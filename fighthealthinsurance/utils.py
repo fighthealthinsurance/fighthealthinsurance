@@ -246,7 +246,7 @@ def ensure_message_alternation(history: List[Dict[str, Any]]) -> List[Dict[str, 
     if result and len(result) > 0 and result[0]:
         if result[0].get("role") == "assistant":
             logger.warning(
-                f"History starts with assistant message, inserting user placeholder: {result}"
+                f"History starts with assistant message, inserting user placeholder (msg_count={len(result)}, roles={[m.get('role') for m in result[:5]]})"
             )
             result.insert(0, {"role": "user", "content": "Continuing a conversation:"})
         elif (
@@ -256,7 +256,7 @@ def ensure_message_alternation(history: List[Dict[str, Any]]) -> List[Dict[str, 
             and result[1].get("role") == "assistant"
         ):
             logger.warning(
-                f"Assistant message immediately after system, inserting user placeholder: {result}"
+                f"Assistant message immediately after system, inserting user placeholder (msg_count={len(result)}, roles={[m.get('role') for m in result[:5]]})"
             )
             result.insert(1, {"role": "user", "content": "Continuing a conversation:"})
 
@@ -529,7 +529,7 @@ async def fire_and_forget_in_new_threadpool(task: Coroutine) -> None:
     thread = threading.Thread(target=run_async_task)
     thread.daemon = True  # Thread will exit when main thread exits
     thread.start()
-    logger.debug(f"Task started good bye :p {task}")
+    logger.debug(f"Task {task} started in background thread")
     return
 
 

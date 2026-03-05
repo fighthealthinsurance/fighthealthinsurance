@@ -316,7 +316,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
             # Generate a random password (user will reset it)
             temp_password = uuid.uuid4().hex
             logger.info(
-                f"Creating professional {email} in domain {user_domain.name} (ID: {domain_id})"
+                f"Creating professional {mask_email_for_logging(email)} in domain {user_domain.name} (ID: {domain_id})"
             )
 
             with transaction.atomic():
@@ -390,16 +390,16 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                 try:
                     send_professional_created_email(email, context)
                     logger.info(
-                        f"Successfully sent welcome email to professional {email}"
+                        f"Successfully sent welcome email to professional {mask_email_for_logging(email)}"
                     )
                 except Exception as e:
                     logger.error(
-                        f"Failed to send welcome email to professional {email}: {str(e)}"
+                        f"Failed to send welcome email to professional {mask_email_for_logging(email)}: {str(e)}"
                     )
                     # Don't raise here, still return success even if email fails
 
                 logger.info(
-                    f"Successfully created professional user {email} in domain {user_domain.name}"
+                    f"Successfully created professional user {mask_email_for_logging(email)} in domain {user_domain.name}"
                 )
                 return Response(
                     serializers.StatusResponseSerializer(
@@ -930,7 +930,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                     except UserDomain.DoesNotExist:
                         logger.error("Domain doesn't exist for cleanup")
             except Exception as e:
-                logger.error(f"Error cleaning up existing data for {email}: {str(e)}")
+                logger.error(f"Error cleaning up existing data for {mask_email_for_logging(email)}: {str(e)}")
                 raise e
         else:
             logger.debug("No existing checkout")
@@ -1320,7 +1320,7 @@ class RestLoginView(ViewSet, SerializerMixin):
         if user:
             request.session["domain_id"] = domain_id
             logger.info(
-                f"User {user.username} logged in setting domain id to {domain_id}"
+                f"User logged in, setting domain id to {domain_id}"
             )
             login(request, user)
             return Response(
