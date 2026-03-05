@@ -136,7 +136,7 @@ def increment_meter(
         payload["identifier"] = identifier
     if meter is None:
         logger.error(
-            "WARNING: we did not find a a meter to log usage for meter: " + meter_name
+            "Did not find a meter to log usage for meter: " + meter_name
         )
     try:
         stripe.billing.MeterEvent.create(

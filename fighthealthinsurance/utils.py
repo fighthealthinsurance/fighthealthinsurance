@@ -246,7 +246,7 @@ def ensure_message_alternation(history: List[Dict[str, Any]]) -> List[Dict[str, 
     if result and len(result) > 0 and result[0]:
         if result[0].get("role") == "assistant":
             logger.error(
-                "We should always start with a user or system message instead {result}"
+                f"We should always start with a user or system message instead {result}"
             )
             result = result[1:]
         elif (
@@ -256,7 +256,7 @@ def ensure_message_alternation(history: List[Dict[str, Any]]) -> List[Dict[str, 
             and result[1].get("role") == "assistant"
         ):
             logger.error(
-                f"We should always start have a user message after system instead {result}"
+                f"We should always have a user message after system instead {result}"
             )
             result = [result[0]] + result[2:]
 
@@ -529,7 +529,7 @@ async def fire_and_forget_in_new_threadpool(task: Coroutine) -> None:
     thread = threading.Thread(target=run_async_task)
     thread.daemon = True  # Thread will exit when main thread exits
     thread.start()
-    logger.debug(f"Task started good bye :p {task}")
+    logger.debug(f"Task {task} started in background thread")
     return
 
 
