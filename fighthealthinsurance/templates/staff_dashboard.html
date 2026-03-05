@@ -193,6 +193,18 @@
         </a>
       </li>
       <li>
+        <a href="{% url 'charts:questions_by_procedure_export' %}">
+          <strong>Questions by Procedure Export</strong>
+          <div class="link-description">Export generated questions by procedure + diagnosis as JSONL</div>
+        </a>
+      </li>
+      <li>
+        <a href="{% url 'charts:denial_questions_export' %}">
+          <strong>Denial Questions Export</strong>
+          <div class="link-description">Export denial questions with answer status as JSONL (non-pro only)</div>
+        </a>
+      </li>
+      <li>
         <a href="{% url 'charts:pro_signups_csv' %}">
           <strong>Pro Signups CSV</strong>
           <div class="link-description">Export professional signups as CSV</div>

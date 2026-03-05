@@ -6,13 +6,15 @@ from django.http import HttpResponse, HttpResponseForbidden, StreamingHttpRespon
 from django.shortcuts import render
 from django.views import View
 from django.contrib.admin.views.decorators import staff_member_required
-from django.db.models import Count, Exists, OuterRef, Q, Subquery
+from django.db.models import Count, Exists, OuterRef, Q
 from django.utils import timezone
 from datetime import timedelta
 
 from fighthealthinsurance.models import (
     Appeal,
     Denial,
+    DenialQA,
+    GenericQuestionGeneration,
     InterestedProfessional,
     OngoingChat,
     ProposedAppeal,
@@ -265,7 +267,7 @@ def chooser_ranked_export(request):
     tasks_with_votes = (
         ChooserTask.objects.filter(votes__isnull=False)
         .distinct()
-        .prefetch_related("candidates", "votes")
+        .prefetch_related("candidates")
     )
 
     def stream_json_lines():
@@ -281,11 +283,13 @@ def chooser_ranked_export(request):
             if not candidate_vote_counts:
                 continue
 
+            # Build lookup from prefetched candidates
+            candidates_by_id = {c.id: c for c in task.candidates.all()}
+
             # The top-voted candidate
             top = candidate_vote_counts[0]
-            try:
-                chosen = ChooserCandidate.objects.get(id=top["chosen_candidate_id"])
-            except ChooserCandidate.DoesNotExist:
+            chosen = candidates_by_id.get(top["chosen_candidate_id"])
+            if chosen is None:
                 continue
 
             total_votes = sum(c["vote_count"] for c in candidate_vote_counts)
@@ -348,8 +352,9 @@ def denial_appeal_export(request):
         .filter(
             creating_professional__isnull=True,
             primary_professional__isnull=True,
-            flag_for_exclude=False,
+            domain__isnull=True,
         )
+        .filter(Q(flag_for_exclude=False) | Q(flag_for_exclude__isnull=True))
         .filter(has_chosen_proposed | has_appeal)
         .prefetch_related("proposedappeal_set", "appeal_set")
     )
@@ -420,6 +425,7 @@ def chat_export(request):
     chats = (
         OngoingChat.objects.filter(
             professional_user__isnull=True,
+            domain__isnull=True,
         )
         .exclude(chat_history__isnull=True)
         .exclude(chat_history=[])
@@ -719,6 +725,97 @@ def users_by_day(request):
         request,
         "bokeh.html",
         {"script": script, "div": div, "df_html": df_html, "totals_html": totals_html},
+    )
+
+
+@staff_member_required
+@export_enabled_required
+def questions_by_procedure_export(request):
+    """Export generated questions keyed by procedure + diagnosis as JSONL."""
+    queryset = GenericQuestionGeneration.objects.all().order_by("procedure", "diagnosis")
+
+    def stream_json_lines():
+        for row in queryset.iterator(chunk_size=200):
+            record = {
+                "procedure": row.procedure,
+                "diagnosis": row.diagnosis,
+                "generated_questions": row.generated_questions,
+            }
+            yield json.dumps(record, default=str) + "\n"
+
+    return StreamingHttpResponse(
+        streaming_content=stream_json_lines(),
+        content_type="application/x-ndjson",
+    )
+
+
+@staff_member_required
+@export_enabled_required
+def denial_questions_export(request):
+    """Export denial questions with answer status as JSONL (non-pro only)."""
+    hashed_farts = Denial.get_hashed_email("farts@farts.com")
+    hashed_pcf = Denial.get_hashed_email("holden@pigscanfly.ca")
+    hashed_gmail = Denial.get_hashed_email("holden.karau@gmail.com")
+    exclude_emails = [hashed_farts, hashed_pcf, hashed_gmail]
+
+    denials = (
+        Denial.objects.exclude(hashed_email__in=exclude_emails)
+        .filter(
+            creating_professional__isnull=True,
+            primary_professional__isnull=True,
+            domain__isnull=True,
+            generated_questions__isnull=False,
+        )
+        .filter(Q(flag_for_exclude=False) | Q(flag_for_exclude__isnull=True))
+    )
+
+    def stream_json_lines():
+        for denial in denials.iterator(chunk_size=100):
+            if not denial.generated_questions:
+                continue
+
+            # Get questions that were answered via DenialQA
+            answered_questions = set(
+                DenialQA.objects.filter(denial=denial).values_list(
+                    "question", flat=True
+                )
+            )
+
+            questions = []
+            for question_text, default_answer in denial.generated_questions:
+                questions.append(
+                    {
+                        "question": question_text,
+                        "default_answer": default_answer,
+                        "was_answered": question_text in answered_questions,
+                    }
+                )
+
+            # Sort: answered first, then unanswered
+            questions.sort(key=lambda q: (not q["was_answered"], q["question"]))
+
+            procedure = (
+                denial.verified_procedure
+                if denial.verified_procedure
+                else denial.procedure
+            )
+            diagnosis = (
+                denial.verified_diagnosis
+                if denial.verified_diagnosis
+                else denial.diagnosis
+            )
+
+            record = {
+                "denial_id": str(denial.denial_id),
+                "procedure": procedure,
+                "diagnosis": diagnosis,
+                "questions": questions,
+            }
+            yield json.dumps(record, default=str) + "\n"
+
+    return StreamingHttpResponse(
+        streaming_content=stream_json_lines(),
+        content_type="application/x-ndjson",
     )
 
 

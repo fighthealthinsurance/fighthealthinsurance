@@ -14,6 +14,8 @@ from fighthealthinsurance.models import (
     ChooserTask,
     ChooserVote,
     Denial,
+    DenialQA,
+    GenericQuestionGeneration,
     OngoingChat,
     ProposedAppeal,
 )
@@ -32,26 +34,36 @@ class ExportEnvVarGatingTest(TestCase):
 
     def test_de_identified_export_blocked_without_env(self):
         with patch.dict(os.environ, {}, clear=True):
-            os.environ.pop("EXPORT_ENABLED", None)
             response = self.client.get(reverse("charts:de_identified_export"))
         self.assertEqual(response.status_code, 403)
 
     def test_chooser_export_blocked_without_env(self):
         with patch.dict(os.environ, {}, clear=True):
-            os.environ.pop("EXPORT_ENABLED", None)
             response = self.client.get(reverse("charts:chooser_ranked_export"))
         self.assertEqual(response.status_code, 403)
 
     def test_denial_appeal_export_blocked_without_env(self):
         with patch.dict(os.environ, {}, clear=True):
-            os.environ.pop("EXPORT_ENABLED", None)
             response = self.client.get(reverse("charts:denial_appeal_export"))
         self.assertEqual(response.status_code, 403)
 
     def test_chat_export_blocked_without_env(self):
         with patch.dict(os.environ, {}, clear=True):
-            os.environ.pop("EXPORT_ENABLED", None)
             response = self.client.get(reverse("charts:chat_export"))
+        self.assertEqual(response.status_code, 403)
+
+    def test_questions_by_procedure_blocked_without_env(self):
+        with patch.dict(os.environ, {}, clear=True):
+            response = self.client.get(
+                reverse("charts:questions_by_procedure_export")
+            )
+        self.assertEqual(response.status_code, 403)
+
+    def test_denial_questions_blocked_without_env(self):
+        with patch.dict(os.environ, {}, clear=True):
+            response = self.client.get(
+                reverse("charts:denial_questions_export")
+            )
         self.assertEqual(response.status_code, 403)
 
     def test_chooser_export_allowed_with_env(self):
@@ -85,6 +97,8 @@ class ExportStaffOnlyTest(TestCase):
             reverse("charts:chooser_ranked_export"),
             reverse("charts:denial_appeal_export"),
             reverse("charts:chat_export"),
+            reverse("charts:questions_by_procedure_export"),
+            reverse("charts:denial_questions_export"),
         ]
         with patch.dict(os.environ, {"EXPORT_ENABLED": "1"}):
             for url in urls:
@@ -357,3 +371,154 @@ class ChatExportContentTest(TestCase):
         lines = [json.loads(line) for line in content.strip().split("\n")]
         self.assertEqual(len(lines), 1)
         self.assertEqual(lines[0]["appeal_texts"], [])
+
+
+class QuestionsByProcedureExportContentTest(TestCase):
+    """Test the content of the questions by procedure export."""
+
+    def setUp(self):
+        self.staff_user = User.objects.create_user(
+            username="staffuser", password="testpass123", is_staff=True
+        )
+        self.client.login(username="staffuser", password="testpass123")
+
+    def test_questions_by_procedure_export_content(self):
+        GenericQuestionGeneration.objects.create(
+            procedure="MRI",
+            diagnosis="Back pain",
+            generated_questions=[
+                ["Was the MRI pre-authorized?", ""],
+                ["Has conservative treatment been tried?", "Yes"],
+            ],
+        )
+
+        with patch.dict(os.environ, {"EXPORT_ENABLED": "1"}):
+            response = self.client.get(
+                reverse("charts:questions_by_procedure_export")
+            )
+
+        self.assertEqual(response.status_code, 200)
+        content = b"".join(response.streaming_content).decode()
+        lines = [json.loads(line) for line in content.strip().split("\n")]
+        self.assertEqual(len(lines), 1)
+
+        record = lines[0]
+        self.assertEqual(record["procedure"], "MRI")
+        self.assertEqual(record["diagnosis"], "Back pain")
+        self.assertEqual(len(record["generated_questions"]), 2)
+        self.assertEqual(
+            record["generated_questions"][0][0], "Was the MRI pre-authorized?"
+        )
+
+    def test_questions_by_procedure_export_empty(self):
+        with patch.dict(os.environ, {"EXPORT_ENABLED": "1"}):
+            response = self.client.get(
+                reverse("charts:questions_by_procedure_export")
+            )
+
+        self.assertEqual(response.status_code, 200)
+        content = b"".join(response.streaming_content).decode()
+        self.assertEqual(content.strip(), "")
+
+
+class DenialQuestionsExportContentTest(TestCase):
+    """Test the content of the denial questions export."""
+
+    def setUp(self):
+        self.staff_user = User.objects.create_user(
+            username="staffuser", password="testpass123", is_staff=True
+        )
+        self.client.login(username="staffuser", password="testpass123")
+
+    def _create_denial(self, **kwargs):
+        defaults = {
+            "hashed_email": "testhash456",
+            "denial_text": "Your claim was denied",
+            "procedure": "MRI",
+            "diagnosis": "Back pain",
+            "insurance_company": "TestInsurance",
+            "generated_questions": [
+                ["Was the MRI pre-authorized?", ""],
+                ["Has conservative treatment been tried?", "Yes"],
+                ["Is the diagnosis confirmed by imaging?", ""],
+            ],
+        }
+        defaults.update(kwargs)
+        return Denial.objects.create(**defaults)
+
+    def test_denial_questions_export_content(self):
+        denial = self._create_denial()
+        # Mark one question as answered
+        DenialQA.objects.create(
+            denial=denial,
+            question="Was the MRI pre-authorized?",
+            text_answer="Yes, it was pre-authorized",
+        )
+
+        with patch.dict(os.environ, {"EXPORT_ENABLED": "1"}):
+            response = self.client.get(
+                reverse("charts:denial_questions_export")
+            )
+
+        self.assertEqual(response.status_code, 200)
+        content = b"".join(response.streaming_content).decode()
+        lines = [json.loads(line) for line in content.strip().split("\n")]
+        self.assertEqual(len(lines), 1)
+
+        record = lines[0]
+        self.assertEqual(record["procedure"], "MRI")
+        self.assertEqual(len(record["questions"]), 3)
+
+        # Answered questions should come first
+        self.assertTrue(record["questions"][0]["was_answered"])
+        self.assertEqual(
+            record["questions"][0]["question"], "Was the MRI pre-authorized?"
+        )
+        # Remaining should be unanswered
+        self.assertFalse(record["questions"][1]["was_answered"])
+        self.assertFalse(record["questions"][2]["was_answered"])
+
+    def test_denial_questions_export_excludes_pro_denials(self):
+        from fhi_users.models import ProfessionalUser
+
+        pro_user_auth = User.objects.create_user(
+            username="prouser", password="testpass123"
+        )
+        pro = ProfessionalUser.objects.create(user=pro_user_auth, active=True)
+        self._create_denial(creating_professional=pro)
+
+        with patch.dict(os.environ, {"EXPORT_ENABLED": "1"}):
+            response = self.client.get(
+                reverse("charts:denial_questions_export")
+            )
+
+        content = b"".join(response.streaming_content).decode()
+        self.assertEqual(content.strip(), "")
+
+    def test_denial_questions_export_excludes_no_questions(self):
+        self._create_denial(generated_questions=None)
+
+        with patch.dict(os.environ, {"EXPORT_ENABLED": "1"}):
+            response = self.client.get(
+                reverse("charts:denial_questions_export")
+            )
+
+        content = b"".join(response.streaming_content).decode()
+        self.assertEqual(content.strip(), "")
+
+    def test_denial_questions_export_uses_verified_fields(self):
+        denial = self._create_denial(
+            verified_procedure="Verified MRI",
+            verified_diagnosis="Verified back pain",
+        )
+
+        with patch.dict(os.environ, {"EXPORT_ENABLED": "1"}):
+            response = self.client.get(
+                reverse("charts:denial_questions_export")
+            )
+
+        content = b"".join(response.streaming_content).decode()
+        lines = [json.loads(line) for line in content.strip().split("\n")]
+        record = lines[0]
+        self.assertEqual(record["procedure"], "Verified MRI")
+        self.assertEqual(record["diagnosis"], "Verified back pain")

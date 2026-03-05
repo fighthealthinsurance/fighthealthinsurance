@@ -16,6 +16,8 @@ from .views import (
     chooser_ranked_export,
     denial_appeal_export,
     chat_export,
+    questions_by_procedure_export,
+    denial_questions_export,
     incomplete_signups_csv,
     procedures_denied_chart,
 )
@@ -39,6 +41,16 @@ urlpatterns = [
         "chat_export",
         chat_export,
         name="chat_export",
+    ),
+    path(
+        "questions_by_procedure_export",
+        questions_by_procedure_export,
+        name="questions_by_procedure_export",
+    ),
+    path(
+        "denial_questions_export",
+        denial_questions_export,
+        name="denial_questions_export",
     ),
     path("pro_signups_csv", pro_signups_csv, name="pro_signups_csv"),
     path(
