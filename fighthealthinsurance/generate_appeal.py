@@ -554,6 +554,7 @@ class AppealGenerator(object):
         ml_context=None,
         pubmed_context=None,
         plan_context=None,
+        rag_context=None,
     ) -> Optional[str]:
         """
         Constructs a prompt for generating a health insurance appeal based on denial details and optional contextual information.
@@ -618,11 +619,15 @@ class AppealGenerator(object):
         if plan_id is not None and plan_id != "" and plan_id != "UNKNOWN":
             base = f"{base}. Please include and fill in any references to the plan id as {plan_id}."
         # Add citation instructions - be explicit about not hallucinating
-        has_citations = (ml_context is not None and ml_context != "") or (
-            pubmed_context is not None and pubmed_context != ""
+        has_citations = (
+            (ml_context is not None and ml_context != "")
+            or (pubmed_context is not None and pubmed_context != "")
+            or (rag_context is not None and rag_context != "")
         )
         if has_citations:
             base = f"{base}\n\nCITATION INSTRUCTIONS: You may ONLY cite medical literature, studies, or references that are explicitly provided below. Do NOT invent, fabricate, or hallucinate any citations, PMIDs, journal names, author names, or study details. If you want to make a medical claim, either cite from the provided references or state it as general medical knowledge without a specific citation."
+            if rag_context is not None and rag_context != "":
+                base = f"{base}\n\nEvidence from medical guidelines and regulations:\n{rag_context}"
             if ml_context is not None and ml_context != "":
                 base = f"{base}\n\nProvided citations (use these): {ml_context}"
             if pubmed_context is not None and pubmed_context != "":
@@ -680,6 +685,7 @@ class AppealGenerator(object):
         pubmed_context=None,
         ml_citations_context=None,
         plan_context=None,
+        rag_context=None,
     ) -> Iterator[str]:
         """
         Generates an iterator of appeal texts for a given insurance denial using templates, non-AI sources, and AI models.
@@ -726,6 +732,7 @@ class AppealGenerator(object):
             ml_context=denial.ml_citation_context,
             pubmed_context=denial.pubmed_context,
             plan_context=plan_context,
+            rag_context=rag_context,
         )
         open_medically_necessary_prompt = self.make_open_med_prompt(
             procedure=denial.procedure,

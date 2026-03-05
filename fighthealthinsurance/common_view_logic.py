@@ -50,8 +50,8 @@ from fighthealthinsurance.ml.ml_citations_helper import MLCitationsHelper
 from fighthealthinsurance.ml.ml_plan_doc_helper import MLPlanDocHelper
 from fighthealthinsurance.models import *
 from fighthealthinsurance.process_denial import ProcessDenialCodes
+from fighthealthinsurance.rag_client import get_rag_context_for_denial
 from fighthealthinsurance.utils import interleave_iterator_for_keep_alive
-
 from .pubmed_tools import PubMedTools
 from .utils import (
     _try_pandoc_engines,
@@ -2090,9 +2090,10 @@ class AppealsBackendHelper:
         denial.gen_attempts = (denial.gen_attempts or 0) + 1
         await denial.asave()
 
-        # Get pubmed and ml citations context
+        # Get pubmed, ml citations, and RAG context
         pubmed_context: Optional[str] = None
         ml_citation_context: Optional[Any] = None
+        rag_context: Optional[str] = None
 
         # Get PubMed context
         logger.debug("Looking up the pubmed context")
@@ -2117,12 +2118,48 @@ class AppealsBackendHelper:
                 ),
                 timeout=40,
             )
-            # Await both contexts so we can use co-operative multitasking
+
+            # Extract CPT/ICD codes from denial text for RAG search
+            rag_procedure_codes = None
+            rag_diagnosis_codes = None
+            denial_text_for_rag = denial.denial_text or ""
+            if denial_text_for_rag:
+                cpt_re = re.compile(
+                    r"[\(\s:,]+(\d{4}[A-Z0-9])[\s:\.\),]", re.M | re.UNICODE
+                )
+                icd_re = re.compile(
+                    r"[\(\s:\.,]+([A-TV-Z][0-9][0-9AB]\.?[0-9A-TV-Z]{0,4})[\s:\.\),]",
+                    re.M | re.UNICODE,
+                )
+                cpt_matches = list(
+                    set(m.group(1) for m in cpt_re.finditer(denial_text_for_rag))
+                )
+                icd_matches = list(
+                    set(m.group(1) for m in icd_re.finditer(denial_text_for_rag))
+                )
+                if cpt_matches:
+                    rag_procedure_codes = cpt_matches
+                if icd_matches:
+                    rag_diagnosis_codes = icd_matches
+
+            # Get RAG context from magic-rag-service
+            rag_context_awaitable = asyncio.wait_for(
+                get_rag_context_for_denial(
+                    denial_text=denial_text_for_rag,
+                    state=denial.state,
+                    procedure_codes=rag_procedure_codes,
+                    diagnosis_codes=rag_diagnosis_codes,
+                ),
+                timeout=30,
+            )
+
+            # Await all contexts so we can use co-operative multitasking
             try:
                 logger.debug("Gathering contexts")
                 results = await asyncio.gather(
                     pubmed_context_awaitable,
                     ml_citation_context_awaitable,
+                    rag_context_awaitable,
                     return_exceptions=True,
                 )
                 if isinstance(results[0], str):
@@ -2133,6 +2170,13 @@ class AppealsBackendHelper:
                     ml_citation_context = results[1]
                 else:
                     ml_citation_context = None
+                if isinstance(results[2], str):
+                    rag_context = results[2]
+                    logger.info("RAG context retrieved successfully")
+                else:
+                    rag_context = None
+                    if results[2] is not None:
+                        logger.debug(f"RAG context not available: {results[2]}")
                 logger.debug("Success")
             except Exception as e:
                 logger.opt(exception=True).error(f"Error gathering contexts: {e}")
@@ -2145,9 +2189,10 @@ class AppealsBackendHelper:
                     denial = await denial_query.aget()
                 pubmed_context = denial.pubmed_context
                 ml_citation_context = denial.ml_citation_context
+                # RAG context is not persisted, so we don't try to retrieve it
                 logger.debug("Used saved contexts")
         else:
-            logger.debug("Too many retries, skipping ML/pubmed ctx")
+            logger.debug("Too many retries, skipping ML/pubmed/RAG ctx")
 
         # Get microsite context if available (optional, non-blocking)
         microsite_context: Optional[str] = None
@@ -2215,6 +2260,7 @@ class AppealsBackendHelper:
             pubmed_context=pubmed_context,
             ml_citations_context=ml_citation_context,
             plan_context=model_plan_context,
+            rag_context=rag_context,
         )
         # Only filters out None
         filtered_appeals: Iterator[str] = filter(lambda x: x != None, appeals)
