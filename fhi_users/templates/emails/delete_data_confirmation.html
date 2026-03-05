@@ -1,0 +1,16 @@
+{% extends "./base_email.html" %}
+
+{% block content %}
+Hello,
+
+We received a request to delete all data associated with {{ email }}.
+
+To confirm this deletion, please click the <a href="{{ confirmation_link }}">link below:
+
+{{ confirmation_link }}</a>
+
+This link will expire in 24 hours. If you did not request this, you can safely ignore this email.
+
+Best regards,
+Fight Health Insurance Team
+{% endblock %}

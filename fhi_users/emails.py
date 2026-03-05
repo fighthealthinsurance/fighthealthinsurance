@@ -132,3 +132,15 @@ def send_professional_created_email(professional_email, context):
         context,
         professional_email,
     )
+
+
+def send_delete_confirmation_email(email: str, token: str) -> None:
+    """Send email asking user to confirm data deletion request."""
+    params = urlencode({"token": token, "email": email})
+    confirmation_link = f"https://www.fightpaperwork.com/confirm-delete?{params}"
+    send_fallback_email(
+        "Confirm Data Deletion Request",
+        "delete_data_confirmation",
+        {"confirmation_link": confirmation_link, "email": email},
+        email,
+    )

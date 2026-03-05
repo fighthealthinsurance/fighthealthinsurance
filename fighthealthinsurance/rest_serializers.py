@@ -92,6 +92,13 @@ class DeleteDataFormSerializer(FormSerializer):
         form = core_forms.DeleteDataForm
 
 
+class ConfirmDeleteDataSerializer(serializers.Serializer):
+    """Serializer for confirming data deletion with a token."""
+
+    token = serializers.CharField(required=True)
+    email = serializers.EmailField(required=True)
+
+
 class ShareAppealFormSerializer(FormSerializer):
     """Serializer for sharing an appeal with another user."""
 

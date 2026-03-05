@@ -7,6 +7,7 @@ from fhi_users.emails import (
     send_appeal_submitted_successfully_email,
     send_error_submitting_appeal_email,
     send_verification_email,
+    send_delete_confirmation_email,
 )
 from django.contrib.auth.models import User
 from django.test import RequestFactory
@@ -61,3 +62,10 @@ class TestEmails:
         send_verification_email(test_request, test_user)
         assert len(mail.outbox) == 2
         assert mail.outbox[0].subject == "Activate your account."
+
+    def test_send_delete_confirmation_email(self):
+        send_delete_confirmation_email("user@example.com", "test-token-123")
+        assert len(mail.outbox) == 2
+        assert mail.outbox[0].subject == "Confirm Data Deletion Request"
+        assert "confirm-delete" in mail.outbox[0].body
+        assert "test-token-123" in mail.outbox[0].body

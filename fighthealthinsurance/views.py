@@ -40,6 +40,9 @@ from fighthealthinsurance.helpers.data_helpers import RemoveDataHelper
 from fighthealthinsurance.helpers.stripe_helpers import StripeWebhookHelper
 from fighthealthinsurance.models import StripeRecoveryInfo
 from fighthealthinsurance.type_utils import User
+from fhi_users.emails import send_delete_confirmation_email
+from fhi_users.models import DeleteToken
+from django.utils import timezone
 
 
 class BlogPostMetadata(TypedDict, total=False):
@@ -599,7 +602,11 @@ class ShareAppealView(View):
 
 
 class RemoveDataView(View):
-    """View for users to request deletion of their data."""
+    """View for users to request deletion of their data.
+
+    Sends a confirmation email with a secure token link instead of
+    immediately deleting data, to verify email ownership.
+    """
 
     def get(self, request):
         return render(
@@ -616,12 +623,18 @@ class RemoveDataView(View):
 
         if form.is_valid():
             email = form.cleaned_data["email"]
-            RemoveDataHelper.remove_data_for_email(email)
+            # Delete any existing tokens for this email
+            DeleteToken.objects.filter(email=email).delete()
+            # Create a new token
+            delete_token = DeleteToken(email=email)
+            delete_token.save()
+            # Send confirmation email
+            send_delete_confirmation_email(email, str(delete_token.token))
             return render(
                 request,
-                "removed_data.html",
+                "delete_data_email_sent.html",
                 context={
-                    "title": "Remove My Data",
+                    "title": "Check Your Email",
                 },
             )
 
@@ -631,6 +644,61 @@ class RemoveDataView(View):
             context={
                 "title": "Remove My Data",
                 "form": form,
+            },
+        )
+
+
+class ConfirmDeleteDataView(View):
+    """View that handles the email confirmation link for data deletion."""
+
+    def get(self, request):
+        token = request.GET.get("token")
+        email = request.GET.get("email")
+
+        if not token or not email:
+            return render(
+                request,
+                "remove_data.html",
+                context={
+                    "title": "Remove My Data",
+                    "form": core_forms.DeleteDataForm(),
+                    "error": "Invalid confirmation link. Please try again.",
+                },
+            )
+
+        try:
+            delete_token = DeleteToken.objects.get(token=token, email=email)
+        except DeleteToken.DoesNotExist:
+            return render(
+                request,
+                "remove_data.html",
+                context={
+                    "title": "Remove My Data",
+                    "form": core_forms.DeleteDataForm(),
+                    "error": "Invalid or already used confirmation link. Please request a new one.",
+                },
+            )
+
+        if delete_token.expires_at < timezone.now():
+            delete_token.delete()
+            return render(
+                request,
+                "remove_data.html",
+                context={
+                    "title": "Remove My Data",
+                    "form": core_forms.DeleteDataForm(),
+                    "error": "This confirmation link has expired. Please request a new one.",
+                },
+            )
+
+        # Token is valid — perform deletion
+        RemoveDataHelper.remove_data_for_email(email)
+        delete_token.delete()
+        return render(
+            request,
+            "removed_data.html",
+            context={
+                "title": "Remove My Data",
             },
         )
 
