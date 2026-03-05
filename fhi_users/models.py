@@ -342,10 +342,12 @@ class DeleteToken(models.Model):
 
     def save(self, *args, **kwargs):
         if not self.expires_at:
+            from django.utils import timezone as tz
+
             if self.created_at:
                 self.expires_at = self.created_at + datetime.timedelta(hours=24)
             else:
-                self.expires_at = datetime.datetime.now() + datetime.timedelta(hours=24)
+                self.expires_at = tz.now() + datetime.timedelta(hours=24)
         super().save(*args, **kwargs)
 
 

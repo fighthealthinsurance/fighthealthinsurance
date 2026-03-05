@@ -121,7 +121,8 @@ class TestDataRemovalRestAPI(TestCase):
             data={"email": "test@example.com"},
             content_type="application/json",
         )
-        assert response.status_code == 200
+        # DeleteMixin.delete() always returns 204
+        assert response.status_code == 204
         assert len(mail.outbox) >= 1
         assert mail.outbox[0].subject == "Confirm Data Deletion Request"
         assert DeleteToken.objects.filter(email="test@example.com").exists()
