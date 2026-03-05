@@ -14,6 +14,8 @@ from .views import (
     MailingListSubscriberCSV,
     de_identified_export,
     chooser_ranked_export,
+    denial_appeal_export,
+    chat_export,
     incomplete_signups_csv,
     procedures_denied_chart,
 )
@@ -27,6 +29,16 @@ urlpatterns = [
         "chooser_ranked_export",
         chooser_ranked_export,
         name="chooser_ranked_export",
+    ),
+    path(
+        "denial_appeal_export",
+        denial_appeal_export,
+        name="denial_appeal_export",
+    ),
+    path(
+        "chat_export",
+        chat_export,
+        name="chat_export",
     ),
     path("pro_signups_csv", pro_signups_csv, name="pro_signups_csv"),
     path(

@@ -1,14 +1,21 @@
-from django.http import HttpResponse
-from django.shortcuts import render
+import json
+import os
+from functools import wraps
 
+from django.http import HttpResponse, HttpResponseForbidden, StreamingHttpResponse
+from django.shortcuts import render
 from django.views import View
 from django.contrib.admin.views.decorators import staff_member_required
-from django.db.models import Count, Q
+from django.db.models import Count, Exists, OuterRef, Q, Subquery
 from django.utils import timezone
 from datetime import timedelta
+
 from fighthealthinsurance.models import (
+    Appeal,
     Denial,
     InterestedProfessional,
+    OngoingChat,
+    ProposedAppeal,
     ChooserTask,
     ChooserCandidate,
     ChooserVote,
@@ -19,8 +26,18 @@ from bokeh.embed import components
 from bokeh.models import ColumnDataSource
 import pandas as pd
 import csv
-from django.http import HttpResponse, StreamingHttpResponse
-import json
+
+
+def export_enabled_required(view_func):
+    """Decorator that gates export views behind the EXPORT_ENABLED=1 env var."""
+
+    @wraps(view_func)
+    def wrapper(request, *args, **kwargs):
+        if os.environ.get("EXPORT_ENABLED") != "1":
+            return HttpResponseForbidden("Exports are not enabled.")
+        return view_func(request, *args, **kwargs)
+
+    return wrapper
 
 
 class BaseEmailsWithRawEmailCSV(View):
@@ -200,6 +217,7 @@ def incomplete_signups_csv(request):
 
 
 @staff_member_required
+@export_enabled_required
 def de_identified_export(request):
     # Exclude test emails
     limit = request.GET.get("limit")
@@ -240,6 +258,7 @@ def de_identified_export(request):
 
 
 @staff_member_required
+@export_enabled_required
 def chooser_ranked_export(request):
     """Export the highest-ranked candidate for each chooser task as JSONL."""
     # Get all tasks that have at least one vote, annotated with vote count
@@ -250,7 +269,7 @@ def chooser_ranked_export(request):
     )
 
     def stream_json_lines():
-        for task in tasks_with_votes.iterator():
+        for task in tasks_with_votes.iterator(chunk_size=100):
             # Count votes per candidate for this task
             candidate_vote_counts = (
                 ChooserVote.objects.filter(task=task)
@@ -301,6 +320,126 @@ def chooser_ranked_export(request):
                 "vote_count": top["vote_count"],
                 "total_votes": total_votes,
                 "all_candidates": all_candidates,
+            }
+            yield json.dumps(record, default=str) + "\n"
+
+    return StreamingHttpResponse(
+        streaming_content=stream_json_lines(),
+        content_type="application/x-ndjson",
+    )
+
+
+@staff_member_required
+@export_enabled_required
+def denial_appeal_export(request):
+    """Export de-identified denial + chosen appeal pairs as JSONL (non-pro users only)."""
+    hashed_farts = Denial.get_hashed_email("farts@farts.com")
+    hashed_pcf = Denial.get_hashed_email("holden@pigscanfly.ca")
+    hashed_gmail = Denial.get_hashed_email("holden.karau@gmail.com")
+    exclude_emails = [hashed_farts, hashed_pcf, hashed_gmail]
+
+    # Non-pro denials that have a chosen ProposedAppeal or a finalized Appeal
+    has_chosen_proposed = Exists(
+        ProposedAppeal.objects.filter(for_denial=OuterRef("pk"), chosen=True)
+    )
+    has_appeal = Exists(Appeal.objects.filter(for_denial=OuterRef("pk")))
+    denials = (
+        Denial.objects.exclude(hashed_email__in=exclude_emails)
+        .filter(
+            creating_professional__isnull=True,
+            primary_professional__isnull=True,
+            flag_for_exclude=False,
+        )
+        .filter(has_chosen_proposed | has_appeal)
+        .prefetch_related("proposedappeal_set", "appeal_set")
+    )
+
+    def stream_json_lines():
+        for denial in denials.iterator(chunk_size=100):
+            # Prefer manual de-identified text if available
+            denial_text = (
+                denial.manual_deidentified_denial
+                if denial.manual_deidentified_denial
+                else denial.denial_text
+            )
+            procedure = (
+                denial.verified_procedure
+                if denial.verified_procedure
+                else denial.procedure
+            )
+            diagnosis = (
+                denial.verified_diagnosis
+                if denial.verified_diagnosis
+                else denial.diagnosis
+            )
+
+            # Get appeal text: prefer manual de-id, then chosen ProposedAppeal, then Appeal
+            appeal_text = None
+            if denial.manual_deidentified_appeal:
+                appeal_text = denial.manual_deidentified_appeal
+            else:
+                chosen_proposed = denial.proposedappeal_set.filter(chosen=True).first()
+                if chosen_proposed:
+                    appeal_text = chosen_proposed.appeal_text
+                else:
+                    appeal = denial.appeal_set.first()
+                    if appeal:
+                        appeal_text = appeal.appeal_text
+
+            if not appeal_text:
+                continue
+
+            record = {
+                "denial_id": denial.denial_id,
+                "denial_text": denial_text,
+                "procedure": procedure,
+                "diagnosis": diagnosis,
+                "insurance_company": denial.insurance_company,
+                "appeal_text": appeal_text,
+                "references": denial.references,
+                "generated_questions": denial.generated_questions,
+                "ml_citation_context": denial.ml_citation_context,
+            }
+            yield json.dumps(record, default=str) + "\n"
+
+    return StreamingHttpResponse(
+        streaming_content=stream_json_lines(),
+        content_type="application/x-ndjson",
+    )
+
+
+@staff_member_required
+@export_enabled_required
+def chat_export(request):
+    """Export de-identified chat histories as JSONL (non-pro users only)."""
+    hashed_farts = Denial.get_hashed_email("farts@farts.com")
+    hashed_pcf = Denial.get_hashed_email("holden@pigscanfly.ca")
+    hashed_gmail = Denial.get_hashed_email("holden.karau@gmail.com")
+    exclude_emails = [hashed_farts, hashed_pcf, hashed_gmail]
+
+    chats = (
+        OngoingChat.objects.filter(
+            professional_user__isnull=True,
+        )
+        .exclude(chat_history__isnull=True)
+        .exclude(chat_history=[])
+        .exclude(hashed_email__in=exclude_emails)
+        .prefetch_related("appeals")
+    )
+
+    def stream_json_lines():
+        for chat in chats.iterator(chunk_size=100):
+            appeal_texts = [
+                a.appeal_text
+                for a in chat.appeals.all()
+                if a.appeal_text
+            ]
+            record = {
+                "chat_id": str(chat.id),
+                "chat_history": chat.chat_history,
+                "denied_item": chat.denied_item,
+                "denied_reason": chat.denied_reason,
+                "appeal_texts": appeal_texts,
             }
             yield json.dumps(record, default=str) + "\n"
 
