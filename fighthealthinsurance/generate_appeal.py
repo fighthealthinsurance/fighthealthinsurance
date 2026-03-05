@@ -1006,21 +1006,19 @@ class AppealGenerator(object):
         )
 
         appeals: Iterator[str] = as_available_nested(generated_text_futures)
-        logger.debug(f"Appeals itr starting with {appeals}")
+        logger.debug("Appeals iterator created")
         # Check and make sure we have some AI powered results
         try:
-            logger.debug(f"Getting first {appeals}")
+            logger.debug("Getting first appeal from iterator")
             first = appeals.__next__()
             appeals = itertools.chain([first], appeals)
-            logger.debug(f"First pulled off {appeals}")
+            logger.debug("First appeal retrieved")
         except StopIteration:
-            logger.warning(
-                f"Adding backup calls {backup_calls} first group not success."
-            )
+            logger.warning("First group not successful, adding backup calls")
             appeals = as_available_nested(make_async_model_calls(backup_calls))
-        logger.debug(f"Adding initial appeals {initial_appeals} to back of itr.")
+        logger.debug("Appending initial appeals to iterator")
         appeals = itertools.chain(appeals, initial_appeals)
-        logger.debug(f"Sending back {appeals}")
+        logger.debug("Returning appeals iterator")
         return appeals
 
     async def synthesize_appeals(

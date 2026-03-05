@@ -24,6 +24,7 @@ import minio as m
 from configurations import Configuration
 from corsheaders.defaults import default_methods
 from dj_easy_log import load_loguru
+from loguru import logger
 from minio_storage.storage import MinioStorage
 from stopit import ThreadingTimeout as Timeout
 
@@ -731,7 +732,7 @@ class Prod(Base):
 
     @cached_property
     def EXTERNAL_STORAGE_B(self):
-        print(
+        logger.info(
             f"Creating connection to {self.MINIO_STORAGE_ENDPOINT} region {self.MINIO_STORAGE_REGION}"
         )
         try:
@@ -750,25 +751,26 @@ class Prod(Base):
                         secure=True,
                     )
                     bucket = self.MINIO_STORAGE_MEDIA_BUCKET_NAME
-                    print(
-                        f"Created client for minio at {self.MINIO_STORAGE_ENDPOINT} connecting to bucket {bucket}"
+                    logger.info(
+                        f"Created MinIO client for {self.MINIO_STORAGE_ENDPOINT} bucket {bucket}"
                     )
                     check = minio_client.list_objects(bucket)
                     next(check, None)
-                    print(f"Check passed, making MinioStorage object.")
+                    logger.info("MinIO bucket check passed")
                     minio = MinioStorage(
                         minio_client,
                         bucket_name=bucket,
                         auto_create_bucket=False,  # B2 issues
                     )
-                    print(f"Connected to minio at {self.MINIO_STORAGE_ENDPOINT}")
+                    logger.info(f"Connected to MinIO at {self.MINIO_STORAGE_ENDPOINT}")
 
                     return minio
                 else:
                     raise Exception("No storage endpoint configured")
         except Exception as e:
-            print(f"Failed to setup minio storage to {self.MINIO_STORAGE_ENDPOINT}")
-            print(traceback.format_exc())
+            logger.opt(exception=True).error(
+                f"Failed to setup MinIO storage to {self.MINIO_STORAGE_ENDPOINT}"
+            )
             return None
 
 

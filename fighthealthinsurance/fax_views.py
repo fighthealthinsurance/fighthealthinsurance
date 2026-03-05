@@ -60,7 +60,7 @@ class StageFaxView(generic.FormView):
             return {"fax_form": self.get_form()}
 
     def form_valid(self, form):
-        logger.debug(f"Huzzah valid fax form.")
+        logger.debug("Valid fax form received")
         form_data = form.cleaned_data
         # Get all of the articles the user wants to send
         pubmed_checkboxes = [

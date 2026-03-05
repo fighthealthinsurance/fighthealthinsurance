@@ -123,7 +123,7 @@ class StreamingEntityBackend(AsyncWebsocketConsumer):
             logger.debug("Yielding before closing connection")
             await asyncio.sleep(0.1)
             try:
-                logger.debug("Prepairing to close connection")
+                logger.debug("Preparing to close connection")
                 await self.close()
                 logger.debug("Closed connection")
             except Exception:

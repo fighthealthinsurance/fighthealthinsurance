@@ -19,6 +19,8 @@ from rest_framework.serializers import ValidationError
 
 from loguru import logger
 
+from fighthealthinsurance.utils import mask_email_for_logging
+
 if TYPE_CHECKING:
     from django.contrib.auth.models import User
 else:
@@ -151,7 +153,7 @@ def combine_domain_and_username(
         domain=domain,
     )
     username = f"{raw_username}🐼{domain_id}"
-    logger.debug(f"Made user username: {username}")
+    logger.debug("Generated username for user")
     return username
 
 
@@ -250,11 +252,11 @@ def create_user(
                 last_name=last_name,
                 is_active=False,
             )
-            logger.info(f"Created new user with username: {username}, email: {email}")
+            logger.info(f"Created new user with email: {mask_email_for_logging(email)}")
         return user
     except Exception as e:
         logger.opt(exception=True).error(
-            f"Failed to create user {email} in domain {domain_name}: {str(e)}"
+            f"Failed to create user {mask_email_for_logging(email)} in domain {domain_name}: {e}"
         )
         raise
 

@@ -117,7 +117,7 @@ class ProcessDenialRegex(DenialBase):
         return (await self.get_procedure(text), await self.get_diagnosis(text))
 
     async def get_denialtype(self, denial_text, procedure, diagnosis):
-        logger.debug(f"Getting denial types for {denial_text}")
+        logger.debug(f"Getting denial types ({len(denial_text)} chars)")
         denials = []
         async for d in self.denialTypes:
             if (
@@ -160,7 +160,7 @@ class ProcessDenialRegex(DenialBase):
         Returns:
             List of DenialTypes objects that match the text
         """
-        logger.debug(f"Getting denial types for {denial_text}")
+        logger.debug(f"Getting denial types ({len(denial_text)} chars)")
         denials = []
         async for d in self.denialTypes:
             if (
