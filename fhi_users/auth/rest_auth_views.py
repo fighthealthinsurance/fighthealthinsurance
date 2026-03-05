@@ -43,6 +43,7 @@ from fhi_users.models import (
 from fighthealthinsurance.models import StripeRecoveryInfo
 from fhi_users.auth import rest_serializers as serializers
 from fighthealthinsurance import rest_serializers as common_serializers
+from fighthealthinsurance.utils import mask_email_for_logging
 from fhi_users.auth import auth_utils
 from fhi_users.auth.auth_utils import (
     create_user,
@@ -907,7 +908,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
 
                 # Delete the user
                 user_to_delete.delete()
-                logger.info(f"Deleted existing user for {email} during signup retry")
+                logger.info(f"Deleted existing user for {mask_email_for_logging(email)} during signup retry")
                 # Clean up domain if it's a new domain
                 if new_domain and existing_checkout.domain:
                     try:
@@ -1552,19 +1553,19 @@ class VerifyEmailViewSet(ViewSet, SerializerMixin):
             user.save()
             try:
                 extraproperties = ExtraUserProperties.objects.get(user=user)
-            except:
+            except ExtraUserProperties.DoesNotExist:
                 extraproperties = ExtraUserProperties.objects.create(user=user)
             extraproperties.email_verified = True
             extraproperties.save()
             verification_token.delete()
             try:
                 PatientUser.objects.filter(user=user).update(is_active=True)
-            except:
-                pass
+            except Exception as e:
+                logger.warning(f"Could not activate PatientUser: {e}")
             try:
                 ProfessionalUser.objects.filter(user=user).update(is_active=True)
-            except:
-                pass
+            except Exception as e:
+                logger.warning(f"Could not activate ProfessionalUser: {e}")
             return Response(
                 serializers.StatusResponseSerializer({"status": "success"}).data
             )

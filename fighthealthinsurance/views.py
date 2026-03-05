@@ -41,7 +41,7 @@ from fighthealthinsurance.helpers.data_helpers import RemoveDataHelper
 from fighthealthinsurance.helpers.stripe_helpers import StripeWebhookHelper
 from fighthealthinsurance.models import DeleteToken, StripeRecoveryInfo
 from fighthealthinsurance.type_utils import User
-from fighthealthinsurance.utils import send_fallback_email
+from fighthealthinsurance.utils import mask_email_for_logging, send_fallback_email
 
 
 class BlogPostMetadata(TypedDict, total=False):
@@ -1054,7 +1054,7 @@ class GenerateAppeal(View):
             denial.qa_context = json.dumps(qa_context)
             denial.save()
         except Exception as e:
-            logger.error(f"*********************Error updating medical context: {e}")
+            logger.error(f"Error updating medical context: {e}")
 
         del elems["csrfmiddlewaretoken"]
         return render(
@@ -1094,7 +1094,6 @@ class OCRView(View):
 
     def post(self, request):
         try:
-            logger.debug(request.FILES)
             files = dict(request.FILES.lists())
             uploader = files["uploader"]
             doc_txt = self._ocr(uploader)
@@ -1226,13 +1225,13 @@ class InitialProcessView(generic.FormView):
                     defaults=defaults,
                 )
             except Exception as e:
-                logger.debug(f"Error subscribing {email} to mailing list: {e}")
+                logger.warning(f"Error subscribing {mask_email_for_logging(email)} to mailing list: {e}")
                 try:
                     models.MailingListSubscriber.objects.filter(email=email).update(
                         **defaults
                     )
                 except Exception as e2:
-                    logger.warning(f"Error updating subscriber? {email}!?!")
+                    logger.warning(f"Error updating subscriber {mask_email_for_logging(email)}: {e2}")
 
         # Get microsite slug from request if available and validate it
         microsite_slug = self.request.POST.get(
@@ -1325,7 +1324,6 @@ class SessionRequiredMixin(View):
     """Verify that the current user has an active session."""
 
     def dispatch(self, request, *args, **kwargs):
-        print(request.session)
         # Don't enforce this rule for now in prod we want to wait for everyone to have a session
         force_session = settings.DEBUG or os.environ.get("TESTING", False)
         if (
@@ -1333,7 +1331,7 @@ class SessionRequiredMixin(View):
             and not request.session.get("denial_uuid")
             and not request.session.get("denial_id")
         ):
-            print("Huzzah doing le check")
+            logger.debug("denial_id not in session, checking POST/GET")
             denial_id = request.POST.get("denial_id") or request.GET.get("denial_id")
             if denial_id:
                 request.session["denial_id"] = denial_id
@@ -1736,7 +1734,7 @@ def chat_interface_view(request):
 
     If the user hasn't accepted the terms of service yet, redirect to the consent form.
     """
-    logger.debug(f"Chat interface view called with session: {request.session}")
+    logger.debug("Chat interface view called")
 
     # Check if the user completed the consent process by looking for session data
     consent_completed = request.session.get("consent_completed", False)

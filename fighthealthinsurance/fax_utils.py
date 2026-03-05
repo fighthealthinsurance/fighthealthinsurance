@@ -13,6 +13,8 @@ from PyPDF2 import PdfReader, PdfWriter
 from requests import Session
 from stopit import ThreadingTimeout as Timeout
 
+from loguru import logger
+
 from .utils import _try_pandoc_engines
 
 FROM_FAX = os.getenv("FROM_FAX", "4158407591")
@@ -201,10 +203,10 @@ class SonicFax(FaxSenderBase):
                 if filename in chunk:
                     # Core states we care about
                     if ">failed<" in chunk:
-                        print(f"Failed :( {chunk}")
+                        logger.warning("Fax failed")
                         return False
                     elif ">success<" in chunk:
-                        print(f"Success: {chunk}")
+                        logger.info("Fax succeeded")
                         return True
                     # More delay states
                     elif "in-queue" in chunk:
@@ -216,9 +218,9 @@ class SonicFax(FaxSenderBase):
                         await asyncio.sleep(c * 2)
                         pass
                     else:
-                        print(f"No status in {chunk} but {filename}")
+                        logger.debug(f"No status yet for {filename}")
                         pass
-        print(f"Timed out -- on file {filename} last response: {full}")
+        logger.warning(f"Timed out checking fax status for {filename}")
         return False
 
     async def send_fax_non_blocking(
@@ -331,14 +333,14 @@ class HylaFaxClient(FaxSenderBase):
 
     async def _run_command(self, command: list[str]) -> Tuple[int, str]:
         """Return the command and it's output"""
-        print(f"Sending command {command}")
+        logger.debug(f"Sending command {command}")
         proc = await asyncio.create_subprocess_shell(
             " ".join(command),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
         stdout, stderr = await proc.communicate()
-        print(f"Exit code {proc.returncode}")
+        logger.debug(f"Exit code {proc.returncode}")
         result_text = f"STDOUT: {stdout.decode()} STDERR: {stderr.decode()}"
         if proc.returncode is None:
             return (254, result_text)
@@ -357,7 +359,7 @@ class HylaFaxClient(FaxSenderBase):
         with tempfile.NamedTemporaryFile(
             suffix=".txt", prefix="dest", mode="w+t", delete=True
         ) as f:
-            print(f"Wrote phone number {destination} to {f.name}")
+            logger.debug(f"Wrote phone number to {f.name}")
             f.write(destination)
             f.flush()
             os.sync()
@@ -394,7 +396,7 @@ class HylaFaxClient(FaxSenderBase):
                     # Extracting the job ID
                     if match:
                         job_id = match.group(1)
-                        print("Job ID:", job_id)
+                        logger.info(f"Fax job ID: {job_id}")
                         exit_code, result_text = await self._run_command(
                             ["faxstat", "-d"]
                         )
@@ -407,13 +409,13 @@ class HylaFaxClient(FaxSenderBase):
 
                         # Checking if the job succeeded
                         if match:
-                            print(f"Job ID {job_id} succeeded.")
+                            logger.info(f"Fax job {job_id} succeeded")
                             return True
                         else:
-                            print(f"Job ID {job_id} did not succeed.")
+                            logger.warning(f"Fax job {job_id} did not succeed")
                             return False
                     else:
-                        print("No job ID found.")
+                        logger.warning("No job ID found in fax response")
                         return False
             return False
 
@@ -453,30 +455,30 @@ class SshHylaFaxClient(HylaFaxClient):
             dir = os.path.dirname(target)
             exit_code, _result_text = await self._run_command(["mkdir", "-p", dir])
             if exit_code != 0:
-                print("Failed to make dir")
+                logger.error("Failed to create remote directory")
                 return None
             sftp_client.put(path, target)
             return target
         except Exception as e:
-            print(
-                f"Error during upload: {e} sending remote file {path} to {target} on {self.remote_host}"
+            logger.opt(exception=True).error(
+                f"Error uploading file to {self.remote_host}"
             )
             return None
 
     async def _run_command(self, command: list[str]) -> Tuple[int, str]:
         try:
             async with self._create_async_ssh_client() as conn:
-                print(f"Sending remote command {command}")
+                logger.debug(f"Sending remote command {command}")
                 process = conn.run(" ".join(command))
                 result = await process
-                print(f"Sent cmd")
+                logger.debug("Remote command completed")
                 exit_code: int = result.exit_status
                 result_text = f"STDOUT: {result.stdout} STDERR: {result.stderr}"
                 if exit_code != 0:
-                    print(f"Failed :( -- {result}")
+                    logger.warning(f"Remote command failed: exit code {exit_code}")
                 return (exit_code, result_text)
         except Exception as e:
-            print(f"Error sending command {command} -- {e}")
+            logger.opt(exception=True).error(f"Error sending remote command {command}")
             return (254, f"{e} fron {command}")
 
 
@@ -538,7 +540,7 @@ class FlexibleFaxMagic(object):
                     pages = len(reader.pages)
                     return (f"{input_path}.pdf", pages)
             except Exception as e:
-                print(f"Skipping input {input_path} {e}")
+                logger.warning(f"Skipping input {input_path}: {e}")
                 return (None, 0)
 
         for input_path in input_paths:
@@ -638,10 +640,10 @@ class FlexibleFaxMagic(object):
                 key=lambda backend: backend.estimate_cost(destination, page_count),
             )
         for backend in backends_by_cost:
-            print(f"Entering timeout ctx")
+            logger.debug(f"Trying fax backend {backend}")
             with Timeout(1300.0) as _timeout_ctx:
                 try:
-                    print(f"Calling backend {backend}")
+                    logger.debug(f"Calling backend {backend}")
                     r = await asyncio.wait_for(
                         backend.send_fax(
                             destination=destination, path=path, blocking=blocking
@@ -649,14 +651,14 @@ class FlexibleFaxMagic(object):
                         timeout=600,
                     )
                     if r == True:
-                        print(f"Sent fax to {destination} using {backend}")
+                        logger.info(f"Sent fax to {destination} using {backend}")
                         return True
                     else:
-                        print(f"Failed sending to {destination} using {backend}")
+                        logger.warning(f"Failed sending fax to {destination} using {backend}")
                 except Exception as e:
-                    print(f"Error {e} sending fax on {backend}, retrying once")
+                    logger.warning(f"Error sending fax on {backend}, retrying once: {e}")
                 try:
-                    print(f"Retrying backend {backend}")
+                    logger.debug(f"Retrying backend {backend}")
                     r = await asyncio.wait_for(
                         backend.send_fax(
                             destination=destination, path=path, blocking=blocking
@@ -664,16 +666,16 @@ class FlexibleFaxMagic(object):
                         timeout=600,
                     )
                     if r == True:
-                        print(f"Sent fax to {destination} using {backend}")
+                        logger.info(f"Sent fax to {destination} using {backend}")
                         return True
                     else:
-                        print(f"Failed sending to {destination} using {backend}")
+                        logger.warning(f"Failed sending fax to {destination} using {backend}")
                 except Exception as e:
-                    print(
-                        f"Error {e} sending fax on {backend}, moving on to next backend"
+                    logger.error(
+                        f"Error sending fax on {backend}, moving to next backend: {e}"
                     )
 
-        print(f"Unable to send fax to {destination} using {self.backends}")
+        logger.error(f"Unable to send fax to {destination} using any backend")
         return False
 
 
@@ -683,5 +685,5 @@ flexible_fax_magic = FlexibleFaxMagic([FaxyMcFaxFace()])
 try:
     s = SonicFax()
     flexible_fax_magic._add_backend(s)
-except:
-    pass
+except Exception:
+    logger.debug("SonicFax not available, skipping")

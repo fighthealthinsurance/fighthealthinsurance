@@ -6,6 +6,7 @@ from rest_framework.response import Response
 
 from fighthealthinsurance.chat_lead_serializers import ChatLeadsSerializer
 from fighthealthinsurance.models import ChatLeads, MailingListSubscriber
+from fighthealthinsurance.utils import mask_email_for_logging
 
 
 class ChatLeadsViewSet(viewsets.GenericViewSet):
@@ -45,13 +46,13 @@ class ChatLeadsViewSet(viewsets.GenericViewSet):
                         defaults=defaults,
                     )
                 except Exception as e:
-                    logger.debug(f"Error subscribing {email} to mailing list: {e}")
+                    logger.warning(f"Error subscribing {mask_email_for_logging(email)} to mailing list: {e}")
                     try:
                         MailingListSubscriber.objects.filter(email=email).update(
                             **defaults
                         )
                     except Exception as e2:
-                        logger.warning(f"Error updating subscriber {email}: {e2}")
+                        logger.warning(f"Error updating subscriber {mask_email_for_logging(email)}: {e2}")
 
             # Return the session ID to be used for chat
             return Response(
