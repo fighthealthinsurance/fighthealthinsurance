@@ -18,6 +18,7 @@ from fighthealthinsurance.generate_prior_auth import prior_auth_generator
 from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance.models import (
     ChatLeads,
+    ChatType,
     Denial,
     OngoingChat,
     PriorAuthRequest,
@@ -453,43 +454,60 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                 return
 
         try:
-            # Handle different user types
-            if not is_authenticated:
-                # Anonymous user with session key
-                professional_user = None
+            # Determine chat_type and professional_user once, consolidating all detection logic
+            professional_user = None
+            chat_type = ChatType.PATIENT  # default
 
-                # Check if this is a trial chat (verify session_id exists in ChatLeads)
+            if not is_authenticated:
+                # Anonymous user — check if this is a trial professional via ChatLeads
                 if session_key:
-                    if await ChatLeads.objects.filter(session_id=session_key).aexists():
-                        is_patient = False
-                    # This is a trial professional chat with a valid ChatLead entry
-                    logger.info(f"Trial professional chat for session {session_key}")
+                    lead = await ChatLeads.objects.filter(
+                        session_id=session_key
+                    ).afirst()
+                    if lead and (not lead.drug or lead.drug == ""):
+                        # ChatLeads entry without a drug means trial professional
+                        chat_type = ChatType.TRIAL_PROFESSIONAL
+                        logger.info(
+                            f"Trial professional chat for session {session_key}"
+                        )
+                    elif lead:
+                        # Lead with a drug — drug-specific microsite lead, treat as patient
+                        chat_type = ChatType.PATIENT
+                        logger.debug(
+                            f"Drug-specific lead for session {session_key}, treating as patient"
+                        )
+                    else:
+                        chat_type = ChatType.PATIENT
                 else:
-                    is_patient = True  # Default to patient if we can't find the chat lead & non-auth
+                    chat_type = ChatType.PATIENT
             elif is_patient:
-                # Patient user (authenticated) -- not yet supported.
-                professional_user = None
+                # Client explicitly indicated patient
+                chat_type = ChatType.PATIENT
             else:
-                # Professional user
+                # Authenticated user claiming professional — verify
                 professional_user = await sync_to_async(self._get_professional_user)(
                     user
                 )
-                if not professional_user:
-                    # Instead of an error message, set as patient user when pro user not found
+                if professional_user:
+                    chat_type = ChatType.PROFESSIONAL
+                else:
                     logger.info(
                         f"User {user.username} is not a professional user, treating as patient"
                     )
-                    professional_user = None
-                    is_patient = True
+                    chat_type = ChatType.PATIENT
+
+            # Sync is_patient for backward compatibility
+            is_patient = chat_type == ChatType.PATIENT
+
             # Extract tracking info from websocket scope (privacy-aware)
             tracking_info = extract_tracking_info_from_scope(
-                scope=self.scope, is_professional=(professional_user is not None)
+                scope=self.scope, is_professional=(chat_type == ChatType.PROFESSIONAL)
             )
 
             chat = await self._get_or_create_chat(
                 user,
                 professional_user,
-                is_patient,
+                chat_type,
                 chat_id,
                 session_key,
                 email=email,
@@ -506,7 +524,6 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                     send_json_message_func=self.send_json_message,
                     chat=chat,
                     user=user,
-                    is_patient=is_patient,
                     use_external_models=use_external_models,
                 )
             elif use_external_models != self.chat_interface.use_external_models:
@@ -550,7 +567,7 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
         self,
         user,
         professional_user=None,
-        is_patient=False,
+        chat_type=ChatType.PATIENT,
         chat_id=None,
         session_key=None,
         email=None,  # Email for patient users so we can handle data deletion later
@@ -588,33 +605,27 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                 )
                 pass  # Fall through to create a new one
 
-        # Create a new chat
+        # Sync is_patient for backward compatibility
+        is_patient = chat_type == ChatType.PATIENT
+
+        # Build tracking kwargs
+        tracking_kwargs = tracking_info.to_model_kwargs() if tracking_info else {}
+
+        # Create a new chat based on chat_type
         if session_key:
-            # Anonymous user
-            logger.info(f"Creating new anonymous chat for session {session_key[:8]}")
+            # Anonymous user (patient or trial professional)
+            logger.info(f"Creating new {chat_type} chat for session {session_key[:8]}")
 
-            # Check if this is a trial professional chat
-            is_trial_professional = False
-            try:
-                await ChatLeads.objects.aget(session_id=session_key)
-                is_trial_professional = True
-            except ChatLeads.DoesNotExist:
-                # Regular anonymous chat
-                pass
-
-            # Also store hashed_email for trial professionals
             hashed_email = None
-            if not is_trial_professional and email:
+            if is_patient and email:
                 hashed_email = Denial.get_hashed_email(email)
-
-            # Build tracking kwargs
-            tracking_kwargs = tracking_info.to_model_kwargs() if tracking_info else {}
 
             return await OngoingChat.objects.acreate(
                 session_key=session_key,
                 chat_history=[],
                 summary_for_next_call=[],
-                is_patient=not is_trial_professional,  # Not a patient if it's a trial professional
+                chat_type=chat_type,
+                is_patient=is_patient,
                 hashed_email=hashed_email,
                 microsite_slug=microsite_slug,
                 **tracking_kwargs,
@@ -622,10 +633,9 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
         elif is_patient and user and user.is_authenticated:
             # Patient user
             logger.info(f"Creating new patient chat for user {user.id}")
-            # Build tracking kwargs
-            tracking_kwargs = tracking_info.to_model_kwargs() if tracking_info else {}
             return await OngoingChat.objects.acreate(
                 user=user,
+                chat_type=ChatType.PATIENT,
                 is_patient=True,
                 chat_history=[],
                 summary_for_next_call=[],
@@ -638,10 +648,10 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
             logger.info(
                 f"Creating new professional chat for user {professional_user.id}"
             )
-            # Build tracking kwargs
-            tracking_kwargs = tracking_info.to_model_kwargs() if tracking_info else {}
             return await OngoingChat.objects.acreate(
                 professional_user=professional_user,
+                chat_type=ChatType.PROFESSIONAL,
+                is_patient=False,
                 chat_history=[],
                 summary_for_next_call=[],
                 microsite_slug=microsite_slug,

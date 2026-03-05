@@ -8,7 +8,7 @@ from django.utils import timezone
 from asgiref.sync import sync_to_async
 from loguru import logger
 
-from fhi_users.models import ProfessionalUser, User
+from fhi_users.models import User
 from fighthealthinsurance import settings
 from fighthealthinsurance.chat.context_manager import (
     prepare_history_for_llm,
@@ -36,7 +36,7 @@ from fighthealthinsurance.ml.ml_models import RemoteModelLike
 from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance.models import (
     Appeal,
-    ChatLeads,
+    ChatType,
     Denial,
     OngoingChat,
     PriorAuthRequest,
@@ -56,9 +56,8 @@ class ChatInterface:
         send_json_message_func: Callable[[Dict[str, Any]], Awaitable[None]],
         chat: OngoingChat,
         user: User,
-        is_patient: bool,
         use_external_models: bool = False,
-    ):  # Changed to Dict[str, Any]
+    ):
         def wrap_send_json_message_func(message: Dict[str, Any]) -> Awaitable[None]:
             """Wraps the send_json_message_func to ensure it's always awaited."""
             if "chat_id" not in message:
@@ -69,8 +68,19 @@ class ChatInterface:
         self.pubmed_tools = PubMedTools()
         self.chat: OngoingChat = chat
         self.user: User = user
-        self.is_patient: bool = is_patient
         self.use_external_models: bool = use_external_models
+
+    @property
+    def is_patient(self) -> bool:
+        return self.chat.chat_type == ChatType.PATIENT
+
+    @property
+    def is_professional(self) -> bool:
+        return self.chat.chat_type == ChatType.PROFESSIONAL
+
+    @property
+    def is_trial_professional(self) -> bool:
+        return self.chat.chat_type == ChatType.TRIAL_PROFESSIONAL
 
     async def send_error_message(self, message: str):
         """Sends an error message to the client."""
@@ -1029,33 +1039,9 @@ class ChatInterface:
 
         llm_input_message = user_message
 
-        is_trial_professional = False
-
-        # Check if the user is a trial professional
-        try:
-            if await ChatLeads.objects.filter(session_id=chat.session_key).aexists():
-                lead = await ChatLeads.objects.filter(
-                    session_id=chat.session_key
-                ).afirst()
-                drug = None
-                if lead:
-                    drug = lead.drug
-                if not drug or drug == "":
-                    # If the lead is not linked to a drug, they are a trial professional
-                    if not await ProfessionalUser.objects.filter(user=user).aexists():
-                        is_trial_professional = True
-                else:
-                    logger.debug(
-                        f"User is a lead with a drug {drug} -- not a trial professional"
-                    )
-        except Exception as e:
-            logger.warning(f"Error checking if user is a trial professional: {e}")
-            is_trial_professional = True
-
-        is_patient = self.is_patient
         if is_new_chat:
-            # If this is a trial professional user, add a banner message to the chat history
-            if is_trial_professional:
+            # If this is a trial professional user, add a banner message
+            if self.is_trial_professional:
                 trial_banner = {
                     "role": "system",
                     "content": "⚠️ You're using a free trial version. Responses may be slower, and features like linked appeals and prior auths require a full professional account.\n\nWant full access? [Create a free account →](/signup)",
@@ -1068,7 +1054,7 @@ class ChatInterface:
                 await self.send_json_message_func(trial_banner)
 
             user_info_str = await self._get_user_info()
-            template = get_intro_template(chat.is_patient)
+            template = get_intro_template(self.is_patient)
             llm_input_message = template.format(
                 user_info=user_info_str, message=user_message
             )
@@ -1095,7 +1081,7 @@ class ChatInterface:
         final_response_text = None
         final_context_part = None
 
-        if is_trial_professional:
+        if self.is_trial_professional:
             await asyncio.sleep(0.5)  # Half a second delay for trial users.
 
         # Note: Medicaid queries are now handled through the tool calling system
@@ -1109,7 +1095,8 @@ class ChatInterface:
                 llm_input_message,
                 summarized_context,
                 history_for_llm,
-                is_logged_in=(not is_trial_professional) and not is_patient,
+                is_logged_in=self.is_professional,
+                is_professional=not self.is_patient,
                 fallback_backends=fallback_models if fallback_models else None,
                 full_history=full_history_for_llm,  # Also try with full history if model supports it
             )

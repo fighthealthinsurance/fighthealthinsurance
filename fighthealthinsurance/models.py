@@ -1880,6 +1880,12 @@ class ProposedPriorAuth(ExportModelOperationsMixin("ProposedPriorAuth"), models.
         )
 
 
+class ChatType(models.TextChoices):
+    PATIENT = "patient", "Patient"
+    TRIAL_PROFESSIONAL = "trial_professional", "Trial Professional"
+    PROFESSIONAL = "professional", "Professional"
+
+
 class OngoingChat(models.Model):
     """
     Model for storing ongoing chat sessions between users and LLM.
@@ -1895,6 +1901,12 @@ class OngoingChat(models.Model):
         User, on_delete=models.SET_NULL, null=True, blank=True, related_name="chats"
     )
     is_patient = models.BooleanField(default=False)
+    chat_type = models.CharField(
+        max_length=20,
+        choices=ChatType.choices,
+        default=ChatType.PATIENT,
+        help_text="Type of chat user: patient, trial professional, or full professional",
+    )
     # For anonymous users (not logged in), track by session ID
     session_key = models.CharField(max_length=100, null=True, blank=True, db_index=True)
     chat_history = models.JSONField(
@@ -1958,19 +1970,23 @@ class OngoingChat(models.Model):
         )
 
     def summarize_professional_user(self) -> str:
-        if self.is_patient and self.user:
+        if self.chat_type == ChatType.PATIENT and self.user:
             return f"a patient user (ID: {self.user.id})"
-        elif self.professional_user:
+        elif self.chat_type == ChatType.PROFESSIONAL and self.professional_user:
             return str(self.professional_user)
+        elif self.chat_type == ChatType.TRIAL_PROFESSIONAL:
+            return f"a trial professional user (Session: {self.session_key[:8] if self.session_key else 'unknown'})"
         else:
             return "a user"
 
     def summarize_user(self) -> str:
-        """Returns a description of the user - either patient, professional, or anonymous."""
-        if self.is_patient and self.user:
+        """Returns a description of the user - either patient, professional, trial professional, or anonymous."""
+        if self.chat_type == ChatType.PATIENT and self.user:
             return f"a patient user (ID: {self.user.id})"
-        elif self.professional_user:
+        elif self.chat_type == ChatType.PROFESSIONAL and self.professional_user:
             return f"a professional user ({self.professional_user.get_display_name()})"
+        elif self.chat_type == ChatType.TRIAL_PROFESSIONAL:
+            return f"a trial professional user (Session: {self.session_key[:8] if self.session_key else 'unknown'})"
         elif self.session_key:
             return f"an anonymous user (Session: {self.session_key[:8]})"
         else:
@@ -1986,10 +2002,12 @@ class OngoingChat(models.Model):
         ]
 
     def __str__(self):
-        if self.is_patient and self.user:
+        if self.chat_type == ChatType.PATIENT and self.user:
             return f"Ongoing Chat {self.id} for patient {self.user.email}"
-        elif self.professional_user:
+        elif self.chat_type == ChatType.PROFESSIONAL and self.professional_user:
             return f"Ongoing Chat {self.id} for {self.professional_user.get_display_name()}"
+        elif self.chat_type == ChatType.TRIAL_PROFESSIONAL and self.session_key:
+            return f"Ongoing Chat {self.id} for trial professional session {self.session_key[:8]}"
         elif self.session_key:
             return (
                 f"Ongoing Chat {self.id} for anonymous session {self.session_key[:8]}"
@@ -1998,7 +2016,19 @@ class OngoingChat(models.Model):
             return f"Ongoing Chat {self.id} (no associated user)"
 
     def is_professional_user(self):
-        return not self.is_patient
+        return self.chat_type == ChatType.PROFESSIONAL
+
+    @property
+    def is_professional_chat(self) -> bool:
+        return self.chat_type == ChatType.PROFESSIONAL
+
+    @property
+    def is_trial_professional_chat(self) -> bool:
+        return self.chat_type == ChatType.TRIAL_PROFESSIONAL
+
+    @property
+    def is_patient_chat(self) -> bool:
+        return self.chat_type == ChatType.PATIENT
 
     def is_logged_in_user(self):
         return self.user is not None

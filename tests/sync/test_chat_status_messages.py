@@ -9,6 +9,7 @@ from django.contrib.auth import get_user_model
 from rest_framework.test import APITestCase
 
 from fighthealthinsurance.models import (
+    ChatType,
     OngoingChat,
     ProfessionalUser,
     ChatLeads,
@@ -73,6 +74,7 @@ class ChatStatusMessageTest(APITestCase):
         )
         chat = await sync_to_async(OngoingChat.objects.create)(
             professional_user=professional,
+            chat_type=ChatType.PROFESSIONAL,
             chat_history=[],
             summary_for_next_call=[],
         )
@@ -95,7 +97,6 @@ class ChatStatusMessageTest(APITestCase):
             send_json_message_func=mock_send_json,
             chat=chat,
             user=user,
-            is_patient=False,
         )
 
         # Test sending a status message
@@ -119,6 +120,7 @@ class ChatStatusMessageTest(APITestCase):
         )
         chat = await sync_to_async(OngoingChat.objects.create)(
             professional_user=professional,
+            chat_type=ChatType.PROFESSIONAL,
             chat_history=[],
             summary_for_next_call=[],
         )
@@ -139,7 +141,6 @@ class ChatStatusMessageTest(APITestCase):
             send_json_message_func=mock_send_json,
             chat=chat,
             user=user,
-            is_patient=False,
         )
 
         # Mock PubMed response with a tool call
@@ -181,6 +182,7 @@ class ChatStatusMessageTest(APITestCase):
         )
         chat = await sync_to_async(OngoingChat.objects.create)(
             professional_user=professional,
+            chat_type=ChatType.PROFESSIONAL,
             chat_history=[],
             summary_for_next_call=[],
         )
@@ -201,7 +203,6 @@ class ChatStatusMessageTest(APITestCase):
             send_json_message_func=mock_send_json,
             chat=chat,
             user=user,
-            is_patient=False,
         )
 
         # Mock Medicaid tool call
@@ -326,6 +327,7 @@ class ChatStatusMessageTest(APITestCase):
         )
         chat = await sync_to_async(OngoingChat.objects.create)(
             professional_user=professional,
+            chat_type=ChatType.PROFESSIONAL,
             chat_history=[],
             summary_for_next_call=[],
         )
@@ -346,7 +348,6 @@ class ChatStatusMessageTest(APITestCase):
             send_json_message_func=mock_send_json,
             chat=chat,
             user=user,
-            is_patient=False,
         )
 
         # Send multiple status messages
@@ -376,6 +377,7 @@ class ChatStatusMessageTest(APITestCase):
         )
         chat = await sync_to_async(OngoingChat.objects.create)(
             professional_user=professional,
+            chat_type=ChatType.PROFESSIONAL,
             chat_history=[],
             summary_for_next_call=[],
         )
@@ -396,7 +398,6 @@ class ChatStatusMessageTest(APITestCase):
             send_json_message_func=mock_send_json,
             chat=chat,
             user=user,
-            is_patient=False,
         )
 
         # Mock response with appeal creation
@@ -432,6 +433,7 @@ class ChatStatusMessageTest(APITestCase):
         )
         chat = await sync_to_async(OngoingChat.objects.create)(
             professional_user=professional,
+            chat_type=ChatType.PROFESSIONAL,
             chat_history=[],
             summary_for_next_call=[],
         )
@@ -452,7 +454,6 @@ class ChatStatusMessageTest(APITestCase):
             send_json_message_func=mock_send_json,
             chat=chat,
             user=user,
-            is_patient=False,
         )
 
         # Test sending an error message
@@ -542,6 +543,7 @@ class ChatStatusMessageTest(APITestCase):
         )
         chat = await sync_to_async(OngoingChat.objects.create)(
             professional_user=professional,
+            chat_type=ChatType.PROFESSIONAL,
             chat_history=[
                 {
                     "role": "user",
@@ -566,7 +568,6 @@ class ChatStatusMessageTest(APITestCase):
             send_json_message_func=mock_send_json,
             chat=chat,
             user=user,
-            is_patient=False,
         )
 
         # Set a response for the retry

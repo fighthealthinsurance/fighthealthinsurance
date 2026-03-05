@@ -712,6 +712,7 @@ class OngoingChatSerializer(serializers.ModelSerializer):
             "appeals",
             "prior_auths",
             "is_patient",
+            "chat_type",
             "denied_item",
             "denied_reason",
         ]
@@ -741,17 +742,15 @@ class OngoingChatSerializer(serializers.ModelSerializer):
 
     @extend_schema_field(serializers.CharField())
     def get_professional_name(self, obj):
-        """Get the name of the user (professional or patient)."""
-        if obj.is_patient and obj.user:
-            return None
-        elif obj.professional_user:
+        """Get the name of the professional user, if applicable."""
+        if obj.professional_user:
             return obj.professional_user.get_display_name()
         return None
 
     @extend_schema_field(serializers.CharField())
     def get_user_name(self, obj):
         """Get the name of the user (professional or patient)."""
-        if obj.is_patient and obj.user:
+        if obj.is_patient_chat and obj.user:
             return obj.user.email
         elif obj.professional_user:
             return obj.professional_user.get_display_name()
