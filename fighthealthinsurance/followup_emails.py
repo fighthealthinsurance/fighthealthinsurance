@@ -58,7 +58,9 @@ class ThankyouEmailSender(object):
             return True
         except Exception as e:
             # Log the error for debugging
-            logger.warning(f"Failed to send thank you email to {mask_email_for_logging(email)}: {e}")
+            logger.warning(
+                f"Failed to send thank you email to {mask_email_for_logging(email)}: {e}"
+            )
             return False
 
 
@@ -137,5 +139,7 @@ class FollowUpEmailSender(object):
             return True
         except Exception as e:
             # Log the error for debugging
-            logger.warning(f"Failed to send follow-up email to {mask_email_for_logging(email)}: {e}")
+            logger.warning(
+                f"Failed to send follow-up email to {mask_email_for_logging(email)}: {e}"
+            )
             return False

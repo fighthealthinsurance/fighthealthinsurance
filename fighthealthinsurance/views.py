@@ -41,7 +41,11 @@ from fighthealthinsurance.helpers.data_helpers import RemoveDataHelper
 from fighthealthinsurance.helpers.stripe_helpers import StripeWebhookHelper
 from fighthealthinsurance.models import DeleteToken, StripeRecoveryInfo
 from fighthealthinsurance.type_utils import User
-from fighthealthinsurance.utils import mask_email_for_logging, send_fallback_email
+from fighthealthinsurance.utils import (
+    mask_email_for_logging,
+    send_fallback_email,
+    subscribe_to_mailing_list,
+)
 
 
 class BlogPostMetadata(TypedDict, total=False):
@@ -1218,20 +1222,7 @@ class InitialProcessView(generic.FormView):
             }
             if len(name) > 2:
                 defaults["name"] = name
-            # Use get_or_create to avoid duplicate subscriptions
-            try:
-                models.MailingListSubscriber.objects.get_or_create(
-                    email=email,
-                    defaults=defaults,
-                )
-            except Exception as e:
-                logger.warning(f"Error subscribing {mask_email_for_logging(email)} to mailing list: {e}")
-                try:
-                    models.MailingListSubscriber.objects.filter(email=email).update(
-                        **defaults
-                    )
-                except Exception as e2:
-                    logger.warning(f"Error updating subscriber {mask_email_for_logging(email)}: {e2}")
+            subscribe_to_mailing_list(email, defaults)
 
         # Get microsite slug from request if available and validate it
         microsite_slug = self.request.POST.get(
