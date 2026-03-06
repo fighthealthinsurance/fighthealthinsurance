@@ -68,7 +68,7 @@ class InterestedProfessionalForm(forms.ModelForm):
 
 
 class DeleteDataForm(forms.Form):
-    email = forms.CharField(required=True)
+    email = forms.EmailField(required=True)
 
 
 class ShareAppealForm(forms.Form):

@@ -24,7 +24,10 @@ class Migration(migrations.Migration):
                     ),
                 ),
                 ("email", models.CharField(max_length=255)),
-                ("token", models.CharField(default=uuid.uuid4, max_length=255)),
+                (
+                    "token",
+                    models.CharField(default=uuid.uuid4, max_length=255, unique=True),
+                ),
                 ("created_at", models.DateTimeField(auto_now_add=True)),
                 ("expires_at", models.DateTimeField()),
             ],

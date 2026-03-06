@@ -662,44 +662,39 @@ class RemoveDataView(View):
 class ConfirmDeleteDataView(View):
     """View that handles the email confirmation link for data deletion."""
 
+    def _error_response(self, request, error_message):
+        return render(
+            request,
+            "remove_data.html",
+            context={
+                "title": "Remove My Data",
+                "form": core_forms.DeleteDataForm(),
+                "error": error_message,
+            },
+        )
+
     def get(self, request):
         token = request.GET.get("token")
         email = request.GET.get("email")
 
         if not token or not email:
-            return render(
-                request,
-                "remove_data.html",
-                context={
-                    "title": "Remove My Data",
-                    "form": core_forms.DeleteDataForm(),
-                    "error": "Invalid confirmation link. Please try again.",
-                },
+            return self._error_response(
+                request, "Invalid confirmation link. Please try again."
             )
 
         try:
             delete_token = DeleteToken.objects.get(token=token, email=email)
         except DeleteToken.DoesNotExist:
-            return render(
+            return self._error_response(
                 request,
-                "remove_data.html",
-                context={
-                    "title": "Remove My Data",
-                    "form": core_forms.DeleteDataForm(),
-                    "error": "Invalid or already used confirmation link. Please request a new one.",
-                },
+                "Invalid or already used confirmation link. Please request a new one.",
             )
 
         if delete_token.expires_at < timezone.now():
             delete_token.delete()
-            return render(
+            return self._error_response(
                 request,
-                "remove_data.html",
-                context={
-                    "title": "Remove My Data",
-                    "form": core_forms.DeleteDataForm(),
-                    "error": "This confirmation link has expired. Please request a new one.",
-                },
+                "This confirmation link has expired. Please request a new one.",
             )
 
         # Token is valid — perform deletion

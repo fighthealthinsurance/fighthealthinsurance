@@ -11,6 +11,7 @@ from django.conf import settings
 from django.db import models
 from django.db.models import Q
 from django.db.models.functions import Now
+from django.utils import timezone
 
 from django_encrypted_filefield.crypt import Cryptographer
 from django_encrypted_filefield.fields import EncryptedFileField
@@ -2183,16 +2184,14 @@ class DeleteToken(models.Model):
     """Token for confirming data deletion requests from non-authenticated users."""
 
     email = models.CharField(max_length=255)
-    token = models.CharField(max_length=255, default=uuid.uuid4)
+    token = models.CharField(max_length=255, default=uuid.uuid4, unique=True)
     created_at = models.DateTimeField(auto_now_add=True)
     expires_at = models.DateTimeField()
 
     def save(self, *args, **kwargs):
         if not self.expires_at:
-            from django.utils import timezone as tz
-
             if self.created_at:
                 self.expires_at = self.created_at + datetime.timedelta(hours=24)
             else:
-                self.expires_at = tz.now() + datetime.timedelta(hours=24)
+                self.expires_at = timezone.now() + datetime.timedelta(hours=24)
         super().save(*args, **kwargs)
