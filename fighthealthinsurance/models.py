@@ -1969,16 +1969,6 @@ class OngoingChat(models.Model):
             | Q(professional_user__user__email=email)
         )
 
-    def summarize_professional_user(self) -> str:
-        if self.chat_type == ChatType.PATIENT and self.user:
-            return f"a patient user (ID: {self.user.id})"
-        elif self.chat_type == ChatType.PROFESSIONAL and self.professional_user:
-            return str(self.professional_user)
-        elif self.chat_type == ChatType.TRIAL_PROFESSIONAL:
-            return f"a trial professional user (Session: {self.session_key[:8] if self.session_key else 'unknown'})"
-        else:
-            return "a user"
-
     def summarize_user(self) -> str:
         """Returns a description of the user - either patient, professional, trial professional, or anonymous."""
         if self.chat_type == ChatType.PATIENT and self.user:
@@ -2017,18 +2007,6 @@ class OngoingChat(models.Model):
 
     def is_professional_user(self):
         return self.chat_type == ChatType.PROFESSIONAL
-
-    @property
-    def is_professional_chat(self) -> bool:
-        return self.chat_type == ChatType.PROFESSIONAL
-
-    @property
-    def is_trial_professional_chat(self) -> bool:
-        return self.chat_type == ChatType.TRIAL_PROFESSIONAL
-
-    @property
-    def is_patient_chat(self) -> bool:
-        return self.chat_type == ChatType.PATIENT
 
     def is_logged_in_user(self):
         return self.user is not None

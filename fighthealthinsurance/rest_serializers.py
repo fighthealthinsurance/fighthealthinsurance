@@ -750,7 +750,7 @@ class OngoingChatSerializer(serializers.ModelSerializer):
     @extend_schema_field(serializers.CharField())
     def get_user_name(self, obj):
         """Get the name of the user (professional or patient)."""
-        if obj.is_patient_chat and obj.user:
+        if obj.chat_type == "patient" and obj.user:
             return obj.user.email
         elif obj.professional_user:
             return obj.professional_user.get_display_name()

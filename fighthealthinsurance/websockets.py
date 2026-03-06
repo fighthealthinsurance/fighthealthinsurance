@@ -605,55 +605,35 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                 )
                 pass  # Fall through to create a new one
 
-        # Sync is_patient for backward compatibility
+        # Create a new chat
         is_patient = chat_type == ChatType.PATIENT
-
-        # Build tracking kwargs
         tracking_kwargs = tracking_info.to_model_kwargs() if tracking_info else {}
 
-        # Create a new chat based on chat_type
-        if session_key:
-            # Anonymous user (patient or trial professional)
-            logger.info(f"Creating new {chat_type} chat for session {session_key[:8]}")
+        # Hash email for patient users (privacy-preserving lookup for data deletion)
+        hashed_email = None
+        if is_patient and email:
+            hashed_email = Denial.get_hashed_email(email)
 
-            hashed_email = None
-            if is_patient and email:
-                hashed_email = Denial.get_hashed_email(email)
+        # Set user/professional_user based on chat type
+        chat_user = user if (user and user.is_authenticated) else None
+        if chat_type == ChatType.PATIENT and not chat_user and not session_key:
+            chat_user = None  # anonymous patient without session
 
-            return await OngoingChat.objects.acreate(
-                session_key=session_key,
-                chat_history=[],
-                summary_for_next_call=[],
-                chat_type=chat_type,
-                is_patient=is_patient,
-                hashed_email=hashed_email,
-                microsite_slug=microsite_slug,
-                **tracking_kwargs,
-            )
-        elif is_patient and user and user.is_authenticated:
-            # Patient user
-            logger.info(f"Creating new patient chat for user {user.id}")
-            return await OngoingChat.objects.acreate(
-                user=user,
-                chat_type=ChatType.PATIENT,
-                is_patient=True,
-                chat_history=[],
-                summary_for_next_call=[],
-                hashed_email=Denial.get_hashed_email(email) if email else None,
-                microsite_slug=microsite_slug,
-                **tracking_kwargs,
-            )
-        else:
-            # Professional user
-            logger.info(
-                f"Creating new professional chat for user {professional_user.id}"
-            )
-            return await OngoingChat.objects.acreate(
-                professional_user=professional_user,
-                chat_type=ChatType.PROFESSIONAL,
-                is_patient=False,
-                chat_history=[],
-                summary_for_next_call=[],
-                microsite_slug=microsite_slug,
-                **tracking_kwargs,
-            )
+        logger.info(
+            f"Creating new {chat_type} chat"
+            f"{' for session ' + session_key[:8] if session_key else ''}"
+            f"{' for user ' + str(chat_user.id) if chat_user else ''}"
+        )
+
+        return await OngoingChat.objects.acreate(
+            user=chat_user if chat_type != ChatType.TRIAL_PROFESSIONAL else None,
+            professional_user=professional_user,
+            session_key=session_key,
+            chat_type=chat_type,
+            is_patient=is_patient,
+            chat_history=[],
+            summary_for_next_call=[],
+            hashed_email=hashed_email,
+            microsite_slug=microsite_slug,
+            **tracking_kwargs,
+        )
