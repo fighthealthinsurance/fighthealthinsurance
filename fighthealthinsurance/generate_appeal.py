@@ -1052,11 +1052,12 @@ class AppealGenerator(object):
                 temperature=0.3,
             )
             if result and len(result.strip()) > 50:
+                synthesized: str = str(result)
                 logger.info(
                     f"Successfully synthesized {len(appeal_texts)} appeals into one "
-                    f"({len(result)} chars) using {best_model}"
+                    f"({len(synthesized)} chars) using {best_model}"
                 )
-                return result
+                return synthesized
             logger.warning(f"Synthesis returned insufficient result from {best_model}")
         except Exception:
             logger.opt(exception=True).warning(

@@ -2308,9 +2308,9 @@ class AppealsBackendHelper:
             try:
                 synthesized = await appealGenerator.synthesize_appeals(
                     appeal_texts=collected_appeal_texts,
-                    denial_text=denial.denial_text,
-                    procedure=denial.procedure,
-                    diagnosis=denial.diagnosis,
+                    denial_text=str(denial.denial_text) if denial.denial_text else None,
+                    procedure=str(denial.procedure) if denial.procedure else None,
+                    diagnosis=str(denial.diagnosis) if denial.diagnosis else None,
                 )
                 if synthesized:
                     saved = await save_appeal(synthesized)
