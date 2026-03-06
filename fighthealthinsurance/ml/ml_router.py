@@ -522,6 +522,12 @@ class MLRouter(object):
 
         return None
 
+    def best_internal_model(self) -> Optional[RemoteModelLike]:
+        """Return the highest-quality internal model available, or None."""
+        if not self.internal_models_by_cost:
+            return None
+        return max(self.internal_models_by_cost, key=lambda m: m.quality())
+
     def cheapest(self, name: str) -> list[RemoteModelLike]:
         try:
             return [self.models_by_name[name][0]]

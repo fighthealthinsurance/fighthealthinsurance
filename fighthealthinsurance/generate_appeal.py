@@ -42,6 +42,23 @@ class AppealTemplateGenerator(object):
 
 
 class AppealGenerator(object):
+    # System prompt for the synthesis step
+    SYNTHESIS_SYSTEM_PROMPT = (
+        "You are an expert health insurance appeal writer. You will be given several "
+        "draft appeal letters that were generated for the same insurance denial. Your job "
+        "is to synthesize the best possible single appeal letter by combining the strongest "
+        "arguments, citations, and language from all drafts. "
+        "Rules:\n"
+        "- Keep the formal appeal letter format (address, date, salutation, body, closing).\n"
+        "- Include ALL valid citations and references from any draft — do NOT invent new ones.\n"
+        "- Choose the most persuasive and specific arguments from each draft.\n"
+        "- Eliminate redundancy while preserving completeness.\n"
+        "- Maintain a professional, assertive tone throughout.\n"
+        "- If drafts disagree on facts, prefer the most specific and well-supported version.\n"
+        "- The final letter should be comprehensive but not unnecessarily long.\n"
+        "- Preserve any patient/provider/plan details exactly as they appear in the drafts."
+    )
+
     def __init__(self):
         self.regex_denial_processor = ProcessDenialRegex()
 
@@ -978,3 +995,71 @@ class AppealGenerator(object):
         appeals = itertools.chain(appeals, initial_appeals)
         logger.debug(f"Sending back {appeals}")
         return appeals
+
+    async def synthesize_appeals(
+        self,
+        appeal_texts: List[str],
+        denial_text: Optional[str] = None,
+        procedure: Optional[str] = None,
+        diagnosis: Optional[str] = None,
+    ) -> Optional[str]:
+        """
+        Synthesize multiple appeal drafts into one best appeal using the
+        highest-quality internal model.
+
+        Args:
+            appeal_texts: List of appeal letter texts to synthesize from.
+            denial_text: Original denial letter text for context.
+            procedure: The denied procedure, if known.
+            diagnosis: The diagnosis, if known.
+
+        Returns:
+            The synthesized appeal text, or None if synthesis fails.
+        """
+        if not appeal_texts:
+            return None
+
+        best_model = ml_router.best_internal_model()
+        if best_model is None:
+            logger.warning("No internal model available for appeal synthesis")
+            return None
+
+        # Build the user prompt with all drafts
+        numbered_drafts = "\n\n".join(
+            f"--- DRAFT {i + 1} ---\n{text}" for i, text in enumerate(appeal_texts)
+        )
+        context_parts = []
+        if denial_text:
+            # Truncate very long denial text to leave room for drafts
+            context_parts.append(f"ORIGINAL DENIAL LETTER:\n{denial_text[:3000]}")
+        if procedure:
+            context_parts.append(f"PROCEDURE: {procedure}")
+        if diagnosis:
+            context_parts.append(f"DIAGNOSIS: {diagnosis}")
+        context_section = "\n".join(context_parts)
+
+        prompt = (
+            f"{context_section}\n\n"
+            f"Below are {len(appeal_texts)} draft appeal letters for this denial. "
+            "Synthesize them into the single best appeal letter.\n\n"
+            f"{numbered_drafts}"
+        )
+
+        try:
+            result = await best_model._infer_no_context(
+                system_prompts=[self.SYNTHESIS_SYSTEM_PROMPT],
+                prompt=prompt,
+                temperature=0.3,
+            )
+            if result and len(result.strip()) > 50:
+                logger.info(
+                    f"Successfully synthesized {len(appeal_texts)} appeals into one "
+                    f"({len(result)} chars) using {best_model}"
+                )
+                return result
+            logger.warning(f"Synthesis returned insufficient result from {best_model}")
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"Appeal synthesis failed on {best_model}"
+            )
+        return None

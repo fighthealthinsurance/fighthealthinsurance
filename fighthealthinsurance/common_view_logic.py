@@ -2265,9 +2265,17 @@ class AppealsBackendHelper:
         # Only filters out None
         filtered_appeals: Iterator[str] = filter(lambda x: x != None, appeals)
 
+        # Collect raw appeal texts for synthesis while streaming them through
+        collected_appeal_texts: list[str] = []
+
+        async def save_and_collect(appeal_text: str) -> dict[str, str]:
+            """Save the appeal and collect raw text for later synthesis."""
+            collected_appeal_texts.append(appeal_text)
+            return await save_appeal(appeal_text)
+
         # We convert to async here.
         saved_appeals: AsyncIterator[dict[str, str]] = a.map(
-            save_appeal, filtered_appeals
+            save_and_collect, filtered_appeals
         )
         # Note: we intentionally call save before substution.
         subbed_appeals: AsyncIterator[dict[str, str]] = a.map(
@@ -2285,3 +2293,35 @@ class AppealsBackendHelper:
                 new = new + 1
             yield i
         logger.debug(f"All appeals sent {new} and {old}")
+
+        # --- Final synthesis step ---
+        # Take all collected appeals and synthesize the best one using the
+        # highest-quality internal model. This runs after all drafts have
+        # already been streamed to the user so it doesn't block them.
+        if len(collected_appeal_texts) >= 2:
+            yield json.dumps(
+                {
+                    "type": "status",
+                    "message": "Synthesizing best appeal from all drafts...",
+                }
+            ) + "\n"
+            try:
+                synthesized = await appealGenerator.synthesize_appeals(
+                    appeal_texts=collected_appeal_texts,
+                    denial_text=denial.denial_text,
+                    procedure=denial.procedure,
+                    diagnosis=denial.diagnosis,
+                )
+                if synthesized:
+                    saved = await save_appeal(synthesized)
+                    subbed = await sub_in_appeals(saved)
+                    subbed["synthesized"] = "true"
+                    yield json.dumps(subbed) + "\n"
+                    new += 1
+                    logger.info(
+                        f"Synthesized appeal generated from {len(collected_appeal_texts)} drafts"
+                    )
+                else:
+                    logger.debug("Synthesis returned no result, skipping")
+            except Exception:
+                logger.opt(exception=True).warning("Final appeal synthesis failed")
