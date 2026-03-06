@@ -191,6 +191,13 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         name="about",
     ),
     path(
+        "about-ai",
+        cache_control(public=True)(
+            cache_page(60 * 60 * 2)(views.AboutAIView.as_view())
+        ),
+        name="about-ai",
+    ),
+    path(
         "how-to-help",
         cache_control(public=True)(
             cache_page(60 * 60 * 2)(views.HowToHelpView.as_view())
