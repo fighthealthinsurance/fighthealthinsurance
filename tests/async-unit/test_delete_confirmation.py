@@ -50,6 +50,22 @@ class TestRemoveDataView(TestCase):
         response = self.client.post(url, {"email": "test@example.com"})
         assert b"support42@fighthealthinsurance.com" in response.content
 
+    @patch("fighthealthinsurance.views.RemoveDataHelper.remove_data_for_email")
+    def test_post_does_not_delete_data_immediately(self, mock_remove):
+        """Ensure POST only sends email and does NOT delete data."""
+        url = reverse("remove_data")
+        self.client.post(url, {"email": "test@example.com"})
+        mock_remove.assert_not_called()
+
+    def test_confirmation_email_contains_correct_token(self):
+        """Verify the email body contains the correct token and email params."""
+        url = reverse("remove_data")
+        self.client.post(url, {"email": "test@example.com"})
+        token = DeleteToken.objects.get(email="test@example.com")
+        email_body = mail.outbox[0].body
+        assert str(token.token) in email_body
+        assert "test%40example.com" in email_body or "test@example.com" in email_body
+
 
 @pytest.mark.django_db
 class TestConfirmDeleteDataView(TestCase):

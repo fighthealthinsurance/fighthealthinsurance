@@ -11,6 +11,7 @@ from django.utils.encoding import force_str
 from django.contrib.auth.tokens import default_token_generator
 from fhi_users.models import UserDomain
 
+
 User = get_user_model()
 
 
