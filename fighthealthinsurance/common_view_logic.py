@@ -2316,7 +2316,7 @@ class AppealsBackendHelper:
                     saved = await save_appeal(synthesized)
                     subbed = await sub_in_appeals(saved)
                     subbed["synthesized"] = "true"
-                    yield json.dumps(subbed) + "\n"
+                    yield await format_response(subbed)
                     new += 1
                     logger.info(
                         f"Synthesized appeal generated from {len(collected_appeal_texts)} drafts"
