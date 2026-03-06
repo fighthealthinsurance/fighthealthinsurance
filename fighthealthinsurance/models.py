@@ -1900,6 +1900,12 @@ class OngoingChat(models.Model):
     chat_history = models.JSONField(
         default=list, null=True, blank=True
     )  # JSON List of dictionaries {"role": "user", "content": message, "timestamp": timezone.now().isoformat()})
+    edited_chat_history = models.JSONField(
+        default=list,
+        null=True,
+        blank=True,
+        help_text="Cleaned up / edited version of chat_history for review purposes",
+    )
     summary_for_next_call = models.JSONField(
         null=True, blank=True
     )  # JSON List of strings
