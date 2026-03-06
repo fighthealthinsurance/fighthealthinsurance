@@ -1,6 +1,7 @@
 """Management command to run all JSONL exports to files, avoiding HTTP timeout issues."""
 
 import os
+from collections.abc import Callable, Generator
 
 from django.core.management.base import BaseCommand
 
@@ -14,7 +15,7 @@ from charts.views import (
     generate_questions_by_procedure_lines,
 )
 
-EXPORTS = {
+EXPORTS: dict[str, tuple[Callable[[], Generator[str, None, None]], str]] = {
     "de_identified": (generate_de_identified_lines, "de_identified.jsonl"),
     "chooser_ranked": (generate_chooser_ranked_lines, "chooser_ranked.jsonl"),
     "denial_appeal": (generate_denial_appeal_lines, "denial_appeal.jsonl"),
