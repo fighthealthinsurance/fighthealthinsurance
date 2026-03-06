@@ -1054,7 +1054,7 @@ class ChatInterface:
                 await self.send_json_message_func(trial_banner)
 
             user_info_str = await self._get_user_info()
-            template = get_intro_template(self.is_patient)
+            template = get_intro_template(self.chat.chat_type)
             llm_input_message = template.format(
                 user_info=user_info_str, message=user_message
             )

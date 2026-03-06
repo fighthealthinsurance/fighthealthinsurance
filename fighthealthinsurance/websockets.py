@@ -578,15 +578,13 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
         if chat_id:
             # Chat ids should be secure they're random UUIDs.
             try:
-                chat = (
-                    await OngoingChat.objects.prefetch_related()
-                    .select_related()
-                    .aget(id=chat_id)
-                )
+                chat = await OngoingChat.objects.select_related(
+                    "user", "professional_user"
+                ).aget(id=chat_id)
                 # But let's also check session key and user just to be safe.
                 if chat.session_key and session_key != chat.session_key:
                     raise OngoingChat.DoesNotExist("Session key mismatch")
-                if chat.user and chat.user != user:
+                if chat.user_id and (not user or chat.user_id != user.pk):
                     raise OngoingChat.DoesNotExist("User mismatch")
 
                 # Update microsite_slug if provided and not already set
@@ -614,10 +612,7 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
         if is_patient and email:
             hashed_email = Denial.get_hashed_email(email)
 
-        # Set user/professional_user based on chat type
         chat_user = user if (user and user.is_authenticated) else None
-        if chat_type == ChatType.PATIENT and not chat_user and not session_key:
-            chat_user = None  # anonymous patient without session
 
         logger.info(
             f"Creating new {chat_type} chat"
@@ -626,7 +621,7 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
         )
 
         return await OngoingChat.objects.acreate(
-            user=chat_user if chat_type != ChatType.TRIAL_PROFESSIONAL else None,
+            user=chat_user,
             professional_user=professional_user,
             session_key=session_key,
             chat_type=chat_type,
