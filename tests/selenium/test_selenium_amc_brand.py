@@ -14,8 +14,6 @@ import time
 import pytest
 from django.contrib.staticfiles.testing import StaticLiveServerTestCase
 from selenium.webdriver.common.by import By
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.support.ui import WebDriverWait
 from seleniumbase import BaseCase
 
 from .fhi_selenium_base import FHISeleniumBase
@@ -42,19 +40,6 @@ class SeleniumTestAMCBranding(FHISeleniumBase, StaticLiveServerTestCase):
         super(StaticLiveServerTestCase, cls).tearDownClass()
         super(BaseCase, cls).tearDownClass()
 
-    def wait_for_wizard(self, timeout=15):
-        """Wait for the AMC React wizard to mount and render."""
-        WebDriverWait(self.driver, timeout).until(
-            EC.presence_of_element_located((By.ID, "amc-wizard-root"))
-        )
-        WebDriverWait(self.driver, timeout).until(
-            lambda d: len(
-                d.find_element(By.ID, "amc-wizard-root").find_elements(
-                    By.CSS_SELECTOR, "*"
-                )
-            )
-            > 0
-        )
 
     def test_amc_landing_page_shows_correct_branding(self):
         """Test that AMC landing page shows correct branding."""
@@ -153,19 +138,6 @@ class SeleniumTestAMCWizardFlow(FHISeleniumBase, StaticLiveServerTestCase):
         super(StaticLiveServerTestCase, cls).tearDownClass()
         super(BaseCase, cls).tearDownClass()
 
-    def wait_for_wizard(self, timeout=15):
-        """Wait for the AMC React wizard to mount and render."""
-        WebDriverWait(self.driver, timeout).until(
-            EC.presence_of_element_located((By.ID, "amc-wizard-root"))
-        )
-        WebDriverWait(self.driver, timeout).until(
-            lambda d: len(
-                d.find_element(By.ID, "amc-wizard-root").find_elements(
-                    By.CSS_SELECTOR, "*"
-                )
-            )
-            > 0
-        )
 
     def test_amc_wizard_loads_with_stepper(self):
         """Test that the wizard loads with the 3-step stepper."""
@@ -382,19 +354,6 @@ class SeleniumTestBrandColorScheme(FHISeleniumBase, StaticLiveServerTestCase):
         super(StaticLiveServerTestCase, cls).tearDownClass()
         super(BaseCase, cls).tearDownClass()
 
-    def wait_for_wizard(self, timeout=15):
-        """Wait for the AMC React wizard to mount."""
-        WebDriverWait(self.driver, timeout).until(
-            EC.presence_of_element_located((By.ID, "amc-wizard-root"))
-        )
-        WebDriverWait(self.driver, timeout).until(
-            lambda d: len(
-                d.find_element(By.ID, "amc-wizard-root").find_elements(
-                    By.CSS_SELECTOR, "*"
-                )
-            )
-            > 0
-        )
 
     def test_amc_has_blue_css_variable(self):
         """Test that AMC pages have blue brand color CSS variable."""
@@ -457,19 +416,6 @@ class SeleniumTestBrandConsistency(FHISeleniumBase, StaticLiveServerTestCase):
         super(StaticLiveServerTestCase, cls).tearDownClass()
         super(BaseCase, cls).tearDownClass()
 
-    def wait_for_wizard(self, timeout=15):
-        """Wait for the AMC React wizard to mount."""
-        WebDriverWait(self.driver, timeout).until(
-            EC.presence_of_element_located((By.ID, "amc-wizard-root"))
-        )
-        WebDriverWait(self.driver, timeout).until(
-            lambda d: len(
-                d.find_element(By.ID, "amc-wizard-root").find_elements(
-                    By.CSS_SELECTOR, "*"
-                )
-            )
-            > 0
-        )
 
     def test_amc_brand_persists_through_navigation(self):
         """Test that navigating through AMC site maintains AMC branding."""

@@ -138,7 +138,7 @@ a {
 a:hover,
 a:active,
 a:focus {
-    color: var(--brand-primary-color);
+    color: var(--brand-primary-color, #a5c422);
     outline: none;
 }
 
@@ -161,7 +161,7 @@ a:focus {
 }
 
 .section-btn {
-    background: var(--brand-primary-color);
+    background: var(--brand-primary-color, #a5c422);
     border: 0;
     border-radius: 3px;
     color: #ffffff;
@@ -350,7 +350,7 @@ header span.date-icon {
 }
 
 header span i {
-    color: var(--brand-primary-color);
+    color: var(--brand-primary-color, #a5c422);
     margin-right: 5px;
 }
 
@@ -374,7 +374,7 @@ header span i {
 }
 
 .navbar-default .navbar-brand .fa {
-    color: var(--brand-primary-color);
+    color: var(--brand-primary-color, #a5c422);
 }
 
 .navbar-default .navbar-nav li.appointment-btn {
@@ -382,7 +382,7 @@ header span i {
 }
 
 .navbar-default .navbar-nav li.appointment-btn a {
-    background: var(--brand-primary-color);
+    background: var(--brand-primary-color, #a5c422);
     border-radius: 3px;
     color: #ffffff !important;
     font-weight: 600;
@@ -517,11 +517,11 @@ header span i {
 }
 
 .slider .item-first .pro-version-text a {
-    color: var(--brand-primary-color);
+    color: var(--brand-primary-color, #a5c422);
 }
 
 .slider .item-first .pro-version-text a:visited {
-    color: var(--brand-primary-color);
+    color: var(--brand-primary-color, #a5c422);
 }
 
 
@@ -642,7 +642,7 @@ header span i {
   -----------------------------------------*/
 
 #service {
-    background: var(--brand-primary-color);
+    background: var(--brand-primary-color, #a5c422);
 }
 
 #service h2,
@@ -662,7 +662,7 @@ header span i {
     font-size: 50px;
     margin-bottom: 10px;
     background: #ffffff;
-    color: var(--brand-primary-color);
+    color: var(--brand-primary-color, #a5c422);
     width: 120px;
     height: 120px;
     line-height: 120px;
@@ -850,7 +850,7 @@ header span i {
 }
 
 #appointment button#cf-submit {
-    background: var(--brand-primary-color);
+    background: var(--brand-primary-color, #a5c422);
     color: #ffffff;
     font-weight: 600;
     height: 55px;

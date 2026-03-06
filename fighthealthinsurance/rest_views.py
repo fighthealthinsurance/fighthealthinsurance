@@ -22,6 +22,7 @@ from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import AllowAny
+from rest_framework.throttling import AnonRateThrottle
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -2099,16 +2100,23 @@ class ChooserViewSet(viewsets.ViewSet):
         )
 
 
+class AnonymousDenialThrottle(AnonRateThrottle):
+    """Stricter rate limit for anonymous denial creation (10/hour per IP)."""
+
+    rate = "10/hour"
+
+
 class AnonymousDenialViewSet(viewsets.ViewSet):
     """
     Anonymous denial creation for consumer-facing flows (AMC wizard).
 
     POST /ziggy/rest/amc-denials/ - Create a denial without authentication.
-    Validates reCAPTCHA token to prevent spam. Rate limited by DRF anon throttle.
+    Validates reCAPTCHA token to prevent spam. Rate limited to 10/hour per IP.
     """
 
     permission_classes = [AllowAny]
     authentication_classes = []
+    throttle_classes = [AnonymousDenialThrottle]
 
     @extend_schema(
         request=serializers.AnonymousDenialRequestSerializer,
@@ -2154,7 +2162,7 @@ class AnonymousDenialViewSet(viewsets.ViewSet):
                     defaults={"comments": "From AMC wizard"},
                 )
             except Exception as e:
-                logger.debug(f"Error subscribing {email}: {e}")
+                logger.debug("Error subscribing %s: %s", email, e)
 
         # Create the denial
         try:
@@ -2172,7 +2180,7 @@ class AnonymousDenialViewSet(viewsets.ViewSet):
                 )
             )
         except Exception as e:
-            logger.error(f"Error creating denial: {e}")
+            logger.error("Error creating denial: %s", e)
             return Response(
                 {"error": "Failed to create denial"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,

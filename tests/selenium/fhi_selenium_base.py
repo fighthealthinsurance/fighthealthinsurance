@@ -71,3 +71,17 @@ class FHISeleniumBase(BaseCase, TestCase):
     def wait_for_url_contains(self, text, timeout=15):
         """Wait until URL contains specific text."""
         WebDriverWait(self.driver, timeout).until(EC.url_contains(text))
+
+    def wait_for_wizard(self, timeout=15):
+        """Wait for the AMC React wizard to mount and render."""
+        WebDriverWait(self.driver, timeout).until(
+            EC.presence_of_element_located((By.ID, "amc-wizard-root"))
+        )
+        WebDriverWait(self.driver, timeout).until(
+            lambda d: len(
+                d.find_element(By.ID, "amc-wizard-root").find_elements(
+                    By.CSS_SELECTOR, "*"
+                )
+            )
+            > 0
+        )

@@ -1205,15 +1205,6 @@ class InitialProcessView(generic.FormView):
         )
 
 
-class AMCInitialProcessView(InitialProcessView):
-    """AMC-styled intake flow view with Material UI blue theme."""
-
-    template_name = "amc_scrub.html"
-
-    def get_back_url(self) -> str:
-        return reverse("amc_scan")
-
-
 class AMCWizardView(generic.TemplateView):
     """AMC React wizard - single page that loads the React SPA."""
 
@@ -2185,7 +2176,3 @@ class StateHelpView(TemplateView):
         return context
 
 
-class AMCIndexView(generic.TemplateView):
-    """AppealMyClaims landing page with CTAs linking to the scan flow."""
-
-    template_name = "amc_index.html"
