@@ -245,7 +245,7 @@ def generate_de_identified_lines(limit=None):
         "appeal_fax_number",
     )
     if limit:
-        safe_denials = safe_denials[0:int(limit)]
+        safe_denials = safe_denials[0 : int(limit)]
 
     for record in safe_denials.iterator():
         yield json.dumps(record, default=str) + "\n"
@@ -255,10 +255,12 @@ def generate_de_identified_lines(limit=None):
 @export_enabled_required
 def de_identified_export(request):
     limit = request.GET.get("limit")
-    return StreamingHttpResponse(
+    response = StreamingHttpResponse(
         streaming_content=generate_de_identified_lines(limit=limit),
         content_type="application/x-ndjson",
     )
+    response["Content-Disposition"] = 'attachment; filename="de_identified.jsonl"'
+    return response
 
 
 def generate_chooser_ranked_lines():
@@ -269,25 +271,34 @@ def generate_chooser_ranked_lines():
         .prefetch_related("candidates")
     )
 
-    for task in tasks_with_votes:
-        candidate_vote_counts = (
-            ChooserVote.objects.filter(task=task)
-            .values("chosen_candidate_id")
-            .annotate(vote_count=Count("id"))
-            .order_by("-vote_count")
+    # Batch all vote counts in a single query to avoid N+1
+    all_vote_counts = (
+        ChooserVote.objects.filter(task__in=tasks_with_votes)
+        .values("task_id", "chosen_candidate_id")
+        .annotate(vote_count=Count("id"))
+    )
+    # Build {task_id: [(chosen_candidate_id, vote_count), ...]} sorted by vote_count desc
+    votes_by_task: dict[int, list[tuple[int, int]]] = {}
+    for row in all_vote_counts:
+        votes_by_task.setdefault(row["task_id"], []).append(
+            (row["chosen_candidate_id"], row["vote_count"])
         )
+    for task_id in votes_by_task:
+        votes_by_task[task_id].sort(key=lambda x: x[1], reverse=True)
 
-        if not candidate_vote_counts:
+    for task in tasks_with_votes:
+        task_votes = votes_by_task.get(task.id)
+        if not task_votes:
             continue
 
         candidates_by_id = {c.id: c for c in task.candidates.all()}
 
-        top = candidate_vote_counts[0]
-        chosen = candidates_by_id.get(top["chosen_candidate_id"])
+        top_candidate_id, top_vote_count = task_votes[0]
+        chosen = candidates_by_id.get(top_candidate_id)
         if chosen is None:
             continue
 
-        total_votes = sum(c["vote_count"] for c in candidate_vote_counts)
+        total_votes = sum(vc for _, vc in task_votes)
 
         all_candidates = [
             {
@@ -315,7 +326,7 @@ def generate_chooser_ranked_lines():
                 "model_name": chosen.model_name,
                 "content": chosen.content,
             },
-            "vote_count": top["vote_count"],
+            "vote_count": top_vote_count,
             "total_votes": total_votes,
             "all_candidates": all_candidates,
         }
@@ -326,10 +337,12 @@ def generate_chooser_ranked_lines():
 @export_enabled_required
 def chooser_ranked_export(request):
     """Export the highest-ranked candidate for each chooser task as JSONL."""
-    return StreamingHttpResponse(
+    response = StreamingHttpResponse(
         streaming_content=generate_chooser_ranked_lines(),
         content_type="application/x-ndjson",
     )
+    response["Content-Disposition"] = 'attachment; filename="chooser_ranked.jsonl"'
+    return response
 
 
 def generate_denial_appeal_lines():
@@ -352,7 +365,7 @@ def generate_denial_appeal_lines():
         )
         .filter(Q(flag_for_exclude=False) | Q(flag_for_exclude__isnull=True))
         .filter(has_chosen_proposed | has_appeal)
-        .prefetch_related("proposedappeal_set", "appeal_set")
+        .prefetch_related("proposedappeal_set", "appeal_set", "denialqa_set")
     )
 
     for denial in denials:
@@ -362,14 +375,10 @@ def generate_denial_appeal_lines():
             else denial.denial_text
         )
         procedure = (
-            denial.verified_procedure
-            if denial.verified_procedure
-            else denial.procedure
+            denial.verified_procedure if denial.verified_procedure else denial.procedure
         )
         diagnosis = (
-            denial.verified_diagnosis
-            if denial.verified_diagnosis
-            else denial.diagnosis
+            denial.verified_diagnosis if denial.verified_diagnosis else denial.diagnosis
         )
 
         appeal_text = None
@@ -387,6 +396,13 @@ def generate_denial_appeal_lines():
         if not appeal_text:
             continue
 
+        # Build Q&A from prefetched DenialQA records
+        qa_pairs = []
+        for qa in denial.denialqa_set.all():
+            answer = qa.text_answer if qa.text_answer else qa.bool_answer
+            if answer is not None:
+                qa_pairs.append({"question": qa.question, "answer": answer})
+
         record = {
             "denial_id": str(denial.denial_id),
             "denial_text": denial_text,
@@ -396,7 +412,9 @@ def generate_denial_appeal_lines():
             "appeal_text": appeal_text,
             "references": denial.references,
             "generated_questions": denial.generated_questions,
+            "qa_pairs": qa_pairs,
             "ml_citation_context": denial.ml_citation_context,
+            "pubmed_context": denial.pubmed_context,
         }
         yield json.dumps(record, default=str) + "\n"
 
@@ -405,10 +423,12 @@ def generate_denial_appeal_lines():
 @export_enabled_required
 def denial_appeal_export(request):
     """Export de-identified denial + chosen appeal pairs as JSONL (non-pro users only)."""
-    return StreamingHttpResponse(
+    response = StreamingHttpResponse(
         streaming_content=generate_denial_appeal_lines(),
         content_type="application/x-ndjson",
     )
+    response["Content-Disposition"] = 'attachment; filename="denial_appeal.jsonl"'
+    return response
 
 
 def generate_chat_lines():
@@ -430,11 +450,7 @@ def generate_chat_lines():
     )
 
     for chat in chats:
-        appeal_texts = [
-            a.appeal_text
-            for a in chat.appeals.all()
-            if a.appeal_text
-        ]
+        appeal_texts = [a.appeal_text for a in chat.appeals.all() if a.appeal_text]
         record = {
             "chat_id": str(chat.id),
             "chat_history": chat.chat_history,
@@ -449,10 +465,12 @@ def generate_chat_lines():
 @export_enabled_required
 def chat_export(request):
     """Export de-identified chat histories as JSONL (non-pro users only)."""
-    return StreamingHttpResponse(
+    response = StreamingHttpResponse(
         streaming_content=generate_chat_lines(),
         content_type="application/x-ndjson",
     )
+    response["Content-Disposition"] = 'attachment; filename="chat.jsonl"'
+    return response
 
 
 @staff_member_required
@@ -730,7 +748,9 @@ def users_by_day(request):
 
 def generate_questions_by_procedure_lines():
     """Yield JSONL lines of generated questions by procedure + diagnosis."""
-    queryset = GenericQuestionGeneration.objects.all().order_by("procedure", "diagnosis")
+    queryset = GenericQuestionGeneration.objects.all().order_by(
+        "procedure", "diagnosis"
+    )
 
     for row in queryset.iterator(chunk_size=200):
         record = {
@@ -745,10 +765,14 @@ def generate_questions_by_procedure_lines():
 @export_enabled_required
 def questions_by_procedure_export(request):
     """Export generated questions keyed by procedure + diagnosis as JSONL."""
-    return StreamingHttpResponse(
+    response = StreamingHttpResponse(
         streaming_content=generate_questions_by_procedure_lines(),
         content_type="application/x-ndjson",
     )
+    response["Content-Disposition"] = (
+        'attachment; filename="questions_by_procedure.jsonl"'
+    )
+    return response
 
 
 def generate_denial_questions_lines():
@@ -798,14 +822,10 @@ def generate_denial_questions_lines():
         questions.sort(key=lambda q: (not q["was_answered"], q["question"]))
 
         procedure = (
-            denial.verified_procedure
-            if denial.verified_procedure
-            else denial.procedure
+            denial.verified_procedure if denial.verified_procedure else denial.procedure
         )
         diagnosis = (
-            denial.verified_diagnosis
-            if denial.verified_diagnosis
-            else denial.diagnosis
+            denial.verified_diagnosis if denial.verified_diagnosis else denial.diagnosis
         )
 
         record = {
@@ -821,10 +841,12 @@ def generate_denial_questions_lines():
 @export_enabled_required
 def denial_questions_export(request):
     """Export denial questions with answer status as JSONL (non-pro only)."""
-    return StreamingHttpResponse(
+    response = StreamingHttpResponse(
         streaming_content=generate_denial_questions_lines(),
         content_type="application/x-ndjson",
     )
+    response["Content-Disposition"] = 'attachment; filename="denial_questions.jsonl"'
+    return response
 
 
 def generate_pubmed_article_lines():
@@ -853,10 +875,12 @@ def generate_pubmed_article_lines():
 @export_enabled_required
 def pubmed_article_export(request):
     """Export summarized PubMed articles as JSONL."""
-    return StreamingHttpResponse(
+    response = StreamingHttpResponse(
         streaming_content=generate_pubmed_article_lines(),
         content_type="application/x-ndjson",
     )
+    response["Content-Disposition"] = 'attachment; filename="pubmed_articles.jsonl"'
+    return response
 
 
 @staff_member_required

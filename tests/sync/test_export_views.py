@@ -55,23 +55,17 @@ class ExportEnvVarGatingTest(TestCase):
 
     def test_questions_by_procedure_blocked_without_env(self):
         with patch.dict(os.environ, {}, clear=True):
-            response = self.client.get(
-                reverse("charts:questions_by_procedure_export")
-            )
+            response = self.client.get(reverse("charts:questions_by_procedure_export"))
         self.assertEqual(response.status_code, 403)
 
     def test_denial_questions_blocked_without_env(self):
         with patch.dict(os.environ, {}, clear=True):
-            response = self.client.get(
-                reverse("charts:denial_questions_export")
-            )
+            response = self.client.get(reverse("charts:denial_questions_export"))
         self.assertEqual(response.status_code, 403)
 
     def test_pubmed_article_blocked_without_env(self):
         with patch.dict(os.environ, {}, clear=True):
-            response = self.client.get(
-                reverse("charts:pubmed_article_export")
-            )
+            response = self.client.get(reverse("charts:pubmed_article_export"))
         self.assertEqual(response.status_code, 403)
 
     def test_chooser_export_allowed_with_env(self):
@@ -91,23 +85,17 @@ class ExportEnvVarGatingTest(TestCase):
 
     def test_questions_by_procedure_allowed_with_env(self):
         with patch.dict(os.environ, {"EXPORT_ENABLED": "1"}):
-            response = self.client.get(
-                reverse("charts:questions_by_procedure_export")
-            )
+            response = self.client.get(reverse("charts:questions_by_procedure_export"))
         self.assertEqual(response.status_code, 200)
 
     def test_denial_questions_allowed_with_env(self):
         with patch.dict(os.environ, {"EXPORT_ENABLED": "1"}):
-            response = self.client.get(
-                reverse("charts:denial_questions_export")
-            )
+            response = self.client.get(reverse("charts:denial_questions_export"))
         self.assertEqual(response.status_code, 200)
 
     def test_pubmed_article_allowed_with_env(self):
         with patch.dict(os.environ, {"EXPORT_ENABLED": "1"}):
-            response = self.client.get(
-                reverse("charts:pubmed_article_export")
-            )
+            response = self.client.get(reverse("charts:pubmed_article_export"))
         self.assertEqual(response.status_code, 200)
 
 
@@ -326,6 +314,57 @@ class DenialAppealExportContentTest(TestCase):
         self.assertEqual(len(lines), 1)
         self.assertEqual(lines[0]["appeal_text"], "Finalized appeal text")
 
+    def test_denial_appeal_export_includes_qa_and_pubmed_context(self):
+        denial = self._create_denial(
+            pubmed_context="PubMed says treatment is effective per PMID 12345",
+        )
+        ProposedAppeal.objects.create(
+            for_denial=denial,
+            appeal_text="Appeal with context",
+            chosen=True,
+        )
+        DenialQA.objects.create(
+            denial=denial,
+            question="Was prior authorization obtained?",
+            text_answer="Yes, on 2024-01-15",
+        )
+        DenialQA.objects.create(
+            denial=denial,
+            question="Is the treatment medically necessary?",
+            bool_answer=True,
+        )
+
+        with patch.dict(os.environ, {"EXPORT_ENABLED": "1"}):
+            response = self.client.get(reverse("charts:denial_appeal_export"))
+
+        content = b"".join(response.streaming_content).decode()
+        lines = [json.loads(line) for line in content.strip().split("\n")]
+        self.assertEqual(len(lines), 1)
+
+        record = lines[0]
+        self.assertEqual(
+            record["pubmed_context"],
+            "PubMed says treatment is effective per PMID 12345",
+        )
+        self.assertEqual(len(record["qa_pairs"]), 2)
+        qa_questions = {qa["question"] for qa in record["qa_pairs"]}
+        self.assertIn("Was prior authorization obtained?", qa_questions)
+        self.assertIn("Is the treatment medically necessary?", qa_questions)
+        # Check text answer
+        text_qa = next(
+            qa
+            for qa in record["qa_pairs"]
+            if qa["question"] == "Was prior authorization obtained?"
+        )
+        self.assertEqual(text_qa["answer"], "Yes, on 2024-01-15")
+        # Check bool answer
+        bool_qa = next(
+            qa
+            for qa in record["qa_pairs"]
+            if qa["question"] == "Is the treatment medically necessary?"
+        )
+        self.assertTrue(bool_qa["answer"])
+
 
 class ChatExportContentTest(TestCase):
     """Test the content of the chat export."""
@@ -423,9 +462,7 @@ class QuestionsByProcedureExportContentTest(TestCase):
         )
 
         with patch.dict(os.environ, {"EXPORT_ENABLED": "1"}):
-            response = self.client.get(
-                reverse("charts:questions_by_procedure_export")
-            )
+            response = self.client.get(reverse("charts:questions_by_procedure_export"))
 
         self.assertEqual(response.status_code, 200)
         content = b"".join(response.streaming_content).decode()
@@ -442,9 +479,7 @@ class QuestionsByProcedureExportContentTest(TestCase):
 
     def test_questions_by_procedure_export_empty(self):
         with patch.dict(os.environ, {"EXPORT_ENABLED": "1"}):
-            response = self.client.get(
-                reverse("charts:questions_by_procedure_export")
-            )
+            response = self.client.get(reverse("charts:questions_by_procedure_export"))
 
         self.assertEqual(response.status_code, 200)
         content = b"".join(response.streaming_content).decode()
@@ -486,9 +521,7 @@ class DenialQuestionsExportContentTest(TestCase):
         )
 
         with patch.dict(os.environ, {"EXPORT_ENABLED": "1"}):
-            response = self.client.get(
-                reverse("charts:denial_questions_export")
-            )
+            response = self.client.get(reverse("charts:denial_questions_export"))
 
         self.assertEqual(response.status_code, 200)
         content = b"".join(response.streaming_content).decode()
@@ -518,9 +551,7 @@ class DenialQuestionsExportContentTest(TestCase):
         self._create_denial(creating_professional=pro)
 
         with patch.dict(os.environ, {"EXPORT_ENABLED": "1"}):
-            response = self.client.get(
-                reverse("charts:denial_questions_export")
-            )
+            response = self.client.get(reverse("charts:denial_questions_export"))
 
         content = b"".join(response.streaming_content).decode()
         self.assertEqual(content.strip(), "")
@@ -529,9 +560,7 @@ class DenialQuestionsExportContentTest(TestCase):
         self._create_denial(generated_questions=None)
 
         with patch.dict(os.environ, {"EXPORT_ENABLED": "1"}):
-            response = self.client.get(
-                reverse("charts:denial_questions_export")
-            )
+            response = self.client.get(reverse("charts:denial_questions_export"))
 
         content = b"".join(response.streaming_content).decode()
         self.assertEqual(content.strip(), "")
@@ -543,9 +572,7 @@ class DenialQuestionsExportContentTest(TestCase):
         )
 
         with patch.dict(os.environ, {"EXPORT_ENABLED": "1"}):
-            response = self.client.get(
-                reverse("charts:denial_questions_export")
-            )
+            response = self.client.get(reverse("charts:denial_questions_export"))
 
         content = b"".join(response.streaming_content).decode()
         lines = [json.loads(line) for line in content.strip().split("\n")]
@@ -576,9 +603,7 @@ class PubMedArticleExportContentTest(TestCase):
         )
 
         with patch.dict(os.environ, {"EXPORT_ENABLED": "1"}):
-            response = self.client.get(
-                reverse("charts:pubmed_article_export")
-            )
+            response = self.client.get(reverse("charts:pubmed_article_export"))
 
         self.assertEqual(response.status_code, 200)
         content = b"".join(response.streaming_content).decode()
@@ -610,18 +635,14 @@ class PubMedArticleExportContentTest(TestCase):
         )
 
         with patch.dict(os.environ, {"EXPORT_ENABLED": "1"}):
-            response = self.client.get(
-                reverse("charts:pubmed_article_export")
-            )
+            response = self.client.get(reverse("charts:pubmed_article_export"))
 
         content = b"".join(response.streaming_content).decode()
         self.assertEqual(content.strip(), "")
 
     def test_pubmed_article_export_empty(self):
         with patch.dict(os.environ, {"EXPORT_ENABLED": "1"}):
-            response = self.client.get(
-                reverse("charts:pubmed_article_export")
-            )
+            response = self.client.get(reverse("charts:pubmed_article_export"))
 
         self.assertEqual(response.status_code, 200)
         content = b"".join(response.streaming_content).decode()
