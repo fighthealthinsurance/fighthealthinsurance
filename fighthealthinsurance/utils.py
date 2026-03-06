@@ -288,6 +288,24 @@ def mask_email_for_logging(email: Optional[str]) -> str:
     return f"{masked_local}@{domain}"
 
 
+def subscribe_to_mailing_list(email: str, defaults: dict) -> None:
+    """Subscribe email to mailing list, updating if already exists."""
+    from fighthealthinsurance.models import MailingListSubscriber
+
+    try:
+        MailingListSubscriber.objects.get_or_create(email=email, defaults=defaults)
+    except Exception as e:
+        logger.warning(
+            f"Error subscribing {mask_email_for_logging(email)} to mailing list: {e}"
+        )
+        try:
+            MailingListSubscriber.objects.filter(email=email).update(**defaults)
+        except Exception as e2:
+            logger.warning(
+                f"Error updating subscriber {mask_email_for_logging(email)}: {e2}"
+            )
+
+
 def send_fallback_email(subject: str, template_name: str, context, to_email: str):
     if to_email.endswith("-fake@fighthealthinsurance.com"):
         return
@@ -309,7 +327,9 @@ def send_fallback_email(subject: str, template_name: str, context, to_email: str
         settings.DEFAULT_FROM_EMAIL,
         to=[to_email],
     )
-    logger.debug(f"Sending email to {mask_email_for_logging(to_email)} with subject {subject}")
+    logger.debug(
+        f"Sending email to {mask_email_for_logging(to_email)} with subject {subject}"
+    )
 
     # Lastly, attach the HTML content to the email instance and send.
     msg.attach_alternative(html_content, "text/html")

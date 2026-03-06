@@ -626,54 +626,43 @@ class FlexibleFaxMagic(object):
             os.remove(f)
         return True
 
+    async def _try_send(self, backend, destination, path, blocking) -> bool:
+        """Attempt a single fax send. Returns True on success, False on failure."""
+        r = await asyncio.wait_for(
+            backend.send_fax(destination=destination, path=path, blocking=blocking),
+            timeout=600,
+        )
+        if r == True:
+            logger.info(f"Sent fax to {destination} using {backend}")
+            return True
+        logger.warning(f"Failed sending fax to {destination} using {backend}")
+        return False
+
     async def _send_fax(
         self, path: str, destination: str, blocking: bool, professional: bool
     ) -> bool:
         page_count = len(PdfReader(path).pages)
+        backends = self.professional_backends if professional else self.backends
         backends_by_cost = sorted(
-            self.backends,
+            backends,
             key=lambda backend: backend.estimate_cost(destination, page_count),
         )
-        if professional:
-            backends_by_cost = sorted(
-                self.professional_backends,
-                key=lambda backend: backend.estimate_cost(destination, page_count),
-            )
         for backend in backends_by_cost:
             logger.debug(f"Trying fax backend {backend}")
             with Timeout(1300.0) as _timeout_ctx:
-                try:
-                    logger.debug(f"Calling backend {backend}")
-                    r = await asyncio.wait_for(
-                        backend.send_fax(
-                            destination=destination, path=path, blocking=blocking
-                        ),
-                        timeout=600,
-                    )
-                    if r == True:
-                        logger.info(f"Sent fax to {destination} using {backend}")
-                        return True
-                    else:
-                        logger.warning(f"Failed sending fax to {destination} using {backend}")
-                except Exception as e:
-                    logger.warning(f"Error sending fax on {backend}, retrying once: {e}")
-                try:
-                    logger.debug(f"Retrying backend {backend}")
-                    r = await asyncio.wait_for(
-                        backend.send_fax(
-                            destination=destination, path=path, blocking=blocking
-                        ),
-                        timeout=600,
-                    )
-                    if r == True:
-                        logger.info(f"Sent fax to {destination} using {backend}")
-                        return True
-                    else:
-                        logger.warning(f"Failed sending fax to {destination} using {backend}")
-                except Exception as e:
-                    logger.error(
-                        f"Error sending fax on {backend}, moving to next backend: {e}"
-                    )
+                for attempt in range(2):
+                    try:
+                        if await self._try_send(backend, destination, path, blocking):
+                            return True
+                    except Exception as e:
+                        if attempt == 0:
+                            logger.warning(
+                                f"Error sending fax on {backend}, retrying: {e}"
+                            )
+                        else:
+                            logger.error(
+                                f"Error sending fax on {backend}, moving to next backend: {e}"
+                            )
 
         logger.error(f"Unable to send fax to {destination} using any backend")
         return False

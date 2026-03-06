@@ -1456,7 +1456,9 @@ class RemoteOpenLike(RemoteModel):
     async def get_procedure_and_diagnosis(
         self, prompt: str
     ) -> tuple[Optional[str], Optional[str]]:
-        logger.debug(f"Getting procedure and diagnosis for {self} ({len(prompt)} chars)")
+        logger.debug(
+            f"Getting procedure and diagnosis for {self} ({len(prompt)} chars)"
+        )
         model_response = await self._infer_no_context(
             system_prompts=self.get_system_prompts("procedure"), prompt=prompt
         )
@@ -1739,9 +1741,7 @@ class RemoteOpenLike(RemoteModel):
                     if "object" in json_result and json_result["object"] != "error":
                         logger.debug(f"Response from {self} looks ok")
                     else:
-                        logger.warning(
-                            f"Bad response from {self} with {model}"
-                        )
+                        logger.warning(f"Bad response from {self} with {model}")
         except aiohttp.ClientResponseError as e:
             # Re-raise HTTP errors to allow subclasses (e.g., RemoteGroq) to handle
             # specific status codes like 429 rate limiting
@@ -1795,7 +1795,9 @@ class RemoteOpenLike(RemoteModel):
                 logger.error(error_msg)
                 raise ValueError(error_msg)
 
-            logger.debug(f"Got response ({len(r) if r else 0} chars) from {model} via {api_base}")
+            logger.debug(
+                f"Got response ({len(r) if r else 0} chars) from {model} via {api_base}"
+            )
 
             # If this is a reasoning model, extract the answer portion
             if r and LLMResponseUtils.is_well_formatted_for_reasoning(r):
