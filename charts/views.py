@@ -20,7 +20,6 @@ from fighthealthinsurance.models import (
     ProposedAppeal,
     PubMedArticleSummarized,
     ChooserTask,
-    ChooserCandidate,
     ChooserVote,
 )
 from fhi_users.models import ProfessionalDomainRelation
@@ -41,6 +40,52 @@ def export_enabled_required(view_func):
         return view_func(request, *args, **kwargs)
 
     return wrapper
+
+
+def _get_excluded_hashed_emails():
+    """Return hashed test emails to exclude from exports."""
+    return [
+        Denial.get_hashed_email(e)
+        for e in ("farts@farts.com", "holden@pigscanfly.ca", "holden.karau@gmail.com")
+    ]
+
+
+def _non_pro_unflagged_denials():
+    """Return base Denial queryset excluding pro users, flagged, and test emails."""
+    return (
+        Denial.objects.exclude(hashed_email__in=_get_excluded_hashed_emails())
+        .filter(
+            creating_professional__isnull=True,
+            primary_professional__isnull=True,
+            domain__isnull=True,
+        )
+        .filter(Q(flag_for_exclude=False) | Q(flag_for_exclude__isnull=True))
+    )
+
+
+def _get_verified_or_raw(denial, field):
+    """Return verified_{field} if set, else {field}."""
+    return getattr(denial, f"verified_{field}") or getattr(denial, field)
+
+
+def _make_jsonl_export_view(generator_func, filename):
+    """Create a staff-only, export-gated streaming JSONL view."""
+
+    @staff_member_required
+    @export_enabled_required
+    def view(request):
+        response = StreamingHttpResponse(
+            streaming_content=generator_func(),
+            content_type="application/x-ndjson",
+        )
+        response["Content-Disposition"] = f'attachment; filename="{filename}"'
+        return response
+
+    view.__name__ = generator_func.__name__.replace("generate_", "").replace(
+        "_lines", "_export"
+    )
+    view.__qualname__ = view.__name__
+    return view
 
 
 class BaseEmailsWithRawEmailCSV(View):
@@ -221,12 +266,8 @@ def incomplete_signups_csv(request):
 
 def generate_de_identified_lines(limit=None):
     """Yield JSONL lines of de-identified denial data."""
-    hashed_farts = Denial.get_hashed_email("farts@farts.com")
-    hashed_pcf = Denial.get_hashed_email("holden@pigscanfly.ca")
-    hashed_gmail = Denial.get_hashed_email("holden.karau@gmail.com")
-    exclude_emails = [hashed_farts, hashed_pcf, hashed_gmail]
     safe_denials = Denial.objects.exclude(
-        Q(hashed_email__in=exclude_emails)
+        Q(hashed_email__in=_get_excluded_hashed_emails())
         | Q(manual_deidentified_denial="")
         | Q(manual_deidentified_denial__isnull=True)
     ).values(
@@ -333,53 +374,22 @@ def generate_chooser_ranked_lines():
         yield json.dumps(record, default=str) + "\n"
 
 
-@staff_member_required
-@export_enabled_required
-def chooser_ranked_export(request):
-    """Export the highest-ranked candidate for each chooser task as JSONL."""
-    response = StreamingHttpResponse(
-        streaming_content=generate_chooser_ranked_lines(),
-        content_type="application/x-ndjson",
-    )
-    response["Content-Disposition"] = 'attachment; filename="chooser_ranked.jsonl"'
-    return response
-
-
 def generate_denial_appeal_lines():
     """Yield JSONL lines of de-identified denial + chosen appeal pairs (non-pro only)."""
-    hashed_farts = Denial.get_hashed_email("farts@farts.com")
-    hashed_pcf = Denial.get_hashed_email("holden@pigscanfly.ca")
-    hashed_gmail = Denial.get_hashed_email("holden.karau@gmail.com")
-    exclude_emails = [hashed_farts, hashed_pcf, hashed_gmail]
-
     has_chosen_proposed = Exists(
         ProposedAppeal.objects.filter(for_denial=OuterRef("pk"), chosen=True)
     )
     has_appeal = Exists(Appeal.objects.filter(for_denial=OuterRef("pk")))
     denials = (
-        Denial.objects.exclude(hashed_email__in=exclude_emails)
-        .filter(
-            creating_professional__isnull=True,
-            primary_professional__isnull=True,
-            domain__isnull=True,
-        )
-        .filter(Q(flag_for_exclude=False) | Q(flag_for_exclude__isnull=True))
+        _non_pro_unflagged_denials()
         .filter(has_chosen_proposed | has_appeal)
         .prefetch_related("proposedappeal_set", "appeal_set", "denialqa_set")
     )
 
     for denial in denials:
-        denial_text = (
-            denial.manual_deidentified_denial
-            if denial.manual_deidentified_denial
-            else denial.denial_text
-        )
-        procedure = (
-            denial.verified_procedure if denial.verified_procedure else denial.procedure
-        )
-        diagnosis = (
-            denial.verified_diagnosis if denial.verified_diagnosis else denial.diagnosis
-        )
+        denial_text = denial.manual_deidentified_denial or denial.denial_text
+        procedure = _get_verified_or_raw(denial, "procedure")
+        diagnosis = _get_verified_or_raw(denial, "diagnosis")
 
         appeal_text = None
         if denial.manual_deidentified_appeal:
@@ -419,25 +429,8 @@ def generate_denial_appeal_lines():
         yield json.dumps(record, default=str) + "\n"
 
 
-@staff_member_required
-@export_enabled_required
-def denial_appeal_export(request):
-    """Export de-identified denial + chosen appeal pairs as JSONL (non-pro users only)."""
-    response = StreamingHttpResponse(
-        streaming_content=generate_denial_appeal_lines(),
-        content_type="application/x-ndjson",
-    )
-    response["Content-Disposition"] = 'attachment; filename="denial_appeal.jsonl"'
-    return response
-
-
 def generate_chat_lines():
     """Yield JSONL lines of de-identified chat histories (non-pro only)."""
-    hashed_farts = Denial.get_hashed_email("farts@farts.com")
-    hashed_pcf = Denial.get_hashed_email("holden@pigscanfly.ca")
-    hashed_gmail = Denial.get_hashed_email("holden.karau@gmail.com")
-    exclude_emails = [hashed_farts, hashed_pcf, hashed_gmail]
-
     chats = (
         OngoingChat.objects.filter(
             professional_user__isnull=True,
@@ -445,7 +438,7 @@ def generate_chat_lines():
         )
         .exclude(chat_history__isnull=True)
         .exclude(chat_history=[])
-        .exclude(hashed_email__in=exclude_emails)
+        .exclude(hashed_email__in=_get_excluded_hashed_emails())
         .prefetch_related("appeals")
     )
 
@@ -459,18 +452,6 @@ def generate_chat_lines():
             "appeal_texts": appeal_texts,
         }
         yield json.dumps(record, default=str) + "\n"
-
-
-@staff_member_required
-@export_enabled_required
-def chat_export(request):
-    """Export de-identified chat histories as JSONL (non-pro users only)."""
-    response = StreamingHttpResponse(
-        streaming_content=generate_chat_lines(),
-        content_type="application/x-ndjson",
-    )
-    response["Content-Disposition"] = 'attachment; filename="chat.jsonl"'
-    return response
 
 
 @staff_member_required
@@ -761,36 +742,11 @@ def generate_questions_by_procedure_lines():
         yield json.dumps(record, default=str) + "\n"
 
 
-@staff_member_required
-@export_enabled_required
-def questions_by_procedure_export(request):
-    """Export generated questions keyed by procedure + diagnosis as JSONL."""
-    response = StreamingHttpResponse(
-        streaming_content=generate_questions_by_procedure_lines(),
-        content_type="application/x-ndjson",
-    )
-    response["Content-Disposition"] = (
-        'attachment; filename="questions_by_procedure.jsonl"'
-    )
-    return response
-
-
 def generate_denial_questions_lines():
     """Yield JSONL lines of denial questions with answer status (non-pro only)."""
-    hashed_farts = Denial.get_hashed_email("farts@farts.com")
-    hashed_pcf = Denial.get_hashed_email("holden@pigscanfly.ca")
-    hashed_gmail = Denial.get_hashed_email("holden.karau@gmail.com")
-    exclude_emails = [hashed_farts, hashed_pcf, hashed_gmail]
-
     denials = (
-        Denial.objects.exclude(hashed_email__in=exclude_emails)
-        .filter(
-            creating_professional__isnull=True,
-            primary_professional__isnull=True,
-            domain__isnull=True,
-            generated_questions__isnull=False,
-        )
-        .filter(Q(flag_for_exclude=False) | Q(flag_for_exclude__isnull=True))
+        _non_pro_unflagged_denials()
+        .filter(generated_questions__isnull=False)
         .exclude(generated_questions=[])
     )
 
@@ -821,12 +777,8 @@ def generate_denial_questions_lines():
         # Sort: answered first, then unanswered
         questions.sort(key=lambda q: (not q["was_answered"], q["question"]))
 
-        procedure = (
-            denial.verified_procedure if denial.verified_procedure else denial.procedure
-        )
-        diagnosis = (
-            denial.verified_diagnosis if denial.verified_diagnosis else denial.diagnosis
-        )
+        procedure = _get_verified_or_raw(denial, "procedure")
+        diagnosis = _get_verified_or_raw(denial, "diagnosis")
 
         record = {
             "denial_id": str(denial.denial_id),
@@ -835,18 +787,6 @@ def generate_denial_questions_lines():
             "questions": questions,
         }
         yield json.dumps(record, default=str) + "\n"
-
-
-@staff_member_required
-@export_enabled_required
-def denial_questions_export(request):
-    """Export denial questions with answer status as JSONL (non-pro only)."""
-    response = StreamingHttpResponse(
-        streaming_content=generate_denial_questions_lines(),
-        content_type="application/x-ndjson",
-    )
-    response["Content-Disposition"] = 'attachment; filename="denial_questions.jsonl"'
-    return response
 
 
 def generate_pubmed_article_lines():
@@ -871,16 +811,22 @@ def generate_pubmed_article_lines():
         yield json.dumps(record, default=str) + "\n"
 
 
-@staff_member_required
-@export_enabled_required
-def pubmed_article_export(request):
-    """Export summarized PubMed articles as JSONL."""
-    response = StreamingHttpResponse(
-        streaming_content=generate_pubmed_article_lines(),
-        content_type="application/x-ndjson",
-    )
-    response["Content-Disposition"] = 'attachment; filename="pubmed_articles.jsonl"'
-    return response
+chooser_ranked_export = _make_jsonl_export_view(
+    generate_chooser_ranked_lines, "chooser_ranked.jsonl"
+)
+denial_appeal_export = _make_jsonl_export_view(
+    generate_denial_appeal_lines, "denial_appeal.jsonl"
+)
+chat_export = _make_jsonl_export_view(generate_chat_lines, "chat.jsonl")
+questions_by_procedure_export = _make_jsonl_export_view(
+    generate_questions_by_procedure_lines, "questions_by_procedure.jsonl"
+)
+denial_questions_export = _make_jsonl_export_view(
+    generate_denial_questions_lines, "denial_questions.jsonl"
+)
+pubmed_article_export = _make_jsonl_export_view(
+    generate_pubmed_article_lines, "pubmed_articles.jsonl"
+)
 
 
 @staff_member_required
@@ -889,15 +835,9 @@ def procedures_denied_chart(request):
     Create a chart showing the count of each procedure that has been denied,
     grouped together in a case-insensitive and space-insensitive way.
     """
-    # Exclude test emails
-    hashed_farts = Denial.get_hashed_email("farts@farts.com")
-    hashed_pcf = Denial.get_hashed_email("holden@pigscanfly.ca")
-    hashed_gmail = Denial.get_hashed_email("holden.karau@gmail.com")
-    exclude_emails = [hashed_farts, hashed_pcf, hashed_gmail]
-
     # Get all denials with procedures that aren't empty or None
     denials_with_procedures = (
-        Denial.objects.exclude(Q(hashed_email__in=exclude_emails))
+        Denial.objects.exclude(Q(hashed_email__in=_get_excluded_hashed_emails()))
         .exclude(Q(procedure__isnull=True) | Q(procedure=""))
         .values_list("procedure", flat=True)
     )

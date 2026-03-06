@@ -61,8 +61,6 @@ class Command(BaseCommand):
                     f.write(line)
                     count += 1
 
-            self.stdout.write(
-                self.style.SUCCESS(f"  {name}: {count} records written")
-            )
+            self.stdout.write(self.style.SUCCESS(f"  {name}: {count} records written"))
 
         self.stdout.write(self.style.SUCCESS("All exports complete."))
