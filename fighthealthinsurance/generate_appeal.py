@@ -987,7 +987,7 @@ class AppealGenerator(object):
                         pass
                     # It's either full or a reason to plug into a template
                     if k == "full":
-                        logger.debug(f"Bubbling up full response {text}")
+                        logger.debug(f"Bubbling up full response ({len(text)} chars)")
                         yield text
                     else:
                         yield template_generator.generate(text)
