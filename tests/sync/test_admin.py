@@ -120,6 +120,11 @@ class TestOngoingChatAdmin(TestCase):
         chat = OngoingChat()
         self.assertFalse(self.admin.has_edited(chat))
 
+    def test_has_edited_false_when_none(self):
+        """Should return False when edited history is explicitly None."""
+        chat = OngoingChat(edited_chat_history=None)
+        self.assertFalse(self.admin.has_edited(chat))
+
     def test_has_edited_true_when_present(self):
         """Should return True when edited history exists."""
         chat = OngoingChat(
@@ -193,6 +198,51 @@ class TestAdminAccess(TestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "chat-editor-container")
+
+
+import json
+
+
+class TestOngoingChatAdminEditing(TestCase):
+    """Test editing OngoingChat via admin form."""
+
+    ADMIN_URL = "/timbit/admin/"
+
+    def setUp(self):
+        self.client = Client()
+        self.admin_user = User.objects.create_superuser(
+            username="admin", email="admin@test.com", password="adminpass123"
+        )
+        self.client.login(username="admin", password="adminpass123")
+
+    def test_save_edited_chat_history_persists(self):
+        """Edited chat history should persist when saved via admin."""
+        chat = OngoingChat.objects.create(
+            chat_history=[{"role": "user", "content": "original msg"}],
+        )
+        edited = [{"role": "user", "content": "cleaned up msg"}]
+        response = self.client.post(
+            f"{self.ADMIN_URL}fighthealthinsurance/ongoingchat/{chat.pk}/change/",
+            {
+                "is_patient": "on",
+                "chat_history": json.dumps(chat.chat_history),
+                "edited_chat_history": json.dumps(edited),
+                "denied_item": "",
+                "denied_reason": "",
+                "session_key": "",
+                "hashed_email": "",
+                "microsite_slug": "",
+                "user_agent": "",
+                "asn": "",
+                "asn_name": "",
+                "_save": "Save",
+            },
+        )
+        # Should redirect on success (302) to changelist
+        self.assertEqual(response.status_code, 302)
+        chat.refresh_from_db()
+        self.assertEqual(len(chat.edited_chat_history), 1)
+        self.assertEqual(chat.edited_chat_history[0]["content"], "cleaned up msg")
 
 
 class TestAdminActions(TestCase):
