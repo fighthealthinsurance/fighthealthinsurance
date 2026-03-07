@@ -1061,14 +1061,36 @@ class AppealGenerator(object):
                 logger.opt(exception=True).debug(f"Synthesis failed on {model}")
             return None
 
-        tasks: List[Coroutine[Any, Any, Optional[str]]] = [
-            try_model(m) for m in all_internal
-        ]
+        # Build tasks and map each coroutine to its model's quality score
+        task_quality: dict[int, float] = {}
+        tasks: List[Coroutine[Any, Any, Optional[str]]] = []
+        for m in all_internal:
+            coro = try_model(m)
+            task_quality[id(coro)] = float(m.quality())
+            tasks.append(coro)
 
-        def score_fn(result: Optional[str], _awaitable: Any) -> float:
+        QUALITY_KEYWORDS = (
+            "evidence",
+            "medical necessity",
+            "medically necessary",
+            "appeal",
+            "policy",
+            "clinical",
+        )
+
+        def score_fn(result: Optional[str], awaitable: Any) -> float:
             if result is None:
                 return -1.0
-            return float(len(result.strip()))
+            stripped = result.strip()
+            lower = stripped.lower()
+            # Cap length reward to discourage excessive verbosity
+            length_score = min(len(stripped), 3000)
+            model_score = task_quality.get(id(awaitable), 100.0)
+            keyword_score = sum(10 for kw in QUALITY_KEYWORDS if kw in lower)
+            diagnosis_bonus = 50 if diagnosis and diagnosis.lower() in lower else 0
+            return (
+                length_score * 0.3 + model_score * 0.3 + keyword_score + diagnosis_bonus
+            )
 
         try:
             best = await best_within_timelimit(tasks, score_fn=score_fn, timeout=60)

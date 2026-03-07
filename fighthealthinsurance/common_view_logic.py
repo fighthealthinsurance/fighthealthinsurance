@@ -2330,17 +2330,19 @@ class AppealsBackendHelper:
                 # (best_within_timelimit uses 60s internally + fallback)
                 SYNTHESIS_TIMEOUT = 120
                 KEEPALIVE_INTERVAL = 20
-                elapsed = 0
+                elapsed = 0.0
                 while not synthesis_task.done() and elapsed < SYNTHESIS_TIMEOUT:
+                    t0 = time.monotonic()
                     try:
                         await asyncio.wait_for(
                             asyncio.shield(synthesis_task),
                             timeout=KEEPALIVE_INTERVAL,
                         )
                     except asyncio.TimeoutError:
-                        elapsed += KEEPALIVE_INTERVAL
+                        elapsed += time.monotonic() - t0
                         yield "\n"
                         continue
+                    elapsed += time.monotonic() - t0
                     break
 
                 if not synthesis_task.done():

@@ -139,7 +139,7 @@ class TestSynthesizeAppeals(unittest.TestCase):
 
         # Make best_within_timelimit call through to the actual coroutine
         # so we can verify the model's _infer_no_context was called with the right prompt
-        async def call_first_task(tasks, score_fn, timeout):
+        async def call_first_task(tasks, **_kwargs):
             result = await tasks[0]
             return result
 
@@ -179,7 +179,7 @@ class TestSynthesizeAppeals(unittest.TestCase):
         mock_model._infer_no_context = AsyncMock(return_value="A" * 100)
         mock_router.internal_models_by_cost = [mock_model]
 
-        async def call_first_task(tasks, score_fn, timeout):
+        async def call_first_task(tasks, **_kwargs):
             return await tasks[0]
 
         mock_best_within.side_effect = call_first_task
@@ -196,7 +196,7 @@ class TestSynthesizeAppeals(unittest.TestCase):
         mock_model._infer_no_context = AsyncMock(return_value="A" * 100)
         mock_router.internal_models_by_cost = [mock_model]
 
-        async def call_first_task(tasks, score_fn, timeout):
+        async def call_first_task(tasks, **_kwargs):
             return await tasks[0]
 
         mock_best_within.side_effect = call_first_task
