@@ -134,7 +134,7 @@ Cheap-O-Insurance-Corp""",
         self.type("input#id_insurance_company", "EvilCo")
         self.click("button#fax_appeal")
         # Make sure we get to stripe checkout
-        time.sleep(1)
+        self.wait_for_page_ready()
         if (
             "STRIPE_TEST_SECRET_KEY" in os.environ
             and "NOSTRIPE" not in os.environ
@@ -462,17 +462,17 @@ Sincerely, OtherInsuranceCo""",
         # Negative assertion: health history must NOT contain first appeal's
         # data.  wait_for_page_ready returns as soon as readyState is
         # "complete", but the localStorage restoration script may still be
-        # pending.  Poll for a bounded time so that if the script is going to
-        # restore the old value we catch it, rather than asserting before the
-        # script has had a chance to run.
-        deadline = time.time() + 2
-        health_value = self.get_value("textarea#health_history")
-        while time.time() < deadline:
-            health_value = self.get_value("textarea#health_history")
-            if health_value == first_health:
-                break  # Restoration happened – fall through to the assertion
-            time.sleep(0.2)
+        # pending.  Use WebDriverWait to poll for a bounded time so that if
+        # the script is going to restore the old value we catch it, rather
+        # than asserting before the script has had a chance to run.
+        try:
+            WebDriverWait(self.driver, 2).until(
+                lambda d: d.find_element(By.CSS_SELECTOR, "textarea#health_history").get_attribute("value") == first_health
+            )
+        except Exception:
+            pass  # Timeout is expected — means the old value was NOT restored
 
+        health_value = self.get_value("textarea#health_history")
         assert (
             health_value != first_health
         ), f"Second appeal should not restore first appeal's health history. Got: '{health_value}'"

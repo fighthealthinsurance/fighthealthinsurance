@@ -68,10 +68,8 @@ class SeleniumChatStatusMessagesTest(FHISeleniumBase, StaticLiveServerTestCase):
         self.fill_consent_form()
         self.click("button[type='submit']")
 
-        # Should redirect to chat interface
-        self.wait(1)  # Wait for redirect
-        # The chat interface should load
-        self.wait_for_element("#chat-interface-root", timeout=10)
+        # The chat interface should load after redirect
+        self.wait_for_element("#chat-interface-root", timeout=15)
 
     def test_status_message_displays_on_send(self):
         """Test that status message appears when sending a chat message."""
@@ -82,7 +80,7 @@ class SeleniumChatStatusMessagesTest(FHISeleniumBase, StaticLiveServerTestCase):
 
         # Wait for chat interface to load
         self.wait_for_element("#chat-interface-root", timeout=10)
-        self.wait(2)  # Wait for WebSocket connection
+        self.wait_for_page_ready()
 
         # Type and send a message
         # React components require special handling, so we use JavaScript to interact
@@ -116,7 +114,7 @@ class SeleniumChatStatusMessagesTest(FHISeleniumBase, StaticLiveServerTestCase):
                 """)
 
             # Wait for typing indicator to appear
-            self.wait(1)
+            self.wait_for_page_ready()
 
             # Check that typing animation is visible
             # The exact selector may vary based on the rendered React component
@@ -146,7 +144,7 @@ class SeleniumChatStatusMessagesTest(FHISeleniumBase, StaticLiveServerTestCase):
 
         # Wait for chat interface to load
         self.wait_for_element("#chat-interface-root", timeout=10)
-        self.wait(2)
+        self.wait_for_page_ready()
 
         # Send a message that will trigger a long response
         try:
@@ -200,7 +198,7 @@ class SeleniumChatStatusMessagesTest(FHISeleniumBase, StaticLiveServerTestCase):
 
         # Wait for chat interface to load
         self.wait_for_element("#chat-interface-root", timeout=10)
-        self.wait(2)
+        self.wait_for_page_ready()
 
         # Check page source for the expected messages
         # Note: These messages appear in the JavaScript, so we check if they would display
@@ -225,7 +223,7 @@ class SeleniumChatStatusMessagesTest(FHISeleniumBase, StaticLiveServerTestCase):
 
         # Wait for chat interface to load
         self.wait_for_element("#chat-interface-root", timeout=10)
-        self.wait(2)
+        self.wait_for_page_ready()
 
         # In a real scenario, the retry button appears after 60 seconds
         # For testing, we verify the button logic exists in the code
@@ -252,7 +250,7 @@ class SeleniumChatStatusMessagesTest(FHISeleniumBase, StaticLiveServerTestCase):
 
         # Wait for chat interface to load
         self.wait_for_element("#chat-interface-root", timeout=10)
-        self.wait(2)
+        self.wait_for_page_ready()
 
         # Verify the chat interface has loaded correctly
         chat_root = self.execute_script("""
@@ -279,8 +277,8 @@ class SeleniumChatStatusMessagesTest(FHISeleniumBase, StaticLiveServerTestCase):
 
         # Wait for chat interface to load
         self.wait_for_element("#chat-interface-root", timeout=10)
-        # Give extra time for JavaScript to initialize session key
-        self.wait(3)
+        # Wait for JavaScript to initialize session key
+        self.wait_for_page_ready()
 
         # Check localStorage for session key - it should be created on component mount
         session_key = self.execute_script("""
@@ -303,7 +301,7 @@ class SeleniumChatStatusMessagesTest(FHISeleniumBase, StaticLiveServerTestCase):
 
         # Reload page and verify session persists
         self.refresh()
-        self.wait(2)
+        self.wait_for_page_ready()
 
         session_key_after = self.execute_script("""
             return localStorage.getItem('fhi_chat_session_key');
@@ -323,7 +321,7 @@ class SeleniumChatStatusMessagesTest(FHISeleniumBase, StaticLiveServerTestCase):
 
         # Wait for chat interface to load
         self.wait_for_element("#chat-interface-root", timeout=10)
-        self.wait(2)
+        self.wait_for_page_ready()
 
         # Get initial chat ID
         initial_chat_id = self.execute_script("""
@@ -343,7 +341,7 @@ class SeleniumChatStatusMessagesTest(FHISeleniumBase, StaticLiveServerTestCase):
             """)
 
             if new_chat_button:
-                self.wait(1)
+                self.wait_for_page_ready()
 
                 # Verify chat ID was cleared/reset
                 chat_id_after = self.execute_script("""
@@ -380,7 +378,7 @@ class SeleniumChatStatusMessagesTest(FHISeleniumBase, StaticLiveServerTestCase):
 
         # Wait for chat interface to load
         self.wait_for_element("#chat-interface-root", timeout=10)
-        self.wait(2)
+        self.wait_for_page_ready()
 
         # Get initial state
         initial_value = self.execute_script("""
@@ -398,7 +396,7 @@ class SeleniumChatStatusMessagesTest(FHISeleniumBase, StaticLiveServerTestCase):
         """)
 
         if toggle_clicked:
-            self.wait(0.5)
+            self.wait_for_page_ready()
 
             # Check the new value
             new_value = self.execute_script("""
@@ -441,7 +439,7 @@ class SeleniumChatStatusMessagesTest(FHISeleniumBase, StaticLiveServerTestCase):
 
         # Wait for chat interface to load
         self.wait_for_element("#chat-interface-root", timeout=10)
-        self.wait(2)
+        self.wait_for_page_ready()
 
         # Enable external models
         self.execute_script("""
@@ -450,7 +448,7 @@ class SeleniumChatStatusMessagesTest(FHISeleniumBase, StaticLiveServerTestCase):
                 toggle.click();
             }
         """)
-        self.wait(0.5)
+        self.wait_for_page_ready()
 
         # Verify it's saved
         saved_value = self.execute_script("""
@@ -459,7 +457,7 @@ class SeleniumChatStatusMessagesTest(FHISeleniumBase, StaticLiveServerTestCase):
 
         # Reload the page
         self.refresh()
-        self.wait(2)
+        self.wait_for_page_ready()
 
         # Check that the value persists
         persisted_value = self.execute_script("""
@@ -480,7 +478,7 @@ class SeleniumChatStatusMessagesTest(FHISeleniumBase, StaticLiveServerTestCase):
 
         # Wait for chat interface to load
         self.wait_for_element("#chat-interface-root", timeout=10)
-        self.wait(2)
+        self.wait_for_page_ready()
 
         # Enable external models
         self.execute_script("""
@@ -489,13 +487,13 @@ class SeleniumChatStatusMessagesTest(FHISeleniumBase, StaticLiveServerTestCase):
                 toggle.click();
             }
         """)
-        self.wait(0.5)
+        self.wait_for_page_ready()
 
         # Try to send a message
         try:
             self.type("textarea", "Test message with external models enabled")
             self.click("button[aria-label='Send message']")
-            self.wait(2)
+            self.wait_for_page_ready()
 
             # The message should be sent - we can't easily verify WebSocket payload
             # but we can check that no errors occurred

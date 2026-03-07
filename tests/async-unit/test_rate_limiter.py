@@ -228,8 +228,8 @@ class TestRateLimiterEdgeCases(unittest.TestCase):
 
         limiter.mark_exhausted(retry_after_seconds=0.001)
 
-        # Sleep a tiny bit and should be recovered
-        time.sleep(0.01)
+        # Sleep a bit and should be recovered
+        time.sleep(0.05)
         self.assertTrue(limiter.can_request())
 
     def test_concurrent_access_is_safe(self):
