@@ -195,7 +195,9 @@ class PriorAuthTextSubstituter:
             else:
                 context["practice_name"] = "{{PRACTICE_NAME}}"
                 context["practice_phone"] = "{{PRACTICE_PHONE}}"
-                context["practice_fax"] = context.get("provider_fax", "{{PRACTICE_FAX}}")
+                context["practice_fax"] = context.get(
+                    "provider_fax", "{{PRACTICE_FAX}}"
+                )
                 context["practice_address"] = "{{PRACTICE_ADDRESS}}"
 
             # Add the date
