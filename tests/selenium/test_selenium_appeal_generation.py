@@ -216,6 +216,16 @@ Cheap-O-Insurance-Corp""",
         self.assert_title_eventually("Delete Your Data")
         self.type("input#id_email", email)
         self.click("button#submit")
+        self.assert_title_eventually("Check Your Email")
+        # Retrieve the delete token from the DB and follow the confirmation flow
+        delete_token = DeleteToken.objects.get(email=email)
+        confirm_url = (
+            f"{self.live_server_url}/confirm_delete_data"
+            f"?token={delete_token.token}&email={email}"
+        )
+        self.open(confirm_url)
+        self.assert_title_eventually("Confirm Data Deletion")
+        self.click("button[type='submit']")
         self.assert_title_eventually("Deleted Your Data")
         denials_for_user_count = Denial.objects.filter(
             hashed_email=hashed_email
