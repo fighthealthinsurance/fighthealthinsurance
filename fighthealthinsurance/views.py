@@ -604,7 +604,7 @@ def send_delete_confirmation_email(email: str, token: str) -> None:
     """Send email asking user to confirm data deletion request."""
     params = urlencode({"token": token, "email": email})
     confirmation_link = (
-        f"https://{settings.FIGHT_PAPERWORK_DOMAIN}/confirm-delete?{params}"
+        f"https://{settings.FIGHT_HEALTH_INSURANCE_DOMAIN}/confirm-delete?{params}"
     )
     send_fallback_email(
         "Confirm Data Deletion Request",
