@@ -2176,3 +2176,78 @@ class ChooserSkip(ExportModelOperationsMixin("ChooserSkip"), models.Model):  # t
             str: A string in the form "Skip of Task {task_id} by {session_key}".
         """
         return f"Skip of Task {self.task_id} by {self.session_key}"
+
+
+# Policy Document Analysis Models (Issue #570)
+class PolicyDocument(ExportModelOperationsMixin("PolicyDocument"), models.Model):  # type: ignore
+    """
+    Stores uploaded policy documents (Summary of Benefits, Medical Policy PDFs).
+    Used to help users understand their insurance coverage.
+    """
+
+    DOCUMENT_TYPE_CHOICES = [
+        ("summary_of_benefits", "Summary of Benefits"),
+        ("medical_policy", "Medical Policy"),
+        ("other", "Other Policy Document"),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    document_enc = EncryptedFileField(null=True, storage=settings.COMBINED_STORAGE)
+    document_type = models.CharField(
+        max_length=50, choices=DOCUMENT_TYPE_CHOICES, default="other"
+    )
+    filename = models.CharField(max_length=255, blank=True)
+    hashed_email = models.CharField(max_length=200, null=True, blank=True)
+    session_key = models.CharField(max_length=100, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["hashed_email"]),
+            models.Index(fields=["session_key"]),
+            models.Index(fields=["created_at"]),
+        ]
+        verbose_name = "Policy Document"
+        verbose_name_plural = "Policy Documents"
+
+    def __str__(self):
+        return f"PolicyDocument: {self.filename or self.id} ({self.document_type})"
+
+
+class PolicyDocumentAnalysis(ExportModelOperationsMixin("PolicyDocumentAnalysis"), models.Model):  # type: ignore
+    """
+    Stores AI analysis of policy documents.
+    Includes extracted exclusions, inclusions, and appeal-relevant clauses.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    policy_document = models.ForeignKey(
+        PolicyDocument, on_delete=models.CASCADE, related_name="analyses"
+    )
+    user_question = models.TextField(blank=True)  # What user wanted to understand
+    exclusions = models.JSONField(default=list)  # List of exclusion clauses
+    inclusions = models.JSONField(default=list)  # List of coverage/inclusion clauses
+    appeal_clauses = models.JSONField(default=list)  # Clauses relevant to appeals
+    summary = models.TextField(blank=True)  # Overall summary
+    quotable_sections = models.JSONField(
+        default=list
+    )  # Formatted quotes with page refs
+    created_at = models.DateTimeField(auto_now_add=True)
+    chat = models.ForeignKey(
+        "OngoingChat",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="policy_analyses",
+    )
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["policy_document"]),
+            models.Index(fields=["created_at"]),
+        ]
+        verbose_name = "Policy Document Analysis"
+        verbose_name_plural = "Policy Document Analyses"
+
+    def __str__(self):
+        return f"Analysis of {self.policy_document.filename or self.policy_document_id}"
