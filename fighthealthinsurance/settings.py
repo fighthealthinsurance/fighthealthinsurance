@@ -71,6 +71,7 @@ class Base(Configuration):
     }
 
     FIGHT_PAPERWORK_DOMAIN = "localhost:3000"
+    FIGHT_HEALTH_INSURANCE_DOMAIN = "localhost:8000"
 
     BCC_EMAILS = ["auto-user-messages@fighthealthinsurance.com"]
 
@@ -628,6 +629,7 @@ class Prod(Base):
     # Different fido server for production
     FIDO_SERVER_ID = "fighthealthinsurance.com"  # Server rp id for FIDO2, it is the full domain of your project
     FIGHT_PAPERWORK_DOMAIN = "www.fightpaperwork.com"
+    FIGHT_HEALTH_INSURANCE_DOMAIN = "www.fighthealthinsurance.com"
 
     STRIPE_LIVE_MODE = True
 

@@ -27,6 +27,7 @@ from django.views.decorators.clickjacking import xframe_options_exempt
 from django.views.decorators.csrf import csrf_exempt, ensure_csrf_cookie
 from django.views.decorators.http import require_http_methods
 from django.views.generic.base import TemplateView
+from django.utils import timezone
 from django.views.generic.edit import FormView
 
 import stripe
@@ -38,8 +39,9 @@ from fighthealthinsurance import common_view_logic, forms as core_forms, models
 from fighthealthinsurance.chat_forms import UserConsentForm
 from fighthealthinsurance.helpers.data_helpers import RemoveDataHelper
 from fighthealthinsurance.helpers.stripe_helpers import StripeWebhookHelper
-from fighthealthinsurance.models import StripeRecoveryInfo
+from fighthealthinsurance.models import DeleteToken, StripeRecoveryInfo
 from fighthealthinsurance.type_utils import User
+from fighthealthinsurance.utils import send_fallback_email
 
 
 class BlogPostMetadata(TypedDict, total=False):
@@ -598,8 +600,26 @@ class ShareAppealView(View):
             return render(request, "thankyou.html")
 
 
+def send_delete_confirmation_email(email: str, token: str) -> None:
+    """Send email asking user to confirm data deletion request."""
+    params = urlencode({"token": token, "email": email})
+    confirmation_link = (
+        f"https://{settings.FIGHT_HEALTH_INSURANCE_DOMAIN}/confirm-delete?{params}"
+    )
+    send_fallback_email(
+        "Confirm Data Deletion Request",
+        "delete_data_confirmation",
+        {"confirmation_link": confirmation_link, "email": email},
+        email,
+    )
+
+
 class RemoveDataView(View):
-    """View for users to request deletion of their data."""
+    """View for users to request deletion of their data.
+
+    Sends a confirmation email with a secure token link instead of
+    immediately deleting data, to verify email ownership.
+    """
 
     def get(self, request):
         return render(
@@ -616,12 +636,19 @@ class RemoveDataView(View):
 
         if form.is_valid():
             email = form.cleaned_data["email"]
-            RemoveDataHelper.remove_data_for_email(email)
+            hashed_email = models.Denial.get_hashed_email(email)
+            # Delete any existing tokens for this email
+            DeleteToken.objects.filter(hashed_email=hashed_email).delete()
+            # Create a new token
+            delete_token = DeleteToken(hashed_email=hashed_email)
+            delete_token.save()
+            # Send confirmation email
+            send_delete_confirmation_email(email, str(delete_token.token))
             return render(
                 request,
-                "removed_data.html",
+                "delete_data_email_sent.html",
                 context={
-                    "title": "Remove My Data",
+                    "title": "Check Your Email",
                 },
             )
 
@@ -631,6 +658,77 @@ class RemoveDataView(View):
             context={
                 "title": "Remove My Data",
                 "form": form,
+            },
+        )
+
+
+class ConfirmDeleteDataView(View):
+    """View that handles the email confirmation link for data deletion.
+
+    GET shows a confirmation page; POST performs the actual deletion.
+    This two-step approach prevents email scanners and link prefetch
+    bots from triggering deletion by following the emailed link.
+    """
+
+    def _error_response(self, request, error_message):
+        return render(
+            request,
+            "remove_data.html",
+            context={
+                "title": "Remove My Data",
+                "form": core_forms.DeleteDataForm(),
+                "error": error_message,
+            },
+        )
+
+    def _validate_token(self, token_str, email):
+        """Validate token and email, return (delete_token, error_message) tuple."""
+        if not token_str or not email:
+            return None, "Invalid confirmation link. Please try again."
+        try:
+            hashed_email = models.Denial.get_hashed_email(email)
+            delete_token = DeleteToken.objects.get(
+                token=token_str, hashed_email=hashed_email
+            )
+        except DeleteToken.DoesNotExist:
+            return (
+                None,
+                "Invalid or already used confirmation link. Please request a new one.",
+            )
+        if delete_token.expires_at < timezone.now():
+            delete_token.delete()
+            return None, "This confirmation link has expired. Please request a new one."
+        return delete_token, None
+
+    def get(self, request):
+        token_str = request.GET.get("token")
+        email = request.GET.get("email")
+        delete_token, error = self._validate_token(token_str, email)
+        if error:
+            return self._error_response(request, error)
+        return render(
+            request,
+            "confirm_delete.html",
+            context={
+                "title": "Confirm Data Deletion",
+                "email": email,
+                "token": token_str,
+            },
+        )
+
+    def post(self, request):
+        token_str = request.POST.get("token")
+        email = request.POST.get("email")
+        delete_token, error = self._validate_token(token_str, email)
+        if error:
+            return self._error_response(request, error)
+        RemoveDataHelper.remove_data_for_email(email)
+        delete_token.delete()
+        return render(
+            request,
+            "removed_data.html",
+            context={
+                "title": "Remove My Data",
             },
         )
 

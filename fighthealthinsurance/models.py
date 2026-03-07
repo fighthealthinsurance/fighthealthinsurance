@@ -1,3 +1,4 @@
+import datetime
 import hashlib
 import os
 import re
@@ -10,6 +11,7 @@ from django.conf import settings
 from django.db import models
 from django.db.models import Q
 from django.db.models.functions import Now
+from django.utils import timezone
 
 from django_encrypted_filefield.crypt import Cryptographer
 from django_encrypted_filefield.fields import EncryptedFileField
@@ -2176,3 +2178,20 @@ class ChooserSkip(ExportModelOperationsMixin("ChooserSkip"), models.Model):  # t
             str: A string in the form "Skip of Task {task_id} by {session_key}".
         """
         return f"Skip of Task {self.task_id} by {self.session_key}"
+
+
+class DeleteToken(models.Model):
+    """Token for confirming data deletion requests from non-authenticated users."""
+
+    hashed_email = models.CharField(max_length=300, unique=True)
+    token = models.CharField(max_length=255, default=uuid.uuid4, unique=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+
+    def save(self, *args, **kwargs):
+        if not self.expires_at:
+            if self.created_at:
+                self.expires_at = self.created_at + datetime.timedelta(hours=24)
+            else:
+                self.expires_at = timezone.now() + datetime.timedelta(hours=24)
+        super().save(*args, **kwargs)

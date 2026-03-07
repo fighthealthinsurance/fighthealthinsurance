@@ -285,6 +285,11 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
     path("share_appeal", views.ShareAppealView.as_view(), name="share_appeal"),
     path("remove_data", views.RemoveDataView.as_view(), name="remove_data"),
     path(
+        "confirm-delete",
+        views.ConfirmDeleteDataView.as_view(),
+        name="confirm_delete_data",
+    ),
+    path(
         "tos",
         cache_control(public=True)(
             cache_page(60 * 60 * 2)(views.TermsOfServiceView.as_view())
