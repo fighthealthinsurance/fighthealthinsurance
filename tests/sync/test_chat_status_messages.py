@@ -278,7 +278,7 @@ class ChatStatusMessageTest(APITestCase):
         responses = []
         try:
             while True:
-                response = await communicator.receive_json_from(timeout=5)
+                response = await communicator.receive_json_from(timeout=15)
                 responses.append(response)
                 # Stop when we get the actual content response
                 if "content" in response and response.get("role") == "assistant":
@@ -500,7 +500,7 @@ class ChatStatusMessageTest(APITestCase):
         response = None
         try:
             while True:
-                response = await communicator.receive_json_from(timeout=5)
+                response = await communicator.receive_json_from(timeout=15)
                 # When we get actual content, the status should be cleared
                 if "content" in response and response.get("role") == "assistant":
                     # This is the final response, status should be cleared

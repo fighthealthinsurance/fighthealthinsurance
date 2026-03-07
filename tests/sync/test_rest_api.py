@@ -1,6 +1,7 @@
 """Test the rest API functionality"""
 
 from asgiref.sync import sync_to_async
+from unittest.mock import patch
 
 import asyncio
 
@@ -223,28 +224,36 @@ class DenialEndToEnd(APITestCase):
             hashed_email=hashed_email, denial_id=denial_id
         ).aget()
         print(f"We should find {denial}")
-        # Now we need to poke entity extraction, this part is async
-        seb_communicator = WebsocketCommunicator(
-            StreamingEntityBackend.as_asgi(), "/testws/"
-        )
-        connected, _ = await seb_communicator.connect()
-        assert connected
-        await seb_communicator.send_json_to(
-            {
-                "email": email,
-                "semi_sekret": semi_sekret,
-                "denial_id": denial_id,
-            }
-        )
-        # We should receive at least one frame.
-        response = await seb_communicator.receive_from()
-        # Now consume all of the rest of them until done.
-        try:
-            while True:
-                response = await seb_communicator.receive_from()
-        except:
-            pass
-        await asyncio.sleep(5)  # Give a second for the fire and forget pubmed to run
+        # Now we need to poke entity extraction, this part is async.
+        # Mock fire_and_forget_in_new_threadpool to avoid background threads
+        # that race with test teardown.
+        async def _noop_fire_and_forget(task):
+            task.close()  # Prevent "coroutine was never awaited" warning
+
+        with patch(
+            "fighthealthinsurance.common_view_logic.fire_and_forget_in_new_threadpool",
+            side_effect=_noop_fire_and_forget,
+        ):
+            seb_communicator = WebsocketCommunicator(
+                StreamingEntityBackend.as_asgi(), "/testws/"
+            )
+            connected, _ = await seb_communicator.connect()
+            assert connected
+            await seb_communicator.send_json_to(
+                {
+                    "email": email,
+                    "semi_sekret": semi_sekret,
+                    "denial_id": denial_id,
+                }
+            )
+            # We should receive at least one frame.
+            response = await seb_communicator.receive_from()
+            # Now consume all of the rest of them until done.
+            try:
+                while True:
+                    response = await seb_communicator.receive_from()
+            except:
+                pass
         # Set health history before next steps
         health_history_url = reverse("healthhistory-list")
         health_history_response = await sync_to_async(self.client.post)(

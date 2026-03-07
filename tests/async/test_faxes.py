@@ -2,7 +2,6 @@ import os
 import unittest
 from fighthealthinsurance.fax_utils import FaxSenderBase, FlexibleFaxMagic
 import tempfile
-import time
 import pytest
 from PyPDF2 import PdfReader
 import asyncio
@@ -48,7 +47,7 @@ class FaxSendBaseTest(unittest.TestCase):
             for i in range(0, 10000):
                 t1.write("Test ")
             t1.flush()
-            time.sleep(1)
+            os.sync()
             r = asyncio.run(
                 m.assemble_outputs(
                     user_header="MyHeader", extra="", input_paths=[t1.name]
@@ -74,7 +73,7 @@ class FaxSendBaseTest(unittest.TestCase):
             for i in range(0, 10):
                 t1.write("Test ")
             t1.flush()
-            time.sleep(1)
+            os.sync()
             with tempfile.NamedTemporaryFile(
                 suffix=".txt", prefix="short_meeps", mode="w+t", delete=False
             ) as t2:
@@ -136,7 +135,7 @@ class FaxSendBaseTest(unittest.TestCase):
         ) as t1:
             t1.write("Test ")
             t1.flush()
-            time.sleep(1)
+            os.sync()
             try:
                 # Create a subclass to track which backends are selected
                 class TestFlexibleFaxMagic(FlexibleFaxMagic):
