@@ -252,6 +252,15 @@
     return ALLOWED_ROLES.indexOf(role) !== -1 ? role : 'user';
   }
 
+  function debounce(fn, delay) {
+    var timer;
+    return function() {
+      var args = arguments, ctx = this;
+      clearTimeout(timer);
+      timer = setTimeout(function() { fn.apply(ctx, args); }, delay);
+    };
+  }
+
   function renderReadOnlyMessages(containerId, messages) {
     const container = document.getElementById(containerId);
     container.innerHTML = '';
@@ -307,6 +316,15 @@
           escapeHtml(content) +
         '</div>';
       container.appendChild(div);
+      // Attach debounced input listener for near-real-time sync
+      var editable = div.querySelector('.chat-content-editable');
+      if (editable) {
+        (function(capturedIdx) {
+          editable.addEventListener('input', debounce(function() {
+            window._chatEditor.updateContent(capturedIdx, this.innerText);
+          }, 300));
+        })(idx);
+      }
     });
   }
 
@@ -328,6 +346,9 @@
       }
     },
     deleteMsg: function(idx) {
+      if (!confirm('Delete this message?')) {
+        return;
+      }
       const messages = getFieldValue('edited_chat_history');
       messages.splice(idx, 1);
       setFieldValue('edited_chat_history', messages);
