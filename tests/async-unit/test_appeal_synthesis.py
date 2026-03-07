@@ -66,9 +66,7 @@ class TestSynthesizeAppeals(unittest.TestCase):
 
     @patch("fighthealthinsurance.generate_appeal.best_within_timelimit")
     @patch("fighthealthinsurance.generate_appeal.ml_router")
-    def test_returns_synthesized_text_on_success(
-        self, mock_router, mock_best_within
-    ):
+    def test_returns_synthesized_text_on_success(self, mock_router, mock_best_within):
         mock_model = MagicMock(spec=RemoteModelLike)
         mock_router.internal_models_by_cost = [mock_model]
 
@@ -193,9 +191,7 @@ class TestSynthesizeAppeals(unittest.TestCase):
 
     @patch("fighthealthinsurance.generate_appeal.best_within_timelimit")
     @patch("fighthealthinsurance.generate_appeal.ml_router")
-    def test_denial_text_truncated_at_3000_chars(
-        self, mock_router, mock_best_within
-    ):
+    def test_denial_text_truncated_at_3000_chars(self, mock_router, mock_best_within):
         mock_model = MagicMock(spec=RemoteModelLike)
         mock_model._infer_no_context = AsyncMock(return_value="A" * 100)
         mock_router.internal_models_by_cost = [mock_model]

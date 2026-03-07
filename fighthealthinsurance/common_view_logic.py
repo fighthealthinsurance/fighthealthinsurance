@@ -1987,7 +1987,7 @@ class AppealsBackendHelper:
             if appeal.appeal_text is not None:
                 logger.debug(f"Found existing appeal {appeal}, yielding")
                 existing_appeal_dict = await sub_in_appeals(
-                    {"id": str(appeal.id), "content": appeal.appeal_text, "new": False}
+                    {"id": str(appeal.id), "content": appeal.appeal_text}
                 )
                 yield await format_response(existing_appeal_dict)
 
@@ -2237,7 +2237,7 @@ class AppealsBackendHelper:
                 pass
             passed = time.time() - t
             logger.debug(f"Saved {appeal_text} after {passed} seconds")
-            return {"id": id, "content": appeal_text, "new": True}
+            return {"id": id, "content": appeal_text}
 
         # Yield status: generating appeals
         yield json.dumps(
