@@ -19,7 +19,7 @@ About Our AI
         When you submit a denial or chat with our system, we use fine-tuned medical language models
         (like <a href="https://ai.google.dev/gemma/docs/medgemma" target="_blank" rel="noopener noreferrer">MedGemma</a>)
         to draft an appeal letter tailored to your situation.
-        We run multiple AI models in parallel and select the best result for your case.
+        We run multiple AI models in parallel.
         Our system also searches <a href="https://pubmed.ncbi.nlm.nih.gov/" target="_blank" rel="noopener noreferrer">PubMed</a>
         for relevant medical literature to strengthen your appeal with citations.
     </p>
@@ -27,20 +27,19 @@ About Our AI
     <h4 class="mt-4">Training &amp; Data</h4>
     <p>
         Our models are fine-tuned on data derived from publicly available state appeal decisions
-        from California, New York, and Washington. When we initially tried to obtain actual appeal
-        letters through public records requests, the requests were denied for privacy reasons.
+        from California, and other states. 
         Instead, we use the public decisions &mdash; which describe the diagnosis, treatment,
-        denial reason, and outcome &mdash; to generate synthetic training examples.
-        No real patient appeals or private health information are used in training.
+        denial reason, and outcome of appeal &mdash; to generate synthetic training examples.
+        Additionally de-Identified records are used for fine tuning when availavle.
     </p>
     <p>
         We fine-tune using <a href="https://en.wikipedia.org/wiki/Fine-tuning_(deep_learning)#Parameter-efficient_fine-tuning" target="_blank" rel="noopener noreferrer">LoRA (Low-Rank Adaptation)</a>,
         an efficient technique that adapts a small fraction of model parameters while preserving the
-        base model's medical knowledge. After fine-tuning, we quantize the models to reduce their
-        size and power consumption while maintaining quality.
+        base model's "knowledge." After fine-tuning, we quantize the models to reduce their
+        size and power consumption while maintaining quality. In general generating an appeal uses less power than playing a video game on a modern PC.
     </p>
     <p>
-        We regularly update which base models we use as better open medical language models become available.
+        We update which base models we use as better open language models become available.
     </p>
 
     <h4 class="mt-4">Sustainability</h4>
@@ -64,7 +63,7 @@ About Our AI
 
     <h4 class="mt-4">Open Source</h4>
     <p>
-        Fight Health Insurance is open source. You can find our code on
+        Fight Health Insurance is mostly open source. You can find our code on
         <a href="https://github.com/fighthealthinsurance" target="_blank" rel="noopener noreferrer">GitHub</a>.
         We believe transparency is especially important when AI is involved in healthcare.
     </p>
