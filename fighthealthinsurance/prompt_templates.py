@@ -4,7 +4,7 @@ This module contains templates for both professional and patient users.
 """
 
 import string
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Union
 
 from fighthealthinsurance.models import ChatType
 
@@ -40,7 +40,7 @@ NEW_CHAT_PATIENT_TEMPLATE = PromptTemplate(
 )
 
 
-def get_intro_template(chat_type: ChatType) -> PromptTemplate:
+def get_intro_template(chat_type: Union[str, ChatType]) -> PromptTemplate:
     """Return the appropriate template based on chat type.
 
     Patient chats get a compassionate, jargon-free template.
