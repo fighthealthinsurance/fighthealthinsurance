@@ -670,7 +670,7 @@ class OngoingChatAdmin(admin.ModelAdmin):
 
     @admin.display(boolean=True, description="Edited")
     def has_edited(self, obj: OngoingChat) -> bool:
-        return bool(obj.edited_chat_history)
+        return bool(obj.edited_chat_history and len(obj.edited_chat_history) > 0)
 
 
 @admin.register(ChooserTask)
