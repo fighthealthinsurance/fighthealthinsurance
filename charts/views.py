@@ -46,7 +46,15 @@ def _get_excluded_hashed_emails():
     """Return hashed test emails to exclude from exports."""
     return [
         Denial.get_hashed_email(e)
-        for e in ("farts@farts.com", "holden@pigscanfly.ca", "holden.karau@gmail.com")
+        for e in (
+            "farts@farts.com",
+            "holden@pigscanfly.ca",
+            "holden.karau@gmail.com",
+            "holden@fighthealthinsurance.com",
+            "warrick@fighthealthinsurance.com",
+            "test@test.com",
+            "",
+        )
     ]
 
 
