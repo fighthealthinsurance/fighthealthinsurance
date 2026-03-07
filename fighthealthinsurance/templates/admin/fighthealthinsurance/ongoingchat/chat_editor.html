@@ -192,8 +192,8 @@
 {% if original %}
 <div class="chat-editor-container">
   <div class="tab-buttons">
-    <button type="button" class="active" onclick="showTab('original')">Original Chat</button>
-    <button type="button" onclick="showTab('edited')">Edited Chat</button>
+    <button type="button" class="active" data-tab="original" onclick="showTab('original')">Original Chat</button>
+    <button type="button" data-tab="edited" onclick="showTab('edited')">Edited Chat</button>
   </div>
   <div class="tab-content">
     <!-- Original (read-only) tab -->
@@ -261,6 +261,7 @@
     }
     messages.forEach(function(msg) {
       const role = sanitizeRole(msg.role);
+      const content = typeof msg.content === 'string' ? msg.content : String(msg.content || '');
       const div = document.createElement('div');
       div.className = 'chat-message role-' + role;
       div.innerHTML =
@@ -268,7 +269,7 @@
           '<span class="chat-role-badge">' + escapeHtml(role) + '</span>' +
           (msg.timestamp ? '<span class="chat-timestamp">' + escapeHtml(msg.timestamp) + '</span>' : '') +
         '</div>' +
-        '<div class="chat-content">' + escapeHtml(msg.content) + '</div>';
+        '<div class="chat-content">' + escapeHtml(content) + '</div>';
       container.appendChild(div);
     });
   }
@@ -283,6 +284,7 @@
     }
     messages.forEach(function(msg, idx) {
       const role = sanitizeRole(msg.role);
+      const content = typeof msg.content === 'string' ? msg.content : String(msg.content || '');
       const div = document.createElement('div');
       div.className = 'chat-message role-' + role;
       div.setAttribute('data-idx', idx);
@@ -302,7 +304,7 @@
         '</div>' +
         '<div class="chat-content-editable" contenteditable="true" ' +
           'onblur="window._chatEditor.updateContent(' + idx + ', this.innerText)">' +
-          escapeHtml(msg.content) +
+          escapeHtml(content) +
         '</div>';
       container.appendChild(div);
     });
@@ -378,7 +380,7 @@
     }
     const original = getFieldValue('chat_history');
     // Deep copy
-    setFieldValue('edited_chat_history', JSON.parse(JSON.stringify(original)));
+    setFieldValue('edited_chat_history', JSON.parse(JSON.stringify(original || [])));
     renderEditableMessages();
   };
 
@@ -387,7 +389,7 @@
     document.getElementById('tab-edited').style.display = tabName === 'edited' ? '' : 'none';
     const buttons = document.querySelectorAll('.tab-buttons button');
     buttons.forEach(function(btn) {
-      btn.classList.toggle('active', btn.textContent.toLowerCase().indexOf(tabName) !== -1);
+      btn.classList.toggle('active', btn.dataset.tab === tabName);
     });
   };
 
