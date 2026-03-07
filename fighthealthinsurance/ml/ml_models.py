@@ -2321,7 +2321,7 @@ class DeepInfra(RemoteFullOpenLike):
             ModelDescription(
                 cost=400,
                 name="deepseek",
-                internal_name="deepseek-ai/DeepSeek-R1-Turbo",
+                internal_name="deepseek-ai/DeepSeek-R1-0528-Turbo",
             ),
         ]
 
