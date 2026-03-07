@@ -66,6 +66,68 @@ class TestDenialAdmin(TestCase):
         self.assertTrue(len(self.admin.search_fields) > 0)
 
 
+class TestOngoingChatAdmin(TestCase):
+    """Test OngoingChatAdmin configuration."""
+
+    def setUp(self):
+        self.site = AdminSite()
+        self.admin = OngoingChatAdmin(OngoingChat, self.site)
+
+    def test_change_form_template_set(self):
+        """Should use custom chat editor template."""
+        self.assertIn("chat_editor", self.admin.change_form_template)
+
+    def test_list_display_includes_message_count(self):
+        """Should show message count in list."""
+        self.assertIn("message_count", self.admin.list_display)
+
+    def test_list_display_includes_has_edited(self):
+        """Should show edited status in list."""
+        self.assertIn("has_edited", self.admin.list_display)
+
+    def test_search_fields_configured(self):
+        """Should have searchable fields."""
+        self.assertIn("denied_item", self.admin.search_fields)
+        self.assertIn("session_key", self.admin.search_fields)
+
+    def test_readonly_fields_includes_chat_history(self):
+        """Original chat_history should be read-only."""
+        self.assertIn("chat_history", self.admin.readonly_fields)
+
+    def test_fieldsets_structured(self):
+        """Should have Chat Data and Denial Info fieldsets."""
+        fieldset_names = [fs[0] for fs in self.admin.fieldsets]
+        self.assertIn("Chat Data", fieldset_names)
+        self.assertIn("Denial Info", fieldset_names)
+
+    def test_message_count_empty(self):
+        """Should return 0 for empty chat history."""
+        chat = OngoingChat()
+        self.assertEqual(self.admin.message_count(chat), 0)
+
+    def test_message_count_with_messages(self):
+        """Should return correct count for messages."""
+        chat = OngoingChat(
+            chat_history=[
+                {"role": "user", "content": "hello"},
+                {"role": "assistant", "content": "hi"},
+            ]
+        )
+        self.assertEqual(self.admin.message_count(chat), 2)
+
+    def test_has_edited_false_when_empty(self):
+        """Should return False when no edited history."""
+        chat = OngoingChat()
+        self.assertFalse(self.admin.has_edited(chat))
+
+    def test_has_edited_true_when_present(self):
+        """Should return True when edited history exists."""
+        chat = OngoingChat(
+            edited_chat_history=[{"role": "user", "content": "edited"}]
+        )
+        self.assertTrue(self.admin.has_edited(chat))
+
+
 class TestAdminAccess(TestCase):
     """Test admin page access for superusers."""
 
@@ -111,6 +173,26 @@ class TestAdminAccess(TestCase):
         self.client.login(username="admin", password="adminpass123")
         response = self.client.get(f"{self.ADMIN_URL}fighthealthinsurance/chatleads/")
         self.assertEqual(response.status_code, 200)
+
+    def test_ongoingchat_changelist(self):
+        """OngoingChat changelist should be accessible."""
+        self.client.login(username="admin", password="adminpass123")
+        response = self.client.get(
+            f"{self.ADMIN_URL}fighthealthinsurance/ongoingchat/"
+        )
+        self.assertEqual(response.status_code, 200)
+
+    def test_ongoingchat_change_form_with_custom_template(self):
+        """OngoingChat change form should load with custom chat editor template."""
+        self.client.login(username="admin", password="adminpass123")
+        chat = OngoingChat.objects.create(
+            chat_history=[{"role": "user", "content": "test message"}]
+        )
+        response = self.client.get(
+            f"{self.ADMIN_URL}fighthealthinsurance/ongoingchat/{chat.pk}/change/"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "chat-editor-container")
 
 
 class TestAdminActions(TestCase):
