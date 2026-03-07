@@ -2298,6 +2298,8 @@ class AppealsBackendHelper:
         # Take all collected appeals and synthesize the best one using the
         # highest-quality internal model. This runs after all drafts have
         # already been streamed to the user so it doesn't block them.
+        # We emit keepalives every 20s and enforce a 200s hard timeout so
+        # the client (which reconnects after 240s of silence) stays alive.
         if len(collected_appeal_texts) >= 2:
             yield json.dumps(
                 {
@@ -2306,22 +2308,47 @@ class AppealsBackendHelper:
                 }
             ) + "\n"
             try:
-                synthesized = await appealGenerator.synthesize_appeals(
-                    appeal_texts=collected_appeal_texts,
-                    denial_text=str(denial.denial_text) if denial.denial_text else None,
-                    procedure=str(denial.procedure) if denial.procedure else None,
-                    diagnosis=str(denial.diagnosis) if denial.diagnosis else None,
-                )
-                if synthesized:
-                    saved = await save_appeal(synthesized)
-                    subbed = await sub_in_appeals(saved)
-                    subbed["synthesized"] = "true"
-                    yield await format_response(subbed)
-                    new += 1
-                    logger.info(
-                        f"Synthesized appeal generated from {len(collected_appeal_texts)} drafts"
+                synthesis_task = asyncio.ensure_future(
+                    appealGenerator.synthesize_appeals(
+                        appeal_texts=collected_appeal_texts,
+                        denial_text=(
+                            str(denial.denial_text) if denial.denial_text else None
+                        ),
+                        procedure=(str(denial.procedure) if denial.procedure else None),
+                        diagnosis=(str(denial.diagnosis) if denial.diagnosis else None),
                     )
+                )
+                # Emit keepalives while synthesis is running, up to 200s
+                SYNTHESIS_TIMEOUT = 200
+                KEEPALIVE_INTERVAL = 20
+                elapsed = 0
+                while not synthesis_task.done() and elapsed < SYNTHESIS_TIMEOUT:
+                    try:
+                        await asyncio.wait_for(
+                            asyncio.shield(synthesis_task),
+                            timeout=KEEPALIVE_INTERVAL,
+                        )
+                    except asyncio.TimeoutError:
+                        elapsed += KEEPALIVE_INTERVAL
+                        yield "\n"
+                        continue
+                    break
+
+                if not synthesis_task.done():
+                    synthesis_task.cancel()
+                    logger.warning(f"Synthesis timed out after {SYNTHESIS_TIMEOUT}s")
                 else:
-                    logger.debug("Synthesis returned no result, skipping")
+                    synthesized = synthesis_task.result()
+                    if synthesized:
+                        saved = await save_appeal(synthesized)
+                        subbed = await sub_in_appeals(saved)
+                        subbed["synthesized"] = "true"
+                        yield await format_response(subbed)
+                        new += 1
+                        logger.info(
+                            f"Synthesized appeal generated from {len(collected_appeal_texts)} drafts"
+                        )
+                    else:
+                        logger.debug("Synthesis returned no result, skipping")
             except Exception:
                 logger.opt(exception=True).warning("Final appeal synthesis failed")
