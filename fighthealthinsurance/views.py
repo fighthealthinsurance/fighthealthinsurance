@@ -603,7 +603,9 @@ class ShareAppealView(View):
 def send_delete_confirmation_email(email: str, token: str) -> None:
     """Send email asking user to confirm data deletion request."""
     params = urlencode({"token": token, "email": email})
-    confirmation_link = f"https://www.fightpaperwork.com/confirm-delete?{params}"
+    confirmation_link = (
+        f"https://{settings.FIGHT_PAPERWORK_DOMAIN}/confirm-delete?{params}"
+    )
     send_fallback_email(
         "Confirm Data Deletion Request",
         "delete_data_confirmation",
@@ -660,7 +662,12 @@ class RemoveDataView(View):
 
 
 class ConfirmDeleteDataView(View):
-    """View that handles the email confirmation link for data deletion."""
+    """View that handles the email confirmation link for data deletion.
+
+    GET shows a confirmation page; POST performs the actual deletion.
+    This two-step approach prevents email scanners and link prefetch
+    bots from triggering deletion by following the emailed link.
+    """
 
     def _error_response(self, request, error_message):
         return render(
@@ -673,31 +680,44 @@ class ConfirmDeleteDataView(View):
             },
         )
 
-    def get(self, request):
-        token = request.GET.get("token")
-        email = request.GET.get("email")
-
-        if not token or not email:
-            return self._error_response(
-                request, "Invalid confirmation link. Please try again."
-            )
-
+    def _validate_token(self, token_str, email):
+        """Validate token and email, return (delete_token, error_message) tuple."""
+        if not token_str or not email:
+            return None, "Invalid confirmation link. Please try again."
         try:
-            delete_token = DeleteToken.objects.get(token=token, email=email)
+            delete_token = DeleteToken.objects.get(token=token_str, email=email)
         except DeleteToken.DoesNotExist:
-            return self._error_response(
-                request,
+            return (
+                None,
                 "Invalid or already used confirmation link. Please request a new one.",
             )
-
         if delete_token.expires_at < timezone.now():
             delete_token.delete()
-            return self._error_response(
-                request,
-                "This confirmation link has expired. Please request a new one.",
-            )
+            return None, "This confirmation link has expired. Please request a new one."
+        return delete_token, None
 
-        # Token is valid — perform deletion
+    def get(self, request):
+        token_str = request.GET.get("token")
+        email = request.GET.get("email")
+        delete_token, error = self._validate_token(token_str, email)
+        if error:
+            return self._error_response(request, error)
+        return render(
+            request,
+            "confirm_delete.html",
+            context={
+                "title": "Confirm Data Deletion",
+                "email": email,
+                "token": token_str,
+            },
+        )
+
+    def post(self, request):
+        token_str = request.POST.get("token")
+        email = request.POST.get("email")
+        delete_token, error = self._validate_token(token_str, email)
+        if error:
+            return self._error_response(request, error)
         RemoveDataHelper.remove_data_for_email(email)
         delete_token.delete()
         return render(
