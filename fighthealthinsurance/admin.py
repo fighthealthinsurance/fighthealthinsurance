@@ -661,13 +661,13 @@ class OngoingChatAdmin(admin.ModelAdmin):
     )
 
     @admin.display(description="Messages")
-    def message_count(self, obj):
+    def message_count(self, obj: OngoingChat) -> int:
         if obj.chat_history:
             return len(obj.chat_history)
         return 0
 
     @admin.display(boolean=True, description="Edited")
-    def has_edited(self, obj):
+    def has_edited(self, obj: OngoingChat) -> bool:
         return bool(obj.edited_chat_history)
 
 

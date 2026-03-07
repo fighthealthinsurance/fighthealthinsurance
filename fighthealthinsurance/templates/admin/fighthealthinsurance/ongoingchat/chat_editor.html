@@ -246,6 +246,12 @@
     return div.innerHTML;
   }
 
+  var ALLOWED_ROLES = ['user', 'assistant', 'agent'];
+  function sanitizeRole(role) {
+    role = (role || 'user').toLowerCase();
+    return ALLOWED_ROLES.indexOf(role) !== -1 ? role : 'user';
+  }
+
   function renderReadOnlyMessages(containerId, messages) {
     const container = document.getElementById(containerId);
     container.innerHTML = '';
@@ -254,7 +260,7 @@
       return;
     }
     messages.forEach(function(msg) {
-      const role = (msg.role || 'user').toLowerCase();
+      const role = sanitizeRole(msg.role);
       const div = document.createElement('div');
       div.className = 'chat-message role-' + role;
       div.innerHTML =
@@ -276,7 +282,7 @@
       return;
     }
     messages.forEach(function(msg, idx) {
-      const role = (msg.role || 'user').toLowerCase();
+      const role = sanitizeRole(msg.role);
       const div = document.createElement('div');
       div.className = 'chat-message role-' + role;
       div.setAttribute('data-idx', idx);
