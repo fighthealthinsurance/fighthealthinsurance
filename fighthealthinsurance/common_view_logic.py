@@ -2166,7 +2166,9 @@ class AppealsBackendHelper:
                     pubmed_context = results[0]
                 else:
                     pubmed_context = None
-                if isinstance(results[1], str):
+                if isinstance(results[1], list):
+                    ml_citation_context = results[1]
+                elif isinstance(results[1], str):
                     ml_citation_context = results[1]
                 else:
                     ml_citation_context = None
