@@ -438,23 +438,9 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
             )
             return
 
-        # For patients we need the e-mail to allow data deletion since we don't have
-        # accounts or lead objects to link to.
-        if is_patient:
-            if not email:
-                await self.send_json_message(
-                    {"error": "Email is required for patient users."}
-                )
-                return
-            try:
-                # Validate the email format
-                validate_email(email)
-            except ValidationError:
-                await self.send_json_message({"error": "Invalid email format."})
-                return
-
         try:
-            # Determine chat_type and professional_user once, consolidating all detection logic
+            # Determine chat_type and professional_user once, consolidating all detection logic.
+            # This must run BEFORE email validation so we use the server-derived is_patient.
             professional_user = None
             chat_type = ChatType.PATIENT  # default
 
@@ -496,8 +482,23 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                     )
                     chat_type = ChatType.PATIENT
 
-            # Sync is_patient for backward compatibility
+            # Use server-derived is_patient for all subsequent logic
             is_patient = chat_type == ChatType.PATIENT
+
+            # For patients we need the e-mail to allow data deletion since we don't have
+            # accounts or lead objects to link to.
+            if is_patient:
+                if not email:
+                    await self.send_json_message(
+                        {"error": "Email is required for patient users."}
+                    )
+                    return
+                try:
+                    # Validate the email format
+                    validate_email(email)
+                except ValidationError:
+                    await self.send_json_message({"error": "Invalid email format."})
+                    return
 
             # Extract tracking info from websocket scope (privacy-aware)
             tracking_info = extract_tracking_info_from_scope(

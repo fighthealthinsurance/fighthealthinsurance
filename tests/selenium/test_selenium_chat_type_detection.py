@@ -62,9 +62,8 @@ class SeleniumPatientChatTypeTest(FHISeleniumBase, StaticLiveServerTestCase):
         self.fill_consent_form(email=test_email)
         self.click("button[type='submit']")
 
-        # Wait for chat interface to load
-        self.wait_for_element("#chat-interface-root", timeout=10)
-        self.wait(1)
+        # Wait for chat interface to load and localStorage to be populated
+        self.wait_for_page_ready(localstorage_key="fhi_user_info")
 
         # Verify user info is stored in localStorage (patient flow)
         user_info_json = self.execute_script(
@@ -87,8 +86,7 @@ class SeleniumPatientChatTypeTest(FHISeleniumBase, StaticLiveServerTestCase):
         self.fill_consent_form(email=test_email)
         self.click("button[type='submit']")
 
-        self.wait_for_element("#chat-interface-root", timeout=10)
-        self.wait(1)
+        self.wait_for_page_ready(localstorage_key="fhi_user_info")
 
         # Patient consent should NOT create a ChatLeads entry
         final_count = ChatLeads.objects.count()
@@ -113,8 +111,7 @@ class SeleniumPatientChatTypeTest(FHISeleniumBase, StaticLiveServerTestCase):
 
         self.click("button[type='submit']")
 
-        self.wait_for_element("#chat-interface-root", timeout=15)
-        self.wait(1)
+        self.wait_for_page_ready(localstorage_key="fhi_user_info")
 
         # Verify user info stored
         user_info_json = self.execute_script(

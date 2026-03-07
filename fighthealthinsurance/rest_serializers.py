@@ -13,6 +13,7 @@ from fighthealthinsurance import forms as core_forms
 from fighthealthinsurance.models import (
     Appeal,
     AppealAttachment,
+    ChatType,
     DemoRequests,
     Denial,
     MailingListSubscriber,
@@ -750,7 +751,7 @@ class OngoingChatSerializer(serializers.ModelSerializer):
     @extend_schema_field(serializers.CharField())
     def get_user_name(self, obj):
         """Get the name of the user (professional or patient)."""
-        if obj.chat_type == "patient" and obj.user:
+        if obj.chat_type == ChatType.PATIENT and obj.user:
             return obj.user.email
         elif obj.professional_user:
             return obj.professional_user.get_display_name()

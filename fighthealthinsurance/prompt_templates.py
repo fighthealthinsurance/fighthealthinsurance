@@ -6,6 +6,8 @@ This module contains templates for both professional and patient users.
 import string
 from typing import Any, Dict, Optional
 
+from fighthealthinsurance.models import ChatType
+
 
 class PromptTemplate:
     """Base class for all prompt templates."""
@@ -38,12 +40,12 @@ NEW_CHAT_PATIENT_TEMPLATE = PromptTemplate(
 )
 
 
-def get_intro_template(chat_type: str) -> PromptTemplate:
+def get_intro_template(chat_type: ChatType) -> PromptTemplate:
     """Return the appropriate template based on chat type.
 
     Patient chats get a compassionate, jargon-free template.
     Professional and trial professional chats get the professional template.
     """
-    if chat_type == "patient":
+    if chat_type == ChatType.PATIENT:
         return NEW_CHAT_PATIENT_TEMPLATE
     return NEW_CHAT_PROFESSIONAL_TEMPLATE
