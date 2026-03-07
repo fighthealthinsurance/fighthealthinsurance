@@ -175,6 +175,42 @@
         </a>
       </li>
       <li>
+        <a href="{% url 'charts:chooser_ranked_export' %}">
+          <strong>Chooser Ranked Answers Export</strong>
+          <div class="link-description">Export highest-ranked answers for synthetic denials as JSONL</div>
+        </a>
+      </li>
+      <li>
+        <a href="{% url 'charts:denial_appeal_export' %}">
+          <strong>Denial + Appeal Export</strong>
+          <div class="link-description">Export de-identified denial and chosen appeal pairs as JSONL (non-pro only)</div>
+        </a>
+      </li>
+      <li>
+        <a href="{% url 'charts:chat_export' %}">
+          <strong>Chat Export</strong>
+          <div class="link-description">Export de-identified chat histories as JSONL (non-pro only)</div>
+        </a>
+      </li>
+      <li>
+        <a href="{% url 'charts:questions_by_procedure_export' %}">
+          <strong>Questions by Procedure Export</strong>
+          <div class="link-description">Export generated questions by procedure + diagnosis as JSONL</div>
+        </a>
+      </li>
+      <li>
+        <a href="{% url 'charts:denial_questions_export' %}">
+          <strong>Denial Questions Export</strong>
+          <div class="link-description">Export denial questions with answer status as JSONL (non-pro only)</div>
+        </a>
+      </li>
+      <li>
+        <a href="{% url 'charts:pubmed_article_export' %}">
+          <strong>PubMed Article Summaries Export</strong>
+          <div class="link-description">Export summarized PubMed articles as JSONL</div>
+        </a>
+      </li>
+      <li>
         <a href="{% url 'charts:pro_signups_csv' %}">
           <strong>Pro Signups CSV</strong>
           <div class="link-description">Export professional signups as CSV</div>

@@ -1,20 +1,99 @@
-from django.http import HttpResponse
-from django.shortcuts import render
+import json
+import os
+from functools import wraps
 
+from django.http import HttpResponse, HttpResponseForbidden, StreamingHttpResponse
+from django.shortcuts import render
 from django.views import View
 from django.contrib.admin.views.decorators import staff_member_required
-from django.db.models import Count, Q
+from django.db.models import Count, Exists, OuterRef, Q
 from django.utils import timezone
 from datetime import timedelta
-from fighthealthinsurance.models import Denial, InterestedProfessional
+
+from fighthealthinsurance.models import (
+    Appeal,
+    Denial,
+    DenialQA,
+    GenericQuestionGeneration,
+    InterestedProfessional,
+    OngoingChat,
+    ProposedAppeal,
+    PubMedArticleSummarized,
+    ChooserTask,
+    ChooserVote,
+)
 from fhi_users.models import ProfessionalDomainRelation
 from bokeh.plotting import figure
 from bokeh.embed import components
 from bokeh.models import ColumnDataSource
 import pandas as pd
 import csv
-from django.http import HttpResponse, StreamingHttpResponse
-import json
+
+
+def export_enabled_required(view_func):
+    """Decorator that gates export views behind the EXPORT_ENABLED=1 env var."""
+
+    @wraps(view_func)
+    def wrapper(request, *args, **kwargs):
+        if os.environ.get("EXPORT_ENABLED") != "1":
+            return HttpResponseForbidden("Exports are not enabled.")
+        return view_func(request, *args, **kwargs)
+
+    return wrapper
+
+
+def _get_excluded_hashed_emails():
+    """Return hashed test emails to exclude from exports."""
+    return [
+        Denial.get_hashed_email(e)
+        for e in (
+            "farts@farts.com",
+            "holden@pigscanfly.ca",
+            "holden.karau@gmail.com",
+            "holden@fighthealthinsurance.com",
+            "warrick@fighthealthinsurance.com",
+            "test@test.com",
+            "",
+        )
+    ]
+
+
+def _non_pro_unflagged_denials():
+    """Return base Denial queryset excluding pro users, flagged, and test emails."""
+    return (
+        Denial.objects.exclude(hashed_email__in=_get_excluded_hashed_emails())
+        .filter(
+            creating_professional__isnull=True,
+            primary_professional__isnull=True,
+            domain__isnull=True,
+        )
+        .filter(Q(flag_for_exclude=False) | Q(flag_for_exclude__isnull=True))
+    )
+
+
+def _get_verified_or_raw(denial, field):
+    """Return verified_{field} if set, else {field}."""
+    return getattr(denial, f"verified_{field}") or getattr(denial, field)
+
+
+def _make_jsonl_export_view(generator_func, filename):
+    """Create a staff-only, export-gated streaming JSONL view."""
+
+    @staff_member_required
+    @export_enabled_required
+    def view(request):
+        response = StreamingHttpResponse(
+            streaming_content=generator_func(),
+            content_type="application/x-ndjson",
+        )
+        response["Content-Disposition"] = f'attachment; filename="{filename}"'
+        return response
+
+    view.__name__ = generator_func.__name__.replace("generate_", "").replace(
+        "_lines", "_export"
+    )
+    view.__qualname__ = view.__name__
+    return view
 
 
 class BaseEmailsWithRawEmailCSV(View):
@@ -193,16 +272,10 @@ def incomplete_signups_csv(request):
     return response
 
 
-@staff_member_required
-def de_identified_export(request):
-    # Exclude test emails
-    limit = request.GET.get("limit")
-    hashed_farts = Denial.get_hashed_email("farts@farts.com")
-    hashed_pcf = Denial.get_hashed_email("holden@pigscanfly.ca")
-    hashed_gmail = Denial.get_hashed_email("holden.karau@gmail.com")
-    exclude_emails = [hashed_farts, hashed_pcf, hashed_gmail]
+def generate_de_identified_lines(limit=None):
+    """Yield JSONL lines of de-identified denial data."""
     safe_denials = Denial.objects.exclude(
-        Q(hashed_email__in=exclude_emails)
+        Q(hashed_email__in=_get_excluded_hashed_emails())
         | Q(manual_deidentified_denial="")
         | Q(manual_deidentified_denial__isnull=True)
     ).values(
@@ -223,14 +296,172 @@ def de_identified_export(request):
     if limit:
         safe_denials = safe_denials[0 : int(limit)]
 
-    def stream_json_lines(queryset):
-        for record in queryset.iterator():
-            yield json.dumps(record, default=str) + "\n"
+    for record in safe_denials.iterator():
+        yield json.dumps(record, default=str) + "\n"
 
-    return StreamingHttpResponse(
-        streaming_content=stream_json_lines(safe_denials),
+
+@staff_member_required
+@export_enabled_required
+def de_identified_export(request):
+    limit = request.GET.get("limit")
+    response = StreamingHttpResponse(
+        streaming_content=generate_de_identified_lines(limit=limit),
         content_type="application/x-ndjson",
     )
+    response["Content-Disposition"] = 'attachment; filename="de_identified.jsonl"'
+    return response
+
+
+def generate_chooser_ranked_lines():
+    """Yield JSONL lines of highest-ranked candidate for each chooser task."""
+    tasks_with_votes = (
+        ChooserTask.objects.filter(votes__isnull=False)
+        .distinct()
+        .prefetch_related("candidates")
+    )
+
+    # Batch all vote counts in a single query to avoid N+1
+    all_vote_counts = (
+        ChooserVote.objects.filter(task__in=tasks_with_votes)
+        .values("task_id", "chosen_candidate_id")
+        .annotate(vote_count=Count("id"))
+    )
+    # Build {task_id: [(chosen_candidate_id, vote_count), ...]} sorted by vote_count desc
+    votes_by_task: dict[int, list[tuple[int, int]]] = {}
+    for row in all_vote_counts:
+        votes_by_task.setdefault(row["task_id"], []).append(
+            (row["chosen_candidate_id"], row["vote_count"])
+        )
+    for task_id in votes_by_task:
+        votes_by_task[task_id].sort(key=lambda x: x[1], reverse=True)
+
+    for task in tasks_with_votes:
+        task_votes = votes_by_task.get(task.id)
+        if not task_votes:
+            continue
+
+        candidates_by_id = {c.id: c for c in task.candidates.all()}
+
+        top_candidate_id, top_vote_count = task_votes[0]
+        chosen = candidates_by_id.get(top_candidate_id)
+        if chosen is None:
+            continue
+
+        total_votes = sum(vc for _, vc in task_votes)
+
+        all_candidates = [
+            {
+                "id": c.id,
+                "candidate_index": c.candidate_index,
+                "kind": c.kind,
+                "model_name": c.model_name,
+                "content": c.content,
+                "metadata": c.metadata,
+            }
+            for c in candidates_by_id.values()
+            if c.is_active
+        ]
+        all_candidates.sort(key=lambda c: c["candidate_index"])
+
+        record = {
+            "task_id": task.id,
+            "task_type": task.task_type,
+            "context": task.context_json,
+            "source": task.source,
+            "chosen_candidate": {
+                "id": chosen.id,
+                "candidate_index": chosen.candidate_index,
+                "kind": chosen.kind,
+                "model_name": chosen.model_name,
+                "content": chosen.content,
+            },
+            "vote_count": top_vote_count,
+            "total_votes": total_votes,
+            "all_candidates": all_candidates,
+        }
+        yield json.dumps(record, default=str) + "\n"
+
+
+def generate_denial_appeal_lines():
+    """Yield JSONL lines of de-identified denial + chosen appeal pairs (non-pro only)."""
+    has_chosen_proposed = Exists(
+        ProposedAppeal.objects.filter(for_denial=OuterRef("pk"), chosen=True)
+    )
+    has_appeal = Exists(Appeal.objects.filter(for_denial=OuterRef("pk")))
+    denials = (
+        _non_pro_unflagged_denials()
+        .filter(has_chosen_proposed | has_appeal)
+        .prefetch_related("proposedappeal_set", "appeal_set", "denialqa_set")
+    )
+
+    for denial in denials:
+        denial_text = denial.manual_deidentified_denial or denial.denial_text
+        procedure = _get_verified_or_raw(denial, "procedure")
+        diagnosis = _get_verified_or_raw(denial, "diagnosis")
+
+        appeal_text = None
+        if denial.manual_deidentified_appeal:
+            appeal_text = denial.manual_deidentified_appeal
+        else:
+            chosen_proposed = next(
+                (p for p in denial.proposedappeal_set.all() if p.chosen), None
+            )
+            if chosen_proposed:
+                appeal_text = chosen_proposed.appeal_text
+            else:
+                appeals = list(denial.appeal_set.all())
+                if appeals:
+                    appeal_text = appeals[0].appeal_text
+
+        if not appeal_text:
+            continue
+
+        # Build Q&A from prefetched DenialQA records
+        qa_pairs = []
+        for qa in denial.denialqa_set.all():
+            answer = qa.text_answer if qa.text_answer else qa.bool_answer
+            if answer is not None:
+                qa_pairs.append({"question": qa.question, "answer": answer})
+
+        record = {
+            "denial_id": str(denial.denial_id),
+            "denial_text": denial_text,
+            "procedure": procedure,
+            "diagnosis": diagnosis,
+            "insurance_company": denial.insurance_company,
+            "appeal_text": appeal_text,
+            "references": denial.references,
+            "generated_questions": denial.generated_questions,
+            "qa_pairs": qa_pairs,
+            "ml_citation_context": denial.ml_citation_context,
+            "pubmed_context": denial.pubmed_context,
+        }
+        yield json.dumps(record, default=str) + "\n"
+
+
+def generate_chat_lines():
+    """Yield JSONL lines of de-identified chat histories (non-pro only)."""
+    chats = (
+        OngoingChat.objects.filter(
+            professional_user__isnull=True,
+            domain__isnull=True,
+        )
+        .exclude(chat_history__isnull=True)
+        .exclude(chat_history=[])
+        .exclude(hashed_email__in=_get_excluded_hashed_emails())
+        .prefetch_related("appeals")
+    )
+
+    for chat in chats:
+        appeal_texts = [a.appeal_text for a in chat.appeals.all() if a.appeal_text]
+        record = {
+            "chat_id": str(chat.id),
+            "chat_history": chat.chat_history,
+            "denied_item": chat.denied_item,
+            "denied_reason": chat.denied_reason,
+            "appeal_texts": appeal_texts,
+        }
+        yield json.dumps(record, default=str) + "\n"
 
 
 @staff_member_required
@@ -506,21 +737,116 @@ def users_by_day(request):
     )
 
 
+def generate_questions_by_procedure_lines():
+    """Yield JSONL lines of generated questions by procedure + diagnosis."""
+    queryset = GenericQuestionGeneration.objects.all().order_by(
+        "procedure", "diagnosis"
+    )
+
+    for row in queryset.iterator(chunk_size=200):
+        record = {
+            "procedure": row.procedure,
+            "diagnosis": row.diagnosis,
+            "generated_questions": row.generated_questions,
+        }
+        yield json.dumps(record, default=str) + "\n"
+
+
+def generate_denial_questions_lines():
+    """Yield JSONL lines of denial questions with answer status (non-pro only)."""
+    denials = (
+        _non_pro_unflagged_denials()
+        .filter(generated_questions__isnull=False)
+        .exclude(generated_questions=[])
+    )
+
+    # Batch-fetch all answered questions to avoid N+1 (uses subquery, not materialized IDs)
+    answered_by_denial: dict[str, set[str]] = {}
+    for denial_id, question in DenialQA.objects.filter(denial__in=denials).values_list(
+        "denial_id", "question"
+    ):
+        answered_by_denial.setdefault(denial_id, set()).add(question)
+
+    for denial in denials.iterator(chunk_size=100):
+        if not denial.generated_questions:
+            continue
+
+        answered_questions = answered_by_denial.get(denial.denial_id, set())
+
+        questions = []
+        for question_text, default_answer in denial.generated_questions:
+            questions.append(
+                {
+                    "question": question_text,
+                    "default_answer": default_answer,
+                    "was_answered": question_text in answered_questions,
+                }
+            )
+
+        # Sort: answered first, then unanswered
+        questions.sort(key=lambda q: (not q["was_answered"], q["question"]))
+
+        procedure = _get_verified_or_raw(denial, "procedure")
+        diagnosis = _get_verified_or_raw(denial, "diagnosis")
+
+        record = {
+            "denial_id": str(denial.denial_id),
+            "procedure": procedure,
+            "diagnosis": diagnosis,
+            "questions": questions,
+        }
+        yield json.dumps(record, default=str) + "\n"
+
+
+def generate_pubmed_article_lines():
+    """Yield JSONL lines of summarized PubMed articles."""
+    queryset = (
+        PubMedArticleSummarized.objects.exclude(basic_summary__isnull=True)
+        .exclude(basic_summary="")
+        .values(
+            "pmid",
+            "doi",
+            "query",
+            "title",
+            "abstract",
+            "basic_summary",
+            "says_effective",
+            "publication_date",
+            "article_url",
+        )
+    )
+
+    for record in queryset.iterator(chunk_size=200):
+        yield json.dumps(record, default=str) + "\n"
+
+
+chooser_ranked_export = _make_jsonl_export_view(
+    generate_chooser_ranked_lines, "chooser_ranked.jsonl"
+)
+denial_appeal_export = _make_jsonl_export_view(
+    generate_denial_appeal_lines, "denial_appeal.jsonl"
+)
+chat_export = _make_jsonl_export_view(generate_chat_lines, "chat.jsonl")
+questions_by_procedure_export = _make_jsonl_export_view(
+    generate_questions_by_procedure_lines, "questions_by_procedure.jsonl"
+)
+denial_questions_export = _make_jsonl_export_view(
+    generate_denial_questions_lines, "denial_questions.jsonl"
+)
+pubmed_article_export = _make_jsonl_export_view(
+    generate_pubmed_article_lines, "pubmed_articles.jsonl"
+)
+
+
 @staff_member_required
 def procedures_denied_chart(request):
     """
     Create a chart showing the count of each procedure that has been denied,
     grouped together in a case-insensitive and space-insensitive way.
     """
-    # Exclude test emails
-    hashed_farts = Denial.get_hashed_email("farts@farts.com")
-    hashed_pcf = Denial.get_hashed_email("holden@pigscanfly.ca")
-    hashed_gmail = Denial.get_hashed_email("holden.karau@gmail.com")
-    exclude_emails = [hashed_farts, hashed_pcf, hashed_gmail]
-
     # Get all denials with procedures that aren't empty or None
     denials_with_procedures = (
-        Denial.objects.exclude(Q(hashed_email__in=exclude_emails))
+        Denial.objects.exclude(Q(hashed_email__in=_get_excluded_hashed_emails()))
         .exclude(Q(procedure__isnull=True) | Q(procedure=""))
         .values_list("procedure", flat=True)
     )
