@@ -96,14 +96,14 @@ export function scrubPersonalInfo(message: string, userInfo: UserInfo | null): s
   if (userInfo.firstName) {
     scrubbedMessage = scrubbedMessage.replace(
       new RegExp(`\\b${escapeRegExp(userInfo.firstName)}\\b`, "gi"),
-      "[FIRST_NAME]"
+      "{{FIRST_NAME}}"
     );
   }
 
   if (userInfo.lastName) {
     scrubbedMessage = scrubbedMessage.replace(
       new RegExp(`\\b${escapeRegExp(userInfo.lastName)}\\b`, "gi"),
-      "[LAST_NAME]"
+      "{{LAST_NAME}}"
     );
   }
 
@@ -111,7 +111,7 @@ export function scrubPersonalInfo(message: string, userInfo: UserInfo | null): s
   if (userInfo.address) {
     scrubbedMessage = scrubbedMessage.replace(
       new RegExp(escapeRegExp(userInfo.address), "gi"),
-      "[ADDRESS]"
+      "{{ADDRESS}}"
     );
   }
 
@@ -119,7 +119,7 @@ export function scrubPersonalInfo(message: string, userInfo: UserInfo | null): s
   if (userInfo.city) {
     scrubbedMessage = scrubbedMessage.replace(
       new RegExp(`\\b${escapeRegExp(userInfo.city)}\\b`, "gi"),
-      "[CITY]"
+      "{{CITY}}"
     );
   }
 
@@ -127,7 +127,7 @@ export function scrubPersonalInfo(message: string, userInfo: UserInfo | null): s
   if (userInfo.state) {
     scrubbedMessage = scrubbedMessage.replace(
       new RegExp(`\\b${escapeRegExp(userInfo.state)}\\b`, "gi"),
-      "[STATE]"
+      "{{STATE}}"
     );
   }
 
@@ -135,7 +135,7 @@ export function scrubPersonalInfo(message: string, userInfo: UserInfo | null): s
   if (userInfo.zipCode) {
     scrubbedMessage = scrubbedMessage.replace(
       new RegExp(`\\b${escapeRegExp(userInfo.zipCode)}\\b`, "gi"),
-      "[ZIP_CODE]"
+      "{{ZIP_CODE}}"
     );
   }
 
@@ -143,7 +143,7 @@ export function scrubPersonalInfo(message: string, userInfo: UserInfo | null): s
   if (userInfo.email) {
     scrubbedMessage = scrubbedMessage.replace(
       new RegExp(escapeRegExp(userInfo.email), "gi"),
-      "[EMAIL]"
+      "{{Your Email Address}}"
     );
   }
 
@@ -159,31 +159,31 @@ export function restorePersonalInfo(message: string, userInfo: UserInfo | null):
   let restoredMessage = message;
 
   if (userInfo.firstName) {
-    restoredMessage = restoredMessage.replace(/\[FIRST_NAME\]/g, userInfo.firstName);
+    restoredMessage = restoredMessage.replace(/\{\{FIRST_NAME\}\}/g, userInfo.firstName);
   }
 
   if (userInfo.lastName) {
-    restoredMessage = restoredMessage.replace(/\[LAST_NAME\]/g, userInfo.lastName);
+    restoredMessage = restoredMessage.replace(/\{\{LAST_NAME\}\}/g, userInfo.lastName);
   }
 
   if (userInfo.address) {
-    restoredMessage = restoredMessage.replace(/\[ADDRESS\]/g, userInfo.address);
+    restoredMessage = restoredMessage.replace(/\{\{ADDRESS\}\}/g, userInfo.address);
   }
 
   if (userInfo.city) {
-    restoredMessage = restoredMessage.replace(/\[CITY\]/g, userInfo.city);
+    restoredMessage = restoredMessage.replace(/\{\{CITY\}\}/g, userInfo.city);
   }
 
   if (userInfo.state) {
-    restoredMessage = restoredMessage.replace(/\[STATE\]/g, userInfo.state);
+    restoredMessage = restoredMessage.replace(/\{\{STATE\}\}/g, userInfo.state);
   }
 
   if (userInfo.zipCode) {
-    restoredMessage = restoredMessage.replace(/\[ZIP_CODE\]/g, userInfo.zipCode);
+    restoredMessage = restoredMessage.replace(/\{\{ZIP_CODE\}\}/g, userInfo.zipCode);
   }
 
   if (userInfo.email) {
-    restoredMessage = restoredMessage.replace(/\[EMAIL\]/g, userInfo.email);
+    restoredMessage = restoredMessage.replace(/\{\{Your Email Address\}\}/g, userInfo.email);
   }
 
   return restoredMessage;

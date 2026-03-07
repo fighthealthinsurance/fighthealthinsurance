@@ -16,10 +16,11 @@ class PriorAuthTextSubstituter:
     mechanism for safe substitutions.
 
     Example placeholders that can be used in templates:
-    - $patient_name, $patient_dob - Patient information
-    - $provider_name, $provider_npi - Provider information
-    - $practice_name, $practice_address - Practice/domain information
-    - $today - Current date
+    - {{patient_name}}, {{patient_dob}} - Patient information
+    - {{provider_name}}, {{provider_npi}} - Provider information
+    - {{practice_name}}, {{practice_address}} - Practice/domain information
+    - {{today}} - Current date
+    Also supports legacy $variable and [variable] formats.
     """
 
     @staticmethod
@@ -53,7 +54,7 @@ class PriorAuthTextSubstituter:
             for k, v in context.items():
                 if v is None:
                     continue
-                pattern = rf"(?i)(\${k}|\[{k}\])"
+                pattern = rf"(?i)(\${k}|\[{k}\]|\{{\{{{k}\}}\}})"
                 # See https://docs.python.org/3/library/re.html#re.escape
                 escaped_value = str(v).replace("\\", r"\\")
                 proposal_text = re.sub(pattern, escaped_value, proposal_text)
@@ -78,20 +79,20 @@ class PriorAuthTextSubstituter:
 
         try:
             # Patient information
-            patient_name = prior_auth.patient_name or "[PATIENT NAME]"
+            patient_name = prior_auth.patient_name or "{{PATIENT_NAME}}"
             context["patient_name"] = patient_name
             context["patient name"] = patient_name
 
-            plan_id = prior_auth.plan_id or "[PLAN ID]"
+            plan_id = prior_auth.plan_id or "{{PLAN_ID}}"
             context["plan_id"] = plan_id
             context["plan id"] = plan_id
 
-            member_id = prior_auth.member_id or "[MEMBER ID]"
+            member_id = prior_auth.member_id or "{{MEMBER_ID}}"
             context["member_id"] = member_id
             context["member id"] = member_id
             context["enter member id"] = member_id
 
-            patient_dob = "[DATE OF BIRTH]"
+            patient_dob = "{{DATE_OF_BIRTH}}"
             if prior_auth.patient_dob:
                 patient_dob = str(prior_auth.patient_dob)
             context["patient_dob"] = patient_dob
@@ -99,11 +100,11 @@ class PriorAuthTextSubstituter:
             context["Enter DOB"] = patient_dob
 
             # Medical information
-            diagnosis = prior_auth.diagnosis or "[DIAGNOSIS]"
+            diagnosis = prior_auth.diagnosis or "{{DIAGNOSIS}}"
             context["diagnosis"] = diagnosis
-            treatment = prior_auth.treatment or "[TREATMENT]"
+            treatment = prior_auth.treatment or "{{TREATMENT}}"
             context["treatment"] = treatment
-            insurance_company = prior_auth.insurance_company or "[INSURANCE COMPANY]"
+            insurance_company = prior_auth.insurance_company or "{{INSURANCE_COMPANY}}"
             context["insurance_company"] = insurance_company
             context["insurance company"] = insurance_company
             context["health plan name"] = insurance_company
@@ -129,44 +130,44 @@ class PriorAuthTextSubstituter:
                 context["provider name"] = professional.get_display_name()
                 context["your name"] = professional.get_display_name()
                 context["your_name"] = professional.get_display_name()
-                context["provider_npi"] = professional.npi_number or "[NPI NUMBER]"
+                context["provider_npi"] = professional.npi_number or "{{NPI_NUMBER}}"
                 context["provider_type"] = (
-                    professional.provider_type or "[PROVIDER TYPE]"
+                    professional.provider_type or "{{PROVIDER_TYPE}}"
                 )
-                credentials = professional.credentials or "[CREDENTIALS]"
+                credentials = professional.credentials or "{{CREDENTIALS}}"
                 context["CREDENTIALS"] = credentials
                 context["provider_credentials"] = credentials
                 context["Your Title/Credentials"] = credentials
                 context["Your Credentials"] = credentials
 
                 # Get professional contact information
-                fax = professional.get_fax_number() or "[PROVIDER FAX]"
+                fax = professional.get_fax_number() or "{{PROVIDER_FAX}}"
                 context["provider_fax"] = fax
                 context["provider fax"] = fax
                 context["Your Contact Information"] = fax
             else:
                 # Default placeholders if no professional is associated
-                context["provider_name"] = "[PROVIDER NAME]"
-                context["provider_npi"] = "[NPI NUMBER]"
-                context["provider_type"] = "[PROVIDER TYPE]"
-                context["provider_credentials"] = "[CREDENTIALS]"
-                context["provider_fax"] = "[PROVIDER FAX]"
+                context["provider_name"] = "{{PROVIDER_NAME}}"
+                context["provider_npi"] = "{{NPI_NUMBER}}"
+                context["provider_type"] = "{{PROVIDER_TYPE}}"
+                context["provider_credentials"] = "{{CREDENTIALS}}"
+                context["provider_fax"] = "{{PROVIDER_FAX}}"
 
             # Domain/Practice information
             if prior_auth.domain:
                 domain: UserDomain = prior_auth.domain
                 context["practice_name"] = (
-                    domain.business_name or domain.display_name or "[PRACTICE NAME]"
+                    domain.business_name or domain.display_name or "{{PRACTICE_NAME}}"
                 )
                 context["practice_phone"] = (
-                    domain.visible_phone_number or "[PRACTICE PHONE]"
+                    domain.visible_phone_number or "{{PRACTICE_PHONE}}"
                 )
 
                 if domain.office_fax:
                     context["practice_fax"] = domain.office_fax
                 else:
                     context["practice_fax"] = context.get(
-                        "provider_fax", "[PRACTICE FAX]"
+                        "provider_fax", "{{PRACTICE_FAX}}"
                     )
 
                 # Address information
@@ -190,12 +191,12 @@ class PriorAuthTextSubstituter:
                 if address_parts:
                     context["practice_address"] = ", ".join(address_parts)
                 else:
-                    context["practice_address"] = "[PRACTICE ADDRESS]"
+                    context["practice_address"] = "{{PRACTICE_ADDRESS}}"
             else:
-                context["practice_name"] = "[PRACTICE NAME]"
-                context["practice_phone"] = "[PRACTICE PHONE]"
-                context["practice_fax"] = context.get("provider_fax", "[PRACTICE FAX]")
-                context["practice_address"] = "[PRACTICE ADDRESS]"
+                context["practice_name"] = "{{PRACTICE_NAME}}"
+                context["practice_phone"] = "{{PRACTICE_PHONE}}"
+                context["practice_fax"] = context.get("provider_fax", "{{PRACTICE_FAX}}")
+                context["practice_address"] = "{{PRACTICE_ADDRESS}}"
 
             # Add the date
             context["today"] = date.today().strftime("%B %d, %Y")
@@ -208,10 +209,10 @@ class PriorAuthTextSubstituter:
             if not context:
                 # Ensure we have at least the basic medical information
                 context = {
-                    "diagnosis": getattr(prior_auth, "diagnosis", "[DIAGNOSIS]"),
-                    "treatment": getattr(prior_auth, "treatment", "[TREATMENT]"),
+                    "diagnosis": getattr(prior_auth, "diagnosis", "{{DIAGNOSIS}}"),
+                    "treatment": getattr(prior_auth, "treatment", "{{TREATMENT}}"),
                     "insurance_company": getattr(
-                        prior_auth, "insurance_company", "[INSURANCE COMPANY]"
+                        prior_auth, "insurance_company", "{{INSURANCE_COMPANY}}"
                     ),
                     "today": date.today().strftime("%B %d, %Y"),
                 }
