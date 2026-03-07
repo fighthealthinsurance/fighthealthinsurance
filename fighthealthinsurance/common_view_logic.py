@@ -2265,17 +2265,9 @@ class AppealsBackendHelper:
         # Only filters out None
         filtered_appeals: Iterator[str] = filter(lambda x: x != None, appeals)
 
-        # Collect raw appeal texts for synthesis while streaming them through
-        collected_appeal_texts: list[str] = []
-
-        async def save_and_collect(appeal_text: str) -> dict[str, str]:
-            """Save the appeal and collect raw text for later synthesis."""
-            collected_appeal_texts.append(appeal_text)
-            return await save_appeal(appeal_text)
-
         # We convert to async here.
         saved_appeals: AsyncIterator[dict[str, str]] = a.map(
-            save_and_collect, filtered_appeals
+            save_appeal, filtered_appeals
         )
         # Note: we intentionally call save before substution.
         subbed_appeals: AsyncIterator[dict[str, str]] = a.map(
@@ -2303,12 +2295,16 @@ class AppealsBackendHelper:
         ) + "\n"
 
         # --- Final synthesis step ---
-        # Take all collected appeals and synthesize the best one using the
-        # highest-quality internal model. This runs after all drafts have
-        # already been streamed to the user so it doesn't block them.
+        # Query saved appeals from DB rather than collecting in-flight,
+        # so we don't interfere with the streaming pipeline.
         # We emit keepalives every 20s and enforce a 200s hard timeout so
         # the client (which reconnects after 240s of silence) stays alive.
-        if len(collected_appeal_texts) >= 2:
+        saved_appeal_texts: list[str] = [
+            str(pa.appeal_text)
+            async for pa in ProposedAppeal.objects.filter(for_denial=denial)
+            if pa.appeal_text
+        ]
+        if len(saved_appeal_texts) >= 2:
             yield json.dumps(
                 {
                     "type": "status",
@@ -2318,7 +2314,7 @@ class AppealsBackendHelper:
             try:
                 synthesis_task = asyncio.ensure_future(
                     appealGenerator.synthesize_appeals(
-                        appeal_texts=collected_appeal_texts,
+                        appeal_texts=saved_appeal_texts,
                         denial_text=(
                             str(denial.denial_text) if denial.denial_text else None
                         ),
@@ -2357,7 +2353,7 @@ class AppealsBackendHelper:
                         yield await format_response(subbed)
                         new += 1
                         logger.info(
-                            f"Synthesized appeal generated from {len(collected_appeal_texts)} drafts"
+                            f"Synthesized appeal generated from {len(saved_appeal_texts)} drafts"
                         )
                     else:
                         logger.debug("Synthesis returned no result, skipping")
