@@ -395,13 +395,15 @@ def generate_denial_appeal_lines():
         if denial.manual_deidentified_appeal:
             appeal_text = denial.manual_deidentified_appeal
         else:
-            chosen_proposed = denial.proposedappeal_set.filter(chosen=True).first()
+            chosen_proposed = next(
+                (p for p in denial.proposedappeal_set.all() if p.chosen), None
+            )
             if chosen_proposed:
                 appeal_text = chosen_proposed.appeal_text
             else:
-                appeal = denial.appeal_set.first()
-                if appeal:
-                    appeal_text = appeal.appeal_text
+                appeals = list(denial.appeal_set.all())
+                if appeals:
+                    appeal_text = appeals[0].appeal_text
 
         if not appeal_text:
             continue
@@ -750,13 +752,12 @@ def generate_denial_questions_lines():
         .exclude(generated_questions=[])
     )
 
-    # Batch-fetch all answered questions to avoid N+1
-    denial_ids = list(denials.values_list("denial_id", flat=True))
-    answered_by_denial = {}
-    for qa in DenialQA.objects.filter(denial_id__in=denial_ids).values_list(
+    # Batch-fetch all answered questions to avoid N+1 (uses subquery, not materialized IDs)
+    answered_by_denial: dict[str, set[str]] = {}
+    for denial_id, question in DenialQA.objects.filter(denial__in=denials).values_list(
         "denial_id", "question"
     ):
-        answered_by_denial.setdefault(qa[0], set()).add(qa[1])
+        answered_by_denial.setdefault(denial_id, set()).add(question)
 
     for denial in denials.iterator(chunk_size=100):
         if not denial.generated_questions:
