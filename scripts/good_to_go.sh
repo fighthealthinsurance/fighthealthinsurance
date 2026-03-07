@@ -7,6 +7,12 @@
 
 set -euo pipefail
 
+# Install tox if not available
+if ! command -v tox &>/dev/null; then
+    echo "tox not found, installing..."
+    pip install tox
+fi
+
 # Determine python version slug (default: auto-detect)
 PY_VERSION=""
 TOX_EXTRA_ARGS=()
