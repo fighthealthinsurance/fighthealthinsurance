@@ -729,8 +729,12 @@ class AppealGenerator(object):
             claim_id=denial.claim_id,
             insurance_company=insurance_company_name,
             is_tpa=is_tpa,
-            ml_context=denial.ml_citation_context,
-            pubmed_context=denial.pubmed_context,
+            ml_context=(
+                "\n".join(ml_citations_context)
+                if isinstance(ml_citations_context, list)
+                else ml_citations_context
+            ),
+            pubmed_context=pubmed_context,
             plan_context=plan_context,
             rag_context=rag_context,
         )
