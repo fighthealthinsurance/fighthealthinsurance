@@ -59,6 +59,36 @@ class TestRemoveDataView(TestCase):
         assert str(token.token) in email_body
         assert "test%40example.com" in email_body or "test@example.com" in email_body
 
+    def test_confirmation_email_contains_working_link(self):
+        """Extract the link from the email and verify it loads the confirmation page."""
+        import re
+        from urllib.parse import urlparse, parse_qs
+
+        url = reverse("remove_data")
+        self.client.post(url, {"email": "test@example.com"})
+        token = DeleteToken.objects.get(email="test@example.com")
+        email_body = mail.outbox[0].body
+
+        # Extract URL from email body
+        urls = re.findall(r"https?://[^\s]+", email_body)
+        assert len(urls) >= 1, "No URL found in email body"
+        confirmation_url = urls[0]
+
+        # Verify URL structure
+        parsed = urlparse(confirmation_url)
+        params = parse_qs(parsed.query)
+        assert parsed.path == "/confirm-delete"
+        assert params["token"] == [str(token.token)]
+        assert params["email"] == ["test@example.com"]
+
+        # Follow the link with the test client (use just path + query)
+        response = self.client.get(
+            f"{parsed.path}?{parsed.query}",
+        )
+        assert response.status_code == 200
+        assert b"Confirm Data Deletion" in response.content
+        assert b"Confirm Deletion" in response.content
+
 
 class TestConfirmDeleteDataView(TestCase):
     """Test the email confirmation link handler.

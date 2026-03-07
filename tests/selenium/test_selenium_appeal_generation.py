@@ -220,7 +220,7 @@ Cheap-O-Insurance-Corp""",
         # Retrieve the delete token from the DB and follow the confirmation flow
         delete_token = DeleteToken.objects.get(email=email)
         confirm_url = (
-            f"{self.live_server_url}/confirm_delete_data"
+            f"{self.live_server_url}/confirm-delete"
             f"?token={delete_token.token}&email={email}"
         )
         self.open(confirm_url)

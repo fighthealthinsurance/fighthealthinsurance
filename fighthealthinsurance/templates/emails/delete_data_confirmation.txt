@@ -1,4 +1,4 @@
-Hello,
+{% autoescape off %}Hello,
 
 We received a request to delete all data associated with {{ email }}.
 
@@ -10,3 +10,4 @@ This link will expire in 24 hours. If you did not request this, you can safely i
 
 Best regards,
 Fight Health Insurance Team
+{% endautoescape %}
