@@ -220,7 +220,6 @@ class TestOngoingChatAdminEditing(TestCase):
             f"{self.ADMIN_URL}fighthealthinsurance/ongoingchat/{chat.pk}/change/",
             {
                 "is_patient": "on",
-                "chat_history": json.dumps(chat.chat_history),
                 "edited_chat_history": json.dumps(edited),
                 "denied_item": "",
                 "denied_reason": "",
