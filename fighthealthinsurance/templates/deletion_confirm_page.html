@@ -1,0 +1,52 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Confirm Deletion - Fight Health Insurance{% endblock title %}
+{% block metatitle %}Confirm Data Deletion{% endblock metatitle %}
+
+{% block content %}
+<div class="container mt-5 deletion-page-container">
+    <div class="row justify-content-center">
+        <div class="col-md-8 col-lg-6">
+            <div class="card border-danger">
+                <div class="card-header bg-danger text-white">
+                    <h4 class="mb-0">⚠️ Confirm Data Deletion</h4>
+                </div>
+                <div class="card-body">
+                    <p class="lead mb-4">
+                        You are about to permanently delete all data for <strong>{{ email }}</strong>
+                    </p>
+
+                    <div class="alert alert-danger">
+                        <strong>Warning: This action cannot be undone!</strong>
+                        <p class="mb-0 mt-2">All of the following will be permanently deleted:</p>
+                        <ul class="mb-0 mt-2">
+                            <li>All appeal letters and documents</li>
+                            <li>Denial records</li>
+                            <li>Call logs and evidence</li>
+                            <li>Follow-up schedules</li>
+                            <li>Chat history</li>
+                        </ul>
+                    </div>
+
+                    <form method="post" class="mt-4">
+                        {% csrf_token %}
+                        <div class="d-grid gap-2">
+                            <button type="submit" class="btn btn-danger btn-lg">
+                                Yes, Delete All My Data
+                            </button>
+                            <a href="{% url 'root' %}" class="btn btn-outline-secondary">
+                                Cancel, Keep My Data
+                            </a>
+                        </div>
+                    </form>
+
+                    <p class="text-muted small mt-4 mb-0">
+                        Changed your mind? Simply close this page or click "Cancel" above.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock content %}

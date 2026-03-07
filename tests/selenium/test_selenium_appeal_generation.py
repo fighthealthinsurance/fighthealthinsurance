@@ -216,7 +216,20 @@ Cheap-O-Insurance-Corp""",
         self.assert_title_eventually("Delete Your Data")
         self.type("input#id_email", email)
         self.click("button#submit")
-        self.assert_title_eventually("Deleted Your Data")
+        # Two-step deletion: first page confirms request was sent
+        self.assert_title_eventually("Deletion Requested - Fight Health Insurance")
+
+        # Get the deletion token from the database
+        deletion_request = DataDeletionRequest.objects.get(hashed_email=hashed_email)
+        token = deletion_request.token
+
+        # Navigate to the confirmation page and confirm deletion
+        self.open(f"{self.live_server_url}/confirm_deletion/{token}")
+        self.assert_title_eventually("Confirm Deletion - Fight Health Insurance")
+        self.click('button[type="submit"]')
+
+        # Verify deletion completed
+        self.assert_title_eventually("Data Deleted - Fight Health Insurance")
         denials_for_user_count = Denial.objects.filter(
             hashed_email=hashed_email
         ).count()

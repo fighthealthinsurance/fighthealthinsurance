@@ -30,7 +30,13 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.debug import sensitive_post_parameters
 from django.views.generic.base import RedirectView
 
-from fighthealthinsurance import fax_views, staff_views, views
+from fighthealthinsurance import (
+    fax_views,
+    patient_export_views,
+    patient_views,
+    staff_views,
+    views,
+)
 from fighthealthinsurance.sitemap import sitemap_view
 
 
@@ -104,7 +110,7 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         name="send_mailing_list_mail",
     ),
     # Authentication
-    path("v0/auth/", include("fhi_users.urls")),
+    path("v0/auth/", include(("fhi_users.urls", "fhi_users"), namespace="fhi_users")),
     # stripe integration (TODO webhooks go here)
     # These are links we e-mail people so might have some extra junk.
     # So if there's an extra / or . at the end we ignore it.
@@ -119,7 +125,7 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         name="followup-with-a-period",
     ),
     path(
-        "v0/followup/<uuid:uuid>/<slug:hashed_email>/<slug:followup_semi_sekret>/",
+        "v0/followup/<uuid:uuid>/<slug:hashed_email>/<slug:follow_up_semi_sekret>/",
         views.FollowUpView.as_view(),
         name="followup-with-trailing-slash",
     ),
@@ -285,6 +291,16 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
     path("share_appeal", views.ShareAppealView.as_view(), name="share_appeal"),
     path("remove_data", views.RemoveDataView.as_view(), name="remove_data"),
     path(
+        "confirm_deletion/<slug:token>",
+        views.ConfirmDataDeletionView.as_view(),
+        name="confirm_deletion",
+    ),
+    path(
+        "v0/download_calendar/<uuid:denial_uuid>/<slug:hashed_email>",
+        views.DownloadCalendarView.as_view(),
+        name="download_calendar",
+    ),
+    path(
         "tos",
         cache_control(public=True)(
             cache_page(60 * 60 * 2)(views.TermsOfServiceView.as_view())
@@ -401,6 +417,52 @@ urlpatterns += [
         "explain-denial",
         views.ExplainDenialView.as_view(),
         name="explain_denial",
+    ),
+    # Patient auth and dashboard - Logged-in patient views
+    path(
+        "my/login",
+        patient_views.PatientLoginView.as_view(),
+        name="patient-login",
+    ),
+    path(
+        "my/dashboard",
+        patient_views.PatientDashboardView.as_view(),
+        name="patient-dashboard",
+    ),
+    path(
+        "my/call-log/new",
+        patient_views.CallLogCreateView.as_view(),
+        name="patient-call-log-create",
+    ),
+    path(
+        "my/call-log/<uuid:uuid>/edit",
+        patient_views.CallLogEditView.as_view(),
+        name="patient-call-log-edit",
+    ),
+    path(
+        "my/evidence/new",
+        patient_views.EvidenceCreateView.as_view(),
+        name="patient-evidence-create",
+    ),
+    path(
+        "my/evidence/<uuid:uuid>/edit",
+        patient_views.EvidenceEditView.as_view(),
+        name="patient-evidence-edit",
+    ),
+    path(
+        "my/evidence/<uuid:uuid>/download",
+        patient_views.EvidenceDownloadView.as_view(),
+        name="patient-evidence-download",
+    ),
+    path(
+        "my/export/call-logs",
+        patient_export_views.CallLogExportView.as_view(),
+        name="patient-call-log-export",
+    ),
+    path(
+        "my/export/evidence",
+        patient_export_views.EvidenceExportView.as_view(),
+        name="patient-evidence-export",
     ),
 ]
 

@@ -122,6 +122,8 @@ class FollowUpEmailSender(object):
                     "follow_up_semi_sekret": denial.follow_up_semi_sekret,
                 },
             ),
+            "signup_url": "https://www.fighthealthinsurance.com"
+            + reverse("fhi_users:signup"),
         }
 
         try:

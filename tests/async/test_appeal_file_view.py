@@ -18,7 +18,7 @@ class AppealFileViewTest(TestCase):
         # to setup a number of the users.
         self.client = APIClient()
         # Create the initial provider user has domain access
-        professional_create_url = reverse("professional_user-list")
+        professional_create_url = reverse("fhi_users:professional_user-list")
         self.domain = "newdomain"
         self.user_password = "newLongerPasswordMagicCheetoCheeto123"
         data = {
@@ -85,7 +85,7 @@ class AppealFileViewTest(TestCase):
         response = self.client.post(professional_create_url, data, format="json")
         self.assertIn(response.status_code, range(200, 300))
         # Create the initial patient user in same domainm (should have access)
-        create_patient_url = reverse("patient_user-list")
+        create_patient_url = reverse("fhi_users:patient_user-list")
         initial_patient_data = {
             "username": "initiial_patient@example.com",
             "password": self.user_password,
@@ -223,7 +223,7 @@ class AppealFileViewTest(TestCase):
         )
 
     def do_login(self, username, password, client=None):
-        url = reverse("rest_login-login")
+        url = reverse("fhi_users:rest_login-login")
         data = {
             "username": username,
             "password": password,

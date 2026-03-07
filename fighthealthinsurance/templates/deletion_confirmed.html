@@ -1,0 +1,51 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Data Deleted - Fight Health Insurance{% endblock title %}
+{% block metatitle %}Your Data Has Been Deleted{% endblock metatitle %}
+
+{% block content %}
+<div class="container mt-5 deletion-page-container">
+    <div class="row justify-content-center">
+        <div class="col-md-8 col-lg-6">
+            <div class="card">
+                <div class="card-body text-center py-5">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" fill="#28a745" class="bi bi-check-circle mb-4" viewBox="0 0 16 16">
+                        <path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14m0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16"/>
+                        <path d="m10.97 4.97-.02.022-3.473 4.425-2.093-2.094a.75.75 0 0 0-1.06 1.06L6.97 11.03a.75.75 0 0 0 1.079-.02l3.992-4.99a.75.75 0 0 0-1.071-1.05"/>
+                    </svg>
+
+                    <h2 class="mb-3">Your Data Has Been Deleted</h2>
+
+                    <p class="lead mb-4">
+                        All of your data has been permanently removed from Fight Health Insurance.
+                    </p>
+
+                    <div class="alert alert-info text-start">
+                        <strong>What was deleted:</strong>
+                        <ul class="mb-0 mt-2">
+                            <li>All appeal letters and documents</li>
+                            <li>Denial records</li>
+                            <li>Call logs and evidence</li>
+                            <li>Follow-up schedules</li>
+                            <li>Chat history</li>
+                        </ul>
+                    </div>
+
+                    <p class="mt-4">
+                        We're sorry to see you go. If you ever need help fighting health insurance denials again, we'll be here.
+                    </p>
+
+                    <div class="mt-4">
+                        <a href="{% url 'root' %}" class="btn btn-primary">Return to Home</a>
+                    </div>
+
+                    <p class="text-muted small mt-4">
+                        Questions? Contact us at <a href="mailto:support@fighthealthinsurance.com">support@fighthealthinsurance.com</a>
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock content %}

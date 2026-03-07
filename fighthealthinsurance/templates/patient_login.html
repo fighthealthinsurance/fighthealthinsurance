@@ -1,0 +1,48 @@
+{% extends 'base.html' %}
+{% load static %}
+{% block title %}
+Log In
+{% endblock title %}
+
+{% block content %}
+<div class="container">
+  <div class="card card-login mx-auto mt-5">
+    <div class="card-header">Log In</div>
+    <div class="card-body">
+      {% if error %}
+      <div class="alert alert-danger">{{ error }}</div>
+      {% endif %}
+
+      <form action="{% url 'patient-login' %}{% if request.GET.next %}?next={{ request.GET.next|urlencode }}{% endif %}" method="post" id="loginForm">
+        {% csrf_token %}
+        <div class="form-group">
+          <div class="form-label-group">
+            <label for="inputEmail">Email</label>
+            <input type="email" id="inputEmail" name="email" class="form-control"
+                   placeholder="your.email@example.com" autofocus="autofocus" required="required">
+          </div>
+        </div>
+        <div class="form-group">
+          <div class="form-label-group">
+            <label for="inputPassword">Password</label>
+            <input type="password" id="inputPassword" name="password" class="form-control"
+                   placeholder="Password" required="required">
+          </div>
+        </div>
+
+        <button class="btn btn-primary btn-block" type="submit">Log In</button>
+      </form>
+
+      <div class="text-center mt-3">
+        <p class="mb-0">
+          Don't have an account?
+          <a href="{% url 'fhi_users:signup' %}">Create one (optional)</a>
+        </p>
+        <p class="mt-2 mb-0">
+          <a href="{% url 'scan' %}" class="text-muted">Continue without an account</a>
+        </p>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock content %}

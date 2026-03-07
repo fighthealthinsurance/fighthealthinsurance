@@ -38,7 +38,7 @@ class ProfessionalUserManagementTests(TestCase):
 
         # Create admin user
         self.admin_user = User.objects.create_user(
-            username=f"adminuser🐼{self.domain.id}",
+            username=f"adminuser\U0001f43c{self.domain.id}",
             password="adminpass",
             email="admin@example.com",
             first_name="Admin",
@@ -64,7 +64,7 @@ class ProfessionalUserManagementTests(TestCase):
 
         # Create regular professional user (active, not admin)
         self.regular_user = User.objects.create_user(
-            username=f"reguser🐼{self.domain.id}",
+            username=f"reguser\U0001f43c{self.domain.id}",
             password="regpass",
             email="reg@example.com",
             first_name="Regular",
@@ -88,7 +88,7 @@ class ProfessionalUserManagementTests(TestCase):
 
         # Create pending professional user
         self.pending_user = User.objects.create_user(
-            username=f"pendinguser🐼{self.domain.id}",
+            username=f"pendinguser\U0001f43c{self.domain.id}",
             password="pendingpass",
             email="pending@example.com",
             first_name="Pending",
@@ -121,7 +121,7 @@ class ProfessionalUserManagementTests(TestCase):
         session.save()
 
         # List active professionals
-        url = reverse("professional_user-list-active-in-domain")
+        url = reverse("fhi_users:professional_user-list-active-in-domain")
         response = self.client.post(url, format="json")
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -149,7 +149,7 @@ class ProfessionalUserManagementTests(TestCase):
         session.save()
 
         # List pending professionals
-        url = reverse("professional_user-list-pending-in-domain")
+        url = reverse("fhi_users:professional_user-list-pending-in-domain")
         response = self.client.post(url, format="json")
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -172,7 +172,7 @@ class ProfessionalUserManagementTests(TestCase):
         session.save()
 
         # Accept the pending professional
-        url = reverse("professional_user-accept")
+        url = reverse("fhi_users:professional_user-accept")
         data = {
             "professional_user_id": self.pending_professional.id,
             "domain_id": str(self.domain.id),
@@ -192,13 +192,13 @@ class ProfessionalUserManagementTests(TestCase):
         self.assertTrue(self.pending_professional.active)
 
         # Check that listing pending users no longer includes this professional
-        url = reverse("professional_user-list-pending-in-domain")
+        url = reverse("fhi_users:professional_user-list-pending-in-domain")
         response = self.client.post(url, format="json")
         pending_data = response.json()
         self.assertEqual(len(pending_data), 0)
 
         # Check that listing active users now includes this professional
-        url = reverse("professional_user-list-active-in-domain")
+        url = reverse("fhi_users:professional_user-list-active-in-domain")
         response = self.client.post(url, format="json")
         active_data = response.json()
         professional_ids = [p["professional_user_id"] for p in active_data]
@@ -215,7 +215,7 @@ class ProfessionalUserManagementTests(TestCase):
         session.save()
 
         # Reject the pending professional
-        url = reverse("professional_user-reject")
+        url = reverse("fhi_users:professional_user-reject")
         data = {
             "professional_user_id": self.pending_professional.id,
             "domain_id": str(self.domain.id),
@@ -232,13 +232,13 @@ class ProfessionalUserManagementTests(TestCase):
         self.assertTrue(self.pending_relation.rejected)
 
         # Check that listing pending users no longer includes this professional
-        url = reverse("professional_user-list-pending-in-domain")
+        url = reverse("fhi_users:professional_user-list-pending-in-domain")
         response = self.client.post(url, format="json")
         pending_data = response.json()
         self.assertEqual(len(pending_data), 0)
 
         # Check that listing active users still doesn't include this professional
-        url = reverse("professional_user-list-active-in-domain")
+        url = reverse("fhi_users:professional_user-list-active-in-domain")
         response = self.client.post(url, format="json")
         active_data = response.json()
         professional_ids = [p["professional_user_id"] for p in active_data]
@@ -255,7 +255,7 @@ class ProfessionalUserManagementTests(TestCase):
         session.save()
 
         # Try to accept the pending professional
-        url = reverse("professional_user-accept")
+        url = reverse("fhi_users:professional_user-accept")
         data = {
             "professional_user_id": self.pending_professional.id,
             "domain_id": str(self.domain.id),
@@ -267,7 +267,7 @@ class ProfessionalUserManagementTests(TestCase):
         self.assertEqual(response.json()["status"], "error")
 
         # Try to reject the pending professional
-        url = reverse("professional_user-reject")
+        url = reverse("fhi_users:professional_user-reject")
         response = self.client.post(url, data, format="json")
 
         # Should be forbidden for non-admin users
@@ -282,7 +282,7 @@ class ProfessionalUserManagementTests(TestCase):
     def test_signup_user_with_new_domain_is_admin(self):
         """Test that a user who creates a new domain is properly set as an admin after completing signup"""
         # Create professional user with new domain via the signup API
-        url = reverse("professional_user-list")
+        url = reverse("fhi_users:professional_user-list")
         data = {
             "user_signup_info": {
                 "username": "newdomainuser@example.com",
@@ -348,7 +348,7 @@ class ProfessionalUserManagementTests(TestCase):
         session.save()
 
         # Create a new professional in the domain using the admin privileges
-        create_url = reverse("professional_user-create-professional-in-current-domain")
+        create_url = reverse("fhi_users:professional_user-create-professional-in-current-domain")
         provider_data = {
             "email": "newstaff@example.com",
             "first_name": "Staff",
@@ -390,7 +390,7 @@ class ProfessionalUserManagementTests(TestCase):
         self.assertFalse(self.regular_relation.admin)
 
         # Make the regular user an admin
-        url = reverse("professional_user-make-admin")
+        url = reverse("fhi_users:professional_user-make-admin")
         data = {
             "professional_user_id": self.regular_professional.id,
             "domain_id": str(self.domain.id),
@@ -411,7 +411,7 @@ class ProfessionalUserManagementTests(TestCase):
         self.client.login(username=self.regular_user.username, password="regpass")
 
         # Accept the pending user first to make them active
-        url = reverse("professional_user-accept")
+        url = reverse("fhi_users:professional_user-accept")
         data = {
             "professional_user_id": self.pending_professional.id,
             "domain_id": str(self.domain.id),
@@ -420,7 +420,7 @@ class ProfessionalUserManagementTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
         # Then make them an admin
-        url = reverse("professional_user-make-admin")
+        url = reverse("fhi_users:professional_user-make-admin")
         data = {
             "professional_user_id": self.pending_professional.id,
             "domain_id": str(self.domain.id),
@@ -441,7 +441,7 @@ class ProfessionalUserManagementTests(TestCase):
         session["domain_id"] = str(self.domain.id)
         session.save()
 
-        url = reverse("professional_user-accept")
+        url = reverse("fhi_users:professional_user-accept")
         data = {
             "professional_user_id": self.pending_professional.id,
             "domain_id": str(self.domain.id),
@@ -456,7 +456,7 @@ class ProfessionalUserManagementTests(TestCase):
         session.save()
 
         # Try to make pending user an admin
-        url = reverse("professional_user-make-admin")
+        url = reverse("fhi_users:professional_user-make-admin")
         data = {
             "professional_user_id": self.pending_professional.id,
             "domain_id": str(self.domain.id),

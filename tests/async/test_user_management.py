@@ -88,7 +88,7 @@ class UserDomainManagementTests(TestCase):
 
     def test_update_address_with_partial_data(self) -> None:
         """Test updating only some domain fields works correctly."""
-        url = reverse("user_domain-update-address")
+        url = reverse("fhi_users:user_domain-update-address")
 
         # Login as admin
         self.client.login(
@@ -118,7 +118,7 @@ class UserDomainManagementTests(TestCase):
 
     def test_list_domain_returns_all_fields(self) -> None:
         """Test that domain list endpoint returns all expected fields."""
-        url = reverse("user_domain-list")
+        url = reverse("fhi_users:user_domain-list")
 
         # Login as regular professional
         self.client.login(username=self.pro_user.username, password=self.pro_password)
@@ -189,7 +189,7 @@ class ProfessionalProfileManagementTests(TestCase):
 
     def test_get_current_user(self) -> None:
         """Test getting the current professional user's information."""
-        url = reverse("professional_profile-get-current-user")
+        url = reverse("fhi_users:professional_profile-get-current-user")
 
         # Test unauthenticated access
         response = self.client.get(url)
@@ -210,7 +210,7 @@ class ProfessionalProfileManagementTests(TestCase):
 
     def test_get_current_user_not_professional(self) -> None:
         """Test get_current_user when the user is not a professional user."""
-        url = reverse("professional_profile-get-current-user")
+        url = reverse("fhi_users:professional_profile-get-current-user")
 
         # Create a regular user (not a professional)
         User.objects.create_user(
@@ -233,7 +233,7 @@ class ProfessionalProfileManagementTests(TestCase):
 
     def test_update_professional_partial_fields(self) -> None:
         """Test updating only some fields of professional profile."""
-        url = reverse("professional_profile-update-profile")
+        url = reverse("fhi_users:professional_profile-update-profile")
 
         # Login
         self.client.login(username=self.user.username, password=self.password)
@@ -256,7 +256,7 @@ class ProfessionalProfileManagementTests(TestCase):
 
     def test_update_professional_with_invalid_npi(self) -> None:
         """Test updating professional with invalid NPI number fails validation."""
-        url = reverse("professional_profile-update-profile")
+        url = reverse("fhi_users:professional_profile-update-profile")
 
         # Login
         self.client.login(username=self.user.username, password=self.password)
@@ -315,7 +315,7 @@ class PasswordManagementTests(TestCase):
 
     def test_password_too_short(self) -> None:
         """Test changing to a password that's too short."""
-        url = reverse("password-change-password")
+        url = reverse("fhi_users:password-change-password")
 
         # Login
         self.client.login(username=self.user.username, password=self.password)
@@ -337,7 +337,7 @@ class PasswordManagementTests(TestCase):
 
     def test_password_no_digits(self) -> None:
         """Test changing to a password without digits fails validation."""
-        url = reverse("password-change-password")
+        url = reverse("fhi_users:password-change-password")
 
         # Login
         self.client.login(username=self.user.username, password=self.password)
@@ -359,7 +359,7 @@ class PasswordManagementTests(TestCase):
 
     def test_password_all_digits(self) -> None:
         """Test changing to a password with only digits fails validation."""
-        url = reverse("password-change-password")
+        url = reverse("fhi_users:password-change-password")
 
         # Login
         self.client.login(username=self.user.username, password=self.password)
@@ -381,7 +381,7 @@ class PasswordManagementTests(TestCase):
 
     def test_patient_password_change(self) -> None:
         """Test password change works for patient users too."""
-        url = reverse("password-change-password")
+        url = reverse("fhi_users:password-change-password")
         new_password = "NewPatientPass456!"
 
         # Login as patient
