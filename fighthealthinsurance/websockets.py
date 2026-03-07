@@ -450,17 +450,11 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                     lead = await ChatLeads.objects.filter(
                         session_id=session_key
                     ).afirst()
-                    if lead and (not lead.drug or lead.drug == ""):
-                        # ChatLeads entry without a drug means trial professional
+                    if lead:
+                        # ChatLeads entry = trial professional (email + company from trial form)
                         chat_type = ChatType.TRIAL_PROFESSIONAL
                         logger.info(
                             f"Trial professional chat for session {session_key}"
-                        )
-                    elif lead:
-                        # Lead with a drug — drug-specific microsite lead, treat as patient
-                        chat_type = ChatType.PATIENT
-                        logger.debug(
-                            f"Drug-specific lead for session {session_key}, treating as patient"
                         )
                     else:
                         chat_type = ChatType.PATIENT

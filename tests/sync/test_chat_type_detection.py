@@ -127,7 +127,7 @@ class ChatTypeModelTest(TestCase):
 
 
 class ChatLeadsTrialDetectionTest(TestCase):
-    """Test that ChatLeads drug field correctly distinguishes trial professionals."""
+    """Test that any ChatLeads entry indicates a trial professional."""
 
     def test_lead_without_drug_is_trial_professional(self):
         import uuid
@@ -146,7 +146,8 @@ class ChatLeadsTrialDetectionTest(TestCase):
         lead = ChatLeads.objects.get(session_id=session_id)
         self.assertFalse(lead.drug)
 
-    def test_lead_with_drug_is_not_trial_professional(self):
+    def test_lead_with_drug_is_still_trial_professional(self):
+        """A ChatLeads entry with a drug field is still a trial professional."""
         import uuid
 
         session_id = str(uuid.uuid4())
@@ -162,4 +163,7 @@ class ChatLeadsTrialDetectionTest(TestCase):
         )
 
         lead = ChatLeads.objects.get(session_id=session_id)
+        # Drug field is stored but doesn't affect trial professional status
         self.assertEqual(lead.drug, "Ozempic")
+        # Any ChatLeads entry = trial professional
+        self.assertTrue(lead.company)
