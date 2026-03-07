@@ -42,6 +42,29 @@ class AppealTemplateGenerator(object):
 
 
 class AppealGenerator(object):
+    QUALITY_KEYWORDS = (
+        "evidence",
+        "medical necessity",
+        "medically necessary",
+        "appeal",
+        "policy",
+        "clinical",
+    )
+
+    MAX_SYNTHESIS_DRAFTS = 3
+
+    @staticmethod
+    def _score_appeal_text(text: str, diagnosis: Optional[str] = None) -> float:
+        """Score an appeal text by length, keyword presence, and diagnosis match."""
+        stripped = text.strip()
+        lower = stripped.lower()
+        length_score = min(len(stripped), 3000)
+        keyword_score = sum(
+            10 for kw in AppealGenerator.QUALITY_KEYWORDS if kw in lower
+        )
+        diagnosis_bonus = 50 if diagnosis and diagnosis.lower() in lower else 0
+        return length_score * 0.3 + keyword_score + diagnosis_bonus
+
     # System prompt for the synthesis step
     SYNTHESIS_SYSTEM_PROMPT = (
         "You are an expert health insurance appeal writer. You will be given several "
@@ -1019,6 +1042,17 @@ class AppealGenerator(object):
         if not appeal_texts:
             return None
 
+        # Select the best drafts if we have too many to fit in the prompt
+        if len(appeal_texts) > self.MAX_SYNTHESIS_DRAFTS:
+            appeal_texts = sorted(
+                appeal_texts,
+                key=lambda t: self._score_appeal_text(t, diagnosis),
+                reverse=True,
+            )[: self.MAX_SYNTHESIS_DRAFTS]
+            logger.info(
+                f"Selected top {self.MAX_SYNTHESIS_DRAFTS} drafts for synthesis"
+            )
+
         all_internal = ml_router.internal_models_by_cost
         if not all_internal:
             logger.warning("No internal models available for appeal synthesis")
@@ -1069,28 +1103,12 @@ class AppealGenerator(object):
             task_quality[id(coro)] = float(m.quality())
             tasks.append(coro)
 
-        QUALITY_KEYWORDS = (
-            "evidence",
-            "medical necessity",
-            "medically necessary",
-            "appeal",
-            "policy",
-            "clinical",
-        )
-
         def score_fn(result: Optional[str], awaitable: Any) -> float:
             if result is None:
                 return -1.0
-            stripped = result.strip()
-            lower = stripped.lower()
-            # Cap length reward to discourage excessive verbosity
-            length_score = min(len(stripped), 3000)
+            text_score = self._score_appeal_text(result, diagnosis)
             model_score = task_quality.get(id(awaitable), 100.0)
-            keyword_score = sum(10 for kw in QUALITY_KEYWORDS if kw in lower)
-            diagnosis_bonus = 50 if diagnosis and diagnosis.lower() in lower else 0
-            return (
-                length_score * 0.3 + model_score * 0.3 + keyword_score + diagnosis_bonus
-            )
+            return text_score + model_score * 0.3
 
         try:
             best = await best_within_timelimit(tasks, score_fn=score_fn, timeout=60)

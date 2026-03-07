@@ -214,3 +214,50 @@ class TestSynthesizeAppeals(unittest.TestCase):
         # Should contain the truncated version (3000 chars), not the full 5000
         self.assertIn("X" * 3000, prompt)
         self.assertNotIn("X" * 3001, prompt)
+
+    @patch("fighthealthinsurance.generate_appeal.best_within_timelimit")
+    @patch("fighthealthinsurance.generate_appeal.ml_router")
+    def test_selects_top_drafts_when_many_provided(self, mock_router, mock_best_within):
+        """When more than MAX_SYNTHESIS_DRAFTS are provided, only the top-scored are used."""
+        mock_model = MagicMock(spec=RemoteModelLike)
+        mock_model._infer_no_context = AsyncMock(return_value="A" * 100)
+        mock_router.internal_models_by_cost = [mock_model]
+
+        async def call_first_task(tasks, **_kwargs):
+            return await tasks[0]
+
+        mock_best_within.side_effect = call_first_task
+
+        # Create 5 drafts with varying quality — high-quality ones have keywords
+        good_1 = (
+            "This appeal presents strong evidence of medical necessity and clinical support for the policy. "
+            * 10
+        )
+        good_2 = (
+            "We appeal this denial based on clinical evidence and established medical policy guidelines. "
+            * 10
+        )
+        good_3 = (
+            "The evidence clearly shows this is medically necessary per the clinical policy. "
+            * 10
+        )
+        weak_1 = "Hello world this is a short filler text without relevant terms. " * 3
+        weak_2 = "Another filler draft that says nothing useful at all. " * 3
+
+        all_drafts = [weak_1, good_1, weak_2, good_2, good_3]
+
+        asyncio.run(
+            self._run_synthesize(
+                appeal_texts=all_drafts,
+            )
+        )
+
+        prompt = mock_model._infer_no_context.call_args.kwargs["prompt"]
+        # Should have exactly 3 drafts in the prompt
+        self.assertEqual(prompt.count("--- DRAFT"), 3)
+        # The good drafts should be included, the weak ones excluded
+        self.assertIn(good_1, prompt)
+        self.assertIn(good_2, prompt)
+        self.assertIn(good_3, prompt)
+        self.assertNotIn(weak_1, prompt)
+        self.assertNotIn(weak_2, prompt)
