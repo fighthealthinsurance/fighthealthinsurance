@@ -2298,9 +2298,9 @@ class AppealsBackendHelper:
         yield json.dumps(
             {
                 "type": "status",
-                "message": "Regular appeals finished. Checking once more..."
-            } + "\n"
-        )
+                "message": "Regular appeals finished. Checking once more...",
+            }
+        ) + "\n"
 
         # --- Final synthesis step ---
         # Take all collected appeals and synthesize the best one using the
@@ -2326,8 +2326,9 @@ class AppealsBackendHelper:
                         diagnosis=(str(denial.diagnosis) if denial.diagnosis else None),
                     )
                 )
-                # Emit keepalives while synthesis is running, up to 200s
-                SYNTHESIS_TIMEOUT = 200
+                # Emit keepalives while synthesis is running, up to 120s
+                # (best_within_timelimit uses 60s internally + fallback)
+                SYNTHESIS_TIMEOUT = 120
                 KEEPALIVE_INTERVAL = 20
                 elapsed = 0
                 while not synthesis_task.done() and elapsed < SYNTHESIS_TIMEOUT:

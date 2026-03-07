@@ -1004,8 +1004,8 @@ class AppealGenerator(object):
         diagnosis: Optional[str] = None,
     ) -> Optional[str]:
         """
-        Synthesize multiple appeal drafts into one best appeal using the
-        highest-quality internal model.
+        Synthesize multiple appeal drafts into one best appeal by trying ALL
+        internal models in parallel and picking the best result within 60s.
 
         Args:
             appeal_texts: List of appeal letter texts to synthesize from.
@@ -1019,9 +1019,9 @@ class AppealGenerator(object):
         if not appeal_texts:
             return None
 
-        best_model = ml_router.best_internal_model()
-        if best_model is None:
-            logger.warning("No internal model available for appeal synthesis")
+        all_internal = ml_router.internal_models_by_cost
+        if not all_internal:
+            logger.warning("No internal models available for appeal synthesis")
             return None
 
         # Build the user prompt with all drafts
@@ -1045,22 +1045,41 @@ class AppealGenerator(object):
             f"{numbered_drafts}"
         )
 
-        try:
-            result = await best_model._infer_no_context(
-                system_prompts=[self.SYNTHESIS_SYSTEM_PROMPT],
-                prompt=prompt,
-                temperature=0.3,
-            )
-            if result and len(result.strip()) > 50:
-                synthesized: str = str(result)
-                logger.info(
-                    f"Successfully synthesized {len(appeal_texts)} appeals into one "
-                    f"({len(synthesized)} chars) using {best_model}"
+        async def try_model(model: RemoteModelLike) -> Optional[str]:
+            try:
+                result = await model._infer_no_context(
+                    system_prompts=[self.SYNTHESIS_SYSTEM_PROMPT],
+                    prompt=prompt,
+                    temperature=0.3,
                 )
-                return synthesized
-            logger.warning(f"Synthesis returned insufficient result from {best_model}")
+                if result and len(result.strip()) > 50:
+                    logger.debug(
+                        f"Synthesis candidate from {model}: {len(result)} chars"
+                    )
+                    return str(result)
+            except Exception:
+                logger.opt(exception=True).debug(f"Synthesis failed on {model}")
+            return None
+
+        tasks: List[Coroutine[Any, Any, Optional[str]]] = [
+            try_model(m) for m in all_internal
+        ]
+
+        def score_fn(result: Optional[str], _awaitable: Any) -> float:
+            if result is None:
+                return -1.0
+            return float(len(result.strip()))
+
+        try:
+            best = await best_within_timelimit(tasks, score_fn=score_fn, timeout=60)
+            if best:
+                logger.info(
+                    f"Synthesized {len(appeal_texts)} appeals into one "
+                    f"({len(best)} chars) using best of {len(all_internal)} models"
+                )
+                return str(best)
         except Exception:
             logger.opt(exception=True).warning(
-                f"Appeal synthesis failed on {best_model}"
+                "All synthesis models failed within time limit"
             )
         return None
