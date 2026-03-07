@@ -1987,7 +1987,7 @@ class AppealsBackendHelper:
             if appeal.appeal_text is not None:
                 logger.debug(f"Found existing appeal {appeal}, yielding")
                 existing_appeal_dict = await sub_in_appeals(
-                    {"id": str(appeal.id), "content": appeal.appeal_text}
+                    {"id": str(appeal.id), "content": appeal.appeal_text, "new": False}
                 )
                 yield await format_response(existing_appeal_dict)
 
@@ -2237,7 +2237,7 @@ class AppealsBackendHelper:
                 pass
             passed = time.time() - t
             logger.debug(f"Saved {appeal_text} after {passed} seconds")
-            return {"id": id, "content": appeal_text}
+            return {"id": id, "content": appeal_text, "new": True}
 
         # Yield status: generating appeals
         yield json.dumps(
@@ -2289,10 +2289,18 @@ class AppealsBackendHelper:
 
         new = 0
         async for i in interleaved:
+            # Hack our interleave messages are just newlines
             if i and len(i) > 10:
                 new = new + 1
+            logger.debug(f"Sending appeal count: {new+old}...")
             yield i
-        logger.debug(f"All appeals sent {new} and {old}")
+        logger.debug(f"Normal appeals sent {new} and {old}")
+        yield json.dumps(
+            {
+                "type": "status",
+                "message": "Regular appeals finished. Checking once more..."
+            } + "\n"
+        )
 
         # --- Final synthesis step ---
         # Take all collected appeals and synthesize the best one using the
