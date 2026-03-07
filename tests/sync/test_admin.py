@@ -1,5 +1,7 @@
 """Tests for Django admin configuration."""
 
+import json
+
 from django.test import TestCase, Client
 from django.contrib.admin.sites import AdminSite
 from django.contrib.auth import get_user_model
@@ -127,9 +129,7 @@ class TestOngoingChatAdmin(TestCase):
 
     def test_has_edited_true_when_present(self):
         """Should return True when edited history exists."""
-        chat = OngoingChat(
-            edited_chat_history=[{"role": "user", "content": "edited"}]
-        )
+        chat = OngoingChat(edited_chat_history=[{"role": "user", "content": "edited"}])
         self.assertTrue(self.admin.has_edited(chat))
 
 
@@ -182,9 +182,7 @@ class TestAdminAccess(TestCase):
     def test_ongoingchat_changelist(self):
         """OngoingChat changelist should be accessible."""
         self.client.login(username="admin", password="adminpass123")
-        response = self.client.get(
-            f"{self.ADMIN_URL}fighthealthinsurance/ongoingchat/"
-        )
+        response = self.client.get(f"{self.ADMIN_URL}fighthealthinsurance/ongoingchat/")
         self.assertEqual(response.status_code, 200)
 
     def test_ongoingchat_change_form_with_custom_template(self):
@@ -198,9 +196,6 @@ class TestAdminAccess(TestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "chat-editor-container")
-
-
-import json
 
 
 class TestOngoingChatAdminEditing(TestCase):
