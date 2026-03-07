@@ -301,7 +301,7 @@
           '<button type="button" class="delete-btn" onclick="window._chatEditor.deleteMsg(' + idx + ')" title="Delete">&times;</button>' +
         '</div>' +
         '<div class="chat-content-editable" contenteditable="true" ' +
-          'onblur="window._chatEditor.updateContent(' + idx + ', this.textContent)">' +
+          'onblur="window._chatEditor.updateContent(' + idx + ', this.innerText)">' +
           escapeHtml(msg.content) +
         '</div>';
       container.appendChild(div);
