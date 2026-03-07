@@ -218,7 +218,8 @@ Cheap-O-Insurance-Corp""",
         self.click("button#submit")
         self.assert_title_eventually("Check Your Email")
         # Retrieve the delete token from the DB and follow the confirmation flow
-        delete_token = DeleteToken.objects.get(email=email)
+        hashed = Denial.get_hashed_email(email)
+        delete_token = DeleteToken.objects.get(hashed_email=hashed)
         confirm_url = (
             f"{self.live_server_url}/confirm-delete"
             f"?token={delete_token.token}&email={email}"

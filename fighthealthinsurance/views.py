@@ -27,6 +27,7 @@ from django.views.decorators.clickjacking import xframe_options_exempt
 from django.views.decorators.csrf import csrf_exempt, ensure_csrf_cookie
 from django.views.decorators.http import require_http_methods
 from django.views.generic.base import TemplateView
+from django.utils import timezone
 from django.views.generic.edit import FormView
 
 import stripe
@@ -41,7 +42,6 @@ from fighthealthinsurance.helpers.stripe_helpers import StripeWebhookHelper
 from fighthealthinsurance.models import DeleteToken, StripeRecoveryInfo
 from fighthealthinsurance.type_utils import User
 from fighthealthinsurance.utils import send_fallback_email
-from django.utils import timezone
 
 
 class BlogPostMetadata(TypedDict, total=False):
@@ -636,10 +636,11 @@ class RemoveDataView(View):
 
         if form.is_valid():
             email = form.cleaned_data["email"]
+            hashed_email = models.Denial.get_hashed_email(email)
             # Delete any existing tokens for this email
-            DeleteToken.objects.filter(email=email).delete()
+            DeleteToken.objects.filter(hashed_email=hashed_email).delete()
             # Create a new token
-            delete_token = DeleteToken(email=email)
+            delete_token = DeleteToken(hashed_email=hashed_email)
             delete_token.save()
             # Send confirmation email
             send_delete_confirmation_email(email, str(delete_token.token))
@@ -685,7 +686,10 @@ class ConfirmDeleteDataView(View):
         if not token_str or not email:
             return None, "Invalid confirmation link. Please try again."
         try:
-            delete_token = DeleteToken.objects.get(token=token_str, email=email)
+            hashed_email = models.Denial.get_hashed_email(email)
+            delete_token = DeleteToken.objects.get(
+                token=token_str, hashed_email=hashed_email
+            )
         except DeleteToken.DoesNotExist:
             return (
                 None,

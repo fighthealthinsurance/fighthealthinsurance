@@ -2183,7 +2183,7 @@ class ChooserSkip(ExportModelOperationsMixin("ChooserSkip"), models.Model):  # t
 class DeleteToken(models.Model):
     """Token for confirming data deletion requests from non-authenticated users."""
 
-    email = models.CharField(max_length=255)
+    hashed_email = models.CharField(max_length=300, unique=True)
     token = models.CharField(max_length=255, default=uuid.uuid4, unique=True)
     created_at = models.DateTimeField(auto_now_add=True)
     expires_at = models.DateTimeField()
