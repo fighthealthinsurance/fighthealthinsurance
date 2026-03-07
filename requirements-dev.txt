@@ -14,3 +14,4 @@ mypy==1.19.1
 daphne
 pytest-asyncio
 types-python-dateutil
+setuptools<80
