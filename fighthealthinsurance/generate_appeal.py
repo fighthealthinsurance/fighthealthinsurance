@@ -42,6 +42,46 @@ class AppealTemplateGenerator(object):
 
 
 class AppealGenerator(object):
+    QUALITY_KEYWORDS = (
+        "evidence",
+        "medical necessity",
+        "medically necessary",
+        "appeal",
+        "policy",
+        "clinical",
+    )
+
+    MAX_SYNTHESIS_DRAFTS = 3
+
+    @staticmethod
+    def _score_appeal_text(text: str, diagnosis: Optional[str] = None) -> float:
+        """Score an appeal text by length, keyword presence, and diagnosis match."""
+        stripped = text.strip()
+        lower = stripped.lower()
+        length_score = min(len(stripped), 3000)
+        keyword_score = sum(
+            10 for kw in AppealGenerator.QUALITY_KEYWORDS if kw in lower
+        )
+        diagnosis_bonus = 50 if diagnosis and diagnosis.lower() in lower else 0
+        return length_score * 0.3 + keyword_score + diagnosis_bonus
+
+    # System prompt for the synthesis step
+    SYNTHESIS_SYSTEM_PROMPT = (
+        "You are an expert health insurance appeal writer. You will be given several "
+        "draft appeal letters that were generated for the same insurance denial. Your job "
+        "is to synthesize the best possible single appeal letter by combining the strongest "
+        "arguments, citations, and language from all drafts. "
+        "Rules:\n"
+        "- Keep the formal appeal letter format (address, date, salutation, body, closing).\n"
+        "- Include ALL valid citations and references from any draft — do NOT invent new ones.\n"
+        "- Choose the most persuasive and specific arguments from each draft.\n"
+        "- Eliminate redundancy while preserving completeness.\n"
+        "- Maintain a professional, assertive tone throughout.\n"
+        "- If drafts disagree on facts, prefer the most specific and well-supported version.\n"
+        "- The final letter should be comprehensive but not unnecessarily long.\n"
+        "- Preserve any patient/provider/plan details exactly as they appear in the drafts."
+    )
+
     def __init__(self):
         self.regex_denial_processor = ProcessDenialRegex()
 
@@ -982,3 +1022,108 @@ class AppealGenerator(object):
         appeals = itertools.chain(appeals, initial_appeals)
         logger.debug(f"Sending back {appeals}")
         return appeals
+
+    async def synthesize_appeals(
+        self,
+        appeal_texts: List[str],
+        denial_text: Optional[str] = None,
+        procedure: Optional[str] = None,
+        diagnosis: Optional[str] = None,
+    ) -> Optional[str]:
+        """
+        Synthesize multiple appeal drafts into one best appeal by trying ALL
+        internal models in parallel and picking the best result within 60s.
+
+        Args:
+            appeal_texts: List of appeal letter texts to synthesize from.
+            denial_text: Original denial letter text for context.
+            procedure: The denied procedure, if known.
+            diagnosis: The diagnosis, if known.
+
+        Returns:
+            The synthesized appeal text, or None if synthesis fails.
+        """
+        if not appeal_texts:
+            return None
+
+        # Select the best drafts if we have too many to fit in the prompt
+        if len(appeal_texts) > self.MAX_SYNTHESIS_DRAFTS:
+            appeal_texts = sorted(
+                appeal_texts,
+                key=lambda t: self._score_appeal_text(t, diagnosis),
+                reverse=True,
+            )[: self.MAX_SYNTHESIS_DRAFTS]
+            logger.info(
+                f"Selected top {self.MAX_SYNTHESIS_DRAFTS} drafts for synthesis"
+            )
+
+        all_internal = ml_router.internal_models_by_cost
+        if not all_internal:
+            logger.warning("No internal models available for appeal synthesis")
+            return None
+
+        # Build the user prompt with all drafts
+        numbered_drafts = "\n\n".join(
+            f"--- DRAFT {i + 1} ---\n{text}" for i, text in enumerate(appeal_texts)
+        )
+        context_parts = []
+        if denial_text:
+            # Truncate very long denial text to leave room for drafts
+            context_parts.append(f"ORIGINAL DENIAL LETTER:\n{denial_text[:3000]}")
+        if procedure:
+            context_parts.append(f"PROCEDURE: {procedure}")
+        if diagnosis:
+            context_parts.append(f"DIAGNOSIS: {diagnosis}")
+        context_section = "\n".join(context_parts)
+
+        prompt = (
+            f"{context_section}\n\n"
+            f"Below are {len(appeal_texts)} draft appeal letters for this denial. "
+            "Synthesize them into the single best appeal letter.\n\n"
+            f"{numbered_drafts}"
+        )
+
+        async def try_model(model: RemoteModelLike) -> Optional[str]:
+            try:
+                result = await model._infer_no_context(
+                    system_prompts=[self.SYNTHESIS_SYSTEM_PROMPT],
+                    prompt=prompt,
+                    temperature=0.3,
+                )
+                if result and len(result.strip()) > 50:
+                    logger.debug(
+                        f"Synthesis candidate from {model}: {len(result)} chars"
+                    )
+                    return str(result)
+            except Exception:
+                logger.opt(exception=True).debug(f"Synthesis failed on {model}")
+            return None
+
+        # Build tasks and map each coroutine to its model's quality score
+        task_quality: dict[int, float] = {}
+        tasks: List[Coroutine[Any, Any, Optional[str]]] = []
+        for m in all_internal:
+            coro = try_model(m)
+            task_quality[id(coro)] = float(m.quality())
+            tasks.append(coro)
+
+        def score_fn(result: Optional[str], awaitable: Any) -> float:
+            if result is None:
+                return -1.0
+            text_score = self._score_appeal_text(result, diagnosis)
+            model_score = task_quality.get(id(awaitable), 100.0)
+            return text_score + model_score * 0.3
+
+        try:
+            best = await best_within_timelimit(tasks, score_fn=score_fn, timeout=60)
+            if best:
+                logger.info(
+                    f"Synthesized {len(appeal_texts)} appeals into one "
+                    f"({len(best)} chars) using best of {len(all_internal)} models"
+                )
+                return str(best)
+        except Exception:
+            logger.opt(exception=True).warning(
+                "All synthesis models failed within time limit"
+            )
+        return None

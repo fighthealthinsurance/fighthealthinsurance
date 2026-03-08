@@ -231,6 +231,8 @@ function processResponseChunk(chunk: string): void {
         appealsSoFar.push(appealText);
         appealId++;
 
+        const isSynthesized = parsedLine.synthesized === "true";
+
         // Update status indicator
         updateStatusIndicator('connected', appealsSoFar.length);
 
@@ -239,16 +241,33 @@ function processResponseChunk(chunk: string): void {
           .clone()
           .prop("id", `magic${appealId}`);
         clonedForm.removeAttr("style");
-        
+
         // Add padding/margin to the cloned form container
         clonedForm.css({
           'padding': '0 20px',
           'margin': '20px 0'
         });
 
+        // Add a badge for synthesized appeals
+        if (isSynthesized) {
+          const badge = document.createElement('div');
+          badge.style.cssText = `
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 0.9rem;
+            margin-bottom: 12px;
+            display: inline-block;
+          `;
+          badge.textContent = '\u2728 AI-Optimized Appeal \u2014 Synthesized from all drafts';
+          clonedForm.prepend(badge);
+        }
+
         const formElement = clonedForm.find("form");
         formElement.prop("id", `form_${appealId}`);
-        
+
         // Add max-width and auto margins to center the form with buffer space
         formElement.css({
           'max-width': '1200px',
