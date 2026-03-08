@@ -178,11 +178,6 @@
     padding: 16px;
     background: var(--body-bg, #fff);
   }
-  /* Hide the raw JSON fields */
-  .field-chat_history,
-  .field-edited_chat_history {
-    display: none;
-  }
 </style>
 {% endblock %}
 
@@ -190,6 +185,14 @@
 {{ block.super }}
 
 {% if original %}
+<style>
+  /* Hide raw JSON fields only on change page where editor replaces them */
+  .field-chat_history,
+  .field-edited_chat_history {
+    display: none;
+  }
+</style>
+{{ original.chat_history|json_script:"chat-history-data" }}
 <div class="chat-editor-container">
   <div class="tab-buttons">
     <button type="button" class="active" data-tab="original" onclick="showTab('original')">Original Chat</button>
@@ -220,14 +223,23 @@
 
 <script>
 (function() {
-  // Parse the JSON data from the hidden textarea fields
+  // Parse JSON data from json_script element (readonly fields) or textarea (editable fields)
   function getFieldValue(fieldName) {
-    // Django admin renders JSONField as a textarea
-    const textarea = document.getElementById('id_' + fieldName);
+    // Try json_script element first (for readonly fields injected via Django's json_script filter)
+    var scriptId = fieldName.replace(/_/g, '-') + '-data';
+    var scriptEl = document.getElementById(scriptId);
+    if (scriptEl) {
+      try {
+        var val = JSON.parse(scriptEl.textContent);
+        return Array.isArray(val) ? val : [];
+      } catch(e) {}
+    }
+    // Fall back to textarea widget (for editable fields like edited_chat_history)
+    var textarea = document.getElementById('id_' + fieldName);
     if (!textarea) return [];
     try {
-      const val = JSON.parse(textarea.value);
-      return Array.isArray(val) ? val : [];
+      var val2 = JSON.parse(textarea.value);
+      return Array.isArray(val2) ? val2 : [];
     } catch(e) {
       return [];
     }
