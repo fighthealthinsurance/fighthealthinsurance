@@ -1857,7 +1857,11 @@ class AppealsBackendHelper:
 
         # Yield status: starting
         yield json.dumps(
-            {"type": "status", "message": "Starting appeal generation..."}
+            {
+                "type": "status",
+                "phase": "init",
+                "message": "Starting appeal generation...",
+            }
         ) + "\n"
 
         # Get the current info (e.g. denial).
@@ -1993,13 +1997,25 @@ class AppealsBackendHelper:
 
         # Yield status after any previously saved appeals have been sent
         yield json.dumps(
-            {"type": "status", "message": "Starting appeal generation..."}
+            {
+                "type": "status",
+                "phase": "init",
+                "message": "Starting appeal generation...",
+            }
         ) + "\n"
         yield json.dumps(
-            {"type": "status", "message": "Loaded denial information"}
+            {
+                "type": "status",
+                "phase": "init",
+                "message": "Loaded denial information",
+            }
         ) + "\n"
         yield json.dumps(
-            {"type": "status", "message": "Processing denial types and templates..."}
+            {
+                "type": "status",
+                "phase": "init",
+                "message": "Processing denial types and templates...",
+            }
         ) + "\n"
 
         non_ai_appeals: List[str] = list(
@@ -2104,19 +2120,63 @@ class AppealsBackendHelper:
             yield json.dumps(
                 {
                     "type": "status",
+                    "phase": "research",
                     "message": "Gathering medical research and citations...",
                 }
             ) + "\n"
 
-            pubmed_context_awaitable = asyncio.wait_for(
-                cls.pmt.find_context_for_denial(denial), timeout=40
+            # Queue for per-substep completion status messages
+            status_queue: asyncio.Queue[str] = asyncio.Queue()
+
+            async def tracked_awaitable(
+                awaitable: Any,
+                substep: str,
+                done_msg: str,
+            ) -> Any:
+                try:
+                    result = await awaitable
+                    await status_queue.put(
+                        json.dumps(
+                            {
+                                "type": "status",
+                                "phase": "research",
+                                "substep": substep,
+                                "state": "done",
+                                "message": done_msg,
+                            }
+                        )
+                    )
+                    return result
+                except Exception as e:
+                    logger.warning(f"Research substep '{substep}' failed: {e}")
+                    await status_queue.put(
+                        json.dumps(
+                            {
+                                "type": "status",
+                                "phase": "research",
+                                "substep": substep,
+                                "state": "error",
+                                "message": f"{done_msg} (failed: {e})",
+                            }
+                        )
+                    )
+                    return None
+
+            pubmed_context_awaitable = tracked_awaitable(
+                asyncio.wait_for(cls.pmt.find_context_for_denial(denial), timeout=40),
+                substep="pubmed",
+                done_msg="PubMed search complete",
             )
 
-            ml_citation_context_awaitable = asyncio.wait_for(
-                MLCitationsHelper.generate_citations_for_denial(
-                    denial, speculative=False
+            ml_citation_context_awaitable = tracked_awaitable(
+                asyncio.wait_for(
+                    MLCitationsHelper.generate_citations_for_denial(
+                        denial, speculative=False
+                    ),
+                    timeout=40,
                 ),
-                timeout=40,
+                substep="citations",
+                done_msg="Citations generated",
             )
 
             # Extract CPT/ICD codes from denial text for RAG search
@@ -2143,17 +2203,24 @@ class AppealsBackendHelper:
                     rag_diagnosis_codes = icd_matches
 
             # Get RAG context from magic-rag-service
-            rag_context_awaitable = asyncio.wait_for(
-                get_rag_context_for_denial(
-                    denial_text=denial_text_for_rag,
-                    state=denial.state,
-                    procedure_codes=rag_procedure_codes,
-                    diagnosis_codes=rag_diagnosis_codes,
+            rag_context_awaitable = tracked_awaitable(
+                asyncio.wait_for(
+                    get_rag_context_for_denial(
+                        denial_text=denial_text_for_rag,
+                        state=denial.state,
+                        procedure_codes=rag_procedure_codes,
+                        diagnosis_codes=rag_diagnosis_codes,
+                    ),
+                    timeout=30,
                 ),
-                timeout=30,
+                substep="guidelines",
+                done_msg="Guidelines lookup complete",
             )
 
             # Await all contexts so we can use co-operative multitasking
+            # return_exceptions=True is belt-and-suspenders: tracked_awaitable
+            # already catches exceptions, but this prevents gather from raising
+            # if any edge case slips through.
             try:
                 logger.debug("Gathering contexts")
                 results = await asyncio.gather(
@@ -2162,6 +2229,11 @@ class AppealsBackendHelper:
                     rag_context_awaitable,
                     return_exceptions=True,
                 )
+
+                # Drain substep status messages
+                while not status_queue.empty():
+                    yield status_queue.get_nowait() + "\n"
+
                 if isinstance(results[0], str):
                     pubmed_context = results[0]
                 else:
@@ -2182,6 +2254,9 @@ class AppealsBackendHelper:
                 logger.debug("Success")
             except Exception as e:
                 logger.opt(exception=True).error(f"Error gathering contexts: {e}")
+                # Drain any status messages before falling back
+                while not status_queue.empty():
+                    yield status_queue.get_nowait() + "\n"
                 # We still might have saved a context.
                 try:
                     # Added in Django 5.1
@@ -2195,6 +2270,15 @@ class AppealsBackendHelper:
                 logger.debug("Used saved contexts")
         else:
             logger.debug("Too many retries, skipping ML/pubmed/RAG ctx")
+            yield json.dumps(
+                {
+                    "type": "status",
+                    "phase": "research",
+                    "message": "Research skipped — using previous results",
+                    "substep": "all",
+                    "state": "skipped",
+                }
+            ) + "\n"
 
         # Get microsite context if available (optional, non-blocking)
         microsite_context: Optional[str] = None
@@ -2243,7 +2327,11 @@ class AppealsBackendHelper:
 
         # Yield status: generating appeals
         yield json.dumps(
-            {"type": "status", "message": "Generating personalized appeals with AI..."}
+            {
+                "type": "status",
+                "phase": "generating",
+                "message": "Generating personalized appeals with AI...",
+            }
         ) + "\n"
 
         model_plan_context: Optional[str] = None
@@ -2292,6 +2380,7 @@ class AppealsBackendHelper:
         yield json.dumps(
             {
                 "type": "status",
+                "phase": "generating",
                 "message": "Regular appeals finished. Checking once more...",
             }
         ) + "\n"
@@ -2310,6 +2399,7 @@ class AppealsBackendHelper:
             yield json.dumps(
                 {
                     "type": "status",
+                    "phase": "synthesizing",
                     "message": "Synthesizing best appeal from all drafts...",
                 }
             ) + "\n"
@@ -2361,3 +2451,15 @@ class AppealsBackendHelper:
                         logger.debug("Synthesis returned no result, skipping")
             except Exception:
                 logger.opt(exception=True).warning("Final appeal synthesis failed")
+
+        # Explicit end-of-stream so the client knows exactly what was sent
+        yield json.dumps(
+            {
+                "type": "status",
+                "phase": "done",
+                "message": f"Complete: {new} new and {old} existing appeals generated",
+                "new_appeals": new,
+                "existing_appeals": old,
+                "total_appeals": new + old,
+            }
+        ) + "\n"
