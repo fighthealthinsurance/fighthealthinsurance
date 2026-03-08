@@ -1,23 +1,52 @@
+from django.conf import settings
 from django.shortcuts import render
 from django.http import HttpResponseRedirect, HttpResponse
 from django.urls import reverse, reverse_lazy
+from django.utils.http import url_has_allowed_host_and_scheme, urlsafe_base64_decode
 from django.views import generic, View
-from django.contrib.auth import authenticate, login, logout
+from django.contrib.auth import authenticate, login, logout, REDIRECT_FIELD_NAME
 from django.contrib.auth import get_user_model
 from .auth_utils import combine_domain_and_username, resolve_domain_id
 from .auth_forms import LoginForm
-from django.utils.http import urlsafe_base64_decode
 from django.utils.encoding import force_str
 from django.contrib.auth.tokens import default_token_generator
 from fhi_users.models import UserDomain
 
-
 User = get_user_model()
+
+
+def _get_safe_redirect_url(request) -> str:
+    """Return a validated redirect URL from the request's 'next' parameter.
+
+    Only same-host, path-only redirects are accepted.  Anything else
+    (e.g. ``https://attacker.example``) is silently replaced with the
+    site root to prevent open-redirect attacks.
+    """
+    redirect_to = request.POST.get(
+        REDIRECT_FIELD_NAME, request.GET.get(REDIRECT_FIELD_NAME, "")
+    )
+    allowed_hosts = {request.get_host()}
+    # Also allow hosts from ALLOWED_HOSTS (excluding wildcards)
+    for host in getattr(settings, "ALLOWED_HOSTS", []):
+        if host and host != "*" and not host.startswith("."):
+            allowed_hosts.add(host)
+    if redirect_to and url_has_allowed_host_and_scheme(
+        url=redirect_to,
+        allowed_hosts=allowed_hosts,
+        require_https=request.is_secure(),
+    ):
+        return redirect_to
+    return reverse("root")
 
 
 class LoginView(generic.FormView):
     template_name = "login.html"
     form_class = LoginForm
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context[REDIRECT_FIELD_NAME] = self.request.GET.get(REDIRECT_FIELD_NAME, "")
+        return context
 
     def form_valid(self, form):
         context: dict[str, bool] = {}
@@ -45,7 +74,7 @@ class LoginView(generic.FormView):
                 else:
                     request.session["domain_id"] = domain_id
                     login(request, user)
-                    return HttpResponseRedirect(reverse("root"))
+                    return HttpResponseRedirect(_get_safe_redirect_url(request))
         except UserDomain.DoesNotExist:
             context["domain_invalid"] = True
             return render(request, "login.html", context)

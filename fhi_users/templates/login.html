@@ -17,6 +17,7 @@ Login
       {% endif %}
       <form action="{% url 'login' %}" method="post" id="loginForm">
 	{% csrf_token %}
+	{% if next %}<input type="hidden" name="next" value="{{ next }}">{% endif %}
         <div class="form-group">
           <div class="form-label-group">
 	    <label for="inputUsername">Username</label>
