@@ -186,6 +186,29 @@ export function restorePersonalInfo(message: string, userInfo: UserInfo | null):
     restoredMessage = restoredMessage.replace(/\{\{Your Email Address\}\}/g, userInfo.email);
   }
 
+  // Legacy [BRACKET] format fallbacks for older scrubbed content
+  if (userInfo.firstName) {
+    restoredMessage = restoredMessage.replace(/\[FIRST_NAME\]/g, userInfo.firstName);
+  }
+  if (userInfo.lastName) {
+    restoredMessage = restoredMessage.replace(/\[LAST_NAME\]/g, userInfo.lastName);
+  }
+  if (userInfo.email) {
+    restoredMessage = restoredMessage.replace(/\[EMAIL\]/g, userInfo.email);
+  }
+  if (userInfo.address) {
+    restoredMessage = restoredMessage.replace(/\[ADDRESS\]/g, userInfo.address);
+  }
+  if (userInfo.city) {
+    restoredMessage = restoredMessage.replace(/\[CITY\]/g, userInfo.city);
+  }
+  if (userInfo.state) {
+    restoredMessage = restoredMessage.replace(/\[STATE\]/g, userInfo.state);
+  }
+  if (userInfo.zipCode) {
+    restoredMessage = restoredMessage.replace(/\[ZIP_CODE\]/g, userInfo.zipCode);
+  }
+
   return restoredMessage;
 }
 

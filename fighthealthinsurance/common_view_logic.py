@@ -1948,14 +1948,21 @@ class AppealsBackendHelper:
                 "[Reference Number from Denial Letter]": claim_id,
                 "[Claim ID]": claim_id,
                 "{claim_id}": claim_id,
-                # Subscriber/Group IDs
-                "{{SCSID}}": claim_id,
-                "{{GPID}}": claim_id,
+                # Subscriber/Group IDs - leave {{SCSID}} and {{GPID}} intact
+                # for frontend (appeal.ts) to fill from localStorage
+                # using the actual subscriber_id and group_id values
                 # Diagnosis & Procedure
                 "[Diagnosis]": diagnosis,
                 "[Procedure]": procedure,
                 "{diagnosis}": diagnosis,
                 "{procedure}": procedure,
+                # Legacy $-prefixed keys (used in fixture templates)
+                "$insurance_company": insurance_company,
+                "$DATE": denial.date or "{{date}}",
+                "$diagnosis": diagnosis,
+                "$procedure": procedure,
+                "$claim_id": claim_id,
+                "$CASEID": claim_id,
             }
             try:
                 if (
@@ -1966,6 +1973,7 @@ class AppealsBackendHelper:
                     subs["{{Your Name}}"] = prof_name
                     subs["[Your Name]"] = prof_name
                     subs["YourNameMagic"] = prof_name
+                    subs["$your_name_here"] = prof_name
                 if denial.patient_user is not None:
                     patient_name = denial.patient_user.get_legal_name()
                     subs["{{FIRST_NAME}} {{LAST_NAME}}"] = patient_name

@@ -40,6 +40,7 @@ function descrub() {
   const lname = getLocalStorageItemOrDefault("store_lname", "LastName");
   const subscriber_id = getLocalStorageItemOrDefaultEQ("subscriber_id");
   const group_id = getLocalStorageItemOrDefaultEQ("group_id");
+  const claim_id = getLocalStorageItemOrDefaultEQ("claim_id");
   const email_address = getLocalStorageItemOrDefaultEQ("email_address");
   const phone_number = getLocalStorageItemOrDefaultEQ("phone_number");
   const name = fname + " " + lname;
@@ -50,7 +51,7 @@ function descrub() {
   text = text.replace(/\{\{Your Name\}\}/g, name);
   text = text.replace(/\{\{SCSID\}\}/g, subscriber_id);
   text = text.replace(/\{\{GPID\}\}/g, group_id);
-  text = text.replace(/\{\{CASEID\}\}/g, subscriber_id);
+  text = text.replace(/\{\{CASEID\}\}/g, claim_id);
   text = text.replace(/\{\{Your Email Address\}\}/g, email_address);
   text = text.replace(/\{\{Your Phone Number\}\}/g, phone_number);
 

@@ -916,7 +916,7 @@ class RemoteOpenLike(RemoteModel):
                 "Maintain a formal, objective, and respectful tone throughout. Avoid emotional, casual, or conversational language.\n"
                 "Emphasize medical necessity, clinical evidence, and patient benefit using precise, evidence-based language.\n"
                 "Do not express frustration or personal opinions about insurance companies.\n"
-                "Use appropriate professional sign-offs and titles (e.g., 'Sincerely, Dr. {{FIRST_NAME}} {{LAST_NAME}}, MD').\n"
+                "Use appropriate professional sign-offs and titles (e.g., 'Sincerely, Dr. {{Your Name}}, MD').\n"
                 "CRITICAL: Only cite medical literature, studies, PMIDs, journal names, or author names that are EXPLICITLY provided in the input (e.g., ml_citations_context or pubmed_context). NEVER fabricate or hallucinate citations. If no citations are provided in the input, do not include any specific study references - general medical knowledge statements are fine without citations.\n"
                 "Do NOT use phrases such as 'as a patient', 'my condition', 'I am deeply concerned', or discuss the impact on 'my health' or 'my pain'. Do NOT write from the patient's perspective under any circumstances.\n"
                 "You are the healthcare professional, not the patient. Only write from the provider's perspective, never the patient's.\n\n"
@@ -1764,7 +1764,7 @@ class RemoteFullOpenLike(RemoteOpenLike):
                 Maintain a formal, objective, and respectful tone throughout. Avoid emotional, casual, or conversational language.
                 Emphasize medical necessity, clinical evidence, and patient benefit using precise, evidence-based language.
                 Do not express frustration or personal opinions about insurance companies.
-                Use appropriate professional sign-offs and titles (e.g., "Sincerely, Dr. {{FIRST_NAME}} {{LAST_NAME}}, MD").
+                Use appropriate professional sign-offs and titles (e.g., "Sincerely, Dr. {{Your Name}}, MD").
                 Only include references that are verifiable and provided in the input or from reliable sources.
                 Do NOT use phrases such as "as a patient", "my condition", "I am deeply concerned", or discuss the impact on "my health" or "my pain". Do NOT write from the patient's perspective under any circumstances.
                 You are the healthcare professional, not the patient. Only write from the provider's perspective, never the patient's.
