@@ -195,7 +195,7 @@ class TestAdminAccess(TestCase):
             f"{self.ADMIN_URL}fighthealthinsurance/ongoingchat/{chat.pk}/change/"
         )
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "chat-editor-container")
+        self.assertContains(response, "Copy original to edited")
 
 
 class TestOngoingChatAdminEditing(TestCase):
