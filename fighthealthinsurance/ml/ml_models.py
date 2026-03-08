@@ -62,51 +62,12 @@ def remove_repeated_sentences(
     if len(sentences) < 6:
         return text
 
-    # Normalize for comparison
-    normalized = [s.strip().lower() for s in sentences]
-
-    # --- Detect and collapse alternating A-B-A-B patterns ---
-    # Walk through looking for pairs that repeat 3+ cycles in a row.
-    cleaned_sentences: list[str] = []
-    i = 0
-    while i < len(sentences):
-        # Check for alternating pair pattern starting at i
-        if i + 3 < len(sentences):
-            a_norm = normalized[i]
-            b_norm = normalized[i + 1]
-            # Count how many consecutive A-B cycles we see
-            cycles = 1
-            j = i + 2
-            while (
-                j + 1 < len(sentences)
-                and normalized[j] == a_norm
-                and normalized[j + 1] == b_norm
-            ):
-                cycles += 1
-                j += 2
-            # Also check for a trailing A without a matching B
-            if j < len(sentences) and normalized[j] == a_norm:
-                trailing_a = True
-            else:
-                trailing_a = False
-
-            if cycles >= max_repeats:
-                # Collapse to a single A-B pair
-                cleaned_sentences.append(sentences[i])
-                cleaned_sentences.append(sentences[i + 1])
-                # Skip past all the repeated cycles
-                i = j
-                if trailing_a:
-                    i += 1  # skip the trailing A too
-                continue
-
-        cleaned_sentences.append(sentences[i])
-        i += 1
-
-    # --- Cap individual sentence repeats ---
+    # Cap individual sentence repeats — this naturally handles single-sentence
+    # loops, A-B-A-B alternation, A-B-C-A-B-D patterns, and any other form
+    # of repetition by limiting each unique sentence to max_repeats occurrences.
     seen_counts: dict[str, int] = {}
     final_sentences: list[str] = []
-    for sent in cleaned_sentences:
+    for sent in sentences:
         key = sent.strip().lower()
         count = seen_counts.get(key, 0) + 1
         seen_counts[key] = count
@@ -126,8 +87,13 @@ def has_severe_repetition(text: str, threshold: float = 0.5) -> bool:
     """Check if text has severe sentence repetition (>threshold ratio).
 
     Used as a fast check to reject results before the cleaning pipeline.
-    Returns True if any single sentence accounts for more than `threshold`
-    fraction of all sentences and there are at least 6 sentences.
+    Detects two patterns:
+    1. A single sentence accounts for more than ``threshold`` of all sentences.
+    2. An alternating pair of two distinct sentences that together account for
+       more than ``threshold`` of all sentences and actually alternate (no two
+       adjacent sentences are the same).
+
+    Requires at least 6 sentences to trigger (short texts are never flagged).
     """
     sentences = _sentence_split_re.split(text.strip())
     if len(sentences) < 6:
@@ -138,8 +104,33 @@ def has_severe_repetition(text: str, threshold: float = 0.5) -> bool:
     for s in normalized:
         counts[s] = counts.get(s, 0) + 1
 
+    total = len(sentences)
+
+    # Single sentence dominating
     max_count = max(counts.values())
-    return max_count > threshold * len(sentences)
+    if max_count > threshold * total:
+        return True
+
+    # Alternating pair: exactly 2 distinct normalized sentences making up
+    # >threshold of the text, and they actually alternate (adjacent differ).
+    if len(counts) == 2:
+        combined = sum(counts.values())
+        if combined > threshold * total:
+            pair_keys = list(counts.keys())
+            # Count adjacent pairs where both belong to the pair and differ
+            alternating_count = 0
+            for i in range(len(normalized) - 1):
+                if (
+                    normalized[i] != normalized[i + 1]
+                    and normalized[i] in pair_keys
+                    and normalized[i + 1] in pair_keys
+                ):
+                    alternating_count += 1
+            # In a perfect A-B-A-B of length N, there are N-1 alternations
+            if alternating_count > threshold * (total - 1):
+                return True
+
+    return False
 
 
 class RemoteModelLike(DenialBase):
@@ -1320,6 +1311,12 @@ class RemoteOpenLike(RemoteModel):
                 )
             )
         )
+
+        if cleaned is None:
+            logger.debug(
+                f"Result rejected due to severe repetition on type {infer_type}"
+            )
+            return []
 
         logger.debug(f"Cleaned {cleaned} on type {infer_type}")
 
