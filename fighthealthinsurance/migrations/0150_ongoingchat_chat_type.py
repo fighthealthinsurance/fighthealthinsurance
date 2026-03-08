@@ -32,7 +32,7 @@ class Migration(migrations.Migration):
     dependencies = [
         (
             "fighthealthinsurance",
-            "0147_extralinkdocument_extralinkfetchlog_and_more",
+            "0149_deletetoken_rename_email_to_hashed_email",
         ),
     ]
 
