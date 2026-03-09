@@ -1096,7 +1096,7 @@ class ChatInterface:
                 summarized_context,
                 history_for_llm,
                 is_logged_in=(self.user is not None and self.user.is_authenticated),
-                is_professional=not self.is_patient,
+                is_professional=self.is_professional,
                 fallback_backends=fallback_models if fallback_models else None,
                 full_history=full_history_for_llm,  # Also try with full history if model supports it
             )

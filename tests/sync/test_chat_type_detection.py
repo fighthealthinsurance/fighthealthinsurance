@@ -4,19 +4,23 @@ Tests verify that:
 1. ChatType enum and chat_type field work correctly on OngoingChat
 2. Model properties derive correct values from chat_type
 3. Backward compatibility between chat_type and is_patient
-4. ChatLeads drug field distinguishes trial professionals from drug-specific leads
+4. resolve_chat_type() correctly determines chat type from ChatLeads/user state
 """
 
+import uuid
+
+from asgiref.sync import async_to_sync
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import TransactionTestCase
 
 from fhi_users.models import ProfessionalUser
 from fighthealthinsurance.models import ChatLeads, ChatType, OngoingChat
+from fighthealthinsurance.websockets import resolve_chat_type
 
 User = get_user_model()
 
 
-class ChatTypeModelTest(TestCase):
+class ChatTypeModelTest(TransactionTestCase):
     """Test the OngoingChat model's chat_type field and derived methods."""
 
     def test_patient_chat_type(self):
@@ -126,12 +130,23 @@ class ChatTypeModelTest(TestCase):
         self.assertIn("ongoing chat", str(pro_chat).lower())
 
 
-class ChatLeadsTrialDetectionTest(TestCase):
-    """Test that any ChatLeads entry indicates a trial professional."""
+class ChatLeadsTrialDetectionTest(TransactionTestCase):
+    """Test that resolve_chat_type() distinguishes trial professionals from drug-specific leads."""
+
+    def _resolve(self, session_key):
+        """Call resolve_chat_type for an anonymous user with the given session_key."""
+
+        def _no_professional(user):
+            return None
+
+        return async_to_sync(resolve_chat_type)(
+            user=None,
+            is_authenticated=False,
+            session_key=session_key,
+            get_professional_user_fn=_no_professional,
+        )
 
     def test_lead_without_drug_is_trial_professional(self):
-        import uuid
-
         session_id = str(uuid.uuid4())
         ChatLeads.objects.create(
             name="Trial Pro",
@@ -143,13 +158,12 @@ class ChatLeadsTrialDetectionTest(TestCase):
             session_id=session_id,
         )
 
-        lead = ChatLeads.objects.get(session_id=session_id)
-        self.assertFalse(lead.drug)
+        chat_type, professional_user = self._resolve(session_id)
+        self.assertEqual(chat_type, ChatType.TRIAL_PROFESSIONAL)
+        self.assertIsNone(professional_user)
 
-    def test_lead_with_drug_is_still_trial_professional(self):
-        """A ChatLeads entry with a drug field is still a trial professional."""
-        import uuid
-
+    def test_lead_with_drug_is_patient(self):
+        """A ChatLeads entry with a non-empty drug field is a drug-specific lead (patient)."""
         session_id = str(uuid.uuid4())
         ChatLeads.objects.create(
             name="Drug Lead",
@@ -162,8 +176,51 @@ class ChatLeadsTrialDetectionTest(TestCase):
             drug="Ozempic",
         )
 
-        lead = ChatLeads.objects.get(session_id=session_id)
-        # Drug field is stored but doesn't affect trial professional status
-        self.assertEqual(lead.drug, "Ozempic")
-        # Any ChatLeads entry = trial professional
-        self.assertTrue(lead.company)
+        chat_type, professional_user = self._resolve(session_id)
+        self.assertEqual(chat_type, ChatType.PATIENT)
+        self.assertIsNone(professional_user)
+
+    def test_no_lead_is_patient(self):
+        """An anonymous user with no ChatLeads entry is a patient."""
+        chat_type, professional_user = self._resolve(str(uuid.uuid4()))
+        self.assertEqual(chat_type, ChatType.PATIENT)
+        self.assertIsNone(professional_user)
+
+    def test_authenticated_professional_resolved_server_side(self):
+        """Authenticated user with ProfessionalUser record resolves as PROFESSIONAL."""
+        user = User.objects.create_user(
+            username="resolve_pro", password="testpass", email="resolve_pro@example.com"
+        )
+        professional = ProfessionalUser.objects.create(
+            user=user, active=True, npi_number="3333333333"
+        )
+
+        def _get_professional(u):
+            return ProfessionalUser.objects.filter(user=u, active=True).first()
+
+        chat_type, pro_user = async_to_sync(resolve_chat_type)(
+            user=user,
+            is_authenticated=True,
+            session_key=None,
+            get_professional_user_fn=_get_professional,
+        )
+        self.assertEqual(chat_type, ChatType.PROFESSIONAL)
+        self.assertEqual(pro_user, professional)
+
+    def test_authenticated_non_professional_is_patient(self):
+        """Authenticated user without ProfessionalUser record resolves as PATIENT."""
+        user = User.objects.create_user(
+            username="resolve_patient", password="testpass", email="rp@example.com"
+        )
+
+        def _get_professional(u):
+            return ProfessionalUser.objects.filter(user=u, active=True).first()
+
+        chat_type, pro_user = async_to_sync(resolve_chat_type)(
+            user=user,
+            is_authenticated=True,
+            session_key=None,
+            get_professional_user_fn=_get_professional,
+        )
+        self.assertEqual(chat_type, ChatType.PATIENT)
+        self.assertIsNone(pro_user)

@@ -2,7 +2,7 @@ import asyncio
 import json
 import re
 import uuid
-from typing import AsyncIterator, Optional
+from typing import AsyncIterator, Callable, Optional, Tuple
 
 from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
@@ -242,6 +242,41 @@ class PriorAuthConsumer(AsyncWebsocketConsumer):
         return prior_auth
 
 
+async def resolve_chat_type(
+    user,
+    is_authenticated: bool,
+    session_key: Optional[str],
+    get_professional_user_fn: Callable,
+) -> Tuple[ChatType, Optional["ProfessionalUser"]]:
+    """Determine chat_type and professional_user entirely server-side.
+
+    For anonymous users, checks ChatLeads to distinguish trial professionals from patients.
+    Leads with a non-empty drug field are treated as patients (drug-specific leads).
+    For authenticated users, always checks ProfessionalUser regardless of client payload.
+
+    Returns:
+        (chat_type, professional_user) tuple.
+    """
+    if not is_authenticated:
+        if session_key:
+            lead = await ChatLeads.objects.filter(session_id=session_key).afirst()
+            if lead and not lead.drug:
+                logger.info(f"Trial professional chat for session {session_key}")
+                return ChatType.TRIAL_PROFESSIONAL, None
+            # lead with drug or no lead → patient
+        return ChatType.PATIENT, None
+
+    # Authenticated user — always check ProfessionalUser
+    professional_user = await sync_to_async(get_professional_user_fn)(user)
+    if professional_user:
+        return ChatType.PROFESSIONAL, professional_user
+
+    logger.info(
+        f"User {user.username} is not a professional user, treating as patient"
+    )
+    return ChatType.PATIENT, None
+
+
 class OngoingChatConsumer(AsyncWebsocketConsumer):
     """WebSocket consumer for ongoing chat with LLMs for both pro users and patients."""
 
@@ -439,60 +474,38 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
             return
 
         try:
-            # Determine chat_type and professional_user once, consolidating all detection logic.
+            # Determine chat_type and professional_user entirely server-side.
             # This must run BEFORE email validation so we use the server-derived is_patient.
-            professional_user = None
-            chat_type = ChatType.PATIENT  # default
-
-            if not is_authenticated:
-                # Anonymous user — check if this is a trial professional via ChatLeads
-                if session_key:
-                    lead = await ChatLeads.objects.filter(
-                        session_id=session_key
-                    ).afirst()
-                    if lead:
-                        # ChatLeads entry = trial professional (email + company from trial form)
-                        chat_type = ChatType.TRIAL_PROFESSIONAL
-                        logger.info(
-                            f"Trial professional chat for session {session_key}"
-                        )
-                    else:
-                        chat_type = ChatType.PATIENT
-                else:
-                    chat_type = ChatType.PATIENT
-            elif is_patient:
-                # Client explicitly indicated patient
-                chat_type = ChatType.PATIENT
-            else:
-                # Authenticated user claiming professional — verify
-                professional_user = await sync_to_async(self._get_professional_user)(
-                    user
-                )
-                if professional_user:
-                    chat_type = ChatType.PROFESSIONAL
-                else:
-                    logger.info(
-                        f"User {user.username} is not a professional user, treating as patient"
-                    )
-                    chat_type = ChatType.PATIENT
+            chat_type, professional_user = await resolve_chat_type(
+                user=user,
+                is_authenticated=is_authenticated,
+                session_key=session_key,
+                get_professional_user_fn=self._get_professional_user,
+            )
 
             # Use server-derived is_patient for all subsequent logic
             is_patient = chat_type == ChatType.PATIENT
 
-            # For patients we need the e-mail to allow data deletion since we don't have
-            # accounts or lead objects to link to.
+            # For anonymous patients we need the e-mail to allow data deletion since
+            # we don't have accounts or lead objects to link to.
+            # Authenticated patients already have an email on their account.
             if is_patient:
-                if not email:
-                    await self.send_json_message(
-                        {"error": "Email is required for patient users."}
-                    )
-                    return
-                try:
-                    # Validate the email format
-                    validate_email(email)
-                except ValidationError:
-                    await self.send_json_message({"error": "Invalid email format."})
-                    return
+                if not is_authenticated:
+                    if not email:
+                        await self.send_json_message(
+                            {"error": "Email is required for patient users."}
+                        )
+                        return
+                    try:
+                        validate_email(email)
+                    except ValidationError:
+                        await self.send_json_message(
+                            {"error": "Invalid email format."}
+                        )
+                        return
+                else:
+                    # Authenticated patient — derive email from user account
+                    email = user.email
 
             # Extract tracking info from websocket scope (privacy-aware)
             tracking_info = extract_tracking_info_from_scope(
