@@ -82,8 +82,14 @@ class SeleniumTestPIIRehydration(FHISeleniumBase, StaticLiveServerTestCase):
 
     def _navigate_to_appeal_page(self, denial):
         """Submit the choose_appeal form via JS to reach the appeal page."""
-        # The CSRF token is already available from the page loaded in setUp
-        # (we navigate to /scan which renders a form with {% csrf_token %})
+        # Wait for the CSRF token to be available in the DOM or cookie
+        # (the page at /scan renders a form with {% csrf_token %})
+        WebDriverWait(self.driver, 15).until(
+            lambda d: d.execute_script(
+                "return document.querySelector('input[name=csrfmiddlewaretoken]')?.value "
+                "|| document.cookie.match(/csrftoken=([^;]+)/)?.[1] || '';"
+            )
+        )
         csrf_token = self.execute_script(
             "return document.querySelector('input[name=csrfmiddlewaretoken]')?.value "
             "|| document.cookie.match(/csrftoken=([^;]+)/)?.[1] || '';"
@@ -133,12 +139,12 @@ class SeleniumTestPIIRehydration(FHISeleniumBase, StaticLiveServerTestCase):
         # Navigate to the appeal page via form POST
         self._navigate_to_appeal_page(denial)
 
-        # Wait for the appeal page to load
-        WebDriverWait(self.driver, 15).until(
+        # Wait for the appeal page to load (longer timeout for full suite runs)
+        WebDriverWait(self.driver, 30).until(
             EC.presence_of_element_located((By.ID, "id_completed_appeal_text"))
         )
-        # Wait a moment for descrub() to execute (it runs on page load)
-        WebDriverWait(self.driver, 10).until(
+        # Wait for descrub() to execute (it runs on page load)
+        WebDriverWait(self.driver, 15).until(
             lambda d: "Alice"
             in (
                 d.find_element(By.ID, "id_completed_appeal_text").get_attribute("value")
@@ -224,6 +230,13 @@ class SeleniumTestPIIRehydration(FHISeleniumBase, StaticLiveServerTestCase):
             legacy_appeal.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n")
         )
 
+        # Wait for the CSRF token to be available
+        WebDriverWait(self.driver, 15).until(
+            lambda d: d.execute_script(
+                "return document.querySelector('input[name=csrfmiddlewaretoken]')?.value "
+                "|| document.cookie.match(/csrftoken=([^;]+)/)?.[1] || '';"
+            )
+        )
         csrf_token = self.execute_script(
             "return document.querySelector('input[name=csrfmiddlewaretoken]')?.value "
             "|| document.cookie.match(/csrftoken=([^;]+)/)?.[1] || '';"
@@ -255,10 +268,10 @@ class SeleniumTestPIIRehydration(FHISeleniumBase, StaticLiveServerTestCase):
         """
         self.execute_script(js)
 
-        WebDriverWait(self.driver, 15).until(
+        WebDriverWait(self.driver, 30).until(
             EC.presence_of_element_located((By.ID, "id_completed_appeal_text"))
         )
-        WebDriverWait(self.driver, 10).until(
+        WebDriverWait(self.driver, 15).until(
             lambda d: "Alice"
             in (
                 d.find_element(By.ID, "id_completed_appeal_text").get_attribute("value")
