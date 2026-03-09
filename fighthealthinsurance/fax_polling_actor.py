@@ -2,6 +2,7 @@ import asyncio
 import time
 
 import ray
+from loguru import logger
 
 from fighthealthinsurance.fax_actor import FaxActor
 
@@ -11,12 +12,12 @@ class FaxPollingActor:
     def __init__(self, i=60):
         # This is seperate from the global one
         name = "fpa-worker"
-        print(f"Starting fax polling actor")
+        logger.info("Starting fax polling actor")
         time.sleep(1)
         self.fax_actor = FaxActor.options(  # type: ignore
             name=name, namespace="fhi", get_if_exists=True
         ).remote()
-        print(f"Created fpa-worker {self.fax_actor}")
+        logger.info(f"Created fpa-worker {self.fax_actor}")
         self.interval = i
         self.c = 0
         self.e = 0
@@ -30,24 +31,24 @@ class FaxPollingActor:
         return getattr(self, "running", False)
 
     async def run(self) -> bool:
-        print(f"Starting run")
+        logger.info("Starting fax polling run")
         self.running = True
         while self.running:
             # Like yield
             await asyncio.sleep(1)
             try:
-                print(f"Checked for delayed remote faxes")
+                logger.debug("Checking for delayed remote faxes")
                 c, f = await self.fax_actor.send_delayed_faxes.remote()
                 self.e += f
                 self.c += c
             except Exception as e:
-                print(f"Error {e} while checking outbound faxes")
+                logger.opt(exception=True).error("Error while checking outbound faxes")
                 self.aec += 1
             finally:
                 # Success or failure we wait.
-                print(f"Waiting for next run")
+                logger.debug("Waiting for next run")
                 await asyncio.sleep(60 * 60)
-        print(f"Done running? what?")
+        logger.warning("Fax polling actor stopped running")
         return True
 
     async def count(self) -> int:
