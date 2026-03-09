@@ -199,14 +199,14 @@ class PriorAuthTextSubstituterTest(TestCase):
         )
 
         # Check that placeholders were used for missing fields
-        self.assertIn("Patient: [PATIENT NAME]", result)
-        self.assertIn("DOB: [DATE OF BIRTH]", result)
-        self.assertIn("Insurance ID: [PLAN ID]", result)
-        self.assertIn("Member ID: [MEMBER ID]", result)
-        self.assertIn("Provider: [PROVIDER NAME]", result)
-        self.assertIn("Practice: [PRACTICE NAME]", result)
-        self.assertIn("Address: [PRACTICE ADDRESS]", result)
-        self.assertIn("Phone: [PRACTICE PHONE]", result)
+        self.assertIn("Patient: {{PATIENT_NAME}}", result)
+        self.assertIn("DOB: {{DATE_OF_BIRTH}}", result)
+        self.assertIn("Insurance ID: {{PLAN_ID}}", result)
+        self.assertIn("Member ID: {{MEMBER_ID}}", result)
+        self.assertIn("Provider: {{PROVIDER_NAME}}", result)
+        self.assertIn("Practice: {{PRACTICE_NAME}}", result)
+        self.assertIn("Address: {{PRACTICE_ADDRESS}}", result)
+        self.assertIn("Phone: {{PRACTICE_PHONE}}", result)
 
     def test_empty_input_text(self):
         """Test that empty input text returns empty output"""

@@ -1926,37 +1926,59 @@ class AppealsBackendHelper:
                 and denial.procedure != "UNKNOWN"
             ):
                 procedure = denial.procedure
-            # Substitutes for common terms
+            # Substitutes for common terms - using {{PLACEHOLDER}} format
+            # matching data pipeline conventions
             subs = {
+                # Insurance company substitutions
                 "Esteemed Members of the Appeals Committee": insurance_company,
+                "{{insurance_company}}": insurance_company,
                 "[insurance_company]": insurance_company,
                 "{insurance_company}": insurance_company,
                 "insurance_company": insurance_company,
-                "{{insurance_company}}": insurance_company,
                 "[Insurance Company Name]": insurance_company,
                 "[Insurance Company]": insurance_company,
-                "[Insert Date]": denial.date or "{date}",
                 "[Health Plan]": insurance_company,
-                "[Reference Number from Denial Letter]": claim_id,
                 "Dear Insurance Company": f"Dear {insurance_company}",
                 "Dear Health Plan": f"Dear {insurance_company}",
                 "Dear Sir/Madam": f"Dear {insurance_company}",
+                # Date
+                "[Insert Date]": denial.date or "{{date}}",
+                # Claim/Case ID
+                "{{CASEID}}": claim_id,
+                "[Reference Number from Denial Letter]": claim_id,
                 "[Claim ID]": claim_id,
                 "{claim_id}": claim_id,
+                # Subscriber/Group IDs - leave {{SCSID}} and {{GPID}} intact
+                # for frontend (appeal.ts) to fill from localStorage
+                # using the actual subscriber_id and group_id values
+                # Diagnosis & Procedure
                 "[Diagnosis]": diagnosis,
                 "[Procedure]": procedure,
                 "{diagnosis}": diagnosis,
                 "{procedure}": procedure,
+                # Legacy $-prefixed keys (used in fixture templates)
+                "$insurance_company": insurance_company,
+                "$DATE": denial.date or "{{date}}",
+                "$diagnosis": diagnosis,
+                "$procedure": procedure,
+                "$claim_id": claim_id,
+                "$CASEID": claim_id,
             }
             try:
                 if (
                     denial.professional_to_finish
                     and denial.primary_professional is not None
                 ):
-                    subs["[Your Name]"] = denial.primary_professional.get_full_name()
+                    prof_name = denial.primary_professional.get_full_name()
+                    subs["{{Your Name}}"] = prof_name
+                    subs["[Your Name]"] = prof_name
+                    subs["YourNameMagic"] = prof_name
+                    subs["$your_name_here"] = prof_name
                 if denial.patient_user is not None:
-                    subs["[Patient Name]"] = denial.patient_user.get_legal_name()
-                    subs["[patient name]"] = denial.patient_user.get_legal_name()
+                    patient_name = denial.patient_user.get_legal_name()
+                    subs["{{FIRST_NAME}} {{LAST_NAME}}"] = patient_name
+                    subs["[Patient Name]"] = patient_name
+                    subs["[patient name]"] = patient_name
                 if denial and denial.primary_professional is not None:
                     subs["[Professional Name]"] = (
                         denial.primary_professional.get_full_name()
@@ -1969,10 +1991,6 @@ class AppealsBackendHelper:
                 )
             for k, v in subs.items():
                 if v and v != "" and v != "UNKNOWN":
-                    # Handle the {{}}
-                    content = content.replace("{{" + k + "}}", "{" + k + "}")
-                    if "{" in k:
-                        content = content.replace("{" + k + "}", k)
                     content = content.replace(k, str(v))
             appeal["content"] = content
             return appeal
