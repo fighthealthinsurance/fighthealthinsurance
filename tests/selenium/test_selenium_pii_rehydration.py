@@ -54,9 +54,7 @@ class SeleniumTestPIIRehydration(FHISeleniumBase, StaticLiveServerTestCase):
 
     def _create_denial(self):
         """Create a minimal Denial object for the test."""
-        hashed_email = hashlib.sha512(
-            TEST_EMAIL.encode("utf-8").lower()
-        ).hexdigest()
+        hashed_email = hashlib.sha512(TEST_EMAIL.encode("utf-8").lower()).hexdigest()
         denial = Denial.objects.create(
             hashed_email=hashed_email,
             denial_text="Test denial for PII rehydration",
@@ -80,32 +78,22 @@ class SeleniumTestPIIRehydration(FHISeleniumBase, StaticLiveServerTestCase):
             "phone_number": "555-867-5309",
         }
         for key, value in pii.items():
-            self.execute_script(
-                f"localStorage.setItem('{key}', '{value}');"
-            )
+            self.execute_script(f"localStorage.setItem('{key}', '{value}');")
 
     def _navigate_to_appeal_page(self, denial):
         """Submit the choose_appeal form via JS to reach the appeal page."""
-        # Build and submit a hidden form to POST to choose_appeal
-        # First get a CSRF token by loading a page
+        # The CSRF token is already available from the page loaded in setUp
+        # (we navigate to /scan which renders a form with {% csrf_token %})
         csrf_token = self.execute_script(
             "return document.querySelector('input[name=csrfmiddlewaretoken]')?.value "
             "|| document.cookie.match(/csrftoken=([^;]+)/)?.[1] || '';"
         )
 
-        # If no CSRF token from the page, fetch one from a GET request
-        if not csrf_token:
-            self.execute_script(
-                f"fetch('{self.live_server_url}/choose_appeal', "
-                "{credentials: 'same-origin'});"
-            )
-            import time
-            time.sleep(0.5)
-            csrf_token = self.execute_script(
-                "return document.cookie.match(/csrftoken=([^;]+)/)?.[1] || '';"
-            )
-
-        appeal_text_escaped = STUBBED_APPEAL.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n")
+        appeal_text_escaped = (
+            STUBBED_APPEAL.replace("\\", "\\\\")
+            .replace("'", "\\'")
+            .replace("\n", "\\n")
+        )
 
         js = f"""
         var form = document.createElement('form');
@@ -137,8 +125,8 @@ class SeleniumTestPIIRehydration(FHISeleniumBase, StaticLiveServerTestCase):
         """Test that {{PLACEHOLDER}} tokens are replaced with PII from localStorage."""
         denial = self._create_denial()
 
-        # Open the home page first to set up localStorage
-        self.open(f"{self.live_server_url}/")
+        # Open /scan which has a form with {% csrf_token %} so the CSRF cookie is set
+        self.open(f"{self.live_server_url}/scan")
         self.wait_for_page_ready()
         self._set_localstorage_pii()
 
@@ -151,9 +139,10 @@ class SeleniumTestPIIRehydration(FHISeleniumBase, StaticLiveServerTestCase):
         )
         # Wait a moment for descrub() to execute (it runs on page load)
         WebDriverWait(self.driver, 10).until(
-            lambda d: "Alice" in (
-                d.find_element(By.ID, "id_completed_appeal_text")
-                .get_attribute("value") or ""
+            lambda d: "Alice"
+            in (
+                d.find_element(By.ID, "id_completed_appeal_text").get_attribute("value")
+                or ""
             )
         )
 
@@ -162,56 +151,54 @@ class SeleniumTestPIIRehydration(FHISeleniumBase, StaticLiveServerTestCase):
         ).get_attribute("value")
 
         # Verify all placeholders were replaced with correct values
-        assert "Alice" in completed_text, (
-            f"First name 'Alice' not found in completed appeal text: {completed_text}"
-        )
-        assert "Wonderland" in completed_text, (
-            f"Last name 'Wonderland' not found in completed appeal text: {completed_text}"
-        )
-        assert "Alice Wonderland" in completed_text, (
-            f"Full name 'Alice Wonderland' not found in completed appeal text: {completed_text}"
-        )
-        assert "SUB-12345" in completed_text, (
-            f"Subscriber ID 'SUB-12345' not found in completed appeal text: {completed_text}"
-        )
-        assert "GRP-67890" in completed_text, (
-            f"Group ID 'GRP-67890' not found in completed appeal text: {completed_text}"
-        )
-        assert "CLM-98765" in completed_text, (
-            f"Claim/Case ID 'CLM-98765' not found in completed appeal text: {completed_text}"
-        )
-        assert "alice@example.com" in completed_text, (
-            f"Email 'alice@example.com' not found in completed appeal text: {completed_text}"
-        )
-        assert "555-867-5309" in completed_text, (
-            f"Phone '555-867-5309' not found in completed appeal text: {completed_text}"
-        )
+        assert (
+            "Alice" in completed_text
+        ), f"First name 'Alice' not found in completed appeal text: {completed_text}"
+        assert (
+            "Wonderland" in completed_text
+        ), f"Last name 'Wonderland' not found in completed appeal text: {completed_text}"
+        assert (
+            "Alice Wonderland" in completed_text
+        ), f"Full name 'Alice Wonderland' not found in completed appeal text: {completed_text}"
+        assert (
+            "SUB-12345" in completed_text
+        ), f"Subscriber ID 'SUB-12345' not found in completed appeal text: {completed_text}"
+        assert (
+            "GRP-67890" in completed_text
+        ), f"Group ID 'GRP-67890' not found in completed appeal text: {completed_text}"
+        assert (
+            "CLM-98765" in completed_text
+        ), f"Claim/Case ID 'CLM-98765' not found in completed appeal text: {completed_text}"
+        assert (
+            "alice@example.com" in completed_text
+        ), f"Email 'alice@example.com' not found in completed appeal text: {completed_text}"
+        assert (
+            "555-867-5309" in completed_text
+        ), f"Phone '555-867-5309' not found in completed appeal text: {completed_text}"
 
         # Verify no raw placeholders remain
-        assert "{{FIRST_NAME}}" not in completed_text, (
-            "{{FIRST_NAME}} placeholder was not replaced"
-        )
-        assert "{{LAST_NAME}}" not in completed_text, (
-            "{{LAST_NAME}} placeholder was not replaced"
-        )
-        assert "{{SCSID}}" not in completed_text, (
-            "{{SCSID}} placeholder was not replaced"
-        )
-        assert "{{GPID}}" not in completed_text, (
-            "{{GPID}} placeholder was not replaced"
-        )
-        assert "{{CASEID}}" not in completed_text, (
-            "{{CASEID}} placeholder was not replaced"
-        )
-        assert "{{Your Name}}" not in completed_text, (
-            "{{Your Name}} placeholder was not replaced"
-        )
-        assert "{{Your Email Address}}" not in completed_text, (
-            "{{Your Email Address}} placeholder was not replaced"
-        )
-        assert "{{Your Phone Number}}" not in completed_text, (
-            "{{Your Phone Number}} placeholder was not replaced"
-        )
+        assert (
+            "{{FIRST_NAME}}" not in completed_text
+        ), "{{FIRST_NAME}} placeholder was not replaced"
+        assert (
+            "{{LAST_NAME}}" not in completed_text
+        ), "{{LAST_NAME}} placeholder was not replaced"
+        assert (
+            "{{SCSID}}" not in completed_text
+        ), "{{SCSID}} placeholder was not replaced"
+        assert "{{GPID}}" not in completed_text, "{{GPID}} placeholder was not replaced"
+        assert (
+            "{{CASEID}}" not in completed_text
+        ), "{{CASEID}} placeholder was not replaced"
+        assert (
+            "{{Your Name}}" not in completed_text
+        ), "{{Your Name}} placeholder was not replaced"
+        assert (
+            "{{Your Email Address}}" not in completed_text
+        ), "{{Your Email Address}} placeholder was not replaced"
+        assert (
+            "{{Your Phone Number}}" not in completed_text
+        ), "{{Your Phone Number}} placeholder was not replaced"
 
     def test_legacy_placeholders_replaced(self):
         """Test that legacy placeholder formats are also replaced."""
@@ -227,27 +214,20 @@ class SeleniumTestPIIRehydration(FHISeleniumBase, StaticLiveServerTestCase):
             "$your_name_here"
         )
 
-        self.open(f"{self.live_server_url}/")
+        # Open /scan which has a form with {% csrf_token %} so the CSRF cookie is set
+        self.open(f"{self.live_server_url}/scan")
         self.wait_for_page_ready()
         self._set_localstorage_pii()
 
         # Override STUBBED_APPEAL with legacy text for this test
-        appeal_text_escaped = legacy_appeal.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n")
+        appeal_text_escaped = (
+            legacy_appeal.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n")
+        )
 
         csrf_token = self.execute_script(
             "return document.querySelector('input[name=csrfmiddlewaretoken]')?.value "
             "|| document.cookie.match(/csrftoken=([^;]+)/)?.[1] || '';"
         )
-        if not csrf_token:
-            self.execute_script(
-                f"fetch('{self.live_server_url}/choose_appeal', "
-                "{credentials: 'same-origin'});"
-            )
-            import time
-            time.sleep(0.5)
-            csrf_token = self.execute_script(
-                "return document.cookie.match(/csrftoken=([^;]+)/)?.[1] || '';"
-            )
 
         js = f"""
         var form = document.createElement('form');
@@ -279,9 +259,10 @@ class SeleniumTestPIIRehydration(FHISeleniumBase, StaticLiveServerTestCase):
             EC.presence_of_element_located((By.ID, "id_completed_appeal_text"))
         )
         WebDriverWait(self.driver, 10).until(
-            lambda d: "Alice" in (
-                d.find_element(By.ID, "id_completed_appeal_text")
-                .get_attribute("value") or ""
+            lambda d: "Alice"
+            in (
+                d.find_element(By.ID, "id_completed_appeal_text").get_attribute("value")
+                or ""
             )
         )
 
@@ -290,14 +271,14 @@ class SeleniumTestPIIRehydration(FHISeleniumBase, StaticLiveServerTestCase):
         ).get_attribute("value")
 
         # Legacy [Your Name] should be replaced
-        assert "Alice Wonderland" in completed_text, (
-            f"Full name not found after legacy placeholder replacement: {completed_text}"
-        )
+        assert (
+            "Alice Wonderland" in completed_text
+        ), f"Full name not found after legacy placeholder replacement: {completed_text}"
         # Legacy $your_name_here should be replaced
-        assert "$your_name_here" not in completed_text, (
-            f"Legacy $your_name_here was not replaced: {completed_text}"
-        )
+        assert (
+            "$your_name_here" not in completed_text
+        ), f"Legacy $your_name_here was not replaced: {completed_text}"
         # Legacy [Email Address] should be replaced
-        assert "alice@example.com" in completed_text, (
-            f"Email not found after legacy placeholder replacement: {completed_text}"
-        )
+        assert (
+            "alice@example.com" in completed_text
+        ), f"Email not found after legacy placeholder replacement: {completed_text}"

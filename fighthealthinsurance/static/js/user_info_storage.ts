@@ -92,6 +92,15 @@ export function scrubPersonalInfo(message: string, userInfo: UserInfo | null): s
 
   let scrubbedMessage = message;
 
+  // Replace email first (before names) to avoid corrupting email addresses
+  // e.g., alice@example.com -> {{FIRST_NAME}}@example.com
+  if (userInfo.email) {
+    scrubbedMessage = scrubbedMessage.replace(
+      new RegExp(escapeRegExp(userInfo.email), "gi"),
+      "{{Your Email Address}}"
+    );
+  }
+
   // Replace name with word boundaries
   if (userInfo.firstName) {
     scrubbedMessage = scrubbedMessage.replace(
@@ -136,14 +145,6 @@ export function scrubPersonalInfo(message: string, userInfo: UserInfo | null): s
     scrubbedMessage = scrubbedMessage.replace(
       new RegExp(`\\b${escapeRegExp(userInfo.zipCode)}\\b`, "gi"),
       "{{ZIP_CODE}}"
-    );
-  }
-
-  // Replace email
-  if (userInfo.email) {
-    scrubbedMessage = scrubbedMessage.replace(
-      new RegExp(escapeRegExp(userInfo.email), "gi"),
-      "{{Your Email Address}}"
     );
   }
 
@@ -207,6 +208,16 @@ export function restorePersonalInfo(message: string, userInfo: UserInfo | null):
   }
   if (userInfo.zipCode) {
     restoredMessage = restoredMessage.replace(/\[ZIP_CODE\]/g, userInfo.zipCode);
+  }
+
+  // Legacy combined-name and email placeholders
+  const fullName = userInfo.firstName + (userInfo.lastName ? " " + userInfo.lastName : "");
+  if (fullName.trim()) {
+    restoredMessage = restoredMessage.replace(/\[Your Name\]/g, fullName);
+    restoredMessage = restoredMessage.replace(/\$your_name_here/g, fullName);
+  }
+  if (userInfo.email) {
+    restoredMessage = restoredMessage.replace(/\[Email Address\]/g, userInfo.email);
   }
 
   return restoredMessage;

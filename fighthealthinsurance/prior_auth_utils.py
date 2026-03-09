@@ -98,6 +98,8 @@ class PriorAuthTextSubstituter:
             context["patient_dob"] = patient_dob
             context["Patient DOB"] = patient_dob
             context["Enter DOB"] = patient_dob
+            context["date_of_birth"] = patient_dob
+            context["DATE_OF_BIRTH"] = patient_dob
 
             # Medical information
             diagnosis = prior_auth.diagnosis or "{{DIAGNOSIS}}"
@@ -130,7 +132,10 @@ class PriorAuthTextSubstituter:
                 context["provider name"] = professional.get_display_name()
                 context["your name"] = professional.get_display_name()
                 context["your_name"] = professional.get_display_name()
-                context["provider_npi"] = professional.npi_number or "{{NPI_NUMBER}}"
+                npi = professional.npi_number or "{{NPI_NUMBER}}"
+                context["provider_npi"] = npi
+                context["npi_number"] = npi
+                context["NPI_NUMBER"] = npi
                 context["provider_type"] = (
                     professional.provider_type or "{{PROVIDER_TYPE}}"
                 )
@@ -149,6 +154,8 @@ class PriorAuthTextSubstituter:
                 # Default placeholders if no professional is associated
                 context["provider_name"] = "{{PROVIDER_NAME}}"
                 context["provider_npi"] = "{{NPI_NUMBER}}"
+                context["npi_number"] = "{{NPI_NUMBER}}"
+                context["NPI_NUMBER"] = "{{NPI_NUMBER}}"
                 context["provider_type"] = "{{PROVIDER_TYPE}}"
                 context["provider_credentials"] = "{{CREDENTIALS}}"
                 context["provider_fax"] = "{{PROVIDER_FAX}}"
@@ -210,12 +217,14 @@ class PriorAuthTextSubstituter:
             )
             if not context:
                 # Ensure we have at least the basic medical information
+                # Use `or` to fall back to placeholder when attribute exists but is empty
                 context = {
-                    "diagnosis": getattr(prior_auth, "diagnosis", "{{DIAGNOSIS}}"),
-                    "treatment": getattr(prior_auth, "treatment", "{{TREATMENT}}"),
-                    "insurance_company": getattr(
-                        prior_auth, "insurance_company", "{{INSURANCE_COMPANY}}"
-                    ),
+                    "diagnosis": getattr(prior_auth, "diagnosis", None)
+                    or "{{DIAGNOSIS}}",
+                    "treatment": getattr(prior_auth, "treatment", None)
+                    or "{{TREATMENT}}",
+                    "insurance_company": getattr(prior_auth, "insurance_company", None)
+                    or "{{INSURANCE_COMPANY}}",
                     "today": date.today().strftime("%B %d, %Y"),
                 }
 

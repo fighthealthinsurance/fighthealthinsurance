@@ -7,6 +7,19 @@ from django.test import TestCase
 
 
 class FHISeleniumBase(BaseCase, TestCase):
+    def setUp(self):
+        # Prevent Chrome from routing localhost through an HTTP proxy.
+        # sb_config is the seleniumbase.config module; chromium_arg is set by
+        # the pytest plugin. We must patch it before super().setUp() reads it.
+        import seleniumbase.config as sb_config
+
+        existing = getattr(sb_config, "chromium_arg", None)
+        if not existing:
+            sb_config.chromium_arg = "--no-proxy-server"
+        elif "--no-proxy-server" not in existing:
+            sb_config.chromium_arg = existing + ";--no-proxy-server"
+        super().setUp()
+
     def assert_title_eventually(self, desired_title):
         try:
             WebDriverWait(self.driver, 15).until(EC.title_is(desired_title))
@@ -37,7 +50,9 @@ class FHISeleniumBase(BaseCase, TestCase):
         )
         return self.click(f"button#{target}")
 
-    def wait_for_page_ready(self, timeout=15, predicate=None, selector=None, localstorage_key=None):
+    def wait_for_page_ready(
+        self, timeout=15, predicate=None, selector=None, localstorage_key=None
+    ):
         """Wait for page JavaScript to complete loading.
 
         Args:
@@ -53,13 +68,17 @@ class FHISeleniumBase(BaseCase, TestCase):
             WebDriverWait(self.driver, timeout).until(predicate)
         elif selector is not None:
             WebDriverWait(self.driver, timeout).until(
-                lambda d: d.find_element(By.CSS_SELECTOR, selector).get_attribute("value") not in (None, "")
+                lambda d: d.find_element(By.CSS_SELECTOR, selector).get_attribute(
+                    "value"
+                )
+                not in (None, "")
             )
         elif localstorage_key is not None:
             WebDriverWait(self.driver, timeout).until(
                 lambda d: d.execute_script(
                     f"return localStorage.getItem('{localstorage_key}')"
-                ) is not None
+                )
+                is not None
             )
 
     def wait_for_clickable(self, selector, timeout=15):

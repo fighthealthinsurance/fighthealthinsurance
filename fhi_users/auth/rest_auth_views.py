@@ -1,5 +1,6 @@
 from loguru import logger
 from typing import Optional, TYPE_CHECKING
+import os
 import time
 import json
 import uuid
@@ -1077,7 +1078,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                 ).data,
                 status=status.HTTP_201_CREATED,
             )
-        if not (settings.DEBUG and data["skip_stripe"]):
+        if not ((settings.DEBUG or os.environ.get("TESTING")) and data["skip_stripe"]):
             # Validate redirect URLs to prevent open redirect attacks
             default_cancel = f"https://{settings.FIGHT_PAPERWORK_DOMAIN}/?q=ohno"
             continue_url = validate_redirect_url(

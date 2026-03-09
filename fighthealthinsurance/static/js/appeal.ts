@@ -55,22 +55,22 @@ function descrub() {
   text = text.replace(/\{\{Your Email Address\}\}/g, email_address);
   text = text.replace(/\{\{Your Phone Number\}\}/g, phone_number);
 
-  // Legacy format fallbacks for backward compatibility
-  text = text.replace("YourNameMagic", name);
-  text = text.replace("[Your Name]", name);
-  text = text.replace("[Patient's Name]", name);
-  text = text.replace("$your_name_here", name);
-  text = text.replace("[Policy Number or Member ID]", subscriber_id);
-  text = text.replace("[Email Address]", email_address);
-  text = text.replace("SCSID: 123456789", subscriber_id);
-  text = text.replace("GPID: 987654321", group_id);
-  text = text.replace("subscriber\\_id", subscriber_id);
-  text = text.replace("group\\_id", group_id);
+  // Legacy format fallbacks for backward compatibility (global replacements)
+  text = text.replace(/YourNameMagic/g, name);
+  text = text.replace(/\[Your Name\]/g, name);
+  text = text.replace(/\[Patient's Name\]/g, name);
+  text = text.replace(/\$your_name_here/g, name);
+  text = text.replace(/\[Policy Number or Member ID\]/g, subscriber_id);
+  text = text.replace(/\[Email Address\]/g, email_address);
+  text = text.replace(/SCSID: 123456789/g, subscriber_id);
+  text = text.replace(/GPID: 987654321/g, group_id);
+  text = text.replace(/subscriber\\_id/g, subscriber_id);
+  text = text.replace(/group\\_id/g, group_id);
   // These must come after the more specific patterns above
-  text = text.replace("subscriber_id", subscriber_id);
-  text = text.replace("group_id", group_id);
-  text = text.replace("fname", fname);
-  text = text.replace("lname", lname);
+  text = text.replace(/subscriber_id/g, subscriber_id);
+  text = text.replace(/group_id/g, group_id);
+  text = text.replace(/\bfname\b/g, fname);
+  text = text.replace(/\blname\b/g, lname);
   if (target) {
     target.value = text;
   } else {
