@@ -31,6 +31,107 @@ from fighthealthinsurance.exec import *
 from fighthealthinsurance.process_denial import DenialBase
 from fighthealthinsurance.utils import all_concrete_subclasses
 
+# Regex to split text into sentences. Splits after sentence-ending punctuation
+# followed by whitespace and a capital letter (avoids splitting on "Dr.", "U.S.", etc.)
+_sentence_split_re = re.compile(r"(?<=[.!?])\s+(?=[A-Z])")
+
+
+def remove_repeated_sentences(
+    text: Optional[str], max_repeats: int = 3
+) -> Optional[str]:
+    """Remove repeated sentences from LLM output that has gone into a loop.
+
+    Detects both single-sentence repetition (same sentence N+ times) and
+    alternating patterns (A-B-A-B-A-B). Returns cleaned text with duplicates
+    stripped, or None if the text was so repetitive that stripping leaves
+    less than 30% of the original.
+
+    Args:
+        text: The text to filter, or None.
+        max_repeats: Maximum times a sentence may appear (default 3).
+
+    Returns:
+        Cleaned text, or None if input was None or too severely repetitive.
+    """
+    if text is None:
+        return None
+
+    sentences = _sentence_split_re.split(text.strip())
+
+    # Short texts can have legitimate repetition — skip filtering.
+    if len(sentences) < 6:
+        return text
+
+    # Cap individual sentence repeats — this naturally handles single-sentence
+    # loops, A-B-A-B alternation, A-B-C-A-B-D patterns, and any other form
+    # of repetition by limiting each unique sentence to max_repeats occurrences.
+    seen_counts: dict[str, int] = {}
+    final_sentences: list[str] = []
+    for sent in sentences:
+        key = sent.strip().lower()
+        count = seen_counts.get(key, 0) + 1
+        seen_counts[key] = count
+        if count <= max_repeats:
+            final_sentences.append(sent)
+
+    result = " ".join(final_sentences)
+
+    # If we stripped away too much, the original was unsalvageable
+    if len(result) < 0.3 * len(text):
+        return None
+
+    return result
+
+
+def has_severe_repetition(text: str, threshold: float = 0.5) -> bool:
+    """Check if text has severe sentence repetition (>threshold ratio).
+
+    Used as a fast check to reject results before the cleaning pipeline.
+    Detects two patterns:
+    1. A single sentence accounts for more than ``threshold`` of all sentences.
+    2. An alternating pair of two distinct sentences that together account for
+       more than ``threshold`` of all sentences and actually alternate (no two
+       adjacent sentences are the same).
+
+    Requires at least 6 sentences to trigger (short texts are never flagged).
+    """
+    sentences = _sentence_split_re.split(text.strip())
+    if len(sentences) < 6:
+        return False
+
+    normalized = [s.strip().lower() for s in sentences]
+    counts: dict[str, int] = {}
+    for s in normalized:
+        counts[s] = counts.get(s, 0) + 1
+
+    total = len(sentences)
+
+    # Single sentence dominating
+    max_count = max(counts.values())
+    if max_count > threshold * total:
+        return True
+
+    # Alternating pair: exactly 2 distinct normalized sentences making up
+    # >threshold of the text, and they actually alternate (adjacent differ).
+    if len(counts) == 2:
+        combined = sum(counts.values())
+        if combined > threshold * total:
+            pair_keys = list(counts.keys())
+            # Count adjacent pairs where both belong to the pair and differ
+            alternating_count = 0
+            for i in range(len(normalized) - 1):
+                if (
+                    normalized[i] != normalized[i + 1]
+                    and normalized[i] in pair_keys
+                    and normalized[i + 1] in pair_keys
+                ):
+                    alternating_count += 1
+            # In a perfect A-B-A-B of length N, there are N-1 alternations
+            if alternating_count > threshold * (total - 1):
+                return True
+
+    return False
+
 
 class RemoteModelLike(DenialBase):
     """Base class for remote ML model backends used for chat and appeal generation."""
@@ -957,6 +1058,8 @@ class RemoteOpenLike(RemoteModel):
                 return True
         if len(result.strip(" ")) < 3:
             return True
+        if has_severe_repetition(result):
+            return True
         return False
 
     def is_prior_auth(self, result: Optional[str]) -> bool:
@@ -1201,11 +1304,19 @@ class RemoteOpenLike(RemoteModel):
                 f"Result {result} is for patient voice so no need to check professional."
             )
 
-        cleaned = CleanerUtils.note_remover(
-            CleanerUtils.url_fixer(
-                CleanerUtils.tla_fixer(result), input_urls=input_urls
+        cleaned = remove_repeated_sentences(
+            CleanerUtils.note_remover(
+                CleanerUtils.url_fixer(
+                    CleanerUtils.tla_fixer(result), input_urls=input_urls
+                )
             )
         )
+
+        if cleaned is None:
+            logger.debug(
+                f"Result rejected due to severe repetition on type {infer_type}"
+            )
+            return []
 
         logger.debug(f"Cleaned {cleaned} on type {infer_type}")
 
