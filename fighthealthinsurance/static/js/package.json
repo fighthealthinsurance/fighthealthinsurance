@@ -36,6 +36,7 @@
     "@types/react": "^19.1.4",
     "@types/react-dom": "^19.1.5",
     "async-memoize-one": "1.1.2",
+    "clsx": "^2.1.1",
     "dompurify": "^3.0.8",
     "glob": "^11.0.3",
     "gray-matter": "^4.0.3",
