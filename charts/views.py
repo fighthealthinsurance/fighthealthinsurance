@@ -362,7 +362,7 @@ def generate_chooser_ranked_lines():
             for c in candidates_by_id.values()
             if c.is_active
         ]
-        all_candidates.sort(key=lambda c: c["candidate_index"])
+        all_candidates.sort(key=lambda c: c["candidate_index"])  # type: ignore[arg-type,return-value]
 
         record = {
             "task_id": task.id,
@@ -616,7 +616,7 @@ def signups_by_day(request):
     source = ColumnDataSource(df_pivot)
 
     # Create a Bokeh plot
-    p = figure(title="Daily Signups", x_axis_type="datetime")
+    p = figure(title="Daily Signups", x_axis_type="datetime")  # type: ignore[call-arg]
 
     # Stacked area plot (not cumulative over time)
     p.varea(
@@ -713,7 +713,7 @@ def users_by_day(request):
     source = ColumnDataSource(df)
 
     # Create a Bokeh plot
-    p = figure(title="Daily Users", x_axis_type="datetime")
+    p = figure(title="Daily Users", x_axis_type="datetime")  # type: ignore[call-arg]
 
     # Stacked area plot (not cumulative over time)
     p.varea(
@@ -766,7 +766,7 @@ def generate_denial_questions_lines():
     for denial_id, question in DenialQA.objects.filter(denial__in=denials).values_list(
         "denial_id", "question"
     ):
-        answered_by_denial.setdefault(denial_id, set()).add(question)
+        answered_by_denial.setdefault(denial_id, set()).add(question)  # type: ignore[arg-type]
 
     for denial in denials.iterator(chunk_size=100):
         if not denial.generated_questions:
@@ -853,7 +853,7 @@ def procedures_denied_chart(request):
     )
 
     # Process procedures to normalize them (case insensitive, remove spaces)
-    procedure_counts = {}
+    procedure_counts: dict[str, int] = {}
     for procedure in denials_with_procedures:
         if procedure:
             # Normalize the procedure name: lowercase and remove extra spaces
@@ -894,7 +894,7 @@ def procedures_denied_chart(request):
         chart_df = df
 
     # Create a Bokeh figure
-    p = figure(
+    p = figure(  # type: ignore[call-arg]
         title="Most Commonly Denied Procedures",
         x_range=chart_df["procedure"].tolist(),
         height=500,
@@ -918,7 +918,7 @@ def procedures_denied_chart(request):
     # Customize the chart appearance
     p.xaxis.major_label_orientation = 3.14 / 4  # Rotate x-axis labels 45 degrees
     p.xgrid.grid_line_color = None
-    p.y_range.start = 0
+    p.y_range.start = 0  # type: ignore[attr-defined]
     p.xaxis.axis_label = "Procedures"
     p.yaxis.axis_label = "Number of Denials"
 
