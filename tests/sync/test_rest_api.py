@@ -247,11 +247,11 @@ class DenialEndToEnd(APITestCase):
                 }
             )
             # We should receive at least one frame.
-            response = await seb_communicator.receive_from()
+            response = await seb_communicator.receive_from(timeout=30)
             # Now consume all of the rest of them until done.
             try:
                 while True:
-                    response = await seb_communicator.receive_from()
+                    response = await seb_communicator.receive_from(timeout=30)
             except:
                 pass
         # Set health history before next steps
