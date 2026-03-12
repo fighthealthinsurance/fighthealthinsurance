@@ -259,7 +259,11 @@ async def resolve_chat_type(
     """
     if not is_authenticated:
         if session_key:
-            lead = await ChatLeads.objects.filter(session_id=session_key).order_by("-created_at").afirst()
+            lead = (
+                await ChatLeads.objects.filter(session_id=session_key)
+                .order_by("-created_at")
+                .afirst()
+            )
             if lead and not lead.drug:
                 logger.info(f"Trial professional chat for session {session_key}")
                 return ChatType.TRIAL_PROFESSIONAL, None
@@ -271,9 +275,7 @@ async def resolve_chat_type(
     if professional_user:
         return ChatType.PROFESSIONAL, professional_user
 
-    logger.info(
-        f"User {user.username} is not a professional user, treating as patient"
-    )
+    logger.info(f"User {user.username} is not a professional user, treating as patient")
     return ChatType.PATIENT, None
 
 
@@ -499,9 +501,7 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                     try:
                         validate_email(email)
                     except ValidationError:
-                        await self.send_json_message(
-                            {"error": "Invalid email format."}
-                        )
+                        await self.send_json_message({"error": "Invalid email format."})
                         return
                 else:
                     # Authenticated patient — derive email from user account
@@ -603,7 +603,10 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                     updates["chat_type"] = chat_type
                 if chat.is_patient != is_patient:
                     updates["is_patient"] = is_patient
-                if professional_user and chat.professional_user_id != professional_user.pk:
+                if (
+                    professional_user
+                    and chat.professional_user_id != professional_user.pk
+                ):
                     updates["professional_user"] = professional_user
                 if user and user.is_authenticated and chat.user_id != user.pk:
                     updates["user"] = user

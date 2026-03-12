@@ -1,10 +1,13 @@
 """Selenium tests for chat type detection (patient vs trial professional vs professional).
 
 Tests verify that:
-1. Patient chat flow via consent form creates correct session
-2. Patient chat flow via explain denial creates correct session
+1. Patient chat flow via consent form stores correct user info in localStorage
+2. Patient chat flow via explain denial stores correct user info in localStorage
 3. Patient consent doesn't create ChatLeads entries
-4. Server-side OngoingChat records have correct chat_type
+
+Note: Server-side OngoingChat chat_type verification is covered by
+tests/sync/test_chat_type_detection.py since StaticLiveServerTestCase uses
+WSGI and cannot serve WebSocket connections.
 """
 
 import json
@@ -14,8 +17,6 @@ from seleniumbase import BaseCase
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-
-from fighthealthinsurance.models import ChatType, Denial, OngoingChat
 
 from .fhi_selenium_base import FHISeleniumBase
 
@@ -57,27 +58,6 @@ class SeleniumPatientChatTypeTest(FHISeleniumBase, StaticLiveServerTestCase):
         self.click("input#tos")
         self.click("input#privacy")
 
-    def assert_server_side_chat_type(self, email, expected_chat_type, timeout=5):
-        """Poll for an OngoingChat by hashed email and assert chat_type.
-
-        Retries until timeout since the chat is created asynchronously via WebSocket.
-        """
-        import time as _time
-
-        hashed_email = Denial.get_hashed_email(email)
-        deadline = _time.monotonic() + timeout
-        while _time.monotonic() < deadline:
-            chat = OngoingChat.objects.filter(hashed_email=hashed_email).first()
-            if chat is not None:
-                assert chat.chat_type == expected_chat_type, (
-                    f"Expected chat_type={expected_chat_type}, got {chat.chat_type}"
-                )
-                return
-            _time.sleep(0.5)
-        raise AssertionError(
-            f"No OngoingChat found for email hash after {timeout}s"
-        )
-
     def test_patient_consent_creates_patient_session(self):
         """Test that patient consent flow stores user info in localStorage."""
         self.open(f"{self.live_server_url}/chat-consent")
@@ -97,9 +77,6 @@ class SeleniumPatientChatTypeTest(FHISeleniumBase, StaticLiveServerTestCase):
 
         user_info = json.loads(user_info_json)
         assert user_info["email"] == test_email, f"Email should be {test_email}"
-
-        # Server-side: if a chat was created via WebSocket, verify its type
-        self.assert_server_side_chat_type(test_email, ChatType.PATIENT)
 
     def test_patient_session_has_no_session_key_in_leads(self):
         """Test that patient consent doesn't create a ChatLeads entry."""
@@ -147,6 +124,3 @@ class SeleniumPatientChatTypeTest(FHISeleniumBase, StaticLiveServerTestCase):
         assert user_info_json is not None, "User info should be stored"
         user_info = json.loads(user_info_json)
         assert user_info["email"] == test_email
-
-        # Server-side: if a chat was created via WebSocket, verify its type
-        self.assert_server_side_chat_type(test_email, ChatType.PATIENT)
