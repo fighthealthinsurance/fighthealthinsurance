@@ -5,7 +5,7 @@ About Our AI
 
 {% block content %}
 <div class="container mt-5">
-    <h3 style="margin-top: 10vh;">About Our AI</h3>
+    <h1 style="margin-top: 10vh;">About Our AI</h1>
     <div class="spacer"></div>
 
     <p>
@@ -14,7 +14,7 @@ About Our AI
         You should always review and customize any generated appeal before submitting it.
     </p>
 
-    <h4 class="mt-4">How It Works</h4>
+    <h2 class="mt-4">How It Works</h2>
     <p>
         When you submit a denial or chat with our system, we use fine-tuned medical language models
         (like <a href="https://ai.google.dev/gemma/docs/medgemma" target="_blank" rel="noopener noreferrer">MedGemma</a>)
@@ -24,13 +24,13 @@ About Our AI
         for relevant medical literature to strengthen your appeal with citations.
     </p>
 
-    <h4 class="mt-4">Training &amp; Data</h4>
+    <h2 class="mt-4">Training &amp; Data</h2>
     <p>
-        Our models are fine-tuned on data derived from publicly available state appeal decisions
-        from California, and other states. 
-        Instead, we use the public decisions &mdash; which describe the diagnosis, treatment,
-        denial reason, and outcome of appeal &mdash; to generate synthetic training examples.
-        Additionally, de-identified records are used for fine-tuning when available.
+        We generate synthetic training examples from publicly available state appeal decisions
+        from California, and other states, and use those examples to fine-tune our models.
+        These public decisions describe the diagnosis, treatment, denial reason, and outcome of real
+        appeals, but contain no private patient information. No real patient appeal letters are used
+        in training.
     </p>
     <p>
         We fine-tune using <a href="https://en.wikipedia.org/wiki/Fine-tuning_(deep_learning)#Parameter-efficient_fine-tuning" target="_blank" rel="noopener noreferrer">LoRA (Low-Rank Adaptation)</a>,
@@ -41,8 +41,13 @@ About Our AI
     <p>
         We update which base models we use as better open language models become available.
     </p>
+    <p>
+        For more details on how we handle your data, see our
+        <a href="{% url 'tos' %}">Terms of Service</a>. You can also
+        <a href="{% url 'remove_data' %}">request deletion of your data</a> at any time.
+    </p>
 
-    <h4 class="mt-4">Sustainability</h4>
+    <h2 class="mt-4">Sustainability</h2>
     <p>
         We care about the environmental impact of running AI. A few things we do:
     </p>
@@ -61,14 +66,14 @@ About Our AI
         </li>
     </ul>
 
-    <h4 class="mt-4">Open Source</h4>
+    <h2 class="mt-4">Open Source</h2>
     <p>
         Fight Health Insurance is mostly open source. You can find our code on
         <a href="https://github.com/fighthealthinsurance" target="_blank" rel="noopener noreferrer">GitHub</a>.
         We believe transparency is especially important when AI is involved in healthcare.
     </p>
 
-    <h4 class="mt-4">Limitations</h4>
+    <h2 class="mt-4">Limitations</h2>
     <p>
         AI-generated appeals are a starting point, not a finished product. Our models can make mistakes,
         hallucinate citations, or miss important details about your specific situation. Always:
