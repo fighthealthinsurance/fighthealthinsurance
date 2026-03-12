@@ -16,7 +16,7 @@ import requests
 from asgiref.sync import async_to_sync, sync_to_async
 from loguru import logger
 
-from fighthealthinsurance.utils import ensure_message_alternation, RateLimiter
+from fighthealthinsurance.utils import RateLimiter, ensure_message_alternation
 
 # Import the appropriate async_timeout based on Python version
 if sys.version_info >= (3, 11):
@@ -27,8 +27,8 @@ else:
 from llm_result_utils.cleaner_utils import CleanerUtils
 from llm_result_utils.llm_utils import LLMResponseUtils
 
-from fighthealthinsurance.ml.bad_output_utils import is_bad_output
 from fighthealthinsurance.exec import *
+from fighthealthinsurance.ml.bad_output_utils import is_bad_output
 from fighthealthinsurance.process_denial import DenialBase
 from fighthealthinsurance.utils import all_concrete_subclasses
 

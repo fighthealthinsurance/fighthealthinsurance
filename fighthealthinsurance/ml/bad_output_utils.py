@@ -2,7 +2,6 @@
 
 from typing import Callable, Optional
 
-
 # Canonical guardrail phrases that indicate unusable/refusal-style LLM output.
 BAD_OUTPUT_PHRASES: tuple[str, ...] = (
     "Therefore, the Health Plans denial should be overturned.",
