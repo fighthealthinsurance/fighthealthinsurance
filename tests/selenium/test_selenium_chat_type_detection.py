@@ -57,18 +57,26 @@ class SeleniumPatientChatTypeTest(FHISeleniumBase, StaticLiveServerTestCase):
         self.click("input#tos")
         self.click("input#privacy")
 
-    def assert_server_side_chat_type(self, email, expected_chat_type):
-        """Query OngoingChat by hashed email and assert chat_type.
+    def assert_server_side_chat_type(self, email, expected_chat_type, timeout=5):
+        """Poll for an OngoingChat by hashed email and assert chat_type.
 
-        The chat is only created when a WebSocket message is sent, so this
-        assertion is best-effort: it verifies the chat_type if a chat exists.
+        Retries until timeout since the chat is created asynchronously via WebSocket.
         """
+        import time as _time
+
         hashed_email = Denial.get_hashed_email(email)
-        chats = OngoingChat.objects.filter(hashed_email=hashed_email)
-        for chat in chats:
-            assert chat.chat_type == expected_chat_type, (
-                f"Expected chat_type={expected_chat_type}, got {chat.chat_type}"
-            )
+        deadline = _time.monotonic() + timeout
+        while _time.monotonic() < deadline:
+            chat = OngoingChat.objects.filter(hashed_email=hashed_email).first()
+            if chat is not None:
+                assert chat.chat_type == expected_chat_type, (
+                    f"Expected chat_type={expected_chat_type}, got {chat.chat_type}"
+                )
+                return
+            _time.sleep(0.5)
+        raise AssertionError(
+            f"No OngoingChat found for email hash after {timeout}s"
+        )
 
     def test_patient_consent_creates_patient_session(self):
         """Test that patient consent flow stores user info in localStorage."""

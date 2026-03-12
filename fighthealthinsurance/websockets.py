@@ -259,7 +259,7 @@ async def resolve_chat_type(
     """
     if not is_authenticated:
         if session_key:
-            lead = await ChatLeads.objects.filter(session_id=session_key).afirst()
+            lead = await ChatLeads.objects.filter(session_id=session_key).order_by("-created_at").afirst()
             if lead and not lead.drug:
                 logger.info(f"Trial professional chat for session {session_key}")
                 return ChatType.TRIAL_PROFESSIONAL, None
