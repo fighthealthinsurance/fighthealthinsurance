@@ -55,6 +55,7 @@ markdown_strings
 metapub==0.5.12
 nest_asyncio
 packaging>=20.0
+pandas
 pandoc
 paramiko
 Pillow
