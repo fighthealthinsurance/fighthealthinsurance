@@ -1,9 +1,11 @@
 """Base class for Ray actor references to reduce code duplication."""
 
 from functools import cached_property
-from typing import Any, Optional, Tuple
+from typing import Any, Optional
 
 import ray
+
+from fighthealthinsurance.actor_ref_config import ActorRefConfig, ActorStartMode
 
 
 class BaseActorRef:
@@ -12,13 +14,11 @@ class BaseActorRef:
 
     Subclasses should set:
     - actor_class: The actor class to instantiate
-    - actor_name: The name for the actor
-    - has_run_method: Whether the actor has a run() method that should be called
+    - config: Typed actor-ref config
     """
 
     actor_class: type
-    actor_name: str
-    has_run_method: bool = False
+    config: ActorRefConfig
     _actor_instance: Optional[Any] = None
 
     @cached_property
@@ -32,16 +32,16 @@ class BaseActorRef:
         """
         if self._actor_instance is None:
             self._actor_instance = self.actor_class.options(  # type: ignore
-                name=self.actor_name,
-                lifetime="detached",
-                namespace="fhi",
-                get_if_exists=True,
+                name=self.config.name,
+                lifetime=self.config.lifetime,
+                namespace=self.config.namespace,
+                get_if_exists=self.config.get_if_exists,
             ).remote()
 
-        if self.has_run_method:
+        if self.config.start_mode == ActorStartMode.RUN_ON_GET:
             # Kick off the remote task
             remote_result = self._actor_instance.run.remote()
-            print(f"Remote run of {self.actor_name} actor {remote_result}")
+            print(f"Remote run of {self.config.name} actor {remote_result}")
             return (self._actor_instance, remote_result)
 
         return self._actor_instance
@@ -59,19 +59,19 @@ class FaxActorRefBase(BaseActorRef):
     @cached_property
     def get(self) -> Any:
         """Get or create the fax actor instance with special initialization."""
-        namespace = "fhi"
+        namespace = self.config.namespace
         if self._actor_instance is None:
             # First try to get existing actor to avoid race conditions
             try:
                 self._actor_instance = ray.get_actor(
-                    self.actor_name, namespace=namespace
+                    self.config.name, namespace=namespace
                 )
             except ValueError:
                 # Actor doesn't exist, create it
                 self._actor_instance = self.actor_class.options(  # type: ignore
-                    name=self.actor_name,
-                    lifetime="detached",
+                    name=self.config.name,
+                    lifetime=self.config.lifetime,
                     namespace=namespace,
-                    get_if_exists=True,
+                    get_if_exists=self.config.get_if_exists,
                 ).remote()
         return self._actor_instance
