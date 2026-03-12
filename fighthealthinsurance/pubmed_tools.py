@@ -483,10 +483,14 @@ class PubMedTools(object):
                 if hasattr(fetched, "authors") and fetched.authors:
                     authors_str = ", ".join(fetched.authors)
                 journal_str = (
-                    fetched.journal if hasattr(fetched, "journal") and fetched.journal else ""
+                    fetched.journal
+                    if hasattr(fetched, "journal") and fetched.journal
+                    else ""
                 )
                 year_str = (
-                    str(fetched.year) if hasattr(fetched, "year") and fetched.year else ""
+                    str(fetched.year)
+                    if hasattr(fetched, "year") and fetched.year
+                    else ""
                 )
 
                 if fetched is not None and (
