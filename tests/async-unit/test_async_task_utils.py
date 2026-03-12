@@ -28,12 +28,14 @@ class TestAsyncTaskUtils:
     @pytest.mark.asyncio
     async def test_fire_and_forget_in_new_threadpool(self):
         """Test that fire_and_forget_in_new_threadpool runs tasks without blocking"""
-        # Create a shared variable to verify task execution
+        # Create a shared variable and event to verify task execution
         shared_result = {"completed": False}
+        done_event = asyncio.Event()
 
         async def background_task() -> None:
             await asyncio.sleep(0.5)
             shared_result["completed"] = True
+            done_event.set()
 
         # Fire and forget
         await fire_and_forget_in_new_threadpool(background_task())
@@ -41,8 +43,8 @@ class TestAsyncTaskUtils:
         # This should return immediately while task runs in background
         assert shared_result["completed"] is False
 
-        # Wait long enough to confirm task completes
-        await asyncio.sleep(2.0)
+        # Wait for event instead of fixed sleep
+        await asyncio.wait_for(done_event.wait(), timeout=5.0)
         assert shared_result["completed"] is True
 
     @pytest.mark.asyncio

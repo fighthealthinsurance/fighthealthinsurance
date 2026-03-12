@@ -9,6 +9,9 @@ import pytest
 from django.contrib.staticfiles.testing import StaticLiveServerTestCase
 from fighthealthinsurance.models import *
 from seleniumbase import BaseCase
+from selenium.common.exceptions import TimeoutException
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
 
 from .fhi_selenium_base import FHISeleniumBase
 
@@ -469,7 +472,7 @@ Sincerely, OtherInsuranceCo""",
             WebDriverWait(self.driver, 2).until(
                 lambda d: d.find_element(By.CSS_SELECTOR, "textarea#health_history").get_attribute("value") == first_health
             )
-        except Exception:
+        except TimeoutException:
             pass  # Timeout is expected — means the old value was NOT restored
 
         health_value = self.get_value("textarea#health_history")

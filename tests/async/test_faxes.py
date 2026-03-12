@@ -79,7 +79,8 @@ class FaxSendBaseTest(unittest.TestCase):
             ) as t2:
                 for i in range(0, 10):
                     t2.write("Sup ")
-                    t2.flush()
+                t2.flush()
+                os.sync()
                 r = asyncio.run(m.assemble_outputs("MyHeader", "", [t1.name, t2.name]))
                 self.assertEqual(len(r), 1)
                 reader = PdfReader(r[0])

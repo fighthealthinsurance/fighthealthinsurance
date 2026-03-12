@@ -294,6 +294,16 @@ class ChatStatusMessageTest(APITestCase):
         chat_ids = [r.get("chat_id") for r in responses if "chat_id" in r]
         self.assertGreater(len(chat_ids), 0, "Expected to receive a chat_id")
 
+        # Check that we received an assistant response with content
+        assistant_content_responses = [
+            r for r in responses
+            if r.get("role") == "assistant" and "content" in r
+        ]
+        self.assertGreater(
+            len(assistant_content_responses), 0,
+            f"Expected at least one assistant response with content, got responses: {responses}",
+        )
+
         # Give async tasks time to complete before disconnecting
         await asyncio.sleep(0.1)
         try:

@@ -239,21 +239,26 @@ class DenialEndToEnd(APITestCase):
             )
             connected, _ = await seb_communicator.connect()
             assert connected
-            await seb_communicator.send_json_to(
-                {
-                    "email": email,
-                    "semi_sekret": semi_sekret,
-                    "denial_id": denial_id,
-                }
-            )
-            # We should receive at least one frame.
-            response = await seb_communicator.receive_from(timeout=30)
-            # Now consume all of the rest of them until done.
             try:
-                while True:
-                    response = await seb_communicator.receive_from(timeout=30)
-            except:
-                pass
+                await seb_communicator.send_json_to(
+                    {
+                        "email": email,
+                        "semi_sekret": semi_sekret,
+                        "denial_id": denial_id,
+                    }
+                )
+                # We should receive at least one frame.
+                response = await seb_communicator.receive_from(timeout=30)
+                # Now consume all of the rest of them until done.
+                try:
+                    while True:
+                        response = await seb_communicator.receive_from(timeout=30)
+                except asyncio.TimeoutError:
+                    pass
+                # Let async tasks settle before disconnecting
+                await asyncio.sleep(1)
+            finally:
+                await seb_communicator.disconnect()
         # Set health history before next steps
         health_history_url = reverse("healthhistory-list")
         health_history_response = await sync_to_async(self.client.post)(

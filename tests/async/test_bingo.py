@@ -68,8 +68,7 @@ class BingoTests(TestCase):
                         phrases.append(board[i][j])
             boards.append(tuple(phrases))
 
-        # With 36 phrases choosing 24, the probability of all 5 boards
-        # being identical is astronomically low (~1/1.25 billion per pair)
+        # Collisions are extremely unlikely given the number of possible arrangements
         unique_boards = set(boards)
         self.assertGreater(
             len(unique_boards),
