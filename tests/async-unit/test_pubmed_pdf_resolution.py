@@ -179,8 +179,7 @@ class TestTryPmc:
         converter_resp = _make_mock_response(
             json_data={"records": [{"pmcid": "PMC1234567"}]}
         )
-        head_resp = _make_mock_response(status=200)
-        session = _make_mock_session(responses=[converter_resp, head_resp])
+        session = _make_mock_session(responses=[converter_resp])
 
         result = await tools._try_pmc("12345", session, timeout_secs=5.0)
         assert result == "https://www.ncbi.nlm.nih.gov/pmc/articles/PMC1234567/pdf/"
@@ -190,20 +189,6 @@ class TestTryPmc:
 
         converter_resp = _make_mock_response(json_data={"records": [{"pmid": "12345"}]})
         session = _make_mock_session(responses=[converter_resp])
-
-        result = await tools._try_pmc("12345", session, timeout_secs=5.0)
-        assert result is None
-
-    async def test_returns_none_when_head_fails(self):
-        tools = PubMedTools()
-
-        converter_resp = _make_mock_response(
-            json_data={"records": [{"pmcid": "PMC1234567"}]}
-        )
-        head_resp = _make_mock_response(status=404)
-        session = _make_mock_session(responses=[converter_resp])
-        # Override head to return 404
-        session.head = MagicMock(return_value=head_resp)
 
         result = await tools._try_pmc("12345", session, timeout_secs=5.0)
         assert result is None
@@ -449,16 +434,17 @@ class TestTryPreprintServers:
             == "https://www.medrxiv.org/content/10.1101/2024.01.01.123456.full.pdf"
         )
 
-    async def test_returns_none_for_non_preprint_doi_no_results(self):
+    async def test_returns_none_for_non_preprint_doi_without_api_call(self):
         tools = PubMedTools()
 
-        resp = _make_mock_response(json_data={"collection": []})
-        session = _make_mock_session(responses=[resp])
+        session = _make_mock_session()
 
         result = await tools._try_preprint_servers(
             "10.1016/j.cell.2024.01.001", session, timeout_secs=5.0
         )
         assert result is None
+        # Should not have made any API calls for a non-preprint DOI
+        session.get.assert_not_called()
 
     async def test_biorxiv_doi_pattern(self):
         tools = PubMedTools()
@@ -480,6 +466,94 @@ class TestTryPreprintServers:
         # Should match medrxiv first due to 10.1101/ pattern
         assert result is not None
         assert "10.1101/2024.05.15.789012.full.pdf" in result
+
+
+@pytest.mark.asyncio
+class TestQueryBiorxivApi:
+    """Tests for _query_biorxiv_api helper method."""
+
+    async def test_returns_pdf_url_from_jatsxml(self):
+        tools = PubMedTools()
+
+        resp = _make_mock_response(
+            json_data={
+                "collection": [
+                    {
+                        "doi": "10.1101/2024.01.01.123456",
+                        "jatsxml": "https://www.medrxiv.org/content/10.1101/2024.01.01.123456v1.source.xml",
+                    }
+                ]
+            }
+        )
+        session = _make_mock_session(responses=[resp])
+
+        result = await tools._query_biorxiv_api(
+            "medrxiv", "10.1101/2024.01.01.123456", session, timeout_secs=5.0
+        )
+        assert (
+            result
+            == "https://www.medrxiv.org/content/10.1101/2024.01.01.123456v1.full.pdf"
+        )
+
+    async def test_returns_pdf_url_from_doi_when_no_jatsxml(self):
+        tools = PubMedTools()
+
+        resp = _make_mock_response(
+            json_data={"collection": [{"doi": "10.1101/2024.01.01.123456"}]}
+        )
+        session = _make_mock_session(responses=[resp])
+
+        result = await tools._query_biorxiv_api(
+            "biorxiv", "10.1101/2024.01.01.123456", session, timeout_secs=5.0
+        )
+        assert (
+            result
+            == "https://www.biorxiv.org/content/10.1101/2024.01.01.123456.full.pdf"
+        )
+
+    async def test_returns_none_on_empty_collection(self):
+        tools = PubMedTools()
+
+        resp = _make_mock_response(json_data={"collection": []})
+        session = _make_mock_session(responses=[resp])
+
+        result = await tools._query_biorxiv_api(
+            "medrxiv", "10.1101/nothing", session, timeout_secs=5.0
+        )
+        assert result is None
+
+    async def test_returns_none_on_error(self):
+        tools = PubMedTools()
+
+        session = AsyncMock()
+        session.get = MagicMock(side_effect=Exception("timeout"))
+
+        result = await tools._query_biorxiv_api(
+            "medrxiv", "10.1101/err", session, timeout_secs=5.0
+        )
+        assert result is None
+
+
+class TestIsPdfResponse:
+    """Tests for _is_pdf_response static method."""
+
+    def test_pdf_in_url(self):
+        assert PubMedTools._is_pdf_response(
+            "https://example.com/paper.pdf", "text/html"
+        )
+
+    def test_pdf_content_type(self):
+        assert PubMedTools._is_pdf_response(
+            "https://example.com/download", "application/pdf"
+        )
+
+    def test_neither(self):
+        assert not PubMedTools._is_pdf_response("https://example.com/page", "text/html")
+
+    def test_pdf_url_with_query(self):
+        assert PubMedTools._is_pdf_response(
+            "https://example.com/paper.pdf?token=abc", "text/html"
+        )
 
 
 @pytest.mark.asyncio
