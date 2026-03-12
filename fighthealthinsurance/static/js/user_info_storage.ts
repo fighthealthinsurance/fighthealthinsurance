@@ -106,7 +106,7 @@ export function scrubPersonalInfo(message: string, userInfo: UserInfo | null): s
   if (userInfo.firstName && userInfo.lastName) {
     scrubbedMessage = scrubbedMessage.replace(
       new RegExp(`\\b${escapeRegExp(userInfo.firstName)}\\s+${escapeRegExp(userInfo.lastName)}\\b`, "gi"),
-      "{{FIRST_NAME}} {{LAST_NAME}}"
+      "{{PATIENT_NAME}}"
     );
   }
 
@@ -219,9 +219,10 @@ export function restorePersonalInfo(message: string, userInfo: UserInfo | null):
     restoredMessage = restoredMessage.replace(/\[ZIP_CODE\]/g, userInfo.zipCode);
   }
 
-  // Legacy combined-name and email placeholders
+  // Combined-name and email placeholders
   const fullName = userInfo.firstName + (userInfo.lastName ? " " + userInfo.lastName : "");
   if (fullName.trim()) {
+    restoredMessage = restoredMessage.replace(/\{\{PATIENT_NAME\}\}/g, fullName);
     restoredMessage = restoredMessage.replace(/\[Your Name\]/g, fullName);
     restoredMessage = restoredMessage.replace(/\$your_name_here/g, fullName);
   }

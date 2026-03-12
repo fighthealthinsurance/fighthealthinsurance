@@ -46,6 +46,7 @@ function descrub() {
   const name = fname + " " + lname;
 
   // Primary {{PLACEHOLDER}} format (matching data pipeline)
+  text = text.replace(/\{\{PATIENT_NAME\}\}/g, name);
   text = text.replace(/\{\{FIRST_NAME\}\}/g, fname);
   text = text.replace(/\{\{LAST_NAME\}\}/g, lname);
   text = text.replace(/\{\{Your Name\}\}/g, name);
