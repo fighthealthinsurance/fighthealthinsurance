@@ -117,6 +117,10 @@ Fixtures live in `fighthealthinsurance/fixtures/` (initial, followup, plan_sourc
 
 ## Development Rules
 
+### Local Development
+- Use `./scripts/run_local.sh` to start the dev server locally. This is useful for manually verifying changes and taking screenshots.
+- **Taking screenshots is encouraged** — capture the UI after making frontend or visual changes to verify correctness.
+
 ### Running Tests
 - **Always use `tox -e <env>` to run tests.** Never invoke pytest directly or run commands through `.tox/` virtualenv paths (e.g., `.tox/py313-django52-sync/bin/pytest`). The `tox -e` command ensures the correct environment, dependencies, and configuration.
 - Pick the most specific tox environment for what you're testing (e.g., `tox -e py313-django52-async` for async tests, not the full `tox` run).
