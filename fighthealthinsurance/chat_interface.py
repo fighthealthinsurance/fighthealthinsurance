@@ -298,8 +298,7 @@ class ChatInterface:
                         )
                         if (
                             "hashed_email" not in appeal_data
-                            and hasattr(chat, "user")
-                            and chat.user
+                            and chat.user_id is not None
                         ):
                             user_email = await sync_to_async(lambda: chat.user.email)()  # type: ignore
                             if user_email:
