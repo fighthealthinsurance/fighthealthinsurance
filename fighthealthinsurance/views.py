@@ -1777,7 +1777,12 @@ def chat_interface_view(request):
         "microsite_slug": microsite_slug,
         "initial_message": initial_message,
     }
-    logger.debug(f"Rendering chat interface with context: {context}")
+    logger.debug(
+        f"Rendering chat interface: microsite_slug={microsite_slug}, "
+        f"default_procedure={default_procedure}, default_condition={default_condition}, "
+        f"medicare={medicare}, email={mask_email_for_logging(email)}, "
+        f"has_initial_message={bool(initial_message)}"
+    )
     return render(request, "chat_interface.html", context)
 
 

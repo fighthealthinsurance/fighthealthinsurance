@@ -222,7 +222,7 @@ def create_user(
 
         if not validate_password(password):
             logger.opt(exception=True).error(
-                f"Invalid password format during user creation for email: {email}"
+                f"Invalid password format during user creation for email: {mask_email_for_logging(email)}"
             )
             raise Exception(
                 "Password is not valid: must be at least 8 characters and cannot be entirely numeric"

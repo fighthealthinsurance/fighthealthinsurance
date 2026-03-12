@@ -1733,7 +1733,7 @@ class RemoteOpenLike(RemoteModel):
             )
         except aiohttp.client_exceptions.ClientConnectorError:
             logger.warning(f"Network error calling {api_base}")
-        except Exception as e:
+        except Exception:
             logger.opt(exception=True).warning(f"Error calling {api_base}")
             await asyncio.sleep(1)
             return None

@@ -293,17 +293,11 @@ def subscribe_to_mailing_list(email: str, defaults: dict) -> None:
     from fighthealthinsurance.models import MailingListSubscriber
 
     try:
-        MailingListSubscriber.objects.get_or_create(email=email, defaults=defaults)
+        MailingListSubscriber.objects.update_or_create(email=email, defaults=defaults)
     except Exception as e:
         logger.warning(
             f"Error subscribing {mask_email_for_logging(email)} to mailing list: {e}"
         )
-        try:
-            MailingListSubscriber.objects.filter(email=email).update(**defaults)
-        except Exception as e2:
-            logger.warning(
-                f"Error updating subscriber {mask_email_for_logging(email)}: {e2}"
-            )
 
 
 def send_fallback_email(subject: str, template_name: str, context, to_email: str):
