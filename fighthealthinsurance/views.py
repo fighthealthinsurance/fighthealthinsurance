@@ -42,6 +42,7 @@ from fighthealthinsurance.helpers.stripe_helpers import StripeWebhookHelper
 from fighthealthinsurance.models import DeleteToken, StripeRecoveryInfo
 from fighthealthinsurance.type_utils import User
 from fighthealthinsurance.utils import send_fallback_email
+from fighthealthinsurance.helpers.subscription_helpers import subscribe_to_mailing_list
 
 
 class BlogPostMetadata(TypedDict, total=False):
@@ -1212,27 +1213,18 @@ class InitialProcessView(generic.FormView):
             referral_source_details = self.request.POST.get(
                 "referral_source_details", ""
             )
-            defaults = {
-                "comments": "From appeal flow",
-                "referral_source": referral_source,
-                "referral_source_details": referral_source_details,
-            }
-            if len(name) > 2:
-                defaults["name"] = name
-            # Use get_or_create to avoid duplicate subscriptions
             try:
-                models.MailingListSubscriber.objects.get_or_create(
+                subscribe_to_mailing_list(
                     email=email,
-                    defaults=defaults,
+                    source="From appeal flow",
+                    name=name if len(name) > 2 else "",
+                    referral_source=referral_source,
+                    referral_source_details=referral_source_details,
                 )
-            except Exception as e:
-                logger.debug(f"Error subscribing {email} to mailing list: {e}")
-                try:
-                    models.MailingListSubscriber.objects.filter(email=email).update(
-                        **defaults
-                    )
-                except Exception as e2:
-                    logger.warning(f"Error updating subscriber? {email}!?!")
+            except Exception:
+                logger.opt(exception=True).error(
+                    f"Unexpected error subscribing {email} from appeal flow"
+                )
 
         # Get microsite slug from request if available and validate it
         microsite_slug = self.request.POST.get(
@@ -1860,15 +1852,20 @@ class ChatUserConsentView(FormView):
             referral_source_details = form.cleaned_data.get(
                 "referral_source_details", ""
             )
-            # Does the user want to subscribe to the newsletter?
-            models.MailingListSubscriber.objects.create(
-                email=form.cleaned_data.get("email"),
-                phone=form.cleaned_data.get("phone"),
-                name=name,
-                comments="From chat consent form",
-                referral_source=referral_source,
-                referral_source_details=referral_source_details,
-            )
+            email = form.cleaned_data.get("email")
+            try:
+                subscribe_to_mailing_list(
+                    email=email,
+                    source="From chat consent form",
+                    name=name,
+                    phone=form.cleaned_data.get("phone", ""),
+                    referral_source=referral_source,
+                    referral_source_details=referral_source_details,
+                )
+            except Exception:
+                logger.opt(exception=True).error(
+                    f"Unexpected error subscribing {email} from chat consent form"
+                )
 
         # Check if there's denial text to pass through
         denial_text = self.request.POST.get("denial_text", "")
@@ -2140,18 +2137,20 @@ class ExplainDenialView(FormView):
                 "referral_source_details", ""
             )
 
+            email = form.cleaned_data.get("email")
             try:
-                models.MailingListSubscriber.objects.create(
-                    email=form.cleaned_data.get("email"),
-                    phone=form.cleaned_data.get("phone"),
+                subscribe_to_mailing_list(
+                    email=email,
+                    source="From explain denial page",
                     name=name,
-                    comments="From explain denial page",
+                    phone=form.cleaned_data.get("phone", ""),
                     referral_source=referral_source,
                     referral_source_details=referral_source_details,
                 )
-            except Exception as e:
-                # Log the error but don't fail the form submission
-                logger.warning(f"Failed to create mailing list subscriber: {e}")
+            except Exception:
+                logger.opt(exception=True).error(
+                    f"Unexpected error subscribing {email} from explain denial page"
+                )
 
         # Render auto-submit form to POST to chat
         context = {

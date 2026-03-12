@@ -25,3 +25,15 @@ class MissingRequiredDataError(DocumentRegenerationError):
     """Raised when required data for regeneration is missing."""
 
     pass
+
+
+class SubscriptionError(Exception):
+    """Base exception for mailing list subscription operations."""
+
+    pass
+
+
+class DuplicateSubscriptionError(SubscriptionError):
+    """Raised when a duplicate subscription is detected."""
+
+    pass
