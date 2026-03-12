@@ -58,6 +58,7 @@ from fighthealthinsurance.rest_mixins import (
     SerializerMixin,
 )
 from fighthealthinsurance.type_utils import User
+from fighthealthinsurance.helpers.subscription_helpers import subscribe_to_mailing_list
 
 from .common_view_logic import AppealAssemblyHelper
 from .utils import is_convertible_to_int
@@ -371,15 +372,16 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
         )
         # Handle mailing list subscription if requested
         if subscribe and "email" in serializer_data:
+            email = serializer_data["email"]
             try:
-                email = serializer_data["email"]
-                if not MailingListSubscriber.objects.filter(email=email).exists():
-                    MailingListSubscriber.objects.create(
-                        email=email,
-                        comments="Subscribed via denial form",
-                    )
-            except Exception as e:
-                logger.warning(f"Failed to subscribe email to mailing list: {e}")
+                subscribe_to_mailing_list(
+                    email=email,
+                    source="Subscribed via denial form",
+                )
+            except Exception:
+                logger.opt(exception=True).error(
+                    f"Unexpected error subscribing {email} from REST denial form"
+                )
         denial = Denial.objects.get(uuid=denial_response_info.uuid)
         # Creating a pending appeal if one doesn't exist
         try:

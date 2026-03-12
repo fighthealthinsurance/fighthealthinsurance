@@ -5,7 +5,8 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 
 from fighthealthinsurance.chat_lead_serializers import ChatLeadsSerializer
-from fighthealthinsurance.models import ChatLeads, MailingListSubscriber
+from fighthealthinsurance.models import ChatLeads
+from fighthealthinsurance.helpers.subscription_helpers import subscribe_to_mailing_list
 
 
 class ChatLeadsViewSet(viewsets.GenericViewSet):
@@ -32,26 +33,17 @@ class ChatLeadsViewSet(viewsets.GenericViewSet):
                 name = serializer.validated_data.get("name", "")
                 phone = serializer.validated_data.get("phone", "")
 
-                defaults = {"comments": "From chat leads form"}
-                if name:
-                    defaults["name"] = name
-                if phone:
-                    defaults["phone"] = phone
-
-                # Use get_or_create to avoid duplicate subscriptions
                 try:
-                    MailingListSubscriber.objects.get_or_create(
+                    subscribe_to_mailing_list(
                         email=email,
-                        defaults=defaults,
+                        source="From chat leads form",
+                        name=name,
+                        phone=phone,
                     )
-                except Exception as e:
-                    logger.debug(f"Error subscribing {email} to mailing list: {e}")
-                    try:
-                        MailingListSubscriber.objects.filter(email=email).update(
-                            **defaults
-                        )
-                    except Exception as e2:
-                        logger.warning(f"Error updating subscriber {email}: {e2}")
+                except Exception:
+                    logger.opt(exception=True).error(
+                        f"Unexpected error subscribing {email} from chat leads form"
+                    )
 
             # Return the session ID to be used for chat
             return Response(
