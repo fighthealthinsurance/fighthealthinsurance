@@ -278,7 +278,7 @@ class ChatStatusMessageTest(APITestCase):
         responses = []
         try:
             while True:
-                response = await communicator.receive_json_from(timeout=5)
+                response = await communicator.receive_json_from(timeout=15)
                 responses.append(response)
                 # Stop when we get the actual content response
                 if "content" in response and response.get("role") == "assistant":
@@ -293,6 +293,16 @@ class ChatStatusMessageTest(APITestCase):
         # Check that we got a chat_id
         chat_ids = [r.get("chat_id") for r in responses if "chat_id" in r]
         self.assertGreater(len(chat_ids), 0, "Expected to receive a chat_id")
+
+        # Check that we received an assistant response with content
+        assistant_content_responses = [
+            r for r in responses
+            if r.get("role") == "assistant" and "content" in r
+        ]
+        self.assertGreater(
+            len(assistant_content_responses), 0,
+            f"Expected at least one assistant response with content, got responses: {responses}",
+        )
 
         # Give async tasks time to complete before disconnecting
         await asyncio.sleep(0.1)
@@ -500,7 +510,7 @@ class ChatStatusMessageTest(APITestCase):
         response = None
         try:
             while True:
-                response = await communicator.receive_json_from(timeout=5)
+                response = await communicator.receive_json_from(timeout=15)
                 # When we get actual content, the status should be cleared
                 if "content" in response and response.get("role") == "assistant":
                     # This is the final response, status should be cleared

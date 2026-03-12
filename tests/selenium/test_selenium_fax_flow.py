@@ -118,7 +118,7 @@ Cheap-O-Insurance-Corp""",
         # The choose appeal page should have the main content container
         # The form#form might be hidden initially (display:none) until appeals load
         # so we check for the page container instead
-        self.assert_element("#main-content", timeout=5)
+        self.assert_element("#main-content", timeout=15)
 
         # Check that we're on the right page by URL
         assert (

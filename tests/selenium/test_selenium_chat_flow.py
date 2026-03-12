@@ -66,7 +66,8 @@ class SeleniumChatFlowTest(FHISeleniumBase, StaticLiveServerTestCase):
 
         # Wait for chat interface to load
         self.wait_for_element("#chat-interface-root", timeout=10)
-        self.wait(1)
+        self.wait_for_page_ready(localstorage_key="fhi_user_info")
+        time.sleep(1)  # Let React components settle
 
         # Verify user info is stored in localStorage
         user_info_json = self.execute_script(
@@ -96,7 +97,8 @@ class SeleniumChatFlowTest(FHISeleniumBase, StaticLiveServerTestCase):
 
         # Wait for chat interface to load
         self.wait_for_element("#chat-interface-root", timeout=10)
-        self.wait(2)
+        self.wait_for_page_ready(localstorage_key="fhi_user_info")
+        time.sleep(1)  # Let React components settle
 
         # Verify that the email is available in user info for sending
         user_info = self.execute_script("""
@@ -140,7 +142,8 @@ class SeleniumChatFlowTest(FHISeleniumBase, StaticLiveServerTestCase):
 
         # Wait for chat interface to load
         self.wait_for_element("#chat-interface-root", timeout=10)
-        self.wait(1)
+        self.wait_for_page_ready(localstorage_key="fhi_user_info")
+        time.sleep(1)  # Let React components settle
 
         # Verify getUserInfo() returns correct data
         user_info = self.execute_script("""
@@ -223,7 +226,8 @@ class SeleniumExplainDenialChatFlowTest(FHISeleniumBase, StaticLiveServerTestCas
 
         # Wait for redirect to chat
         self.wait_for_element("#chat-interface-root", timeout=15)
-        self.wait(1)
+        self.wait_for_page_ready(localstorage_key="fhi_user_info")
+        time.sleep(1)  # Let React components settle
 
         # Verify user info is stored
         user_info_json = self.execute_script(
@@ -256,7 +260,8 @@ class SeleniumExplainDenialChatFlowTest(FHISeleniumBase, StaticLiveServerTestCas
 
         # Wait for chat interface to load
         self.wait_for_element("#chat-interface-root", timeout=15)
-        self.wait(2)
+        self.wait_for_page_ready(localstorage_key="fhi_user_info")
+        time.sleep(1)  # Let React components settle
 
         # The denial text should be passed to the chat interface (may appear in UI or be ready to send)
         # Check page content or data attributes
@@ -300,7 +305,8 @@ class SeleniumExplainDenialChatFlowTest(FHISeleniumBase, StaticLiveServerTestCas
 
         # Wait for chat interface
         self.wait_for_element("#chat-interface-root", timeout=15)
-        self.wait(2)
+        self.wait_for_page_ready(localstorage_key="fhi_user_info")
+        time.sleep(1)  # Let React components settle
 
         # Verify user info is stored with email for backend communication
         user_info_json = self.execute_script(
@@ -417,7 +423,8 @@ class SeleniumExistingChatTest(FHISeleniumBase, StaticLiveServerTestCase):
 
         # Wait for chat interface
         self.wait_for_element("#chat-interface-root", timeout=10)
-        self.wait_for_page_ready()
+        self.wait_for_page_ready(localstorage_key="fhi_user_info")
+        time.sleep(1)  # Let React components settle
 
         # Verify chat ID was assigned
         chat_id = self.execute_script("return localStorage.getItem('fhi_chat_id');")
@@ -455,7 +462,8 @@ class SeleniumExistingChatTest(FHISeleniumBase, StaticLiveServerTestCase):
 
         # Wait for chat interface
         self.wait_for_element("#chat-interface-root", timeout=15)
-        self.wait_for_page_ready()
+        self.wait_for_page_ready(localstorage_key="fhi_user_info")
+        time.sleep(1)  # Let React components settle
 
         # User info should still be there
         user_info_json = self.execute_script(
@@ -480,6 +488,7 @@ class SeleniumExistingChatTest(FHISeleniumBase, StaticLiveServerTestCase):
         # Click New Chat button
         self.click("button:contains('New Chat')")
         self.wait_for_page_ready()
+        time.sleep(1)  # Let state updates settle
 
         # Chat ID should be cleared
         new_chat_id = self.execute_script("return localStorage.getItem('fhi_chat_id');")
@@ -516,7 +525,8 @@ class SeleniumExistingChatTest(FHISeleniumBase, StaticLiveServerTestCase):
 
         # Wait for chat
         self.wait_for_element("#chat-interface-root", timeout=10)
-        self.wait_for_page_ready()
+        self.wait_for_page_ready(localstorage_key="fhi_user_info")
+        time.sleep(1)  # Let React components settle
 
         # Check external models preference was saved
         external_pref = self.execute_script(
@@ -554,11 +564,13 @@ class SeleniumExistingChatTest(FHISeleniumBase, StaticLiveServerTestCase):
 
         # Wait for chat
         self.wait_for_element("#chat-interface-root", timeout=10)
-        self.wait_for_page_ready()
+        self.wait_for_page_ready(localstorage_key="fhi_user_info")
+        time.sleep(1)  # Let React components settle
 
         # Now visit explain denial - form should be pre-filled
         self.open(f"{self.live_server_url}/explain-denial")
         self.wait_for_page_ready()
+        time.sleep(1)  # Let form pre-fill from localStorage
 
         # Check pre-filled values
         fname = self.execute_script(
@@ -609,7 +621,8 @@ class SeleniumExistingChatTest(FHISeleniumBase, StaticLiveServerTestCase):
 
         # Wait for chat interface to load
         self.wait_for_element("#chat-interface-root", timeout=15)
-        self.wait_for_page_ready()
+        self.wait_for_page_ready(localstorage_key="fhi_user_info")
+        time.sleep(1)  # Let React components settle
 
         # Verify external models preference was saved to localStorage
         external_pref = self.execute_script(

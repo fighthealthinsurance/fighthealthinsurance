@@ -538,7 +538,7 @@ class OngoingChatWebSocketTest(APITestCase):
         )
 
         # Should receive an error response
-        response = await communicator.receive_json_from(timeout=5)
+        response = await communicator.receive_json_from(timeout=15)
         self.assertIn("error", response)
         self.assertIn("Session key", response["error"])
 

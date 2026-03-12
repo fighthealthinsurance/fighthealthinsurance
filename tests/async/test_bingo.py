@@ -55,35 +55,26 @@ class BingoTests(TestCase):
         )
 
     def test_bingo_board_changes_on_reload(self):
-        """Test that bingo board is different on each page load."""
-        # Get first board
-        response1 = self.client.get("/bingo")
-        board1 = response1.context["bingo_board"]
+        """Test that bingo board is randomized on each page load."""
+        boards = []
+        for _ in range(5):
+            response = self.client.get("/bingo")
+            board = response.context["bingo_board"]
+            # Flatten excluding FREE SPACE
+            phrases = []
+            for i in range(5):
+                for j in range(5):
+                    if not (i == 2 and j == 2):
+                        phrases.append(board[i][j])
+            boards.append(tuple(phrases))
 
-        # Get second board
-        response2 = self.client.get("/bingo")
-        board2 = response2.context["bingo_board"]
-
-        # Flatten both boards for comparison (excluding FREE SPACE position)
-        phrases1 = []
-        phrases2 = []
-        for i in range(5):
-            for j in range(5):
-                if not (i == 2 and j == 2):  # Skip FREE SPACE
-                    phrases1.append(board1[i][j])
-                    phrases2.append(board2[i][j])
-
-        # Boards should be different at least sometimes
-        # (with 25 phrases and selecting 24, there's a very high probability they differ)
-        # We'll check that not all phrases are in the same position
-        differences = sum(1 for p1, p2 in zip(phrases1, phrases2) if p1 != p2)
-
-        # Allow for the possibility of the same board (very unlikely but possible)
-        # Most of the time there should be at least some differences
-        # This is a probabilistic test - if it fails, run again
-        self.assertTrue(
-            differences >= 0,  # At minimum, boards can be the same
-            "Bingo boards should be randomized",
+        # Collisions are extremely unlikely given the number of possible arrangements
+        unique_boards = set(boards)
+        self.assertGreater(
+            len(unique_boards),
+            1,
+            "Expected at least 2 different bingo boards out of 5 loads, "
+            "but all were identical -- randomization may be broken",
         )
 
     def test_bingo_template_renders(self):

@@ -226,11 +226,16 @@ class TestRateLimiterEdgeCases(unittest.TestCase):
         """Test mark_exhausted with very small duration."""
         limiter = RateLimiter(name="test")
 
-        limiter.mark_exhausted(retry_after_seconds=0.001)
+        base_time = time.time()
 
-        # Sleep a tiny bit and should be recovered
-        time.sleep(0.01)
-        self.assertTrue(limiter.can_request())
+        with patch("time.time") as mock_time:
+            mock_time.return_value = base_time
+
+            limiter.mark_exhausted(retry_after_seconds=0.001)
+
+            # Advance time past the exhaustion period
+            mock_time.return_value = base_time + 0.05
+            self.assertTrue(limiter.can_request())
 
     def test_concurrent_access_is_safe(self):
         """Test that concurrent access doesn't cause crashes.
