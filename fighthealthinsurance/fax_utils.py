@@ -459,7 +459,7 @@ class SshHylaFaxClient(HylaFaxClient):
                 return None
             sftp_client.put(path, target)
             return target
-        except Exception as e:
+        except Exception:
             logger.opt(exception=True).error(
                 f"Error uploading file to {self.remote_host}"
             )
@@ -632,7 +632,7 @@ class FlexibleFaxMagic(object):
             backend.send_fax(destination=destination, path=path, blocking=blocking),
             timeout=600,
         )
-        if r == True:
+        if r:
             logger.info(f"Sent fax to {destination} using {backend}")
             return True
         logger.warning(f"Failed sending fax to {destination} using {backend}")

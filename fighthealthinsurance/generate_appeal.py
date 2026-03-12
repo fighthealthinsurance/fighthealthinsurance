@@ -984,7 +984,7 @@ class AppealGenerator(object):
                     return []
                 for k, text in model_results:
                     if text is None:
-                        pass
+                        continue
                     # It's either full or a reason to plug into a template
                     if k == "full":
                         logger.debug(f"Bubbling up full response ({len(text)} chars)")

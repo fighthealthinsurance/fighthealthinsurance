@@ -163,5 +163,5 @@ class EmailPollingActor:
             else:
                 logger.debug("No expired emails to clear")
 
-        except Exception as e:
+        except Exception:
             logger.opt(exception=True).error("Error clearing expired emails")

@@ -44,7 +44,7 @@ class ChooserRefillActor:
 
                 # Sleep for 5 minutes between checks
                 await asyncio.sleep(300)
-            except Exception as e:
+            except Exception:
                 logger.opt(exception=True).error(
                     "Error while checking/refilling chooser task pool"
                 )

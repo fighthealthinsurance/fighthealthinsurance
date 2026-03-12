@@ -95,7 +95,11 @@ class FaxActor:
                 logger.debug(f"Attempting to send fax {fax}")
                 t = t + 1
                 response = self.do_send_fax_object(fax)
-                logger.info(f"Sent fax {fax} with result {response}")
+                if response:
+                    logger.info(f"Sent fax {fax} successfully")
+                else:
+                    logger.warning(f"Failed to send fax {fax}")
+                    f = f + 1
             except Exception as e:
                 logger.opt(exception=True).error(f"Error sending fax {fax}")
                 f = f + 1
@@ -208,4 +212,4 @@ class FaxActor:
         except Exception as e:
             logger.opt(exception=True).error("Error running async send_fax")
         self._update_fax_for_sent(fax, fax_sent, missing_destination=False)
-        return True
+        return fax_sent

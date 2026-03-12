@@ -246,7 +246,7 @@ def ensure_message_alternation(history: List[Dict[str, Any]]) -> List[Dict[str, 
     if result and len(result) > 0 and result[0]:
         if result[0].get("role") == "assistant":
             logger.error(
-                f"We should always start with a user or system message instead {result}"
+                f"We should always start with a user or system message instead (msg_count={len(result)}, roles={[m.get('role') for m in result[:5]]})"
             )
             result = result[1:]
         elif (
@@ -256,7 +256,7 @@ def ensure_message_alternation(history: List[Dict[str, Any]]) -> List[Dict[str, 
             and result[1].get("role") == "assistant"
         ):
             logger.error(
-                f"We should always have a user message after system instead {result}"
+                f"We should always have a user message after system instead (msg_count={len(result)}, roles={[m.get('role') for m in result[:5]]})"
             )
             result = [result[0]] + result[2:]
 
@@ -293,17 +293,11 @@ def subscribe_to_mailing_list(email: str, defaults: dict) -> None:
     from fighthealthinsurance.models import MailingListSubscriber
 
     try:
-        MailingListSubscriber.objects.get_or_create(email=email, defaults=defaults)
+        MailingListSubscriber.objects.update_or_create(email=email, defaults=defaults)
     except Exception as e:
         logger.warning(
             f"Error subscribing {mask_email_for_logging(email)} to mailing list: {e}"
         )
-        try:
-            MailingListSubscriber.objects.filter(email=email).update(**defaults)
-        except Exception as e2:
-            logger.warning(
-                f"Error updating subscriber {mask_email_for_logging(email)}: {e2}"
-            )
 
 
 def send_fallback_email(subject: str, template_name: str, context, to_email: str):

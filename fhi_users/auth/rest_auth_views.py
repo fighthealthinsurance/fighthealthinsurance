@@ -302,7 +302,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
             # Check if user with this email already exists
             if User.objects.filter(email=email).exists():
                 logger.opt(exception=True).error(
-                    f"Cannot create professional - email already exists: {email}"
+                    f"Cannot create professional - email already exists: {mask_email_for_logging(email)}"
                 )
                 return Response(
                     common_serializers.ErrorSerializer(
@@ -908,7 +908,9 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
 
                 # Delete the user
                 user_to_delete.delete()
-                logger.info(f"Deleted existing user for {mask_email_for_logging(email)} during signup retry")
+                logger.info(
+                    f"Deleted existing user for {mask_email_for_logging(email)} during signup retry"
+                )
                 # Clean up domain if it's a new domain
                 if new_domain and existing_checkout.domain:
                     try:
@@ -930,7 +932,9 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                     except UserDomain.DoesNotExist:
                         logger.error("Domain doesn't exist for cleanup")
             except Exception as e:
-                logger.error(f"Error cleaning up existing data for {mask_email_for_logging(email)}: {str(e)}")
+                logger.error(
+                    f"Error cleaning up existing data for {mask_email_for_logging(email)}: {str(e)}"
+                )
                 raise e
         else:
             logger.debug("No existing checkout")
@@ -1319,9 +1323,7 @@ class RestLoginView(ViewSet, SerializerMixin):
         user = authenticate(username=username, password=password)
         if user:
             request.session["domain_id"] = domain_id
-            logger.info(
-                f"User logged in, setting domain id to {domain_id}"
-            )
+            logger.info(f"User logged in, setting domain id to {domain_id}")
             login(request, user)
             return Response(
                 serializers.StatusResponseSerializer({"status": "success"}).data
@@ -1559,13 +1561,25 @@ class VerifyEmailViewSet(ViewSet, SerializerMixin):
             extraproperties.save()
             verification_token.delete()
             try:
-                PatientUser.objects.filter(user=user).update(is_active=True)
+                updated = PatientUser.objects.filter(user=user).update(active=True)
+                if updated == 0:
+                    logger.info(
+                        f"No PatientUser found for user {user.id} during activation"
+                    )
             except Exception as e:
-                logger.warning(f"Could not activate PatientUser: {e}")
+                logger.opt(exception=True).error(
+                    f"Could not activate PatientUser for user {user.id}"
+                )
             try:
-                ProfessionalUser.objects.filter(user=user).update(is_active=True)
+                updated = ProfessionalUser.objects.filter(user=user).update(active=True)
+                if updated == 0:
+                    logger.info(
+                        f"No ProfessionalUser found for user {user.id} during activation"
+                    )
             except Exception as e:
-                logger.warning(f"Could not activate ProfessionalUser: {e}")
+                logger.opt(exception=True).error(
+                    f"Could not activate ProfessionalUser for user {user.id}"
+                )
             return Response(
                 serializers.StatusResponseSerializer({"status": "success"}).data
             )
