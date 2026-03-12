@@ -1973,6 +1973,8 @@ class OngoingChat(models.Model):
         """Returns a description of the user - either patient, professional, trial professional, or anonymous."""
         if self.chat_type == ChatType.PATIENT and self.user:
             return f"a patient user (ID: {self.user.id})"
+        elif self.chat_type == ChatType.PATIENT and not self.user:
+            return f"an anonymous patient user (Session: {self.session_key[:8] if self.session_key else 'unknown'})"
         elif self.chat_type == ChatType.PROFESSIONAL and self.professional_user:
             return f"a professional user ({self.professional_user.get_display_name()})"
         elif self.chat_type == ChatType.TRIAL_PROFESSIONAL:
@@ -1994,6 +1996,8 @@ class OngoingChat(models.Model):
     def __str__(self):
         if self.chat_type == ChatType.PATIENT and self.user:
             return f"Ongoing Chat {self.id} for patient {self.user.email}"
+        elif self.chat_type == ChatType.PATIENT and self.session_key:
+            return f"Ongoing Chat {self.id} for anonymous patient session {self.session_key[:8]}"
         elif self.chat_type == ChatType.PROFESSIONAL and self.professional_user:
             return f"Ongoing Chat {self.id} for {self.professional_user.get_display_name()}"
         elif self.chat_type == ChatType.TRIAL_PROFESSIONAL and self.session_key:

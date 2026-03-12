@@ -12,10 +12,14 @@ def backfill_chat_type(apps, schema_editor):
     OngoingChat.objects.filter(
         is_patient=False, professional_user__isnull=False
     ).update(chat_type="professional")
-    # Trial professional chats (is_patient=False and no professional_user)
-    OngoingChat.objects.filter(is_patient=False, professional_user__isnull=True).update(
-        chat_type="trial_professional"
-    )
+    # Trial professional chats (is_patient=False, no professional_user, no user,
+    # and no hashed_email — rows with user or hashed_email are legacy patients)
+    OngoingChat.objects.filter(
+        is_patient=False,
+        professional_user__isnull=True,
+        user__isnull=True,
+        hashed_email__isnull=True,
+    ).update(chat_type="trial_professional")
 
 
 def reverse_backfill(apps, schema_editor):

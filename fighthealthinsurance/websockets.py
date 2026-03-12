@@ -595,13 +595,23 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                 if chat.user_id and (not user or chat.user_id != user.pk):
                     raise OngoingChat.DoesNotExist("User mismatch")
 
-                # Update microsite_slug if provided and not already set
-                # Only save on first message to avoid excessive database writes
+                # Reconcile resolved identity with stored values so
+                # ChatInterface always sees up-to-date audience flags.
+                is_patient = chat_type == ChatType.PATIENT
+                updates = {}
+                if chat.chat_type != chat_type:
+                    updates["chat_type"] = chat_type
+                if chat.is_patient != is_patient:
+                    updates["is_patient"] = is_patient
+                if professional_user and chat.professional_user_id != professional_user.pk:
+                    updates["professional_user"] = professional_user
+                if user and user.is_authenticated and chat.user_id != user.pk:
+                    updates["user"] = user
                 if microsite_slug and not chat.microsite_slug:
-                    await OngoingChat.objects.filter(id=chat.id).aupdate(
-                        microsite_slug=microsite_slug
-                    )
-                    # Refresh the chat object to ensure consistency
+                    updates["microsite_slug"] = microsite_slug
+
+                if updates:
+                    await OngoingChat.objects.filter(id=chat.id).aupdate(**updates)
                     await chat.arefresh_from_db()
 
                 return chat
