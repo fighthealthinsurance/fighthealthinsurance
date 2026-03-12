@@ -195,7 +195,25 @@ class TestAdminAccess(TestCase):
             f"{self.ADMIN_URL}fighthealthinsurance/ongoingchat/{chat.pk}/change/"
         )
         self.assertEqual(response.status_code, 200)
+        # Editor-specific elements rendered only inside {% if original %}
         self.assertContains(response, "Copy original to edited")
+        self.assertContains(response, 'id="original-messages"')
+        self.assertContains(response, 'id="edited-messages"')
+        # chat_history injected via json_script (not read from readonly widget)
+        self.assertContains(response, 'id="chat-history-data"')
+        self.assertContains(response, "test message")
+
+    def test_ongoingchat_add_form_shows_raw_fields(self):
+        """OngoingChat add form should show raw JSON fields, not the editor."""
+        self.client.login(username="admin", password="adminpass123")
+        response = self.client.get(
+            f"{self.ADMIN_URL}fighthealthinsurance/ongoingchat/add/"
+        )
+        self.assertEqual(response.status_code, 200)
+        # Editor should NOT be rendered on add page
+        self.assertNotContains(response, 'id="original-messages"')
+        # The CSS hiding rule should NOT be emitted on the add page
+        self.assertNotContains(response, ".field-chat_history,")
 
 
 class TestOngoingChatAdminEditing(TestCase):
