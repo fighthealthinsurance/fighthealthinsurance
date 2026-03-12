@@ -123,8 +123,8 @@ Fixtures live in `fighthealthinsurance/fixtures/` (initial, followup, plan_sourc
 - After making changes, always run the relevant test suite before considering the work done.
 
 ### Code Style
-- Run `black --check fighthealthinsurance fhi_users` before committing. Fix any issues with `black fighthealthinsurance fhi_users`.
-- Run `mypy --config-file mypy.ini -p fighthealthinsurance -p fhi_users` to catch type errors.
+- **Check style and types via tox:** `tox -e py313-black` for formatting checks, `tox -e py313-mypy` for type checking.
+- To **fix** formatting issues, run `black fighthealthinsurance fhi_users` directly.
 - Follow existing code conventions in the file you're editing — match naming, import style, and structure.
 
 ### Writing Good Tests
