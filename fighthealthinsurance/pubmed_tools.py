@@ -364,15 +364,32 @@ class PubMedTools(object):
 
     @staticmethod
     def format_article_short(article: PubMedArticleSummarized) -> str:
-        """Helper function to format an article for context."""
+        """Helper function to format an article for context with full citation metadata."""
         summary = None
         if article.basic_summary:
             summary = article.basic_summary
         elif article.abstract:
             summary = article.abstract[0:500]
-        summary_opt = f"summary {summary}" if summary else ""
-        url_opt = f"from {article.article_url}" if article.article_url else ""
-        return f"PubMed DOI {article.doi} title {article.title} {url_opt} {summary_opt}"
+
+        parts = []
+        if article.authors:
+            parts.append(f"Authors: {article.authors}")
+        if article.title:
+            parts.append(f"Title: {article.title}")
+        if article.journal:
+            parts.append(f"Journal: {article.journal}")
+        if article.year:
+            parts.append(f"Year: {article.year}")
+        if article.doi:
+            parts.append(f"DOI: {article.doi}")
+        if article.pmid:
+            parts.append(f"PMID: {article.pmid}")
+        if article.article_url:
+            parts.append(f"URL: {article.article_url}")
+        if summary:
+            parts.append(f"Summary: {summary}")
+
+        return "; ".join(parts)
 
     async def get_articles(
         self, pubmed_ids: List[str]
@@ -461,6 +478,17 @@ class PubMedTools(object):
                 if article_text:
                     article_text = article_text.strip()
 
+                # Extract authors, journal, and year from metapub
+                authors_str = ""
+                if hasattr(fetched, "authors") and fetched.authors:
+                    authors_str = ", ".join(fetched.authors)
+                journal_str = (
+                    fetched.journal if hasattr(fetched, "journal") and fetched.journal else ""
+                )
+                year_str = (
+                    str(fetched.year) if hasattr(fetched, "year") and fetched.year else ""
+                )
+
                 if fetched is not None and (
                     (
                         hasattr(fetched, "abstract")
@@ -473,6 +501,9 @@ class PubMedTools(object):
                         pmid=article_id,
                         doi=fetched.doi if hasattr(fetched, "doi") else "",
                         title=title,
+                        authors=authors_str,
+                        journal=journal_str,
+                        year=year_str,
                         abstract=abstract,
                         text=article_text,
                         article_url=url,
