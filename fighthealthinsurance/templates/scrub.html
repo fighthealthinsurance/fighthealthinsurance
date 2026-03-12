@@ -87,6 +87,14 @@ Upload your Health Insurance Denial
 	  </div>
 	</div>
 	{% if upload_more %}
+	<div class="form-check mt-2 mb-2" id="advanced_ocr_section">
+	    <input type="checkbox" id="advanced_ocr_enabled" class="form-check-input" checked>
+	    <label for="advanced_ocr_enabled" class="form-check-label">
+		<b>Enable advanced OCR</b> – uses a WebGPU-accelerated AI model to improve text extraction accuracy.
+		<small class="text-muted d-block">Automatically unchecked by default on mobile/metered connections or when a compatible GPU is not detected.
+		Uncheck to use standard OCR only.</small>
+	    </label>
+	</div>
 	<div id="image_select_magic" style="visibility:visible">
 	    <label class="custom-file-label" for="uploader">
 			<b>Upload Insurance Denial</b>
