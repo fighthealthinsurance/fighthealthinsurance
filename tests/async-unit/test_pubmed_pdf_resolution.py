@@ -434,17 +434,41 @@ class TestTryPreprintServers:
             == "https://www.medrxiv.org/content/10.1101/2024.01.01.123456.full.pdf"
         )
 
-    async def test_returns_none_for_non_preprint_doi_without_api_call(self):
+    async def test_non_preprint_doi_uses_pubs_endpoint(self):
         tools = PubMedTools()
 
-        session = _make_mock_session()
+        # /pubs/ endpoint returns no results for this DOI
+        resp = _make_mock_response(json_data={"collection": []})
+        session = _make_mock_session(responses=[resp])
 
         result = await tools._try_preprint_servers(
             "10.1016/j.cell.2024.01.001", session, timeout_secs=5.0
         )
         assert result is None
-        # Should not have made any API calls for a non-preprint DOI
-        session.get.assert_not_called()
+        # Should have made exactly 1 call (medrxiv pubs endpoint only)
+        assert session.get.call_count == 1
+
+    async def test_non_preprint_doi_finds_preprint(self):
+        tools = PubMedTools()
+
+        resp = _make_mock_response(
+            json_data={
+                "collection": [
+                    {
+                        "preprint_doi": "10.1101/2023.06.15.545100",
+                    }
+                ]
+            }
+        )
+        session = _make_mock_session(responses=[resp])
+
+        result = await tools._try_preprint_servers(
+            "10.1016/j.cell.2024.01.001", session, timeout_secs=5.0
+        )
+        assert (
+            result
+            == "https://www.medrxiv.org/content/10.1101/2023.06.15.545100.full.pdf"
+        )
 
     async def test_biorxiv_doi_pattern(self):
         tools = PubMedTools()
@@ -530,6 +554,62 @@ class TestQueryBiorxivApi:
 
         result = await tools._query_biorxiv_api(
             "medrxiv", "10.1101/err", session, timeout_secs=5.0
+        )
+        assert result is None
+
+
+@pytest.mark.asyncio
+class TestQueryBiorxivPubsApi:
+    """Tests for _query_biorxiv_pubs_api helper method."""
+
+    async def test_returns_pdf_url_when_preprint_found(self):
+        tools = PubMedTools()
+
+        resp = _make_mock_response(
+            json_data={"collection": [{"preprint_doi": "10.1101/2023.06.15.545100"}]}
+        )
+        session = _make_mock_session(responses=[resp])
+
+        result = await tools._query_biorxiv_pubs_api(
+            "medrxiv", "10.1016/j.cell.2024.01.001", session, timeout_secs=5.0
+        )
+        assert (
+            result
+            == "https://www.medrxiv.org/content/10.1101/2023.06.15.545100.full.pdf"
+        )
+
+    async def test_returns_none_on_empty_collection(self):
+        tools = PubMedTools()
+
+        resp = _make_mock_response(json_data={"collection": []})
+        session = _make_mock_session(responses=[resp])
+
+        result = await tools._query_biorxiv_pubs_api(
+            "medrxiv", "10.1016/j.cell.2024.01.001", session, timeout_secs=5.0
+        )
+        assert result is None
+
+    async def test_returns_none_on_error(self):
+        tools = PubMedTools()
+
+        session = AsyncMock()
+        session.get = MagicMock(side_effect=Exception("timeout"))
+
+        result = await tools._query_biorxiv_pubs_api(
+            "medrxiv", "10.1016/j.cell.2024.01.001", session, timeout_secs=5.0
+        )
+        assert result is None
+
+    async def test_returns_none_when_no_preprint_doi(self):
+        tools = PubMedTools()
+
+        resp = _make_mock_response(
+            json_data={"collection": [{"some_other_field": "value"}]}
+        )
+        session = _make_mock_session(responses=[resp])
+
+        result = await tools._query_biorxiv_pubs_api(
+            "medrxiv", "10.1016/j.cell.2024.01.001", session, timeout_secs=5.0
         )
         assert result is None
 

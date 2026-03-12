@@ -248,6 +248,29 @@ class PubMedTools(object):
             logger.debug(f"[DOI:{doi}] {server} lookup failed: {e}")
         return None
 
+    async def _query_biorxiv_pubs_api(
+        self,
+        server: str,
+        doi: str,
+        session: aiohttp.ClientSession,
+        timeout_secs: float,
+    ) -> Optional[str]:
+        """Look up a published DOI on biorxiv/medrxiv to find its preprint PDF."""
+        try:
+            api_url = f"https://api.biorxiv.org/pubs/{server}/{doi}"
+            async with async_timeout(timeout_secs):
+                async with session.get(api_url) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        results = data.get("collection", [])
+                        if results:
+                            preprint_doi = str(results[-1].get("preprint_doi", ""))
+                            if preprint_doi:
+                                return f"https://www.{server}.org/content/{preprint_doi}.full.pdf"
+        except Exception as e:
+            logger.debug(f"[DOI:{doi}] {server} pubs lookup failed: {e}")
+        return None
+
     async def _try_preprint_servers(
         self,
         doi: str,
@@ -256,14 +279,23 @@ class PubMedTools(object):
     ) -> Optional[str]:
         """Try medRxiv and bioRxiv for preprint PDFs."""
         doi_lower = doi.lower()
-        if (
-            "10.1101/" not in doi
-            and "medrxiv" not in doi_lower
-            and "biorxiv" not in doi_lower
-        ):
-            return None
-        for server in ("medrxiv", "biorxiv"):
-            result = await self._query_biorxiv_api(server, doi, session, timeout_secs)
+        is_preprint = (
+            "10.1101/" in doi or "medrxiv" in doi_lower or "biorxiv" in doi_lower
+        )
+        if is_preprint:
+            # Direct lookup via /details/ endpoint
+            for server in ("medrxiv", "biorxiv"):
+                result = await self._query_biorxiv_api(
+                    server, doi, session, timeout_secs
+                )
+                if result:
+                    return result
+        else:
+            # Published DOI — check if a preprint exists via /pubs/ endpoint
+            # Only try medrxiv to limit HTTP calls (most relevant for health appeals)
+            result = await self._query_biorxiv_pubs_api(
+                "medrxiv", doi, session, timeout_secs
+            )
             if result:
                 return result
         return None
