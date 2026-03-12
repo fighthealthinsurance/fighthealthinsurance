@@ -10,10 +10,7 @@ from fighthealthinsurance.common_view_logic import (
     NextStepInfo,
     DenialCreatorHelper,
 )
-from fighthealthinsurance.helpers import (
-    SendFaxHelper,
-    RemoveDataHelper
-)
+from fighthealthinsurance.helpers import SendFaxHelper, RemoveDataHelper
 from fighthealthinsurance.models import Denial, DenialTypes, Appeal, FaxesToSend
 import pytest
 from django.test import TestCase
@@ -21,6 +18,37 @@ from django.test import TestCase
 
 class TestCommonViewLogic(TestCase):
     fixtures = ["fighthealthinsurance/fixtures/initial.yaml"]
+
+    def _create_test_denial(self, denial_id, gen_attempts=0):
+        """Helper to create a test denial with specified gen_attempts."""
+        email = "test@example.com"
+        denial = Denial.objects.create(
+            denial_id=denial_id,
+            semi_sekret="sekret",
+            hashed_email=Denial.get_hashed_email(email),
+            gen_attempts=gen_attempts,
+        )
+        return email, denial
+
+    @staticmethod
+    async def collect_appeal_responses(data):
+        """Collect all responses from generate_appeals into categorized lists."""
+        status_messages = []
+        appeal_contents = []
+        raw_chunks = []
+        async for chunk in AppealsBackendHelper.generate_appeals(data):
+            raw_chunks.append(chunk)
+            if not chunk or not chunk.strip():
+                continue
+            try:
+                parsed = json.loads(chunk)
+                if parsed.get("type") == "status":
+                    status_messages.append(parsed)
+                elif "content" in parsed:
+                    appeal_contents.append(parsed["content"])
+            except json.JSONDecodeError:
+                pass
+        return status_messages, appeal_contents, raw_chunks
 
     @pytest.mark.django_db
     @patch("fighthealthinsurance.common_view_logic.Denial.objects")
@@ -205,8 +233,14 @@ class TestCommonViewLogic(TestCase):
         )
 
     @pytest.mark.django_db
-    @patch("fighthealthinsurance.common_view_logic.fire_and_forget_in_new_threadpool", new_callable=AsyncMock)
-    @patch("fighthealthinsurance.common_view_logic.MLAppealQuestionsHelper.generate_questions_for_denial", new_callable=AsyncMock)
+    @patch(
+        "fighthealthinsurance.common_view_logic.fire_and_forget_in_new_threadpool",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "fighthealthinsurance.common_view_logic.MLAppealQuestionsHelper.generate_questions_for_denial",
+        new_callable=AsyncMock,
+    )
     def test_generate_appeal_questions(self, mock_generate_questions, mock_fire_forget):
         """Test that generate_appeal_questions generates and stores questions."""
         test_questions = [
@@ -255,5 +289,103 @@ class TestCommonViewLogic(TestCase):
                 self.assertEqual(stored_questions_as_tuples, test_questions)
             finally:
                 await Denial.objects.filter(denial_id=99).adelete()
+
+        async_to_sync(test)()
+
+    @pytest.mark.django_db
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_generate_appeals_skips_research_on_high_gen_attempts(
+        self, mock_appeal_generator
+    ):
+        """Test that research phase is skipped when gen_attempts >= 3."""
+        email, denial = self._create_test_denial(12, gen_attempts=3)
+        mock_appeal_generator.make_appeals.return_value = iter(
+            ["Dear Insurance Company, this is an appeal."]
+        )
+
+        async def test():
+            try:
+                status_messages, appeal_contents, _ = (
+                    await self.collect_appeal_responses(
+                        {
+                            "denial_id": 12,
+                            "email": email,
+                            "semi_sekret": denial.semi_sekret,
+                        }
+                    )
+                )
+
+                # Check for the skip message
+                research_messages = [
+                    m for m in status_messages if m.get("phase") == "research"
+                ]
+                assert (
+                    len(research_messages) > 0
+                ), f"Should have a research skip status, got: {status_messages}"
+                skip_msg = research_messages[0]
+                assert (
+                    skip_msg.get("substep") == "all"
+                ), f"Skip message should have substep 'all': {skip_msg}"
+                assert (
+                    "skip" in skip_msg.get("message", "").lower()
+                ), f"Skip message should mention 'skip': {skip_msg}"
+            finally:
+                await Denial.objects.filter(denial_id=12).adelete()
+
+        async_to_sync(test)()
+
+    @pytest.mark.django_db
+    @patch(
+        "fighthealthinsurance.common_view_logic.get_rag_context_for_denial",
+        new_callable=AsyncMock,
+        return_value=None,
+    )
+    @patch(
+        "fighthealthinsurance.common_view_logic.MLCitationsHelper.generate_citations_for_denial",
+        new_callable=AsyncMock,
+        return_value=None,
+    )
+    @patch("fighthealthinsurance.common_view_logic.AppealsBackendHelper.pmt")
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_generate_appeals_has_phase_field(
+        self, mock_appeal_generator, mock_pmt, mock_ml_citations, mock_rag
+    ):
+        """Test that status messages include the phase field."""
+        mock_pmt.find_context_for_denial = AsyncMock(return_value=None)
+        email, denial = self._create_test_denial(13, gen_attempts=0)
+        mock_appeal_generator.make_appeals.return_value = iter(
+            ["Dear Insurance Company, this is an appeal."]
+        )
+
+        async def test():
+            try:
+                status_messages, _, _ = await self.collect_appeal_responses(
+                    {
+                        "denial_id": 13,
+                        "email": email,
+                        "semi_sekret": denial.semi_sekret,
+                    }
+                )
+
+                # Verify phase field is present on status messages
+                statuses_with_phase = [s for s in status_messages if "phase" in s]
+                assert (
+                    len(statuses_with_phase) > 0
+                ), f"Status messages should include 'phase' field, got: {status_messages}"
+
+                # Verify phase progression order
+                phases_seen = []
+                for msg in status_messages:
+                    phase = msg.get("phase")
+                    if phase and (not phases_seen or phases_seen[-1] != phase):
+                        phases_seen.append(phase)
+                assert (
+                    phases_seen[0] == "init"
+                ), f"First phase should be 'init', got: {phases_seen}"
+                assert (
+                    "generating" in phases_seen
+                ), f"Should see 'generating' phase, got: {phases_seen}"
+            finally:
+                await Denial.objects.filter(denial_id=13).adelete()
 
         async_to_sync(test)()
