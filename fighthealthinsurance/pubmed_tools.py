@@ -68,6 +68,7 @@ class PubMedTools(object):
         owns_session = session is None
         if owns_session:
             session = aiohttp.ClientSession(headers=_FETCH_HEADERS)
+        assert session is not None
 
         try:
             # 1. metapub FindIt
@@ -122,7 +123,8 @@ class PubMedTools(object):
                 sync_to_async(FindIt)(pmid),
                 timeout=timeout_secs,
             )
-            return src.url
+            url: Optional[str] = src.url
+            return url
         except Exception:
             logger.debug(f"[{pmid}] FindIt failed")
             return None
@@ -183,13 +185,13 @@ class PubMedTools(object):
                                 if ft_url.get("documentStyle") == "pdf" and ft_url.get(
                                     "availabilityCode"
                                 ) in ("OA", "F"):
-                                    return ft_url.get("url")
+                                    return str(ft_url.get("url"))
                             for ft_url in full_text_urls:
                                 if ft_url.get("availabilityCode") in (
                                     "OA",
                                     "F",
                                 ) and ft_url.get("url"):
-                                    return ft_url.get("url")
+                                    return str(ft_url.get("url"))
         except Exception as e:
             logger.debug(f"[{pmid}] Europe PMC lookup failed: {e}")
         return None
@@ -213,15 +215,15 @@ class PubMedTools(object):
                             # Prefer PDF URL, fall back to landing page
                             pdf_url = best_oa.get("url_for_pdf")
                             if pdf_url:
-                                return pdf_url
+                                return str(pdf_url)
                             landing_url = best_oa.get("url_for_landing_page")
                             if landing_url:
-                                return landing_url
+                                return str(landing_url)
                         # Try all OA locations
                         for oa_loc in data.get("oa_locations", []):
                             pdf_url = oa_loc.get("url_for_pdf")
                             if pdf_url:
-                                return pdf_url
+                                return str(pdf_url)
         except Exception as e:
             logger.debug(f"[DOI:{doi}] Unpaywall lookup failed: {e}")
         return None
@@ -250,12 +252,12 @@ class PubMedTools(object):
                                     jatsxml = results[-1].get("jatsxml")
                                     if jatsxml:
                                         # Convert JATSXML URL to PDF URL
-                                        pdf_url = jatsxml.replace(
+                                        pdf_url: str = str(jatsxml).replace(
                                             ".source.xml", ".full.pdf"
                                         )
                                         return pdf_url
                                     # Try constructing PDF URL from DOI
-                                    biorxiv_doi = results[-1].get("doi", doi)
+                                    biorxiv_doi = str(results[-1].get("doi", doi))
                                     return f"https://www.{server}.org/content/{biorxiv_doi}.full.pdf"
                 except Exception as e:
                     logger.debug(f"[DOI:{doi}] {server} lookup failed: {e}")
@@ -271,7 +273,7 @@ class PubMedTools(object):
                             data = await resp.json()
                             results = data.get("collection", [])
                             if results:
-                                biorxiv_doi = results[-1].get("doi", "")
+                                biorxiv_doi = str(results[-1].get("doi", ""))
                                 if biorxiv_doi:
                                     return f"https://www.{server}.org/content/{biorxiv_doi}.full.pdf"
             except Exception as e:
