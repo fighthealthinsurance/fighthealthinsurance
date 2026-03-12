@@ -219,6 +219,12 @@ class AboutView(generic.TemplateView):
     template_name = "about_us.html"
 
 
+class AboutAIView(generic.TemplateView):
+    """About our AI page."""
+
+    template_name = "about_ai.html"
+
+
 class HowToHelpView(generic.TemplateView):
     """Page describing ways to help the project."""
 

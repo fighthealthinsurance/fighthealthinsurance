@@ -1,0 +1,90 @@
+{% extends 'base.html' %}
+{% block title %}
+About Our AI
+{% endblock title %}
+
+{% block content %}
+<div class="container mt-5">
+    <h1 style="margin-top: 10vh;">About Our AI</h1>
+    <div class="spacer"></div>
+
+    <p>
+        Fight Health Insurance uses AI to help you draft health insurance appeal letters.
+        Our AI is a tool to assist you &mdash; it is not a replacement for professional medical or legal advice.
+        You should always review and customize any generated appeal before submitting it.
+    </p>
+
+    <h2 class="mt-4">How It Works</h2>
+    <p>
+        When you submit a denial or chat with our system, we use fine-tuned medical language models
+        (like <a href="https://ai.google.dev/gemma/docs/medgemma" target="_blank" rel="noopener noreferrer">MedGemma</a>)
+        to draft an appeal letter tailored to your situation.
+        We run multiple AI models in parallel.
+        Our system also searches <a href="https://pubmed.ncbi.nlm.nih.gov/" target="_blank" rel="noopener noreferrer">PubMed</a>
+        for relevant medical literature to strengthen your appeal with citations.
+    </p>
+
+    <h2 class="mt-4">Training &amp; Data</h2>
+    <p>
+        We generate synthetic training examples from publicly available state appeal decisions
+        from California, and other states, and use those examples to fine-tune our models.
+        These public decisions describe the diagnosis, treatment, denial reason, and outcome of real
+        appeals, but contain no private patient information. No real patient appeal letters are used
+        in training.
+    </p>
+    <p>
+        We fine-tune using <a href="https://en.wikipedia.org/wiki/Fine-tuning_(deep_learning)#Parameter-efficient_fine-tuning" target="_blank" rel="noopener noreferrer">LoRA (Low-Rank Adaptation)</a>,
+        an efficient technique that adapts a small fraction of model parameters while preserving the
+        base model's "knowledge." After fine-tuning, we quantize the models to reduce their
+        size and power consumption while maintaining quality. In general generating an appeal uses less power than playing a video game on a modern PC.
+    </p>
+    <p>
+        We update which base models we use as better open language models become available.
+    </p>
+    <p>
+        For more details on how we handle your data, see our
+        <a href="{% url 'tos' %}">Terms of Service</a>. You can also
+        <a href="{% url 'remove_data' %}">request deletion of your data</a> at any time.
+    </p>
+
+    <h2 class="mt-4">Sustainability</h2>
+    <p>
+        We care about the environmental impact of running AI. A few things we do:
+    </p>
+    <ul>
+        <li>
+            <strong>Low-power inference:</strong> Our models are quantized so they run on a single GPU,
+            consuming a fraction of the energy that large cloud-hosted models require.
+        </li>
+        <li>
+            <strong>Solar powered when possible:</strong> During the day, our inference servers run on
+            solar power. We aim to shift compute to daylight hours when solar generation is available.
+        </li>
+        <li>
+            <strong>Efficient serving:</strong> We use <a href="https://github.com/vllm-project/vllm" target="_blank" rel="noopener noreferrer">vLLM</a>,
+            a high-throughput inference engine that maximizes the work done per watt.
+        </li>
+    </ul>
+
+    <h2 class="mt-4">Open Source</h2>
+    <p>
+        Fight Health Insurance is mostly open source. You can find our code on
+        <a href="https://github.com/fighthealthinsurance" target="_blank" rel="noopener noreferrer">GitHub</a>.
+        We believe transparency is especially important when AI is involved in healthcare.
+    </p>
+
+    <h2 class="mt-4">Limitations</h2>
+    <p>
+        AI-generated appeals are a starting point, not a finished product. Our models can make mistakes,
+        hallucinate citations, or miss important details about your specific situation. Always:
+    </p>
+    <ul>
+        <li>Review the generated appeal carefully before sending it.</li>
+        <li>Verify any cited medical literature or regulations.</li>
+        <li>Add personal details about your medical history that the AI does not know.</li>
+        <li>Consult a healthcare professional or attorney if your situation is complex.</li>
+    </ul>
+
+    <div class="spacer" style="margin-top: 5vh;"></div>
+</div>
+{% endblock content %}
