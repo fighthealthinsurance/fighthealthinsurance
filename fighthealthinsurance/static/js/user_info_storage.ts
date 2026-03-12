@@ -101,7 +101,16 @@ export function scrubPersonalInfo(message: string, userInfo: UserInfo | null): s
     );
   }
 
-  // Replace name with word boundaries
+  // Replace combined "firstName lastName" before individual names to avoid
+  // partial matches (e.g., replacing firstName first could prevent lastName match)
+  if (userInfo.firstName && userInfo.lastName) {
+    scrubbedMessage = scrubbedMessage.replace(
+      new RegExp(`\\b${escapeRegExp(userInfo.firstName)}\\s+${escapeRegExp(userInfo.lastName)}\\b`, "gi"),
+      "{{FIRST_NAME}} {{LAST_NAME}}"
+    );
+  }
+
+  // Replace individual names (catches occurrences not part of the combined pattern)
   if (userInfo.firstName) {
     scrubbedMessage = scrubbedMessage.replace(
       new RegExp(`\\b${escapeRegExp(userInfo.firstName)}\\b`, "gi"),
