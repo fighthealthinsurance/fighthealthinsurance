@@ -114,3 +114,28 @@ Tests are in `tests/` with subdirectories:
 - `selenium/` - Sync selenium tests
 
 Fixtures live in `fighthealthinsurance/fixtures/` (initial, followup, plan_source).
+
+## Development Rules
+
+### Running Tests
+- **Always use `tox -e <env>` to run tests.** Never invoke pytest directly or run commands through `.tox/` virtualenv paths (e.g., `.tox/py313-django52-sync/bin/pytest`). The `tox -e` command ensures the correct environment, dependencies, and configuration.
+- Pick the most specific tox environment for what you're testing (e.g., `tox -e py313-django52-async` for async tests, not the full `tox` run).
+- After making changes, always run the relevant test suite before considering the work done.
+
+### Code Style
+- Run `black --check fighthealthinsurance fhi_users` before committing. Fix any issues with `black fighthealthinsurance fhi_users`.
+- Run `mypy --config-file mypy.ini -p fighthealthinsurance -p fhi_users` to catch type errors.
+- Follow existing code conventions in the file you're editing — match naming, import style, and structure.
+
+### Writing Good Tests
+- Tests should be focused: one logical assertion per test, with a clear name describing the scenario.
+- Use descriptive test names that explain what is being tested and expected behavior (e.g., `test_appeal_generation_with_missing_diagnosis_returns_error`).
+- Prefer fixtures and factories over manual object setup. Reuse existing test helpers and fixtures before creating new ones.
+- Test edge cases and error paths, not just the happy path.
+- Mocking: mock external services and ML backends, but avoid mocking the code under test.
+
+### DRY (Don't Repeat Yourself)
+- Before writing new utility functions, helpers, or constants, check if similar functionality already exists in the codebase.
+- Extract shared logic into helpers rather than duplicating code across views, serializers, or tests.
+- Reuse existing model methods, manager methods, and helper classes (see Important Patterns above) instead of reimplementing logic.
+- In tests, use shared setup via `setUp`/fixtures/conftest rather than repeating object creation in every test method.
