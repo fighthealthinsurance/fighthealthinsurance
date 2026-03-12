@@ -91,7 +91,7 @@ class SeleniumChatStatusMessagesTest(FHISeleniumBase, StaticLiveServerTestCase):
             try:
                 self.type("textarea", "Hello, I need help with my appeal")
                 self.click("button[aria-label='Send message']")
-            except:
+            except Exception:
                 # Fallback: Use JavaScript for React component interaction
                 # This is necessary because React may not have stable selectors
                 self.execute_script("""
@@ -157,7 +157,7 @@ class SeleniumChatStatusMessagesTest(FHISeleniumBase, StaticLiveServerTestCase):
             try:
                 self.type("textarea", "Test message for elapsed time")
                 self.click("button[aria-label='Send message']")
-            except:
+            except Exception:
                 # Fallback to JavaScript for React components
                 self.execute_script("""
                     const textarea = document.querySelector('textarea');
@@ -289,6 +289,13 @@ class SeleniumChatStatusMessagesTest(FHISeleniumBase, StaticLiveServerTestCase):
         self.wait_for_page_ready(localstorage_key="fhi_user_info")
         time.sleep(1)  # Let React components settle
 
+        # Try to wait for the chat session key (requires WebSocket connection)
+        try:
+            self.wait_for_page_ready(localstorage_key="fhi_chat_session_key")
+            time.sleep(1)  # Let session key settle
+        except Exception:
+            pass  # WebSocket may not be available in test environment
+
         # Check localStorage for session key - it should be created on component mount
         session_key = self.execute_script("""
             return localStorage.getItem('fhi_chat_session_key');
@@ -311,6 +318,7 @@ class SeleniumChatStatusMessagesTest(FHISeleniumBase, StaticLiveServerTestCase):
         # Reload page and verify session persists
         self.refresh()
         self.wait_for_page_ready()
+        time.sleep(1)  # Let React re-initialize after refresh
 
         session_key_after = self.execute_script("""
             return localStorage.getItem('fhi_chat_session_key');

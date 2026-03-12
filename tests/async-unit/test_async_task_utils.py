@@ -1,5 +1,6 @@
 import pytest
 import asyncio
+import threading
 import time
 from typing import Awaitable, TypeVar, Any
 
@@ -29,8 +30,9 @@ class TestAsyncTaskUtils:
     async def test_fire_and_forget_in_new_threadpool(self):
         """Test that fire_and_forget_in_new_threadpool runs tasks without blocking"""
         # Create a shared variable and event to verify task execution
+        # Use threading.Event since the background task runs in a separate thread
         shared_result = {"completed": False}
-        done_event = asyncio.Event()
+        done_event = threading.Event()
 
         async def background_task() -> None:
             await asyncio.sleep(0.5)
@@ -43,18 +45,33 @@ class TestAsyncTaskUtils:
         # This should return immediately while task runs in background
         assert shared_result["completed"] is False
 
-        # Wait for event instead of fixed sleep
-        await asyncio.wait_for(done_event.wait(), timeout=5.0)
+        # Wait for thread-safe event from background thread
+        loop = asyncio.get_running_loop()
+        await asyncio.wait_for(
+            loop.run_in_executor(None, done_event.wait, 5.0), timeout=10.0
+        )
         assert shared_result["completed"] is True
 
     @pytest.mark.asyncio
     async def test_fire_and_forget_in_new_threadpool_exception_handling(self):
         """Test that exceptions in fire_and_forget tasks don't crash the program"""
-        # This would raise an exception, but shouldn't crash our test
-        await fire_and_forget_in_new_threadpool(self.async_task_that_fails(0.1))
+        # Use threading.Event since background task runs in a separate thread
+        completion_event = threading.Event()
 
-        # Wait to ensure the exception had time to be raised
-        await asyncio.sleep(1.0)
+        async def failing_task() -> None:
+            try:
+                await asyncio.sleep(0.1)
+                raise ValueError("Task failed deliberately")
+            finally:
+                completion_event.set()
+
+        await fire_and_forget_in_new_threadpool(failing_task())
+
+        # Wait for the background task to finish (including exception handling)
+        loop = asyncio.get_running_loop()
+        await asyncio.wait_for(
+            loop.run_in_executor(None, completion_event.wait, 5.0), timeout=10.0
+        )
 
         # Test passes if we reach here without crashing
 
