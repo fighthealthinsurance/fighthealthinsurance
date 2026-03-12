@@ -27,6 +27,7 @@ else:
 from llm_result_utils.cleaner_utils import CleanerUtils
 from llm_result_utils.llm_utils import LLMResponseUtils
 
+from fighthealthinsurance.ml.bad_output_utils import is_bad_output
 from fighthealthinsurance.exec import *
 from fighthealthinsurance.process_denial import DenialBase
 from fighthealthinsurance.utils import all_concrete_subclasses
@@ -252,9 +253,7 @@ class RemoteModelLike(DenialBase):
 
     def bad_result(self, result: Optional[str], infer_type: str) -> bool:
         """Checker to see if a result is "reasonable" may be used to retry."""
-        if result is None or len(result) < 3:
-            return True
-        return False
+        return is_bad_output(result)
 
     def _is_medicaid_related(
         self,
@@ -828,9 +827,7 @@ class RemoteModel(RemoteModelLike):
 
     def bad_result(self, result: Optional[str], infer_type: str) -> bool:
         """Checker to see if a result is "reasonable" may be used to retry."""
-        if result is None or len(result) < 3:
-            return True
-        return False
+        return is_bad_output(result)
 
     def check_is_ok(
         self, result: Optional[str], infer_type: str, prof_pov: bool
@@ -1036,31 +1033,12 @@ class RemoteOpenLike(RemoteModel):
         )
 
     def bad_result(self, result: Optional[str], infer_type: str) -> bool:
-        # TODO: Unify this with the LLM synth data utils in llm-result-utils
-        generic_bad_ideas = [
-            "Therefore, the Health Plans denial should be overturned.",
-            "llama llama virus",
-            "The independent medical review found that",
-            "The independent review findings for",
-            "the physician reviewer overturned",
-            "91111111111111111111111",
-            "I need the text to be able to help you with your appeal",
-            "I cannot directly create",
-            "As an AI, I do not have the capability",
-            "Unfortunately, I cannot directly",
-            "I am an AI assistant and do not have the authority to create medical documents",
-        ]
-        if result is None:
-            return True
-        result_lower = result.lower()
-        for bad in generic_bad_ideas:
-            if bad.lower() in result_lower:
-                return True
-        if len(result.strip(" ")) < 3:
-            return True
-        if has_severe_repetition(result):
-            return True
-        return False
+        return is_bad_output(
+            result,
+            check_guardrail_phrases=True,
+            check_severe_repetition=True,
+            repetition_checker=has_severe_repetition,
+        )
 
     def is_prior_auth(self, result: Optional[str]) -> bool:
         """
