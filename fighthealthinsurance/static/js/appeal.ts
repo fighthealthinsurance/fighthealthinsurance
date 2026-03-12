@@ -4,6 +4,7 @@ import {
   getLocalStorageItemOrDefault,
   getLocalStorageItemOrDefaultEQ,
 } from "./shared";
+import { restorePersonalInfo, type UserInfo } from "./user_info_storage";
 
 async function generateAppealPDF() {
   const options: jsPDFOptions = {
@@ -43,26 +44,33 @@ function descrub() {
   const claim_id = getLocalStorageItemOrDefaultEQ("claim_id");
   const email_address = getLocalStorageItemOrDefaultEQ("email_address");
   const phone_number = getLocalStorageItemOrDefaultEQ("phone_number");
-  const name = fname + " " + lname;
+  const name = [fname, lname].filter(Boolean).join(" ");
 
-  // Primary {{PLACEHOLDER}} format (matching data pipeline)
-  text = text.replace(/\{\{PATIENT_NAME\}\}/g, name);
-  text = text.replace(/\{\{FIRST_NAME\}\}/g, fname);
-  text = text.replace(/\{\{LAST_NAME\}\}/g, lname);
+  // Build UserInfo from localStorage and use restorePersonalInfo for
+  // primary {{PLACEHOLDER}} and legacy [BRACKET] replacements
+  const userInfo: UserInfo = {
+    firstName: fname,
+    lastName: lname,
+    email: email_address,
+    address: getLocalStorageItemOrDefault("store_street", ""),
+    city: getLocalStorageItemOrDefault("store_city", ""),
+    state: getLocalStorageItemOrDefault("store_state", ""),
+    zipCode: getLocalStorageItemOrDefault("store_zip", ""),
+    acceptedTerms: true,
+  };
+  text = restorePersonalInfo(text, userInfo);
+
+  // Additional {{PLACEHOLDER}} formats not covered by restorePersonalInfo
   text = text.replace(/\{\{Your Name\}\}/g, name);
   text = text.replace(/\{\{SCSID\}\}/g, subscriber_id);
   text = text.replace(/\{\{GPID\}\}/g, group_id);
   text = text.replace(/\{\{CASEID\}\}/g, claim_id);
-  text = text.replace(/\{\{Your Email Address\}\}/g, email_address);
   text = text.replace(/\{\{Your Phone Number\}\}/g, phone_number);
 
-  // Legacy format fallbacks for backward compatibility (global replacements)
+  // Legacy format fallbacks for backward compatibility
   text = text.replace(/YourNameMagic/g, name);
-  text = text.replace(/\[Your Name\]/g, name);
   text = text.replace(/\[Patient's Name\]/g, name);
-  text = text.replace(/\$your_name_here/g, name);
   text = text.replace(/\[Policy Number or Member ID\]/g, subscriber_id);
-  text = text.replace(/\[Email Address\]/g, email_address);
   text = text.replace(/SCSID: 123456789/g, subscriber_id);
   text = text.replace(/GPID: 987654321/g, group_id);
   text = text.replace(/subscriber\\_id/g, subscriber_id);

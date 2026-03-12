@@ -220,7 +220,7 @@ export function restorePersonalInfo(message: string, userInfo: UserInfo | null):
   }
 
   // Combined-name and email placeholders
-  const fullName = userInfo.firstName + (userInfo.lastName ? " " + userInfo.lastName : "");
+  const fullName = [userInfo.firstName, userInfo.lastName].filter(Boolean).join(" ");
   if (fullName.trim()) {
     restoredMessage = restoredMessage.replace(/\{\{PATIENT_NAME\}\}/g, fullName);
     restoredMessage = restoredMessage.replace(/\[Your Name\]/g, fullName);
