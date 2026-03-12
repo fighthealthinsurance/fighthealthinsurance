@@ -34,4 +34,3 @@ EMAIL_POLLING_ACTOR_CONFIG = ActorRefConfig(
 MAILING_LIST_ACTOR_CONFIG = ActorRefConfig(name="mailing_list_actor")
 EXTRALINK_PREFETCH_ACTOR_CONFIG = ActorRefConfig(name="extralink_prefetch_actor")
 FAX_ACTOR_CONFIG = ActorRefConfig(name="FaxActor")
-
