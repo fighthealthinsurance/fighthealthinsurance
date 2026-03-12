@@ -1,3 +1,5 @@
+"""Shared heuristics for rejecting unusable LLM output."""
+
 from typing import Callable, Optional
 
 
@@ -16,6 +18,10 @@ BAD_OUTPUT_PHRASES: tuple[str, ...] = (
     "I am an AI assistant and do not have the authority to create medical documents",
 )
 
+BAD_OUTPUT_PHRASES_LOWER: tuple[str, ...] = tuple(
+    phrase.lower() for phrase in BAD_OUTPUT_PHRASES
+)
+
 
 def is_bad_output(
     result: Optional[str],
@@ -25,22 +31,18 @@ def is_bad_output(
     check_severe_repetition: bool = False,
     repetition_checker: Optional[Callable[[str], bool]] = None,
 ) -> bool:
-    """Return True when LLM output should be treated as unusable.
-
-    This centralizes bad-output heuristics so all callers share one canonical
-    phrase set and evaluator logic.
-    """
+    """Return ``True`` when LLM output should be treated as unusable."""
     if result is None:
         return True
 
-    if len(result.strip(" ")) < min_length:
+    if len(result.strip()) < min_length:
         return True
 
     result_lower = result.lower()
-    if check_guardrail_phrases:
-        for phrase in BAD_OUTPUT_PHRASES:
-            if phrase.lower() in result_lower:
-                return True
+    if check_guardrail_phrases and any(
+        phrase in result_lower for phrase in BAD_OUTPUT_PHRASES_LOWER
+    ):
+        return True
 
     if (
         check_severe_repetition

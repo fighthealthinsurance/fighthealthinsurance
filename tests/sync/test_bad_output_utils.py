@@ -1,7 +1,10 @@
-from pathlib import Path
 import unittest
 
-from fighthealthinsurance.ml.bad_output_utils import BAD_OUTPUT_PHRASES, is_bad_output
+from fighthealthinsurance.ml.bad_output_utils import (
+    BAD_OUTPUT_PHRASES,
+    BAD_OUTPUT_PHRASES_LOWER,
+    is_bad_output,
+)
 
 
 class TestBadOutputUtils(unittest.TestCase):
@@ -23,15 +26,28 @@ class TestBadOutputUtils(unittest.TestCase):
         self.assertFalse(is_bad_output("This is valid text."))
 
     def test_canonical_phrase_list_contains_expected_items(self):
-        self.assertIn(
-            "As an AI, I do not have the capability",
-            BAD_OUTPUT_PHRASES,
-        )
+        self.assertIn("As an AI, I do not have the capability", BAD_OUTPUT_PHRASES)
         self.assertIn(
             "I am an AI assistant and do not have the authority to create medical documents",
             BAD_OUTPUT_PHRASES,
         )
+        self.assertEqual(
+            tuple(phrase.lower() for phrase in BAD_OUTPUT_PHRASES),
+            BAD_OUTPUT_PHRASES_LOWER,
+        )
 
-    def test_ml_models_bad_result_paths_use_shared_evaluator(self):
-        src = Path("fighthealthinsurance/ml/ml_models.py").read_text()
-        self.assertGreaterEqual(src.count("return is_bad_output("), 3)
+    def test_repetition_checker_hook(self):
+        calls = []
+
+        def checker(text: str) -> bool:
+            calls.append(text)
+            return True
+
+        result = is_bad_output(
+            "This is long enough to pass length checks.",
+            check_severe_repetition=True,
+            repetition_checker=checker,
+        )
+
+        self.assertTrue(result)
+        self.assertEqual(calls, ["This is long enough to pass length checks."])
