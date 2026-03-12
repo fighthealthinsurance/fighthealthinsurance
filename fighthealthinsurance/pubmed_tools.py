@@ -149,13 +149,7 @@ class PubMedTools(object):
                         records = data.get("records", [])
                         if records and records[0].get("pmcid"):
                             pmcid = records[0]["pmcid"]
-                            pdf_url = f"https://www.ncbi.nlm.nih.gov/pmc/articles/{pmcid}/pdf/"
-                            # Verify it's accessible
-                            async with session.head(
-                                pdf_url, allow_redirects=True
-                            ) as head_resp:
-                                if head_resp.status == 200:
-                                    return pdf_url
+                            return f"https://www.ncbi.nlm.nih.gov/pmc/articles/{pmcid}/pdf/"
         except Exception as e:
             logger.debug(f"[{pmid}] PMC lookup failed: {e}")
         return None
@@ -228,6 +222,32 @@ class PubMedTools(object):
             logger.debug(f"[DOI:{doi}] Unpaywall lookup failed: {e}")
         return None
 
+    async def _query_biorxiv_api(
+        self,
+        server: str,
+        doi: str,
+        session: aiohttp.ClientSession,
+        timeout_secs: float,
+    ) -> Optional[str]:
+        """Query biorxiv/medrxiv API for a single server+DOI and return PDF URL if found."""
+        try:
+            api_url = f"https://api.biorxiv.org/details/{server}/{doi}"
+            async with async_timeout(timeout_secs):
+                async with session.get(api_url) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        results = data.get("collection", [])
+                        if results:
+                            jatsxml = results[-1].get("jatsxml")
+                            if jatsxml:
+                                return str(jatsxml).replace(".source.xml", ".full.pdf")
+                            biorxiv_doi = str(results[-1].get("doi", ""))
+                            if biorxiv_doi:
+                                return f"https://www.{server}.org/content/{biorxiv_doi}.full.pdf"
+        except Exception as e:
+            logger.debug(f"[DOI:{doi}] {server} lookup failed: {e}")
+        return None
+
     async def _try_preprint_servers(
         self,
         doi: str,
@@ -236,48 +256,16 @@ class PubMedTools(object):
     ) -> Optional[str]:
         """Try medRxiv and bioRxiv for preprint PDFs."""
         doi_lower = doi.lower()
-
-        # Direct medRxiv/bioRxiv DOI pattern
+        if (
+            "10.1101/" not in doi
+            and "medrxiv" not in doi_lower
+            and "biorxiv" not in doi_lower
+        ):
+            return None
         for server in ("medrxiv", "biorxiv"):
-            if server in doi_lower or "10.1101/" in doi:
-                try:
-                    # medRxiv/bioRxiv API
-                    api_url = f"https://api.biorxiv.org/details/{server}/{doi}"
-                    async with async_timeout(timeout_secs):
-                        async with session.get(api_url) as resp:
-                            if resp.status == 200:
-                                data = await resp.json()
-                                results = data.get("collection", [])
-                                if results:
-                                    jatsxml = results[-1].get("jatsxml")
-                                    if jatsxml:
-                                        # Convert JATSXML URL to PDF URL
-                                        pdf_url: str = str(jatsxml).replace(
-                                            ".source.xml", ".full.pdf"
-                                        )
-                                        return pdf_url
-                                    # Try constructing PDF URL from DOI
-                                    biorxiv_doi = str(results[-1].get("doi", doi))
-                                    return f"https://www.{server}.org/content/{biorxiv_doi}.full.pdf"
-                except Exception as e:
-                    logger.debug(f"[DOI:{doi}] {server} lookup failed: {e}")
-
-        # Even if the DOI doesn't look like medRxiv/bioRxiv, search for the DOI
-        # on these servers as they may host preprints of published papers
-        for server in ("medrxiv", "biorxiv"):
-            try:
-                api_url = f"https://api.biorxiv.org/details/{server}/{doi}"
-                async with async_timeout(timeout_secs / 2):
-                    async with session.get(api_url) as resp:
-                        if resp.status == 200:
-                            data = await resp.json()
-                            results = data.get("collection", [])
-                            if results:
-                                biorxiv_doi = str(results[-1].get("doi", ""))
-                                if biorxiv_doi:
-                                    return f"https://www.{server}.org/content/{biorxiv_doi}.full.pdf"
-            except Exception as e:
-                logger.debug(f"[DOI:{doi}] {server} search failed: {e}")
+            result = await self._query_biorxiv_api(server, doi, session, timeout_secs)
+            if result:
+                return result
         return None
 
     async def _try_doi_resolution(
@@ -310,6 +298,11 @@ class PubMedTools(object):
         except Exception as e:
             logger.debug(f"[DOI:{doi}] DOI resolution failed: {e}")
         return None
+
+    @staticmethod
+    def _is_pdf_response(url: str, content_type: str) -> bool:
+        """Check if a URL or content-type indicates a PDF response."""
+        return ".pdf" in url or "application/pdf" in content_type
 
     @staticmethod
     def _extract_pdf_url_from_html(html: str, base_url: str) -> Optional[str]:
@@ -741,7 +734,7 @@ class PubMedTools(object):
             async with session.get(url, headers=_FETCH_HEADERS) as response:
                 response.raise_for_status()
                 content_type = response.headers.get("Content-Type", "")
-                if ".pdf" in url or "application/pdf" in content_type:
+                if self._is_pdf_response(url, content_type):
                     with tempfile.NamedTemporaryFile(
                         suffix=".pdf", delete=False
                     ) as my_data:
@@ -857,7 +850,7 @@ class PubMedTools(object):
             async with session.get(url, headers=_FETCH_HEADERS) as response:
                 if response.status == 200:
                     content_type = response.headers.get("Content-Type", "")
-                    if ".pdf" in url or "application/pdf" in content_type:
+                    if self._is_pdf_response(url, content_type):
                         content = await response.read()
                         if len(content) > 20:
                             with tempfile.NamedTemporaryFile(
