@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Run all tox test environments in parallel and report results.
 # Usage: ./scripts/good_to_go.sh [--py 313] [-- extra tox args]
 #
@@ -6,6 +6,12 @@
 # then prints a summary showing which passed and which failed (with output).
 
 set -euo pipefail
+
+# Require Bash 4+ for associative arrays
+if [[ "${BASH_VERSINFO[0]}" -lt 4 ]]; then
+    echo "Error: Bash 4+ required (found ${BASH_VERSION}). On macOS, install via: brew install bash" >&2
+    exit 1
+fi
 
 # Install tox if not available
 if ! command -v tox &>/dev/null; then
@@ -20,6 +26,10 @@ TOX_EXTRA_ARGS=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --py)
+            if [[ -z "${2:-}" || "${2-}" == -* ]]; then
+                echo "Error: --py requires a version slug (e.g. 311, 312, 313)" >&2
+                exit 1
+            fi
             PY_VERSION="$2"
             shift 2
             ;;
@@ -38,8 +48,7 @@ done
 
 # Auto-detect python version if not specified
 if [[ -z "$PY_VERSION" ]]; then
-    PY_FULL=$(python3 --version 2>&1 | grep -oP '\d+\.\d+')
-    PY_VERSION="${PY_FULL//./}"
+    PY_VERSION=$(python3 -c 'import sys; print(f"{sys.version_info.major}{sys.version_info.minor}")')
 fi
 
 echo "Using Python version slug: py${PY_VERSION}"
@@ -57,7 +66,6 @@ ENVS=(
 )
 
 TMPDIR_BASE=$(mktemp -d)
-trap 'rm -rf "$TMPDIR_BASE"' EXIT
 
 declare -A PIDS
 declare -A LOGFILES
@@ -130,9 +138,12 @@ if [[ ${#FAILED_ENVS[@]} -gt 0 ]]; then
     done
 
     echo ""
+    echo "  Logs preserved in: $TMPDIR_BASE"
+    echo ""
     echo "NOT GOOD TO GO: ${#FAILED_ENVS[@]} environment(s) failed."
     exit 1
 else
+    rm -rf "$TMPDIR_BASE"
     echo "ALL GOOD TO GO: all ${#ENVS[@]} environments passed."
     exit 0
 fi
