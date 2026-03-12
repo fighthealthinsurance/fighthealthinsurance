@@ -323,8 +323,7 @@
           (idx < messages.length - 1 ? '<button type="button" onclick="window._chatEditor.moveDown(' + idx + ')" title="Move down">&darr;</button>' : '') +
           '<button type="button" class="delete-btn" onclick="window._chatEditor.deleteMsg(' + idx + ')" title="Delete">&times;</button>' +
         '</div>' +
-        '<div class="chat-content-editable" contenteditable="true" ' +
-          'onblur="window._chatEditor.updateContent(' + idx + ', this.innerText)">' +
+        '<div class="chat-content-editable" contenteditable="true">' +
           escapeHtml(content) +
         '</div>';
       container.appendChild(div);
