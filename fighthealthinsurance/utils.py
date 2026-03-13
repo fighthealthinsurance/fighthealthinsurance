@@ -246,7 +246,7 @@ def ensure_message_alternation(history: List[Dict[str, Any]]) -> List[Dict[str, 
     if result and len(result) > 0 and result[0]:
         if result[0].get("role") == "assistant":
             logger.error(
-                "We should always start with a user or system message instead {result}"
+                f"We should always start with a user or system message instead (msg_count={len(result)}, roles={[m.get('role') for m in result[:5]]})"
             )
             result = result[1:]
         elif (
@@ -256,7 +256,7 @@ def ensure_message_alternation(history: List[Dict[str, Any]]) -> List[Dict[str, 
             and result[1].get("role") == "assistant"
         ):
             logger.error(
-                f"We should always start have a user message after system instead {result}"
+                f"We should always have a user message after system instead (msg_count={len(result)}, roles={[m.get('role') for m in result[:5]]})"
             )
             result = [result[0]] + result[2:]
 
@@ -288,6 +288,18 @@ def mask_email_for_logging(email: Optional[str]) -> str:
     return f"{masked_local}@{domain}"
 
 
+def subscribe_to_mailing_list(email: str, defaults: dict) -> None:
+    """Subscribe email to mailing list, updating if already exists."""
+    from fighthealthinsurance.models import MailingListSubscriber
+
+    try:
+        MailingListSubscriber.objects.update_or_create(email=email, defaults=defaults)
+    except Exception as e:
+        logger.warning(
+            f"Error subscribing {mask_email_for_logging(email)} to mailing list: {e}"
+        )
+
+
 def send_fallback_email(subject: str, template_name: str, context, to_email: str):
     if to_email.endswith("-fake@fighthealthinsurance.com"):
         return
@@ -309,7 +321,9 @@ def send_fallback_email(subject: str, template_name: str, context, to_email: str
         settings.DEFAULT_FROM_EMAIL,
         to=[to_email],
     )
-    logger.debug(f"Sending email to {to_email} with subject {subject}")
+    logger.debug(
+        f"Sending email to {mask_email_for_logging(to_email)} with subject {subject}"
+    )
 
     # Lastly, attach the HTML content to the email instance and send.
     msg.attach_alternative(html_content, "text/html")
@@ -529,7 +543,7 @@ async def fire_and_forget_in_new_threadpool(task: Coroutine) -> None:
     thread = threading.Thread(target=run_async_task)
     thread.daemon = True  # Thread will exit when main thread exits
     thread.start()
-    logger.debug(f"Task started good bye :p {task}")
+    logger.debug(f"Task {task} started in background thread")
     return
 
 

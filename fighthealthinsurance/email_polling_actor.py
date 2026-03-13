@@ -7,6 +7,7 @@ from django.utils import timezone
 
 import ray
 from asgiref.sync import sync_to_async
+from loguru import logger
 
 from fighthealthinsurance.utils import get_env_variable
 
@@ -16,7 +17,7 @@ name = "EmailPollingActor"
 @ray.remote(max_restarts=-1, max_task_retries=-1)
 class EmailPollingActor:
     def __init__(self):
-        print(f"Starting actor")
+        logger.info("Starting EmailPollingActor")
         time.sleep(1)
 
         os.environ.setdefault(
@@ -27,7 +28,7 @@ class EmailPollingActor:
         from configurations.wsgi import get_wsgi_application
 
         _application = get_wsgi_application()
-        print(f"wsgi started")
+        logger.info("EmailPollingActor wsgi started")
         # Now we can import the follow up e-mails logic
         from fighthealthinsurance.followup_emails import (
             FollowUpEmailSender,
@@ -37,41 +38,41 @@ class EmailPollingActor:
         self.followup_sender = FollowUpEmailSender()
         self.thankyou_sender = ThankyouEmailSender()
         self.last_email_clear_check = timezone.now()
-        print(f"Senders started")
+        logger.info("EmailPollingActor senders initialized")
 
     async def health_check(self) -> bool:
         """Check if the actor is healthy and running."""
         return getattr(self, "running", False)
 
     async def run(self) -> None:
-        print(f"Starting run")
+        logger.info("Starting EmailPollingActor run")
         self.running = True
         error_count = 0
         while self.running:
             await asyncio.sleep(1)  # Yield
             try:
-                print(f"Gettting follow up candidates.")
+                logger.debug("Getting follow up candidates")
                 # Send follow-up emails
                 followup_candidates = await sync_to_async(
                     self.followup_sender.find_candidates
                 )()
-                print(f"Top follow up candidates: {followup_candidates[0:4]}")
+                logger.debug(f"Follow up candidates: {followup_candidates.count()}")
                 if followup_candidates.count() > 0:
                     sent_count = await sync_to_async(self.followup_sender.send_all)(
                         count=10
                     )
-                    print(f"Sent {sent_count} follow-up emails")
+                    logger.info(f"Sent {sent_count} follow-up emails")
 
                 # Send thank you emails
                 thankyou_candidates = await sync_to_async(
                     self.thankyou_sender.find_candidates
                 )()
-                print(f"Top thank you candidates: {thankyou_candidates[0:4]}")
+                logger.debug(f"Thank you candidates: {len(thankyou_candidates)}")
                 if len(thankyou_candidates) > 0:
                     sent_count = await sync_to_async(self.thankyou_sender.send_all)(
                         count=10
                     )
-                    print(f"Sent {sent_count} thank you emails")
+                    logger.info(f"Sent {sent_count} thank you emails")
 
                 # Check if we should clear expired emails (once per day)
                 now = timezone.now()
@@ -83,10 +84,10 @@ class EmailPollingActor:
                 error_count = 0
             except Exception as e:
                 error_count += 1
-                print(f"Error {e} while checking messages.")
+                logger.opt(exception=True).error("Error while checking messages")
                 await asyncio.sleep(60)
 
-        print(f"Done running? what?")
+        logger.warning("EmailPollingActor stopped running")
         return None
 
     async def _clear_expired_emails(self) -> None:
@@ -158,9 +159,9 @@ class EmailPollingActor:
                     ).update(email="")
                 )()
 
-                print(f"Cleared emails from {cleared_count} expired denials")
+                logger.info(f"Cleared emails from {cleared_count} expired denials")
             else:
-                print("No expired emails to clear")
+                logger.debug("No expired emails to clear")
 
-        except Exception as e:
-            print(f"Error clearing expired emails: {e}")
+        except Exception:
+            logger.opt(exception=True).error("Error clearing expired emails")

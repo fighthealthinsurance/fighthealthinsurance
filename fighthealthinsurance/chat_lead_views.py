@@ -1,11 +1,11 @@
-from loguru import logger
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.request import Request
 from rest_framework.response import Response
 
 from fighthealthinsurance.chat_lead_serializers import ChatLeadsSerializer
-from fighthealthinsurance.models import ChatLeads, MailingListSubscriber
+from fighthealthinsurance.models import ChatLeads
+from fighthealthinsurance.utils import subscribe_to_mailing_list
 
 
 class ChatLeadsViewSet(viewsets.GenericViewSet):
@@ -38,20 +38,7 @@ class ChatLeadsViewSet(viewsets.GenericViewSet):
                 if phone:
                     defaults["phone"] = phone
 
-                # Use get_or_create to avoid duplicate subscriptions
-                try:
-                    MailingListSubscriber.objects.get_or_create(
-                        email=email,
-                        defaults=defaults,
-                    )
-                except Exception as e:
-                    logger.debug(f"Error subscribing {email} to mailing list: {e}")
-                    try:
-                        MailingListSubscriber.objects.filter(email=email).update(
-                            **defaults
-                        )
-                    except Exception as e2:
-                        logger.warning(f"Error updating subscriber {email}: {e2}")
+                subscribe_to_mailing_list(email, defaults)
 
             # Return the session ID to be used for chat
             return Response(

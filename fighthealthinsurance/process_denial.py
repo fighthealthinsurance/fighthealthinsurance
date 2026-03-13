@@ -117,7 +117,7 @@ class ProcessDenialRegex(DenialBase):
         return (await self.get_procedure(text), await self.get_diagnosis(text))
 
     async def get_denialtype(self, denial_text, procedure, diagnosis):
-        logger.debug(f"Getting denial types for {denial_text}")
+        logger.debug(f"Getting denial types ({len(denial_text)} chars)")
         denials = []
         async for d in self.denialTypes:
             if (
@@ -152,7 +152,8 @@ class ProcessDenialRegex(DenialBase):
 
     async def get_denial_types(self, denial_text):
         """
-        Get the denial types based on regex matches in the text.
+        Get the denial types based on regex matches in the text only
+        (no procedure/diagnosis matching).
 
         Args:
             denial_text: The text of the denial letter
@@ -160,24 +161,7 @@ class ProcessDenialRegex(DenialBase):
         Returns:
             List of DenialTypes objects that match the text
         """
-        logger.debug(f"Getting denial types for {denial_text}")
-        denials = []
-        async for d in self.denialTypes:
-            if (
-                d.regex is not None
-                and d.regex.pattern != ""
-                and d.regex.search(denial_text) is not None
-            ):
-                # Check if there's a negative regex that would exclude this match
-                if (
-                    d.negative_regex.pattern == ""
-                    or d.negative_regex.search(denial_text) is None
-                ):
-                    logger.debug(f"Found denial type match: {d.name}")
-                    denials.append(d)
-
-        logger.debug(f"Collected {len(denials)} denial types")
-        return denials
+        return await self.get_denialtype(denial_text, procedure=None, diagnosis=None)
 
     async def get_regulator(self, text):
         regulators = []

@@ -43,6 +43,7 @@ from fhi_users.models import (
 from fighthealthinsurance.models import StripeRecoveryInfo
 from fhi_users.auth import rest_serializers as serializers
 from fighthealthinsurance import rest_serializers as common_serializers
+from fighthealthinsurance.utils import mask_email_for_logging
 from fhi_users.auth import auth_utils
 from fhi_users.auth.auth_utils import (
     create_user,
@@ -301,7 +302,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
             # Check if user with this email already exists
             if User.objects.filter(email=email).exists():
                 logger.opt(exception=True).error(
-                    f"Cannot create professional - email already exists: {email}"
+                    f"Cannot create professional - email already exists: {mask_email_for_logging(email)}"
                 )
                 return Response(
                     common_serializers.ErrorSerializer(
@@ -315,7 +316,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
             # Generate a random password (user will reset it)
             temp_password = uuid.uuid4().hex
             logger.info(
-                f"Creating professional {email} in domain {user_domain.name} (ID: {domain_id})"
+                f"Creating professional {mask_email_for_logging(email)} in domain {user_domain.name} (ID: {domain_id})"
             )
 
             with transaction.atomic():
@@ -389,16 +390,16 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                 try:
                     send_professional_created_email(email, context)
                     logger.info(
-                        f"Successfully sent welcome email to professional {email}"
+                        f"Successfully sent welcome email to professional {mask_email_for_logging(email)}"
                     )
                 except Exception as e:
                     logger.error(
-                        f"Failed to send welcome email to professional {email}: {str(e)}"
+                        f"Failed to send welcome email to professional {mask_email_for_logging(email)}: {str(e)}"
                     )
                     # Don't raise here, still return success even if email fails
 
                 logger.info(
-                    f"Successfully created professional user {email} in domain {user_domain.name}"
+                    f"Successfully created professional user {mask_email_for_logging(email)} in domain {user_domain.name}"
                 )
                 return Response(
                     serializers.StatusResponseSerializer(
@@ -907,7 +908,9 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
 
                 # Delete the user
                 user_to_delete.delete()
-                logger.info(f"Deleted existing user for {email} during signup retry")
+                logger.info(
+                    f"Deleted existing user for {mask_email_for_logging(email)} during signup retry"
+                )
                 # Clean up domain if it's a new domain
                 if new_domain and existing_checkout.domain:
                     try:
@@ -929,7 +932,9 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                     except UserDomain.DoesNotExist:
                         logger.error("Domain doesn't exist for cleanup")
             except Exception as e:
-                logger.error(f"Error cleaning up existing data for {email}: {str(e)}")
+                logger.error(
+                    f"Error cleaning up existing data for {mask_email_for_logging(email)}: {str(e)}"
+                )
                 raise e
         else:
             logger.debug("No existing checkout")
@@ -1318,9 +1323,7 @@ class RestLoginView(ViewSet, SerializerMixin):
         user = authenticate(username=username, password=password)
         if user:
             request.session["domain_id"] = domain_id
-            logger.info(
-                f"User {user.username} logged in setting domain id to {domain_id}"
-            )
+            logger.info(f"User logged in, setting domain id to {domain_id}")
             login(request, user)
             return Response(
                 serializers.StatusResponseSerializer({"status": "success"}).data
@@ -1552,19 +1555,31 @@ class VerifyEmailViewSet(ViewSet, SerializerMixin):
             user.save()
             try:
                 extraproperties = ExtraUserProperties.objects.get(user=user)
-            except:
+            except ExtraUserProperties.DoesNotExist:
                 extraproperties = ExtraUserProperties.objects.create(user=user)
             extraproperties.email_verified = True
             extraproperties.save()
             verification_token.delete()
             try:
-                PatientUser.objects.filter(user=user).update(is_active=True)
-            except:
-                pass
+                updated = PatientUser.objects.filter(user=user).update(active=True)
+                if updated == 0:
+                    logger.info(
+                        f"No PatientUser found for user {user.id} during activation"
+                    )
+            except Exception as e:
+                logger.opt(exception=True).error(
+                    f"Could not activate PatientUser for user {user.id}"
+                )
             try:
-                ProfessionalUser.objects.filter(user=user).update(is_active=True)
-            except:
-                pass
+                updated = ProfessionalUser.objects.filter(user=user).update(active=True)
+                if updated == 0:
+                    logger.info(
+                        f"No ProfessionalUser found for user {user.id} during activation"
+                    )
+            except Exception as e:
+                logger.opt(exception=True).error(
+                    f"Could not activate ProfessionalUser for user {user.id}"
+                )
             return Response(
                 serializers.StatusResponseSerializer({"status": "success"}).data
             )

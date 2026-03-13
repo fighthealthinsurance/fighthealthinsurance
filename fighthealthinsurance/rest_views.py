@@ -881,7 +881,7 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
         patient_name: str = "unkown"
         if patient_user is not None:
             patient_name = patient_user.get_combined_name()
-        logger.debug("Making the appeal go vroooom")
+        logger.debug("Creating or updating appeal")
         appeal = self.appeal_assembly_helper.create_or_update_appeal(
             appeal=appeal,
             name=patient_name,
