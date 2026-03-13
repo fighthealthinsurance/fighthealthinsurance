@@ -101,7 +101,16 @@ export function scrubPersonalInfo(message: string, userInfo: UserInfo | null): s
     );
   }
 
-  // Replace name with word boundaries
+  // Replace combined "firstName lastName" before individual names to avoid
+  // partial matches (e.g., replacing firstName first could prevent lastName match)
+  if (userInfo.firstName && userInfo.lastName) {
+    scrubbedMessage = scrubbedMessage.replace(
+      new RegExp(`\\b${escapeRegExp(userInfo.firstName)}\\s+${escapeRegExp(userInfo.lastName)}\\b`, "gi"),
+      "{{PATIENT_NAME}}"
+    );
+  }
+
+  // Replace individual names (catches occurrences not part of the combined pattern)
   if (userInfo.firstName) {
     scrubbedMessage = scrubbedMessage.replace(
       new RegExp(`\\b${escapeRegExp(userInfo.firstName)}\\b`, "gi"),
@@ -210,9 +219,10 @@ export function restorePersonalInfo(message: string, userInfo: UserInfo | null):
     restoredMessage = restoredMessage.replace(/\[ZIP_CODE\]/g, userInfo.zipCode);
   }
 
-  // Legacy combined-name and email placeholders
-  const fullName = userInfo.firstName + (userInfo.lastName ? " " + userInfo.lastName : "");
+  // Combined-name and email placeholders
+  const fullName = [userInfo.firstName, userInfo.lastName].filter(Boolean).join(" ");
   if (fullName.trim()) {
+    restoredMessage = restoredMessage.replace(/\{\{PATIENT_NAME\}\}/g, fullName);
     restoredMessage = restoredMessage.replace(/\[Your Name\]/g, fullName);
     restoredMessage = restoredMessage.replace(/\$your_name_here/g, fullName);
   }
