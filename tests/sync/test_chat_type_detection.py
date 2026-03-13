@@ -65,7 +65,7 @@ class ChatTypeModelTest(TransactionTestCase):
             summary_for_next_call=[],
         )
 
-        self.assertFalse(chat.is_professional_user())
+        self.assertTrue(chat.is_professional_user())
         self.assertIn("trial", chat.summarize_user().lower())
 
     def test_backward_compat_with_is_patient(self):
@@ -127,7 +127,8 @@ class ChatTypeModelTest(TransactionTestCase):
             chat_history=[],
             summary_for_next_call=[],
         )
-        self.assertIn("ongoing chat", str(pro_chat).lower())
+        display_name = professional.get_display_name().lower()
+        self.assertIn(display_name, str(pro_chat).lower())
 
 
 class ChatLeadsTrialDetectionTest(TransactionTestCase):

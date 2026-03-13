@@ -1984,6 +1984,11 @@ class OngoingChat(models.Model):
         else:
             return "a user"
 
+    def save(self, *args, **kwargs):
+        # Synchronize is_patient with chat_type (chat_type is authoritative)
+        self.is_patient = self.chat_type == ChatType.PATIENT
+        super().save(*args, **kwargs)
+
     class Meta:
         indexes = [
             models.Index(fields=["hashed_email"], name="chat_hashed_email_idx"),
@@ -2010,7 +2015,7 @@ class OngoingChat(models.Model):
             return f"Ongoing Chat {self.id} (no associated user)"
 
     def is_professional_user(self):
-        return self.chat_type == ChatType.PROFESSIONAL
+        return self.chat_type in (ChatType.PROFESSIONAL, ChatType.TRIAL_PROFESSIONAL)
 
     def is_logged_in_user(self):
         return self.user is not None
