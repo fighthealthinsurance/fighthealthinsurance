@@ -612,6 +612,7 @@ class OngoingChatAdmin(admin.ModelAdmin):
         "id",
         "professional_user",
         "user",
+        "chat_type",
         "is_patient",
         "denied_item",
         "denied_reason",
@@ -627,6 +628,7 @@ class OngoingChatAdmin(admin.ModelAdmin):
         "session_key",
     )
     list_filter = (
+        "chat_type",
         "is_patient",
         "created_at",
         "updated_at",
