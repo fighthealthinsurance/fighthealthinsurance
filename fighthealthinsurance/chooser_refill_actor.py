@@ -4,9 +4,12 @@ import time
 
 import ray
 from asgiref.sync import sync_to_async
-from loguru import logger
 
 from fighthealthinsurance.utils import get_env_variable
+
+# Use stdlib logging in Ray actors (see fax_actor.py for rationale)
+import logging
+logger = logging.getLogger(__name__)
 
 name = "ChooserRefillActor"
 
@@ -45,8 +48,8 @@ class ChooserRefillActor:
                 # Sleep for 5 minutes between checks
                 await asyncio.sleep(300)
             except Exception:
-                logger.opt(exception=True).error(
-                    "Error while checking/refilling chooser task pool"
+                logger.error(
+                    "Error while checking/refilling chooser task pool", exc_info=True
                 )
                 # On error, wait a bit longer before retrying
                 await asyncio.sleep(60)

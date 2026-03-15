@@ -2,9 +2,12 @@ import asyncio
 import time
 
 import ray
-from loguru import logger
 
 from fighthealthinsurance.fax_actor import FaxActor
+
+# Use stdlib logging in Ray actors (see fax_actor.py for rationale)
+import logging
+logger = logging.getLogger(__name__)
 
 
 @ray.remote(max_restarts=-1, max_task_retries=-1)
@@ -42,7 +45,7 @@ class FaxPollingActor:
                 self.e += f
                 self.c += c
             except Exception as e:
-                logger.opt(exception=True).error("Error while checking outbound faxes")
+                logger.error("Error while checking outbound faxes", exc_info=True)
                 self.aec += 1
             finally:
                 # Success or failure we wait.

@@ -7,9 +7,12 @@ from django.utils import timezone
 
 import ray
 from asgiref.sync import sync_to_async
-from loguru import logger
 
 from fighthealthinsurance.utils import get_env_variable
+
+# Use stdlib logging in Ray actors (see fax_actor.py for rationale)
+import logging
+logger = logging.getLogger(__name__)
 
 name = "EmailPollingActor"
 
@@ -84,7 +87,7 @@ class EmailPollingActor:
                 error_count = 0
             except Exception as e:
                 error_count += 1
-                logger.opt(exception=True).error("Error while checking messages")
+                logger.error("Error while checking messages", exc_info=True)
                 await asyncio.sleep(60)
 
         logger.warning("EmailPollingActor stopped running")
@@ -164,4 +167,4 @@ class EmailPollingActor:
                 logger.debug("No expired emails to clear")
 
         except Exception:
-            logger.opt(exception=True).error("Error clearing expired emails")
+            logger.error("Error clearing expired emails", exc_info=True)

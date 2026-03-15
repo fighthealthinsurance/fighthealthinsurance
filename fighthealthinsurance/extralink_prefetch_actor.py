@@ -10,7 +10,10 @@ import os
 import time
 
 import ray
-from loguru import logger
+
+# Use stdlib logging in Ray actors (see fax_actor.py for rationale)
+import logging
+logger = logging.getLogger(__name__)
 
 
 @ray.remote(max_restarts=-1, max_task_retries=-1)
@@ -83,7 +86,7 @@ class ExtraLinkPrefetchActor:
             }
 
         except Exception as e:
-            logger.opt(exception=True).error(f"Error in pre-fetch operation: {e}")
+            logger.error(f"Error in pre-fetch operation: {e}", exc_info=True)
             return {
                 "extralinks": {
                     "fetched": self.extralink_fetched,
@@ -125,7 +128,7 @@ class ExtraLinkPrefetchActor:
             return result
 
         except Exception as e:
-            logger.opt(exception=True).error(f"Error in extralink pre-fetch: {e}")
+            logger.error(f"Error in extralink pre-fetch: {e}", exc_info=True)
             return {
                 "fetched": 0,
                 "failed": 1,
@@ -197,7 +200,7 @@ class ExtraLinkPrefetchActor:
             return stats
 
         except Exception as e:
-            logger.opt(exception=True).error(f"Error in PubMed pre-fetch: {e}")
+            logger.error(f"Error in PubMed pre-fetch: {e}", exc_info=True)
             return {
                 "fetched": 0,
                 "failed": 1,

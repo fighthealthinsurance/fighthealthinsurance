@@ -11,10 +11,15 @@ from django.urls import reverse
 from django.utils import timezone
 
 import ray
-from loguru import logger
 
 from fighthealthinsurance.fax_utils import *
 from fighthealthinsurance.utils import get_env_variable
+
+# Use stdlib logging (not loguru) in Ray actors: loguru's logger object
+# cannot be serialized by Ray's cloudpickle, causing actor init failures.
+# stdlib logging is routed to loguru via dj_easy_log's InterceptHandler.
+import logging
+logger = logging.getLogger(__name__)
 
 
 @ray.remote(max_restarts=-1, max_task_retries=-1)
@@ -101,7 +106,7 @@ class FaxActor:
                     logger.warning(f"Failed to send fax {fax}")
                     f = f + 1
             except Exception as e:
-                logger.opt(exception=True).error(f"Error sending fax {fax}")
+                logger.error(f"Error sending fax {fax}", exc_info=True)
                 f = f + 1
         if t > 0:
             logger.info(f"Tried sending {t} faxes with {f} failures")
@@ -210,6 +215,6 @@ class FaxActor:
                 )
             )
         except Exception as e:
-            logger.opt(exception=True).error("Error running async send_fax")
+            logger.error("Error running async send_fax", exc_info=True)
         self._update_fax_for_sent(fax, fax_sent, missing_destination=False)
         return fax_sent
