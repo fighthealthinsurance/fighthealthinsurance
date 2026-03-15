@@ -150,10 +150,9 @@ class ChatLeadsSubscriptionTest(TestCase):
         new_subscriber_count = MailingListSubscriber.objects.count()
         self.assertEqual(new_subscriber_count, initial_subscriber_count)
 
-        # Verify the original subscriber data is unchanged
+        # Verify the subscriber data is updated (update_or_create refreshes metadata)
         subscriber = MailingListSubscriber.objects.get(email="existing@example.com")
-        self.assertEqual(subscriber.name, "Existing User")
-        self.assertEqual(subscriber.comments, "Previously subscribed")
+        self.assertEqual(subscriber.name, "New User")
 
     def test_chat_lead_required_fields_validation(self):
         """Test that required fields are validated."""

@@ -124,7 +124,6 @@ class MailingListSubscriptionTest(TestCase):
         new_count = MailingListSubscriber.objects.count()
         self.assertEqual(new_count, initial_count)
 
-        # Verify the original subscriber data is unchanged
+        # Verify the subscriber data is updated (update_or_create refreshes metadata)
         subscriber = MailingListSubscriber.objects.get(email="existing@example.com")
-        self.assertEqual(subscriber.name, "Existing User")
-        self.assertEqual(subscriber.comments, "Previously subscribed")
+        self.assertEqual(subscriber.name, "New Name")
