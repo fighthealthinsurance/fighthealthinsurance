@@ -121,6 +121,37 @@ function printAppeal() {
   }
 }
 
+function checkForUnfilledPlaceholders(text: string): string[] {
+  const found: string[] = [];
+
+  // Double-brace placeholders like {{FIRST_NAME}}, {{Your Name}}, etc.
+  const braceMatches = text.match(/\{\{[^}]+\}\}/g);
+  if (braceMatches) {
+    found.push(...braceMatches);
+  }
+
+  // Legacy bracket placeholders
+  for (const pattern of ["[Patient's Name]", "[Policy Number or Member ID]"]) {
+    if (text.includes(pattern)) {
+      found.push(pattern);
+    }
+  }
+
+  // Default placeholder values that indicate unfilled fields
+  const defaultPlaceholders: [RegExp, string][] = [
+    [/\bFirstName\b/, "FirstName"],
+    [/\bLastName\b/, "LastName"],
+    [/\bYourNameMagic\b/, "YourNameMagic"],
+  ];
+  for (const [regex, label] of defaultPlaceholders) {
+    if (regex.test(text)) {
+      found.push(label);
+    }
+  }
+
+  return found;
+}
+
 function setupAppeal() {
   const generate_button = document.getElementById("generate_pdf");
   if (generate_button != null) {
@@ -145,6 +176,37 @@ function setupAppeal() {
     descrub_button.onclick = descrub;
   }
   descrub();
+
+  // Warn before fax submission if PHI placeholders remain unfilled
+  const faxButton = document.getElementById("fax_appeal");
+  const faxForm = faxButton?.closest("form");
+  if (faxForm) {
+    let skipCheck = false;
+    faxForm.addEventListener("submit", (e) => {
+      if (skipCheck) {
+        skipCheck = false;
+        return;
+      }
+      const appealText =
+        (document.getElementById("id_completed_appeal_text") as HTMLTextAreaElement)
+          ?.value || "";
+      const placeholders = checkForUnfilledPlaceholders(appealText);
+      if (placeholders.length > 0) {
+        e.preventDefault();
+        const listing = placeholders.join(", ");
+        const proceed = confirm(
+          "Your appeal still contains placeholder text that should be replaced with your personal information:\n\n" +
+          listing +
+          "\n\nClick 'Fill in your PII' to auto-fill, or edit the appeal text manually.\n\n" +
+          "Do you want to send the fax anyway?"
+        );
+        if (proceed) {
+          skipCheck = true;
+          faxForm.submit();
+        }
+      }
+    });
+  }
 }
 
 setupAppeal();
