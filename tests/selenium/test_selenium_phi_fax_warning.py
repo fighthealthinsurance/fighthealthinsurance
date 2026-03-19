@@ -5,9 +5,6 @@ Verifies that when the appeal text still contains unfilled PHI placeholders
 dialog before the fax form is submitted.
 """
 
-import hashlib
-import time
-
 from django.contrib.staticfiles.testing import StaticLiveServerTestCase
 from selenium.common.exceptions import NoAlertPresentException
 from selenium.webdriver.common.by import By
@@ -63,9 +60,8 @@ class SeleniumTestPHIFaxWarning(FHISeleniumBase, StaticLiveServerTestCase):
         super(BaseCase, cls).tearDownClass()
 
     def _create_denial(self):
-        hashed_email = hashlib.sha512(TEST_EMAIL.encode("utf-8").lower()).hexdigest()
         return Denial.objects.create(
-            hashed_email=hashed_email,
+            hashed_email=Denial.get_hashed_email(TEST_EMAIL),
             denial_text="Test denial for PHI warning",
             semi_sekret=TEST_SEMI_SEKRET,
             insurance_company="Test Insurance Co",
@@ -86,11 +82,10 @@ class SeleniumTestPHIFaxWarning(FHISeleniumBase, StaticLiveServerTestCase):
             "return document.querySelector('input[name=csrfmiddlewaretoken]')?.value "
             "|| document.cookie.match(/csrftoken=([^;]+)/)?.[1] || '';"
         )
+        assert csrf_token, "CSRF token not found — page may not have loaded correctly"
 
         appeal_escaped = (
-            appeal_text.replace("\\", "\\\\")
-            .replace("'", "\\'")
-            .replace("\n", "\\n")
+            appeal_text.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n")
         )
 
         js = f"""
@@ -156,9 +151,9 @@ class SeleniumTestPHIFaxWarning(FHISeleniumBase, StaticLiveServerTestCase):
         completed_text = self.driver.find_element(
             By.ID, "id_completed_appeal_text"
         ).get_attribute("value")
-        assert "{{" in completed_text or "FirstName" in completed_text, (
-            f"Expected placeholders in appeal text but got: {completed_text}"
-        )
+        assert (
+            "{{" in completed_text or "FirstName" in completed_text
+        ), f"Expected placeholders in appeal text but got: {completed_text}"
 
         self._fill_fax_form_fields()
 
@@ -170,17 +165,17 @@ class SeleniumTestPHIFaxWarning(FHISeleniumBase, StaticLiveServerTestCase):
         alert_text = alert.text
 
         # Verify the alert mentions placeholders
-        assert "placeholder" in alert_text.lower() or "{{" in alert_text, (
-            f"Expected warning about placeholders, got: {alert_text}"
-        )
+        assert (
+            "placeholder" in alert_text.lower() or "{{" in alert_text
+        ), f"Expected warning about placeholders, got: {alert_text}"
 
         # Dismiss the dialog (cancel) — form should NOT submit
         alert.dismiss()
 
         # Verify we're still on the same page (not redirected)
-        assert self.is_element_present("#id_completed_appeal_text"), (
-            "Should still be on appeal page after dismissing warning"
-        )
+        assert self.is_element_present(
+            "#id_completed_appeal_text"
+        ), "Should still be on appeal page after dismissing warning"
 
     def test_fax_no_warning_when_placeholders_filled(self):
         """Clicking fax with all placeholders filled should NOT trigger a warning."""
@@ -194,12 +189,12 @@ class SeleniumTestPHIFaxWarning(FHISeleniumBase, StaticLiveServerTestCase):
         completed_text = self.driver.find_element(
             By.ID, "id_completed_appeal_text"
         ).get_attribute("value")
-        assert "{{" not in completed_text, (
-            f"Expected no placeholders but found some: {completed_text}"
-        )
-        assert "FirstName" not in completed_text, (
-            f"Expected no default placeholder 'FirstName' but found it: {completed_text}"
-        )
+        assert (
+            "{{" not in completed_text
+        ), f"Expected no placeholders but found some: {completed_text}"
+        assert (
+            "FirstName" not in completed_text
+        ), f"Expected no default placeholder 'FirstName' but found it: {completed_text}"
 
         self._fill_fax_form_fields(name="Alice Wonderland")
 
@@ -215,19 +210,27 @@ class SeleniumTestPHIFaxWarning(FHISeleniumBase, StaticLiveServerTestCase):
         # Click fax button via JS
         self._click_fax_via_js()
 
-        # Give a brief moment for any alert to appear
-        time.sleep(1)
+        # Give a brief moment for any alert to appear — use a short explicit
+        # wait for the submit button to remain clickable (no navigation away).
+        WebDriverWait(self.driver, 2).until(
+            EC.element_to_be_clickable((By.ID, "fax_appeal"))
+        )
 
         # Verify no alert is present (validation passed, no warning)
         try:
-            self.driver.switch_to.alert
-            assert False, "No alert should appear when placeholders are filled in"
+            alert = self.driver.switch_to.alert
+            raise AssertionError(
+                f"No alert should appear when placeholders are filled in, "
+                f"but got: {alert.text}"
+            )
         except NoAlertPresentException:
             pass  # Expected — no alert means validation passed
 
         # Verify the form would have submitted (our intercept caught it)
         submitted = self.execute_script("return window.__faxFormSubmitted === true;")
-        assert submitted, "Form should have attempted to submit (no placeholder warning)"
+        assert (
+            submitted
+        ), "Form should have attempted to submit (no placeholder warning)"
 
     def test_fax_warning_dismiss_stays_on_page(self):
         """Dismissing the confirm dialog keeps user on the appeal page."""
@@ -249,14 +252,17 @@ class SeleniumTestPHIFaxWarning(FHISeleniumBase, StaticLiveServerTestCase):
         alert_text = alert.text
 
         # Verify the alert content mentions placeholders
-        assert "placeholder" in alert_text.lower() or "{{" in alert_text, (
-            f"Expected warning about placeholders, got: {alert_text}"
-        )
+        assert (
+            "placeholder" in alert_text.lower() or "{{" in alert_text
+        ), f"Expected warning about placeholders, got: {alert_text}"
 
         # Dismiss (cancel) — should stay on same page
         alert.dismiss()
 
-        time.sleep(1)
+        # Wait for the page to remain stable (appeal text still present)
+        WebDriverWait(self.driver, 2).until(
+            EC.presence_of_element_located((By.ID, "id_completed_appeal_text"))
+        )
 
         # Verify URL hasn't changed (form was NOT submitted)
         assert self.driver.current_url == url_before, (
@@ -265,6 +271,6 @@ class SeleniumTestPHIFaxWarning(FHISeleniumBase, StaticLiveServerTestCase):
         )
 
         # Verify appeal text is still editable
-        assert self.is_element_present("#id_completed_appeal_text"), (
-            "Appeal text area should still be present"
-        )
+        assert self.is_element_present(
+            "#id_completed_appeal_text"
+        ), "Appeal text area should still be present"

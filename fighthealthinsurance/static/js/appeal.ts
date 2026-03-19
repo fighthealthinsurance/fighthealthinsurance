@@ -179,7 +179,7 @@ function setupAppeal() {
 
   // Warn before fax submission if PHI placeholders remain unfilled
   const faxButton = document.getElementById("fax_appeal");
-  const faxForm = faxButton?.closest("form");
+  const faxForm = faxButton?.closest("form") as HTMLFormElement | null;
   if (faxForm) {
     let skipCheck = false;
     faxForm.addEventListener("submit", (e) => {
@@ -197,11 +197,15 @@ function setupAppeal() {
         const proceed = confirm(
           "Your appeal still contains placeholder text that should be replaced with your personal information:\n\n" +
           listing +
-          "\n\nClick 'Fill in your PII' to auto-fill, or edit the appeal text manually.\n\n" +
+          "\n\nYou may need to fill in your PII/PHI manually — please double-check the letter before submission.\n" +
+          "Press OK to auto-fill your PII, or Cancel to edit the appeal manually.\n\n" +
           "Do you want to send the fax anyway?"
         );
         if (proceed) {
           skipCheck = true;
+          // Use submit() intentionally (not requestSubmit()) to bypass the
+          // submit event handler and avoid re-triggering the placeholder check.
+          // Server-side validation is handled by StageFaxView.form_valid().
           faxForm.submit();
         }
       }
