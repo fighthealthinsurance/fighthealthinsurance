@@ -3,6 +3,7 @@ import { jsPDF, jsPDFOptions } from "jspdf";
 import {
   getLocalStorageItemOrDefault,
   getLocalStorageItemOrDefaultEQ,
+  setLocalStorageItemWithTTL,
 } from "./shared";
 import { restorePersonalInfo, type UserInfo } from "./user_info_storage";
 
@@ -31,31 +32,49 @@ async function generateAppealPDF() {
   doc.save("appeal.pdf");
 }
 
+// Read a PII panel input value, falling back to localStorage then a default
+function getPiiValue(inputId: string, storageKey: string, defaultVal: string): string {
+  const el = document.getElementById(inputId) as HTMLInputElement | null;
+  if (el && el.value.trim()) {
+    return el.value.trim();
+  }
+  return getLocalStorageItemOrDefault(storageKey, defaultVal);
+}
+
+// Sentinel that marks the start of the appended PII block so we can strip & re-add
+const PII_BLOCK_MARKER = "\n\n---\nPatient Information:";
+
 function descrub() {
   const appeal_text = document.getElementById("scrubbed_appeal_text");
   const target = document.getElementById(
     "id_completed_appeal_text",
   ) as HTMLTextAreaElement;
   var text = (appeal_text as HTMLTextAreaElement)?.value || "";
-  const fname = getLocalStorageItemOrDefault("store_fname", "FirstName");
-  const lname = getLocalStorageItemOrDefault("store_lname", "LastName");
-  const subscriber_id = getLocalStorageItemOrDefaultEQ("subscriber_id");
-  const group_id = getLocalStorageItemOrDefaultEQ("group_id");
+
+  // Read from PII panel inputs first, fall back to localStorage
+  const fname = getPiiValue("pii_fname", "store_fname", "FirstName");
+  const lname = getPiiValue("pii_lname", "store_lname", "LastName");
+  const subscriber_id = getPiiValue("pii_subscriber_id", "subscriber_id", "subscriber_id");
+  const group_id = getPiiValue("pii_group_id", "group_id", "group_id");
   const claim_id = getLocalStorageItemOrDefaultEQ("claim_id");
-  const email_address = getLocalStorageItemOrDefaultEQ("email_address");
-  const phone_number = getLocalStorageItemOrDefaultEQ("phone_number");
+  const email_address = getPiiValue("pii_email", "email_address", "email_address");
+  const phone_number = getPiiValue("pii_phone", "phone_number", "phone_number");
+  const street = getPiiValue("pii_street", "store_street", "");
+  const city = getPiiValue("pii_city", "store_city", "");
+  const state = getPiiValue("pii_state", "store_state", "");
+  const zip = getPiiValue("pii_zip", "store_zip", "");
   const name = [fname, lname].filter(Boolean).join(" ");
 
-  // Build UserInfo from localStorage and use restorePersonalInfo for
-  // primary {{PLACEHOLDER}} and legacy [BRACKET] replacements
+  // Build UserInfo and use restorePersonalInfo for primary {{PLACEHOLDER}}
+  // and legacy [BRACKET] replacements
   const userInfo: UserInfo = {
     firstName: fname,
     lastName: lname,
     email: email_address,
-    address: getLocalStorageItemOrDefault("store_street", ""),
-    city: getLocalStorageItemOrDefault("store_city", ""),
-    state: getLocalStorageItemOrDefault("store_state", ""),
-    zipCode: getLocalStorageItemOrDefault("store_zip", ""),
+    address: street,
+    city: city,
+    state: state,
+    zipCode: zip,
     acceptedTerms: true,
   };
   text = restorePersonalInfo(text, userInfo);
@@ -80,6 +99,44 @@ function descrub() {
   text = text.replace(/group_id/g, group_id);
   text = text.replace(/\bfname\b/g, fname);
   text = text.replace(/\blname\b/g, lname);
+
+  // Strip any previously appended PII block before re-adding
+  const markerIdx = text.indexOf(PII_BLOCK_MARKER);
+  if (markerIdx !== -1) {
+    text = text.substring(0, markerIdx);
+  }
+
+  // Build and append PII summary block at the bottom of the letter
+  const isReal = (val: string, ...defaults: string[]) =>
+    val && !defaults.includes(val);
+
+  const lines: string[] = [];
+  if (isReal(name, "FirstName", "LastName", "FirstName LastName"))
+    lines.push(`Name: ${name}`);
+  const addrParts = [street, city, state, zip].filter(Boolean);
+  if (addrParts.length > 0) {
+    // Format as "Street, City, State Zip"
+    let addr = street;
+    if (city) addr += (addr ? ", " : "") + city;
+    if (state) addr += (addr ? ", " : "") + state;
+    if (zip) addr += (addr ? " " : "") + zip;
+    lines.push(`Address: ${addr}`);
+  }
+  if (isReal(phone_number, "phone_number"))
+    lines.push(`Phone: ${phone_number}`);
+  if (isReal(email_address, "email_address"))
+    lines.push(`Email: ${email_address}`);
+  if (isReal(subscriber_id, "subscriber_id"))
+    lines.push(`Subscriber ID: ${subscriber_id}`);
+  if (isReal(group_id, "group_id"))
+    lines.push(`Group ID: ${group_id}`);
+  if (isReal(claim_id, "claim_id"))
+    lines.push(`Claim ID: ${claim_id}`);
+
+  if (lines.length > 0) {
+    text += PII_BLOCK_MARKER + "\n" + lines.join("\n");
+  }
+
   if (target) {
     target.value = text;
   } else {
@@ -152,6 +209,42 @@ function checkForUnfilledPlaceholders(text: string): string[] {
   return found;
 }
 
+// Mapping from PII panel input IDs to localStorage keys
+const PII_FIELD_MAP: [string, string][] = [
+  ["pii_fname", "store_fname"],
+  ["pii_lname", "store_lname"],
+  ["pii_phone", "phone_number"],
+  ["pii_email", "email_address"],
+  ["pii_street", "store_street"],
+  ["pii_city", "store_city"],
+  ["pii_state", "store_state"],
+  ["pii_zip", "store_zip"],
+  ["pii_subscriber_id", "subscriber_id"],
+  ["pii_group_id", "group_id"],
+];
+
+function populatePiiPanel() {
+  for (const [inputId, storageKey] of PII_FIELD_MAP) {
+    const el = document.getElementById(inputId) as HTMLInputElement | null;
+    if (!el) continue;
+    const stored = getLocalStorageItemOrDefault(storageKey, "");
+    // Only populate if the stored value is a real value (not the key itself)
+    if (stored && stored !== storageKey) {
+      el.value = stored;
+    }
+  }
+}
+
+function setupPiiPanelListeners() {
+  for (const [inputId, storageKey] of PII_FIELD_MAP) {
+    const el = document.getElementById(inputId) as HTMLInputElement | null;
+    if (!el) continue;
+    el.addEventListener("input", () => {
+      setLocalStorageItemWithTTL(storageKey, el.value);
+    });
+  }
+}
+
 function setupAppeal() {
   const generate_button = document.getElementById("generate_pdf");
   if (generate_button != null) {
@@ -166,6 +259,10 @@ function setupAppeal() {
       await printAppeal();
     };
   }
+
+  // Populate PII panel from localStorage and wire up save-on-change
+  populatePiiPanel();
+  setupPiiPanelListeners();
 
   const appeal_text = document.getElementById("scrubbed_appeal_text");
   if (appeal_text != null) {
