@@ -60,8 +60,9 @@ class EmailPollingActor:
                 followup_candidates = await sync_to_async(
                     self.followup_sender.find_candidates
                 )()
-                logger.debug(f"Follow up candidates: {followup_candidates.count()}")
-                if followup_candidates.count() > 0:
+                followup_count = followup_candidates.count()
+                logger.debug(f"Follow up candidates: {followup_count}")
+                if followup_count > 0:
                     sent_count = await sync_to_async(self.followup_sender.send_all)(
                         count=10
                     )
