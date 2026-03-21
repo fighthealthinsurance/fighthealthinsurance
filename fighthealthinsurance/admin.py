@@ -50,6 +50,8 @@ from fighthealthinsurance.models import (
     SecondaryDenialProfessionalRelation,
     StripePrice,
     StripeProduct,
+    PolicyDocument,
+    PolicyDocumentAnalysis,
 )
 
 
@@ -794,3 +796,19 @@ class AuditLogAdmin(admin.ModelAdmin):
 
     def has_delete_permission(self, request, obj=None):
         return False
+
+
+@admin.register(PolicyDocument)
+class PolicyDocumentAdmin(admin.ModelAdmin):
+    list_display = ("id", "filename", "document_type", "created_at")
+    list_filter = ("document_type", "created_at")
+    search_fields = ("filename", "hashed_email")
+    readonly_fields = ("id", "created_at")
+
+
+@admin.register(PolicyDocumentAnalysis)
+class PolicyDocumentAnalysisAdmin(admin.ModelAdmin):
+    list_display = ("id", "policy_document", "user_question", "created_at")
+    list_filter = ("created_at",)
+    search_fields = ("user_question", "summary")
+    readonly_fields = ("id", "created_at")
