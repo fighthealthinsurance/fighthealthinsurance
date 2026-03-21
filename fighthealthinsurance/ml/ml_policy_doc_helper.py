@@ -34,7 +34,7 @@ class MLPolicyDocHelper:
     TIMEOUT_SECONDS = 90
 
     @classmethod
-    def _read_and_decrypt_file(cls, file_field) -> Optional[bytes]:
+    def _read_and_decrypt_file(cls, file_field: Any) -> Optional[bytes]:
         """
         Read and decrypt bytes from an EncryptedFileField.
 
@@ -378,7 +378,7 @@ Respond in JSON format with the following structure:
         return None
 
     @classmethod
-    def _validate_analysis_structure(cls, parsed: dict) -> bool:
+    def _validate_analysis_structure(cls, parsed: Dict[str, Any]) -> bool:
         """Validate that parsed JSON has the expected top-level structure."""
         required_keys = ["exclusions", "inclusions", "appeal_clauses", "summary"]
         return all(key in parsed for key in required_keys)
