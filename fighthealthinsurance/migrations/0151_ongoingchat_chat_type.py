@@ -16,6 +16,12 @@ def backfill_chat_type(apps, schema_editor):
         user__isnull=True,
         hashed_email__isnull=True,
     ).update(chat_type="trial_professional")
+    # Catch-all: any is_patient=False rows not matched above retain non-patient status.
+    # Default to trial_professional to avoid silently reclassifying as patient.
+    OngoingChat.objects.filter(
+        is_patient=False,
+        chat_type="patient",
+    ).update(chat_type="trial_professional")
 
 
 def reverse_backfill(apps, schema_editor):
