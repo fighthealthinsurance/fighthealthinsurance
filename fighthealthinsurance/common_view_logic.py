@@ -631,14 +631,53 @@ class FindNextStepsHelper:
         question_forms = []
         prof_pov = denial.professional_to_finish
 
-        # Add forms for each denial type
+        # Add forms for each denial type, tracking which form classes are used
+        denial_type_forms = set()
         for dt in denial.denial_type.all():
             new_form = dt.get_form()
             if new_form is not None:
+                denial_type_forms.add(new_form.__name__)
                 new_form = new_form(
                     initial={"medical_reason": dt.appeal_text}, prof_pov=prof_pov
                 )
                 question_forms.append(new_form)
+
+        # Add journey documentation form when denial has medical necessity / prior auth
+        # types — or when a microsite defines journey items.
+        # Skip if StepTherapy or FormularyChangeQuestions already cover medication history.
+        from fighthealthinsurance.forms.questions import JourneyDocumentationQuestions
+
+        # Add journey form if the denial type forms don't already cover medication/treatment history
+        # (StepTherapy and FormularyChangeQuestions already ask about these)
+        journey_already_covered = denial_type_forms & {
+            "StepTherapy",
+            "FormularyChangeQuestions",
+        }
+
+        if not journey_already_covered:
+            # Check if the microsite has journey documentation items
+            has_microsite_journey = False
+            if hasattr(denial, "microsite_slug") and denial.microsite_slug:
+                from fighthealthinsurance.microsites import get_microsite
+
+                microsite = get_microsite(denial.microsite_slug)
+                if microsite and microsite.journey_documentation_items:
+                    has_microsite_journey = True
+
+            # Add journey form for medical necessity, prior auth, or microsite-guided denials
+            has_journey_form_types = bool(
+                denial_type_forms
+                & {
+                    "MedicalNeccessaryQuestions",
+                    "PriorAuthQuestions",
+                    "ExperimentalQuestions",
+                    "NotCoveredQuestions",
+                    "NotCoveredByQuestions",
+                }
+            )
+
+            if has_journey_form_types or has_microsite_journey:
+                question_forms.append(JourneyDocumentationQuestions(prof_pov=prof_pov))
 
         # Add generated questions form if available
         if denial.generated_questions:
