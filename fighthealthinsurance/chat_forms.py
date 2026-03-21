@@ -2,6 +2,155 @@ from django import forms
 
 from fighthealthinsurance.forms import REFERRAL_SOURCE_CHOICES
 
+SUPPORTED_POLICY_EXTENSIONS = {".pdf", ".docx", ".doc", ".txt", ".rtf"}
+
+SUPPORTED_POLICY_CONTENT_TYPES = {
+    "application/pdf",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/msword",
+    "text/plain",
+    "application/rtf",
+    "text/rtf",
+}
+
+# Magic bytes for file type validation
+_PDF_MAGIC = b"%PDF"
+_DOCX_MAGIC = b"PK"  # ZIP-based format
+
+
+class UnderstandPolicyForm(forms.Form):
+    """Form for uploading policy documents with consent"""
+
+    DOCUMENT_TYPE_CHOICES = [
+        ("summary_of_benefits", "Summary of Benefits"),
+        ("medical_policy", "Medical Policy"),
+        ("other", "Other Policy Document"),
+    ]
+
+    policy_document = forms.FileField(
+        required=True,
+        widget=forms.FileInput(
+            attrs={
+                "class": "form-control",
+                "id": "policy_document",
+                "accept": ".pdf,.docx,.doc,.txt,.rtf",
+            }
+        ),
+    )
+
+    document_type = forms.ChoiceField(
+        required=True,
+        choices=DOCUMENT_TYPE_CHOICES,
+        initial="summary_of_benefits",
+        widget=forms.Select(
+            attrs={
+                "class": "form-control",
+                "id": "document_type",
+            }
+        ),
+    )
+
+    user_question = forms.CharField(
+        required=False,
+        max_length=1000,
+        widget=forms.Textarea(
+            attrs={
+                "class": "form-control",
+                "id": "user_question",
+                "rows": 3,
+                "placeholder": "Optional: What specific question do you have about your policy? (e.g., 'Is my MRI covered?' or 'What are the exclusions for mental health?')",
+            }
+        ),
+    )
+
+    first_name = forms.CharField(
+        max_length=100,
+        required=True,
+        widget=forms.TextInput(
+            attrs={
+                "class": "form-control",
+                "id": "store_fname",
+                "placeholder": "Enter your first name",
+            }
+        ),
+    )
+
+    last_name = forms.CharField(
+        max_length=100,
+        required=True,
+        widget=forms.TextInput(
+            attrs={
+                "class": "form-control",
+                "id": "store_lname",
+                "placeholder": "Enter your last name",
+            }
+        ),
+    )
+
+    email = forms.EmailField(
+        required=True,
+        widget=forms.EmailInput(
+            attrs={
+                "class": "form-control",
+                "id": "email",
+                "placeholder": "Enter your email address",
+            }
+        ),
+    )
+
+    tos_agreement = forms.BooleanField(
+        required=True,
+        widget=forms.CheckboxInput(attrs={"class": "form-check-input", "id": "tos"}),
+    )
+
+    privacy_policy = forms.BooleanField(
+        required=True,
+        widget=forms.CheckboxInput(
+            attrs={"class": "form-check-input", "id": "privacy"}
+        ),
+    )
+
+    subscribe = forms.BooleanField(
+        required=False,
+        initial=True,
+        widget=forms.CheckboxInput(
+            attrs={"class": "form-check-input", "id": "subscribe"}
+        ),
+    )
+
+    def clean_policy_document(self):
+        """Validate the uploaded file type and size."""
+        file = self.cleaned_data.get("policy_document")
+        if file:
+            if file.size > 20 * 1024 * 1024:
+                raise forms.ValidationError(
+                    "File size must be less than 20MB. Please upload a smaller file."
+                )
+            ext = "." + file.name.rsplit(".", 1)[-1].lower() if "." in file.name else ""
+            if ext not in SUPPORTED_POLICY_EXTENSIONS:
+                raise forms.ValidationError(
+                    f"Unsupported file type. Please upload one of: {', '.join(sorted(SUPPORTED_POLICY_EXTENSIONS))}"
+                )
+            if (
+                file.content_type
+                and file.content_type not in SUPPORTED_POLICY_CONTENT_TYPES
+            ):
+                raise forms.ValidationError(
+                    "The uploaded file does not appear to be a supported document type."
+                )
+            # Magic byte check for PDF and DOCX
+            header = file.read(8)
+            file.seek(0)
+            if ext == ".pdf" and not header.startswith(_PDF_MAGIC):
+                raise forms.ValidationError(
+                    "The file does not appear to be a valid PDF."
+                )
+            if ext == ".docx" and not header.startswith(_DOCX_MAGIC):
+                raise forms.ValidationError(
+                    "The file does not appear to be a valid DOCX document."
+                )
+        return file
+
 
 class UserConsentForm(forms.Form):
     """Form for user TOS consent and personal information collection"""
