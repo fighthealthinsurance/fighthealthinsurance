@@ -212,8 +212,8 @@ function checkForUnfilledPlaceholders(text: string): string[] {
     found.push(singleMatch[0]);
   }
 
-  // Dollar-prefixed template variables like $diagnosis, $insurance_company
-  const dollarMatches = text.match(/\$[a-z_]+/g);
+  // Dollar-prefixed template variables like $diagnosis, $DATE, $CASEID
+  const dollarMatches = text.match(/\$[A-Za-z0-9_]+/g);
   if (dollarMatches) {
     found.push(...dollarMatches);
   }
