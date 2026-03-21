@@ -559,16 +559,20 @@ class ChatInterface:
                                         f"Journey documentation guidance added for {microsite.slug}"
                                     )
 
-                                # Also try ML-generated journey questions
+                                # Also try ML-generated journey questions (bounded by timeout)
                                 try:
                                     from fighthealthinsurance.ml.ml_journey_helper import (
                                         JourneyDocumentationHelper,
                                     )
 
-                                    ml_guidance = await JourneyDocumentationHelper.get_journey_guidance_for_chat(
-                                        procedure=microsite.default_procedure,
-                                        diagnosis=microsite.default_condition,
-                                        documentation_items=microsite.journey_documentation_items,
+                                    ml_guidance = await asyncio.wait_for(
+                                        JourneyDocumentationHelper.get_journey_guidance_for_chat(
+                                            procedure=microsite.default_procedure,
+                                            diagnosis=microsite.default_condition,
+                                            documentation_items=microsite.journey_documentation_items,
+                                            timeout=35,
+                                        ),
+                                        timeout=40,
                                     )
                                     if ml_guidance:
                                         all_context_parts.append(ml_guidance)

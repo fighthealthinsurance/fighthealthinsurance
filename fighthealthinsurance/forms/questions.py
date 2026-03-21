@@ -1546,8 +1546,8 @@ class JourneyDocumentationQuestions(InsuranceQuestions):
         """Return main appeal text based on journey documentation answers."""
         r = []
 
-        if self.cleaned_data.get("prior_medications"):
-            prior = self.cleaned_data["prior_medications"]
+        prior = self.cleaned_data.get("prior_medications")
+        if prior:
             if self.prof_pov:
                 r.append(
                     f"The patient has previously tried the following treatments: {prior}. "
@@ -1560,8 +1560,8 @@ class JourneyDocumentationQuestions(InsuranceQuestions):
                     "These were either ineffective or caused unacceptable side effects."
                 )
 
-        if self.cleaned_data.get("test_results"):
-            results = self.cleaned_data["test_results"]
+        results = self.cleaned_data.get("test_results")
+        if results:
             if self.prof_pov:
                 r.append(
                     f"Clinical evidence supporting this treatment includes: {results}."
@@ -1569,8 +1569,8 @@ class JourneyDocumentationQuestions(InsuranceQuestions):
             else:
                 r.append(f"My test results and clinical evidence include: {results}.")
 
-        if self.cleaned_data.get("treatment_timeline"):
-            timeline = self.cleaned_data["treatment_timeline"]
+        timeline = self.cleaned_data.get("treatment_timeline")
+        if timeline:
             if self.prof_pov:
                 r.append(
                     f"The patient's treatment history spans: {timeline}. "
@@ -1580,8 +1580,8 @@ class JourneyDocumentationQuestions(InsuranceQuestions):
             else:
                 r.append(f"I have been dealing with this condition for: {timeline}.")
 
-        if self.cleaned_data.get("why_this_treatment"):
-            rationale = self.cleaned_data["why_this_treatment"]
+        rationale = self.cleaned_data.get("why_this_treatment")
+        if rationale:
             if self.prof_pov:
                 r.append(
                     f"The clinical rationale for this specific treatment is: {rationale}."
