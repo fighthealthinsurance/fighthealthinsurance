@@ -606,8 +606,9 @@ class AppealAttachmentAdmin(admin.ModelAdmin):
 
 @admin.register(OngoingChat)
 class OngoingChatAdmin(admin.ModelAdmin):
-    """Admin configuration for OngoingChat model."""
+    """Admin configuration for OngoingChat model with chat editor UI."""
 
+    change_form_template = "admin/fighthealthinsurance/ongoingchat/chat_editor.html"
     list_display = (
         "id",
         "professional_user",
@@ -616,6 +617,8 @@ class OngoingChatAdmin(admin.ModelAdmin):
         "is_patient",
         "denied_item",
         "denied_reason",
+        "message_count",
+        "has_edited",
         "created_at",
         "updated_at",
     )
@@ -635,7 +638,61 @@ class OngoingChatAdmin(admin.ModelAdmin):
         "domain",
     )
     ordering = ("-updated_at",)
-    readonly_fields = ("id", "created_at", "updated_at")
+    readonly_fields = ("id", "created_at", "updated_at", "chat_history")
+    fieldsets = (
+        (
+            None,
+            {
+                "fields": ("id", "professional_user", "user", "is_patient", "domain"),
+            },
+        ),
+        (
+            "Denial Info",
+            {
+                "fields": ("denied_item", "denied_reason"),
+            },
+        ),
+        (
+            "Chat Data",
+            {
+                "fields": ("chat_history", "edited_chat_history"),
+                "description": "Use the chat editor below the form to view and edit messages in a friendly interface.",
+            },
+        ),
+        (
+            "Metadata",
+            {
+                "fields": (
+                    "session_key",
+                    "hashed_email",
+                    "microsite_slug",
+                    "created_at",
+                    "updated_at",
+                ),
+                "classes": ("collapse",),
+            },
+        ),
+        (
+            "Usage Tracking",
+            {
+                "fields": ("user_agent", "asn", "asn_name", "ip_address"),
+                "classes": ("collapse",),
+            },
+        ),
+    )
+
+    @admin.display(description="Messages")
+    def message_count(self, obj: OngoingChat) -> int:
+        if isinstance(obj.chat_history, list):
+            return len(obj.chat_history)
+        return 0
+
+    @admin.display(boolean=True, description="Edited")
+    def has_edited(self, obj: OngoingChat) -> bool:
+        return (
+            isinstance(obj.edited_chat_history, list)
+            and len(obj.edited_chat_history) > 0
+        )
 
 
 @admin.register(ChooserTask)
