@@ -60,7 +60,8 @@ class SeleniumTestAdminChatEditor(FHISeleniumBase, StaticLiveServerTestCase):
         self.type("#id_username", "admin")
         self.type("#id_password", "adminpass123")
         self.click("input[type='submit']")
-        self.wait_for_element("#content", timeout=10)
+        # Wait for #site-name which only appears on authenticated admin pages
+        self.wait_for_element("#site-name", timeout=10)
 
     def _open_chat_change_page(self):
         """Navigate to the OngoingChat change page."""
@@ -93,8 +94,8 @@ class SeleniumTestAdminChatEditor(FHISeleniumBase, StaticLiveServerTestCase):
 
         # Save the form
         self.click("input[name='_save']")
-        # Should redirect to changelist
-        self.wait_for_url_contains("ongoingchat/", timeout=10)
+        # Should redirect to changelist (wait for changelist-specific element)
+        self.wait_for_element("#result_list", timeout=10)
 
         # Verify DB persistence
         self.chat.refresh_from_db()

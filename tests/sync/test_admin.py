@@ -117,6 +117,16 @@ class TestOngoingChatAdmin(TestCase):
         )
         self.assertEqual(self.admin.message_count(chat), 2)
 
+    def test_message_count_with_scalar_returns_zero(self):
+        """Should return 0 when chat_history is a scalar (malformed data)."""
+        chat = OngoingChat(chat_history=42)
+        self.assertEqual(self.admin.message_count(chat), 0)
+
+    def test_message_count_with_dict_returns_zero(self):
+        """Should return 0 when chat_history is a dict (malformed data)."""
+        chat = OngoingChat(chat_history={"key": "val"})
+        self.assertEqual(self.admin.message_count(chat), 0)
+
     def test_has_edited_false_when_empty(self):
         """Should return False when no edited history."""
         chat = OngoingChat()
@@ -125,6 +135,11 @@ class TestOngoingChatAdmin(TestCase):
     def test_has_edited_false_when_none(self):
         """Should return False when edited history is explicitly None."""
         chat = OngoingChat(edited_chat_history=None)
+        self.assertFalse(self.admin.has_edited(chat))
+
+    def test_has_edited_false_with_scalar(self):
+        """Should return False when edited_chat_history is a scalar (malformed data)."""
+        chat = OngoingChat(edited_chat_history="not a list")
         self.assertFalse(self.admin.has_edited(chat))
 
     def test_has_edited_true_when_present(self):
