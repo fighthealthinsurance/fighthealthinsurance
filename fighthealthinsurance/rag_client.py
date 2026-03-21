@@ -4,7 +4,6 @@ Provides an async client for calling the Magic RAG Service
 to retrieve evidence-based context for insurance appeal generation.
 """
 
-import threading
 import time
 from dataclasses import dataclass
 from typing import Optional
@@ -62,8 +61,9 @@ class RAGContextResult:
 class RAGClient:
     """Async client for the Magic RAG Service."""
 
-    # Cache health status for 60 seconds to avoid repeated checks
+    # Cache health status: 60s for success, 5s for failure (quick recovery from blips)
     _HEALTH_CACHE_TTL = 60.0
+    _HEALTH_CACHE_TTL_FAILURE = 5.0
 
     def __init__(
         self,
@@ -74,7 +74,14 @@ class RAGClient:
         self.base_url = base_url or get_env_variable(
             "RAG_SERVICE_URL", "http://localhost:8001"
         )
-        self.timeout = timeout
+        if "localhost" in self.base_url or "127.0.0.1" in self.base_url:
+            logger.warning(
+                f"RAG service URL is {self.base_url} — set RAG_SERVICE_URL "
+                "env var for production deployments"
+            )
+        # Short connect timeout (5s) to fail fast if service is unreachable,
+        # longer read timeout (30s) for actual requests.
+        self.timeout = httpx.Timeout(timeout, connect=5.0)
         self._client: Optional[httpx.AsyncClient] = None
         self._health_ok: Optional[bool] = None
         self._health_checked_at: float = 0.0
@@ -95,13 +102,16 @@ class RAGClient:
             self._client = None
 
     async def health_check(self) -> bool:
-        """Check if the RAG service is healthy (cached for 60s)."""
+        """Check if the RAG service is healthy (cached: 60s success, 5s failure)."""
         now = time.monotonic()
-        if (
-            self._health_ok is not None
-            and (now - self._health_checked_at) < self._HEALTH_CACHE_TTL
-        ):
-            return self._health_ok
+        if self._health_ok is not None:
+            ttl = (
+                self._HEALTH_CACHE_TTL
+                if self._health_ok
+                else self._HEALTH_CACHE_TTL_FAILURE
+            )
+            if (now - self._health_checked_at) < ttl:
+                return self._health_ok
         try:
             client = await self._get_client()
             response = await client.get("/health/")
@@ -183,18 +193,16 @@ class RAGClient:
             return None
 
 
-# Global client instance with thread-safe initialization
+# Global client instance — lock-free since RAGClient() is a cheap, side-effect-free
+# constructor. A brief race creating two instances is harmless; the last one wins.
 _rag_client: Optional[RAGClient] = None
-_rag_client_lock = threading.Lock()
 
 
 def get_rag_client() -> RAGClient:
-    """Get the global RAG client instance (thread-safe)."""
+    """Get the global RAG client instance."""
     global _rag_client
     if _rag_client is None:
-        with _rag_client_lock:
-            if _rag_client is None:
-                _rag_client = RAGClient()
+        _rag_client = RAGClient()
     return _rag_client
 
 
