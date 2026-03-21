@@ -294,9 +294,8 @@ function setupAppeal() {
         const proceed = confirm(
           "Your appeal still contains placeholder text that should be replaced with your personal information:\n\n" +
           listing +
-          "\n\nYou may need to fill in your PII/PHI manually — please double-check the letter before submission.\n" +
-          "Press OK to auto-fill your PII, or Cancel to edit the appeal manually.\n\n" +
-          "Do you want to send the fax anyway?"
+          "\n\nYou may need to fill in your PII/PHI manually — please double-check the letter before submission.\n\n" +
+          "Press OK to send the fax anyway, or Cancel to go back and fill in your information first."
         );
         if (proceed) {
           skipCheck = true;
