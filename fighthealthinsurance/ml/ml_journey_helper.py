@@ -49,7 +49,7 @@ class JourneyDocumentationHelper:
 
         Returns:
             List of (question, explanation) tuples where explanation describes
-            why this information helps the appeal.
+            why this information helps the appeal. Returns empty list on any failure.
         """
         # Build the prompt with all available context
         context_parts = []
@@ -77,7 +77,7 @@ class JourneyDocumentationHelper:
         doc_items_hint = ""
         if documentation_items:
             items_list = "\n".join(
-                f"- {item['label']}"
+                f"- {item.get('label', 'Unknown')}"
                 + (
                     f" ({item.get('prompt_hint', '')})"
                     if item.get("prompt_hint")
@@ -129,11 +129,15 @@ While your reasoning (inside <think></think>) can discuss rationale, do not incl
                 )
             )
 
-        result = await best_within_timelimit(
-            awaitables,
-            score_fn=_score_journey_questions,
-            timeout=model_timeout,
-        )
+        try:
+            result = await best_within_timelimit(
+                awaitables,
+                score_fn=_score_journey_questions,
+                timeout=model_timeout,
+            )
+        except Exception as e:
+            logger.warning(f"best_within_timelimit raised for journey questions: {e}")
+            return []
 
         if result:
             return result
@@ -147,11 +151,15 @@ While your reasoning (inside <think></think>) can discuss rationale, do not incl
         denial_reason: Optional[str] = None,
         patient_context: Optional[str] = None,
         documentation_items: Optional[list[dict[str, str]]] = None,
+        timeout: int = 35,
     ) -> str:
         """Generate a formatted journey guidance string for injection into chat context.
 
         This is used for auto-injecting guidance on first message when a microsite
         has journey documentation items defined.
+
+        Args:
+            timeout: Maximum total time for this call in seconds.
 
         Returns:
             Formatted string with journey guidance, or empty string if generation fails.
@@ -163,7 +171,7 @@ While your reasoning (inside <think></think>) can discuss rationale, do not incl
         if documentation_items:
             items_text = []
             for item in documentation_items:
-                label = item["label"]
+                label = item.get("label", "Unknown")
                 hint = item.get("prompt_hint", "")
                 if hint:
                     items_text.append(f"- {label}: {hint}")
@@ -178,16 +186,20 @@ While your reasoning (inside <think></think>) can discuss rationale, do not incl
                 + "\n".join(items_text)
             )
 
-        # Also try to get ML-generated questions for additional context
+        # Also try to get ML-generated questions for additional context,
+        # bounded by the caller's timeout.
         try:
-            ml_questions = await JourneyDocumentationHelper.generate_journey_questions(
-                procedure=procedure,
-                diagnosis=diagnosis,
-                denial_text=denial_text,
-                denial_reason=denial_reason,
-                patient_context=patient_context,
-                documentation_items=documentation_items,
-                timeout=30,
+            ml_questions = await asyncio.wait_for(
+                JourneyDocumentationHelper.generate_journey_questions(
+                    procedure=procedure,
+                    diagnosis=diagnosis,
+                    denial_text=denial_text,
+                    denial_reason=denial_reason,
+                    patient_context=patient_context,
+                    documentation_items=documentation_items,
+                    timeout=min(30, timeout - 2),
+                ),
+                timeout=timeout,
             )
             if ml_questions:
                 q_text = "\n".join(
@@ -195,6 +207,10 @@ While your reasoning (inside <think></think>) can discuss rationale, do not incl
                     for q, a in ml_questions
                 )
                 guidance_parts.append(f"Suggested questions from analysis:\n{q_text}")
+        except asyncio.TimeoutError:
+            logger.warning(
+                f"Journey guidance ML question generation timed out after {timeout}s"
+            )
         except Exception as e:
             logger.warning(f"Failed to generate ML journey questions: {e}")
 
@@ -214,8 +230,6 @@ def _score_journey_questions(
             return 0
         # Prefer 2-4 questions
         count = len(result)
-        if count < 1:
-            return 0
         if count > 6:
             return 1  # Too many is bad
         return count * 10
