@@ -239,14 +239,19 @@ class AppealAssemblyHelper:
     ) -> Appeal:
         if denial is None:
             if denial_id is not None:
-                denial = (
-                    Denial.objects.filter(denial_id=denial_id)
-                    .filter(
-                        hashed_email=Denial.get_hashed_email(email),
-                        semi_sekret=semi_sekret,
+                try:
+                    denial = (
+                        Denial.objects.filter(denial_id=denial_id)
+                        .filter(
+                            hashed_email=Denial.get_hashed_email(email),
+                            semi_sekret=semi_sekret,
+                        )
+                        .get()
                     )
-                    .get()
-                )
+                except Denial.DoesNotExist:
+                    raise Exception(
+                        f"Could not find denial {denial_id} for the provided email and secret."
+                    )
         if denial is None:
             raise Exception("No denial ID or denial provided.")
         # Build our cover page
@@ -475,9 +480,14 @@ class ChooseAppealHelper:
     ]:
         hashed_email = Denial.get_hashed_email(email)
         # Get the current info
-        denial: Denial = Denial.objects.filter(
-            denial_id=denial_id, hashed_email=hashed_email, semi_sekret=semi_sekret
-        ).get()
+        try:
+            denial: Denial = Denial.objects.filter(
+                denial_id=denial_id, hashed_email=hashed_email, semi_sekret=semi_sekret
+            ).get()
+        except Denial.DoesNotExist:
+            raise Exception(
+                f"Could not find denial {denial_id} for the provided email and secret."
+            )
         denial.appeal_text = appeal_text
         denial.save()
         pa = ProposedAppeal(appeal_text=appeal_text, for_denial=denial, chosen=True)
@@ -571,10 +581,11 @@ class FollowUpHelper:
     def fetch_denial(
         cls, uuid: str, follow_up_semi_sekret: str, hashed_email: str, **kwargs
     ):
-        denial = Denial.objects.filter(
-            uuid=uuid, follow_up_semi_sekret=follow_up_semi_sekret
-        ).get()
-        if denial is None:
+        try:
+            denial = Denial.objects.filter(
+                uuid=uuid, follow_up_semi_sekret=follow_up_semi_sekret
+            ).get()
+        except Denial.DoesNotExist:
             raise Exception(
                 f"Failed to find denial for {uuid} & {follow_up_semi_sekret}"
             )
