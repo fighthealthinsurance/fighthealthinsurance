@@ -187,11 +187,25 @@ function checkForUnfilledPlaceholders(text: string): string[] {
     found.push(...braceMatches);
   }
 
-  // Legacy bracket placeholders
-  for (const pattern of ["[Patient's Name]", "[Policy Number or Member ID]"]) {
-    if (text.includes(pattern)) {
-      found.push(pattern);
-    }
+  // Generic bracket placeholders like [Diagnosis], [Patient's Name], etc.
+  // Matches [Title Case...] or [UPPER CASE...] to avoid false positives
+  // on normal bracketed text like [1] or [see above].
+  const bracketMatches = text.match(/\[[A-Z][A-Za-z' ]+\]/g);
+  if (bracketMatches) {
+    found.push(...bracketMatches);
+  }
+
+  // Single-brace placeholders like {diagnosis}, {insurance_company}
+  // Negative lookahead/lookbehind to skip {{double_brace}} patterns
+  const singleBraceMatches = text.match(/(?<!\{)\{[a-z_]+\}(?!\})/g);
+  if (singleBraceMatches) {
+    found.push(...singleBraceMatches);
+  }
+
+  // Dollar-prefixed template variables like $diagnosis, $insurance_company
+  const dollarMatches = text.match(/\$[a-z_]+/g);
+  if (dollarMatches) {
+    found.push(...dollarMatches);
   }
 
   // Default placeholder values that indicate unfilled fields
