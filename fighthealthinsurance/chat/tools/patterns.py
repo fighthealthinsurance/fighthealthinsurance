@@ -36,6 +36,12 @@ CREATE_OR_UPDATE_PRIOR_AUTH_REGEX = (
 # Matches: fetch_doc {JSON} or **fetch_doc {JSON}**
 FETCH_DOC_REGEX = r"(?:\*\*)?fetch_doc\s*(\{[^}]*\})\s*(?:\*\*)?"
 
+# Flat JSON only (no nested braces) — LLM sends simple key-value params.
+# Non-anchored like MEDICAID_INFO_REGEX (tool appears mid-response, not on its own line).
+GET_DOCUMENTATION_QUESTIONS_REGEX = (
+    r"(?:\*\*)?get_documentation_questions\s*(\{[^}]*\})\s*(?:\*\*)?"
+)
+
 # List of all tool patterns for scoring/detection
 ALL_TOOL_PATTERNS = [
     PUBMED_QUERY_REGEX,
@@ -44,4 +50,5 @@ ALL_TOOL_PATTERNS = [
     CREATE_OR_UPDATE_APPEAL_REGEX,
     CREATE_OR_UPDATE_PRIOR_AUTH_REGEX,
     FETCH_DOC_REGEX,
+    GET_DOCUMENTATION_QUESTIONS_REGEX,
 ]
