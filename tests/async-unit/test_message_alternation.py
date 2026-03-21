@@ -125,5 +125,49 @@ class TestEnsureMessageAlternation(unittest.TestCase):
         self.assertIn("E", result[2]["content"])
 
 
+    def test_leading_assistant_gets_user_inserted(self):
+        """Leading assistant message should get a user placeholder inserted before it."""
+        history = [
+            {"role": "assistant", "content": "Hello there"},
+            {"role": "user", "content": "Hi"},
+            {"role": "assistant", "content": "How can I help?"},
+        ]
+        result = ensure_message_alternation(history)
+        self.assertEqual(len(result), 4)
+        self.assertEqual(result[0]["role"], "user")
+        self.assertEqual(result[0]["content"], "Continue")
+        self.assertEqual(result[1]["role"], "assistant")
+        self.assertEqual(result[1]["content"], "Hello there")
+        self.assertEqual(result[2]["role"], "user")
+        self.assertEqual(result[3]["role"], "assistant")
+
+    def test_system_then_assistant_gets_user_inserted(self):
+        """Assistant immediately after system should get a user placeholder inserted between."""
+        history = [
+            {"role": "system", "content": "You are helpful"},
+            {"role": "assistant", "content": "Hello"},
+            {"role": "user", "content": "Hi"},
+        ]
+        result = ensure_message_alternation(history)
+        self.assertEqual(len(result), 4)
+        self.assertEqual(result[0]["role"], "system")
+        self.assertEqual(result[1]["role"], "user")
+        self.assertEqual(result[1]["content"], "Continue")
+        self.assertEqual(result[2]["role"], "assistant")
+        self.assertEqual(result[2]["content"], "Hello")
+        self.assertEqual(result[3]["role"], "user")
+
+    def test_leading_assistant_content_preserved(self):
+        """Content should be preserved when fixing leading assistant (not dropped)."""
+        history = [
+            {"role": "assistant", "content": "Important context info"},
+        ]
+        result = ensure_message_alternation(history)
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result[0]["role"], "user")
+        self.assertEqual(result[1]["role"], "assistant")
+        self.assertEqual(result[1]["content"], "Important context info")
+
+
 if __name__ == "__main__":
     unittest.main()

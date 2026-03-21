@@ -231,10 +231,7 @@ def build_retry_calls(
     call_scores: Dict[Awaitable, int] = {}
 
     # Use shorter history for retry (Python gracefully handles if len < 5)
-    # Ensure we start on a user message so alternation isn't broken
     start_idx = max(0, len(history) - 5)
-    if start_idx > 0 and history[start_idx].get("role") == "assistant":
-        start_idx -= 1
     retry_history = ensure_message_alternation(history[start_idx:])
 
     # Try primary backends with shortened history
