@@ -146,7 +146,9 @@
 
       // Track fax payment when form is submitted (only for paid faxes)
       if(form){
-        form.addEventListener('submit', function(){
+        form.addEventListener('submit', function(e){
+          // Don't track if another handler (e.g. placeholder warning) canceled the submit
+          if(e.defaultPrevented) return;
           const amt = hiddenField ? parseInt(hiddenField.value, 10) : 0;
           // Skip tracking for free fax submissions to avoid affecting bidding strategies
           if(amt > 0 && window.trackUETConversion){
