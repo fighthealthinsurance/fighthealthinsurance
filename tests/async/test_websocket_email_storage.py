@@ -9,7 +9,7 @@ import pytest
 from django.test import TestCase
 import uuid
 
-from fighthealthinsurance.models import OngoingChat, Denial
+from fighthealthinsurance.models import OngoingChat, Denial, ChatType
 
 
 class TestWebSocketEmailStorage(TestCase):
@@ -141,7 +141,7 @@ class TestWebSocketChatCreation:
         chat = await mock_websocket_consumer._get_or_create_chat(
             user=None,
             professional_user=None,
-            is_patient=True,
+            chat_type=ChatType.PATIENT,
             chat_id=None,
             session_key=test_session_key,
             email=test_email,
