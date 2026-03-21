@@ -237,6 +237,12 @@ class Preparing2026View(generic.TemplateView):
     template_name = "preparing_2026.html"
 
 
+class Turning26View(generic.TemplateView):
+    """SEO page for young adults aging off a parent's health insurance at 26."""
+
+    template_name = "turning_26.html"
+
+
 class PBSNewsHourView(generic.TemplateView):
     """Page about the PBS NewsHour feature."""
 
