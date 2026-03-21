@@ -2249,8 +2249,11 @@ class AppealsBackendHelper:
                 )
 
                 # Drain substep status messages
-                while not status_queue.empty():
-                    yield status_queue.get_nowait() + "\n"
+                try:
+                    while True:
+                        yield status_queue.get_nowait() + "\n"
+                except asyncio.QueueEmpty:
+                    pass
 
                 if isinstance(results[0], str):
                     pubmed_context = results[0]
@@ -2273,8 +2276,11 @@ class AppealsBackendHelper:
             except Exception as e:
                 logger.opt(exception=True).error(f"Error gathering contexts: {e}")
                 # Drain any status messages before falling back
-                while not status_queue.empty():
-                    yield status_queue.get_nowait() + "\n"
+                try:
+                    while True:
+                        yield status_queue.get_nowait() + "\n"
+                except asyncio.QueueEmpty:
+                    pass
                 # We still might have saved a context.
                 try:
                     # Added in Django 5.1
