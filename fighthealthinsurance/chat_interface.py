@@ -616,7 +616,10 @@ class ChatInterface:
 
                 try:
                     params = json.loads(doc_questions_match.group(1).strip())
-                except Exception:
+                except Exception as json_err:
+                    logger.debug(
+                        f"Failed to parse documentation questions JSON: {json_err}"
+                    )
                     params = {}
 
                 if not isinstance(params, dict):
@@ -673,10 +676,11 @@ class ChatInterface:
 
                 await self.send_status_message("Documentation guidance ready")
 
+                # Use cleaned_response (tool token removed) in history, not raw response_text
                 history_for_llm += [
                     {"role": "user", "content": current_message_for_llm}
                 ]
-                history_for_llm += [{"role": "agent", "content": response_text}]
+                history_for_llm += [{"role": "agent", "content": cleaned_response}]
                 (
                     additional_response_text,
                     additional_context_part,
@@ -689,8 +693,12 @@ class ChatInterface:
                     is_logged_in=is_logged_in,
                     is_professional=is_professional,
                 )
-                if additional_response_text and len(additional_response_text) > 1:
-                    response_text = additional_response_text
+                # Append additional response to cleaned text (matching PubMed pattern)
+                if cleaned_response and additional_response_text:
+                    cleaned_response += additional_response_text
+                elif additional_response_text:
+                    cleaned_response = additional_response_text
+                response_text = cleaned_response
                 if context_part:
                     if additional_context_part:
                         context_part += additional_context_part
@@ -1054,16 +1062,20 @@ class ChatInterface:
                                         f"Journey documentation guidance added for {microsite.slug}"
                                     )
 
-                                # Also try ML-generated journey questions
+                                # Also try ML-generated journey questions (bounded by timeout)
                                 try:
                                     from fighthealthinsurance.ml.ml_journey_helper import (
                                         JourneyDocumentationHelper,
                                     )
 
-                                    ml_guidance = await JourneyDocumentationHelper.get_journey_guidance_for_chat(
-                                        procedure=microsite.default_procedure,
-                                        diagnosis=microsite.default_condition,
-                                        documentation_items=microsite.journey_documentation_items,
+                                    ml_guidance = await asyncio.wait_for(
+                                        JourneyDocumentationHelper.get_journey_guidance_for_chat(
+                                            procedure=microsite.default_procedure,
+                                            diagnosis=microsite.default_condition,
+                                            documentation_items=microsite.journey_documentation_items,
+                                            timeout=35,
+                                        ),
+                                        timeout=40,
                                     )
                                     if ml_guidance:
                                         all_context_parts.append(ml_guidance)
