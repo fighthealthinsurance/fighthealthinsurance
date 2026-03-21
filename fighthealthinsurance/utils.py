@@ -245,20 +245,20 @@ def ensure_message_alternation(history: List[Dict[str, Any]]) -> List[Dict[str, 
 
     if result and len(result) > 0 and result[0]:
         if result[0].get("role") == "assistant":
-            logger.error(
-                "We should always start with a user or system message instead {result}"
+            logger.warning(
+                f"History starts with assistant message, inserting user placeholder: {result}"
             )
-            result = result[1:]
+            result.insert(0, {"role": "user", "content": "Continue"})
         elif (
             result[0].get("role") == "system"
             and len(result) > 1
             and result[1]
             and result[1].get("role") == "assistant"
         ):
-            logger.error(
-                f"We should always start have a user message after system instead {result}"
+            logger.warning(
+                f"Assistant message immediately after system, inserting user placeholder: {result}"
             )
-            result = [result[0]] + result[2:]
+            result.insert(1, {"role": "user", "content": "Continue"})
 
     return result
 
