@@ -213,6 +213,12 @@ function checkForUnfilledPlaceholders(text: string): string[] {
     [/\bFirstName\b/, "FirstName"],
     [/\bLastName\b/, "LastName"],
     [/\bYourNameMagic\b/, "YourNameMagic"],
+    // Sentinel fallback literals from descrub() when no real value is stored
+    [/\bsubscriber_id\b/, "subscriber_id"],
+    [/\bgroup_id\b/, "group_id"],
+    [/\bclaim_id\b/, "claim_id"],
+    [/\bphone_number\b/, "phone_number"],
+    [/\bemail_address\b/, "email_address"],
   ];
   for (const [regex, label] of defaultPlaceholders) {
     if (regex.test(text)) {
@@ -255,6 +261,8 @@ function setupPiiPanelListeners() {
     if (!el) continue;
     el.addEventListener("input", () => {
       setLocalStorageItemWithTTL(storageKey, el.value);
+      // Re-run descrub so the completed appeal textarea reflects the new value
+      descrub();
     });
   }
 }
@@ -298,6 +306,8 @@ function setupAppeal() {
         skipCheck = false;
         return;
       }
+      // Regenerate appeal text from current PII panel values before checking
+      descrub();
       const appealText =
         (document.getElementById("id_completed_appeal_text") as HTMLTextAreaElement)
           ?.value || "";
