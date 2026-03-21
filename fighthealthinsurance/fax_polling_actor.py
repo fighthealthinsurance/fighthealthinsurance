@@ -7,6 +7,7 @@ from fighthealthinsurance.fax_actor import FaxActor
 
 # Use stdlib logging in Ray actors (see fax_actor.py for rationale)
 import logging
+
 logger = logging.getLogger(__name__)
 
 

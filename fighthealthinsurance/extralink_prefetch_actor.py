@@ -13,6 +13,7 @@ import ray
 
 # Use stdlib logging in Ray actors (see fax_actor.py for rationale)
 import logging
+
 logger = logging.getLogger(__name__)
 
 

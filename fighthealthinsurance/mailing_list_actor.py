@@ -9,6 +9,7 @@ from fighthealthinsurance.utils import get_env_variable
 
 # Use stdlib logging in Ray actors (see fax_actor.py for rationale)
 import logging
+
 logger = logging.getLogger(__name__)
 
 name = "MailingListActor"
