@@ -6812,5 +6812,262 @@
         "description": "40 years of commitment to preventing osteoporosis through education and advocacy."
       }
     ]
+  },
+  "allergy-immunotherapy-denial": {
+    "slug": "allergy-immunotherapy-denial",
+    "title": "Appealing Allergy Immunotherapy Denials",
+    "default_procedure": "Allergy Immunotherapy (Allergy Shots or Sublingual Tablets)",
+    "default_condition": "Allergic Rhinitis / Allergic Asthma",
+    "tagline": "Allergy immunotherapy is one of the few treatments that can modify the underlying allergic disease — appeal your denial.",
+    "hero_h1": "Appeal Your Allergy Immunotherapy Denial",
+    "hero_subhead": "Don't settle for symptom management when disease-modifying treatment exists.",
+    "intro": "Allergy immunotherapy — whether subcutaneous (allergy shots) or sublingual (under-the-tongue tablets) — is one of the few treatments that can modify the underlying allergic disease rather than just managing symptoms. Despite decades of evidence and endorsement by major medical societies, insurers deny immunotherapy claims citing insufficient documentation, questioning medical necessity, or imposing step therapy requirements. A well-documented appeal can overturn these denials.",
+    "common_denial_reasons": [
+      "Not medically necessary",
+      "Must try other medications first (step therapy)",
+      "Insufficient documentation of allergy testing",
+      "Treatment duration exceeds plan limits",
+      "Sublingual immunotherapy considered experimental",
+      "Out-of-network allergist",
+      "Prior authorization not obtained"
+    ],
+    "how_we_help": "We help you document your allergy history, failed medication trials, skin test or blood test results, and the clinical rationale for immunotherapy as the appropriate next step.",
+    "cta": "Start your allergy immunotherapy appeal — it takes about 3 minutes.",
+    "faq": [
+      {
+        "question": "Why do insurers deny allergy immunotherapy?",
+        "answer": "Common reasons include claiming you haven't tried enough medications first, questioning whether your allergies are severe enough, or considering sublingual immunotherapy experimental. All of these can be challenged with proper documentation."
+      },
+      {
+        "question": "Do I need allergy testing results for my appeal?",
+        "answer": "Yes. Skin prick tests or specific IgE blood tests showing sensitization to the allergens being treated are essential documentation. Your appeal should include these results along with your clinical symptoms."
+      },
+      {
+        "question": "What if my insurer says sublingual immunotherapy is experimental?",
+        "answer": "Several sublingual immunotherapy tablets (Grastek, Ragwitek, Odactra) are FDA-approved. Practice parameters from the American Academy of Allergy, Asthma & Immunology support both subcutaneous and sublingual immunotherapy as evidence-based treatments."
+      },
+      {
+        "question": "How long does allergy immunotherapy last?",
+        "answer": "Standard treatment is 3-5 years. Insurers sometimes deny continuation after the first year, but guidelines recommend completing the full course for lasting benefit. Your appeal should reference these guidelines."
+      }
+    ],
+    "evidence_snippets": [
+      "Allergen immunotherapy is recommended by the American Academy of Allergy, Asthma & Immunology (AAAAI) and the World Health Organization (WHO) as the only disease-modifying treatment for allergic rhinitis and allergic asthma.",
+      "Studies demonstrate that immunotherapy reduces medication use, prevents new sensitizations, and decreases the risk of developing asthma in patients with allergic rhinitis.",
+      "Discontinuing immunotherapy before completing the recommended 3-5 year course significantly increases the risk of symptom relapse and loss of therapeutic benefit."
+    ],
+    "pubmed_search_terms": [
+      "allergen immunotherapy efficacy allergic rhinitis",
+      "sublingual immunotherapy evidence-based review",
+      "allergy immunotherapy prevents asthma development"
+    ],
+    "advocacy_resources": [
+      {
+        "name": "American Academy of Allergy, Asthma & Immunology (AAAAI)",
+        "url": "https://www.aaaai.org/tools-for-the-public/conditions-library/allergies/allergy-shots-(immunotherapy)",
+        "description": "Patient education and clinical guidelines for allergy immunotherapy."
+      },
+      {
+        "name": "Asthma and Allergy Foundation of America (AAFA)",
+        "url": "https://aafa.org/allergies/allergy-treatments/immunotherapy/",
+        "description": "Resources on insurance coverage, patient advocacy, and understanding immunotherapy options."
+      }
+    ]
+  },
+  "spinal-fusion-denial": {
+    "slug": "spinal-fusion-denial",
+    "title": "Appealing Spinal Fusion Surgery Denials",
+    "default_procedure": "Spinal Fusion Surgery",
+    "default_condition": "Degenerative Disc Disease / Spinal Stenosis",
+    "tagline": "Spinal fusion denials are common but beatable — we'll help you build a strong appeal.",
+    "hero_h1": "Appeal Your Spinal Fusion Denial",
+    "hero_subhead": "When conservative treatment has failed and surgery is your best option, don't let a denial stop you.",
+    "intro": "Spinal fusion surgery is one of the most commonly denied procedures by health insurers. Insurers frequently argue that conservative treatments haven't been exhausted, that the surgery is experimental for your specific condition, or that the documentation doesn't support medical necessity. However, for patients with documented structural instability, progressive neurological deficits, or failure of adequate conservative care (typically 3-12 months depending on the insurer and condition), spinal fusion is well-supported by clinical evidence and can be successfully appealed.",
+    "common_denial_reasons": [
+      "Not medically necessary",
+      "Conservative treatment not exhausted (physical therapy, injections, medication)",
+      "Insufficient documentation of functional impairment",
+      "Surgery type considered experimental for this indication",
+      "Imaging does not correlate with symptoms",
+      "Multi-level fusion not supported",
+      "Prior authorization required",
+      "Peer-to-peer review required"
+    ],
+    "how_we_help": "We help you organize your treatment history, imaging results, failed conservative therapies, and surgeon's rationale into a compelling appeal that addresses the insurer's specific denial reasons.",
+    "cta": "Start your spinal fusion appeal — it takes about 3 minutes.",
+    "faq": [
+      {
+        "question": "How long do I need to try conservative treatment before surgery?",
+        "answer": "Most insurers require 6-12 months of conservative treatment including physical therapy, medications, and often epidural injections. Document each treatment, its duration, and why it failed to provide adequate relief."
+      },
+      {
+        "question": "What imaging do I need for a spinal fusion appeal?",
+        "answer": "MRI is standard. CT scans, X-rays (including flexion/extension views for instability), and sometimes discography may be needed. Your appeal should show that imaging findings correlate with your symptoms and physical exam."
+      },
+      {
+        "question": "What if my insurer says my imaging doesn't match my symptoms?",
+        "answer": "Your surgeon can provide a detailed explanation of how the imaging findings (disc herniation, stenosis, spondylolisthesis, etc.) correspond to your specific pain pattern, weakness, or numbness. Include the physical examination findings that correlate."
+      },
+      {
+        "question": "Can I appeal a denial for multi-level fusion?",
+        "answer": "Yes. Multi-level fusions are more scrutinized but can be appealed. Your surgeon should explain why each level needs to be included, supported by imaging and clinical findings at each segment."
+      }
+    ],
+    "evidence_snippets": [
+      "The North American Spine Society (NASS) clinical guidelines support spinal fusion for patients with symptomatic degenerative disc disease, spondylolisthesis, or spinal stenosis who have failed adequate conservative treatment.",
+      "Studies demonstrate that spinal fusion provides superior long-term outcomes compared to continued conservative management in appropriately selected patients with documented structural pathology.",
+      "Delay of indicated spinal surgery can lead to progressive neurological deterioration, chronic pain syndrome, and increased disability, resulting in higher overall healthcare costs."
+    ],
+    "pubmed_search_terms": [
+      "spinal fusion outcomes degenerative disc disease",
+      "lumbar fusion medical necessity criteria",
+      "spinal surgery conservative treatment failure outcomes"
+    ],
+    "advocacy_resources": [
+      {
+        "name": "North American Spine Society (NASS)",
+        "url": "https://www.spine.org/Portals/0/assets/downloads/ResearchClinicalCare/Guidelines/LumbarFusion.pdf",
+        "description": "Evidence-based clinical guidelines for lumbar fusion surgery."
+      },
+      {
+        "name": "American Association of Neurological Surgeons (AANS)",
+        "url": "https://www.aans.org/patients/conditions-treatments/spinal-fusion/",
+        "description": "Patient education about spinal fusion procedures, indications, and outcomes."
+      }
+    ]
+  },
+  "cardiac-rehab-denial": {
+    "slug": "cardiac-rehab-denial",
+    "title": "Appealing Cardiac Rehabilitation Denials",
+    "default_procedure": "Cardiac Rehabilitation",
+    "default_condition": "Coronary Artery Disease / Heart Failure",
+    "tagline": "Cardiac rehab saves lives — it shouldn't be denied. Learn how to appeal.",
+    "hero_h1": "Appeal Your Cardiac Rehab Denial",
+    "hero_subhead": "Cardiac rehabilitation is proven to reduce cardiac mortality and hospital readmissions. Your insurer should cover it.",
+    "intro": "Cardiac rehabilitation is a medically supervised program of exercise, education, and counseling for patients recovering from heart attacks, heart surgery, heart failure, and other cardiac conditions. Despite Class I recommendations from the American Heart Association and American College of Cardiology, and Medicare coverage for qualifying diagnoses, insurers still deny cardiac rehab claims. Common tactics include limiting the number of sessions, questioning medical necessity, or citing missed enrollment windows.",
+    "common_denial_reasons": [
+      "Not medically necessary",
+      "Exceeded maximum number of sessions",
+      "Not enrolled within required timeframe after cardiac event",
+      "Qualifying diagnosis not documented",
+      "Out-of-network rehabilitation facility",
+      "Prior authorization not obtained",
+      "Maintenance phase not covered",
+      "Home-based cardiac rehab not covered"
+    ],
+    "how_we_help": "We help you document your cardiac diagnosis, surgical history, functional limitations, and the clinical evidence showing that cardiac rehab reduces mortality and hospital readmissions for your specific condition.",
+    "cta": "Start your cardiac rehab appeal — it takes about 3 minutes.",
+    "faq": [
+      {
+        "question": "What diagnoses qualify for cardiac rehabilitation?",
+        "answer": "Common qualifying diagnoses include heart attack (myocardial infarction), coronary artery bypass grafting (CABG), percutaneous coronary intervention (PCI/stenting), heart valve repair or replacement, heart failure with reduced ejection fraction, heart or lung transplant, and stable angina. Medicare covers 36 sessions with possibility of extension to 72."
+      },
+      {
+        "question": "What if my insurer limits the number of sessions?",
+        "answer": "Guidelines support 36 sessions as standard, with additional sessions for patients who need them. Your appeal should document your functional capacity, ongoing risk factors, and why additional sessions are medically necessary. Include your cardiologist's recommendation."
+      },
+      {
+        "question": "Can I appeal if I missed the enrollment deadline?",
+        "answer": "Yes. While many programs recommend starting within weeks of a cardiac event, medical complications, hospitalization, or other valid reasons for delayed enrollment can support an appeal. Document why you couldn't start sooner."
+      },
+      {
+        "question": "Is home-based cardiac rehab covered?",
+        "answer": "Coverage varies by plan. Medicare expanded coverage for home-based cardiac rehab in recent years. If denied, appeal by documenting barriers to attending facility-based programs (distance, mobility limitations, etc.) and citing evidence that home-based programs have comparable outcomes."
+      }
+    ],
+    "evidence_snippets": [
+      "The American Heart Association and American College of Cardiology give cardiac rehabilitation a Class I recommendation (highest level), indicating that benefits substantially outweigh risks.",
+      "Meta-analyses demonstrate that cardiac rehabilitation reduces cardiac mortality by 20-26% in patients with coronary heart disease, with additional reductions in all-cause mortality.",
+      "Cardiac rehabilitation is associated with a 31% reduction in hospital readmissions within the first year after a cardiac event, representing significant cost savings."
+    ],
+    "pubmed_search_terms": [
+      "cardiac rehabilitation mortality reduction meta-analysis",
+      "cardiac rehab cost effectiveness outcomes",
+      "cardiac rehabilitation guidelines AHA ACC"
+    ],
+    "advocacy_resources": [
+      {
+        "name": "American Heart Association",
+        "url": "https://www.heart.org/en/health-topics/cardiac-rehab",
+        "description": "Patient education about cardiac rehabilitation benefits, what to expect, and insurance coverage guidance."
+      },
+      {
+        "name": "American Association of Cardiovascular and Pulmonary Rehabilitation (AACVPR)",
+        "url": "https://www.aacvpr.org/",
+        "description": "Professional organization supporting cardiac rehab programs with patient advocacy resources."
+      }
+    ]
+  },
+  "aphasia-speech-therapy-denial": {
+    "slug": "aphasia-speech-therapy-denial",
+    "title": "Appealing Aphasia Speech Therapy Denials",
+    "default_procedure": "Speech-Language Therapy for Aphasia",
+    "default_condition": "Aphasia",
+    "tagline": "Aphasia therapy works — don't let your insurer cut it short.",
+    "hero_h1": "Appeal Your Aphasia Therapy Denial",
+    "hero_subhead": "Research shows people with aphasia continue to improve with therapy, even years after a stroke. Fight for the treatment you deserve.",
+    "intro": "Aphasia is a language disorder caused by stroke, brain injury, or neurological conditions that affects the ability to speak, understand, read, and write. Speech-language therapy is the primary treatment, yet insurers routinely deny or limit coverage — often claiming the patient has 'plateaued' or that further therapy is 'maintenance only.' Current research contradicts these claims, showing that people with aphasia can make meaningful gains well beyond the acute recovery period with appropriate intensive therapy.",
+    "common_denial_reasons": [
+      "Patient has plateaued — no further progress expected",
+      "Therapy is maintenance, not restorative",
+      "Exceeded maximum number of therapy visits",
+      "Not medically necessary",
+      "Insufficient documentation of functional improvement",
+      "Prior authorization not obtained",
+      "Must use in-network provider",
+      "Therapy frequency exceeds plan guidelines"
+    ],
+    "how_we_help": "We help you build an appeal that documents measurable therapy progress, references current aphasia research on neuroplasticity and late-stage recovery, and challenges the outdated notion that improvement stops after a fixed window.",
+    "cta": "Start your aphasia therapy appeal — it takes about 3 minutes.",
+    "faq": [
+      {
+        "question": "Can people with aphasia still improve after the first year?",
+        "answer": "Yes. While the fastest recovery often happens in the first few months after a stroke, research on neuroplasticity demonstrates that language recovery can continue for years with appropriate therapy. Studies show significant gains from intensive speech-language therapy even in chronic aphasia (more than 12 months post-onset). Your appeal should cite this evidence if your insurer claims you’ve plateaued."
+      },
+      {
+        "question": "What does 'maintenance therapy' mean, and can I appeal it?",
+        "answer": "Insurers use 'maintenance' to mean therapy that prevents decline rather than producing new gains. However, for aphasia, therapy that maintains communication skills IS medically necessary — losing communication ability severely impacts safety, independence, and quality of life. Additionally, many patients labeled as 'maintenance' are actually still making functional progress. Your therapist’s documentation of ongoing goals and measurable gains is key to appealing this."
+      },
+      {
+        "question": "How many therapy sessions should insurance cover for aphasia?",
+        "answer": "There is no one-size-fits-all number. Research supports intensive therapy (multiple sessions per week) for better outcomes. Medicare does not impose hard visit caps for medically necessary therapy. If your plan limits sessions, appeal with documentation showing ongoing progress toward functional communication goals."
+      },
+      {
+        "question": "What documentation strengthens an aphasia therapy appeal?",
+        "answer": "Include your speech-language pathologist’s evaluation and treatment plan, standardized assessment scores showing progress (such as the Western Aphasia Battery or Boston Naming Test), functional communication measures, therapy session notes documenting specific gains, your neurologist’s letter of medical necessity, and any research citations on aphasia recovery timelines."
+      },
+      {
+        "question": "What if my insurer says I need to use a different provider?",
+        "answer": "Aphasia therapy requires specialized expertise. If your insurer wants you to switch to an in-network provider, you can request a network exception if there are no in-network speech-language pathologists with aphasia expertise nearby. Document your therapist’s specialized training and why continuity of care matters for your recovery."
+      }
+    ],
+    "evidence_snippets": [
+      "A Cochrane systematic review found that speech-language therapy for aphasia after stroke leads to clinically significant improvements in functional communication, reading, writing, and expressive language compared to no therapy.",
+      "Research on neuroplasticity demonstrates that the brain can reorganize language networks well beyond the acute recovery period, supporting continued therapy for chronic aphasia.",
+      "Multiple randomized controlled trials demonstrate that intensive speech-language therapy produces greater language gains than lower-intensity approaches.",
+      "Discontinuing speech-language therapy prematurely in aphasia patients can lead to regression of communication abilities, social isolation, depression, and loss of functional independence."
+    ],
+    "pubmed_search_terms": [
+      "aphasia speech therapy effectiveness chronic recovery",
+      "intensive language therapy aphasia neuroplasticity outcomes",
+      "speech-language pathology aphasia medical necessity"
+    ],
+    "advocacy_resources": [
+      {
+        "name": "National Aphasia Association",
+        "url": "https://www.aphasia.org/",
+        "description": "Patient education, support groups, and advocacy resources for people with aphasia and their families."
+      },
+      {
+        "name": "American Speech-Language-Hearing Association (ASHA)",
+        "url": "https://www.asha.org/public/speech/disorders/aphasia/",
+        "description": "Professional organization for speech-language pathologists with aphasia treatment resources and coverage guidance."
+      },
+      {
+        "name": "Aphasia Access",
+        "url": "https://aphasiaaccess.org/",
+        "description": "Organization dedicated to expanding life participation approaches for people with aphasia."
+      }
+    ]
   }
 }

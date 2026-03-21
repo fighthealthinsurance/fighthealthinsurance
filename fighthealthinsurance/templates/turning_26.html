@@ -1,0 +1,490 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Turning 26? How to Keep Your Health Insurance Coverage{% endblock title %}
+{% block metatitle %}Turning 26? How to Keep Your Health Insurance Coverage - Fight Health Insurance{% endblock metatitle %}
+{% block metadescription %}Turning 26 means aging off your parent's health insurance. Learn your options, deadlines, and how to avoid coverage gaps. Free tools to appeal denials during your transition.{% endblock metadescription %}
+
+{% block content %}
+<!-- Hero Section -->
+<section id="turning26-hero" class="slider" data-stellar-background-ratio="0.5">
+    <div class="row">
+        <div class="item item-first">
+            <div class="caption d-flex flex-column align-items-center justify-content-center">
+                <div class="hero-inner" style="max-width: 900px;">
+                    <h3 class="hero-tagline">Your parent's plan ends at 26&mdash;but your options don't</h3>
+                    <h1 class="hero-headline">Turning 26: Your Health Insurance Guide</h1>
+                    <p class="hero-subcopy">Aging off a parent's health plan is a qualifying life event. You have 60 days to enroll in new coverage&mdash;here's how to make the transition without gaps or surprises.</p>
+                    <div class="hero-cta-group">
+                        <a href="#coverage-options" class="section-btn btn btn-default smoothScroll primary-cta">See Your Options</a>
+                    </div>
+                    <div class="hero-cta-group hero-cta-secondary">
+                        <a href="{% url 'scan' %}" class="btn btn-outline-green smoothScroll secondary-cta">Already Denied? Generate Appeal</a>
+                        <a href="{% url 'chat' %}" class="btn btn-outline-green smoothScroll tertiary-cta">Ask AI Assistant</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- What Happens at 26 Section -->
+<section id="what-happens" class="py-5">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto">
+                <h2 class="text-center mb-4">What Happens When You Turn 26</h2>
+                <p class="lead text-center mb-4">Under the Affordable Care Act, you can stay on a parent's health insurance plan until you turn 26. After that, coverage typically ends on your birthday or at the end of the birth month, depending on the plan.</p>
+
+                <div class="card mb-4 border-warning">
+                    <div class="card-body">
+                        <h5 class="card-title"><span class="text-warning me-2">&#9888;</span> Key Deadline</h5>
+                        <p class="card-text">Losing coverage at 26 triggers a <strong>Special Enrollment Period (SEP)</strong>. You generally have <strong>60 days</strong> before or after your birthday to enroll in a new plan through the ACA Marketplace, your employer, or Medicaid.</p>
+                        <p class="card-text small text-muted mb-0">Missing this window means you may have to wait until Open Enrollment (November&ndash;January) to get coverage.</p>
+                    </div>
+                </div>
+
+                <div class="row g-4">
+                    <div class="col-md-6">
+                        <div class="card h-100 border-info">
+                            <div class="card-body">
+                                <h6 class="card-subtitle mb-2 text-info">Check Your Exact End Date</h6>
+                                <p class="card-text">Some plans drop you on your 26th birthday. Others cover you through the end of the month or even the end of the plan year. Call your parent's insurer to confirm the exact date your coverage ends.</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="card h-100 border-info">
+                            <div class="card-body">
+                                <h6 class="card-subtitle mb-2 text-info">No Employer Plan Required</h6>
+                                <p class="card-text">You can stay on a parent's plan even if you have access to employer coverage, are married, live in a different state, or are not a tax dependent. The ACA has no such restrictions for dependents under 26.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Coverage Options Section -->
+<section id="coverage-options" class="py-5 bg-light">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto">
+                <h2 class="text-center mb-4">Your Coverage Options After 26</h2>
+                <p class="text-center text-muted mb-4">Each option has different costs, networks, and benefits. Here's what to consider.</p>
+
+                <div class="accordion" id="coverageAccordion">
+                    <!-- Employer Coverage -->
+                    <div class="accordion-item">
+                        <h3 class="accordion-header" id="headingEmployer">
+                            <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#collapseEmployer" aria-expanded="true" aria-controls="collapseEmployer">
+                                Employer-Sponsored Insurance
+                            </button>
+                        </h3>
+                        <div id="collapseEmployer" class="accordion-collapse collapse show" aria-labelledby="headingEmployer" data-bs-parent="#coverageAccordion">
+                            <div class="accordion-body">
+                                <p>If your employer offers health insurance, this is usually the most straightforward option. Turning 26 qualifies you for a special enrollment period at work.</p>
+                                <ul>
+                                    <li>Ask HR about enrollment deadlines&mdash;they may differ from the ACA marketplace window</li>
+                                    <li>Compare premiums, deductibles, and provider networks before enrolling</li>
+                                    <li>Check if your current doctors and medications are covered</li>
+                                    <li>Consider whether a high-deductible plan with HSA makes sense for your situation</li>
+                                </ul>
+                                <p class="mb-0"><strong>Tip:</strong> Start talking to HR 2&ndash;3 months before your 26th birthday so paperwork is ready.</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- ACA Marketplace -->
+                    <div class="accordion-item">
+                        <h3 class="accordion-header" id="headingACA">
+                            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseACA" aria-expanded="false" aria-controls="collapseACA">
+                                ACA Marketplace (Healthcare.gov)
+                            </button>
+                        </h3>
+                        <div id="collapseACA" class="accordion-collapse collapse" aria-labelledby="headingACA" data-bs-parent="#coverageAccordion">
+                            <div class="accordion-body">
+                                <p>The Health Insurance Marketplace offers plans at various price points with potential subsidies based on income.</p>
+                                <ul>
+                                    <li>Use the Special Enrollment Period triggered by aging off your parent's plan</li>
+                                    <li>Premium tax credits can significantly reduce monthly costs if your income qualifies</li>
+                                    <li>All Marketplace plans cover essential health benefits including prescriptions, mental health, and preventive care</li>
+                                    <li>You can compare plans by metal tier: Bronze (lowest premium), Silver, Gold, Platinum (highest coverage)</li>
+                                </ul>
+                                <p class="mb-0"><strong>Tip:</strong> Silver plans offer extra cost-sharing reductions if your income is under 250% of the federal poverty level.</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Medicaid -->
+                    <div class="accordion-item">
+                        <h3 class="accordion-header" id="headingMedicaid">
+                            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseMedicaid" aria-expanded="false" aria-controls="collapseMedicaid">
+                                Medicaid
+                            </button>
+                        </h3>
+                        <div id="collapseMedicaid" class="accordion-collapse collapse" aria-labelledby="headingMedicaid" data-bs-parent="#coverageAccordion">
+                            <div class="accordion-body">
+                                <p>If your income is low, you may qualify for Medicaid. Eligibility and benefits vary by state.</p>
+                                <ul>
+                                    <li>In states that expanded Medicaid, adults under 138% of the federal poverty level generally qualify</li>
+                                    <li>Medicaid has no enrollment periods&mdash;you can apply anytime</li>
+                                    <li>Coverage is often free or very low cost</li>
+                                    <li>Check your state's Medicaid website or apply through Healthcare.gov</li>
+                                </ul>
+                                <p class="mb-0"><strong>Tip:</strong> Even if you're not sure you qualify, apply anyway. The Marketplace application will automatically check your Medicaid eligibility.</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- COBRA -->
+                    <div class="accordion-item">
+                        <h3 class="accordion-header" id="headingCOBRA">
+                            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseCOBRA" aria-expanded="false" aria-controls="collapseCOBRA">
+                                COBRA Continuation Coverage
+                            </button>
+                        </h3>
+                        <div id="collapseCOBRA" class="accordion-collapse collapse" aria-labelledby="headingCOBRA" data-bs-parent="#coverageAccordion">
+                            <div class="accordion-body">
+                                <p>COBRA lets you continue your parent's employer-sponsored plan, but you pay the full premium (plus up to 2% admin fee). This is typically expensive but keeps your same doctors and coverage.</p>
+                                <ul>
+                                    <li>Available for up to 36 months for dependent qualifying events, though duration varies&mdash;check your specific COBRA notice for details</li>
+                                    <li>You have 60 days to elect COBRA after coverage ends</li>
+                                    <li>Often costs $400&ndash;$700+/month since you pay the full premium</li>
+                                    <li>Best used as a short-term bridge if you're mid-treatment</li>
+                                </ul>
+                                <p class="mb-0"><strong>Tip:</strong> Compare COBRA costs to Marketplace plans with subsidies. A Marketplace plan is often cheaper.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Transition Checklist Section -->
+<section id="transition-checklist" class="py-5">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto">
+                <h2 class="text-center mb-4">Your Transition Checklist</h2>
+                <p class="text-center text-muted mb-4">Start 3 months before your 26th birthday to avoid gaps in coverage.</p>
+
+                <div class="list-group">
+                    <div class="list-group-item">
+                        <div class="d-flex w-100 justify-content-between">
+                            <h5 class="mb-1"><span class="badge bg-success me-2">3 months before</span> Confirm your coverage end date</h5>
+                        </div>
+                        <p class="mb-1">Call your parent's insurer to find out the exact date your coverage terminates. Some plans end on your birthday, others at month-end or plan year-end.</p>
+                    </div>
+                    <div class="list-group-item">
+                        <div class="d-flex w-100 justify-content-between">
+                            <h5 class="mb-1"><span class="badge bg-success me-2">3 months before</span> Gather your medical records</h5>
+                        </div>
+                        <p class="mb-1">Request copies of your medical records, prescription history, and any ongoing treatment documentation. You'll need these for new providers and to ensure continuity of care.</p>
+                    </div>
+                    <div class="list-group-item">
+                        <div class="d-flex w-100 justify-content-between">
+                            <h5 class="mb-1"><span class="badge bg-primary me-2">2 months before</span> Research your options</h5>
+                        </div>
+                        <p class="mb-1">Compare employer plans, Marketplace plans, Medicaid eligibility, and COBRA costs. Check which plans include your doctors and cover your medications.</p>
+                    </div>
+                    <div class="list-group-item">
+                        <div class="d-flex w-100 justify-content-between">
+                            <h5 class="mb-1"><span class="badge bg-primary me-2">2 months before</span> Refill prescriptions</h5>
+                        </div>
+                        <p class="mb-1">Get a 90-day supply of maintenance medications if possible. This gives you a buffer while transitioning to a new plan's formulary.</p>
+                    </div>
+                    <div class="list-group-item">
+                        <div class="d-flex w-100 justify-content-between">
+                            <h5 class="mb-1"><span class="badge bg-warning text-dark me-2">1 month before</span> Enroll in new coverage</h5>
+                        </div>
+                        <p class="mb-1">Submit your application. For employer plans, notify HR. For the Marketplace, apply at Healthcare.gov. Aim for your new coverage to start the day after your old coverage ends.</p>
+                    </div>
+                    <div class="list-group-item">
+                        <div class="d-flex w-100 justify-content-between">
+                            <h5 class="mb-1"><span class="badge bg-danger me-2">After enrollment</span> Transfer care to in-network providers</h5>
+                        </div>
+                        <p class="mb-1">If your doctors aren't in your new plan's network, ask for referrals. Some plans offer continuity-of-care exceptions that let you keep seeing your current provider during an active treatment course.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Common Denial Scenarios Section -->
+<section id="denial-scenarios" class="py-5 bg-light">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto">
+                <h2 class="text-center mb-4">Common Denial Scenarios After Turning 26</h2>
+                <p class="text-center mb-4">Transitions create opportunities for insurers to deny claims. Here are the most common issues and what to do.</p>
+
+                <div class="row g-4">
+                    <div class="col-md-6">
+                        <div class="card h-100">
+                            <div class="card-body">
+                                <h5 class="card-title">Gap in Coverage Claims</h5>
+                                <p class="card-text">If there's any delay between your parent's plan ending and your new plan starting, claims during the gap may be denied. Even a few days can cause problems.</p>
+                                <p class="card-text"><strong>What to do:</strong> Align your new coverage start date with your old plan's end date. If a gap occurs, some claims may be retroactively covered if you enroll within the SEP window.</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="card h-100">
+                            <div class="card-body">
+                                <h5 class="card-title">Prior Authorization Resets</h5>
+                                <p class="card-text">Treatments approved under your parent's plan need new prior authorization with your new insurer. This can interrupt ongoing treatments like biologics, mental health therapy, or physical therapy.</p>
+                                <p class="card-text"><strong>What to do:</strong> Ask your doctor to submit prior authorization requests to your new plan before your old coverage ends. If denied, appeal immediately.</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="card h-100">
+                            <div class="card-body">
+                                <h5 class="card-title">Formulary Differences</h5>
+                                <p class="card-text">Your new plan may not cover the same medications, or may place them on a higher cost tier. Step therapy requirements can force you to try cheaper drugs first.</p>
+                                <p class="card-text"><strong>What to do:</strong> Check the formulary before enrolling. If your medication isn't covered, you can request a formulary exception or appeal based on medical necessity.</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="card h-100">
+                            <div class="card-body">
+                                <h5 class="card-title">Out-of-Network Denials</h5>
+                                <p class="card-text">Providers who were in-network under your parent's plan may not be in-network with your new plan. Claims from these providers will be denied or underpaid.</p>
+                                <p class="card-text"><strong>What to do:</strong> Verify provider networks before choosing a plan. If you must see an out-of-network provider for continuity, request a network exception.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Special Situations Section -->
+<section id="special-situations" class="py-5">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto">
+                <h2 class="text-center mb-4">Special Situations</h2>
+
+                <div class="row g-4 mb-4">
+                    <div class="col-md-6">
+                        <div class="card h-100">
+                            <div class="card-header bg-info text-white">
+                                <strong>Graduate Students</strong>
+                            </div>
+                            <div class="card-body">
+                                <p class="card-text">Many universities offer student health insurance plans (SHIPs) that can be a good bridge. Check:</p>
+                                <ul class="mb-0">
+                                    <li>Whether your school automatically enrolls you</li>
+                                    <li>How SHIP compares to Marketplace options</li>
+                                    <li>Whether you can waive SHIP if you find better coverage elsewhere</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="card h-100">
+                            <div class="card-header bg-info text-white">
+                                <strong>Chronic Conditions</strong>
+                            </div>
+                            <div class="card-body">
+                                <p class="card-text">If you have an ongoing condition, plan your transition carefully:</p>
+                                <ul class="mb-0">
+                                    <li>Document your treatment history thoroughly</li>
+                                    <li>Ask your doctor for a letter of medical necessity</li>
+                                    <li>Request continuity of care from your new insurer</li>
+                                    <li>If a new plan denies your treatment, appeal immediately</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="row g-4">
+                    <div class="col-md-6">
+                        <div class="card h-100">
+                            <div class="card-header bg-info text-white">
+                                <strong>Freelancers &amp; Gig Workers</strong>
+                            </div>
+                            <div class="card-body">
+                                <p class="card-text">Without employer coverage, the Marketplace is your primary option:</p>
+                                <ul class="mb-0">
+                                    <li>Income-based subsidies can make plans affordable</li>
+                                    <li>Estimate your annual income carefully for accurate subsidies</li>
+                                    <li>Consider professional associations that offer group plans</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="card h-100">
+                            <div class="card-header bg-info text-white">
+                                <strong>Married at 26</strong>
+                            </div>
+                            <div class="card-body">
+                                <p class="card-text">If you're married, you may be able to join your spouse's plan:</p>
+                                <ul class="mb-0">
+                                    <li>Losing your parent's coverage is a qualifying event for your spouse's plan</li>
+                                    <li>Compare spouse's employer plan vs. Marketplace options</li>
+                                    <li>Note that subsidies are based on household income if married</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- State Resources Section -->
+<section id="state-resources" class="py-5 bg-light">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto">
+                <h2 class="text-center mb-4">Find Help in Your State</h2>
+                <p class="text-center mb-4">Some states offer additional protections or resources for young adults transitioning off a parent's plan.</p>
+
+                <div class="row g-4">
+                    <div class="col-md-6">
+                        <div class="card h-100">
+                            <div class="card-body">
+                                <h5 class="card-title">State-Specific Resources</h5>
+                                <p class="card-text">Your state's insurance department can help with enrollment questions, complaints, and understanding your rights.</p>
+                                <a href="{% url 'state_help_index' %}" class="btn btn-outline-green">Find Your State's Resources</a>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="card h-100">
+                            <div class="card-body">
+                                <h5 class="card-title">Extended Age Limits</h5>
+                                <p class="card-text">A few states require plans to cover dependents beyond age 26 (e.g., New Jersey up to 31, New York up to 29 for some plans). Check your state's rules.</p>
+                                <a href="https://www.healthcare.gov/young-adults/children-under-26/" target="_blank" rel="noopener noreferrer" class="btn btn-outline-green">Learn More at Healthcare.gov</a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Final CTA Section -->
+<section id="final-cta" class="py-5">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto text-center">
+                <h2 class="mb-3">Denied After Turning 26? We Can Help.</h2>
+                <p class="lead mb-4">Coverage transitions are a common time for denials. Our AI-powered tool helps you generate appeal letters in minutes, for free.</p>
+                <div class="d-flex justify-content-center gap-3 flex-wrap">
+                    <a href="{% url 'scan' %}" class="btn btn-green btn-lg">Generate an Appeal</a>
+                    <a href="{% url 'chat' %}" class="btn btn-outline-green btn-lg">AI Chat Assistant</a>
+                    <a href="{% url 'how-to-help' %}" class="btn btn-outline-secondary btn-lg">Help Our Mission</a>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Disclaimer Section -->
+<section id="disclaimer" class="py-4">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto">
+                <div class="disclaimer-box p-3 bg-light border rounded">
+                    <p class="text-muted small mb-0">
+                        <strong>Disclaimer:</strong> This page is for informational purposes only and does not constitute legal, medical, or financial advice. Insurance plans, eligibility rules, and state regulations vary. Review your specific plan documents and consult your state's insurance department for accurate information. Last updated: March 2026.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+{% endblock content %}
+
+{% block extra_style %}
+<style>
+    #turning26-hero .hero-inner {
+        backdrop-filter: blur(3px);
+        padding: 2rem;
+        border-radius: 14px;
+    }
+
+    .accordion-button:not(.collapsed) {
+        background-color: rgba(165, 196, 34, 0.15);
+        color: #155724;
+    }
+
+    .accordion-button:focus {
+        box-shadow: 0 0 0 0.25rem rgba(165, 196, 34, 0.25);
+    }
+
+    .list-group-item {
+        border-left: 4px solid #a5c422;
+    }
+
+    .list-group-item:hover {
+        background-color: rgba(165, 196, 34, 0.05);
+    }
+
+    .card.border-warning {
+        border-left: 4px solid #ffc107 !important;
+    }
+
+    .card.border-info {
+        border-left: 4px solid #17a2b8 !important;
+    }
+
+    #final-cta {
+        background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+    }
+
+    .btn-green {
+        background: linear-gradient(to right, #ADD100 0%, #7B920A 51%, #ADD100 100%);
+        background-size: 200% auto;
+        border: none;
+        color: white;
+        transition: 0.5s;
+    }
+
+    .btn-green:hover {
+        background-position: right center;
+        color: white;
+    }
+
+    .btn-outline-green {
+        color: #7B920A;
+        border-color: #7B920A;
+    }
+
+    .btn-outline-green:hover {
+        background-color: #7B920A;
+        border-color: #7B920A;
+        color: white;
+    }
+
+    section {
+        scroll-margin-top: 80px;
+    }
+
+    @media (max-width: 768px) {
+        #turning26-hero .hero-inner {
+            padding: 1.5rem;
+        }
+
+        .btn-lg {
+            padding: 0.5rem 1rem;
+            font-size: 1rem;
+        }
+    }
+</style>
+{% endblock extra_style %}
