@@ -32,6 +32,12 @@ CREATE_OR_UPDATE_PRIOR_AUTH_REGEX = (
     r"^\s*\*{0,4}create_or_update_prior_auth\*{0,4}\s*(\{.*\})\s*$"
 )
 
+# Journey documentation questions tool - captures JSON parameters
+# Matches: get_documentation_questions {JSON} or **get_documentation_questions {JSON}**
+GET_DOCUMENTATION_QUESTIONS_REGEX = (
+    r"(?:\*\*)?get_documentation_questions\s*(\{[^}]*\})\s*(?:\*\*)?"
+)
+
 # List of all tool patterns for scoring/detection
 ALL_TOOL_PATTERNS = [
     PUBMED_QUERY_REGEX,
@@ -39,4 +45,5 @@ ALL_TOOL_PATTERNS = [
     MEDICAID_ELIGIBILITY_REGEX,
     CREATE_OR_UPDATE_APPEAL_REGEX,
     CREATE_OR_UPDATE_PRIOR_AUTH_REGEX,
+    GET_DOCUMENTATION_QUESTIONS_REGEX,
 ]

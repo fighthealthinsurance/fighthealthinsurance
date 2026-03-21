@@ -29,6 +29,7 @@ from fighthealthinsurance.chat.safety_filters import (
 from fighthealthinsurance.chat.tools.patterns import (
     CREATE_OR_UPDATE_APPEAL_REGEX as create_or_update_appeal_regex,
     CREATE_OR_UPDATE_PRIOR_AUTH_REGEX as create_or_update_prior_auth_regex,
+    GET_DOCUMENTATION_QUESTIONS_REGEX as get_documentation_questions_regex,
     MEDICAID_ELIGIBILITY_REGEX as medicaid_eligibility_regex,
     MEDICAID_INFO_REGEX as medicaid_info_lookup_regex,
     PUBMED_QUERY_REGEX as pubmed_query_terms_regex,
@@ -600,6 +601,106 @@ class ChatInterface:
                 f"Error in medicaid eligibility tool call {e}"
             )
 
+        # Handle get_documentation_questions tool call
+        try:
+            doc_questions_match = re.search(
+                get_documentation_questions_regex,
+                response_text,
+                flags=re.DOTALL | re.IGNORECASE,
+            )
+            if doc_questions_match:
+                logger.debug("Documentation questions tool call detected")
+                cleaned_response = response_text.replace(
+                    doc_questions_match.group(0), ""
+                ).strip()
+
+                try:
+                    params = json.loads(doc_questions_match.group(1).strip())
+                except Exception:
+                    params = {}
+
+                if not isinstance(params, dict):
+                    params = {}
+
+                await self.send_status_message(
+                    "Analyzing denial to generate documentation questions..."
+                )
+
+                from fighthealthinsurance.ml.ml_journey_helper import (
+                    JourneyDocumentationHelper,
+                )
+
+                # Get microsite documentation items if available
+                doc_items = None
+                if chat.microsite_slug:
+                    microsite = get_microsite(chat.microsite_slug)
+                    if microsite and microsite.journey_documentation_items:
+                        doc_items = microsite.journey_documentation_items
+
+                # Use params from tool call + chat context
+                procedure = params.get("procedure") or chat.denied_item
+                diagnosis = params.get("diagnosis")
+                denial_text = params.get("denial_text")
+                denial_reason = params.get("denial_reason") or chat.denied_reason
+                patient_context = params.get("patient_context")
+
+                questions = await JourneyDocumentationHelper.generate_journey_questions(
+                    procedure=procedure,
+                    diagnosis=diagnosis,
+                    denial_text=denial_text,
+                    denial_reason=denial_reason,
+                    patient_context=patient_context,
+                    documentation_items=doc_items,
+                    timeout=30,
+                )
+
+                if questions:
+                    q_text = "\n".join(
+                        f"- {q}" + (f" (helps because: {a})" if a else "")
+                        for q, a in questions
+                    )
+                    doc_context = (
+                        f"Documentation questions generated for this denial:\n{q_text}\n\n"
+                        "Use these to guide the conversation. Ask about one or two items at a time. "
+                        "Explain to the patient why each piece of information helps their appeal."
+                    )
+                else:
+                    doc_context = (
+                        "Could not generate specific documentation questions. "
+                        "Ask the patient about their treatment history, prior medications, "
+                        "test results, and why their doctor recommended this specific treatment."
+                    )
+
+                await self.send_status_message("Documentation guidance ready")
+
+                history_for_llm += [
+                    {"role": "user", "content": current_message_for_llm}
+                ]
+                history_for_llm += [{"role": "agent", "content": response_text}]
+                (
+                    additional_response_text,
+                    additional_context_part,
+                ) = await self._call_llm_with_actions(
+                    model_backends,
+                    current_message_for_llm=doc_context,
+                    previous_context_summary=previous_context_summary,
+                    history_for_llm=history_for_llm,
+                    depth=depth + 1,
+                    is_logged_in=is_logged_in,
+                    is_professional=is_professional,
+                )
+                if additional_response_text and len(additional_response_text) > 1:
+                    response_text = additional_response_text
+                if context_part:
+                    if additional_context_part:
+                        context_part += additional_context_part
+                else:
+                    context_part = additional_context_part
+        except Exception as e:
+            logger.opt(exception=True).debug(
+                f"Error in documentation questions tool call: {e}"
+            )
+
         # Handle Medicaid info lookup first (before PubMed)
         try:
             # Find ALL matches but only process the FIRST one to avoid multiple calls
@@ -939,6 +1040,40 @@ class ChatInterface:
                                 logger.info(
                                     f"RAG context added to chat for microsite {microsite.slug}"
                                 )
+
+                            # Add journey documentation guidance if microsite defines it
+                            if microsite.journey_documentation_items:
+                                journey_prompt = (
+                                    microsite.get_journey_documentation_prompt()
+                                )
+                                if journey_prompt:
+                                    all_context_parts.append(
+                                        f"Journey documentation guidance:\n{journey_prompt}"
+                                    )
+                                    logger.info(
+                                        f"Journey documentation guidance added for {microsite.slug}"
+                                    )
+
+                                # Also try ML-generated journey questions
+                                try:
+                                    from fighthealthinsurance.ml.ml_journey_helper import (
+                                        JourneyDocumentationHelper,
+                                    )
+
+                                    ml_guidance = await JourneyDocumentationHelper.get_journey_guidance_for_chat(
+                                        procedure=microsite.default_procedure,
+                                        diagnosis=microsite.default_condition,
+                                        documentation_items=microsite.journey_documentation_items,
+                                    )
+                                    if ml_guidance:
+                                        all_context_parts.append(ml_guidance)
+                                        logger.info(
+                                            f"ML journey guidance added for {microsite.slug}"
+                                        )
+                                except Exception as e:
+                                    logger.warning(
+                                        f"Failed to get ML journey guidance: {e}"
+                                    )
 
                             if all_context_parts:
                                 full_context = "\n\n".join(all_context_parts)
