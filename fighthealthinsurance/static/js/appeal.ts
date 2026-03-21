@@ -196,10 +196,20 @@ function checkForUnfilledPlaceholders(text: string): string[] {
   }
 
   // Single-brace placeholders like {diagnosis}, {insurance_company}
-  // Negative lookahead/lookbehind to skip {{double_brace}} patterns
-  const singleBraceMatches = text.match(/(?<!\{)\{[a-z_]+\}(?!\})/g);
-  if (singleBraceMatches) {
-    found.push(...singleBraceMatches);
+  // Filter out {{double_brace}} matches without lookbehind (unsupported in Safari <16.4)
+  const singleBraceRe = /\{[a-z_]+\}/g;
+  let singleMatch: RegExpExecArray | null;
+  while ((singleMatch = singleBraceRe.exec(text)) !== null) {
+    const idx = singleMatch.index;
+    const end = idx + singleMatch[0].length;
+    // Skip if this is part of a {{...}} double-brace placeholder
+    if (
+      (idx > 0 && text[idx - 1] === "{") ||
+      (end < text.length && text[end] === "}")
+    ) {
+      continue;
+    }
+    found.push(singleMatch[0]);
   }
 
   // Dollar-prefixed template variables like $diagnosis, $insurance_company
@@ -226,7 +236,8 @@ function checkForUnfilledPlaceholders(text: string): string[] {
     }
   }
 
-  return found;
+  // Deduplicate so the confirm dialog isn't noisy
+  return Array.from(new Set(found));
 }
 
 // Mapping from PII panel input IDs to localStorage keys
@@ -323,10 +334,10 @@ function setupAppeal() {
         );
         if (proceed) {
           skipCheck = true;
-          // Use submit() intentionally (not requestSubmit()) to bypass the
-          // submit event handler and avoid re-triggering the placeholder check.
-          // Server-side validation is handled by StageFaxView.form_valid().
-          faxForm.submit();
+          // Use requestSubmit() so other submit handlers (e.g. pwyw tracking)
+          // still fire and HTML5 constraint validation runs. skipCheck prevents
+          // this handler from re-triggering the placeholder check.
+          faxForm.requestSubmit();
         }
       }
     });
