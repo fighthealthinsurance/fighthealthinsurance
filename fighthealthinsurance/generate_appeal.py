@@ -770,7 +770,7 @@ class AppealGenerator(object):
             insurance_company=insurance_company_name,
             is_tpa=is_tpa,
             ml_context=(
-                "\n".join(ml_citations_context)
+                "\n".join(str(c) for c in ml_citations_context if c)
                 if isinstance(ml_citations_context, list)
                 else ml_citations_context
             ),
