@@ -2314,6 +2314,8 @@ class AppealsBackendHelper:
                 if microsite_context:
                     # Append to ml_citation_context or pubmed_context
                     if ml_citation_context:
+                        if isinstance(ml_citation_context, list):
+                            ml_citation_context = "\n".join(ml_citation_context)
                         ml_citation_context = (
                             f"{ml_citation_context}\n\n{microsite_context}"
                         )
