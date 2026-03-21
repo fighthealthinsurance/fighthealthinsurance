@@ -19,9 +19,12 @@ from fhi_users.models import (
     ProfessionalUser,
 )
 
+from tests.conftest import skip_if_stripe_ssl_blocked
+
 User = get_user_model()
 
 
+@skip_if_stripe_ssl_blocked
 class PaymentViewsTests(TestCase):
     def setUp(self) -> None:
         self.client = APIClient()

@@ -23,6 +23,8 @@ from fhi_users.models import (
 
 from unittest.mock import patch
 
+from tests.conftest import skip_if_stripe_ssl_blocked
+
 User = get_user_model()
 
 
@@ -277,6 +279,7 @@ class RestAuthViewsTests(TestCase):
         self.assertEqual(response.json()["status"], "error")
         self.assertEqual(response.json()["message"], "Activation link has expired")
 
+    @skip_if_stripe_ssl_blocked
     def test_create_professional_user_with_new_domain(self) -> None:
         url = reverse("professional_user-list")
         data = {
@@ -791,6 +794,7 @@ class RestAuthViewsTests(TestCase):
         self.assertEqual(len(mail.outbox), email_count_before + 2)
 
 
+@skip_if_stripe_ssl_blocked
 class TestE2EProfessionalUserSignupFlow(TestCase):
     def setUp(self):
         self.client = APIClient()
