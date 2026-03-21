@@ -20,7 +20,7 @@ from fighthealthinsurance.utils import get_env_variable
 # stdlib logging is routed to loguru via dj_easy_log's InterceptHandler.
 import logging
 
-logger = logging.getLogger(__name__)
+logger: logging.Logger = logging.getLogger(__name__)
 
 
 @ray.remote(max_restarts=-1, max_task_retries=-1)
