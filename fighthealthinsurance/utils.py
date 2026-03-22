@@ -431,23 +431,21 @@ class SyncIteratorToAsync(AsyncIterator[T]):
 
     def __init__(self, sync_iter: Iterator[T]):
         self._sync_iter = sync_iter
-        self._pending: Optional[asyncio.Future[T]] = None
+        self._pending: Optional[asyncio.Future[object]] = None
         self._exhausted = False
 
     def __aiter__(self) -> "SyncIteratorToAsync[T]":
         return self
 
-    def _next_with_default(self) -> T:
-        return next(self._sync_iter, self._sentinel)  # type: ignore[call-overload]
+    def _next_with_default(self) -> object:
+        return next(self._sync_iter, self._sentinel)
 
     async def __anext__(self) -> T:
         if self._exhausted:
             raise StopAsyncIteration
         if self._pending is None:
             loop = asyncio.get_running_loop()
-            self._pending = loop.run_in_executor(
-                None, self._next_with_default
-            )
+            self._pending = loop.run_in_executor(None, self._next_with_default)
         item = await self._pending
         self._pending = None
         if item is self._sentinel:
