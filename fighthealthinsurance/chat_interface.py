@@ -1283,7 +1283,7 @@ class ChatInterface:
             True if policy analysis was performed and handled, False otherwise.
         """
         try:
-            policy_doc = None
+            policy_doc: Optional[PolicyDocument] = None
             session_key = chat.session_key
 
             if session_key:

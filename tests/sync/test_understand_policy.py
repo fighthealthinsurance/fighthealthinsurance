@@ -3,6 +3,7 @@
 import io
 import json
 import uuid
+from typing import Any, Dict
 from unittest.mock import MagicMock, patch
 
 import pymupdf
@@ -25,9 +26,9 @@ from fighthealthinsurance.models import PolicyDocument, PolicyDocumentAnalysis
 class UnderstandPolicyFormValidationTest(TestCase):
     """Tests for UnderstandPolicyForm file validation."""
 
-    def _make_form_data(self, **overrides):
+    def _make_form_data(self, **overrides: Any) -> Dict[str, Any]:
         """Helper to build base form data."""
-        data = {
+        data: Dict[str, Any] = {
             "first_name": "Test",
             "last_name": "User",
             "email": "test@example.com",
@@ -38,7 +39,9 @@ class UnderstandPolicyFormValidationTest(TestCase):
         data.update(overrides)
         return data
 
-    def _make_uploaded_file(self, name, content, content_type):
+    def _make_uploaded_file(
+        self, name: str, content: bytes, content_type: str
+    ) -> SimpleUploadedFile:
         return SimpleUploadedFile(name, content, content_type=content_type)
 
     def test_accepts_pdf(self):

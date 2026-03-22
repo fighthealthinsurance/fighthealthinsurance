@@ -388,7 +388,7 @@ Respond in JSON format with the following structure:
         cls, analysis: PolicyDocumentAnalysis, include_disclaimer: bool = True
     ) -> str:
         """Format the analysis results for display in chat."""
-        output_parts = []
+        output_parts: list[str] = []
 
         if analysis.summary:
             output_parts.append("## Summary\n")
