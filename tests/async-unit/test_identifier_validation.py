@@ -68,6 +68,22 @@ class TestIsPlausibleIdentifier:
         long_value = "A" * 40 + "1" + "B" * 20
         assert is_plausible_identifier(long_value) is False
 
+    def test_labeled_strings_rejected(self):
+        """Labeled strings like 'Plan ID: ABC123' should have labels stripped
+        and be validated on the ID portion only, not accepted as-is."""
+        # These should still return True because after stripping the label,
+        # the remaining value 'ABC123' is a valid ID.
+        assert is_plausible_identifier("Plan ID: ABC123") is True
+        assert is_plausible_identifier("Claim #: XYZ789") is True
+        assert is_plausible_identifier("Member: H5521-001") is True
+        # But if the label prefix IS the entire value, reject it
+        assert is_plausible_identifier("Plan ID:") is False
+        assert is_plausible_identifier("Claim Number") is False
+
+    def test_colons_in_value_rejected(self):
+        """Colons indicate labels, not valid ID characters."""
+        assert is_plausible_identifier("ABC:123") is False
+
     def test_special_characters_rejected(self):
         """Values with non-ID characters should be rejected."""
         assert is_plausible_identifier("plan@123") is False

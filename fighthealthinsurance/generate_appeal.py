@@ -74,30 +74,46 @@ def _is_english_word(word: str) -> bool:
     return False
 
 
+_LABEL_PREFIX_RE = re.compile(
+    r"^(?:plan|claim|member|group|policy|subscriber|id|number|no|#)"
+    r"[\s:.\-/#]*",
+    re.IGNORECASE,
+)
+
+
 def is_plausible_identifier(value: Optional[str]) -> bool:
     """Check whether a string looks like a plausible plan/claim/member ID.
 
     Real IDs are typically alphanumeric codes like 'ABC123456', 'H5521-001',
     'PLAN987654', or occasionally pure-alpha codes like 'BCBSMA'.
-    They are not common English words.
+    They are not common English words or labeled phrases like 'Plan ID: ABC123'.
     """
     if value is None:
         return False
     stripped = value.strip()
     if not stripped:
         return False
+    # Strip common label prefixes (e.g. "Plan ID: ", "Claim #", "Member: ")
+    # Apply repeatedly to handle stacked prefixes like "Plan ID:"
+    prev = None
+    while stripped != prev:
+        prev = stripped
+        stripped = _LABEL_PREFIX_RE.sub("", stripped).strip()
+    if not stripped:
+        return False
     # Reject very short or very long values
     if len(stripped) < 3 or len(stripped) > 50:
         return False
-    # Must be primarily alphanumeric (allow hyphens, underscores, spaces, dots, slashes, colons)
-    if not re.match(r"^[A-Za-z0-9\s\-_./#:]+$", stripped):
+    # Must be primarily alphanumeric (allow hyphens, underscores, spaces, dots, slashes)
+    # Colons are not valid in IDs — they indicate labels.
+    if not re.match(r"^[A-Za-z0-9\s\-_./#]+$", stripped):
         return False
     # Reject if the lowercased value is a known English word (including inflected forms)
     lowered = stripped.lower()
     if _is_english_word(lowered):
         return False
-    # Also reject multi-word phrases where every word is English
-    words = re.split(r"[\s\-_./#:]+", lowered)
+    # Reject multi-word phrases where every word is English
+    words = re.split(r"[\s\-_./#]+", lowered)
     if len(words) > 1 and all(_is_english_word(w) for w in words if w):
         return False
     return True
@@ -304,7 +320,7 @@ class AppealGenerator(object):
         # If a score_fn was provided, verify the result actually scores positively
         # to avoid returning junk like English words that passed attempt_model.
         if best is not None and score_fn is not None:
-            final_score = score_fn(best, None)
+            final_score = score_fn(best, denial_text)
             if final_score < 0:
                 logger.debug(
                     f"Rejecting extraction result {best!r} with negative score {final_score}"
