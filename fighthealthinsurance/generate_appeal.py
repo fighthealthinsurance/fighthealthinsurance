@@ -75,8 +75,7 @@ def _is_english_word(word: str) -> bool:
 
 
 _LABEL_PREFIX_RE = re.compile(
-    r"^(?:plan|claim|member|group|policy|subscriber|id|number|no|#)"
-    r"[\s:.\-/#]*",
+    r"^(?:plan|claim|member|group|policy|subscriber|id|number|no|#)" r"[\s:.\-/#]*",
     re.IGNORECASE,
 )
 
