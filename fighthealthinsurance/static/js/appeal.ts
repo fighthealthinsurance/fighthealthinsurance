@@ -100,6 +100,30 @@ function descrub() {
   text = text.replace(/\bfname\b/g, fname);
   text = text.replace(/\blname\b/g, lname);
 
+  // Fuzzy matching for model-generated placeholder variants
+  // like [Claim # Placeholder], [Patient Name Placeholder], etc.
+  const fuzzyReplacements: [RegExp, string][] = [
+    [/\[Claim\s*#?\s*(?:Number\s*)?(?:Placeholder)?\]/gi, claim_id],
+    [/\[Reference\s*#?\s*(?:Number\s*)?(?:Placeholder)?\]/gi, claim_id],
+    [/\[Patient(?:'?s?)?\s+Name\s*(?:Placeholder)?\]/gi, name],
+    [/\[Subscriber\s*(?:ID|#)\s*(?:Placeholder)?\]/gi, subscriber_id],
+    [/\[Group\s*(?:ID|#)\s*(?:Placeholder)?\]/gi, group_id],
+    [/\[Your\s+Name\s*(?:Placeholder)?\]/gi, name],
+    [/\[(?:Email|Email\s+Address)\s*(?:Placeholder)?\]/gi, email_address],
+    [/\[Phone\s*(?:Number)?\s*(?:Placeholder)?\]/gi, phone_number],
+  ];
+  // Sentinel defaults that indicate no real value was stored
+  const sentinels = new Set([
+    "FirstName", "LastName", "FirstName LastName",
+    "subscriber_id", "group_id", "claim_id",
+    "email_address", "phone_number",
+  ]);
+  for (const [pattern, value] of fuzzyReplacements) {
+    if (value && value !== "" && !sentinels.has(value)) {
+      text = text.replace(pattern, () => value);
+    }
+  }
+
   // Strip any previously appended PII block before re-adding
   const markerIdx = text.indexOf(PII_BLOCK_MARKER);
   if (markerIdx !== -1) {
