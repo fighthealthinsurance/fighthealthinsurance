@@ -159,9 +159,7 @@ class MicrositeSitemapTests(TestCase):
 
         # All non-WIP microsites should be in the sitemap
         for slug in non_wip_microsites:
-            self.assertIn(
-                slug, items, f"Non-WIP microsite {slug} should be in sitemap"
-            )
+            self.assertIn(slug, items, f"Non-WIP microsite {slug} should be in sitemap")
 
     def test_full_sitemap_excludes_wip_microsites(self):
         """Test that WIP microsites don't appear in the full sitemap XML."""

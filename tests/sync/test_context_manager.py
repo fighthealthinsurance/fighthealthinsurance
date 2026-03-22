@@ -104,9 +104,9 @@ class TestPrepareHistoryForLLM:
         assert history[0]["role"] == "user"
         # And alternation should be intact
         for i in range(len(history) - 1):
-            assert history[i]["role"] != history[i + 1]["role"], (
-                f"Messages {i} and {i+1} have same role: {history[i]['role']}"
-            )
+            assert (
+                history[i]["role"] != history[i + 1]["role"]
+            ), f"Messages {i} and {i+1} have same role: {history[i]['role']}"
 
     @pytest.mark.asyncio
     async def test_message_alternation_applied(self):

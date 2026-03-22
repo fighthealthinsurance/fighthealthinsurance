@@ -102,7 +102,9 @@ class MLCitationsHelper:
                     )
                     or []
                 )
-                logger.debug(f"Huzzah got best citations within timelimit {result}")
+                logger.debug(
+                    f"Got best citations within time limit: {len(result)} results"
+                )
                 return result
             except Exception:
                 logger.opt(exception=True).debug(

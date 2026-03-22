@@ -1,12 +1,13 @@
 import time
 
 import ray
+from loguru import logger
 
 from fighthealthinsurance.chooser_refill_actor_ref import chooser_refill_actor_ref
 from fighthealthinsurance.email_polling_actor_ref import email_polling_actor_ref
 from fighthealthinsurance.fax_polling_actor_ref import fax_polling_actor_ref
 
-print("Waiting for ray to (probably) launch.")
+logger.info("Waiting for ray to (probably) launch.")
 time.sleep(60)
 
 success = False
@@ -16,35 +17,35 @@ epar = None
 fpar = None
 cpar = None
 while not success and attempt < 10:
-    print("attempting to launch actors.")
+    logger.info("Attempting to launch actors.")
     attempt = attempt + 1
     try:
         epar, etask = email_polling_actor_ref.get
         fpar, ftask = fax_polling_actor_ref.get
         cpar, ctask = chooser_refill_actor_ref.get
-        print(f"Launched email polling actor {epar}")
-        print(f"Launched fax polling actor {fpar}")
-        print(f"Launched chooser refill actor {cpar}")
-        print(f"Double check that we're not finishing the tasks")
+        logger.info(f"Launched email polling actor {epar}")
+        logger.info(f"Launched fax polling actor {fpar}")
+        logger.info(f"Launched chooser refill actor {cpar}")
+        logger.info("Checking that polling tasks are still running")
         time.sleep(10)
         ready, wait = ray.wait([etask, ftask, ctask], timeout=10)
-        print(f"Finished {ready}")
+        logger.info(f"Finished {ready}")
         result = ray.get(ready)
-        print(f"Which resulted in {result}")
+        logger.info(f"Results: {result}")
         if len(result) > 0:
             raise Exception("We should not have any polling actors finished!")
         for actor in [epar, fpar, cpar]:
-            print(f"Checking health of {actor}")
+            logger.info(f"Checking health of {actor}")
             result = ray.get(actor.health_check.remote())
-            print(f"Got {result}")
+            logger.info(f"Health check result: {result}")
         success = True
-        print(f"Requesting polling runs")
+        logger.info("All polling actors launched successfully")
 
-    except Exception as e:
-        print(f"Error {e} trying to launch")
+    except Exception:
+        logger.opt(exception=True).error("Error trying to launch actors")
         time.sleep(60)
 
 if not success:
-    print(f"No successes?!?")
+    logger.error("Failed to launch polling actors after all attempts")
 
 __all__ = ["epar", "fpar", "cpar"]

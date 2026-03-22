@@ -58,9 +58,7 @@ class TestExtraLinkFetcher:
 
         # Test HTML detection
         assert (
-            fetcher._detect_document_type(
-                "https://example.com/page.html", "text/html"
-            )
+            fetcher._detect_document_type("https://example.com/page.html", "text/html")
             == "html"
         )
 

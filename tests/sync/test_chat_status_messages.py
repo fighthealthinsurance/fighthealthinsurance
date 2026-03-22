@@ -297,11 +297,11 @@ class ChatStatusMessageTest(APITestCase):
 
         # Check that we received an assistant response with content
         assistant_content_responses = [
-            r for r in responses
-            if r.get("role") == "assistant" and "content" in r
+            r for r in responses if r.get("role") == "assistant" and "content" in r
         ]
         self.assertGreater(
-            len(assistant_content_responses), 0,
+            len(assistant_content_responses),
+            0,
             f"Expected at least one assistant response with content, got responses: {responses}",
         )
 

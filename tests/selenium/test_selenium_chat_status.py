@@ -116,7 +116,8 @@ class SeleniumChatStatusMessagesTest(FHISeleniumBase, StaticLiveServerTestCase):
 
             # Wait for typing indicator to appear
             self.wait_for_page_ready(
-                predicate=lambda d: "Typing" in d.execute_script("return document.body.innerText || ''")
+                predicate=lambda d: "Typing"
+                in d.execute_script("return document.body.innerText || ''")
             )
             time.sleep(1)  # Let in-place updates settle
 

@@ -151,7 +151,7 @@ def combine_domain_and_username(
         domain=domain,
     )
     username = f"{raw_username}🐼{domain_id}"
-    logger.debug(f"Made user username: {username}")
+    logger.debug("Generated username for user")
     return username
 
 
@@ -210,6 +210,8 @@ def create_user(
         The newly created User object -- the user is set to active false until they verify their email.
     """
 
+    from fighthealthinsurance.utils import mask_email_for_logging
+
     try:
         username = combine_domain_and_username(
             raw_username,
@@ -220,7 +222,7 @@ def create_user(
 
         if not validate_password(password):
             logger.opt(exception=True).error(
-                f"Invalid password format during user creation for email: {email}"
+                f"Invalid password format during user creation for email: {mask_email_for_logging(email)}"
             )
             raise Exception(
                 "Password is not valid: must be at least 8 characters and cannot be entirely numeric"
@@ -231,14 +233,16 @@ def create_user(
             user = User.objects.get(
                 username=username,
                 email=email,
-                password=None,
             )
-            user.password = password
-            user.first_name = first_name
-            user.last_name = last_name
-            user.save()
+            if not user.has_usable_password():
+                user.set_password(password)
+                user.first_name = first_name
+                user.last_name = last_name
+                user.save()
+            else:
+                raise User.DoesNotExist
             logger.info(
-                f"Updated existing pending user with username: {username}, email: {email}"
+                f"Updated existing pending user with email: {mask_email_for_logging(email)}"
             )
             return user
         except User.DoesNotExist:
@@ -250,11 +254,11 @@ def create_user(
                 last_name=last_name,
                 is_active=False,
             )
-            logger.info(f"Created new user with username: {username}, email: {email}")
+            logger.info(f"Created new user with email: {mask_email_for_logging(email)}")
         return user
     except Exception as e:
         logger.opt(exception=True).error(
-            f"Failed to create user {email} in domain {domain_name}: {str(e)}"
+            f"Failed to create user {mask_email_for_logging(email)} in domain {domain_name}: {e}"
         )
         raise
 
