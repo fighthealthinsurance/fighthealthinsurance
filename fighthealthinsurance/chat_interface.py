@@ -70,6 +70,19 @@ class ChatInterface:
         self.user: User = user
         self.use_external_models: bool = use_external_models
 
+    @staticmethod
+    def _append_to_history(chat, role: str, content: str):
+        """Append a message to chat history with a timestamp."""
+        if not chat.chat_history:
+            chat.chat_history = []
+        chat.chat_history.append(
+            {
+                "role": role,
+                "content": content,
+                "timestamp": timezone.now().isoformat(),
+            }
+        )
+
     @property
     def is_patient(self) -> bool:
         return self.chat.chat_type == ChatType.PATIENT
@@ -803,22 +816,8 @@ class ChatInterface:
             # Log the crisis detection for monitoring
             logger.info(f"Crisis resources provided for chat {chat.id}")
             # Add to chat history
-            if not chat.chat_history:
-                chat.chat_history = []
-            chat.chat_history.append(
-                {
-                    "role": "user",
-                    "content": user_message,
-                    "timestamp": timezone.now().isoformat(),
-                }
-            )
-            chat.chat_history.append(
-                {
-                    "role": "assistant",
-                    "content": crisis_response,
-                    "timestamp": timezone.now().isoformat(),
-                }
-            )
+            self._append_to_history(chat, "user", user_message)
+            self._append_to_history(chat, "assistant", crisis_response)
             await chat.asave()
             # Don't continue with normal processing - let the user respond
             return
@@ -991,22 +990,8 @@ class ChatInterface:
                 user_facing_message = "This chat is already linked to your prior authorization request. How can I help you with it?"
         if link_message and user_facing_message:
             await asyncio.sleep(0.01)
-            if not chat.chat_history:
-                chat.chat_history = []
-            chat.chat_history.append(
-                {
-                    "role": "user",
-                    "content": link_message,
-                    "timestamp": timezone.now().isoformat(),
-                }
-            )
-            chat.chat_history.append(
-                {
-                    "role": "assistant",
-                    "content": user_facing_message,
-                    "timestamp": timezone.now().isoformat(),
-                }
-            )
+            self._append_to_history(chat, "user", link_message)
+            self._append_to_history(chat, "assistant", user_facing_message)
             # Merge any microsite context from DB before saving to avoid overwriting
             # background task updates
             await self._merge_summary_from_db(chat)
@@ -1142,12 +1127,10 @@ class ChatInterface:
 
             # Add the user message to history (unless it's a duplicate)
             if not is_duplicate:
-                chat.chat_history.append(
-                    {
-                        "role": "user",
-                        "content": merged_message if should_merge else user_message,
-                        "timestamp": timezone.now().isoformat(),
-                    }
+                self._append_to_history(
+                    chat,
+                    "user",
+                    merged_message if should_merge else user_message,
                 )
 
             if should_store_summary(chat.summary_for_next_call, final_context_part):
@@ -1155,13 +1138,7 @@ class ChatInterface:
                     chat.summary_for_next_call = []
                 chat.summary_for_next_call.append(final_context_part)
 
-            chat.chat_history.append(
-                {
-                    "role": "assistant",
-                    "content": final_response_text,
-                    "timestamp": timezone.now().isoformat(),
-                }
-            )
+            self._append_to_history(chat, "assistant", final_response_text)
 
             # Merge any microsite context from DB before saving to avoid overwriting
             # background task updates

@@ -30,7 +30,6 @@ from django.template.loader import render_to_string
 from django.urls import reverse
 
 import asyncstdlib as a
-import pymupdf
 import ray
 import uszipcode
 from asgiref.sync import async_to_sync, sync_to_async
@@ -51,7 +50,10 @@ from fighthealthinsurance.ml.ml_plan_doc_helper import MLPlanDocHelper
 from fighthealthinsurance.models import *
 from fighthealthinsurance.process_denial import ProcessDenialCodes
 from fighthealthinsurance.rag_client import get_rag_context_for_denial
-from fighthealthinsurance.utils import interleave_iterator_for_keep_alive
+from fighthealthinsurance.utils import (
+    extract_file_text,
+    interleave_iterator_for_keep_alive,
+)
 from .pubmed_tools import PubMedTools
 from .utils import (
     _try_pandoc_engines,
@@ -1615,22 +1617,9 @@ class DenialCreatorHelper:
                         continue
 
                     path = file_field.path
-                    if path.lower().endswith(".pdf"):
-                        try:
-                            with pymupdf.open(path) as pdf_doc:
-                                for page in pdf_doc:
-                                    combined_text += page.get_text() + "\n"
-                        except RuntimeError as e:
-                            logger.warning(f"Error reading PDF {path}: {e}")
-                    else:
-                        # Try to read as text file
-                        try:
-                            with open(
-                                path, "r", encoding="utf-8", errors="ignore"
-                            ) as f:
-                                combined_text += f.read() + "\n"
-                        except Exception as e:
-                            logger.debug(f"Could not read {path} as text: {e}")
+                    text = extract_file_text(path)
+                    if text:
+                        combined_text += text + "\n"
                 except Exception as e:
                     logger.debug(f"Error processing plan document: {e}")
         except Exception as e:

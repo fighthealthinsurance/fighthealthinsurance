@@ -195,6 +195,13 @@ def safe_redirect(request, url):
         raise Exception(f"Asked to redirect to non-existing url.")
 
 
+def mark_session_consent(session, email: str) -> None:
+    """Mark consent as completed in the session and store the user's email."""
+    session["consent_completed"] = True
+    session["email"] = email
+    session.save()
+
+
 class ProVersionView(generic.RedirectView):
     """Redirect to the professional version site."""
 
@@ -1854,12 +1861,7 @@ class ChatUserConsentView(FormView):
         return context
 
     def form_valid(self, form):
-        # Mark consent as completed in the session
-        self.request.session["consent_completed"] = True
-        self.request.session["email"] = form.cleaned_data.get(
-            "email"
-        )  # Used for data deletion requests
-        self.request.session.save()
+        mark_session_consent(self.request.session, form.cleaned_data.get("email"))
         if form.cleaned_data.get("subscribe"):
             name = f"{form.cleaned_data.get('first_name')} {form.cleaned_data.get('last_name')}"
             referral_source = form.cleaned_data.get("referral_source", "")
@@ -2133,10 +2135,7 @@ class ExplainDenialView(FormView):
             form.add_error(None, "Please enter your denial letter text.")
             return self.form_invalid(form)
 
-        # Mark consent as completed in the session
-        self.request.session["consent_completed"] = True
-        self.request.session["email"] = form.cleaned_data.get("email")
-        self.request.session.save()
+        mark_session_consent(self.request.session, form.cleaned_data.get("email"))
 
         # Handle mailing list subscription
         if form.cleaned_data.get("subscribe"):
