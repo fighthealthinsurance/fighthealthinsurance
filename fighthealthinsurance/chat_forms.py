@@ -1,4 +1,7 @@
+from typing import Optional
+
 from django import forms
+from django.core.files.uploadedfile import UploadedFile
 
 from fighthealthinsurance.forms import REFERRAL_SOURCE_CHOICES
 
@@ -18,50 +21,8 @@ _PDF_MAGIC = b"%PDF"
 _DOCX_MAGIC = b"PK"  # ZIP-based format
 
 
-class UnderstandPolicyForm(forms.Form):
-    """Form for uploading policy documents with consent"""
-
-    DOCUMENT_TYPE_CHOICES = [
-        ("summary_of_benefits", "Summary of Benefits"),
-        ("medical_policy", "Medical Policy"),
-        ("other", "Other Policy Document"),
-    ]
-
-    policy_document = forms.FileField(
-        required=True,
-        widget=forms.FileInput(
-            attrs={
-                "class": "form-control",
-                "id": "policy_document",
-                "accept": ".pdf,.docx,.doc,.txt,.rtf",
-            }
-        ),
-    )
-
-    document_type = forms.ChoiceField(
-        required=True,
-        choices=DOCUMENT_TYPE_CHOICES,
-        initial="summary_of_benefits",
-        widget=forms.Select(
-            attrs={
-                "class": "form-control",
-                "id": "document_type",
-            }
-        ),
-    )
-
-    user_question = forms.CharField(
-        required=False,
-        max_length=1000,
-        widget=forms.Textarea(
-            attrs={
-                "class": "form-control",
-                "id": "user_question",
-                "rows": 3,
-                "placeholder": "Optional: What specific question do you have about your policy? (e.g., 'Is my MRI covered?' or 'What are the exclusions for mental health?')",
-            }
-        ),
-    )
+class BaseConsentFieldsMixin(forms.Form):
+    """Shared consent fields for forms that collect user info + TOS agreement."""
 
     first_name = forms.CharField(
         max_length=100,
@@ -118,7 +79,53 @@ class UnderstandPolicyForm(forms.Form):
         ),
     )
 
-    def clean_policy_document(self):
+
+class UnderstandPolicyForm(BaseConsentFieldsMixin):
+    """Form for uploading policy documents with consent"""
+
+    DOCUMENT_TYPE_CHOICES = [
+        ("summary_of_benefits", "Summary of Benefits"),
+        ("medical_policy", "Medical Policy"),
+        ("other", "Other Policy Document"),
+    ]
+
+    policy_document = forms.FileField(
+        required=True,
+        widget=forms.FileInput(
+            attrs={
+                "class": "form-control",
+                "id": "policy_document",
+                "accept": ".pdf,.docx,.doc,.txt,.rtf",
+            }
+        ),
+    )
+
+    document_type = forms.ChoiceField(
+        required=True,
+        choices=DOCUMENT_TYPE_CHOICES,
+        initial="summary_of_benefits",
+        widget=forms.Select(
+            attrs={
+                "class": "form-control",
+                "id": "document_type",
+            }
+        ),
+    )
+
+    user_question = forms.CharField(
+        required=False,
+        max_length=1000,
+        widget=forms.Textarea(
+            attrs={
+                "class": "form-control",
+                "id": "user_question",
+                "rows": 3,
+                "placeholder": "Optional: What specific question do you have about your policy? (e.g., 'Is my MRI covered?' or 'What are the exclusions for mental health?')",
+            }
+        ),
+    )
+
+    def clean_policy_document(self) -> Optional[UploadedFile]:
         """Validate the uploaded file type and size."""
         file = self.cleaned_data.get("policy_document")
         if file:
@@ -152,43 +159,8 @@ class UnderstandPolicyForm(forms.Form):
         return file
 
 
-class UserConsentForm(forms.Form):
+class UserConsentForm(BaseConsentFieldsMixin):
     """Form for user TOS consent and personal information collection"""
-
-    first_name = forms.CharField(
-        max_length=100,
-        required=True,
-        widget=forms.TextInput(
-            attrs={
-                "class": "form-control",
-                "id": "store_fname",
-                "placeholder": "Enter your first name",
-            }
-        ),
-    )
-
-    last_name = forms.CharField(
-        max_length=100,
-        required=True,
-        widget=forms.TextInput(
-            attrs={
-                "class": "form-control",
-                "id": "store_lname",
-                "placeholder": "Enter your last name",
-            }
-        ),
-    )
-
-    email = forms.EmailField(
-        required=True,
-        widget=forms.EmailInput(
-            attrs={
-                "class": "form-control",
-                "id": "email",
-                "placeholder": "Enter your email address",
-            }
-        ),
-    )
 
     phone = forms.CharField(
         max_length=20,
@@ -247,26 +219,6 @@ class UserConsentForm(forms.Form):
                 "id": "store_zip",
                 "placeholder": "Enter your ZIP code",
             }
-        ),
-    )
-
-    tos_agreement = forms.BooleanField(
-        required=True,
-        widget=forms.CheckboxInput(attrs={"class": "form-check-input", "id": "tos"}),
-    )
-
-    privacy_policy = forms.BooleanField(
-        required=True,
-        widget=forms.CheckboxInput(
-            attrs={"class": "form-check-input", "id": "privacy"}
-        ),
-    )
-
-    subscribe = forms.BooleanField(
-        required=False,
-        initial=True,
-        widget=forms.CheckboxInput(
-            attrs={"class": "form-check-input", "id": "subscribe"}
         ),
     )
 
