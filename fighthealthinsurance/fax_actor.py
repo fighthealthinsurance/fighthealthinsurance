@@ -10,6 +10,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 import ray
+from loguru import logger
 
 from fighthealthinsurance.fax_utils import *
 from fighthealthinsurance.utils import get_env_variable
@@ -72,14 +73,14 @@ class FaxActor:
         try:
             FaxesToSend.objects.all().delete()
         except Exception as e:
-            print(f"Couldn't delete faxes {e}")
+            logger.warning(f"Couldn't delete faxes: {e}")
             call_command("migrate")
 
     def send_delayed_faxes(self) -> Tuple[int, int]:
         from fighthealthinsurance.models import FaxesToSend
 
         target_time = timezone.now() - timedelta(hours=1)
-        print(f"Sending faxes older than target: {target_time}")
+        logger.info(f"Sending faxes older than target: {target_time}")
 
         delayed_faxes = FaxesToSend.objects.filter(
             should_send=True,
@@ -90,17 +91,21 @@ class FaxActor:
         f = 0
         for fax in delayed_faxes:
             try:
-                print(f"Attempting to send fax {fax}")
+                logger.debug(f"Attempting to send fax {fax}")
                 t = t + 1
                 response = self.do_send_fax_object(fax)
-                print(f"Sent fax {fax} with result {response}")
-            except Exception as e:
-                print(f"Error sending fax {fax}: {e}")
+                if response:
+                    logger.info(f"Sent fax {fax} successfully")
+                else:
+                    logger.warning(f"Failed to send fax {fax}")
+                    f = f + 1
+            except Exception:
+                logger.opt(exception=True).error(f"Error sending fax {fax}")
                 f = f + 1
         if t > 0:
-            print(f"Tried sending {t} faxes with {f} failures")
+            logger.info(f"Tried sending {t} faxes with {f} failures")
         else:
-            print("No old faxes found to send")
+            logger.debug("No old faxes found to send")
         return (t, f)
 
     def do_send_fax(self, hashed_email: str, uuid_val: Union[str, uuid.UUID]) -> bool:
@@ -115,31 +120,31 @@ class FaxActor:
                 uuid=uuid_val, hashed_email=hashed_email
             ).get()
         except FaxesToSend.DoesNotExist:
-            print(f"Fax not found for uuid={uuid_val}, hashed_email={hashed_email}")
+            logger.warning(f"Fax not found for uuid={uuid_val}")
             return False
         return self.do_send_fax_object(fax)
 
     def _update_fax_for_sending(self, fax):
-        print(f"Recording attempt to send time")
+        logger.debug("Recording attempt to send time")
         fax.attempting_to_send_as_of = timezone.now()
         fax.save()
 
     def _update_fax_for_sent(self, fax, fax_success, missing_destination):
-        print(f"Fax send command returned :)")
+        logger.debug("Fax send command returned")
         email = fax.email
         fax.sent = True
         fax.fax_success = fax_success
         fax.save()
-        print(f"Checking if we should notify user of result {fax_success}")
+        logger.debug(f"Checking if we should notify user of result {fax_success}")
         if fax.professional:
-            print(f"Professional fax, no need to notify user -- updating appeal")
+            logger.debug("Professional fax, updating appeal")
             appeal = fax.for_appeal
             if appeal is not None:
                 appeal.sent = fax_success
                 appeal.save()
                 return True
             else:
-                print(f"No appeal found for professional {fax}?!?")
+                logger.warning(f"No appeal found for professional {fax}")
                 return True
         fax_redo_link = "https://www.fighthealthinsurance.com" + reverse(
             "fax-followup",
@@ -174,15 +179,15 @@ class FaxActor:
         )
         msg.attach_alternative(html_content, "text/html")
         msg.send()
-        print(f"E-mail sent!")
+        logger.info("Fax follow-up email sent")
 
     def do_send_fax_object(self, fax) -> bool:
         denial = fax.denial_id
         if denial is None:
-            print(f"Fax {fax} has no denial id")
+            logger.warning(f"Fax {fax} has no denial id")
             return False
         if fax.destination is None:
-            print(f"Fax {fax} has no destination")
+            logger.warning(f"Fax {fax} has no destination")
             self._update_fax_for_sent(fax, False, missing_destination=True)
             return False
         extra = ""
@@ -191,7 +196,7 @@ class FaxActor:
         if fax.name is not None and len(fax.name) > 2:
             extra += f"This fax is sent on behalf of {fax.name}."
         self._update_fax_for_sending(fax)
-        print(f"Kicking of fax sending")
+        logger.debug("Kicking off fax sending")
         fax_sent = False
         try:
             fax_sent = asyncio.run(
@@ -204,6 +209,6 @@ class FaxActor:
                 )
             )
         except Exception as e:
-            print(f"Error running async send_fax {e}")
+            logger.opt(exception=True).error("Error running async send_fax")
         self._update_fax_for_sent(fax, fax_sent, missing_destination=False)
-        return True
+        return fax_sent

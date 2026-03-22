@@ -28,6 +28,7 @@ from bokeh.embed import components
 from bokeh.models import ColumnDataSource
 import pandas as pd
 import csv
+from loguru import logger
 
 
 def export_enabled_required(view_func):
@@ -573,7 +574,7 @@ def signups_by_day(request):
         )
         # Convert query results to a DataFrame
         df = pd.DataFrame(list(signups_per_day))
-    except:
+    except Exception:
         signups_per_day = (
             InterestedProfessional.objects.exclude(
                 Q(email="farts@farts.com") | Q(email="holden@pigscanfly.ca")
@@ -585,7 +586,7 @@ def signups_by_day(request):
         # Convert query results to a DataFrame
         df = pd.DataFrame(list(signups_per_day))
 
-    print(df)
+    logger.debug(f"Signup DataFrame: {len(df)} rows")
     if df.empty or "signup_date" not in df.columns:
         return HttpResponse("No signup data available.", content_type="text/plain")
 
@@ -700,7 +701,7 @@ def users_by_day(request):
     # Convert query results to a DataFrame
     df = pd.DataFrame(list(users_per_day))
 
-    print(df)
+    logger.debug(f"User DataFrame: {len(df)} rows")
     if df.empty:
         return HttpResponse("No user data available.", content_type="text/plain")
 
