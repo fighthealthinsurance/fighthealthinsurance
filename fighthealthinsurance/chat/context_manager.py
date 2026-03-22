@@ -200,10 +200,25 @@ async def background_generate_summary(chat_id: uuid.UUID, placeholder_tag: str) 
     if not history:
         return
 
+    # Check if the placeholder still exists before doing the expensive ML call.
+    # If another message already produced a real summary, the placeholder will
+    # have been superseded and we can skip summarization entirely.
+    if not chat.summary_for_next_call or not any(
+        str(entry) == placeholder_tag for entry in chat.summary_for_next_call
+    ):
+        logger.debug(
+            f"Background summary: placeholder already gone for chat {chat_id}, "
+            f"tag={placeholder_tag!r}"
+        )
+        return
+
     try:
         summary = await ml_router.summarize_chat_history(history, max_messages=0)
     except Exception as e:
-        logger.warning(f"Background summary generation failed for chat {chat_id}: {e}")
+        logger.warning(
+            f"Background summary generation failed for chat {chat_id}: "
+            f"{type(e).__name__}: {e}"
+        )
         return
 
     if not summary:
@@ -226,3 +241,7 @@ async def background_generate_summary(chat_id: uuid.UUID, placeholder_tag: str) 
                     f"Background summary replaced placeholder for chat {chat_id}"
                 )
                 return
+        logger.debug(
+            f"Background summary: placeholder not found in chat {chat_id} "
+            f"after re-fetch, tag={placeholder_tag!r}"
+        )

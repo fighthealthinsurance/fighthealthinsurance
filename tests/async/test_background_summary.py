@@ -7,6 +7,7 @@ These test the end-to-end flow through the WebSocket consumer, verifying that:
 3. The background task replaces the placeholder with a real summary
 """
 
+import contextlib
 import typing
 from unittest.mock import patch, AsyncMock
 
@@ -51,26 +52,28 @@ class BackgroundSummaryIntegrationTest(APITestCase):
         """
         mock_model = MockChatModelNoContext()
 
-        get_chat_backends_patcher = patch(
-            "fighthealthinsurance.ml.ml_router.MLRouter.get_chat_backends"
-        )
-        mock_get_chat_backends = get_chat_backends_patcher.start()
-        mock_get_chat_backends.return_value = [mock_model]
+        with contextlib.ExitStack() as stack:
+            mock_get_chat_backends = stack.enter_context(
+                patch(
+                    "fighthealthinsurance.ml.ml_router.MLRouter.get_chat_backends"
+                )
+            )
+            mock_get_chat_backends.return_value = [mock_model]
 
-        get_chat_backends_fallback_patcher = patch(
-            "fighthealthinsurance.ml.ml_router.MLRouter.get_chat_backends_with_fallback"
-        )
-        mock_get_fallback = get_chat_backends_fallback_patcher.start()
-        mock_get_fallback.return_value = ([mock_model], [])
+            mock_get_fallback = stack.enter_context(
+                patch(
+                    "fighthealthinsurance.ml.ml_router.MLRouter.get_chat_backends_with_fallback"
+                )
+            )
+            mock_get_fallback.return_value = ([mock_model], [])
 
-        # Track fire_and_forget calls but don't execute them
-        fire_and_forget_patcher = patch(
-            "fighthealthinsurance.chat_interface.fire_and_forget_in_new_threadpool",
-            new_callable=AsyncMock,
-        )
-        mock_fire_and_forget = fire_and_forget_patcher.start()
+            mock_fire_and_forget = stack.enter_context(
+                patch(
+                    "fighthealthinsurance.chat_interface.fire_and_forget_in_new_threadpool",
+                    new_callable=AsyncMock,
+                )
+            )
 
-        try:
             user = await sync_to_async(User.objects.create_user)(
                 username="bg_summary_user",
                 password="testpass",
@@ -123,50 +126,53 @@ class BackgroundSummaryIntegrationTest(APITestCase):
             mock_fire_and_forget.assert_called()
 
             await communicator.disconnect()
-        finally:
-            get_chat_backends_patcher.stop()
-            get_chat_backends_fallback_patcher.stop()
-            fire_and_forget_patcher.stop()
 
     async def test_background_task_replaces_placeholder_before_next_message(self):
         """
-        Simulate the background task completing before the next message:
+        Simulate the background task completing inline (via mock fire_and_forget):
         1. First message: model omits context -> placeholder stored
-        2. Background task runs and replaces placeholder
-        3. Second message: should use the background-generated summary
+        2. fire_and_forget runs the background task synchronously, replacing
+           the placeholder with a real summary in the DB
+        3. Verify the DB entry is the generated summary, not the placeholder
         """
         mock_model = MockChatModelNoContext()
 
-        get_chat_backends_patcher = patch(
-            "fighthealthinsurance.ml.ml_router.MLRouter.get_chat_backends"
-        )
-        mock_get_chat_backends = get_chat_backends_patcher.start()
-        mock_get_chat_backends.return_value = [mock_model]
+        with contextlib.ExitStack() as stack:
+            mock_get_chat_backends = stack.enter_context(
+                patch(
+                    "fighthealthinsurance.ml.ml_router.MLRouter.get_chat_backends"
+                )
+            )
+            mock_get_chat_backends.return_value = [mock_model]
 
-        get_chat_backends_fallback_patcher = patch(
-            "fighthealthinsurance.ml.ml_router.MLRouter.get_chat_backends_with_fallback"
-        )
-        mock_get_fallback = get_chat_backends_fallback_patcher.start()
-        mock_get_fallback.return_value = ([mock_model], [])
+            mock_get_fallback = stack.enter_context(
+                patch(
+                    "fighthealthinsurance.ml.ml_router.MLRouter.get_chat_backends_with_fallback"
+                )
+            )
+            mock_get_fallback.return_value = ([mock_model], [])
 
-        # Execute fire_and_forget inline so background task runs immediately
-        async def mock_fire_and_forget_impl(coro):
-            return await coro
+            # Execute fire_and_forget inline so background task runs immediately
+            async def mock_fire_and_forget_impl(coro):
+                return await coro
 
-        fire_and_forget_patcher = patch(
-            "fighthealthinsurance.chat_interface.fire_and_forget_in_new_threadpool",
-            side_effect=mock_fire_and_forget_impl,
-        )
-        mock_fire_and_forget = fire_and_forget_patcher.start()
+            stack.enter_context(
+                patch(
+                    "fighthealthinsurance.chat_interface.fire_and_forget_in_new_threadpool",
+                    side_effect=mock_fire_and_forget_impl,
+                )
+            )
 
-        summarize_patcher = patch(
-            "fighthealthinsurance.chat.context_manager.ml_router.summarize_chat_history",
-            new_callable=AsyncMock,
-        )
-        mock_summarize = summarize_patcher.start()
-        mock_summarize.return_value = "Patient denied GLP-1 coverage, asking for help"
+            mock_summarize = stack.enter_context(
+                patch(
+                    "fighthealthinsurance.chat.context_manager.ml_router.summarize_chat_history",
+                    new_callable=AsyncMock,
+                )
+            )
+            mock_summarize.return_value = (
+                "Patient denied GLP-1 coverage, asking for help"
+            )
 
-        try:
             user = await sync_to_async(User.objects.create_user)(
                 username="bg_replace_user",
                 password="testpass",
@@ -217,11 +223,6 @@ class BackgroundSummaryIntegrationTest(APITestCase):
             )
 
             await communicator.disconnect()
-        finally:
-            get_chat_backends_patcher.stop()
-            get_chat_backends_fallback_patcher.stop()
-            fire_and_forget_patcher.stop()
-            summarize_patcher.stop()
 
     async def test_normal_context_does_not_trigger_background_task(self):
         """
@@ -233,25 +234,28 @@ class BackgroundSummaryIntegrationTest(APITestCase):
             "Here is my response.", "Helping patient with GLP-1 denial"
         )
 
-        get_chat_backends_patcher = patch(
-            "fighthealthinsurance.ml.ml_router.MLRouter.get_chat_backends"
-        )
-        mock_get_chat_backends = get_chat_backends_patcher.start()
-        mock_get_chat_backends.return_value = [mock_model]
+        with contextlib.ExitStack() as stack:
+            mock_get_chat_backends = stack.enter_context(
+                patch(
+                    "fighthealthinsurance.ml.ml_router.MLRouter.get_chat_backends"
+                )
+            )
+            mock_get_chat_backends.return_value = [mock_model]
 
-        get_chat_backends_fallback_patcher = patch(
-            "fighthealthinsurance.ml.ml_router.MLRouter.get_chat_backends_with_fallback"
-        )
-        mock_get_fallback = get_chat_backends_fallback_patcher.start()
-        mock_get_fallback.return_value = ([mock_model], [])
+            mock_get_fallback = stack.enter_context(
+                patch(
+                    "fighthealthinsurance.ml.ml_router.MLRouter.get_chat_backends_with_fallback"
+                )
+            )
+            mock_get_fallback.return_value = ([mock_model], [])
 
-        fire_and_forget_patcher = patch(
-            "fighthealthinsurance.chat_interface.fire_and_forget_in_new_threadpool",
-            new_callable=AsyncMock,
-        )
-        mock_fire_and_forget = fire_and_forget_patcher.start()
+            mock_fire_and_forget = stack.enter_context(
+                patch(
+                    "fighthealthinsurance.chat_interface.fire_and_forget_in_new_threadpool",
+                    new_callable=AsyncMock,
+                )
+            )
 
-        try:
             user = await sync_to_async(User.objects.create_user)(
                 username="normal_ctx_user",
                 password="testpass",
@@ -300,7 +304,3 @@ class BackgroundSummaryIntegrationTest(APITestCase):
             mock_fire_and_forget.assert_not_called()
 
             await communicator.disconnect()
-        finally:
-            get_chat_backends_patcher.stop()
-            get_chat_backends_fallback_patcher.stop()
-            fire_and_forget_patcher.stop()

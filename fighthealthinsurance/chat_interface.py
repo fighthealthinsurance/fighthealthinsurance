@@ -1063,13 +1063,15 @@ class ChatInterface:
         current_llm_context = None
         if chat.summary_for_next_call and len(chat.summary_for_next_call) > 0:
             current_llm_context = chat.summary_for_next_call[-1]
-            # If we had a pubmed result in between carry it forward.
+            # Include the previous context summary so the model has continuity
+            # across summarization boundaries (e.g. microsite context, PubMed).
             if len(chat.summary_for_next_call) > 1:
-                if (
-                    "PubMed search results" in chat.summary_for_next_call[-2]
-                    or "PubMed search results" in current_llm_context
-                ):
-                    current_llm_context += chat.summary_for_next_call[-2]
+                prev_summary = chat.summary_for_next_call[-2]
+                if prev_summary and str(prev_summary).strip():
+                    current_llm_context = (
+                        f"Previous context summary:\n{prev_summary}\n\n"
+                        f"Most recent context summary:\n{current_llm_context}"
+                    )
 
         llm_input_message = user_message
 
