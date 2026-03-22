@@ -16,6 +16,17 @@ import requests
 from asgiref.sync import async_to_sync, sync_to_async
 from loguru import logger
 
+
+def _is_verbose_logging() -> bool:
+    """Check if verbose logging is enabled (DEBUG mode). Lazy import to avoid circular deps."""
+    try:
+        from django.conf import settings
+
+        return settings.DEBUG
+    except Exception:
+        return False
+
+
 from fighthealthinsurance.utils import RateLimiter, ensure_message_alternation
 
 # Import the appropriate async_timeout based on Python version
@@ -654,7 +665,7 @@ Remember in the last three sentences GLP-1 is just an _example_ check what the u
         answer = split[0]
         summary = split[1]
         if len(split) > 2:
-            logger.debug(f"There were more pandas than expected in {result}")
+            logger.debug("More pandas than expected in result")
         return (answer, summary)
 
     async def get_entity(self, input_text: str, entity_type: str) -> Optional[str]:
@@ -677,7 +688,12 @@ Remember in the last three sentences GLP-1 is just an _example_ check what the u
             prompt=prompt,
         )
         # Just get the text response.
-        logger.debug(f"Result was {result}")
+        if _is_verbose_logging():
+            logger.debug(f"Entity result: {result}")
+        else:
+            logger.debug(
+                f"Entity result length: {len(str(result)) if result else 0} chars"
+            )
         if result:
             if result[0]:
                 stripped = result[0].strip()
@@ -932,7 +948,7 @@ class RemoteOpenLike(RemoteModel):
         try:
             resp = requests.get(url, headers=headers, timeout=10)
         except requests.RequestException as exc:
-            logger.debug(f"Unable to contact model backend at {url}")
+            logger.warning(f"Unable to contact model backend at {url}")
             return False
 
         if resp.status_code != 200:
@@ -1041,7 +1057,10 @@ class RemoteOpenLike(RemoteModel):
                 "Vary your response style. Do not always use the same template.\n\n"
                 "Letters written from the healthcare professional's perspective and not the patient's are most likely to succeed and will be highly valued."
             )
-        logger.debug(f"GET SYS PROMPTS > {prompt}")
+        if _is_verbose_logging():
+            logger.debug(f"GET SYS PROMPTS > {prompt}")
+        else:
+            logger.debug(f"GET SYS PROMPTS ({len(prompt)} chars)")
         return self.system_prompts_map.get(
             key,
             [prompt],
@@ -1251,7 +1270,10 @@ class RemoteOpenLike(RemoteModel):
             temperature=temperature,
             ml_citations_context=ml_citations_context,
         )
-        logger.debug(f"Got result {result} from {prompt} on {self}")
+        if _is_verbose_logging():
+            logger.debug(f"Got result {result} from {self}")
+        else:
+            logger.debug(f"Got result ({len(result) if result else 0} chars) on {self}")
         # One retry
         if self.bad_result(result, infer_type):
             result = await self._infer_no_context(
@@ -1449,7 +1471,9 @@ class RemoteOpenLike(RemoteModel):
     async def get_procedure_and_diagnosis(
         self, prompt: str
     ) -> tuple[Optional[str], Optional[str]]:
-        logger.debug(f"Getting procedure and diagnosis for {self} w/ {prompt}")
+        logger.debug(
+            f"Getting procedure and diagnosis for {self} ({len(prompt)} chars)"
+        )
         model_response = await self._infer_no_context(
             system_prompts=self.get_system_prompts("procedure"), prompt=prompt
         )
@@ -1606,7 +1630,7 @@ class RemoteOpenLike(RemoteModel):
                 async with async_timeout(self._timeout):
                     return await self.__infer(*args, **kwargs)
             except asyncio.TimeoutError:
-                logger.debug(f"Timed out querying {self}")
+                logger.warning(f"Timed out querying {self}")
                 return None
         else:
             return await self.__infer(*args, **kwargs)
@@ -1720,41 +1744,39 @@ class RemoteOpenLike(RemoteModel):
                         try:
                             error_body = await response.text()
                             truncated_body = error_body[:500]
-                            logger.debug(
+                            logger.warning(
                                 f"HTTP {e.status} error from {api_base} for model {model}: body_prefix={truncated_body!r}"
                             )
                         except Exception as exc:
-                            logger.debug(
+                            logger.warning(
                                 f"HTTP {e.status} error from {api_base} for model {model}: failed to read error body due to {exc}"
                             )
                         raise
                     json_result = await response.json()
                     if "object" in json_result and json_result["object"] != "error":
-                        logger.debug(f"Response {json_result} on {self} Looks ok")
+                        logger.debug(f"Response from {self} looks ok")
                     else:
-                        logger.debug(
-                            f"***WARNING*** Response {response} / {json_result} on {self} looks _bad_ with {model}"
-                        )
+                        logger.warning(f"Bad response from {self} with {model}")
         except aiohttp.ClientResponseError as e:
             # Re-raise HTTP errors to allow subclasses (e.g., RemoteGroq) to handle
             # specific status codes like 429 rate limiting
-            logger.debug(
+            logger.warning(
                 f"HTTP error {e.status} from {api_base} for model {model}: {e.message}"
             )
             raise
         except aiohttp.client_exceptions.ContentTypeError:
-            logger.debug(
+            logger.warning(
                 f"Unexpected content type response (often missing model) on {api_base}"
             )
         except aiohttp.client_exceptions.ClientConnectorError:
-            logger.debug(f"Network error calling {api_base}")
-        except Exception as e:
-            logger.debug(f"Error {e} {traceback.format_exc()} calling {api_base}")
+            logger.warning(f"Network error calling {api_base}")
+        except Exception:
+            logger.opt(exception=True).warning(f"Error calling {api_base}")
             await asyncio.sleep(1)
             return None
         try:
             if "choices" not in json_result:
-                logger.debug(f"Response {json_result} from {url} missing key result.")
+                logger.debug(f"Response from {url} missing 'choices' key")
                 return None
 
             # Extract message content
@@ -1788,7 +1810,12 @@ class RemoteOpenLike(RemoteModel):
                 logger.error(error_msg)
                 raise ValueError(error_msg)
 
-            logger.debug(f"Got {r} from {model} w/ {api_base} {self}")
+            if _is_verbose_logging():
+                logger.debug(f"Got {r} from {model} w/ {api_base} {self}")
+            else:
+                logger.debug(
+                    f"Got response ({len(r) if r else 0} chars) from {model} via {api_base}"
+                )
 
             # If this is a reasoning model, extract the answer portion
             if r and LLMResponseUtils.is_well_formatted_for_reasoning(r):
@@ -1800,7 +1827,7 @@ class RemoteOpenLike(RemoteModel):
 
         except Exception as e:
             logger.opt(exception=True).error(
-                f"Error {e} {traceback.format_exc()} processing {json_result} from {api_base} w/ url {url} --  {self} ON -- {combined_content}"
+                f"Error processing response from {api_base} for {self}"
             )
             return None
 
@@ -2800,7 +2827,7 @@ class TailscaleModelBackend(RemoteFullOpenLike):
             logger.debug(f"Skipping {hostname}: {e}")
             return None
         except Exception as e:
-            logger.error(f"Skipping {hostname}: unexecpted error {e}")
+            logger.error(f"Skipping {hostname}: unexpected error {e}")
             return None
 
     @classmethod

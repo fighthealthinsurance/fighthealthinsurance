@@ -354,7 +354,7 @@ class PubMedTools(object):
             r: Optional[str] = await ml_router.summarize(
                 title="Combined contexts", text=joined_contexts
             )
-            logger.debug("Huzzah!")
+            logger.debug("Summarized combined contexts")
             if r is None:
                 return joined_contexts
             else:
