@@ -33,6 +33,7 @@ class UnderstandPolicyFormValidationTest(TestCase):
             "last_name": "User",
             "email": "test@example.com",
             "document_type": "summary_of_benefits",
+            "plan_category": "employer_erisa",
             "tos_agreement": True,
             "privacy_policy": True,
         }
@@ -331,6 +332,13 @@ class UnderstandPolicyViewTest(TestCase):
         self.assertContains(response, "policy_document")
         self.assertContains(response, "document_type")
 
+    def test_get_shows_plan_category_field(self):
+        response = self.client.get(self.url)
+        self.assertContains(response, "plan_category")
+        self.assertContains(response, "ERISA")
+        self.assertContains(response, "Medicare")
+        self.assertContains(response, "Medicaid")
+
     def test_post_without_file_shows_errors(self):
         response = self.client.post(
             self.url,
@@ -339,6 +347,7 @@ class UnderstandPolicyViewTest(TestCase):
                 "last_name": "User",
                 "email": "test@example.com",
                 "document_type": "summary_of_benefits",
+                "plan_category": "employer_erisa",
                 "tos_agreement": "on",
                 "privacy_policy": "on",
             },
@@ -355,6 +364,7 @@ class UnderstandPolicyViewTest(TestCase):
                 "last_name": "User",
                 "email": "test@example.com",
                 "document_type": "summary_of_benefits",
+                "plan_category": "medicare_advantage",
                 "tos_agreement": "on",
                 "privacy_policy": "on",
                 "policy_document": SimpleUploadedFile(
@@ -367,6 +377,7 @@ class UnderstandPolicyViewTest(TestCase):
         self.assertEqual(PolicyDocument.objects.count(), 1)
         doc = PolicyDocument.objects.first()
         self.assertEqual(doc.document_type, "summary_of_benefits")
+        self.assertEqual(doc.plan_category, "medicare_advantage")
         self.assertIn("policy", doc.filename)
 
     def test_valid_upload_stores_session_data(self):
@@ -378,6 +389,7 @@ class UnderstandPolicyViewTest(TestCase):
                 "last_name": "User",
                 "email": "test@example.com",
                 "document_type": "medical_policy",
+                "plan_category": "employer_erisa",
                 "tos_agreement": "on",
                 "privacy_policy": "on",
                 "policy_document": SimpleUploadedFile(
