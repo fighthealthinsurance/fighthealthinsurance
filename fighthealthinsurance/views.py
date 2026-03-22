@@ -45,6 +45,26 @@ from fighthealthinsurance.type_utils import User
 from fighthealthinsurance.utils import send_fallback_email
 
 
+def _handle_mailing_list_subscribe(form: forms.Form, source_page: str) -> None:
+    """Subscribe user to mailing list if opted in. Swallows errors."""
+    if not form.cleaned_data.get("subscribe"):
+        return
+    name = f"{form.cleaned_data.get('first_name')} {form.cleaned_data.get('last_name')}"
+    try:
+        models.MailingListSubscriber.objects.create(
+            email=form.cleaned_data.get("email"),
+            phone=form.cleaned_data.get("phone", ""),
+            name=name,
+            comments=f"From {source_page}",
+            referral_source=form.cleaned_data.get("referral_source", ""),
+            referral_source_details=form.cleaned_data.get(
+                "referral_source_details", ""
+            ),
+        )
+    except Exception as e:
+        logger.warning(f"Failed to create mailing list subscriber: {e}")
+
+
 class BlogPostMetadata(TypedDict, total=False):
     """Type definition for blog post metadata from frontmatter."""
 
@@ -1889,21 +1909,7 @@ class ChatUserConsentView(FormView):
 
     def form_valid(self, form):
         mark_session_consent(self.request.session, form.cleaned_data.get("email"))
-        if form.cleaned_data.get("subscribe"):
-            name = f"{form.cleaned_data.get('first_name')} {form.cleaned_data.get('last_name')}"
-            referral_source = form.cleaned_data.get("referral_source", "")
-            referral_source_details = form.cleaned_data.get(
-                "referral_source_details", ""
-            )
-            # Does the user want to subscribe to the newsletter?
-            models.MailingListSubscriber.objects.create(
-                email=form.cleaned_data.get("email"),
-                phone=form.cleaned_data.get("phone"),
-                name=name,
-                comments="From chat consent form",
-                referral_source=referral_source,
-                referral_source_details=referral_source_details,
-            )
+        _handle_mailing_list_subscribe(form, "chat consent form")
 
         # Check if there's denial text to pass through
         denial_text = self.request.POST.get("denial_text", "")
@@ -2164,26 +2170,7 @@ class ExplainDenialView(FormView):
 
         mark_session_consent(self.request.session, form.cleaned_data.get("email"))
 
-        # Handle mailing list subscription
-        if form.cleaned_data.get("subscribe"):
-            name = f"{form.cleaned_data.get('first_name')} {form.cleaned_data.get('last_name')}"
-            referral_source = form.cleaned_data.get("referral_source", "")
-            referral_source_details = form.cleaned_data.get(
-                "referral_source_details", ""
-            )
-
-            try:
-                models.MailingListSubscriber.objects.create(
-                    email=form.cleaned_data.get("email"),
-                    phone=form.cleaned_data.get("phone"),
-                    name=name,
-                    comments="From explain denial page",
-                    referral_source=referral_source,
-                    referral_source_details=referral_source_details,
-                )
-            except Exception as e:
-                # Log the error but don't fail the form submission
-                logger.warning(f"Failed to create mailing list subscriber: {e}")
+        _handle_mailing_list_subscribe(form, "explain denial page")
 
         # Render auto-submit form to POST to chat
         context = {
@@ -2208,18 +2195,21 @@ class UnderstandPolicyView(FormView):
         context["title"] = "Understand My Policy"
         return context
 
-    def form_valid(self, form):
+    def form_valid(self, form) -> HttpResponse:
         """Process the uploaded policy document and redirect to chat."""
         email = form.cleaned_data.get("email")
         document_type = form.cleaned_data.get("document_type")
         user_question = form.cleaned_data.get("user_question", "")
         uploaded_file = form.cleaned_data.get("policy_document")
 
+        if not uploaded_file:
+            form.add_error("policy_document", "File upload failed.")
+            return self.form_invalid(form)
+
         # Sanitize filename for display
         safe_filename = re.sub(r"[^\w\s.\-]", "_", uploaded_file.name)[:200]
 
-        self.request.session["consent_completed"] = True
-        self.request.session["email"] = email
+        mark_session_consent(self.request.session, email or "")
 
         # Create PolicyDocument record
         try:
@@ -2249,17 +2239,7 @@ class UnderstandPolicyView(FormView):
             form.add_error(None, "Failed to upload document. Please try again.")
             return self.form_invalid(form)
 
-        # Handle mailing list subscription
-        if form.cleaned_data.get("subscribe"):
-            name = f"{form.cleaned_data.get('first_name')} {form.cleaned_data.get('last_name')}"
-            try:
-                models.MailingListSubscriber.objects.create(
-                    email=email,
-                    name=name,
-                    comments="From understand policy page",
-                )
-            except Exception as e:
-                logger.warning(f"Failed to create mailing list subscriber: {e}")
+        _handle_mailing_list_subscribe(form, "understand policy page")
 
         # Build initial message for chat — must match the regex in
         # chat_interface._POLICY_ANALYSIS_REGEX so the chat handler picks it up.
