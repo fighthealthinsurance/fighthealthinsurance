@@ -7,7 +7,8 @@ Sets up environment variables needed for tests to match tox configuration.
 import os
 import shutil
 import ssl
-import socket
+import urllib.error
+import urllib.request
 
 import pytest
 
@@ -26,12 +27,11 @@ def _has_ssl_intercepting_proxy() -> bool:
     if not (os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy")):
         return False
     try:
-        ctx = ssl.create_default_context()
-        with socket.create_connection(("api.stripe.com", 443), timeout=5) as sock:
-            with ctx.wrap_socket(sock, server_hostname="api.stripe.com"):
-                pass
+        handler = urllib.request.ProxyHandler()
+        opener = urllib.request.build_opener(handler)
+        opener.open("https://api.stripe.com", timeout=5)
         return False
-    except (ssl.SSLError, ssl.SSLCertVerificationError, OSError):
+    except (ssl.SSLError, ssl.SSLCertVerificationError, urllib.error.URLError, OSError):
         return True
 
 
