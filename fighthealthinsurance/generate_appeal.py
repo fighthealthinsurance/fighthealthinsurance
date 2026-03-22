@@ -41,6 +41,70 @@ class AppealTemplateGenerator(object):
             return None
 
 
+try:
+    from english_words import get_english_words_set
+
+    _ENGLISH_WORDS: frozenset[str] = frozenset(
+        get_english_words_set(["gcide", "web2"], lower=True)
+    )
+except Exception:
+    logger.warning("english-words package not available, using empty word set")
+    _ENGLISH_WORDS = frozenset()
+
+
+def is_plausible_identifier(value: Optional[str]) -> bool:
+    """Check whether a string looks like a plausible plan/claim/member ID.
+
+    Real IDs are typically alphanumeric codes like 'ABC123456', 'H5521-001',
+    'PLAN987654'. They virtually always contain at least one digit and are
+    not common English words.
+    """
+    if value is None:
+        return False
+    stripped = value.strip()
+    if not stripped:
+        return False
+    # Reject very short or very long values
+    if len(stripped) < 3 or len(stripped) > 50:
+        return False
+    # Must contain at least one digit -- real IDs always do
+    if not re.search(r"\d", stripped):
+        return False
+    # Must be primarily alphanumeric (allow hyphens, underscores, spaces, dots, slashes, colons)
+    if not re.match(r"^[A-Za-z0-9\s\-_./#:]+$", stripped):
+        return False
+    # Reject if the lowercased value is a known English word
+    if stripped.lower() in _ENGLISH_WORDS:
+        return False
+    return True
+
+
+def identifier_found_in_text(identifier: str, text: str) -> bool:
+    """Check if an identifier appears in text with flexible matching.
+
+    Handles format variations like hyphens vs spaces vs no separator.
+    For example, 'H5521-001' should match 'H5521 001' or 'H5521001' in text.
+    """
+    if not identifier or not text:
+        return False
+
+    # Normalize: remove common separators and lowercase
+    def normalize(s: str) -> str:
+        return re.sub(r"[\s\-_./#:]+", "", s).lower()
+
+    norm_id = normalize(identifier)
+    norm_text = normalize(text)
+
+    if norm_id in norm_text:
+        return True
+
+    # Also try the original (lowercased) as-is in the lowered text
+    if identifier.lower() in text.lower():
+        return True
+
+    return False
+
+
 class AppealGenerator(object):
     QUALITY_KEYWORDS = (
         "evidence",
@@ -402,11 +466,32 @@ class AppealGenerator(object):
             r"[Mm]ember(?:\s*(?:ID|Number|#|:))?\s*[:=]?\s*([A-Z0-9]{5,20})",
         ]
 
+        def plan_id_score(result: Optional[str], _: Any) -> float:
+            if result is None:
+                return -1.0
+            if not is_plausible_identifier(result):
+                return -1.0
+            # Check that the identifier is found in the source document
+            if not identifier_found_in_text(result, denial_text):
+                return -0.5
+            score = 1.0
+            length = len(result.strip())
+            if 5 <= length <= 20:
+                score += 1.0
+            elif 3 <= length <= 30:
+                score += 0.5
+            # Bonus for mixed alphanumeric (common in IDs)
+            if re.search(r"[A-Za-z]", result) and re.search(r"\d", result):
+                score += 0.5
+            return score
+
         return await self._extract_entity_with_regexes_and_model(
             denial_text=denial_text,
             patterns=plan_patterns,
             use_external=use_external,
             model_method_name="get_plan_id",
+            find_in_denial=False,  # Handled by plan_id_score with flexible matching
+            score_fn=plan_id_score,
         )
 
     async def get_claim_id(self, denial_text=None, use_external=False) -> Optional[str]:
@@ -430,11 +515,32 @@ class AppealGenerator(object):
             r"[Rr]eference(?:\s*(?:ID|Number|#|:))?\s*[:=]?\s*([A-Z0-9-]{5,20})",
         ]
 
+        def claim_id_score(result: Optional[str], _: Any) -> float:
+            if result is None:
+                return -1.0
+            if not is_plausible_identifier(result):
+                return -1.0
+            # Check that the identifier is found in the source document
+            if not identifier_found_in_text(result, denial_text):
+                return -0.5
+            score = 1.0
+            length = len(result.strip())
+            if 5 <= length <= 20:
+                score += 1.0
+            elif 3 <= length <= 30:
+                score += 0.5
+            # Bonus for mixed alphanumeric (common in IDs)
+            if re.search(r"[A-Za-z]", result) and re.search(r"\d", result):
+                score += 0.5
+            return score
+
         return await self._extract_entity_with_regexes_and_model(
             denial_text=denial_text,
             patterns=claim_patterns,
             use_external=use_external,
             model_method_name="get_claim_id",
+            find_in_denial=False,  # Handled by claim_id_score with flexible matching
+            score_fn=claim_id_score,
         )
 
     async def get_date_of_service(

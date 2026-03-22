@@ -41,6 +41,7 @@ django-two-factor-auth
 django-mfa2
 coverage
 drf-spectacular
+english-words>=2.0.0
 easy_thumbnails
 exceptionite
 flake8-django
