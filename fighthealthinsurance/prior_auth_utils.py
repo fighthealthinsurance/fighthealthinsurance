@@ -64,15 +64,6 @@ class PriorAuthTextSubstituter:
                 # Member/Plan ID variants
                 (r"\[Member\s*(?:ID|#)\s*(?:Placeholder)?\]", context.get("member_id")),
                 (r"\[Plan\s*(?:ID|#)\s*(?:Placeholder)?\]", context.get("plan_id")),
-                # Claim/Reference number variants
-                (
-                    r"\[Claim\s*#?\s*(?:Number\s*)?(?:Placeholder)?\]",
-                    context.get("member_id"),
-                ),
-                (
-                    r"\[Reference\s*#?\s*(?:Number\s*)?(?:Placeholder)?\]",
-                    context.get("member_id"),
-                ),
                 # Patient name variants
                 (
                     r"\[Patient(?:'?s?)?\s+Name\s*(?:Placeholder)?\]",

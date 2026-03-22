@@ -235,10 +235,10 @@ class PriorAuthTextSubstituterTest(TestCase):
         self.assertIn(f"Patient name: {self.prior_auth.patient_name}", result)
         self.assertIn("$placeholder is invalid", result)
 
-    def test_fuzzy_placeholder_claim_number(self):
-        """Test fuzzy matching for model-generated placeholder variants like [Claim # Placeholder]"""
+    def test_fuzzy_placeholder_substitution(self):
+        """Test fuzzy matching for model-generated placeholder variants"""
         template_text = (
-            "Re: Claim [Claim # Placeholder] for patient [Patient Name Placeholder].\n"
+            "Patient: [Patient Name Placeholder].\n"
             "Diagnosis: [Diagnosis Placeholder]\n"
             "Treatment: [Treatment Placeholder]\n"
             "Insurance: [Insurance Company Placeholder]\n"
@@ -254,8 +254,7 @@ class PriorAuthTextSubstituterTest(TestCase):
             self.prior_auth, template_text
         )
 
-        self.assertIn(f"Re: Claim {self.prior_auth.member_id}", result)
-        self.assertIn(f"patient {self.prior_auth.patient_name}", result)
+        self.assertIn(f"Patient: {self.prior_auth.patient_name}", result)
         self.assertIn(f"Diagnosis: {self.prior_auth.diagnosis}", result)
         self.assertIn(f"Treatment: {self.prior_auth.treatment}", result)
         self.assertIn(f"Insurance: {self.prior_auth.insurance_company}", result)
@@ -264,39 +263,49 @@ class PriorAuthTextSubstituterTest(TestCase):
         self.assertIn(f"Provider: {self.professional.get_display_name()}", result)
         self.assertIn(f"NPI: {self.professional.npi_number}", result)
         self.assertIn(f"Practice: {self.domain.business_name}", result)
-        self.assertNotIn("[Claim # Placeholder]", result)
         self.assertNotIn("[Patient Name Placeholder]", result)
+        self.assertNotIn("[Diagnosis Placeholder]", result)
+
+    def test_fuzzy_placeholder_claim_not_mapped_to_member_id(self):
+        """Test that [Claim # Placeholder] is NOT incorrectly mapped to member_id in prior auth"""
+        template_text = "Claim: [Claim # Placeholder] Member: [Member ID Placeholder]"
+
+        result = PriorAuthTextSubstituter.substitute_patient_and_provider_info(
+            self.prior_auth, template_text
+        )
+
+        # Member ID should be substituted
+        self.assertIn(f"Member: {self.prior_auth.member_id}", result)
+        # Claim placeholder should be left alone (no claim field in prior auth)
+        self.assertIn("[Claim # Placeholder]", result)
 
     def test_fuzzy_placeholder_without_placeholder_suffix(self):
         """Test fuzzy matching works without 'Placeholder' suffix too"""
         template_text = (
-            "Claim [Claim #] for [Patient Name].\n"
-            "Reference: [Reference Number]\n"
+            "For [Patient Name].\n"
             "Diagnosis: [Diagnosis Code]\n"
+            "Member: [Member ID]\n"
         )
 
         result = PriorAuthTextSubstituter.substitute_patient_and_provider_info(
             self.prior_auth, template_text
         )
 
-        self.assertIn(f"Claim {self.prior_auth.member_id}", result)
-        self.assertIn(f"for {self.prior_auth.patient_name}", result)
-        self.assertIn(f"Reference: {self.prior_auth.member_id}", result)
+        self.assertIn(f"For {self.prior_auth.patient_name}", result)
         self.assertIn(f"Diagnosis: {self.prior_auth.diagnosis}", result)
+        self.assertIn(f"Member: {self.prior_auth.member_id}", result)
 
     def test_fuzzy_placeholder_case_insensitive(self):
         """Test fuzzy matching is case-insensitive"""
-        template_text = (
-            "[CLAIM # PLACEHOLDER] and [claim # placeholder] and [Claim # Placeholder]"
-        )
+        template_text = "[MEMBER ID PLACEHOLDER] and [member id placeholder] and [Member ID Placeholder]"
 
         result = PriorAuthTextSubstituter.substitute_patient_and_provider_info(
             self.prior_auth, template_text
         )
 
-        self.assertNotIn("[CLAIM # PLACEHOLDER]", result)
-        self.assertNotIn("[claim # placeholder]", result)
-        self.assertNotIn("[Claim # Placeholder]", result)
+        self.assertNotIn("[MEMBER ID PLACEHOLDER]", result)
+        self.assertNotIn("[member id placeholder]", result)
+        self.assertNotIn("[Member ID Placeholder]", result)
         self.assertEqual(result.count(self.prior_auth.member_id), 3)
 
     def test_fuzzy_placeholder_skipped_when_no_data(self):

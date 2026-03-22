@@ -2032,13 +2032,12 @@ class AppealsBackendHelper:
                 ),
             ]
             for pattern, value in fuzzy_subs:
-                if (
-                    value
-                    and value != ""
-                    and value != "UNKNOWN"
-                    and not value.startswith("{")
-                ):
-                    content = re.sub(pattern, str(value), content, flags=re.IGNORECASE)
+                if not value or value == "" or value == "UNKNOWN":
+                    continue
+                str_value = str(value)
+                if str_value.startswith("{"):
+                    continue
+                content = re.sub(pattern, str_value, content, flags=re.IGNORECASE)
             appeal["content"] = content
             return appeal
 
