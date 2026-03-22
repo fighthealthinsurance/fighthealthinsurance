@@ -579,20 +579,20 @@ class JourneyDocumentationQuestions(InsuranceQuestions):
 
     def medical_context(self):
         """Return context about the patient's medical journey."""
-        response = ""
-        if self.cleaned_data.get("prior_medications"):
-            response += f"Prior medications/treatments tried: {self.cleaned_data['prior_medications']}. "
-        if self.cleaned_data.get("test_results"):
-            response += f"Relevant test results: {self.cleaned_data['test_results']}. "
-        if self.cleaned_data.get("treatment_timeline"):
-            response += (
-                f"Treatment timeline: {self.cleaned_data['treatment_timeline']}. "
-            )
-        if self.cleaned_data.get("why_this_treatment"):
-            response += (
-                f"Clinical rationale: {self.cleaned_data['why_this_treatment']}. "
-            )
-        return response
+        parts = []
+        prior = self.cleaned_data.get("prior_medications")
+        if prior:
+            parts.append(f"Prior medications/treatments tried: {prior}.")
+        results = self.cleaned_data.get("test_results")
+        if results:
+            parts.append(f"Relevant test results: {results}.")
+        timeline = self.cleaned_data.get("treatment_timeline")
+        if timeline:
+            parts.append(f"Treatment timeline: {timeline}.")
+        rationale = self.cleaned_data.get("why_this_treatment")
+        if rationale:
+            parts.append(f"Clinical rationale: {rationale}.")
+        return " ".join(parts)
 
     def main(self):
         """Return main appeal text based on journey documentation answers."""
