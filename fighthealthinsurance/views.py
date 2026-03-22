@@ -2198,6 +2198,7 @@ class UnderstandPolicyView(FormView):
         """Process the uploaded policy document and redirect to chat."""
         email = form.cleaned_data.get("email")
         document_type = form.cleaned_data.get("document_type")
+        plan_category = form.cleaned_data.get("plan_category", "unknown")
         user_question = form.cleaned_data.get("user_question", "")
         uploaded_file = form.cleaned_data.get("policy_document")
 
@@ -2222,6 +2223,7 @@ class UnderstandPolicyView(FormView):
             policy_doc = PolicyDocument.objects.create(
                 document_enc=uploaded_file,
                 document_type=document_type,
+                plan_category=plan_category,
                 filename=safe_filename,
                 hashed_email=hashed_email,
                 session_key=session_key,
@@ -2246,9 +2248,18 @@ class UnderstandPolicyView(FormView):
             document_type, "policy document"
         )
 
-        initial_message = (
-            f"I've uploaded my insurance {doc_type_display}: {safe_filename}\n\n"
+        plan_category_display = dict(UnderstandPolicyForm.PLAN_CATEGORY_CHOICES).get(
+            plan_category, ""
         )
+
+        initial_message = (
+            f"I've uploaded my insurance {doc_type_display}: {safe_filename}\n"
+        )
+
+        if plan_category and plan_category != "unknown":
+            initial_message += f"Plan type: {plan_category_display}\n"
+
+        initial_message += "\n"
 
         if user_question:
             initial_message += f"My question: {user_question}\n\n"
@@ -2258,7 +2269,8 @@ class UnderstandPolicyView(FormView):
             "1. What is covered (inclusions)\n"
             "2. What is NOT covered (exclusions)\n"
             "3. Any clauses that would be useful if I need to appeal a denial\n"
-            "4. Key quotes I could use in an appeal letter"
+            "4. Key quotes I could use in an appeal letter\n"
+            "5. Which regulator oversees this plan and how to file a complaint"
         )
 
         context = {

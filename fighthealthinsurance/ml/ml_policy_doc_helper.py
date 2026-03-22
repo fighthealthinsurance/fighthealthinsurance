@@ -208,8 +208,9 @@ class MLPolicyDocHelper:
                     return None
 
                 # Step 2: Analyze for exclusions, inclusions, and appeal clauses
+                plan_category = getattr(policy_document, "plan_category", "unknown")
                 analysis_results = await cls._analyze_document_content(
-                    full_text, user_question
+                    full_text, user_question, plan_category=plan_category
                 )
 
                 if not analysis_results:
@@ -243,12 +244,27 @@ class MLPolicyDocHelper:
 
         return None
 
+    # Map plan categories to their regulatory context for the LLM prompt
+    PLAN_REGULATOR_CONTEXT: Dict[str, str] = {
+        "employer_erisa": "This is an ERISA employer-sponsored plan regulated by the U.S. Department of Labor. Appeals go through the DOL/EBSA.",
+        "employer_non_erisa": "This is a non-ERISA employer plan (government or church employer). Appeals are typically handled by the state insurance department.",
+        "aca_marketplace": "This is an ACA Marketplace plan. Appeals may go through HHS or the state insurance department/exchange.",
+        "medicare_traditional": "This is a Traditional Medicare plan regulated by CMS. Appeals follow the Medicare appeals process (redetermination, reconsideration, ALJ, etc.).",
+        "medicare_advantage": "This is a Medicare Advantage (Part C) plan regulated by CMS. Appeals go through the plan first, then to an Independent Review Entity (IRE).",
+        "medicaid_chip": "This is a Medicaid/CHIP plan regulated by the state Medicaid agency and CMS. Appeals go through the state fair hearing process.",
+        "tricare": "This is a TRICARE military health plan. Appeals go through the TRICARE appeals process.",
+        "va": "This is VA Health Care. Appeals go through the VA's Clinical Appeals process.",
+        "individual_off_exchange": "This is an individual off-exchange plan. Appeals are typically handled by the state insurance department.",
+        "short_term": "This is a short-term health plan. These may have limited appeal rights; check state regulations.",
+    }
+
     @classmethod
     async def _analyze_document_content(
         cls,
         full_text: str,
         user_question: Optional[str] = None,
         remaining_timeout: Optional[float] = None,
+        plan_category: str = "unknown",
     ) -> Optional[Dict[str, Any]]:
         """
         Use LLM to analyze document content for exclusions, inclusions, and appeal clauses.
@@ -264,8 +280,17 @@ The user has a specific question about this policy:
 Please pay special attention to sections relevant to this question.
 """
 
+        plan_context = ""
+        if plan_category and plan_category != "unknown":
+            regulator_info = cls.PLAN_REGULATOR_CONTEXT.get(plan_category, "")
+            if regulator_info:
+                plan_context = f"""
+Plan type context: {regulator_info}
+Use this information to tailor your analysis of appeal rights and regulatory references.
+"""
+
         prompt = f"""Analyze this insurance policy document and extract the following information.
-{question_context}
+{question_context}{plan_context}
 IMPORTANT: For each item you extract, include the exact page number where it appears.
 
 Extract:
@@ -285,12 +310,13 @@ Extract:
    - Prior authorization requirements
    - Exceptions to exclusions
    - Grievance procedures
+   - Which regulator oversees this plan and how to file external complaints
    For each, provide the exact quote and page number.
 
 4. **QUOTABLE SECTIONS**: Extract 3-5 key quotes that could be cited in an appeal letter.
    Format as: "Quote text" (Page X)
 
-5. **SUMMARY**: A brief (2-3 paragraph) plain-English summary of the key coverage and limitations.
+5. **SUMMARY**: A brief (2-3 paragraph) plain-English summary of the key coverage and limitations. Include which regulatory body oversees this plan type and the patient's external appeal rights.
 
 Document text:
 {text_for_analysis}

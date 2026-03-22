@@ -800,8 +800,8 @@ class AuditLogAdmin(admin.ModelAdmin):
 
 @admin.register(PolicyDocument)
 class PolicyDocumentAdmin(admin.ModelAdmin):
-    list_display = ("id", "filename", "document_type", "created_at")
-    list_filter = ("document_type", "created_at")
+    list_display = ("id", "filename", "document_type", "plan_category", "created_at")
+    list_filter = ("document_type", "plan_category", "created_at")
     search_fields = ("filename", "hashed_email")
     readonly_fields = ("id", "created_at")
 
