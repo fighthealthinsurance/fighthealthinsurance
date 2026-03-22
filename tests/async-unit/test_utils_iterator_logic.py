@@ -3,6 +3,7 @@ import asyncio
 import time
 from typing import AsyncIterator
 from fighthealthinsurance.utils import (
+    QueuedAsyncIterator,
     interleave_iterator_for_keep_alive,
     sync_iterator_to_async,
 )
@@ -182,3 +183,87 @@ class TestSyncIteratorToAsync:
         # The actual data item must appear
         data_items = [r for r in result if r != "\n"]
         assert "appeal1" in data_items
+
+
+class TestQueuedAsyncIterator:
+    @pytest.mark.asyncio
+    async def test_basic(self):
+        """All items from an async generator are yielded."""
+        async def source():
+            for i in range(3):
+                yield f"item{i}"
+
+        result = [item async for item in QueuedAsyncIterator(source())]
+        assert result == ["item0", "item1", "item2"]
+
+    @pytest.mark.asyncio
+    async def test_empty(self):
+        """Empty source produces no items."""
+        async def source():
+            return
+            yield  # make it an async generator  # noqa: E275
+
+        result = [item async for item in QueuedAsyncIterator(source())]
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_exception_propagation(self):
+        """Exceptions from the source are re-raised."""
+        async def source():
+            yield "ok"
+            raise ValueError("boom")
+
+        it = QueuedAsyncIterator(source())
+        items = []
+        with pytest.raises(ValueError, match="boom"):
+            async for item in it:
+                items.append(item)
+        assert items == ["ok"]
+
+    @pytest.mark.asyncio
+    async def test_full_pipeline_with_amap_and_keepalive(self):
+        """End-to-end: blocking sync iter -> sync_iterator_to_async ->
+        a.map chain (async generators) -> QueuedAsyncIterator ->
+        interleave_iterator_for_keep_alive.
+
+        This simulates the real appeal streaming pipeline and verifies:
+        1. Keep-alive newlines are emitted during blocking waits
+        2. All data items arrive (no items lost)
+        3. No 'async generator already running' errors
+        """
+        import asyncstdlib as a
+
+        # Use a single item with delay > timeout to keep the test fast
+        # while still exercising the timeout/keepalive path
+        blocking_iter = BlockingSyncIterator(["appeal1"], delay=2.0)
+        async_iter = sync_iterator_to_async(blocking_iter)
+
+        # a.map chain returns async generators (same as real code)
+        async def wrap_dict(text):
+            return {"content": text}
+
+        async def to_json(d):
+            return str(d)
+
+        mapped1 = a.map(wrap_dict, async_iter)
+        mapped2 = a.map(to_json, mapped1)
+
+        # QueuedAsyncIterator bridges async generators to the shield pattern
+        queued = QueuedAsyncIterator(mapped2)
+        interleaved = interleave_iterator_for_keep_alive(queued, timeout=1)
+
+        result = []
+        async for item in interleaved:
+            result.append(item)
+
+        newline_count = result.count("\n")
+        data_items = [r for r in result if r != "\n"]
+
+        # Must have keepalive newlines (proves event loop wasn't blocked)
+        assert newline_count > 3, (
+            f"Expected keep-alive newlines, got {newline_count}"
+        )
+        # Appeal must arrive (not lost by shield/timeout interaction)
+        assert len(data_items) >= 1, (
+            f"Expected at least 1 data item, got {len(data_items)}: {data_items}"
+        )

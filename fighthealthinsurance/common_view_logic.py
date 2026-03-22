@@ -51,6 +51,7 @@ from fighthealthinsurance.models import *
 from fighthealthinsurance.process_denial import ProcessDenialCodes
 from fighthealthinsurance.rag_client import get_rag_context_for_denial
 from fighthealthinsurance.utils import (
+    QueuedAsyncIterator,
     extract_file_text,
     interleave_iterator_for_keep_alive,
     sync_iterator_to_async,
@@ -2388,9 +2389,13 @@ class AppealsBackendHelper:
             sub_in_appeals, saved_appeals
         )
         appeals_json: AsyncIterator[str] = a.map(format_response, subbed_appeals)
+        # a.map returns async generators which don't support overlapping __anext__()
+        # calls. QueuedAsyncIterator buffers through a queue so the shield+timeout
+        # pattern in interleave_iterator_for_keep_alive works correctly.
+        queued_appeals: AsyncIterator[str] = QueuedAsyncIterator(appeals_json)
         # StreamignHttpResponse needs a synchronous iterator otherwise it blocks.
         interleaved: AsyncIterator[str] = interleave_iterator_for_keep_alive(
-            appeals_json
+            queued_appeals
         )
 
         new = 0

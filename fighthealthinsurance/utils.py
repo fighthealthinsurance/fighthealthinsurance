@@ -458,6 +458,50 @@ def sync_iterator_to_async(sync_iter: Iterator[T]) -> AsyncIterator[T]:
     return SyncIteratorToAsync(sync_iter)
 
 
+class QueuedAsyncIterator(AsyncIterator[T]):
+    """Wraps any async iterable into a class-based async iterator that supports
+    overlapping __anext__() calls (required by interleave_iterator_for_keep_alive's
+    asyncio.shield + wait_for pattern).
+
+    A background task eagerly consumes the source and buffers items in a queue.
+    Tracks a pending queue.get() so that retried __anext__() calls after
+    shield cancellation reuse the same in-flight get rather than losing items.
+    """
+
+    _DONE = object()
+
+    def __init__(self, source: AsyncIterator[T]):
+        self._queue: asyncio.Queue[T] = asyncio.Queue()
+        self._exhausted = False
+        self._pending: Optional[asyncio.Task[T]] = None
+        self._task = asyncio.ensure_future(self._produce(source))
+
+    async def _produce(self, source: AsyncIterator[T]) -> None:
+        try:
+            async for item in source:
+                await self._queue.put(item)
+        except Exception as e:
+            await self._queue.put(e)  # type: ignore[arg-type]
+        await self._queue.put(self._DONE)  # type: ignore[arg-type]
+
+    def __aiter__(self) -> "QueuedAsyncIterator[T]":
+        return self
+
+    async def __anext__(self) -> T:
+        if self._exhausted:
+            raise StopAsyncIteration
+        if self._pending is None or self._pending.done():
+            self._pending = asyncio.ensure_future(self._queue.get())
+        item = await self._pending
+        self._pending = None
+        if item is self._DONE:
+            self._exhausted = True
+            raise StopAsyncIteration
+        if isinstance(item, BaseException):
+            raise item
+        return item
+
+
 def all_subclasses(cls: type[U]) -> set[type[U]]:
     return set(cls.__subclasses__()).union(
         [s for c in cls.__subclasses__() for s in all_subclasses(c)]
