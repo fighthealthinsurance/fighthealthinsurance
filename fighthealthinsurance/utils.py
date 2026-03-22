@@ -842,3 +842,23 @@ async def _try_pandoc_engines(command: list[str]):
         except CalledProcessError as e:
             logger.debug(f"Error with engine {engine}: {e}")
     raise Exception(f"Failed {command} with all engines {engines}")
+
+
+def extract_file_text(path: str) -> str:
+    """Extract text from a PDF or text file at the given path."""
+    import pymupdf
+
+    if path.lower().endswith(".pdf"):
+        try:
+            with pymupdf.open(path) as doc:
+                return "\n".join(page.get_text() for page in doc)
+        except RuntimeError as e:
+            logger.warning(f"Error reading PDF {path}: {e}")
+            return ""
+    else:
+        try:
+            with open(path, "r", encoding="utf-8", errors="ignore") as f:
+                return f.read()
+        except Exception as e:
+            logger.debug(f"Could not read {path} as text: {e}")
+            return ""

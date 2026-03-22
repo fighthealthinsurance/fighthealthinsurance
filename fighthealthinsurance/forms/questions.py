@@ -3,12 +3,12 @@ import urllib
 
 from django import forms
 
-import pymupdf
 import requests
 from bs4 import BeautifulSoup
 from loguru import logger
 
 from fighthealthinsurance.models import Denial, PlanDocuments
+from fighthealthinsurance.utils import extract_file_text
 
 
 class InsuranceQuestions(forms.Form):
@@ -292,18 +292,7 @@ class GenderAffirmingCareQuestions(InsuranceQuestions):
         # Do we have plan documents and do they reference WPATH?
         wpath_version = None
         for path in plan_paths:
-            contents = None
-            if ".pdf" in path:
-                try:
-                    doc = pymupdf.open(path)
-                    contents = ""
-                    for page in doc:  # type: ignore[attr-defined]
-                        contents += page.get_text()
-                except RuntimeError:
-                    logger.warning(f"Error reading {path}")
-            if contents is None:
-                with open(path, "r") as file:
-                    contents = file.read()
+            contents = extract_file_text(path)
             soc_version_re = re.compile(
                 "WPATH.*?Standards of.*?Care.*?Version.*?(\\d+).*",
                 re.IGNORECASE | re.MULTILINE | re.DOTALL,
