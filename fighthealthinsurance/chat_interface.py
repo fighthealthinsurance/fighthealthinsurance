@@ -932,9 +932,7 @@ class ChatInterface:
 
                             if all_context_parts:
                                 full_context = "\n\n".join(all_context_parts)
-                                microsite_entry = (
-                                    f"Microsite context:\n{full_context}"
-                                )
+                                microsite_entry = f"Microsite context:\n{full_context}"
                                 # Store microsite context in chat summary
                                 chat_obj = await OngoingChat.objects.aget(id=chat.id)
                                 if not chat_obj.summary_for_next_call:
