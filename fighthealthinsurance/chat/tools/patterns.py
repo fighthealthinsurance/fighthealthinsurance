@@ -32,11 +32,8 @@ CREATE_OR_UPDATE_PRIOR_AUTH_REGEX = (
     r"^\s*\*{0,4}create_or_update_prior_auth\*{0,4}\s*(\{.*\})\s*$"
 )
 
-# Journey documentation questions tool - captures JSON parameters
-# Matches: get_documentation_questions {JSON} or **get_documentation_questions {JSON}**
-# Note: [^}]* only matches flat JSON (no nested braces). This is intentional and
-# consistent with MEDICAID_INFO_REGEX / MEDICAID_ELIGIBILITY_REGEX - the LLM is
-# instructed to send simple key-value params only.
+# Flat JSON only (no nested braces) — LLM sends simple key-value params.
+# Same pattern as MEDICAID_INFO_REGEX / MEDICAID_ELIGIBILITY_REGEX.
 GET_DOCUMENTATION_QUESTIONS_REGEX = (
     r"(?:\*\*)?get_documentation_questions\s*(\{[^}]*\})\s*(?:\*\*)?"
 )
