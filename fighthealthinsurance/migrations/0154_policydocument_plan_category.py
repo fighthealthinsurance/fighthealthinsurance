@@ -15,8 +15,14 @@ class Migration(migrations.Migration):
                 blank=True,
                 choices=[
                     ("employer_erisa", "Employer Plan (ERISA)"),
-                    ("employer_non_erisa", "Employer Plan (Non-ERISA, e.g. government/church)"),
-                    ("aca_marketplace", "ACA Marketplace (Healthcare.gov / State Exchange)"),
+                    (
+                        "employer_non_erisa",
+                        "Employer Plan (Non-ERISA, e.g. government/church)",
+                    ),
+                    (
+                        "aca_marketplace",
+                        "ACA Marketplace (Healthcare.gov / State Exchange)",
+                    ),
                     ("medicare_traditional", "Medicare (Traditional/Original)"),
                     ("medicare_advantage", "Medicare Advantage (Part C)"),
                     ("medicaid_chip", "Medicaid / CHIP"),
