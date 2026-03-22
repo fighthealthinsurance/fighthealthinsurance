@@ -1800,7 +1800,7 @@ def chat_interface_view(request):
         "initial_message": initial_message,
     }
     logger.debug(
-        f"Rendering chat interface: microsite_slug={microsite_slug}, default_procedure={default_procedure}, default_condition={default_condition}, medicare={medicare}, has_initial_message={bool(initial_message)}"
+        f"Rendering chat interface: microsite_slug={microsite_slug}, has_default_procedure={bool(default_procedure)}, has_default_condition={bool(default_condition)}, medicare={medicare}, has_initial_message={bool(initial_message)}"
     )
     return render(request, "chat_interface.html", context)
 

@@ -103,7 +103,9 @@ class TestMLCitationsHelper:
 
     @pytest.mark.asyncio
     @patch("fighthealthinsurance.ml.ml_citations_helper.Denial.objects")
-    async def test_generate_citations_for_denial_use_candidate(self, mock_denial_objects):
+    async def test_generate_citations_for_denial_use_candidate(
+        self, mock_denial_objects
+    ):
         """Test using candidate citations when they exist with matching procedure/diagnosis."""
         # Setup mock for database update
         mock_queryset = MagicMock()

@@ -329,9 +329,7 @@ class TestFaxFollowUpView:
 
         new_fax_number = "8005559999"
 
-        with patch(
-            "fighthealthinsurance.helpers.SendFaxHelper.resend"
-        ) as mock_resend:
+        with patch("fighthealthinsurance.helpers.SendFaxHelper.resend") as mock_resend:
             mock_resend.return_value = True
 
             response = client.post(

@@ -42,7 +42,7 @@ def get_or_create_price(
                     name=product_name,
                     stripe_meter_id=meter_id,
                 )
-            except:
+            except Exception:
                 meter_request = stripe.billing.Meter.create(
                     display_name=product_name,
                     event_name=product_name,

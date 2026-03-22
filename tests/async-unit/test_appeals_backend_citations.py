@@ -59,6 +59,7 @@ def _make_mock_denial_query(denial):
 
 def _make_empty_proposed_appeal_query():
     """Create a mock for ProposedAppeal.objects.filter(for_denial=denial).all()."""
+
     async def empty_async_iter():
         return
         yield

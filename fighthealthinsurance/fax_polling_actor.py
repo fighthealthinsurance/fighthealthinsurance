@@ -51,7 +51,7 @@ class FaxPollingActor:
             finally:
                 # Success or failure we wait.
                 self._logger.debug("Waiting for next run")
-                await asyncio.sleep(60 * 60)
+                await asyncio.sleep(self.interval)
         self._logger.warning("FaxPollingActor stopped running")
         return True
 

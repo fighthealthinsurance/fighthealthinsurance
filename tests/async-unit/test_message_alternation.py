@@ -124,7 +124,6 @@ class TestEnsureMessageAlternation(unittest.TestCase):
         self.assertIn("D", result[2]["content"])
         self.assertIn("E", result[2]["content"])
 
-
     def test_leading_assistant_gets_user_inserted(self):
         """Leading assistant message should get a user placeholder inserted before it."""
         history = [

@@ -766,12 +766,17 @@ class Prod(Base):
 
                     return minio
                 else:
-                    raise Exception("No storage endpoint configured")
-        except Exception as e:
+                    raise ValueError("No storage endpoint configured")
+        except (ConnectionError, TimeoutError, OSError, ValueError) as e:
             logger.opt(exception=True).error(
                 f"Failed to setup minio storage to {self.MINIO_STORAGE_ENDPOINT}"
             )
             return None
+        except Exception:
+            logger.opt(exception=True).error(
+                f"Unexpected error setting up minio storage to {self.MINIO_STORAGE_ENDPOINT}"
+            )
+            raise
 
 
 TEST_RUNNER = "django_nose.NoseTestSuiteRunner"

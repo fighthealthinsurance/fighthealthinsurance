@@ -44,7 +44,19 @@ class TestInterleaveIterator:
         """
         items = ["data1", "data2", "data3"]
         # Pattern: \n, [\n, data, \n]..., \n (final before StopAsyncIteration)
-        expected_output = ["\n", "\n", "data1", "\n", "\n", "data2", "\n", "\n", "data3", "\n", "\n"]
+        expected_output = [
+            "\n",
+            "\n",
+            "data1",
+            "\n",
+            "\n",
+            "data2",
+            "\n",
+            "\n",
+            "data3",
+            "\n",
+            "\n",
+        ]
         async_iter = async_generator(items)
         interleaved_iter = interleave_iterator_for_keep_alive(async_iter)
         result = [item async for item in interleaved_iter]
@@ -83,6 +95,6 @@ class TestInterleaveIterator:
         # proving timeouts fired. The basic test with 3 items gets 11 newlines
         # (initial + 2*3 items + final bookends). With timeouts we should see
         # substantially more since each timeout cycle emits additional newlines.
-        assert newline_count > 11, (
-            f"Expected extra timeout-induced keep-alive newlines, got only {newline_count}"
-        )
+        assert (
+            newline_count > 11
+        ), f"Expected extra timeout-induced keep-alive newlines, got only {newline_count}"

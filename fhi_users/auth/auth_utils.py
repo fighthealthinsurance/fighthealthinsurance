@@ -233,12 +233,14 @@ def create_user(
             user = User.objects.get(
                 username=username,
                 email=email,
-                password=None,
             )
-            user.password = password
-            user.first_name = first_name
-            user.last_name = last_name
-            user.save()
+            if not user.has_usable_password():
+                user.set_password(password)
+                user.first_name = first_name
+                user.last_name = last_name
+                user.save()
+            else:
+                raise User.DoesNotExist
             logger.info(
                 f"Updated existing pending user with email: {mask_email_for_logging(email)}"
             )

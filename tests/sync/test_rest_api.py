@@ -224,6 +224,7 @@ class DenialEndToEnd(APITestCase):
             hashed_email=hashed_email, denial_id=denial_id
         ).aget()
         print(f"We should find {denial}")
+
         # Now we need to poke entity extraction, this part is async.
         # Mock fire_and_forget_in_new_threadpool to avoid background threads
         # that race with test teardown.

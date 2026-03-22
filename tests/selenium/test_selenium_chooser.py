@@ -108,7 +108,6 @@ class SeleniumTestChooserPageLoad(FHISeleniumBase, StaticLiveServerTestCase):
         # Should explain what the user is doing
         self.assert_text("Help Us Improve Our AI Responses", timeout=10)
 
-
     def test_chooser_page_requires_tos_agreement(self):
         """Verify chooser entry buttons are gated behind an explicit Terms of Service agreement."""
         self.open(f"{self.live_server_url}/chooser/")
@@ -122,8 +121,12 @@ class SeleniumTestChooserPageLoad(FHISeleniumBase, StaticLiveServerTestCase):
         self.assert_attribute("button:contains('Score Chat Responses')", "disabled")
 
         self.click("input[type='checkbox']")
-        self.assert_false(self.is_element_present("button:contains('Score Appeal Letters')[disabled]"))
-        self.assert_false(self.is_element_present("button:contains('Score Chat Responses')[disabled]"))
+        self.assert_false(
+            self.is_element_present("button:contains('Score Appeal Letters')[disabled]")
+        )
+        self.assert_false(
+            self.is_element_present("button:contains('Score Chat Responses')[disabled]")
+        )
 
     def test_chooser_page_has_privacy_disclaimer(self):
         """
