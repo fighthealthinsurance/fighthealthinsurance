@@ -58,6 +58,78 @@ class PriorAuthTextSubstituter:
                 # See https://docs.python.org/3/library/re.html#re.escape
                 escaped_value = str(v).replace("\\", r"\\")
                 proposal_text = re.sub(pattern, escaped_value, proposal_text)
+            # Second pass: regex-based fuzzy matching for model-generated
+            # placeholder variants like [Claim # Placeholder]
+            fuzzy_subs = [
+                # Member/Plan ID variants
+                (r"\[Member\s*(?:ID|#)\s*(?:Placeholder)?\]", context.get("member_id")),
+                (r"\[Plan\s*(?:ID|#)\s*(?:Placeholder)?\]", context.get("plan_id")),
+                # Claim/Reference number variants
+                (
+                    r"\[Claim\s*#?\s*(?:Number\s*)?(?:Placeholder)?\]",
+                    context.get("member_id"),
+                ),
+                (
+                    r"\[Reference\s*#?\s*(?:Number\s*)?(?:Placeholder)?\]",
+                    context.get("member_id"),
+                ),
+                # Patient name variants
+                (
+                    r"\[Patient(?:'?s?)?\s+Name\s*(?:Placeholder)?\]",
+                    context.get("patient_name"),
+                ),
+                # Date of birth variants
+                (
+                    r"\[(?:Patient\s+)?(?:Date\s+of\s+Birth|DOB)\s*(?:Placeholder)?\]",
+                    context.get("patient_dob"),
+                ),
+                # Diagnosis variants
+                (
+                    r"\[Diagnosis\s*(?:Code\s*)?(?:Placeholder)?\]",
+                    context.get("diagnosis"),
+                ),
+                # Treatment variants
+                (
+                    r"\[Treatment\s*(?:Name\s*)?(?:Placeholder)?\]",
+                    context.get("treatment"),
+                ),
+                # Insurance company variants
+                (
+                    r"\[Insurance\s+Company\s*(?:Name\s*)?(?:Placeholder)?\]",
+                    context.get("insurance_company"),
+                ),
+                (
+                    r"\[Health\s+Plan\s*(?:Name\s*)?(?:Placeholder)?\]",
+                    context.get("insurance_company"),
+                ),
+                # Provider name variants
+                (
+                    r"\[(?:Provider|Doctor|Physician)(?:'?s?)?\s+Name\s*(?:Placeholder)?\]",
+                    context.get("provider_name"),
+                ),
+                # NPI variants
+                (
+                    r"\[NPI\s*(?:#|Number)?\s*(?:Placeholder)?\]",
+                    context.get("provider_npi"),
+                ),
+                # Date variants
+                (r"\[(?:Current\s+)?Date\s*(?:Placeholder)?\]", context.get("today")),
+                # Practice/address variants
+                (
+                    r"\[Practice\s+(?:Name\s*)?(?:Placeholder)?\]",
+                    context.get("practice_name"),
+                ),
+                (
+                    r"\[Practice\s+Address\s*(?:Placeholder)?\]",
+                    context.get("practice_address"),
+                ),
+            ]
+            for pattern, value in fuzzy_subs:
+                if value and not value.startswith("{{"):
+                    escaped_value = str(value).replace("\\", r"\\")
+                    proposal_text = re.sub(
+                        pattern, escaped_value, proposal_text, flags=re.IGNORECASE
+                    )
             return proposal_text
         except Exception as e:
             logger.error(f"Error substituting values in prior auth text: {e}")

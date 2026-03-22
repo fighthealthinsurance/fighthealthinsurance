@@ -235,6 +235,88 @@ class PriorAuthTextSubstituterTest(TestCase):
         self.assertIn(f"Patient name: {self.prior_auth.patient_name}", result)
         self.assertIn("$placeholder is invalid", result)
 
+    def test_fuzzy_placeholder_claim_number(self):
+        """Test fuzzy matching for model-generated placeholder variants like [Claim # Placeholder]"""
+        template_text = (
+            "Re: Claim [Claim # Placeholder] for patient [Patient Name Placeholder].\n"
+            "Diagnosis: [Diagnosis Placeholder]\n"
+            "Treatment: [Treatment Placeholder]\n"
+            "Insurance: [Insurance Company Placeholder]\n"
+            "Member ID: [Member ID Placeholder]\n"
+            "Plan ID: [Plan ID Placeholder]\n"
+            "Provider: [Provider Name Placeholder]\n"
+            "NPI: [NPI Number Placeholder]\n"
+            "Date: [Date Placeholder]\n"
+            "Practice: [Practice Name Placeholder]\n"
+        )
+
+        result = PriorAuthTextSubstituter.substitute_patient_and_provider_info(
+            self.prior_auth, template_text
+        )
+
+        self.assertIn(f"Re: Claim {self.prior_auth.member_id}", result)
+        self.assertIn(f"patient {self.prior_auth.patient_name}", result)
+        self.assertIn(f"Diagnosis: {self.prior_auth.diagnosis}", result)
+        self.assertIn(f"Treatment: {self.prior_auth.treatment}", result)
+        self.assertIn(f"Insurance: {self.prior_auth.insurance_company}", result)
+        self.assertIn(f"Member ID: {self.prior_auth.member_id}", result)
+        self.assertIn(f"Plan ID: {self.prior_auth.plan_id}", result)
+        self.assertIn(f"Provider: {self.professional.get_display_name()}", result)
+        self.assertIn(f"NPI: {self.professional.npi_number}", result)
+        self.assertIn(f"Practice: {self.domain.business_name}", result)
+        self.assertNotIn("[Claim # Placeholder]", result)
+        self.assertNotIn("[Patient Name Placeholder]", result)
+
+    def test_fuzzy_placeholder_without_placeholder_suffix(self):
+        """Test fuzzy matching works without 'Placeholder' suffix too"""
+        template_text = (
+            "Claim [Claim #] for [Patient Name].\n"
+            "Reference: [Reference Number]\n"
+            "Diagnosis: [Diagnosis Code]\n"
+        )
+
+        result = PriorAuthTextSubstituter.substitute_patient_and_provider_info(
+            self.prior_auth, template_text
+        )
+
+        self.assertIn(f"Claim {self.prior_auth.member_id}", result)
+        self.assertIn(f"for {self.prior_auth.patient_name}", result)
+        self.assertIn(f"Reference: {self.prior_auth.member_id}", result)
+        self.assertIn(f"Diagnosis: {self.prior_auth.diagnosis}", result)
+
+    def test_fuzzy_placeholder_case_insensitive(self):
+        """Test fuzzy matching is case-insensitive"""
+        template_text = (
+            "[CLAIM # PLACEHOLDER] and [claim # placeholder] and [Claim # Placeholder]"
+        )
+
+        result = PriorAuthTextSubstituter.substitute_patient_and_provider_info(
+            self.prior_auth, template_text
+        )
+
+        self.assertNotIn("[CLAIM # PLACEHOLDER]", result)
+        self.assertNotIn("[claim # placeholder]", result)
+        self.assertNotIn("[Claim # Placeholder]", result)
+        self.assertEqual(result.count(self.prior_auth.member_id), 3)
+
+    def test_fuzzy_placeholder_skipped_when_no_data(self):
+        """Test that fuzzy placeholders are not replaced when data is missing (placeholder fallback)"""
+        minimal_prior_auth = PriorAuthRequest.objects.create(
+            diagnosis="Test Diagnosis",
+            treatment="Test Treatment",
+            insurance_company="Test Insurance",
+            status="initial",
+        )
+
+        template_text = "Provider: [Provider Name Placeholder]"
+
+        result = PriorAuthTextSubstituter.substitute_patient_and_provider_info(
+            minimal_prior_auth, template_text
+        )
+
+        # Provider name is {{PROVIDER_NAME}} fallback, so fuzzy sub should be skipped
+        self.assertIn("[Provider Name Placeholder]", result)
+
     @patch(
         "fighthealthinsurance.prior_auth_utils.PriorAuthTextSubstituter._build_context_dict"
     )
