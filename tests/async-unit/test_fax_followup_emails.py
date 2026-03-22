@@ -59,78 +59,79 @@ def test_fax_without_destination(test_denial):
     return fax
 
 
+@pytest.fixture
+def notify_enabled():
+    """Patch send_mail and enable fax status notifications."""
+    with patch("fighthealthinsurance.fax_actor.send_mail") as mock_send, patch(
+        "fighthealthinsurance.fax_actor.get_env_variable", return_value="true"
+    ):
+        yield mock_send
+
+
 @pytest.mark.django_db
 class TestFaxStatusNotification:
     """Test internal fax status notification emails to support."""
 
-    def test_notification_sent_on_success(self, test_fax_with_destination):
+    def test_notification_sent_on_success(
+        self, test_fax_with_destination, notify_enabled
+    ):
         """Test that a status notification is sent when fax succeeds."""
         from fighthealthinsurance.fax_actor import send_fax_status_notification
 
-        fax = test_fax_with_destination
+        send_fax_status_notification(test_fax_with_destination, True, False)
 
-        with patch("fighthealthinsurance.fax_actor.send_mail") as mock_send, \
-             patch("fighthealthinsurance.fax_actor.get_env_variable", return_value="true"):
-            send_fax_status_notification(fax, True, False)
+        notify_enabled.assert_called_once()
+        args = notify_enabled.call_args
+        assert "SUCCESS" in args[0][0]  # subject
+        assert str(test_fax_with_destination.fax_id) in args[0][1]  # body
+        assert "support42@fighthealthinsurance.com" in args[0][3]
 
-            mock_send.assert_called_once()
-            args = mock_send.call_args
-            assert "SUCCESS" in args[0][0]  # subject
-            assert str(fax.fax_id) in args[0][1]  # body
-            assert "support42@fighthealthinsurance.com" in args[0][3]
-
-    def test_notification_sent_on_failure(self, test_fax_with_destination):
+    def test_notification_sent_on_failure(
+        self, test_fax_with_destination, notify_enabled
+    ):
         """Test that a status notification is sent when fax fails."""
         from fighthealthinsurance.fax_actor import send_fax_status_notification
 
-        fax = test_fax_with_destination
+        send_fax_status_notification(test_fax_with_destination, False, False)
 
-        with patch("fighthealthinsurance.fax_actor.send_mail") as mock_send, \
-             patch("fighthealthinsurance.fax_actor.get_env_variable", return_value="true"):
-            send_fax_status_notification(fax, False, False)
+        notify_enabled.assert_called_once()
+        assert "FAILED" in notify_enabled.call_args[0][0]
 
-            mock_send.assert_called_once()
-            assert "FAILED" in mock_send.call_args[0][0]
-
-    def test_notification_missing_destination(self, test_fax_without_destination):
+    def test_notification_missing_destination(
+        self, test_fax_without_destination, notify_enabled
+    ):
         """Test that missing destination is indicated in notification."""
         from fighthealthinsurance.fax_actor import send_fax_status_notification
 
-        fax = test_fax_without_destination
+        send_fax_status_notification(test_fax_without_destination, False, True)
 
-        with patch("fighthealthinsurance.fax_actor.send_mail") as mock_send, \
-             patch("fighthealthinsurance.fax_actor.get_env_variable", return_value="true"):
-            send_fax_status_notification(fax, False, True)
-
-            mock_send.assert_called_once()
-            assert "missing destination" in mock_send.call_args[0][0]
+        notify_enabled.assert_called_once()
+        assert "missing destination" in notify_enabled.call_args[0][0]
 
     def test_notification_disabled_by_env_var(self, test_fax_with_destination):
         """Test that notifications are not sent when disabled via env var."""
         from fighthealthinsurance.fax_actor import send_fax_status_notification
 
-        fax = test_fax_with_destination
-
-        with patch("fighthealthinsurance.fax_actor.send_mail") as mock_send, \
-             patch("fighthealthinsurance.fax_actor.get_env_variable", return_value="false"):
-            send_fax_status_notification(fax, True, False)
+        with patch("fighthealthinsurance.fax_actor.send_mail") as mock_send, patch(
+            "fighthealthinsurance.fax_actor.get_env_variable", return_value="false"
+        ):
+            send_fax_status_notification(test_fax_with_destination, True, False)
 
             mock_send.assert_not_called()
 
-    def test_notification_contains_fax_id_and_uuid(self, test_fax_with_destination):
+    def test_notification_contains_fax_id_and_uuid(
+        self, test_fax_with_destination, notify_enabled
+    ):
         """Test that notification body contains fax ID and UUID for lookup."""
         from fighthealthinsurance.fax_actor import send_fax_status_notification
 
         fax = test_fax_with_destination
+        send_fax_status_notification(fax, True, False)
 
-        with patch("fighthealthinsurance.fax_actor.send_mail") as mock_send, \
-             patch("fighthealthinsurance.fax_actor.get_env_variable", return_value="true"):
-            send_fax_status_notification(fax, True, False)
-
-            body = mock_send.call_args[0][1]
-            assert str(fax.fax_id) in body
-            assert str(fax.uuid) in body
-            assert fax.destination in body
+        body = notify_enabled.call_args[0][1]
+        assert str(fax.fax_id) in body
+        assert str(fax.uuid) in body
+        assert fax.destination in body
 
 
 @pytest.mark.django_db
@@ -403,9 +404,7 @@ class TestFaxFollowUpView:
 
         new_fax_number = "8005559999"
 
-        with patch(
-            "fighthealthinsurance.helpers.SendFaxHelper.resend"
-        ) as mock_resend:
+        with patch("fighthealthinsurance.helpers.SendFaxHelper.resend") as mock_resend:
             mock_resend.return_value = True
 
             response = client.post(

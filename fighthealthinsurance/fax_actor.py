@@ -153,16 +153,13 @@ class FaxActor:
         fax.attempting_to_send_as_of = timezone.now()
         fax.save()
 
-    def _send_fax_status_notification(self, fax, fax_success, missing_destination):
-        send_fax_status_notification(fax, fax_success, missing_destination)
-
     def _update_fax_for_sent(self, fax, fax_success, missing_destination):
         print(f"Fax send command returned :)")
         email = fax.email
         fax.sent = True
         fax.fax_success = fax_success
         fax.save()
-        self._send_fax_status_notification(fax, fax_success, missing_destination)
+        send_fax_status_notification(fax, fax_success, missing_destination)
         print(f"Checking if we should notify user of result {fax_success}")
         if fax.professional:
             print(f"Professional fax, no need to notify user -- updating appeal")
