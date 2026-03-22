@@ -521,10 +521,10 @@ async def _interleave_iterator_for_keep_alive(
             break
         except asyncio.CancelledError:
             logger.debug("Cancellation of task in interleaved generator")
-            yield "\n"
             if task is not None and not task.done():
                 task.cancel()
             task = None
+            raise
         except Exception as e:
             logger.opt(exception=True).error(f"Error in generator: {e}")
             yield "\n"

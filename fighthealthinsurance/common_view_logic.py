@@ -2380,9 +2380,7 @@ class AppealsBackendHelper:
         async_appeals: AsyncIterator[str] = sync_iterator_to_async(filtered_appeals)
 
         # We convert to async here.
-        saved_appeals: AsyncIterator[dict[str, str]] = a.map(
-            save_appeal, async_appeals
-        )
+        saved_appeals: AsyncIterator[dict[str, str]] = a.map(save_appeal, async_appeals)
         # Note: we intentionally call save before substution.
         subbed_appeals: AsyncIterator[dict[str, str]] = a.map(
             sub_in_appeals, saved_appeals

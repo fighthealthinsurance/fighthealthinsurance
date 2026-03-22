@@ -152,25 +152,31 @@ class TestSyncIteratorToAsync:
 
         This is the core regression test for the appeal streaming bug:
         if next() blocked the event loop, the concurrent task could not run.
+        Uses an asyncio.Event to prove concurrent_work() finishes *while*
+        consume() is still blocked waiting for iterator items.
         """
         blocking_iter = BlockingSyncIterator(["x", "y"], delay=0.5)
 
-        concurrent_task_ran = False
+        concurrent_done = asyncio.Event()
+        consume_done = asyncio.Event()
 
         async def concurrent_work():
-            nonlocal concurrent_task_ran
             await asyncio.sleep(0.1)
-            concurrent_task_ran = True
+            assert not consume_done.is_set(), (
+                "concurrent_work must finish while consume is still running"
+            )
+            concurrent_done.set()
 
         async def consume():
             results = []
             async for item in sync_iterator_to_async(blocking_iter):
                 results.append(item)
+            consume_done.set()
             return results
 
         results, _ = await asyncio.gather(consume(), concurrent_work())
         assert results == ["x", "y"]
-        assert concurrent_task_ran, (
+        assert concurrent_done.is_set(), (
             "Concurrent async task should have run while iterator was blocking"
         )
 
@@ -186,10 +192,12 @@ class TestSyncIteratorToAsync:
         async for item in interleaved:
             result.append(item)
 
-        # Keep-alive newlines must have been emitted while waiting
+        # With 1 item and no timeouts, the baseline pattern produces 4 newlines
+        # (initial + before-item + after-item + final). With a 2s blocking delay
+        # and 1s timeout, at least one extra keep-alive newline must fire.
         newline_count = result.count("\n")
-        assert newline_count > 3, (
-            f"Expected keep-alive newlines during blocking wait, got {newline_count}"
+        assert newline_count >= 5, (
+            f"Expected keep-alive newlines beyond baseline 4, got {newline_count}"
         )
         # The actual data item must appear
         data_items = [r for r in result if r != "\n"]
@@ -233,9 +241,10 @@ class TestFullAppealStreamingPipeline:
         newline_count = result.count("\n")
         data_items = [r for r in result if r != "\n"]
 
-        # Must have keepalive newlines (proves event loop wasn't blocked)
-        assert newline_count > 3, (
-            f"Expected keep-alive newlines, got {newline_count}"
+        # Baseline for 1 item with no timeouts is 4 newlines; extra ones
+        # prove keep-alive fired during the blocking wait.
+        assert newline_count >= 5, (
+            f"Expected keep-alive newlines beyond baseline 4, got {newline_count}"
         )
         # Appeal must arrive
         assert len(data_items) >= 1, (
