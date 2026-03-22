@@ -5,6 +5,7 @@ Sets up environment variables needed for tests to match tox configuration.
 """
 
 import os
+import shutil
 import ssl
 import socket
 
@@ -39,4 +40,9 @@ _skip_stripe_ssl = _has_ssl_intercepting_proxy()
 skip_if_stripe_ssl_blocked = pytest.mark.skipif(
     _skip_stripe_ssl,
     reason="SSL-intercepting proxy blocks Stripe API connections",
+)
+
+skip_if_no_pandoc = pytest.mark.skipif(
+    shutil.which("pandoc") is None,
+    reason="pandoc is not installed",
 )
