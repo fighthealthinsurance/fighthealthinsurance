@@ -199,7 +199,6 @@ class ChatInterface:
         is_professional: bool = True,
         fallback_backends: Optional[List[RemoteModelLike]] = None,
         full_history: Optional[List[Dict[str, str]]] = None,
-        document_name: Optional[str] = None,
     ) -> Tuple[Optional[str], Optional[str]]:
         """
         Calls the LLM, handles PubMed query requests if present and returns the response.
@@ -237,7 +236,6 @@ class ChatInterface:
         score_fn = create_response_scorer(
             call_scores,
             primary_calls=calls,
-            document_name=document_name,
             chat_history=chat.chat_history,
         )
 
@@ -266,7 +264,6 @@ class ChatInterface:
                 fallback_backends=fallback_backends,
                 timeout=35.0,
                 status_callback=self.send_status_message,
-                document_name=document_name,
                 chat_history=chat.chat_history,
             )
             if retry_response and len(retry_response.strip()) > 5:
@@ -804,7 +801,6 @@ class ChatInterface:
         iterate_on_appeal: Optional[str] = None,
         iterate_on_prior_auth: Optional[str] = None,
         user: Optional[User] = None,
-        document_name: Optional[str] = None,
     ):
         """
         Handles an incoming chat message, interacts with LLMs, and manages chat history.
@@ -1092,7 +1088,6 @@ class ChatInterface:
                 is_professional=self.is_professional or self.is_trial_professional,
                 fallback_backends=fallback_models if fallback_models else None,
                 full_history=full_history_for_llm,  # Also try with full history if model supports it
-                document_name=document_name,
             )
 
             if response_text and response_text.strip():

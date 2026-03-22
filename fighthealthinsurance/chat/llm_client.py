@@ -60,24 +60,29 @@ def estimate_history_tokens(history: List[Dict[str, str]]) -> int:
     return sum(len(msg.get("content", "")) for msg in history) // 4
 
 
-def _history_contains_patient_name(chat_history: List[Dict[str, str]]) -> bool:
-    """Check if patient_name has already been provided in the chat history."""
-    for msg in chat_history:
+# Common file extensions to detect document names in chat history
+_FILE_EXT_PATTERN = re.compile(
+    r"[\w\-. ]+\.(?:pdf|jpg|jpeg|png|gif|doc|docx|txt|csv|xlsx|xls|rtf|tiff?|bmp|webp)",
+    re.IGNORECASE,
+)
+
+
+def _extract_document_names_from_history(
+    chat_history: List[Dict[str, str]],
+) -> List[str]:
+    """Extract document filenames from recent chat history messages."""
+    names: List[str] = []
+    for msg in chat_history[-10:]:  # Only check recent messages
         content = msg.get("content", "")
-        # Check for patient_name in tool calls (e.g. create_or_update_appeal{"patient_name": "..."})
-        if '"patient_name"' in content or "'patient_name'" in content:
-            return True
-        # Check for patient_name in structured responses
-        if "patient_name" in content and ":" in content:
-            return True
-    return False
+        for match in _FILE_EXT_PATTERN.finditer(content):
+            names.append(match.group(0).strip())
+    return names
 
 
 def score_llm_response(
     result: Optional[Tuple[Optional[str], Optional[str]]],
     call_score: int,
     is_primary_call: bool = True,
-    document_name: Optional[str] = None,
     chat_history: Optional[List[Dict[str, str]]] = None,
 ) -> float:
     """
@@ -87,7 +92,6 @@ def score_llm_response(
         result: Tuple of (response_text, context_part) from LLM
         call_score: Base score from model quality
         is_primary_call: Whether this is a primary (not retry) call
-        document_name: Name of a file the user just uploaded, if any
         chat_history: Current chat history for context-aware scoring
 
     Returns:
@@ -131,20 +135,22 @@ def score_llm_response(
             score -= 200
             logger.warning("Detected false promise in response, penalizing score")
 
-        # Bonus for referencing an uploaded document by name
-        if document_name and document_name.lower() in response_text.lower():
-            score += 150
-            logger.debug(
-                f"Response references uploaded document '{document_name}', boosting score"
-            )
+        # Bonus for referencing an uploaded document by name (derived from history)
+        if chat_history:
+            for doc_name in _extract_document_names_from_history(chat_history):
+                if doc_name.lower() in response_text.lower():
+                    score += 150
+                    logger.debug(
+                        f"Response references uploaded document '{doc_name}', boosting score"
+                    )
+                    break
 
-        # Penalize asking for patient_name when it's already in history
-        if chat_history and ASKS_FOR_PATIENT_NAME.search(response_text):
-            if _history_contains_patient_name(chat_history):
-                score -= 100
-                logger.debug(
-                    "Response asks for patient_name already in history, penalizing"
-                )
+        # Always penalize asking for patient name — it's known client-side
+        if ASKS_FOR_PATIENT_NAME.search(response_text):
+            score -= 200
+            logger.debug(
+                "Response asks for patient name, penalizing (known client-side)"
+            )
 
     # Add base quality score from model
     if response_text and context_part:
@@ -159,7 +165,6 @@ def score_llm_response(
 def create_response_scorer(
     call_scores: Dict[Awaitable, int],
     primary_calls: Optional[List[Awaitable]] = None,
-    document_name: Optional[str] = None,
     chat_history: Optional[List[Dict[str, str]]] = None,
 ) -> Callable[[Optional[Tuple[Optional[str], Optional[str]]], Awaitable], float]:
     """
@@ -168,7 +173,6 @@ def create_response_scorer(
     Args:
         call_scores: Dict mapping call awaitables to their base scores
         primary_calls: List of primary (non-retry) calls for bonus scoring
-        document_name: Name of a file the user just uploaded, if any
         chat_history: Current chat history for context-aware scoring
 
     Returns:
@@ -186,7 +190,6 @@ def create_response_scorer(
             result,
             call_score,
             is_primary,
-            document_name=document_name,
             chat_history=chat_history,
         )
 
