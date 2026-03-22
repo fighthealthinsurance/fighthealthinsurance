@@ -4,7 +4,8 @@ import uuid
 from datetime import timedelta
 from typing import Tuple, Union
 
-from django.core.mail import EmailMultiAlternatives
+from django.conf import settings
+from django.core.mail import EmailMultiAlternatives, send_mail
 from django.template.loader import render_to_string
 from django.urls import reverse
 from django.utils import timezone
@@ -13,6 +14,34 @@ import ray
 
 from fighthealthinsurance.fax_utils import *
 from fighthealthinsurance.utils import get_env_variable
+
+
+def send_fax_status_notification(fax, fax_success, missing_destination):
+    """Send internal notification email about fax status to support."""
+    notify = get_env_variable("FAX_STATUS_NOTIFICATIONS", "true").lower() == "true"
+    if not notify:
+        return
+    status = "SUCCESS" if fax_success else "FAILED"
+    if missing_destination:
+        status = "FAILED (missing destination)"
+    denial_id = getattr(fax.denial_id, "pk", None)
+    body = (
+        f"Fax Status: {status}\n"
+        f"Fax ID: {fax.fax_id}\n"
+        f"UUID: {fax.uuid}\n"
+        f"Destination: {fax.destination or 'N/A'}\n"
+        f"Denial ID: {denial_id}\n"
+        f"Professional: {fax.professional}\n"
+    )
+    try:
+        send_mail(
+            f"Fax {status} - ID {fax.fax_id}",
+            body,
+            settings.DEFAULT_FROM_EMAIL,
+            ["support42@fighthealthinsurance.com"],
+        )
+    except Exception as e:
+        print(f"Error sending fax status notification: {e}")
 
 
 @ray.remote(max_restarts=-1, max_task_retries=-1)
@@ -124,12 +153,16 @@ class FaxActor:
         fax.attempting_to_send_as_of = timezone.now()
         fax.save()
 
+    def _send_fax_status_notification(self, fax, fax_success, missing_destination):
+        send_fax_status_notification(fax, fax_success, missing_destination)
+
     def _update_fax_for_sent(self, fax, fax_success, missing_destination):
         print(f"Fax send command returned :)")
         email = fax.email
         fax.sent = True
         fax.fax_success = fax_success
         fax.save()
+        self._send_fax_status_notification(fax, fax_success, missing_destination)
         print(f"Checking if we should notify user of result {fax_success}")
         if fax.professional:
             print(f"Professional fax, no need to notify user -- updating appeal")
