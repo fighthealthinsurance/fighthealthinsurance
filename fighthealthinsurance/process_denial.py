@@ -101,7 +101,7 @@ class ProcessDenialRegex(DenialBase):
         return None
 
     async def get_diagnosis(self, text):
-        logger.debug(f"Getting diagnosis types for {text}")
+        logger.debug(f"Getting diagnosis types ({len(text)} chars)")
         procedure = None
         async for d in self.diagnosis:
             logger.debug(f"Exploring {d} w/ {d.regex}")
