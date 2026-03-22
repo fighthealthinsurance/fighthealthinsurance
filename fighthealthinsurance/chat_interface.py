@@ -11,6 +11,9 @@ from loguru import logger
 from fhi_users.models import User
 from fighthealthinsurance import settings
 from fighthealthinsurance.chat.context_manager import (
+    MISSING_CONTEXT_PREFIX,
+    background_generate_summary,
+    make_placeholder,
     prepare_history_for_llm,
     should_store_summary,
 )
@@ -183,6 +186,21 @@ class ChatInterface:
                             f"Merged microsite context from DB into chat {chat.id}"
                         )
                     break
+
+            # Check if a background summary task has replaced a placeholder in the DB
+            # If the in-memory chat still has a placeholder but the DB has a real summary
+            # at the same position, adopt the DB's value
+            in_memory_summary = chat.summary_for_next_call or []
+            for i, entry in enumerate(in_memory_summary):
+                if MISSING_CONTEXT_PREFIX in str(entry):
+                    # Check if the DB has a real value at this position
+                    if i < len(db_summary) and MISSING_CONTEXT_PREFIX not in str(
+                        db_summary[i]
+                    ):
+                        chat.summary_for_next_call[i] = db_summary[i]
+                        logger.debug(
+                            f"Merged background summary from DB into chat {chat.id}"
+                        )
         except OngoingChat.DoesNotExist:
             logger.warning(f"Chat {chat.id} not found in DB during summary merge")
         except Exception as e:
@@ -1140,10 +1158,27 @@ class ChatInterface:
 
             self._append_to_history(chat, "assistant", final_response_text)
 
+            # If model didn't return a context summary, store a placeholder and
+            # fire a background task to generate one
+            background_summary_task = None
+            if final_response_text and not final_context_part:
+                if not chat.summary_for_next_call:
+                    chat.summary_for_next_call = []
+                history_len = len(chat.chat_history) if chat.chat_history else 0
+                placeholder = make_placeholder(history_len)
+                chat.summary_for_next_call.append(placeholder)
+                background_summary_task = background_generate_summary(
+                    chat.id, placeholder
+                )
+
             # Merge any microsite context from DB before saving to avoid overwriting
             # background task updates
             await self._merge_summary_from_db(chat)
             await chat.asave()
+
+            # Launch background summary after save so the task can read the latest history
+            if background_summary_task is not None:
+                await fire_and_forget_in_new_threadpool(background_summary_task)
             await self.send_message_to_client(final_response_text)
         else:
             # Provide more helpful error message based on context
