@@ -441,7 +441,7 @@ class SyncIteratorToAsync(AsyncIterator[T]):
         if self._exhausted:
             raise StopAsyncIteration
         if self._pending is None:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             self._pending = loop.run_in_executor(
                 None, next, self._sync_iter, self._sentinel
             )
