@@ -112,6 +112,35 @@ class UnderstandPolicyForm(BaseConsentFieldsMixin):
         ),
     )
 
+    PLAN_CATEGORY_CHOICES = [
+        ("employer_erisa", "Employer Plan (ERISA) — regulated by Dept. of Labor"),
+        (
+            "employer_non_erisa",
+            "Employer Plan (Non-ERISA, e.g. government/church employer)",
+        ),
+        ("aca_marketplace", "ACA Marketplace (Healthcare.gov / State Exchange)"),
+        ("medicare_traditional", "Medicare (Traditional/Original)"),
+        ("medicare_advantage", "Medicare Advantage (Part C)"),
+        ("medicaid_chip", "Medicaid / CHIP"),
+        ("tricare", "TRICARE (Military)"),
+        ("va", "VA Health Care"),
+        ("individual_off_exchange", "Individual Plan (Off-Exchange)"),
+        ("short_term", "Short-Term Health Plan"),
+        ("unknown", "I'm Not Sure"),
+    ]
+
+    plan_category = forms.ChoiceField(
+        required=True,
+        choices=PLAN_CATEGORY_CHOICES,
+        initial="unknown",
+        widget=forms.Select(
+            attrs={
+                "class": "form-control",
+                "id": "plan_category",
+            }
+        ),
+    )
+
     user_question = forms.CharField(
         required=False,
         max_length=1000,
