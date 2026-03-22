@@ -2218,10 +2218,27 @@ class PolicyDocument(ExportModelOperationsMixin("PolicyDocument"), models.Model)
         ("other", "Other Policy Document"),
     ]
 
+    PLAN_CATEGORY_CHOICES = [
+        ("employer_erisa", "Employer Plan (ERISA)"),
+        ("employer_non_erisa", "Employer Plan (Non-ERISA, e.g. government/church)"),
+        ("aca_marketplace", "ACA Marketplace (Healthcare.gov / State Exchange)"),
+        ("medicare_traditional", "Medicare (Traditional/Original)"),
+        ("medicare_advantage", "Medicare Advantage (Part C)"),
+        ("medicaid_chip", "Medicaid / CHIP"),
+        ("tricare", "TRICARE (Military)"),
+        ("va", "VA Health Care"),
+        ("individual_off_exchange", "Individual Plan (Off-Exchange)"),
+        ("short_term", "Short-Term Health Plan"),
+        ("unknown", "I'm Not Sure"),
+    ]
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     document_enc = EncryptedFileField(null=True, storage=settings.COMBINED_STORAGE)
     document_type = models.CharField(
         max_length=50, choices=DOCUMENT_TYPE_CHOICES, default="other"
+    )
+    plan_category = models.CharField(
+        max_length=50, choices=PLAN_CATEGORY_CHOICES, default="unknown", blank=True
     )
     filename = models.CharField(max_length=255, blank=True)
     hashed_email = models.CharField(max_length=200, null=True, blank=True)
