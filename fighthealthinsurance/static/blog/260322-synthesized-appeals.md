@@ -8,7 +8,7 @@ tags: ["appeals", "ai", "synthesized-appeals", "health-insurance", "machine-lear
 readTime: "4 min read"
 ---
 
-Fighting a health insurance denial is stressful enough without wondering whether your appeal letter is as strong as it could be. We've been working on something new to help — and we're pretty excited about it. Party on, Garth.
+Fighting a health insurance denial is stressful enough without wondering whether your appeal letter is as strong as it could be. If you really want to hear about it, we've been working on something new — and we think it might actually help.
 
 ## What Are Synthesized Appeals?
 
@@ -47,4 +47,4 @@ This is new territory, and your feedback makes it better. Tell us what's working
 
 **support42@fighthealthinsurance.com**
 
-Excellent. Party on, Wayne.
+Anyway, that's about all we wanted to tell you. Don't ever let anybody tell you your appeal isn't worth fighting for.
