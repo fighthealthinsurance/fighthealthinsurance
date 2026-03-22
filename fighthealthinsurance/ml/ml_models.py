@@ -668,9 +668,13 @@ Remember in the last three sentences GLP-1 is just an _example_ check what the u
         Returns:
             Extracted entity or None
         """
+        if "id" in entity_type.lower():
+            prompt = f"Extract the {entity_type} (an alphanumeric identifier code containing digits, NOT a common English word or description) from the following text: {input_text}. Output ONLY the identifier value. If unknown provide UNKNOWN"
+        else:
+            prompt = f"Extract the {entity_type} from the following text: {input_text}. In your answer just provide the value no description of what it is (e.g. don't use things like the member is.. just provide their name). If unknown provide UNKNOWN"
         result = await self._infer(
             system_prompts=["You are a helpful assistant."],
-            prompt=f"Extract the {entity_type} from the following text: {input_text}. In your answer just provide the value no description of what it is (e.g. don't use things like the member is.. just provide their name). If unknown provide UNKNOWN",
+            prompt=prompt,
         )
         # Just get the text response.
         logger.debug(f"Result was {result}")
@@ -1387,7 +1391,7 @@ class RemoteOpenLike(RemoteModel):
         """
         result = await self._infer_no_context(
             system_prompts=["You are a helpful assistant."],
-            prompt=f"When possible output in the same format as is found in the denial. Tell me the what plan ID is present is within the provided denial. If it is not present or unknown write UNKNOWN. If known just output the answer without any pre-amble and as a snipper from the original doc. DO NOT GUESS IF YOU DON'T KNOW JUST SAY UNKNOWN. The denial follows: {denial}. Remember DO NOT GUESS IF YOU DON'T KNOW JUST SAY UNKNOWN.",
+            prompt=f"Extract the plan ID (an alphanumeric identifier code containing digits, like 'H5521-001', 'PLAN987654', 'GRP12345') from the following denial letter. Plan IDs are NOT common English words -- they are codes assigned by insurance companies. Output ONLY the ID value exactly as it appears in the document, nothing else. If no plan ID is present or you are unsure, write UNKNOWN. DO NOT GUESS. The denial follows: {denial}. Remember: output ONLY the identifier code, DO NOT GUESS IF YOU DON'T KNOW JUST SAY UNKNOWN.",
         )
         if result and "The plan ID is" in result:
             return result.split("The plan ID is")[1].strip()
@@ -1405,7 +1409,7 @@ class RemoteOpenLike(RemoteModel):
         """
         result = await self._infer_no_context(
             system_prompts=["You are a helpful assistant."],
-            prompt=f"When possible output in the same format as is found in the denial. Tell me the what claim ID was denied within the provided denial (it could be multiple but it's normally just one). If it is not present or otherwise unknown write UNKNOWN. If known just output the answer without any pre-amble and as a snipper from the original doc. DO NOT GUESS IF YOU DON'T KNOW JUST SAY UNKNOWN.. The denial follows: {denial}. REMEMBER DO NOT GUESS.",
+            prompt=f"Extract the claim ID (an alphanumeric identifier code containing digits, like 'CLM2024001234', '2024-12345-A', 'C987654321') from the following denial letter. Claim IDs are NOT common English words -- they are reference codes. It could be multiple but is normally just one. Output ONLY the ID value exactly as it appears in the document, nothing else. If no claim ID is present or you are unsure, write UNKNOWN. DO NOT GUESS. The denial follows: {denial}. REMEMBER DO NOT GUESS.",
         )
         if result and "Claim ID is" in result:
             return result.split("Claim ID is")[1].strip()

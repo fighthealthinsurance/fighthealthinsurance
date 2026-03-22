@@ -1467,8 +1467,10 @@ class DenialCreatorHelper:
             # Extract plan ID - could be in various formats (alphanumeric)
             plan_id = await appealGenerator.get_plan_id(denial_text=denial.denial_text)
 
-            # Simple validation to avoid hallucinations
-            if plan_id is not None and len(plan_id) < 30:
+            # Validate that the extracted value looks like a real identifier
+            from fighthealthinsurance.generate_appeal import is_plausible_identifier
+
+            if plan_id is not None and is_plausible_identifier(plan_id):
                 # Use aupdate to directly update the field at the database level
                 await Denial.objects.filter(denial_id=denial_id).aupdate(
                     plan_id=plan_id
@@ -1551,8 +1553,10 @@ class DenialCreatorHelper:
                 denial_text=denial.denial_text
             )
 
-            # Simple validation to avoid hallucinations
-            if claim_id is not None and len(claim_id) < 30:
+            # Validate that the extracted value looks like a real identifier
+            from fighthealthinsurance.generate_appeal import is_plausible_identifier
+
+            if claim_id is not None and is_plausible_identifier(claim_id):
                 # Use aupdate to directly update the field at the database level
                 await Denial.objects.filter(denial_id=denial_id).aupdate(
                     claim_id=claim_id

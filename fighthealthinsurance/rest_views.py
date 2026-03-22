@@ -1454,10 +1454,24 @@ class PriorAuthViewSet(viewsets.ViewSet, SerializerMixin):
             results = {}
             extracted_values = await asyncio.gather(*tasks, return_exceptions=True)
 
+            from fighthealthinsurance.generate_appeal import is_plausible_identifier
+
             for i, value in enumerate(extracted_values):
                 if i < len(fields):  # Safety check
                     field = fields[i]
                     if not isinstance(value, Exception) and value:
+                        # Validate identifier-type fields
+                        if (
+                            field
+                            in (
+                                "plan_id",
+                                "member_id",
+                            )
+                            and isinstance(value, str)
+                            and not is_plausible_identifier(value)
+                        ):
+                            logger.debug(f"Rejected implausible {field}: {value}")
+                            continue
                         results[field] = value
                     elif isinstance(value, Exception):
                         logger.error(f"Error extracting {field}: {value}")

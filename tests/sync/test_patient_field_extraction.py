@@ -186,6 +186,38 @@ class PatientFieldExtractionTest(APITestCase):
         self.assertTrue(is_valid_date)
 
     @patch("fighthealthinsurance.ml.ml_router.ml_router.entity_extract_backends")
+    def test_extract_patient_fields_rejects_english_words(self, mock_extract_backends):
+        """Test that common English words returned by ML are rejected for identifier fields."""
+        mock_model = MagicMock()
+
+        async def mock_get_entity(text, entity_type):
+            # Simulate ML model returning common words instead of real IDs
+            entity_values = {
+                "patient_name": "John Smith",
+                "member_id": "covers",  # Bad: common English word
+                "date_of_birth": "01/15/1980",
+                "plan_id": "amount",  # Bad: common English word
+                "insurance_company": "Blue Cross Blue Shield",
+            }
+            return entity_values.get(entity_type)
+
+        mock_model.get_entity.side_effect = mock_get_entity
+        mock_extract_backends.return_value = [mock_model]
+
+        response = self.client.post(
+            self.extract_fields_url, {"text": self.sample_patient_text}, format="json"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        # plan_id and member_id should be rejected (they're English words with no digits)
+        patient_fields = response.data
+        self.assertNotEqual(patient_fields.get("plan_id"), "amount")
+        self.assertNotEqual(patient_fields.get("member_id"), "covers")
+        # Other fields should still be present
+        self.assertEqual(patient_fields["patient_name"], "John Smith")
+        self.assertEqual(patient_fields["insurance_company"], "Blue Cross Blue Shield")
+
+    @patch("fighthealthinsurance.ml.ml_router.ml_router.entity_extract_backends")
     def test_extract_patient_fields_no_models_available(self, mock_extract_backends):
         """Test handling when no ML models are available for extraction."""
         # Mock the ML router to return no models
