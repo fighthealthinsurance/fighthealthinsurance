@@ -9,7 +9,12 @@ from typing import Awaitable, Callable, Dict, List, Optional, Tuple
 
 from loguru import logger
 
-from fighthealthinsurance.chat.llm_client import MIN_RESPONSE_LENGTH, build_retry_calls
+from fighthealthinsurance.chat.llm_client import (
+    ASKS_FOR_PATIENT_NAME,
+    MIN_RESPONSE_LENGTH,
+    _extract_document_names_from_history,
+    build_retry_calls,
+)
 from fighthealthinsurance.chat.safety_filters import detect_false_promises
 from fighthealthinsurance.ml.ml_models import RemoteModelLike
 from fighthealthinsurance.utils import best_within_timelimit
@@ -17,6 +22,7 @@ from fighthealthinsurance.utils import best_within_timelimit
 
 def create_simple_retry_scorer(
     call_scores: Dict[Awaitable, int],
+    chat_history: Optional[List[Dict[str, str]]] = None,
 ) -> Callable[[Optional[Tuple[Optional[str], Optional[str]]], Awaitable], float]:
     """
     Create a simplified scoring function for retry attempts.
@@ -26,10 +32,17 @@ def create_simple_retry_scorer(
 
     Args:
         call_scores: Dict mapping call awaitables to their base scores
+        chat_history: Current chat history for context-aware scoring
 
     Returns:
         Scoring function compatible with best_within_timelimit
     """
+    doc_names_lower = [
+        n.lower()
+        for n in (
+            _extract_document_names_from_history(chat_history) if chat_history else []
+        )
+    ]
 
     def score_fn(
         result: Optional[Tuple[Optional[str], Optional[str]]],
@@ -52,6 +65,17 @@ def create_simple_retry_scorer(
             if detect_false_promises(response_text):
                 score -= 200
 
+            # Bonus for referencing an uploaded document by name
+            response_lower = response_text.lower()
+            for doc_name in doc_names_lower:
+                if doc_name in response_lower:
+                    score += 150
+                    break
+
+            # Always penalize asking for patient name — it's known client-side
+            if ASKS_FOR_PATIENT_NAME.search(response_text):
+                score -= 200
+
         # Small bonus for context
         if context_part and len(context_part) > MIN_RESPONSE_LENGTH:
             score += 10
@@ -71,6 +95,7 @@ async def retry_llm_with_fallback(
     fallback_backends: Optional[List[RemoteModelLike]] = None,
     timeout: float = 35.0,
     status_callback: Optional[Callable[[str], Awaitable[None]]] = None,
+    chat_history: Optional[List[Dict[str, str]]] = None,
 ) -> Tuple[Optional[str], Optional[str]]:
     """
     Retry LLM call with shortened context and fallback backends.
@@ -90,6 +115,7 @@ async def retry_llm_with_fallback(
         fallback_backends: Optional backup model backends
         timeout: Timeout in seconds for retry attempts
         status_callback: Optional async callback for status messages
+        chat_history: Current chat history for context-aware scoring
 
     Returns:
         Tuple of (response_text, context_part) or (None, None) on failure
@@ -111,7 +137,7 @@ async def retry_llm_with_fallback(
     )
 
     # Create simplified scorer for retries
-    retry_scorer = create_simple_retry_scorer(retry_scores)
+    retry_scorer = create_simple_retry_scorer(retry_scores, chat_history=chat_history)
 
     try:
         retry_response, retry_context = await best_within_timelimit(

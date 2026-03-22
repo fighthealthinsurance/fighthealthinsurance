@@ -233,7 +233,11 @@ class ChatInterface:
         )
 
         # Create scoring function using the extracted module
-        score_fn = create_response_scorer(call_scores, primary_calls=calls)
+        score_fn = create_response_scorer(
+            call_scores,
+            primary_calls=calls,
+            chat_history=chat.chat_history,
+        )
 
         try:
             response_text, context_part = await best_within_timelimit(
@@ -260,6 +264,7 @@ class ChatInterface:
                 fallback_backends=fallback_backends,
                 timeout=35.0,
                 status_callback=self.send_status_message,
+                chat_history=chat.chat_history,
             )
             if retry_response and len(retry_response.strip()) > 5:
                 response_text = retry_response

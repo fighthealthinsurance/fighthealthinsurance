@@ -461,6 +461,7 @@ For example to create an appeal for a patient called "Not A Real Person" with th
 And if we had the denial text in the previous case we would instead do: **create_or_update_appeal**{"patient_name": "Not A Real Person", "appeal_text": "the appeal goes here", "diagnosis": "high risk", "procedure": "prep", "denial_text": "the denial text goes here"}
 Or to create a prior auth for the same fake patient with the prior auth text "prior text auth goes here" you could write: **create_or_update_prior_auth**{"patient_name": "Not A Real Person", "text": "prior text auth goes here", "diagnosis": "high risk", "procedure": "prep"}
 (note those two are just examples, not the actual prior auth or appeal).
+IMPORTANT: Do NOT ask the user for the patient's name. The patient's name is provided automatically by the system when creating appeals or prior auth requests. You can use a placeholder like "Patient Name" in examples — the system will fill it in.
 """
 
         # Conditionally include logged-in instructions
