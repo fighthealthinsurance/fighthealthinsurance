@@ -846,13 +846,16 @@ async def _try_pandoc_engines(command: list[str]):
 
 def extract_file_text(path: str) -> str:
     """Extract text from a PDF or text file at the given path."""
-    import pymupdf
-
     if path.lower().endswith(".pdf"):
+        try:
+            import pymupdf
+        except ImportError:
+            logger.warning("pymupdf is not installed; cannot extract PDF text")
+            return ""
         try:
             with pymupdf.open(path) as doc:
                 return "\n".join(page.get_text() for page in doc)
-        except RuntimeError as e:
+        except Exception as e:
             logger.warning(f"Error reading PDF {path}: {e}")
             return ""
     else:
@@ -860,5 +863,5 @@ def extract_file_text(path: str) -> str:
             with open(path, "r", encoding="utf-8", errors="ignore") as f:
                 return f.read()
         except Exception as e:
-            logger.debug(f"Could not read {path} as text: {e}")
+            logger.warning(f"Could not read {path} as text: {e}")
             return ""
