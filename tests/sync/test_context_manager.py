@@ -246,6 +246,7 @@ class TestMakePlaceholder:
         assert isinstance(make_placeholder(0), str)
 
 
+@pytest.mark.django_db(transaction=True)
 class TestBackgroundGenerateSummary:
     """Tests for the background_generate_summary function."""
 
