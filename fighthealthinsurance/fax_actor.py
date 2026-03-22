@@ -4,15 +4,46 @@ import uuid
 from datetime import timedelta
 from typing import Tuple, Union
 
-from django.core.mail import EmailMultiAlternatives
+from django.conf import settings
+from django.core.mail import EmailMultiAlternatives, send_mail
 from django.template.loader import render_to_string
 from django.urls import reverse
 from django.utils import timezone
 
 import ray
 
+from loguru import logger
+
 from fighthealthinsurance.fax_utils import *
 from fighthealthinsurance.utils import get_env_variable
+
+
+def send_fax_status_notification(fax, fax_success, missing_destination):
+    """Send internal notification email about fax status to support."""
+    notify = get_env_variable("FAX_STATUS_NOTIFICATIONS", "true").lower() == "true"
+    if not notify:
+        return
+    status = "SUCCESS" if fax_success else "FAILED"
+    if missing_destination:
+        status = "FAILED (missing destination)"
+    denial_id = getattr(fax.denial_id, "pk", None)
+    body = (
+        f"Fax Status: {status}\n"
+        f"Fax ID: {fax.fax_id}\n"
+        f"UUID: {fax.uuid}\n"
+        f"Destination: {fax.destination or 'N/A'}\n"
+        f"Denial ID: {denial_id}\n"
+        f"Professional: {fax.professional}\n"
+    )
+    try:
+        send_mail(
+            f"Fax {status} - ID {fax.fax_id}",
+            body,
+            settings.DEFAULT_FROM_EMAIL,
+            ["support42@fighthealthinsurance.com"],
+        )
+    except Exception:
+        logger.opt(exception=True).error("Error sending fax status notification")
 
 
 @ray.remote(max_restarts=-1, max_task_retries=-1)
@@ -137,6 +168,7 @@ class FaxActor:
         fax.sent = True
         fax.fax_success = fax_success
         fax.save()
+        send_fax_status_notification(fax, fax_success, missing_destination)
         self._logger.debug(f"Checking if we should notify user of result {fax_success}")
         if fax.professional:
             self._logger.debug("Professional fax, updating appeal")
