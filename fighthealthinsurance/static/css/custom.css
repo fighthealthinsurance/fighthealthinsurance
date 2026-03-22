@@ -1584,6 +1584,28 @@ section:not(.slider) .share-subcopy {
     margin: 0;
 }
 
+/* ===== Section Title Underline Accent ===== */
+.featured-title::after,
+.start-section-title::after,
+.about-section-title::after,
+.testimonials-title::after {
+    content: '';
+    display: block;
+    width: 60px;
+    height: 3px;
+    background: linear-gradient(90deg, #ADD100, #7B920A);
+    margin: 0.75rem auto 0;
+    border-radius: 2px;
+}
+
+/* ===== Scroll Margin for Sticky Nav ===== */
+.start-section,
+.about-section-refreshed,
+.testimonials-section,
+.featured-section {
+    scroll-margin-top: 80px;
+}
+
 /* ===== Testimonial Stars Enhancement ===== */
 .testimonial-card::before {
     content: "\2605\2605\2605\2605\2605";
