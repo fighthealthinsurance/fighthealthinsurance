@@ -71,25 +71,29 @@ async def retry_llm_with_fallback(
     fallback_backends: Optional[List[RemoteModelLike]] = None,
     timeout: float = 35.0,
     status_callback: Optional[Callable[[str], Awaitable[None]]] = None,
+    full_history: Optional[List[Dict[str, str]]] = None,
 ) -> Tuple[Optional[str], Optional[str]]:
     """
     Retry LLM call with shortened context and fallback backends.
 
-    This function implements the retry strategy when primary LLM calls fail:
-    1. Try with shortened history (last 5 messages)
-    2. Try with full history on primary backends
-    3. Try fallback backends if provided
+    Launches all retry variants in parallel and picks the best-scored
+    result within the timeout:
+    - Shortened history (last 5 messages) on primary backends
+    - Truncated history on primary backends
+    - Full untruncated history on primary backends (if provided and fits)
+    - All three history variants on fallback backends (if provided)
 
     Args:
         model_backends: Primary model backends to retry
         current_message: Current message to send
         previous_context_summary: Summary of previous context
-        history: Full message history
+        history: Truncated message history
         is_professional: Whether user is a professional
         is_logged_in: Whether user is logged in
         fallback_backends: Optional backup model backends
         timeout: Timeout in seconds for retry attempts
         status_callback: Optional async callback for status messages
+        full_history: Full untruncated history (optional)
 
     Returns:
         Tuple of (response_text, context_part) or (None, None) on failure
@@ -99,7 +103,7 @@ async def retry_llm_with_fallback(
 
     logger.info("Primary attempt failed, retrying with compacted context")
 
-    # Build retry calls with shortened history and fallbacks
+    # Build retry calls with shortened history, full history, and fallbacks
     retry_calls, retry_scores = build_retry_calls(
         model_backends=model_backends,
         current_message=current_message,
@@ -108,6 +112,7 @@ async def retry_llm_with_fallback(
         is_professional=is_professional,
         is_logged_in=is_logged_in,
         fallback_backends=fallback_backends,
+        full_history=full_history,
     )
 
     # Create simplified scorer for retries

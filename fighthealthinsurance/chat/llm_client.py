@@ -35,6 +35,9 @@ BAD_CONTEXT_PATTERNS = re.compile(
 # Minimum length for a valid LLM response or context
 MIN_RESPONSE_LENGTH = 5
 
+# Tokens reserved for system prompt, context summary, and response generation
+RESERVED_CONTEXT_TOKENS = 8000
+
 
 def estimate_history_tokens(history: List[Dict[str, str]]) -> int:
     """
@@ -169,6 +172,13 @@ def build_llm_calls(
     calls: List[Awaitable[Tuple[Optional[str], Optional[str]]]] = []
     call_scores: Dict[Awaitable, int] = {}
 
+    # Pre-compute full history token count once (used for context-window checks)
+    full_history_tokens = (
+        estimate_history_tokens(full_history)
+        if full_history and full_history != history
+        else None
+    )
+
     for model_backend in model_backends:
         # Try with truncated history
         call = model_backend.generate_chat_response(
@@ -182,11 +192,10 @@ def build_llm_calls(
         call_scores[call] = model_backend.quality() * 20
 
         # Also try with full history if provided and model can handle it
-        if full_history and full_history != history:
-            full_history_tokens = estimate_history_tokens(full_history)
-            model_max_context = model_backend.get_max_context()
-            # Leave room for system prompt and response (~8k tokens)
-            available_context = model_max_context - 8000
+        if full_history_tokens is not None:
+            available_context = (
+                model_backend.get_max_context() - RESERVED_CONTEXT_TOKENS
+            )
 
             if full_history_tokens < available_context:
                 full_history_call = model_backend.generate_chat_response(
@@ -197,8 +206,8 @@ def build_llm_calls(
                     is_logged_in=is_logged_in,
                 )
                 calls.append(full_history_call)
-                # Slightly prefer full history for better context
-                call_scores[full_history_call] = model_backend.quality() * 22
+                # Prefer full history for better context
+                call_scores[full_history_call] = model_backend.quality() * 25
 
     return calls, call_scores
 
@@ -211,6 +220,7 @@ def build_retry_calls(
     is_professional: bool,
     is_logged_in: bool,
     fallback_backends: Optional[List[RemoteModelLike]] = None,
+    full_history: Optional[List[Dict[str, str]]] = None,
 ) -> Tuple[List[Awaitable[Tuple[Optional[str], Optional[str]]]], Dict[Awaitable, int]]:
     """
     Build retry LLM calls with shortened context and fallback backends.
@@ -223,6 +233,7 @@ def build_retry_calls(
         is_professional: Whether user is a professional
         is_logged_in: Whether user is logged in
         fallback_backends: Optional backup model backends
+        full_history: Full untruncated history (optional)
 
     Returns:
         Tuple of (list of call awaitables, dict mapping calls to quality scores)
@@ -246,7 +257,7 @@ def build_retry_calls(
         calls.append(call)
         call_scores[call] = model_backend.quality() * 15  # Slightly lower score
 
-    # Also try with full history (some models may handle it)
+    # Also try with truncated history (some models may handle it)
     for model_backend in model_backends:
         call = model_backend.generate_chat_response(
             current_message,
@@ -258,7 +269,34 @@ def build_retry_calls(
         calls.append(call)
         call_scores[call] = model_backend.quality() * 50
 
-    # Add fallback backends with both short and full histories
+    # Pre-compute full history token count once (used for context-window checks)
+    full_history_tokens = (
+        estimate_history_tokens(full_history)
+        if full_history and full_history != history
+        else None
+    )
+
+    # Try with actual full history if available and different from truncated
+    if full_history_tokens is not None:
+        for model_backend in model_backends:
+            available_context = (
+                model_backend.get_max_context() - RESERVED_CONTEXT_TOKENS
+            )
+
+            if full_history_tokens < available_context:
+                full_call = model_backend.generate_chat_response(
+                    current_message,
+                    previous_context_summary=previous_context_summary,
+                    history=full_history,
+                    is_professional=is_professional,
+                    is_logged_in=is_logged_in,
+                )
+                calls.append(full_call)
+                # Prefer full history but keep gap small enough that
+                # a false-promise penalty (-200) can still override it
+                call_scores[full_call] = model_backend.quality() * 51
+
+    # Add fallback backends with short, truncated, and full histories
     if fallback_backends:
         for model_backend in fallback_backends:
             # Short history for fallbacks (better success rate)
@@ -272,7 +310,7 @@ def build_retry_calls(
             calls.append(call)
             call_scores[call] = model_backend.quality() * 15
 
-            # Full history for fallbacks (if model can handle it)
+            # Truncated history for fallbacks
             call = model_backend.generate_chat_response(
                 current_message,
                 previous_context_summary=previous_context_summary,
@@ -282,5 +320,23 @@ def build_retry_calls(
             )
             calls.append(call)
             call_scores[call] = model_backend.quality() * 20
+
+            # Full history for fallbacks (if available and model can handle it)
+            if full_history_tokens is not None:
+                available_context = (
+                    model_backend.get_max_context() - RESERVED_CONTEXT_TOKENS
+                )
+
+                if full_history_tokens < available_context:
+                    full_call = model_backend.generate_chat_response(
+                        current_message,
+                        previous_context_summary=previous_context_summary,
+                        history=full_history,
+                        is_professional=is_professional,
+                        is_logged_in=is_logged_in,
+                    )
+                    calls.append(full_call)
+                    # Prefer full history for fallbacks too
+                    call_scores[full_call] = model_backend.quality() * 25
 
     return calls, call_scores

@@ -23,6 +23,9 @@ class MockChatModel:
     def quality(self):
         return 100
 
+    def get_max_context(self):
+        return 32000
+
     def set_next_response(self, response_text: str, context_summary: str):
         """
         Set the next response that the mock model will return (resets after use).
