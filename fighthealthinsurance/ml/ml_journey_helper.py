@@ -24,6 +24,21 @@ class JourneyDocumentationHelper:
     """
 
     @staticmethod
+    def _format_documentation_items(
+        documentation_items: list[dict[str, str]],
+    ) -> str:
+        """Format documentation items into a bullet list string."""
+        lines = []
+        for item in documentation_items:
+            label = item.get("label", "Unknown")
+            hint = item.get("prompt_hint", "")
+            if hint:
+                lines.append(f"- {label}: {hint}")
+            else:
+                lines.append(f"- {label}")
+        return "\n".join(lines)
+
+    @staticmethod
     async def generate_journey_questions(
         procedure: Optional[str] = None,
         diagnosis: Optional[str] = None,
@@ -76,14 +91,8 @@ class JourneyDocumentationHelper:
         # Build documentation items hint if available
         doc_items_hint = ""
         if documentation_items:
-            items_list = "\n".join(
-                f"- {item.get('label', 'Unknown')}"
-                + (
-                    f" ({item.get('prompt_hint', '')})"
-                    if item.get("prompt_hint")
-                    else ""
-                )
-                for item in documentation_items
+            items_list = JourneyDocumentationHelper._format_documentation_items(
+                documentation_items
             )
             doc_items_hint = (
                 f"\nKey documentation categories to ask about:\n{items_list}\n"
@@ -169,21 +178,15 @@ While your reasoning (inside <think></think>) can discuss rationale, do not incl
         guidance_parts = []
 
         if documentation_items:
-            items_text = []
-            for item in documentation_items:
-                label = item.get("label", "Unknown")
-                hint = item.get("prompt_hint", "")
-                if hint:
-                    items_text.append(f"- {label}: {hint}")
-                else:
-                    items_text.append(f"- {label}")
-
+            items_text = JourneyDocumentationHelper._format_documentation_items(
+                documentation_items
+            )
             proc_name = procedure or "the denied treatment"
             guidance_parts.append(
                 f"Journey documentation guidance for {proc_name}:\n"
                 "The following evidence helps strengthen the appeal. "
                 "Proactively ask about these during the conversation (one or two at a time):\n"
-                + "\n".join(items_text)
+                + items_text
             )
 
         # Also try to get ML-generated questions for additional context,
