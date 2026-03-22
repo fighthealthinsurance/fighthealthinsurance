@@ -303,6 +303,8 @@ class TestBackgroundGenerateSummary:
         await chat.arefresh_from_db()
         # Should still be the real summary, not overwritten
         assert chat.summary_for_next_call[-1] == "Real summary from panda emoji"
+        # The ML call should be skipped entirely (early exit)
+        mock_summarize.assert_not_called()
 
     @pytest.mark.asyncio
     @patch(
