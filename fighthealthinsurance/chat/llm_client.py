@@ -62,7 +62,7 @@ def estimate_history_tokens(history: List[Dict[str, str]]) -> int:
 
 # Common file extensions to detect document names in chat history
 _FILE_EXT_PATTERN = re.compile(
-    r"[\w\-. ]+\.(?:pdf|jpg|jpeg|png|gif|doc|docx|txt|csv|xlsx|xls|rtf|tiff?|bmp|webp)",
+    r"[\w\-. ]+\.(?:pdf|jpg|jpeg|png|gif|docx|doc|txt|csv|xlsx|xls|rtf|tiff?|bmp|webp)\b",
     re.IGNORECASE,
 )
 
