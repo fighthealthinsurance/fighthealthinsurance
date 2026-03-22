@@ -47,9 +47,12 @@ try:
     _ENGLISH_WORDS: frozenset[str] = frozenset(
         get_english_words_set(["gcide", "web2"], lower=True)
     )
-except Exception:
+except (ImportError, ModuleNotFoundError):
     logger.warning("english-words package not available, using empty word set")
     _ENGLISH_WORDS = frozenset()
+except Exception as e:
+    logger.error(f"Unexpected error loading english-words package: {e}")
+    raise
 
 
 def _is_english_word(word: str) -> bool:
@@ -242,7 +245,16 @@ class AppealGenerator(object):
         for pattern in patterns:
             match = re.search(pattern, denial_text, flags)
             if match:
-                return match.group(1).strip()
+                candidate = match.group(1).strip()
+                if score_fn is not None:
+                    candidate_score = score_fn(candidate, denial_text)
+                    if candidate_score < 0:
+                        logger.debug(
+                            f"Rejecting regex candidate: score={candidate_score}, "
+                            f"length={len(candidate)}, pattern={pattern}"
+                        )
+                        continue
+                return candidate
 
         # Fallback to ML backends with parallel timed selection
         if not model_method_name:
@@ -322,7 +334,8 @@ class AppealGenerator(object):
             final_score = score_fn(best, denial_text)
             if final_score < 0:
                 logger.debug(
-                    f"Rejecting extraction result {best!r} with negative score {final_score}"
+                    f"Rejecting extraction result: score={final_score}, "
+                    f"length={len(best)}, type={type(best).__name__}"
                 )
                 best = None
 
