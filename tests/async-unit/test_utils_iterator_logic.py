@@ -1,7 +1,11 @@
 import pytest
 import asyncio
+import time
 from typing import AsyncIterator
-from fighthealthinsurance.utils import interleave_iterator_for_keep_alive
+from fighthealthinsurance.utils import (
+    interleave_iterator_for_keep_alive,
+    sync_iterator_to_async,
+)
 
 
 async def async_generator(items, delay: float = 0.1) -> AsyncIterator[str]:
@@ -86,3 +90,95 @@ class TestInterleaveIterator:
         assert newline_count > 11, (
             f"Expected extra timeout-induced keep-alive newlines, got only {newline_count}"
         )
+
+
+class BlockingSyncIterator:
+    """Synchronous iterator that blocks (via time.sleep) on each next() call,
+    simulating concurrent.futures.as_completed() behavior."""
+
+    def __init__(self, items, delay: float = 0.5):
+        self.items = list(items)
+        self.index = 0
+        self.delay = delay
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if self.index >= len(self.items):
+            raise StopIteration
+        time.sleep(self.delay)
+        item = self.items[self.index]
+        self.index += 1
+        return item
+
+
+class TestSyncIteratorToAsync:
+    @pytest.mark.asyncio
+    async def test_basic_conversion(self):
+        """All items from a sync iterator are yielded in order."""
+        items = ["a", "b", "c"]
+        result = [item async for item in sync_iterator_to_async(iter(items))]
+        assert result == items
+
+    @pytest.mark.asyncio
+    async def test_empty_iterator(self):
+        """Empty sync iterator produces no items."""
+        result = [item async for item in sync_iterator_to_async(iter([]))]
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_none_items_preserved(self):
+        """None items pass through (filtering is a separate concern)."""
+        items = ["a", None, "b"]
+        result = [item async for item in sync_iterator_to_async(iter(items))]
+        assert result == items
+
+    @pytest.mark.asyncio
+    async def test_blocking_iterator_does_not_block_event_loop(self):
+        """A blocking sync iterator must not prevent concurrent async work.
+
+        This is the core regression test for the appeal streaming bug:
+        if next() blocked the event loop, the concurrent task could not run.
+        """
+        blocking_iter = BlockingSyncIterator(["x", "y"], delay=0.5)
+
+        concurrent_task_ran = False
+
+        async def concurrent_work():
+            nonlocal concurrent_task_ran
+            await asyncio.sleep(0.1)
+            concurrent_task_ran = True
+
+        async def consume():
+            results = []
+            async for item in sync_iterator_to_async(blocking_iter):
+                results.append(item)
+            return results
+
+        results, _ = await asyncio.gather(consume(), concurrent_work())
+        assert results == ["x", "y"]
+        assert concurrent_task_ran, (
+            "Concurrent async task should have run while iterator was blocking"
+        )
+
+    @pytest.mark.asyncio
+    async def test_keepalive_emitted_during_blocking_iteration(self):
+        """End-to-end: keep-alive newlines are emitted even when the
+        underlying sync iterator blocks, verifying the full pipeline."""
+        blocking_iter = BlockingSyncIterator(["appeal1"], delay=2.0)
+        async_iter = sync_iterator_to_async(blocking_iter)
+        interleaved = interleave_iterator_for_keep_alive(async_iter, timeout=1)
+
+        result = []
+        async for item in interleaved:
+            result.append(item)
+
+        # Keep-alive newlines must have been emitted while waiting
+        newline_count = result.count("\n")
+        assert newline_count > 3, (
+            f"Expected keep-alive newlines during blocking wait, got {newline_count}"
+        )
+        # The actual data item must appear
+        data_items = [r for r in result if r != "\n"]
+        assert "appeal1" in data_items

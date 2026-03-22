@@ -414,6 +414,50 @@ def as_available(futures: List[Future[U]]) -> Iterator[U]:
     return map(complete, concurrent.futures.as_completed(futures))
 
 
+class SyncIteratorToAsync(AsyncIterator[T]):
+    """Convert a blocking synchronous iterator to a non-blocking async iterator.
+
+    Runs each next() call in the default thread pool executor so that blocking
+    operations (e.g. concurrent.futures.as_completed) do not stall the event loop.
+
+    Implemented as a class (not an async generator) to support overlapping
+    __anext__() calls from asyncio.shield() in interleave_iterator_for_keep_alive.
+
+    Tracks a pending executor future internally so that concurrent/retried
+    __anext__() calls reuse the same in-flight next() rather than racing.
+    """
+
+    _sentinel = object()
+
+    def __init__(self, sync_iter: Iterator[T]):
+        self._sync_iter = sync_iter
+        self._pending: Optional[asyncio.Future[T]] = None
+        self._exhausted = False
+
+    def __aiter__(self) -> "SyncIteratorToAsync[T]":
+        return self
+
+    async def __anext__(self) -> T:
+        if self._exhausted:
+            raise StopAsyncIteration
+        if self._pending is None:
+            loop = asyncio.get_event_loop()
+            self._pending = loop.run_in_executor(
+                None, next, self._sync_iter, self._sentinel
+            )
+        item = await self._pending
+        self._pending = None
+        if item is self._sentinel:
+            self._exhausted = True
+            raise StopAsyncIteration
+        return item
+
+
+def sync_iterator_to_async(sync_iter: Iterator[T]) -> AsyncIterator[T]:
+    """Convert a blocking synchronous iterator to a non-blocking async iterator."""
+    return SyncIteratorToAsync(sync_iter)
+
+
 def all_subclasses(cls: type[U]) -> set[type[U]]:
     return set(cls.__subclasses__()).union(
         [s for c in cls.__subclasses__() for s in all_subclasses(c)]
