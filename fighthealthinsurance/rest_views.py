@@ -1461,10 +1461,15 @@ class PriorAuthViewSet(viewsets.ViewSet, SerializerMixin):
                     field = fields[i]
                     if not isinstance(value, Exception) and value:
                         # Validate identifier-type fields
-                        if field in (
-                            "plan_id",
-                            "member_id",
-                        ) and isinstance(value, str) and not is_plausible_identifier(value):
+                        if (
+                            field
+                            in (
+                                "plan_id",
+                                "member_id",
+                            )
+                            and isinstance(value, str)
+                            and not is_plausible_identifier(value)
+                        ):
                             logger.debug(f"Rejected implausible {field}: {value}")
                             continue
                         results[field] = value
