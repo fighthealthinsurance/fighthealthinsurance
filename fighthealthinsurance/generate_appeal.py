@@ -52,12 +52,34 @@ except Exception:
     _ENGLISH_WORDS = frozenset()
 
 
+def _is_english_word(word: str) -> bool:
+    """Check if a word (or its likely stem) is a known English word."""
+    if word in _ENGLISH_WORDS:
+        return True
+    # Check common inflected forms by stripping suffixes
+    # This catches "covers" (cover), "denied" (deny), "approved" (approve), etc.
+    for suffix in ("s", "es", "ed", "ing", "er", "ers", "tion", "ly", "ment"):
+        if word.endswith(suffix) and len(word) > len(suffix) + 2:
+            stem = word[: -len(suffix)]
+            if stem in _ENGLISH_WORDS:
+                return True
+            # "approved" -> "approv" -> "approve" (stem + "e")
+            if (stem + "e") in _ENGLISH_WORDS:
+                return True
+    # "denied" -> "deny" (strip "ied", add "y")
+    if word.endswith("ied") and len(word) > 4:
+        stem = word[:-3] + "y"
+        if stem in _ENGLISH_WORDS:
+            return True
+    return False
+
+
 def is_plausible_identifier(value: Optional[str]) -> bool:
     """Check whether a string looks like a plausible plan/claim/member ID.
 
     Real IDs are typically alphanumeric codes like 'ABC123456', 'H5521-001',
-    'PLAN987654'. They virtually always contain at least one digit and are
-    not common English words.
+    'PLAN987654', or occasionally pure-alpha codes like 'BCBSMA'.
+    They are not common English words.
     """
     if value is None:
         return False
@@ -67,16 +89,42 @@ def is_plausible_identifier(value: Optional[str]) -> bool:
     # Reject very short or very long values
     if len(stripped) < 3 or len(stripped) > 50:
         return False
-    # Must contain at least one digit -- real IDs always do
-    if not re.search(r"\d", stripped):
-        return False
     # Must be primarily alphanumeric (allow hyphens, underscores, spaces, dots, slashes, colons)
     if not re.match(r"^[A-Za-z0-9\s\-_./#:]+$", stripped):
         return False
-    # Reject if the lowercased value is a known English word
-    if stripped.lower() in _ENGLISH_WORDS:
+    # Reject if the lowercased value is a known English word (including inflected forms)
+    lowered = stripped.lower()
+    if _is_english_word(lowered):
+        return False
+    # Also reject multi-word phrases where every word is English
+    words = re.split(r"[\s\-_./#:]+", lowered)
+    if len(words) > 1 and all(_is_english_word(w) for w in words if w):
         return False
     return True
+
+
+def _identifier_score(result: Optional[str], denial_text: str) -> float:
+    """Shared scoring function for plan_id and claim_id extraction."""
+    if result is None:
+        return -1.0
+    if not is_plausible_identifier(result):
+        return -1.0
+    # Check that the identifier is found in the source document
+    if not identifier_found_in_text(result, denial_text):
+        return -0.5
+    score = 1.0
+    length = len(result.strip())
+    if 5 <= length <= 20:
+        score += 1.0
+    elif 3 <= length <= 30:
+        score += 0.5
+    # Bonus for having digits (most IDs do)
+    if re.search(r"\d", result):
+        score += 0.3
+    # Bonus for mixed alphanumeric (common in IDs)
+    if re.search(r"[A-Za-z]", result) and re.search(r"\d", result):
+        score += 0.5
+    return score
 
 
 def identifier_found_in_text(identifier: str, text: str) -> bool:
@@ -467,23 +515,7 @@ class AppealGenerator(object):
         ]
 
         def plan_id_score(result: Optional[str], _: Any) -> float:
-            if result is None:
-                return -1.0
-            if not is_plausible_identifier(result):
-                return -1.0
-            # Check that the identifier is found in the source document
-            if not identifier_found_in_text(result, denial_text):
-                return -0.5
-            score = 1.0
-            length = len(result.strip())
-            if 5 <= length <= 20:
-                score += 1.0
-            elif 3 <= length <= 30:
-                score += 0.5
-            # Bonus for mixed alphanumeric (common in IDs)
-            if re.search(r"[A-Za-z]", result) and re.search(r"\d", result):
-                score += 0.5
-            return score
+            return _identifier_score(result, denial_text)
 
         return await self._extract_entity_with_regexes_and_model(
             denial_text=denial_text,
@@ -516,23 +548,7 @@ class AppealGenerator(object):
         ]
 
         def claim_id_score(result: Optional[str], _: Any) -> float:
-            if result is None:
-                return -1.0
-            if not is_plausible_identifier(result):
-                return -1.0
-            # Check that the identifier is found in the source document
-            if not identifier_found_in_text(result, denial_text):
-                return -0.5
-            score = 1.0
-            length = len(result.strip())
-            if 5 <= length <= 20:
-                score += 1.0
-            elif 3 <= length <= 30:
-                score += 0.5
-            # Bonus for mixed alphanumeric (common in IDs)
-            if re.search(r"[A-Za-z]", result) and re.search(r"\d", result):
-                score += 0.5
-            return score
+            return _identifier_score(result, denial_text)
 
         return await self._extract_entity_with_regexes_and_model(
             denial_text=denial_text,

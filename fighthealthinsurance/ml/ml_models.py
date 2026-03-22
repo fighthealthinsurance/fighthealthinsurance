@@ -667,7 +667,7 @@ Remember in the last three sentences GLP-1 is just an _example_ check what the u
         Returns:
             Extracted entity or None
         """
-        if "id" in entity_type.lower() or entity_type.lower() == "member_id":
+        if "id" in entity_type.lower():
             prompt = f"Extract the {entity_type} (an alphanumeric identifier code containing digits, NOT a common English word or description) from the following text: {input_text}. Output ONLY the identifier value. If unknown provide UNKNOWN"
         else:
             prompt = f"Extract the {entity_type} from the following text: {input_text}. In your answer just provide the value no description of what it is (e.g. don't use things like the member is.. just provide their name). If unknown provide UNKNOWN"

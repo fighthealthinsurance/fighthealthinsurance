@@ -21,15 +21,22 @@ class TestIsPlausibleIdentifier:
         assert is_plausible_identifier("GRP12345") is True
 
     def test_pure_digit_ids(self):
-        """Pure digit IDs should pass (they contain digits and aren't English words)."""
+        """Pure digit IDs should pass."""
         assert is_plausible_identifier("12345") is True
         assert is_plausible_identifier("987654321") is True
+
+    def test_pure_alpha_ids(self):
+        """Pure alpha IDs that aren't English words should pass."""
+        assert is_plausible_identifier("BCBSMA") is True
+        assert is_plausible_identifier("HDHP") is True
+        assert is_plausible_identifier("QWXYZ") is True
 
     def test_common_english_words_rejected(self):
         """Common English words that LLMs incorrectly return should be rejected."""
         assert is_plausible_identifier("covers") is False
         assert is_plausible_identifier("amount") is False
         assert is_plausible_identifier("denied") is False
+        assert is_plausible_identifier("approved") is False
         assert is_plausible_identifier("patient") is False
         assert is_plausible_identifier("insurance") is False
         assert is_plausible_identifier("medical") is False
@@ -37,6 +44,13 @@ class TestIsPlausibleIdentifier:
         assert is_plausible_identifier("plan") is False
         assert is_plausible_identifier("claim") is False
         assert is_plausible_identifier("health") is False
+        assert is_plausible_identifier("services") is False
+        assert is_plausible_identifier("payment") is False
+
+    def test_multi_word_english_phrases_rejected(self):
+        """Multi-word phrases where every word is English should be rejected."""
+        assert is_plausible_identifier("health plan") is False
+        assert is_plausible_identifier("not-covered") is False
 
     def test_none_and_empty(self):
         """None and empty values should be rejected."""
@@ -53,11 +67,6 @@ class TestIsPlausibleIdentifier:
         """Very long values (likely sentence fragments) should be rejected."""
         long_value = "A" * 40 + "1" + "B" * 20
         assert is_plausible_identifier(long_value) is False
-
-    def test_pure_letters_rejected(self):
-        """Pure letter strings without digits should be rejected (no digit = not an ID)."""
-        assert is_plausible_identifier("ABCDE") is False
-        assert is_plausible_identifier("plantype") is False
 
     def test_special_characters_rejected(self):
         """Values with non-ID characters should be rejected."""
