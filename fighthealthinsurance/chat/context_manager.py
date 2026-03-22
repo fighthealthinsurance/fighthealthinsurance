@@ -5,6 +5,7 @@ Handles history truncation, summarization, and context accumulation
 to keep chat sessions manageable within LLM context limits.
 """
 
+import uuid
 from typing import Dict, List, Optional, Tuple
 
 from loguru import logger
@@ -15,6 +16,13 @@ from fighthealthinsurance.utils import ensure_message_alternation
 # Configuration
 DEFAULT_MESSAGES_TO_KEEP = 20
 SUMMARIZATION_INTERVAL = 10
+
+MISSING_CONTEXT_PREFIX = "Missing context summary, refer to previous chat history"
+
+
+def make_placeholder(counter: int) -> str:
+    """Create a uniquely-identified placeholder for a missing context summary."""
+    return f"{MISSING_CONTEXT_PREFIX} [{counter}]"
 
 
 async def prepare_history_for_llm(
@@ -169,3 +177,71 @@ def get_current_context(
         current_context = f"PubMed context: {pubmed_context}"
 
     return current_context
+
+
+async def background_generate_summary(chat_id: uuid.UUID, placeholder_tag: str) -> None:
+    """
+    Generate a context summary in the background when the model omitted the panda emoji.
+
+    Calls ml_router.summarize_chat_history() on the full chat history, then overwrites
+    the specific placeholder (identified by placeholder_tag) only if it's still present.
+    If a subsequent message has already produced a real summary, the placeholder will have
+    been superseded and this is a no-op.
+    """
+    from fighthealthinsurance.models import OngoingChat
+
+    try:
+        chat = await OngoingChat.objects.aget(id=chat_id)
+    except OngoingChat.DoesNotExist:
+        logger.warning(f"Background summary: chat {chat_id} not found")
+        return
+
+    history = chat.chat_history or []
+    if not history:
+        return
+
+    # Check if the placeholder still exists before doing the expensive ML call.
+    # If another message already produced a real summary, the placeholder will
+    # have been superseded and we can skip summarization entirely.
+    if not chat.summary_for_next_call or not any(
+        str(entry) == placeholder_tag for entry in chat.summary_for_next_call
+    ):
+        logger.debug(
+            f"Background summary: placeholder already gone for chat {chat_id}, "
+            f"tag={placeholder_tag!r}"
+        )
+        return
+
+    try:
+        summary = await ml_router.summarize_chat_history(history, max_messages=0)
+    except Exception as e:
+        logger.warning(
+            f"Background summary generation failed for chat {chat_id}: "
+            f"{type(e).__name__}: {e}"
+        )
+        return
+
+    if not summary:
+        logger.info(f"Background summary generation returned empty for chat {chat_id}")
+        return
+
+    # Re-fetch to check for race conditions
+    try:
+        chat = await OngoingChat.objects.aget(id=chat_id)
+    except OngoingChat.DoesNotExist:
+        return
+
+    # Find and overwrite only the specific placeholder we created
+    if chat.summary_for_next_call:
+        for i, entry in enumerate(chat.summary_for_next_call):
+            if str(entry) == placeholder_tag:
+                chat.summary_for_next_call[i] = summary
+                await chat.asave()
+                logger.info(
+                    f"Background summary replaced placeholder for chat {chat_id}"
+                )
+                return
+        logger.debug(
+            f"Background summary: placeholder not found in chat {chat_id} "
+            f"after re-fetch, tag={placeholder_tag!r}"
+        )
