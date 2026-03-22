@@ -565,14 +565,11 @@ class ChatInterface:
                                         JourneyDocumentationHelper,
                                     )
 
-                                    ml_guidance = await asyncio.wait_for(
-                                        JourneyDocumentationHelper.get_journey_guidance_for_chat(
-                                            procedure=microsite.default_procedure,
-                                            diagnosis=microsite.default_condition,
-                                            documentation_items=microsite.journey_documentation_items,
-                                            timeout=35,
-                                        ),
-                                        timeout=40,
+                                    ml_guidance = await JourneyDocumentationHelper.get_journey_guidance_for_chat(
+                                        procedure=microsite.default_procedure,
+                                        diagnosis=microsite.default_condition,
+                                        documentation_items=microsite.journey_documentation_items,
+                                        timeout=35,
                                     )
                                     if ml_guidance:
                                         all_context_parts.append(ml_guidance)
