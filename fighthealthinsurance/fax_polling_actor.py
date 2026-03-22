@@ -42,13 +42,13 @@ class FaxPollingActor:
                 self.e += f
                 self.c += c
             except Exception as e:
-                logger.opt(exception=True).error(f"Error while checking outbound faxes")
+                logger.opt(exception=True).error("Error while checking outbound faxes")
                 self.aec += 1
             finally:
                 # Success or failure we wait.
                 logger.debug("Waiting for next run")
                 await asyncio.sleep(60 * 60)
-        logger.warning("Done running? what?")
+        logger.warning("FaxPollingActor stopped running")
         return True
 
     async def count(self) -> int:
