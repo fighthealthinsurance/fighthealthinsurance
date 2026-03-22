@@ -300,6 +300,17 @@ class AppealGenerator(object):
             )
             best = None
 
+        # best_within_timelimit returns any truthy result regardless of score.
+        # If a score_fn was provided, verify the result actually scores positively
+        # to avoid returning junk like English words that passed attempt_model.
+        if best is not None and score_fn is not None:
+            final_score = score_fn(best, None)
+            if final_score < 0:
+                logger.debug(
+                    f"Rejecting extraction result {best!r} with negative score {final_score}"
+                )
+                best = None
+
         return best
 
     async def get_fax_number(
