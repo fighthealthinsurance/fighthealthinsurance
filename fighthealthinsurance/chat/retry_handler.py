@@ -37,9 +37,12 @@ def create_simple_retry_scorer(
     Returns:
         Scoring function compatible with best_within_timelimit
     """
-    doc_names = (
-        _extract_document_names_from_history(chat_history) if chat_history else []
-    )
+    doc_names_lower = [
+        n.lower()
+        for n in (
+            _extract_document_names_from_history(chat_history) if chat_history else []
+        )
+    ]
 
     def score_fn(
         result: Optional[Tuple[Optional[str], Optional[str]]],
@@ -63,8 +66,9 @@ def create_simple_retry_scorer(
                 score -= 200
 
             # Bonus for referencing an uploaded document by name
-            for doc_name in doc_names:
-                if doc_name.lower() in response_text.lower():
+            response_lower = response_text.lower()
+            for doc_name in doc_names_lower:
+                if doc_name in response_lower:
                     score += 150
                     break
 

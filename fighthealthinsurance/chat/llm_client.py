@@ -137,8 +137,9 @@ def score_llm_response(
 
         # Bonus for referencing an uploaded document by name (derived from history)
         if chat_history:
+            response_lower = response_text.lower()
             for doc_name in _extract_document_names_from_history(chat_history):
-                if doc_name.lower() in response_text.lower():
+                if doc_name.lower() in response_lower:
                     score += 150
                     logger.debug(
                         f"Response references uploaded document '{doc_name}', boosting score"
