@@ -116,10 +116,10 @@ class PriorAuthTextSubstituter:
                 ),
             ]
             for pattern, value in fuzzy_subs:
-                if value and not value.startswith("{{"):
-                    escaped_value = str(value).replace("\\", r"\\")
+                if value and not str(value).startswith("{{"):
+                    escaped = str(value).replace("\\", r"\\")
                     proposal_text = re.sub(
-                        pattern, escaped_value, proposal_text, flags=re.IGNORECASE
+                        pattern, escaped, proposal_text, flags=re.IGNORECASE
                     )
             return proposal_text
         except Exception as e:

@@ -2035,9 +2035,10 @@ class AppealsBackendHelper:
                 if not value or value == "" or value == "UNKNOWN":
                     continue
                 str_value = str(value)
-                if str_value.startswith("{"):
+                if str_value.startswith("{{"):
                     continue
-                content = re.sub(pattern, str_value, content, flags=re.IGNORECASE)
+                escaped = str_value.replace("\\", r"\\")
+                content = re.sub(pattern, escaped, content, flags=re.IGNORECASE)
             appeal["content"] = content
             return appeal
 

@@ -112,9 +112,15 @@ function descrub() {
     [/\[(?:Email|Email\s+Address)\s*(?:Placeholder)?\]/gi, email_address],
     [/\[Phone\s*(?:Number)?\s*(?:Placeholder)?\]/gi, phone_number],
   ];
+  // Sentinel defaults that indicate no real value was stored
+  const sentinels = new Set([
+    "FirstName", "LastName", "FirstName LastName",
+    "subscriber_id", "group_id", "claim_id",
+    "email_address", "phone_number",
+  ]);
   for (const [pattern, value] of fuzzyReplacements) {
-    if (value && value !== "" && !value.includes("_")) {
-      text = text.replace(pattern, value);
+    if (value && value !== "" && !sentinels.has(value)) {
+      text = text.replace(pattern, () => value);
     }
   }
 
