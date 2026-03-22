@@ -1556,25 +1556,18 @@ class VerifyEmailViewSet(ViewSet, SerializerMixin):
                     ).data,
                     status=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 )
-            user.is_active = True
-            user.save()
-            try:
-                extraproperties = ExtraUserProperties.objects.get(user=user)
-            except ExtraUserProperties.DoesNotExist:
-                extraproperties = ExtraUserProperties.objects.create(user=user)
-            extraproperties.email_verified = True
-            extraproperties.save()
-            verification_token.delete()
-            try:
+            with transaction.atomic():
+                user.is_active = True
+                user.save()
+                try:
+                    extraproperties = ExtraUserProperties.objects.get(user=user)
+                except ExtraUserProperties.DoesNotExist:
+                    extraproperties = ExtraUserProperties.objects.create(user=user)
+                extraproperties.email_verified = True
+                extraproperties.save()
+                verification_token.delete()
                 PatientUser.objects.filter(user=user).update(active=True)
-            except Exception:
-                logger.opt(exception=True).warning("Failed to activate PatientUser")
-            try:
                 ProfessionalUser.objects.filter(user=user).update(active=True)
-            except Exception:
-                logger.opt(exception=True).warning(
-                    "Failed to activate ProfessionalUser"
-                )
             return Response(
                 serializers.StatusResponseSerializer({"status": "success"}).data
             )

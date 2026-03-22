@@ -4,7 +4,6 @@ import time
 
 import ray
 from asgiref.sync import sync_to_async
-from loguru import logger
 
 from fighthealthinsurance.utils import get_env_variable
 
@@ -14,7 +13,6 @@ name = "ChooserRefillActor"
 @ray.remote(max_restarts=-1, max_task_retries=-1)
 class ChooserRefillActor:
     def __init__(self):
-        logger.info("Starting ChooserRefillActor")
         time.sleep(1)
 
         os.environ.setdefault(
@@ -25,14 +23,17 @@ class ChooserRefillActor:
         from configurations.wsgi import get_wsgi_application
 
         _application = get_wsgi_application()
-        logger.info("ChooserRefillActor wsgi started")
+        from loguru import logger
+
+        self._logger = logger
+        self._logger.info("ChooserRefillActor initialized")
 
     async def health_check(self) -> bool:
         """Check if the actor is healthy and running."""
         return getattr(self, "running", False)
 
     async def run(self) -> None:
-        logger.info("Starting ChooserRefillActor run")
+        self._logger.info("Starting ChooserRefillActor run")
         self.running = True
 
         from fighthealthinsurance.chooser_tasks import check_and_refill_task_pool
@@ -45,13 +46,13 @@ class ChooserRefillActor:
                 # Sleep for 5 minutes between checks
                 await asyncio.sleep(300)
             except Exception:
-                logger.opt(exception=True).error(
+                self._logger.opt(exception=True).error(
                     "Error while checking/refilling chooser task pool"
                 )
                 # On error, wait a bit longer before retrying
                 await asyncio.sleep(60)
 
-        logger.warning("ChooserRefillActor stopped running")
+        self._logger.warning("ChooserRefillActor stopped running")
         return None
 
     def stop(self) -> None:

@@ -53,9 +53,7 @@ class TestLaunchPollingActorsCommand(TestCase):
         assert "fax_polling_actor" in output
         assert "chooser_refill_actor" in output
 
-    @mock.patch(
-        "fighthealthinsurance.actor_health_status.relaunch_actors"
-    )
+    @mock.patch("fighthealthinsurance.actor_health_status.relaunch_actors")
     def test_command_with_force_handles_errors(self, mock_relaunch):
         """Test the command with --force flag when there are errors."""
         # Mock relaunch_actors to return errors

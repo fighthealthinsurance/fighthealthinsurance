@@ -1175,8 +1175,14 @@ class AppealGenerator(object):
             appeals = itertools.chain([first], appeals)
             logger.debug("First appeal retrieved")
         except StopIteration:
-            logger.warning("First group not successful, adding backup calls")
-            appeals = as_available_nested(make_async_model_calls(backup_calls))
+            if backup_calls:
+                logger.warning("First group not successful, adding backup calls")
+                appeals = as_available_nested(make_async_model_calls(backup_calls))
+            else:
+                logger.warning(
+                    "First group not successful and no backup calls available"
+                )
+                appeals = iter([])
         logger.debug("Appending initial appeals to iterator")
         appeals = itertools.chain(appeals, initial_appeals)
         logger.debug("Returning appeals iterator")

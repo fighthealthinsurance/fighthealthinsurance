@@ -1740,17 +1740,9 @@ class RemoteOpenLike(RemoteModel):
                     try:
                         response.raise_for_status()
                     except aiohttp.ClientResponseError as e:
-                        # Log the response body for debugging 400 errors
-                        try:
-                            error_body = await response.text()
-                            truncated_body = error_body[:500]
-                            logger.warning(
-                                f"HTTP {e.status} error from {api_base} for model {model}: body_prefix={truncated_body!r}"
-                            )
-                        except Exception as exc:
-                            logger.warning(
-                                f"HTTP {e.status} error from {api_base} for model {model}: failed to read error body due to {exc}"
-                            )
+                        logger.warning(
+                            f"HTTP {e.status} error from {api_base} for model {model}: [response body omitted]"
+                        )
                         raise
                     json_result = await response.json()
                     if "object" in json_result and json_result["object"] != "error":

@@ -685,4 +685,4 @@ try:
     s = SonicFax()
     flexible_fax_magic._add_backend(s)
 except Exception:
-    pass  # SonicFax not available
+    logger.debug("SonicFax init failed, skipping backend")

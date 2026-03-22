@@ -7,6 +7,7 @@ from django.shortcuts import render
 from django.views import View
 from django.contrib.admin.views.decorators import staff_member_required
 from django.db.models import Count, Exists, OuterRef, Q
+from django.db.utils import NotSupportedError
 from django.utils import timezone
 from datetime import timedelta
 
@@ -574,7 +575,7 @@ def signups_by_day(request):
         )
         # Convert query results to a DataFrame
         df = pd.DataFrame(list(signups_per_day))
-    except Exception:
+    except NotSupportedError:
         signups_per_day = (
             InterestedProfessional.objects.exclude(
                 Q(email="farts@farts.com") | Q(email="holden@pigscanfly.ca")

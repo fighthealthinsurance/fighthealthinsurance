@@ -116,7 +116,9 @@ class TestAsyncTaskUtils:
 
         # With timeout of 1.0, the best score task (2.0s) won't complete in time
         result = await best_within_timelimit(tasks, score_fn, timeout=1.0)
-        assert result == "medium_score"  # Medium score should be chosen as best available
+        assert (
+            result == "medium_score"
+        )  # Medium score should be chosen as best available
 
     @pytest.mark.asyncio
     async def test_best_within_timelimit_uses_task_parameter(self):

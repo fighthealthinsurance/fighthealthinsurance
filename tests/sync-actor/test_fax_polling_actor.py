@@ -45,16 +45,23 @@ class TestFaxPollingActor(TestCase):
         # Give run() time to start executing before polling
         time.sleep(0.5)
 
-        # Poll until run() has started (health_check returns True)
+        # Poll until run() has started and loop body executed
         max_wait = 30  # seconds
         start = time.time()
         running = False
+        loop_executed = False
         while time.time() - start < max_wait:
             running = ray.get(fax_polling_actor.health_check.remote())
             if running:
-                break
+                # Also verify the loop body ran at least once
+                aec = ray.get(fax_polling_actor.actor_error_count.remote())
+                c = ray.get(fax_polling_actor.count.remote())
+                if aec > 0 or c > 0:
+                    loop_executed = True
+                    break
             time.sleep(0.5)
 
         # For local testing since they're all getting different DBs we're
         # really just checking that it's able to start and run.
         self.assertTrue(running, "run() should have started")
+        self.assertTrue(loop_executed, "run() loop body should have executed")
