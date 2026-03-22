@@ -458,50 +458,6 @@ def sync_iterator_to_async(sync_iter: Iterator[T]) -> AsyncIterator[T]:
     return SyncIteratorToAsync(sync_iter)
 
 
-class QueuedAsyncIterator(AsyncIterator[T]):
-    """Wraps any async iterable into a class-based async iterator that supports
-    overlapping __anext__() calls (required by interleave_iterator_for_keep_alive's
-    asyncio.shield + wait_for pattern).
-
-    A background task eagerly consumes the source and buffers items in a queue.
-    Tracks a pending queue.get() so that retried __anext__() calls after
-    shield cancellation reuse the same in-flight get rather than losing items.
-    """
-
-    _DONE = object()
-
-    def __init__(self, source: AsyncIterator[T]):
-        self._queue: asyncio.Queue[T] = asyncio.Queue()
-        self._exhausted = False
-        self._pending: Optional[asyncio.Task[T]] = None
-        self._task = asyncio.ensure_future(self._produce(source))
-
-    async def _produce(self, source: AsyncIterator[T]) -> None:
-        try:
-            async for item in source:
-                await self._queue.put(item)
-        except Exception as e:
-            await self._queue.put(e)  # type: ignore[arg-type]
-        await self._queue.put(self._DONE)  # type: ignore[arg-type]
-
-    def __aiter__(self) -> "QueuedAsyncIterator[T]":
-        return self
-
-    async def __anext__(self) -> T:
-        if self._exhausted:
-            raise StopAsyncIteration
-        if self._pending is None or self._pending.done():
-            self._pending = asyncio.ensure_future(self._queue.get())
-        item = await self._pending
-        self._pending = None
-        if item is self._DONE:
-            self._exhausted = True
-            raise StopAsyncIteration
-        if isinstance(item, BaseException):
-            raise item
-        return item
-
-
 def all_subclasses(cls: type[U]) -> set[type[U]]:
     return set(cls.__subclasses__()).union(
         [s for c in cls.__subclasses__() for s in all_subclasses(c)]
@@ -523,24 +479,6 @@ def interleave_iterator_for_keep_alive(
     )
 
 
-async def _retrieve_pending_future(c: Optional[asyncio.Future]) -> None:
-    """
-    Helper to properly retrieve any pending exception from a shielded future.
-    This prevents "Future exception was never retrieved" warnings.
-    """
-    if c is None:
-        return
-    try:
-        # Give the task a chance to complete quickly
-        await asyncio.wait_for(asyncio.shield(c), timeout=0.1)
-    except (asyncio.TimeoutError, StopAsyncIteration, asyncio.CancelledError):
-        # These are expected - just consume them
-        pass
-    except Exception:
-        # Any other exception is also consumed to prevent unhandled exception warnings
-        pass
-
-
 async def _interleave_iterator_for_keep_alive(
     iterator: AsyncIterator[str], timeout: int = 20
 ) -> AsyncIterator[str]:
@@ -548,47 +486,51 @@ async def _interleave_iterator_for_keep_alive(
     Yields strings from an async iterator, interleaving newlines as keep-alive signals.
 
     This generator yields a newline string before and after each item from the input iterator,
-    and also yields an empty string every `timeout` seconds if no new item is available.
-    Handles timeouts, cancellations, and exceptions by yielding empty strings to maintain
+    and also yields a newline every ``timeout`` seconds if no new item is available.
+    Handles timeouts, cancellations, and exceptions by yielding newlines to maintain
     connection liveness.
+
+    Uses an explicit Task + fresh shield per wait so that:
+    - The underlying __anext__() is only called once per item (no reentrancy
+      issues with async generators from asyncstdlib.map).
+    - On timeout the Task stays alive; a fresh shield is created for the retry.
+    - No items are lost to cancelled shield futures.
     """
     yield "\n"
     await asyncio.sleep(0)
-    # Keep track of the next elem pointer
-    c = None
+    task: Optional[asyncio.Task[str]] = None
     while True:
         try:
-            if c is None:
-                # Keep wait_for from cancelling it
-                c = asyncio.shield(iterator.__anext__())
+            if task is None:
+                task = asyncio.ensure_future(iterator.__anext__())
             await asyncio.sleep(0)
             yield "\n"
-            # Use asyncio.wait_for to handle timeout for fetching record
-            record = await asyncio.wait_for(c, timeout)
-            # Success, we can clear the next elem pointer
-            c = None
+            # Create a fresh shield each time so a previous cancellation
+            # doesn't poison subsequent waits on the same task.
+            record = await asyncio.wait_for(asyncio.shield(task), timeout)
+            task = None
             yield record
             await asyncio.sleep(0)
             yield "\n"
         except asyncio.TimeoutError:
+            # Shield was cancelled but the task is still running.
+            # Loop back and create a fresh shield for the same task.
             yield "\n"
             continue
-        except asyncio.exceptions.CancelledError:
-            # If the iterator is cancelled, we should stop
+        except StopAsyncIteration:
+            break
+        except asyncio.CancelledError:
             logger.debug("Cancellation of task in interleaved generator")
             yield "\n"
-            # Properly retrieve any pending exception from the shielded future
-            await _retrieve_pending_future(c)
-            c = None
-        except StopAsyncIteration:
-            # Break the loop if iteration is complete
-            break
+            if task is not None and not task.done():
+                task.cancel()
+            task = None
         except Exception as e:
             logger.opt(exception=True).error(f"Error in generator: {e}")
             yield "\n"
-            # Properly retrieve any pending exception from the shielded future
-            await _retrieve_pending_future(c)
-            c = None
+            if task is not None and not task.done():
+                task.cancel()
+            task = None
 
 
 async def fire_and_forget_in_new_threadpool(task: Coroutine) -> None:

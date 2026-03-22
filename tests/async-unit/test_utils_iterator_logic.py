@@ -3,7 +3,6 @@ import asyncio
 import time
 from typing import AsyncIterator
 from fighthealthinsurance.utils import (
-    QueuedAsyncIterator,
     interleave_iterator_for_keep_alive,
     sync_iterator_to_async,
 )
@@ -59,37 +58,49 @@ class TestInterleaveIterator:
     async def test_interleave_iterator_for_keep_alive_slow(self):
         """Test that slow items cause extra keep-alive newlines to be emitted.
 
-        Uses SlowAsyncIterator (class-based) to avoid the Python async generator
-        reentrancy restriction. With delay > timeout, the implementation emits
-        extra keep-alive newlines while waiting. Items may be lost during
-        timeout recovery (by design for streaming HTTP keep-alive) because the
-        CancelledError handler resets the pending future.
+        Uses SlowAsyncIterator (class-based) with delay > timeout so that
+        timeouts fire and keepalive newlines are emitted while waiting.
+        All items should still be delivered (no item loss).
         """
-        # Use delay > timeout so the timeout-induced keep-alive path is exercised
         items = [f"data{i}" for i in range(3)]
         async_iter = SlowAsyncIterator(items, delay=1.5)
         interleaved_iter = interleave_iterator_for_keep_alive(async_iter, timeout=1)
         result = [item async for item in interleaved_iter]
 
-        # Verify the iterator completes and produces keep-alive newlines
         newline_count = result.count("\n")
         assert newline_count > 0, "Should have keep-alive newlines"
 
-        # With delay > timeout, timeouts trigger extra keep-alive newlines.
-        # Items may all be dropped (by design), so we verify the timeout
-        # path produced more newlines than just the bookend pattern.
         data_items = [r for r in result if r != "\n"]
 
-        # Any surviving data items must be from our input
-        for item in data_items:
-            assert item in items, f"Unexpected item: {item}"
+        # All items must be delivered (no item loss)
+        assert data_items == items, (
+            f"Expected all items {items}, got {data_items}"
+        )
 
-        # The key assertion: more newlines than the basic test would produce,
-        # proving timeouts fired. The basic test with 3 items gets 11 newlines
-        # (initial + 2*3 items + final bookends). With timeouts we should see
-        # substantially more since each timeout cycle emits additional newlines.
+        # Extra newlines from timeouts prove the keep-alive path was exercised
         assert newline_count > 11, (
             f"Expected extra timeout-induced keep-alive newlines, got only {newline_count}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_interleave_with_async_generator(self):
+        """interleave_iterator_for_keep_alive works with async generators
+        (not just class-based iterators) when timeouts fire.
+
+        This was previously broken: the old shield pattern called __anext__()
+        on a still-running async generator, causing RuntimeError.
+        """
+        items = ["item1", "item2"]
+        async_iter = async_generator(items, delay=1.5)
+        interleaved = interleave_iterator_for_keep_alive(async_iter, timeout=1)
+
+        result = []
+        async for item in interleaved:
+            result.append(item)
+
+        data_items = [r for r in result if r != "\n"]
+        assert data_items == items, (
+            f"Expected {items}, got {data_items}"
         )
 
 
@@ -185,46 +196,11 @@ class TestSyncIteratorToAsync:
         assert "appeal1" in data_items
 
 
-class TestQueuedAsyncIterator:
+class TestFullAppealStreamingPipeline:
     @pytest.mark.asyncio
-    async def test_basic(self):
-        """All items from an async generator are yielded."""
-        async def source():
-            for i in range(3):
-                yield f"item{i}"
-
-        result = [item async for item in QueuedAsyncIterator(source())]
-        assert result == ["item0", "item1", "item2"]
-
-    @pytest.mark.asyncio
-    async def test_empty(self):
-        """Empty source produces no items."""
-        async def source():
-            return
-            yield  # make it an async generator  # noqa: E275
-
-        result = [item async for item in QueuedAsyncIterator(source())]
-        assert result == []
-
-    @pytest.mark.asyncio
-    async def test_exception_propagation(self):
-        """Exceptions from the source are re-raised."""
-        async def source():
-            yield "ok"
-            raise ValueError("boom")
-
-        it = QueuedAsyncIterator(source())
-        items = []
-        with pytest.raises(ValueError, match="boom"):
-            async for item in it:
-                items.append(item)
-        assert items == ["ok"]
-
-    @pytest.mark.asyncio
-    async def test_full_pipeline_with_amap_and_keepalive(self):
+    async def test_pipeline_with_amap_chain(self):
         """End-to-end: blocking sync iter -> sync_iterator_to_async ->
-        a.map chain (async generators) -> QueuedAsyncIterator ->
-        interleave_iterator_for_keep_alive.
+        a.map chain (async generators) -> interleave_iterator_for_keep_alive.
 
         This simulates the real appeal streaming pipeline and verifies:
         1. Keep-alive newlines are emitted during blocking waits
@@ -233,8 +209,6 @@ class TestQueuedAsyncIterator:
         """
         import asyncstdlib as a
 
-        # Use a single item with delay > timeout to keep the test fast
-        # while still exercising the timeout/keepalive path
         blocking_iter = BlockingSyncIterator(["appeal1"], delay=2.0)
         async_iter = sync_iterator_to_async(blocking_iter)
 
@@ -248,9 +222,9 @@ class TestQueuedAsyncIterator:
         mapped1 = a.map(wrap_dict, async_iter)
         mapped2 = a.map(to_json, mapped1)
 
-        # QueuedAsyncIterator bridges async generators to the shield pattern
-        queued = QueuedAsyncIterator(mapped2)
-        interleaved = interleave_iterator_for_keep_alive(queued, timeout=1)
+        # No QueuedAsyncIterator needed - the fixed interleave handles
+        # async generators directly via Task + fresh shield pattern
+        interleaved = interleave_iterator_for_keep_alive(mapped2, timeout=1)
 
         result = []
         async for item in interleaved:
@@ -263,7 +237,30 @@ class TestQueuedAsyncIterator:
         assert newline_count > 3, (
             f"Expected keep-alive newlines, got {newline_count}"
         )
-        # Appeal must arrive (not lost by shield/timeout interaction)
+        # Appeal must arrive
         assert len(data_items) >= 1, (
             f"Expected at least 1 data item, got {len(data_items)}: {data_items}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_pipeline_multiple_items_no_loss(self):
+        """Multiple items through the full pipeline - none should be lost."""
+        import asyncstdlib as a
+
+        blocking_iter = BlockingSyncIterator(["a1", "a2", "a3"], delay=0.3)
+        async_iter = sync_iterator_to_async(blocking_iter)
+
+        async def identity(x):
+            return x
+
+        mapped = a.map(identity, async_iter)
+        interleaved = interleave_iterator_for_keep_alive(mapped, timeout=1)
+
+        result = []
+        async for item in interleaved:
+            result.append(item)
+
+        data_items = [r for r in result if r != "\n"]
+        assert data_items == ["a1", "a2", "a3"], (
+            f"Expected all items, got {data_items}"
         )
