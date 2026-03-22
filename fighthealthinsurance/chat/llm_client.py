@@ -35,6 +35,15 @@ BAD_CONTEXT_PATTERNS = re.compile(
 # Minimum length for a valid LLM response or context
 MIN_RESPONSE_LENGTH = 5
 
+# Pattern to detect when the response asks for the patient's name
+ASKS_FOR_PATIENT_NAME = re.compile(
+    r"(what is (?:the |your )?patient'?s? name|"
+    r"(?:could|can|would) you (?:please )?(?:provide|tell|give|share) (?:me )?(?:the |your )?patient'?s? name|"
+    r"(?:what|who) is the (?:patient|name of the patient)|"
+    r"I(?:'ll| will) need (?:the |your )?patient'?s? name)",
+    re.IGNORECASE,
+)
+
 
 def estimate_history_tokens(history: List[Dict[str, str]]) -> int:
     """
@@ -51,10 +60,25 @@ def estimate_history_tokens(history: List[Dict[str, str]]) -> int:
     return sum(len(msg.get("content", "")) for msg in history) // 4
 
 
+def _history_contains_patient_name(chat_history: List[Dict[str, str]]) -> bool:
+    """Check if patient_name has already been provided in the chat history."""
+    for msg in chat_history:
+        content = msg.get("content", "")
+        # Check for patient_name in tool calls (e.g. create_or_update_appeal{"patient_name": "..."})
+        if '"patient_name"' in content or "'patient_name'" in content:
+            return True
+        # Check for patient_name in structured responses
+        if "patient_name" in content and ":" in content:
+            return True
+    return False
+
+
 def score_llm_response(
     result: Optional[Tuple[Optional[str], Optional[str]]],
     call_score: int,
     is_primary_call: bool = True,
+    document_name: Optional[str] = None,
+    chat_history: Optional[List[Dict[str, str]]] = None,
 ) -> float:
     """
     Score an LLM response for quality and safety.
@@ -63,6 +87,8 @@ def score_llm_response(
         result: Tuple of (response_text, context_part) from LLM
         call_score: Base score from model quality
         is_primary_call: Whether this is a primary (not retry) call
+        document_name: Name of a file the user just uploaded, if any
+        chat_history: Current chat history for context-aware scoring
 
     Returns:
         Float score (higher is better, -inf for invalid responses)
@@ -105,6 +131,21 @@ def score_llm_response(
             score -= 200
             logger.warning("Detected false promise in response, penalizing score")
 
+        # Bonus for referencing an uploaded document by name
+        if document_name and document_name.lower() in response_text.lower():
+            score += 150
+            logger.debug(
+                f"Response references uploaded document '{document_name}', boosting score"
+            )
+
+        # Penalize asking for patient_name when it's already in history
+        if chat_history and ASKS_FOR_PATIENT_NAME.search(response_text):
+            if _history_contains_patient_name(chat_history):
+                score -= 100
+                logger.debug(
+                    "Response asks for patient_name already in history, penalizing"
+                )
+
     # Add base quality score from model
     if response_text and context_part:
         score += call_score
@@ -118,6 +159,8 @@ def score_llm_response(
 def create_response_scorer(
     call_scores: Dict[Awaitable, int],
     primary_calls: Optional[List[Awaitable]] = None,
+    document_name: Optional[str] = None,
+    chat_history: Optional[List[Dict[str, str]]] = None,
 ) -> Callable[[Optional[Tuple[Optional[str], Optional[str]]], Awaitable], float]:
     """
     Create a scoring function for use with best_within_timelimit.
@@ -125,6 +168,8 @@ def create_response_scorer(
     Args:
         call_scores: Dict mapping call awaitables to their base scores
         primary_calls: List of primary (non-retry) calls for bonus scoring
+        document_name: Name of a file the user just uploaded, if any
+        chat_history: Current chat history for context-aware scoring
 
     Returns:
         Scoring function compatible with best_within_timelimit
@@ -137,7 +182,13 @@ def create_response_scorer(
     ) -> float:
         call_score = call_scores.get(original_task, 0)
         is_primary = original_task in primary_set
-        return score_llm_response(result, call_score, is_primary)
+        return score_llm_response(
+            result,
+            call_score,
+            is_primary,
+            document_name=document_name,
+            chat_history=chat_history,
+        )
 
     return score_fn
 
@@ -179,7 +230,8 @@ def build_llm_calls(
             is_logged_in=is_logged_in,
         )
         calls.append(call)
-        call_scores[call] = model_backend.quality() * 20
+        # Quadratic scaling to more aggressively prefer higher-quality models
+        call_scores[call] = (model_backend.quality() ** 2) // 5
 
         # Also try with full history if provided and model can handle it
         if full_history and full_history != history:
@@ -198,7 +250,7 @@ def build_llm_calls(
                 )
                 calls.append(full_history_call)
                 # Slightly prefer full history for better context
-                call_scores[full_history_call] = model_backend.quality() * 22
+                call_scores[full_history_call] = (model_backend.quality() ** 2) // 4
 
     return calls, call_scores
 
@@ -244,7 +296,8 @@ def build_retry_calls(
             is_logged_in=is_logged_in,
         )
         calls.append(call)
-        call_scores[call] = model_backend.quality() * 15  # Slightly lower score
+        # Quadratic scaling, reduced for retry (lower priority than primary)
+        call_scores[call] = (model_backend.quality() ** 2) // 7
 
     # Also try with full history (some models may handle it)
     for model_backend in model_backends:
@@ -256,7 +309,7 @@ def build_retry_calls(
             is_logged_in=is_logged_in,
         )
         calls.append(call)
-        call_scores[call] = model_backend.quality() * 50
+        call_scores[call] = (model_backend.quality() ** 2) // 2
 
     # Add fallback backends with both short and full histories
     if fallback_backends:
@@ -270,7 +323,7 @@ def build_retry_calls(
                 is_logged_in=is_logged_in,
             )
             calls.append(call)
-            call_scores[call] = model_backend.quality() * 15
+            call_scores[call] = (model_backend.quality() ** 2) // 7
 
             # Full history for fallbacks (if model can handle it)
             call = model_backend.generate_chat_response(
@@ -281,6 +334,6 @@ def build_retry_calls(
                 is_logged_in=is_logged_in,
             )
             calls.append(call)
-            call_scores[call] = model_backend.quality() * 20
+            call_scores[call] = (model_backend.quality() ** 2) // 5
 
     return calls, call_scores
