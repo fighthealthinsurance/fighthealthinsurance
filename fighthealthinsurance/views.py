@@ -2067,6 +2067,12 @@ class UnsubscribeView(View):
 
 
 @method_decorator(xframe_options_exempt, name="dispatch")
+class PatientDashboardView(TemplateView):
+    """Patient dashboard for viewing appeals, denials, call logs, and evidence."""
+
+    template_name = "patient_dashboard.html"
+
+
 class ChooserView(TemplateView):
     """View for the Chooser (Best-Of Selection) interface.
 

@@ -49,6 +49,12 @@ router.register(
     basename="prior-auth-proposals",
 )
 router.register(r"chooser", rest_views.ChooserViewSet, basename="chooser")
+router.register(r"call_logs", rest_views.InsuranceCallLogViewSet, basename="call_logs")
+router.register(
+    r"patient_evidence",
+    rest_views.PatientEvidenceViewSet,
+    basename="patient_evidence",
+)
 
 urlpatterns = [
     # Non-viewset but still rest API endpoints.

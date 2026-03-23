@@ -1708,6 +1708,85 @@ class AppealAttachment(models.Model):
         return cls.objects.filter(appeal__in=allowed_appeals)
 
 
+class InsuranceCallLog(models.Model):
+    """Documents a patient's phone call with their insurance company."""
+
+    id = models.AutoField(primary_key=True)
+    patient_user = models.ForeignKey(
+        PatientUser, on_delete=models.CASCADE, related_name="call_logs"
+    )
+    appeal = models.ForeignKey(
+        Appeal,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="call_logs",
+    )
+    call_date = models.DateTimeField()
+    representative_name = models.CharField(max_length=200, blank=True, default="")
+    reference_number = models.CharField(max_length=200, blank=True, default="")
+    call_outcome = models.TextField(blank=True, default="")
+    notes = models.TextField(blank=True, default="")
+    follow_up_needed = models.BooleanField(default=False)
+    follow_up_date = models.DateField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    @classmethod
+    def filter_to_allowed(cls, user: "User") -> models.QuerySet["InsuranceCallLog"]:
+        """Filter call logs to only those the user has permission to access."""
+        if not user.is_authenticated:
+            return cls.objects.none()
+        if user.is_superuser or user.is_staff:
+            return cls.objects.all()
+        try:
+            patient_user = PatientUser.objects.get(user=user)
+            return cls.objects.filter(patient_user=patient_user)
+        except PatientUser.DoesNotExist:
+            return cls.objects.none()
+
+    class Meta:
+        ordering = ["-call_date"]
+
+
+class PatientEvidence(models.Model):
+    """Supporting document uploaded by a patient for their appeal."""
+
+    id = models.AutoField(primary_key=True)
+    patient_user = models.ForeignKey(
+        PatientUser, on_delete=models.CASCADE, related_name="evidence"
+    )
+    appeal = models.ForeignKey(
+        Appeal,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="patient_evidence",
+    )
+    title = models.CharField(max_length=300)
+    description = models.TextField(blank=True, default="")
+    file = EncryptedFileField(null=True, storage=settings.COMBINED_STORAGE)
+    filename = models.CharField(max_length=255)
+    mime_type = models.CharField(max_length=127)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    @classmethod
+    def filter_to_allowed(cls, user: "User") -> models.QuerySet["PatientEvidence"]:
+        """Filter evidence to only those the user has permission to access."""
+        if not user.is_authenticated:
+            return cls.objects.none()
+        if user.is_superuser or user.is_staff:
+            return cls.objects.all()
+        try:
+            patient_user = PatientUser.objects.get(user=user)
+            return cls.objects.filter(patient_user=patient_user)
+        except PatientUser.DoesNotExist:
+            return cls.objects.none()
+
+    class Meta:
+        ordering = ["-created_at"]
+
+
 class StripeRecoveryInfo(models.Model):
     """Stores recovery information for failed Stripe transactions."""
 
