@@ -1989,6 +1989,58 @@ class AppealsBackendHelper:
             for k, v in subs.items():
                 if v and v != "" and v != "UNKNOWN":
                     content = content.replace(k, str(v))
+            # Second pass: regex-based fuzzy matching for model-generated
+            # placeholder variants like [Claim # Placeholder]
+            patient_name_value = subs.get("[Patient Name]", "{{Your Name}}")
+            prof_name_value = subs.get("{{Your Name}}", "")
+            professional_name_value = subs.get("[Professional Name]", "")
+            domain_address_value = subs.get("[Professional Address]", "")
+            fuzzy_subs = [
+                # Claim/Reference number variants
+                (r"\[Claim\s*#?\s*(?:Number\s*)?(?:Placeholder)?\]", claim_id),
+                (r"\[Reference\s*#?\s*(?:Number\s*)?(?:Placeholder)?\]", claim_id),
+                (r"\[Case\s*#?\s*(?:Number\s*)?(?:Placeholder)?\]", claim_id),
+                (r"\[CLAIM_NUMBER\]", claim_id),
+                # Diagnosis variants
+                (r"\[Diagnosis\s*(?:Code\s*)?(?:Placeholder)?\]", diagnosis),
+                # Procedure variants
+                (r"\[Procedure\s*(?:Code\s*)?(?:Placeholder)?\]", procedure),
+                # Insurance company variants
+                (
+                    r"\[Insurance\s+Company\s*(?:Name\s*)?(?:Placeholder)?\]",
+                    insurance_company,
+                ),
+                (
+                    r"\[Health\s+Plan\s*(?:Name\s*)?(?:Placeholder)?\]",
+                    insurance_company,
+                ),
+                # Date variants
+                (
+                    r"\[(?:Insert\s+)?(?:Current\s+)?Date\s*(?:Placeholder)?\]",
+                    denial.date or "{{date}}",
+                ),
+                # Patient name variants
+                (
+                    r"\[Patient(?:'?s?)?\s+Name\s*(?:Placeholder)?\]",
+                    patient_name_value,
+                ),
+                # Provider/professional name variants
+                (
+                    r"\[(?:Provider|Professional|Doctor|Physician)(?:'?s?)?\s+Name\s*(?:Placeholder)?\]",
+                    prof_name_value or professional_name_value,
+                ),
+                # Address variants
+                (
+                    r"\[(?:Provider|Professional|Practice)?\s*Address\s*(?:Placeholder)?\]",
+                    domain_address_value,
+                ),
+            ]
+            for pattern, value in fuzzy_subs:
+                if not value or value == "" or value == "UNKNOWN":
+                    continue
+                str_value = str(value)
+                escaped = str_value.replace("\\", r"\\")
+                content = re.sub(pattern, escaped, content, flags=re.IGNORECASE)
             appeal["content"] = content
             return appeal
 
