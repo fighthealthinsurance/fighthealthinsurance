@@ -80,19 +80,17 @@ SKIP_STATIC_COLLECT=false
 
 compute_static_checksum() {
   local parts=""
-  # Include JS dist checksum (the build output)
-  if [ -d "${JS_PATH}/dist" ]; then
-    parts="${parts}$(find "${JS_PATH}/dist" -type f -exec md5sum {} \; 2>/dev/null | sort | md5sum | cut -d ' ' -f 1)"
+  # Include all static files (JS dist, non-bundled JS like jquery.sticky.js, CSS, images, blog posts)
+  # Excludes node_modules and source .ts/.tsx files (those are covered by the JS build checksum)
+  if [ -d "fighthealthinsurance/static" ]; then
+    parts="${parts}$(find fighthealthinsurance/static -type f \
+      -not -path '*/node_modules/*' \
+      -not -name '*.ts' -not -name '*.tsx' \
+      -exec md5sum {} \; 2>/dev/null | sort | md5sum | cut -d ' ' -f 1)"
   fi
-  # Include templates
+  # Include templates (referenced by compress)
   if [ -d "fighthealthinsurance/templates" ]; then
     parts="${parts}$(find fighthealthinsurance/templates -type f -exec md5sum {} \; 2>/dev/null | sort | md5sum | cut -d ' ' -f 1)"
-  fi
-  # Include CSS files
-  parts="${parts}$(find fighthealthinsurance/static -maxdepth 1 -name '*.css' -exec md5sum {} \; 2>/dev/null | sort | md5sum | cut -d ' ' -f 1)"
-  # Include blog posts
-  if [ -d "fighthealthinsurance/static/blog" ]; then
-    parts="${parts}$(find fighthealthinsurance/static/blog -type f -name '*.md' -exec md5sum {} \; 2>/dev/null | sort | md5sum | cut -d ' ' -f 1)"
   fi
   echo "$parts" | md5sum | cut -d ' ' -f 1
 }
