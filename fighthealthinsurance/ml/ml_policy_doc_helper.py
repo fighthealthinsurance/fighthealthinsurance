@@ -3,15 +3,17 @@ Helper for analyzing policy documents to extract relevant coverage information.
 
 Uses internal ML models to:
 1. Extract text from policy documents (Summary of Benefits, Medical Policy PDFs/DOCX)
-2. Identify exclusions and inclusions
-3. Find appeal-relevant clauses with page references
+2. Split documents into chunks and analyze them in parallel
+3. Synthesize chunk summaries into a comprehensive analysis
 4. Generate quotable summaries for use in appeals
 """
 
 import asyncio
 import io
 import json
-from typing import Optional, Dict, Any
+import math
+from typing import Optional, Dict, Any, Callable, Awaitable, List
+
 from loguru import logger
 
 import pymupdf
@@ -24,14 +26,23 @@ from fighthealthinsurance.ml.ml_router import ml_router
 # Disclaimer text to include in all outputs
 POLICY_ANALYSIS_DISCLAIMER = """**Important Disclaimer:** This analysis is provided for informational purposes only and is not legal or professional advice. Insurance policies are complex documents, and this AI analysis may not capture all nuances. For definitive interpretations, contact your insurance company directly or consult with a qualified professional."""
 
+# Type alias for the progress callback
+ProgressCallback = Callable[[int, int], Awaitable[None]]
+
 
 class MLPolicyDocHelper:
     """Helper class for ML-powered policy document analysis."""
 
-    # Maximum characters to send to the model for analysis
-    MAX_CONTEXT_LENGTH = 12000
-    # Maximum time to spend on document analysis
-    TIMEOUT_SECONDS = 90
+    # Characters per chunk for parallel analysis
+    CHUNK_SIZE = 4000
+    # Maximum parallel chunk analysis tasks
+    MAX_PARALLEL_CHUNKS = 50
+    # Maximum time for the entire analysis pipeline
+    TIMEOUT_SECONDS = 180
+    # Timeout for each individual chunk analysis
+    CHUNK_TIMEOUT_SECONDS = 60
+    # Timeout for the final synthesis call
+    SYNTHESIS_TIMEOUT_SECONDS = 90
 
     @classmethod
     def _read_and_decrypt_file(cls, file_field: Any) -> Optional[bytes]:
@@ -168,13 +179,47 @@ class MLPolicyDocHelper:
             return "", {}
 
     @classmethod
+    def _build_chunks(cls, page_dict: Dict[int, str]) -> list[Dict[str, Any]]:
+        """
+        Build analysis chunks from extracted page_dict.
+
+        Groups pages/sections into chunks of approximately CHUNK_SIZE characters.
+        Each chunk records which pages it spans.
+        """
+        chunks: list[Dict[str, Any]] = []
+        current_text = ""
+        current_pages: list[int] = []
+
+        for page_num in sorted(page_dict.keys()):
+            page_text = page_dict[page_num]
+            # If adding this page would exceed chunk size, flush current chunk
+            if current_text and len(current_text) + len(page_text) > cls.CHUNK_SIZE:
+                chunks.append({"text": current_text, "pages": list(current_pages)})
+                current_text = ""
+                current_pages = []
+            current_text += page_text + "\n"
+            current_pages.append(page_num)
+
+        # Flush remaining
+        if current_text.strip():
+            chunks.append({"text": current_text, "pages": list(current_pages)})
+
+        return chunks
+
+    @classmethod
     async def analyze_policy_document(
         cls,
         policy_document: PolicyDocument,
         user_question: Optional[str] = None,
+        progress_callback: Optional[ProgressCallback] = None,
     ) -> Optional[PolicyDocumentAnalysis]:
         """
-        Main entry point: Analyze a policy document and store the results.
+        Main entry point: Analyze a policy document using chunked parallel analysis.
+
+        1. Extract text and split into chunks
+        2. Fan out parallel "relevance check" calls (up to MAX_PARALLEL_CHUNKS)
+        3. Collect relevant chunk summaries
+        4. Synthesize into final analysis
         """
         try:
             file_field = policy_document.document_enc
@@ -195,7 +240,7 @@ class MLPolicyDocHelper:
                     )
                     return None
 
-                full_text, _ = await asyncio.to_thread(
+                full_text, page_dict = await asyncio.to_thread(
                     cls.extract_text_from_bytes,
                     decrypted_bytes,
                     policy_document.filename,
@@ -207,19 +252,53 @@ class MLPolicyDocHelper:
                     )
                     return None
 
-                # Step 2: Analyze for exclusions, inclusions, and appeal clauses
-                plan_category = getattr(policy_document, "plan_category", "unknown")
-                analysis_results = await cls._analyze_document_content(
-                    full_text, user_question, plan_category=plan_category
+                # Step 2: Build chunks
+                chunks = cls._build_chunks(page_dict)
+                if not chunks:
+                    logger.warning(f"No chunks built from {policy_document.filename}")
+                    return None
+
+                logger.info(
+                    f"Split {policy_document.filename} into {len(chunks)} chunks for parallel analysis"
                 )
 
-                if not analysis_results:
+                # Step 3: Analyze chunks in parallel
+                plan_category = getattr(policy_document, "plan_category", "unknown")
+                chunk_summaries = await cls._analyze_chunks_parallel(
+                    chunks,
+                    user_question=user_question,
+                    plan_category=plan_category,
+                    progress_callback=progress_callback,
+                )
+
+                if not chunk_summaries:
                     logger.warning(
-                        f"No analysis results for {policy_document.filename}"
+                        f"No relevant chunks found in {policy_document.filename}"
                     )
                     return None
 
-                # Step 3: Create and save the analysis record
+                logger.info(
+                    f"Got {len(chunk_summaries)} relevant chunk summaries from {len(chunks)} chunks"
+                )
+
+                # Step 4: Synthesize chunk summaries into final analysis
+                if progress_callback:
+                    await progress_callback(0, 1)
+
+                analysis_results = await cls._synthesize_chunk_summaries(
+                    chunk_summaries,
+                    user_question=user_question,
+                    plan_category=plan_category,
+                )
+
+                if progress_callback:
+                    await progress_callback(0, 0)
+
+                if not analysis_results:
+                    logger.warning(f"Synthesis failed for {policy_document.filename}")
+                    return None
+
+                # Step 5: Create and save the analysis record
                 analysis = await PolicyDocumentAnalysis.objects.acreate(
                     policy_document=policy_document,
                     user_question=user_question or "",
@@ -259,17 +338,175 @@ class MLPolicyDocHelper:
     }
 
     @classmethod
-    async def _analyze_document_content(
+    async def _analyze_single_chunk(
         cls,
-        full_text: str,
+        chunk: Dict[str, Any],
+        chunk_index: int,
+        user_question: Optional[str],
+        plan_category: str,
+        remaining_counter: asyncio.Lock,
+        remaining_count: list[int],
+        total_chunks: int,
+        progress_callback: Optional[ProgressCallback],
+    ) -> Optional[str]:
+        """
+        Analyze a single chunk for relevance. Returns a summary string if relevant, None otherwise.
+        """
+        pages_str = ", ".join(str(p) for p in chunk["pages"])
+        chunk_text = chunk["text"]
+
+        question_context = ""
+        if user_question:
+            question_context = f'The user is asking: "{user_question}"\n\n'
+
+        plan_context = ""
+        if plan_category and plan_category != "unknown":
+            regulator_info = cls.PLAN_REGULATOR_CONTEXT.get(plan_category, "")
+            if regulator_info:
+                plan_context = f"Plan context: {regulator_info}\n\n"
+
+        prompt = f"""You are analyzing a chunk of a health insurance policy document (pages/sections: {pages_str}).
+
+{question_context}{plan_context}Determine if this chunk contains ANY of the following:
+- Coverage details (what IS covered, benefits)
+- Exclusions (what is NOT covered)
+- Appeal rights, deadlines, or procedures
+- Medical necessity definitions
+- Prior authorization requirements
+- Grievance procedures
+- Cost-sharing details (copays, deductibles, out-of-pocket maximums)
+- Any information relevant to the user's question (if provided)
+
+If this chunk contains relevant information, provide a concise summary (200-400 words) of what you found. Include exact quotes with page references where possible. Format as:
+
+RELEVANT: YES
+PAGES: {pages_str}
+SUMMARY:
+[Your summary with quotes and page references]
+
+If this chunk contains NO relevant information (e.g., it's a table of contents, provider directory, definitions of common terms, or boilerplate), respond with just:
+
+RELEVANT: NO
+
+Document chunk:
+{chunk_text}"""
+
+        models = ml_router.internal_models_by_cost[:2]
+
+        for model in models:
+            try:
+                result = await asyncio.wait_for(
+                    model._infer_no_context(
+                        system_prompts=[
+                            "You are an expert at analyzing health insurance policy documents. "
+                            "Be concise. Include exact page references for all findings."
+                        ],
+                        prompt=prompt,
+                        temperature=0.1,
+                    ),
+                    timeout=cls.CHUNK_TIMEOUT_SECONDS,
+                )
+
+                if result:
+                    # Update progress
+                    async with remaining_counter:
+                        remaining_count[0] -= 1
+                        current_remaining = remaining_count[0]
+                    if progress_callback:
+                        await progress_callback(current_remaining, total_chunks)
+
+                    # Check if relevant
+                    if "RELEVANT: NO" in result.upper():
+                        logger.debug(
+                            f"Chunk {chunk_index} (pages {pages_str}) not relevant"
+                        )
+                        return None
+
+                    # Extract summary portion
+                    summary_start = result.find("SUMMARY:")
+                    if summary_start >= 0:
+                        return (
+                            f"[Pages {pages_str}]\n{result[summary_start + 8:].strip()}"
+                        )
+                    # If no SUMMARY: header but marked relevant, use the whole response
+                    return f"[Pages {pages_str}]\n{result.strip()}"
+
+            except asyncio.TimeoutError:
+                logger.warning(f"Timeout on chunk {chunk_index} with {model}")
+            except Exception as e:
+                logger.debug(f"Error on chunk {chunk_index} with {model}: {e}")
+
+        # If all models failed, still decrement counter
+        async with remaining_counter:
+            remaining_count[0] -= 1
+            current_remaining = remaining_count[0]
+        if progress_callback:
+            await progress_callback(current_remaining, total_chunks)
+
+        return None
+
+    @classmethod
+    async def _analyze_chunks_parallel(
+        cls,
+        chunks: list[Dict[str, Any]],
         user_question: Optional[str] = None,
-        remaining_timeout: Optional[float] = None,
+        plan_category: str = "unknown",
+        progress_callback: Optional[ProgressCallback] = None,
+    ) -> list[str]:
+        """
+        Analyze all chunks in parallel (up to MAX_PARALLEL_CHUNKS at a time).
+        Returns list of relevant chunk summaries.
+        """
+        total_chunks = len(chunks)
+        # Shared mutable counter for progress tracking
+        remaining_count = [total_chunks]
+        remaining_counter = asyncio.Lock()
+
+        if progress_callback:
+            await progress_callback(total_chunks, total_chunks)
+
+        # Use a semaphore to limit concurrency
+        semaphore = asyncio.Semaphore(cls.MAX_PARALLEL_CHUNKS)
+
+        async def bounded_analyze(chunk: Dict[str, Any], idx: int) -> Optional[str]:
+            async with semaphore:
+                return await cls._analyze_single_chunk(
+                    chunk=chunk,
+                    chunk_index=idx,
+                    user_question=user_question,
+                    plan_category=plan_category,
+                    remaining_counter=remaining_counter,
+                    remaining_count=remaining_count,
+                    total_chunks=total_chunks,
+                    progress_callback=progress_callback,
+                )
+
+        tasks = [bounded_analyze(chunk, i) for i, chunk in enumerate(chunks)]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        summaries: list[str] = []
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                logger.debug(f"Chunk {i} raised exception: {result}")
+            elif result is not None:
+                summaries.append(result)
+
+        return summaries
+
+    @classmethod
+    async def _synthesize_chunk_summaries(
+        cls,
+        chunk_summaries: list[str],
+        user_question: Optional[str] = None,
         plan_category: str = "unknown",
     ) -> Optional[Dict[str, Any]]:
         """
-        Use LLM to analyze document content for exclusions, inclusions, and appeal clauses.
+        Combine chunk summaries into a final structured analysis.
         """
-        text_for_analysis = full_text[: cls.MAX_CONTEXT_LENGTH]
+        combined_summaries = "\n\n---\n\n".join(chunk_summaries)
+        # Truncate if extremely long (shouldn't happen often with summaries)
+        if len(combined_summaries) > 30000:
+            combined_summaries = combined_summaries[:30000]
 
         question_context = ""
         if user_question:
@@ -289,64 +526,35 @@ Plan type context: {regulator_info}
 Use this information to tailor your analysis of appeal rights and regulatory references.
 """
 
-        prompt = f"""Analyze this insurance policy document and extract the following information.
+        prompt = f"""You are synthesizing an analysis of a health insurance policy document.
+Multiple sections of the document have been analyzed independently. Below are the relevant findings from each section.
+Your job is to combine these into a single, comprehensive, well-organized analysis.
 {question_context}{plan_context}
-IMPORTANT: For each item you extract, include the exact page number where it appears.
+CHUNK SUMMARIES:
+{combined_summaries}
 
-Extract:
-1. **EXCLUSIONS**: List all exclusions (things NOT covered). For each, provide:
-   - The exclusion text (exact quote when possible)
-   - The page number
-   - A brief explanation of what it means
-
-2. **INCLUSIONS/COVERAGE**: List what IS covered. For each, provide:
-   - The coverage text (exact quote when possible)
-   - The page number
-   - A brief explanation
-
-3. **APPEAL-RELEVANT CLAUSES**: Find clauses that would be useful for appealing a denial:
-   - Appeal deadlines and procedures
-   - Medical necessity definitions
-   - Prior authorization requirements
-   - Exceptions to exclusions
-   - Grievance procedures
-   - Which regulator oversees this plan and how to file external complaints
-   For each, provide the exact quote and page number.
-
-4. **QUOTABLE SECTIONS**: Extract 3-5 key quotes that could be cited in an appeal letter.
-   Format as: "Quote text" (Page X)
-
-5. **SUMMARY**: A brief (2-3 paragraph) plain-English summary of the key coverage and limitations. Include which regulatory body oversees this plan type and the patient's external appeal rights.
-
-Document text:
-{text_for_analysis}
+Synthesize all the above into a single structured analysis. Preserve exact page references from the chunk summaries.
 
 Respond in JSON format with the following structure:
 {{
     "exclusions": [
-        {{"text": "...", "page": 1, "explanation": "..."}}
+        {{"text": "exact quote from policy", "page": 1, "explanation": "plain English explanation"}}
     ],
     "inclusions": [
-        {{"text": "...", "page": 1, "explanation": "..."}}
+        {{"text": "exact quote from policy", "page": 1, "explanation": "plain English explanation"}}
     ],
     "appeal_clauses": [
-        {{"text": "...", "page": 1, "type": "appeal_deadline|medical_necessity|prior_auth|exception|grievance"}}
+        {{"text": "exact quote", "page": 1, "type": "appeal_deadline|medical_necessity|prior_auth|exception|grievance"}}
     ],
     "quotable_sections": [
-        {{"quote": "...", "page": 1, "relevance": "..."}}
+        {{"quote": "exact quote for appeal letter", "page": 1, "relevance": "why this is useful"}}
     ],
-    "summary": "..."
-}}
-"""
+    "summary": "2-3 paragraph plain-English summary of coverage, limitations, appeal rights, and regulatory oversight"
+}}"""
 
         models = ml_router.internal_models_by_cost[:3]
         num_models = len(models)
-
-        # Compute per-model timeout from remaining outer budget
-        if remaining_timeout and remaining_timeout > 0:
-            per_model_timeout = remaining_timeout / max(num_models, 1)
-        else:
-            per_model_timeout = cls.TIMEOUT_SECONDS / max(num_models, 1)
+        per_model_timeout = cls.SYNTHESIS_TIMEOUT_SECONDS / max(num_models, 1)
 
         for model in models:
             try:
@@ -354,9 +562,8 @@ Respond in JSON format with the following structure:
                     model._infer_no_context(
                         system_prompts=[
                             "You are an expert at analyzing health insurance policy documents. "
-                            "Your goal is to help users understand their coverage and find "
-                            "information useful for appealing insurance denials. "
-                            "Always include exact page references. Be thorough but concise."
+                            "Synthesize findings into a clear, structured analysis. "
+                            "Always preserve exact page references. Be thorough but concise."
                         ],
                         prompt=prompt,
                         temperature=0.2,
@@ -367,13 +574,13 @@ Respond in JSON format with the following structure:
                 if result:
                     parsed = cls._parse_analysis_response(result)
                     if parsed:
-                        logger.debug(f"Successfully analyzed document with {model}")
+                        logger.debug(f"Successfully synthesized analysis with {model}")
                         return parsed
 
             except asyncio.TimeoutError:
-                logger.warning(f"Timeout analyzing document with {model}")
+                logger.warning(f"Timeout synthesizing with {model}")
             except Exception as e:
-                logger.debug(f"Error analyzing document with {model}: {e}")
+                logger.debug(f"Error synthesizing with {model}: {e}")
 
         return None
 
@@ -478,6 +685,7 @@ Respond in JSON format with the following structure:
         cls,
         policy_document: PolicyDocument,
         user_question: Optional[str] = None,
+        progress_callback: Optional[ProgressCallback] = None,
     ) -> Optional[PolicyDocumentAnalysis]:
         """
         Get existing analysis or create a new one.
@@ -502,4 +710,6 @@ Respond in JSON format with the following structure:
             logger.debug(f"Found existing analysis for document {policy_document.id}")
             return existing
 
-        return await cls.analyze_policy_document(policy_document, user_question)
+        return await cls.analyze_policy_document(
+            policy_document, user_question, progress_callback=progress_callback
+        )
