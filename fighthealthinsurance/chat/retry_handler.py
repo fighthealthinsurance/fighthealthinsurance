@@ -14,6 +14,7 @@ from fighthealthinsurance.chat.llm_client import (
     MIN_RESPONSE_LENGTH,
     _extract_document_names_from_history,
     build_retry_calls,
+    compute_repetition_penalty,
 )
 from fighthealthinsurance.chat.safety_filters import detect_false_promises
 from fighthealthinsurance.ml.ml_models import RemoteModelLike
@@ -75,6 +76,10 @@ def create_simple_retry_scorer(
             # Always penalize asking for patient name — it's known client-side
             if ASKS_FOR_PATIENT_NAME.search(response_text):
                 score -= 200
+
+            # Penalize responses that repeat previous messages
+            if chat_history:
+                score += compute_repetition_penalty(response_text, chat_history)
 
         # Small bonus for context
         if context_part and len(context_part) > MIN_RESPONSE_LENGTH:

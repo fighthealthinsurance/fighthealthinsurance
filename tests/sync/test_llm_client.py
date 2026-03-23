@@ -6,6 +6,13 @@ from fighthealthinsurance.chat.llm_client import (
     estimate_history_tokens,
     score_llm_response,
     create_response_scorer,
+    normalize_text,
+    bag_of_words,
+    compute_repetition_penalty,
+    EXACT_REPEAT_PENALTY,
+    BAG_OF_WORDS_REPEAT_PENALTY,
+    OLDER_ASSISTANT_REPEAT_PENALTY,
+    OLDER_USER_REPEAT_PENALTY,
     BAD_RESPONSE_PATTERNS,
     BAD_CONTEXT_PATTERNS,
 )
@@ -192,3 +199,140 @@ class TestCreateResponseScorer(TestCase):
         retry_score = scorer(result, retry_call)
 
         self.assertGreater(primary_score, retry_score)
+
+
+class TestNormalizeText(TestCase):
+    """Test text normalization for comparison."""
+
+    def test_lowercase_and_strip(self):
+        self.assertEqual(normalize_text("  Hello WORLD  "), "hello world")
+
+    def test_collapse_whitespace(self):
+        self.assertEqual(normalize_text("hello   world\n\tfoo"), "hello world foo")
+
+    def test_empty_string(self):
+        self.assertEqual(normalize_text(""), "")
+
+
+class TestBagOfWords(TestCase):
+    """Test bag-of-words extraction."""
+
+    def test_basic_extraction(self):
+        self.assertEqual(bag_of_words("Hello World Hello"), {"hello", "world"})
+
+    def test_ignores_punctuation(self):
+        self.assertEqual(bag_of_words("Hello, World!"), {"hello", "world"})
+
+    def test_empty_string(self):
+        self.assertEqual(bag_of_words(""), set())
+
+
+class TestComputeRepetitionPenalty(TestCase):
+    """Test repetition penalty computation."""
+
+    def test_exact_match_user_message(self):
+        """Exact match (ignoring case/spacing) with last user message => -500."""
+        history = [{"role": "user", "content": "I need help with my denial"}]
+        penalty = compute_repetition_penalty(
+            "  i need help with  my denial  ", history
+        )
+        self.assertEqual(penalty, EXACT_REPEAT_PENALTY)
+
+    def test_bag_of_words_match_user_message(self):
+        """Same words, different order => -75."""
+        history = [{"role": "user", "content": "help with my denial"}]
+        penalty = compute_repetition_penalty("my denial with help", history)
+        self.assertEqual(penalty, BAG_OF_WORDS_REPEAT_PENALTY)
+
+    def test_exact_match_assistant_message(self):
+        """Exact match with last assistant message => -500."""
+        history = [
+            {"role": "user", "content": "something different"},
+            {"role": "assistant", "content": "Here is my response"},
+        ]
+        penalty = compute_repetition_penalty("here is my response", history)
+        self.assertEqual(penalty, EXACT_REPEAT_PENALTY)
+
+    def test_no_match_no_penalty(self):
+        """Completely different response => 0."""
+        history = [{"role": "user", "content": "I need help with my denial"}]
+        penalty = compute_repetition_penalty(
+            "Let me look into your insurance case.", history
+        )
+        self.assertEqual(penalty, 0.0)
+
+    def test_empty_history_no_penalty(self):
+        """Empty chat_history => 0."""
+        self.assertEqual(compute_repetition_penalty("some response", []), 0.0)
+
+    def test_empty_response_no_penalty(self):
+        """Empty response text => 0."""
+        history = [{"role": "user", "content": "hello"}]
+        self.assertEqual(compute_repetition_penalty("", history), 0.0)
+
+    def test_partial_overlap_no_penalty(self):
+        """Some shared words but not all => 0 (bag-of-words must be equal)."""
+        history = [{"role": "user", "content": "I need help with my denial"}]
+        penalty = compute_repetition_penalty("I need help with something else", history)
+        self.assertEqual(penalty, 0.0)
+
+    def test_case_insensitive_exact_match(self):
+        """Case differences should still trigger exact match."""
+        history = [{"role": "user", "content": "HELLO WORLD"}]
+        penalty = compute_repetition_penalty("hello world", history)
+        self.assertEqual(penalty, EXACT_REPEAT_PENALTY)
+
+    def test_whitespace_insensitive_exact_match(self):
+        """Whitespace differences should still trigger exact match."""
+        history = [{"role": "user", "content": "hello  world"}]
+        penalty = compute_repetition_penalty("hello world", history)
+        self.assertEqual(penalty, EXACT_REPEAT_PENALTY)
+
+    def test_older_assistant_message_match(self):
+        """Matching an older assistant message => -20."""
+        history = [
+            {"role": "user", "content": "first question"},
+            {"role": "assistant", "content": "first answer"},
+            {"role": "user", "content": "second question"},
+            {"role": "assistant", "content": "second answer"},
+        ]
+        # Response matches "first answer" (older assistant msg, not the last one)
+        penalty = compute_repetition_penalty("first answer", history)
+        self.assertEqual(penalty, OLDER_ASSISTANT_REPEAT_PENALTY)
+
+    def test_older_user_message_match(self):
+        """Matching an older user message => -10."""
+        history = [
+            {"role": "user", "content": "first question"},
+            {"role": "assistant", "content": "first answer"},
+            {"role": "user", "content": "second question"},
+        ]
+        # Response matches "first question" (older user msg, not the last one)
+        penalty = compute_repetition_penalty("first question", history)
+        self.assertEqual(penalty, OLDER_USER_REPEAT_PENALTY)
+
+
+class TestScoreLlmResponseRepetitionPenalty(TestCase):
+    """Integration: repetition penalty within score_llm_response."""
+
+    def test_echoing_user_input_heavily_penalized(self):
+        """Response echoing the user's input should score much lower."""
+        history = [{"role": "user", "content": "I need help with my denial"}]
+        echo_result = ("I need help with my denial", "Context")
+        good_result = ("I can help you appeal that. Let me look into it.", "Context")
+
+        echo_score = score_llm_response(echo_result, 100, chat_history=history)
+        good_score = score_llm_response(good_result, 100, chat_history=history)
+        self.assertGreater(good_score, echo_score)
+        self.assertLess(echo_score, 0)
+
+    def test_bag_of_words_repeat_mildly_penalized(self):
+        """Same words rearranged should be penalized but less than exact match."""
+        history = [{"role": "user", "content": "help with my denial please"}]
+        bow_result = ("my denial please help with", "Context")
+        exact_result = ("help with my denial please", "Context")
+
+        bow_score = score_llm_response(bow_result, 100, chat_history=history)
+        exact_score = score_llm_response(exact_result, 100, chat_history=history)
+        # Both penalized, but exact match more heavily
+        self.assertGreater(bow_score, exact_score)
