@@ -154,12 +154,12 @@ class PubMedTools(object):
                         )
 
                 for since in self.since_list:
-                    for query in queries:
+                    for q in queries:
                         count = 0
-                        if query is None or query.strip() == "":
+                        if q is None or q.strip() == "":
                             continue
                         new_pmids = await self.find_pubmed_article_ids_for_query(
-                            query, since=since
+                            q, since=since
                         )
                         for pmid in new_pmids:
                             if pmid not in unique_pmids:
