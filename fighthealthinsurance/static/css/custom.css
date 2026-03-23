@@ -1518,22 +1518,24 @@ section:not(.slider) .share-subcopy {
 
 /* ===== About Section Refresh ===== */
 #about.about-section-refreshed {
-    background-image: none !important;
     padding: 4rem 0;
-    background-color: transparent;
-    background: linear-gradient(135deg, rgba(165, 196, 34, 0.05) 0%, rgba(123, 146, 10, 0.08) 100%);
+    background: linear-gradient(135deg, rgba(165, 196, 34, 0.75) 0%, rgba(123, 146, 10, 0.8) 100%),
+                url('../images/about-bg-alpaca-optimized.jpg') no-repeat top center !important;
+    background-size: cover !important;
 }
 .about-section-title {
     text-align: center;
     font-size: 1.8rem;
     font-weight: 600;
     margin-bottom: 0.5rem;
-    color: #333;
+    color: #fff;
+    text-shadow: 1px 1px 3px rgba(0, 0, 0, 0.3);
 }
 .about-section-subtitle {
     text-align: center;
     font-size: 1.05rem;
-    color: #666;
+    color: rgba(255, 255, 255, 0.9);
+    text-shadow: 1px 1px 3px rgba(0, 0, 0, 0.25);
     margin-bottom: 2.5rem;
     max-width: 600px;
     margin-left: auto;
@@ -1596,6 +1598,9 @@ section:not(.slider) .share-subcopy {
     background: linear-gradient(90deg, #ADD100, #7B920A);
     margin: 0.75rem auto 0;
     border-radius: 2px;
+}
+.about-section-title::after {
+    background: rgba(255, 255, 255, 0.8);
 }
 
 /* ===== Scroll Margin for Sticky Nav ===== */
