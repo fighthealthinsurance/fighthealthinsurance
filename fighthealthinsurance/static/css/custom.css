@@ -1519,50 +1519,30 @@ section:not(.slider) .share-subcopy {
 /* ===== About Section Refresh ===== */
 #about.about-section-refreshed {
     padding: 4rem 0;
-    background: #fff !important;
-    background-image: none !important;
+    background: url('../images/about-bg-alpaca-optimized.jpg') no-repeat right center !important;
+    background-size: contain !important;
+    background-color: #fff !important;
 }
 .about-section-title {
-    text-align: center;
+    text-align: left;
     font-size: 1.8rem;
     font-weight: 600;
     margin-bottom: 0.5rem;
     color: #333;
 }
 .about-section-subtitle {
-    text-align: center;
+    text-align: left;
     font-size: 1.05rem;
     color: #666;
     margin-bottom: 2.5rem;
     max-width: 600px;
-    margin-left: auto;
-    margin-right: auto;
-}
-.about-layout {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 2.5rem;
-    align-items: center;
-    max-width: 1100px;
-    margin: 0 auto;
-    padding: 0 1rem;
 }
 .about-steps {
     display: flex;
     flex-direction: column;
     gap: 1.25rem;
-}
-.about-image {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-}
-.about-image img {
-    width: 100%;
-    max-width: 500px;
-    border-radius: 16px;
-    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.1);
-    object-fit: cover;
+    max-width: 55%;
+    padding: 0 1rem;
 }
 .about-step {
     background: #fff;
@@ -1667,15 +1647,15 @@ section:not(.slider) .share-subcopy {
     }
     #about.about-section-refreshed {
         padding: 2.5rem 0;
+        background-size: cover !important;
+        background-position: right center !important;
     }
-    .about-layout {
-        grid-template-columns: 1fr;
+    .about-section-title,
+    .about-section-subtitle {
+        text-align: center;
     }
-    .about-image {
-        order: -1;
-    }
-    .about-image img {
-        max-width: 300px;
+    .about-steps {
+        max-width: 100%;
     }
     .featured-row,
     .featured-row-highlight {
