@@ -367,6 +367,40 @@ class TestRemoveRepeatedBlocks(TestCase):
         for line in block:
             self.assertEqual(result.count(line), 1)
 
+    def test_repetition_in_middle_preserves_surrounding(self):
+        """XYZ ABA ABA ABA CDEF → XYZ ABA CDEF: content before/after kept in order."""
+        before = [
+            "Dear Appeals Unit,",
+            "I am writing to appeal this denial.",
+            "This treatment is medically necessary.",
+        ]
+        block = [
+            "• Detailed history and examination",
+            "• Medical decision-making of moderate complexity",
+            "• Services were medically necessary",
+        ]
+        after = [
+            "In conclusion, please approve this appeal.",
+            "Thank you for your consideration.",
+            "Sincerely, Patient Name",
+        ]
+        text = "\n".join(before + block * 4 + after)
+        result = remove_repeated_blocks(text)
+        self.assertIsNotNone(result)
+        # Block appears exactly once
+        for line in block:
+            self.assertEqual(result.count(line), 1)
+        # Before/after content preserved
+        for line in before + after:
+            self.assertIn(line, result)
+        # Order is correct: before < block < after in the output
+        result_lines = result.split("\n")
+        idx_before = result_lines.index(before[-1])
+        idx_block = result_lines.index(block[0])
+        idx_after = result_lines.index(after[0])
+        self.assertLess(idx_before, idx_block)
+        self.assertLess(idx_block, idx_after)
+
     def test_whitespace_normalization(self):
         """Blocks differing only in leading/trailing whitespace are detected."""
         block1 = "  • Point A\n  • Point B\n  • Point C"
@@ -379,14 +413,19 @@ class TestRemoveRepeatedBlocks(TestCase):
         self.assertLessEqual(result.count("Point A"), 1)
 
     def test_small_block_below_min_size_ignored(self):
-        """A 2-line block repeating should not be removed (below min_block_size=3)."""
-        block = "Line A\nLine B"
-        text = "Intro line one.\nIntro line two.\nIntro line three.\n" + "\n".join(
-            [block] * 5
+        """A 2-line block repeating twice should not be removed (below min_block_size=3)."""
+        # Only 2 copies so no larger block (>= 3 lines) can form a repeat
+        text = (
+            "Intro line one.\n"
+            "Intro line two.\n"
+            "Intro line three.\n"
+            "Line A\n"
+            "Line B\n"
+            "Line A\n"
+            "Line B"
         )
         result = remove_repeated_blocks(text)
-        # 2-line block should NOT be removed
-        self.assertGreaterEqual(result.count("Line A"), 3)
+        self.assertEqual(result, text)
 
     def test_severe_repetition_keeps_first_copy(self):
         """Even heavily repeated blocks should salvage the first copy."""

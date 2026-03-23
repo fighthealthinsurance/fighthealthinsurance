@@ -55,6 +55,7 @@ def _find_consecutive_block_repeat(
     items: list[str],
     min_block_size: int = 3,
     largest_first: bool = True,
+    min_reps: int = 2,
 ) -> Optional[tuple[int, int, int]]:
     """Find a consecutive block repetition in *items*.
 
@@ -65,9 +66,11 @@ def _find_consecutive_block_repeat(
             smallest — good for removal (greedily remove the biggest chunk).
             If ``False``, scan from smallest to largest — good for scoring
             (finds the primitive repeating unit, yielding the highest rep count).
+        min_reps: Minimum number of consecutive repetitions to report
+            (default 2).  Matches with fewer reps are skipped.
 
-    Returns ``(start_index, block_size, total_reps)`` for the first match,
-    or ``None`` if no block repeats consecutively.
+    Returns ``(start_index, block_size, total_reps)`` for the first match
+    with at least *min_reps* repetitions, or ``None`` if none found.
     """
     n = len(items)
     if largest_first:
@@ -85,7 +88,8 @@ def _find_consecutive_block_repeat(
                 ):
                     reps += 1
                     j += block_size
-                return (i, block_size, reps)
+                if reps >= min_reps:
+                    return (i, block_size, reps)
     return None
 
 
@@ -212,12 +216,12 @@ def remove_repeated_blocks(
 
     # Repeatedly find and remove the largest repeating block until none remain.
     while True:
-        match = _find_consecutive_block_repeat(normalized, min_block_size)
+        match = _find_consecutive_block_repeat(
+            normalized, min_block_size, min_reps=max_repeats + 1
+        )
         if match is None:
             break
         start, block_size, reps = match
-        if reps <= max_repeats:
-            break
 
         # Mark duplicate occurrences (keep first max_repeats copies)
         keep_end = start + block_size * max_repeats
