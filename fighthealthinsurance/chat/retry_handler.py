@@ -49,7 +49,7 @@ def create_simple_retry_scorer(
         result: Optional[Tuple[Optional[str], Optional[str]]],
         original_task: Awaitable,
     ) -> float:
-        score = call_scores.get(original_task, 0)
+        score: float = call_scores.get(original_task, 0)
 
         if result is None:
             return float("-inf")
