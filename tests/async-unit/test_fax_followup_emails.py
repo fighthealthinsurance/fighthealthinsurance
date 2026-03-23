@@ -108,6 +108,24 @@ class TestFaxStatusNotification:
         notify_enabled.assert_called_once()
         assert "missing destination" in notify_enabled.call_args[0][0]
 
+    def test_notification_missing_denial(self, notify_enabled, db):
+        """Test that missing denial is indicated in notification."""
+        from fighthealthinsurance.fax_actor import send_fax_status_notification
+
+        fax = FaxesToSend.objects.create(
+            hashed_email="abc123",
+            paid=True,
+            email="test@example.com",
+            appeal_text="Test appeal text",
+            denial_id=None,
+            destination="4255551234",
+            sent=False,
+        )
+        send_fax_status_notification(fax, False, False, missing_denial=True)
+
+        notify_enabled.assert_called_once()
+        assert "missing denial" in notify_enabled.call_args[0][0]
+
     def test_notification_disabled_by_env_var(self, test_fax_with_destination):
         """Test that notifications are not sent when disabled via env var."""
         from fighthealthinsurance.fax_actor import send_fax_status_notification
