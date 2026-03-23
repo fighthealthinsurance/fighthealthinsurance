@@ -451,7 +451,7 @@ class SyncIteratorToAsync(AsyncIterator[T]):
         if item is self._sentinel:
             self._exhausted = True
             raise StopAsyncIteration
-        return item
+        return cast(T, item)
 
 
 def sync_iterator_to_async(sync_iter: Iterator[T]) -> AsyncIterator[T]:
