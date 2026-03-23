@@ -189,10 +189,10 @@ if [ "$FAST" != "FAST" ]; then
 fi
 
 # Wait for all parallel tasks
-wait $static_pid || { echo "Static build failed!"; exit 1; }
-wait $vllm_pid $slipstream_pid $backup_pid $alpha_pid 2>/dev/null || true
+wait "$static_pid" || { echo "Static build failed!"; exit 1; }
+wait "$vllm_pid" "$slipstream_pid" "$backup_pid" "$alpha_pid" 2>/dev/null || true
 if [ -n "$db_pid" ]; then
-  wait $db_pid || { echo "DB setup failed!"; exit 1; }
+  wait "$db_pid" || { echo "DB setup failed!"; exit 1; }
 fi
 
 # Source the network check results to set environment variables
