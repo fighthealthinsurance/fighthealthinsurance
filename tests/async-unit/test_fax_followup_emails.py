@@ -59,6 +59,99 @@ def test_fax_without_destination(test_denial):
     return fax
 
 
+@pytest.fixture
+def notify_enabled():
+    """Patch send_mail and enable fax status notifications."""
+    with patch("fighthealthinsurance.fax_actor.send_mail") as mock_send, patch(
+        "fighthealthinsurance.fax_actor.get_env_variable", return_value="true"
+    ):
+        yield mock_send
+
+
+@pytest.mark.django_db
+class TestFaxStatusNotification:
+    """Test internal fax status notification emails to support."""
+
+    def test_notification_sent_on_success(
+        self, test_fax_with_destination, notify_enabled
+    ):
+        """Test that a status notification is sent when fax succeeds."""
+        from fighthealthinsurance.fax_actor import send_fax_status_notification
+
+        send_fax_status_notification(test_fax_with_destination, True, False)
+
+        notify_enabled.assert_called_once()
+        args = notify_enabled.call_args
+        assert "SUCCESS" in args[0][0]  # subject
+        assert str(test_fax_with_destination.fax_id) in args[0][1]  # body
+        assert "support42@fighthealthinsurance.com" in args[0][3]
+
+    def test_notification_sent_on_failure(
+        self, test_fax_with_destination, notify_enabled
+    ):
+        """Test that a status notification is sent when fax fails."""
+        from fighthealthinsurance.fax_actor import send_fax_status_notification
+
+        send_fax_status_notification(test_fax_with_destination, False, False)
+
+        notify_enabled.assert_called_once()
+        assert "FAILED" in notify_enabled.call_args[0][0]
+
+    def test_notification_missing_destination(
+        self, test_fax_without_destination, notify_enabled
+    ):
+        """Test that missing destination is indicated in notification."""
+        from fighthealthinsurance.fax_actor import send_fax_status_notification
+
+        send_fax_status_notification(test_fax_without_destination, False, True)
+
+        notify_enabled.assert_called_once()
+        assert "missing destination" in notify_enabled.call_args[0][0]
+
+    def test_notification_missing_denial(self, notify_enabled, db):
+        """Test that missing denial is indicated in notification."""
+        from fighthealthinsurance.fax_actor import send_fax_status_notification
+
+        fax = FaxesToSend.objects.create(
+            hashed_email="abc123",
+            paid=True,
+            email="test@example.com",
+            appeal_text="Test appeal text",
+            denial_id=None,
+            destination="4255551234",
+            sent=False,
+        )
+        send_fax_status_notification(fax, False, False, missing_denial=True)
+
+        notify_enabled.assert_called_once()
+        assert "missing denial" in notify_enabled.call_args[0][0]
+
+    def test_notification_disabled_by_env_var(self, test_fax_with_destination):
+        """Test that notifications are not sent when disabled via env var."""
+        from fighthealthinsurance.fax_actor import send_fax_status_notification
+
+        with patch("fighthealthinsurance.fax_actor.send_mail") as mock_send, patch(
+            "fighthealthinsurance.fax_actor.get_env_variable", return_value="false"
+        ):
+            send_fax_status_notification(test_fax_with_destination, True, False)
+
+            mock_send.assert_not_called()
+
+    def test_notification_contains_fax_id_and_uuid(
+        self, test_fax_with_destination, notify_enabled
+    ):
+        """Test that notification body contains fax ID and UUID for lookup."""
+        from fighthealthinsurance.fax_actor import send_fax_status_notification
+
+        fax = test_fax_with_destination
+        send_fax_status_notification(fax, True, False)
+
+        body = notify_enabled.call_args[0][1]
+        assert str(fax.fax_id) in body
+        assert str(fax.uuid) in body
+        assert fax.destination in body
+
+
 @pytest.mark.django_db
 class TestFaxFollowUpTemplates:
     """Test fax follow-up email templates."""
