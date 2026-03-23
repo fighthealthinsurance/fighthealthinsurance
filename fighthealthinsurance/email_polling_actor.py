@@ -65,16 +65,6 @@ class EmailPollingActor:
                     )
                     self._logger.info(f"Sent {sent_count} follow-up emails")
 
-                # Send thank you emails
-                thankyou_candidates = await sync_to_async(
-                    self.thankyou_sender.find_candidates
-                )()
-                self._logger.debug(f"Thank you candidates: {len(thankyou_candidates)}")
-                if len(thankyou_candidates) > 0:
-                    sent_count = await sync_to_async(self.thankyou_sender.send_all)(
-                        count=10
-                    )
-                    self._logger.info(f"Sent {sent_count} thank you emails")
 
                 # Check if we should clear expired emails (once per day)
                 now = timezone.now()
