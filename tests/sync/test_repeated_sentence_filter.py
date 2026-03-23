@@ -4,7 +4,9 @@ from django.test import TestCase
 
 from fighthealthinsurance.ml.ml_models import (
     has_severe_repetition,
+    remove_repeated_blocks,
     remove_repeated_sentences,
+    repetition_penalty,
 )
 
 
@@ -246,3 +248,269 @@ class TestHasSevereRepetition(TestCase):
         # Alternating check: adjacent pairs that differ are only at the A→B boundary (1 out of 7).
         # So this should NOT be flagged as severe.
         self.assertFalse(has_severe_repetition(text))
+
+    def test_repeated_line_block_not_severe(self):
+        """Block repetition is handled by remove_repeated_blocks, not here."""
+        block = [
+            "• Detailed history and examination",
+            "• Medical decision-making of moderate complexity",
+            "• Counseling and coordination of care",
+            "• Services were medically necessary",
+        ]
+        # Block repeated 5 times — not detected at the sentence level since
+        # bullet lines don't end with sentence-ending punctuation.
+        text = "\n".join(block * 5)
+        self.assertFalse(has_severe_repetition(text))
+
+    def test_repeated_contact_block_not_severe(self):
+        """Contact block repetition is handled by remove_repeated_blocks, not here."""
+        intro = "Dear Appeals Unit,\nI am writing to appeal.\nPlease review.\n"
+        contact = [
+            "Phone: {{PHONE_NUMBER}}",
+            "Email: {{EMAIL_ADDRESS}}",
+            "Fax: {{FAX_NUMBER}}",
+            "Mail: {{ADDRESS}}",
+            "City, State, ZIP: {{ZIP_CODE}}",
+            "Country: {{COUNTRY}}",
+        ]
+        text = intro + "\n".join(contact * 10)
+        self.assertFalse(has_severe_repetition(text))
+
+
+class TestRemoveRepeatedBlocks(TestCase):
+    """Tests for remove_repeated_blocks()."""
+
+    def test_none_input(self):
+        self.assertIsNone(remove_repeated_blocks(None))
+
+    def test_normal_text_unchanged(self):
+        text = (
+            "Dear Appeals Unit,\n"
+            "I am writing to appeal the denial.\n"
+            "The treatment was medically necessary.\n"
+            "My doctor recommended this procedure.\n"
+            "Evidence supports this course of action.\n"
+            "Please reconsider your decision.\n"
+            "Thank you for your time.\n"
+            "Sincerely, Patient"
+        )
+        result = remove_repeated_blocks(text)
+        self.assertEqual(result, text)
+
+    def test_short_text_unchanged(self):
+        """Fewer than 2*min_block_size non-empty lines should pass through."""
+        text = "Line one\nLine two\nLine three\nLine four\nLine five"
+        result = remove_repeated_blocks(text)
+        self.assertEqual(result, text)
+
+    def test_bullet_block_repeated_four_times(self):
+        """Block of bullet points repeated 4x should keep only the first."""
+        block = [
+            "• Detailed history and examination",
+            "• Medical decision-making of moderate complexity",
+            "• Counseling and/or coordination of care",
+            "• Services were medically necessary",
+            "• Care was provided by an out-of-network provider",
+        ]
+        text = "\n".join(block * 4)
+        result = remove_repeated_blocks(text)
+        self.assertIsNotNone(result)
+        # Should contain each bullet exactly once
+        for line in block:
+            self.assertEqual(result.count(line), 1)
+
+    def test_contact_info_block_repeated(self):
+        """Contact info block repeated 20x at end of good letter."""
+        letter = (
+            "Dear Appeals Unit,\n"
+            "I am writing to formally appeal the denial of coverage.\n"
+            "The services were medically necessary.\n"
+            "Please reconsider your decision.\n"
+            "Sincerely,\n"
+            "Patient Name\n"
+            "Member ID: XXXXX6627"
+        )
+        contact = [
+            "Phone: {{PHONE_NUMBER}}",
+            "Email: {{EMAIL_ADDRESS}}",
+            "Fax: {{FAX_NUMBER}}",
+            "Mail: {{ADDRESS}}",
+            "City, State, ZIP: {{ZIP_CODE}}",
+            "Country: {{COUNTRY}}",
+        ]
+        text = letter + "\n" + "\n".join(contact * 20)
+        result = remove_repeated_blocks(text)
+        self.assertIsNotNone(result)
+        # Letter content preserved
+        self.assertIn("Dear Appeals Unit,", result)
+        self.assertIn("medically necessary", result)
+        # Contact info appears only once
+        self.assertEqual(result.count("Phone: {{PHONE_NUMBER}}"), 1)
+        self.assertEqual(result.count("Email: {{EMAIL_ADDRESS}}"), 1)
+
+    def test_mixed_content_preserved(self):
+        """Unique content before and after a repeated block is preserved."""
+        intro = "Introduction paragraph.\nThis is important context."
+        block = [
+            "• Point one about the case",
+            "• Point two about the case",
+            "• Point three about the case",
+        ]
+        outro = "In conclusion, please approve.\nThank you."
+        text = intro + "\n" + "\n".join(block * 3) + "\n" + outro
+        result = remove_repeated_blocks(text)
+        self.assertIsNotNone(result)
+        self.assertIn("Introduction paragraph.", result)
+        self.assertIn("This is important context.", result)
+        self.assertIn("In conclusion, please approve.", result)
+        self.assertIn("Thank you.", result)
+        for line in block:
+            self.assertEqual(result.count(line), 1)
+
+    def test_repetition_in_middle_preserves_surrounding(self):
+        """XYZ ABA ABA ABA CDEF → XYZ ABA CDEF: content before/after kept in order."""
+        before = [
+            "Dear Appeals Unit,",
+            "I am writing to appeal this denial.",
+            "This treatment is medically necessary.",
+        ]
+        block = [
+            "• Detailed history and examination",
+            "• Medical decision-making of moderate complexity",
+            "• Services were medically necessary",
+        ]
+        after = [
+            "In conclusion, please approve this appeal.",
+            "Thank you for your consideration.",
+            "Sincerely, Patient Name",
+        ]
+        text = "\n".join(before + block * 4 + after)
+        result = remove_repeated_blocks(text)
+        self.assertIsNotNone(result)
+        # Block appears exactly once
+        for line in block:
+            self.assertEqual(result.count(line), 1)
+        # Before/after content preserved
+        for line in before + after:
+            self.assertIn(line, result)
+        # Order is correct: before < block < after in the output
+        result_lines = result.split("\n")
+        idx_before = result_lines.index(before[-1])
+        idx_block = result_lines.index(block[0])
+        idx_after = result_lines.index(after[0])
+        self.assertLess(idx_before, idx_block)
+        self.assertLess(idx_block, idx_after)
+
+    def test_whitespace_normalization(self):
+        """Blocks differing only in leading/trailing whitespace are detected."""
+        block1 = "  • Point A\n  • Point B\n  • Point C"
+        block2 = "• Point A\n• Point B\n• Point C"
+        filler = "Some intro line.\nAnother line.\nThird line."
+        text = filler + "\n" + block1 + "\n" + block2 + "\n" + block1
+        result = remove_repeated_blocks(text)
+        self.assertIsNotNone(result)
+        # Should appear at most once after dedup
+        self.assertLessEqual(result.count("Point A"), 1)
+
+    def test_small_block_below_min_size_ignored(self):
+        """A 2-line block repeating twice should not be removed (below min_block_size=3)."""
+        # Only 2 copies so no larger block (>= 3 lines) can form a repeat
+        text = (
+            "Intro line one.\n"
+            "Intro line two.\n"
+            "Intro line three.\n"
+            "Line A\n"
+            "Line B\n"
+            "Line A\n"
+            "Line B"
+        )
+        result = remove_repeated_blocks(text)
+        self.assertEqual(result, text)
+
+    def test_severe_repetition_keeps_first_copy(self):
+        """Even heavily repeated blocks should salvage the first copy."""
+        block = [
+            "• Repeated point one",
+            "• Repeated point two",
+            "• Repeated point three",
+        ]
+        # 30 repetitions of 3 lines = 90 lines, only 3 unique
+        text = "\n".join(block * 30)
+        result = remove_repeated_blocks(text)
+        self.assertIsNotNone(result)
+        # Should contain each line exactly once
+        for line in block:
+            self.assertEqual(result.count(line), 1)
+
+
+class TestRepetitionPenalty(TestCase):
+    """Tests for repetition_penalty()."""
+
+    def test_clean_text_no_penalty(self):
+        """Text with no repetition should have zero penalty."""
+        text = (
+            "The patient was diagnosed with condition X. "
+            "Treatment Y was recommended by Dr. Smith. "
+            "The insurance company denied coverage. "
+            "This denial is not supported by medical evidence. "
+            "We request that you overturn this decision. "
+            "The patient deserves appropriate care."
+        )
+        self.assertAlmostEqual(repetition_penalty(text), 0.0, places=2)
+
+    def test_short_text_no_penalty(self):
+        """Short text should not be penalized."""
+        self.assertAlmostEqual(repetition_penalty("Hello world."), 0.0, places=2)
+
+    def test_sentence_repetition_penalized(self):
+        """Text with repeated sentences should have a positive penalty."""
+        base = "This is a repeated claim."
+        unique = [
+            "First unique point here.",
+            "Second unique point here.",
+            "Third unique point here.",
+            "Fourth unique point here.",
+            "Fifth unique point here.",
+        ]
+        # 5 unique + base repeated 5 times = 10 sentences, 6 unique = 40% duplicates
+        text = " ".join(unique + [base] * 5)
+        penalty = repetition_penalty(text)
+        self.assertGreater(penalty, 0.0)
+        self.assertLess(penalty, 1.0)
+
+    def test_block_repetition_penalized(self):
+        """Text with a repeated block should have a positive penalty."""
+        letter = "Dear Appeals Unit,\nI am writing to appeal.\nPlease review."
+        block = [
+            "• Point A about the case",
+            "• Point B about the case",
+            "• Point C about the case",
+        ]
+        text = letter + "\n" + "\n".join(block * 3)
+        penalty = repetition_penalty(text)
+        self.assertGreater(penalty, 0.0)
+
+    def test_heavy_repetition_high_penalty(self):
+        """Heavily repetitive text should have a penalty close to 1.0."""
+        block = [
+            "• Repeated point one",
+            "• Repeated point two",
+            "• Repeated point three",
+        ]
+        text = "\n".join(block * 20)
+        penalty = repetition_penalty(text)
+        self.assertGreater(penalty, 0.8)
+
+    def test_penalty_increases_with_repetition(self):
+        """More repetition should produce a higher penalty."""
+        block = [
+            "• Point A",
+            "• Point B",
+            "• Point C",
+        ]
+        filler = (
+            "Dear Unit,\nI appeal.\nPlease review.\nThank you.\nSincerely.\nPatient."
+        )
+        text_2x = filler + "\n" + "\n".join(block * 2)
+        text_5x = filler + "\n" + "\n".join(block * 5)
+        self.assertGreater(repetition_penalty(text_5x), repetition_penalty(text_2x))

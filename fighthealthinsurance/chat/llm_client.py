@@ -11,7 +11,7 @@ from loguru import logger
 
 from fighthealthinsurance.chat.safety_filters import detect_false_promises
 from fighthealthinsurance.chat.tools.patterns import ALL_TOOL_PATTERNS as tools_regex
-from fighthealthinsurance.ml.ml_models import RemoteModelLike
+from fighthealthinsurance.ml.ml_models import RemoteModelLike, repetition_penalty
 from fighthealthinsurance.utils import ensure_message_alternation
 
 # Response patterns that indicate a bad/leaked response
@@ -145,6 +145,12 @@ def score_llm_response(
                         f"Response references uploaded document '{doc_name}', boosting score"
                     )
                     break
+
+        # Penalize repetitive responses so cleaner alternatives are preferred
+        rep_penalty = repetition_penalty(response_text) * 200
+        if rep_penalty > 0:
+            score -= rep_penalty
+            logger.debug(f"Repetition penalty: -{rep_penalty:.0f}")
 
         # Always penalize asking for patient name — it's known client-side
         if ASKS_FOR_PATIENT_NAME.search(response_text):

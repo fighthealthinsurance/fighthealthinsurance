@@ -35,7 +35,11 @@ from fighthealthinsurance.chat.tools.patterns import (
 )
 from fighthealthinsurance.extralink_context_helper import ExtraLinkContextHelper
 from fighthealthinsurance.rag_client import get_rag_context_for_denial
-from fighthealthinsurance.ml.ml_models import RemoteModelLike
+from fighthealthinsurance.ml.ml_models import (
+    RemoteModelLike,
+    remove_repeated_blocks,
+    remove_repeated_sentences,
+)
 from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance.models import (
     Appeal,
@@ -1142,7 +1146,9 @@ class ChatInterface:
             )
 
             if response_text and response_text.strip():
-                final_response_text = response_text.strip()
+                cleaned = remove_repeated_blocks(response_text.strip())
+                cleaned = remove_repeated_sentences(cleaned) or cleaned
+                final_response_text = cleaned
                 final_context_part = context_part
         except Exception as e:
             await asyncio.sleep(0.1)

@@ -13,7 +13,7 @@ from loguru import logger
 from fighthealthinsurance.denial_base import DenialBase
 
 from .exec import executor
-from .ml.ml_models import RemoteFullOpenLike, RemoteModelLike
+from .ml.ml_models import RemoteFullOpenLike, RemoteModelLike, repetition_penalty
 from .ml.ml_router import ml_router
 from .process_denial import ProcessDenialRegex
 from .pubmed_tools import PubMedTools
@@ -185,7 +185,12 @@ class AppealGenerator(object):
 
     @staticmethod
     def _score_appeal_text(text: str, diagnosis: Optional[str] = None) -> float:
-        """Score an appeal text by length, keyword presence, and diagnosis match."""
+        """Score an appeal text by length, keyword presence, diagnosis match,
+        and repetition quality.
+
+        Appeals with repeated sentences or blocks are penalized proportionally
+        so that cleaner appeals are preferred during synthesis selection.
+        """
         stripped = text.strip()
         lower = stripped.lower()
         length_score = min(len(stripped), 3000)
@@ -193,7 +198,11 @@ class AppealGenerator(object):
             10 for kw in AppealGenerator.QUALITY_KEYWORDS if kw in lower
         )
         diagnosis_bonus = 50 if diagnosis and diagnosis.lower() in lower else 0
-        return length_score * 0.3 + keyword_score + diagnosis_bonus
+        base = length_score * 0.3 + keyword_score + diagnosis_bonus
+        # Penalize repetitive content: a fully-repetitive appeal loses up to
+        # 200 points, enough to noticeably prefer a clean alternative.
+        rep_penalty = repetition_penalty(stripped) * 200
+        return base - rep_penalty
 
     # System prompt for the synthesis step
     SYNTHESIS_SYSTEM_PROMPT = (
