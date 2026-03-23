@@ -105,7 +105,65 @@ async function apiFetch<T>(url: string, options?: RequestInit): Promise<T> {
   return response.json();
 }
 
-// --- Status badge helper ---
+// --- Shared hooks ---
+
+function useFetchList<T>(url: string) {
+  const [data, setData] = useState<T[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const refetch = useCallback(async () => {
+    try {
+      setLoading(true);
+      const result = await apiFetch<T[]>(url);
+      setData(result);
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load");
+    } finally {
+      setLoading(false);
+    }
+  }, [url]);
+
+  useEffect(() => {
+    refetch();
+  }, [refetch]);
+
+  return { data, loading, error, setError, refetch };
+}
+
+function useDeleteHandler(
+  baseUrl: string,
+  confirmMsg: string,
+  refetch: () => void,
+  setError: (e: string | null) => void,
+) {
+  return useCallback(
+    async (id: number) => {
+      if (!confirm(confirmMsg)) return;
+      try {
+        await apiFetch(`${baseUrl}${id}/`, { method: "DELETE" });
+        refetch();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Failed to delete");
+      }
+    },
+    [refetch, setError],
+  );
+}
+
+// --- Shared components ---
+
+function LoadingOrError({ loading, error }: { loading: boolean; error: string | null }) {
+  if (loading) return <Loader size="lg" style={{ display: "block", margin: "2rem auto" }} />;
+  if (error)
+    return (
+      <Alert color="red" title="Error">
+        {error}
+      </Alert>
+    );
+  return null;
+}
 
 function StatusBadge({ status }: { status: string }) {
   const colorMap: Record<string, string> = {
@@ -135,30 +193,10 @@ function buildAppealOptions(appeals: AppealSummary[]) {
 
 // --- Appeals Tab ---
 
-function AppealsTab() {
-  const [appeals, setAppeals] = useState<AppealSummary[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+function AppealsTab({ appeals, loading, error }: { appeals: AppealSummary[]; loading: boolean; error: string | null }) {
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [detail, setDetail] = useState<AppealDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
-
-  const fetchAppeals = useCallback(async () => {
-    try {
-      setLoading(true);
-      const data = await apiFetch<AppealSummary[]>("/ziggy/rest/appeals/");
-      setAppeals(data);
-      setError(null);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load appeals");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchAppeals();
-  }, [fetchAppeals]);
 
   const handleExpand = useCallback(
     async (id: number) => {
@@ -181,8 +219,7 @@ function AppealsTab() {
     [expandedId],
   );
 
-  if (loading) return <Loader size="lg" style={{ display: "block", margin: "2rem auto" }} />;
-  if (error) return <Alert color="red" title="Error">{error}</Alert>;
+  if (loading || error) return <LoadingOrError loading={loading} error={error} />;
   if (appeals.length === 0) {
     return (
       <Alert color="blue" title="No Appeals Yet">
@@ -297,26 +334,9 @@ function AppealsTab() {
 // --- Denials Tab ---
 
 function DenialsTab() {
-  const [denials, setDenials] = useState<DenialSummary[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { data: denials, loading, error } = useFetchList<DenialSummary>("/ziggy/rest/denials/");
 
-  useEffect(() => {
-    (async () => {
-      try {
-        setLoading(true);
-        const data = await apiFetch<DenialSummary[]>("/ziggy/rest/denials/");
-        setDenials(data);
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "Failed to load denials");
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, []);
-
-  if (loading) return <Loader size="lg" style={{ display: "block", margin: "2rem auto" }} />;
-  if (error) return <Alert color="red" title="Error">{error}</Alert>;
+  if (loading || error) return <LoadingOrError loading={loading} error={error} />;
   if (denials.length === 0) {
     return (
       <Alert color="blue" title="No Denials">
@@ -404,29 +424,10 @@ const emptyCallLogForm: CallLogFormData = {
 };
 
 function CallLogsTab({ appeals }: { appeals: AppealSummary[] }) {
-  const [logs, setLogs] = useState<CallLog[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { data: logs, loading, error, setError, refetch } = useFetchList<CallLog>("/ziggy/rest/call_logs/");
   const [showForm, setShowForm] = useState(false);
   const [formData, setFormData] = useState<CallLogFormData>(emptyCallLogForm);
   const [submitting, setSubmitting] = useState(false);
-
-  const fetchLogs = useCallback(async () => {
-    try {
-      setLoading(true);
-      const data = await apiFetch<CallLog[]>("/ziggy/rest/call_logs/");
-      setLogs(data);
-      setError(null);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load call logs");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchLogs();
-  }, [fetchLogs]);
 
   const handleSubmit = useCallback(async () => {
     setSubmitting(true);
@@ -449,26 +450,15 @@ function CallLogsTab({ appeals }: { appeals: AppealSummary[] }) {
       });
       setFormData(emptyCallLogForm);
       setShowForm(false);
-      fetchLogs();
+      refetch();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to save call log");
     } finally {
       setSubmitting(false);
     }
-  }, [formData, fetchLogs]);
+  }, [formData, refetch, setError]);
 
-  const handleDelete = useCallback(
-    async (id: number) => {
-      if (!confirm("Delete this call log?")) return;
-      try {
-        await apiFetch(`/ziggy/rest/call_logs/${id}/`, { method: "DELETE" });
-        fetchLogs();
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "Failed to delete");
-      }
-    },
-    [fetchLogs],
-  );
+  const handleDelete = useDeleteHandler("/ziggy/rest/call_logs/", "Delete this call log?", refetch, setError);
 
   const appealOptions = buildAppealOptions(appeals);
 
@@ -619,32 +609,13 @@ function CallLogsTab({ appeals }: { appeals: AppealSummary[] }) {
 // --- Evidence Tab ---
 
 function EvidenceTab({ appeals }: { appeals: AppealSummary[] }) {
-  const [evidence, setEvidence] = useState<Evidence[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { data: evidence, loading, error, setError, refetch } = useFetchList<Evidence>("/ziggy/rest/patient_evidence/");
   const [showForm, setShowForm] = useState(false);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [appealId, setAppealId] = useState<string>("");
   const [submitting, setSubmitting] = useState(false);
-
-  const fetchEvidence = useCallback(async () => {
-    try {
-      setLoading(true);
-      const data = await apiFetch<Evidence[]>("/ziggy/rest/patient_evidence/");
-      setEvidence(data);
-      setError(null);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load evidence");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchEvidence();
-  }, [fetchEvidence]);
 
   const handleSubmit = useCallback(async () => {
     if (!file) {
@@ -676,26 +647,15 @@ function EvidenceTab({ appeals }: { appeals: AppealSummary[] }) {
       setFile(null);
       setAppealId("");
       setShowForm(false);
-      fetchEvidence();
+      refetch();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to upload");
     } finally {
       setSubmitting(false);
     }
-  }, [file, title, description, appealId, fetchEvidence]);
+  }, [file, title, description, appealId, refetch, setError]);
 
-  const handleDelete = useCallback(
-    async (id: number) => {
-      if (!confirm("Delete this evidence document?")) return;
-      try {
-        await apiFetch(`/ziggy/rest/patient_evidence/${id}/`, { method: "DELETE" });
-        fetchEvidence();
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "Failed to delete");
-      }
-    },
-    [fetchEvidence],
-  );
+  const handleDelete = useDeleteHandler("/ziggy/rest/patient_evidence/", "Delete this evidence document?", refetch, setError);
 
   const appealOptions = buildAppealOptions(appeals);
 
@@ -813,18 +773,7 @@ function EvidenceTab({ appeals }: { appeals: AppealSummary[] }) {
 // --- Main Dashboard ---
 
 function PatientDashboard() {
-  const [appeals, setAppeals] = useState<AppealSummary[]>([]);
-
-  useEffect(() => {
-    (async () => {
-      try {
-        const data = await apiFetch<AppealSummary[]>("/ziggy/rest/appeals/");
-        setAppeals(data);
-      } catch {
-        // Appeals will show their own error
-      }
-    })();
-  }, []);
+  const { data: appeals, loading, error } = useFetchList<AppealSummary>("/ziggy/rest/appeals/");
 
   return (
     <Container size="md" py="xl">
@@ -840,7 +789,7 @@ function PatientDashboard() {
         </Tabs.List>
 
         <Tabs.Panel value="appeals">
-          <AppealsTab />
+          <AppealsTab appeals={appeals} loading={loading} error={error} />
         </Tabs.Panel>
         <Tabs.Panel value="denials">
           <DenialsTab />
