@@ -248,20 +248,21 @@ class TestHasSevereRepetition(TestCase):
         # So this should NOT be flagged as severe.
         self.assertFalse(has_severe_repetition(text))
 
-    def test_repeated_line_block_is_severe(self):
-        """A block of bullet points repeated many times should be severe."""
+    def test_repeated_line_block_not_severe(self):
+        """Block repetition is handled by remove_repeated_blocks, not here."""
         block = [
             "• Detailed history and examination",
             "• Medical decision-making of moderate complexity",
             "• Counseling and coordination of care",
             "• Services were medically necessary",
         ]
-        # Block repeated 5 times = 20 lines, 16 are duplicates = 80%
+        # Block repeated 5 times — not detected at the sentence level since
+        # bullet lines don't end with sentence-ending punctuation.
         text = "\n".join(block * 5)
-        self.assertTrue(has_severe_repetition(text))
+        self.assertFalse(has_severe_repetition(text))
 
-    def test_repeated_contact_block_is_severe(self):
-        """A contact info block repeated many times should be severe."""
+    def test_repeated_contact_block_not_severe(self):
+        """Contact block repetition is handled by remove_repeated_blocks, not here."""
         intro = "Dear Appeals Unit,\nI am writing to appeal.\nPlease review.\n"
         contact = [
             "Phone: {{PHONE_NUMBER}}",
@@ -272,7 +273,7 @@ class TestHasSevereRepetition(TestCase):
             "Country: {{COUNTRY}}",
         ]
         text = intro + "\n".join(contact * 10)
-        self.assertTrue(has_severe_repetition(text))
+        self.assertFalse(has_severe_repetition(text))
 
 
 class TestRemoveRepeatedBlocks(TestCase):

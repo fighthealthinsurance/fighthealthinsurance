@@ -85,44 +85,22 @@ def remove_repeated_sentences(
 
 
 def has_severe_repetition(text: str, threshold: float = 0.5) -> bool:
-    """Check if text has severe repetition (>threshold ratio).
+    """Check if text has severe sentence repetition (>threshold ratio).
 
     Used as a fast check to reject results before the cleaning pipeline.
-    Detects three patterns:
+    Detects two patterns:
     1. A single sentence accounts for more than ``threshold`` of all sentences.
     2. An alternating pair of two distinct sentences that together account for
        more than ``threshold`` of all sentences and actually alternate (no two
        adjacent sentences are the same).
-    3. Consecutive multi-line blocks that repeat, where the duplicated lines
-       exceed ``threshold`` of total non-empty lines.
 
-    Sentence-level checks require at least 6 sentences to trigger.
-    Block-level checks require at least 6 non-empty lines.
+    Note: block-level repetition (repeated multi-line bullet lists, contact
+    info, etc.) is intentionally NOT checked here.  Those cases are salvageable
+    by ``remove_repeated_blocks()`` in the cleaning pipeline, and rejecting
+    them early would discard otherwise good content.
+
+    Requires at least 6 sentences to trigger (short texts are never flagged).
     """
-    # Block repetition: consecutive multi-line blocks that repeat.
-    # Checked first because bullet-point/contact-info loops may not split
-    # into sentences at all.
-    lines = [l.strip() for l in text.split("\n") if l.strip()]
-    if len(lines) >= 6:
-        for block_size in range(len(lines) // 2, 2, -1):
-            for i in range(len(lines) - 2 * block_size + 1):
-                if (
-                    lines[i : i + block_size]
-                    == lines[i + block_size : i + 2 * block_size]
-                ):
-                    # Count total consecutive repetitions
-                    reps = 2
-                    j = i + 2 * block_size
-                    while (
-                        j + block_size <= len(lines)
-                        and lines[j : j + block_size] == lines[i : i + block_size]
-                    ):
-                        reps += 1
-                        j += block_size
-                    duplicated_lines = block_size * (reps - 1)
-                    if duplicated_lines > threshold * len(lines):
-                        return True
-
     # Sentence-level checks
     sentences = _sentence_split_re.split(text.strip())
     if len(sentences) < 6:
@@ -179,7 +157,7 @@ def remove_repeated_blocks(
         max_repeats: Maximum times a block may appear (default 1).
 
     Returns:
-        Cleaned text, or None if input was None or too severely repetitive.
+        Cleaned text with duplicate blocks removed, or None if input was None.
     """
     if text is None:
         return None
@@ -1430,9 +1408,6 @@ class RemoteOpenLike(RemoteModel):
         )
 
         block_cleaned = remove_repeated_blocks(after_cleaners)
-        if block_cleaned is None:
-            logger.debug(f"Result rejected due to repeated blocks on type {infer_type}")
-            return []
 
         cleaned = remove_repeated_sentences(block_cleaned)
         if cleaned is None:
