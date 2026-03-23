@@ -103,22 +103,51 @@ def bag_of_words(text: str) -> set:
 def compute_repetition_penalty(
     response_text: str,
     chat_history: List[Dict[str, str]],
+    current_message: Optional[str] = None,
 ) -> float:
     """
     Compute a penalty for responses that repeat previous messages.
 
     Greatly penalizes exact matches (ignoring case/whitespace) with the
-    last user or assistant message.  Mildly penalizes same bag-of-words in
-    different order.  Applies lighter penalties for matching older messages.
+    current user message or the last assistant message.  Mildly penalizes
+    same bag-of-words in different order.  Applies lighter penalties for
+    matching older messages.
+
+    Args:
+        response_text: The candidate response text to evaluate.
+        chat_history: The chat history *before* the current turn.
+        current_message: The user message that triggered this response.
+            Because scoring runs before the message is appended to
+            chat_history, this must be supplied separately.
     """
-    if not chat_history or not response_text:
+    if not response_text:
+        return 0.0
+
+    if not chat_history and not current_message:
         return 0.0
 
     penalty = 0.0
     normalized_response = normalize_text(response_text)
     response_bow = bag_of_words(response_text)
 
-    # Find the last user and assistant messages
+    # --- Check against the current user message (not yet in history) ---
+    if current_message:
+        normalized_current = normalize_text(current_message)
+        if normalized_response == normalized_current:
+            penalty += EXACT_REPEAT_PENALTY
+            logger.debug(
+                "Response is exact repeat of current user message, applying heavy penalty"
+            )
+        elif response_bow == bag_of_words(current_message):
+            penalty += BAG_OF_WORDS_REPEAT_PENALTY
+            logger.debug(
+                "Response has same bag-of-words as current user message, applying mild penalty"
+            )
+
+    if not chat_history:
+        return penalty
+
+    # Find the last user and assistant messages from history
     last_user_msg: Optional[str] = None
     last_assistant_msg: Optional[str] = None
     for msg in reversed(chat_history):
@@ -129,7 +158,7 @@ def compute_repetition_penalty(
         if last_user_msg is not None and last_assistant_msg is not None:
             break
 
-    # Heavy penalties for matching the immediate previous messages
+    # Heavy penalties for matching the immediate previous messages in history
     for prev_text in [last_user_msg, last_assistant_msg]:
         if not prev_text:
             continue
@@ -174,6 +203,7 @@ def score_llm_response(
     call_score: int,
     is_primary_call: bool = True,
     chat_history: Optional[List[Dict[str, str]]] = None,
+    current_message: Optional[str] = None,
 ) -> float:
     """
     Score an LLM response for quality and safety.
@@ -183,6 +213,9 @@ def score_llm_response(
         call_score: Base score from model quality
         is_primary_call: Whether this is a primary (not retry) call
         chat_history: Current chat history for context-aware scoring
+        current_message: The user message that triggered this response.
+            Passed separately because it is not yet in chat_history
+            at scoring time.
 
     Returns:
         Float score (higher is better, -inf for invalid responses)
@@ -250,8 +283,10 @@ def score_llm_response(
             )
 
         # Penalize responses that repeat previous messages
-        if chat_history:
-            score += compute_repetition_penalty(response_text, chat_history)
+        if chat_history or current_message:
+            score += compute_repetition_penalty(
+                response_text, chat_history or [], current_message
+            )
 
     # Add base quality score from model
     if response_text and context_part:
@@ -267,6 +302,7 @@ def create_response_scorer(
     call_scores: Dict[Awaitable, int],
     primary_calls: Optional[List[Awaitable]] = None,
     chat_history: Optional[List[Dict[str, str]]] = None,
+    current_message: Optional[str] = None,
 ) -> Callable[[Optional[Tuple[Optional[str], Optional[str]]], Awaitable], float]:
     """
     Create a scoring function for use with best_within_timelimit.
@@ -275,6 +311,9 @@ def create_response_scorer(
         call_scores: Dict mapping call awaitables to their base scores
         primary_calls: List of primary (non-retry) calls for bonus scoring
         chat_history: Current chat history for context-aware scoring
+        current_message: The user message that triggered this response.
+            Passed separately because it is not yet in chat_history
+            at scoring time.
 
     Returns:
         Scoring function compatible with best_within_timelimit
@@ -292,6 +331,7 @@ def create_response_scorer(
             call_score,
             is_primary,
             chat_history=chat_history,
+            current_message=current_message,
         )
 
     return score_fn

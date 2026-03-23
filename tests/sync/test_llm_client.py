@@ -311,28 +311,98 @@ class TestComputeRepetitionPenalty(TestCase):
         penalty = compute_repetition_penalty("first question", history)
         self.assertEqual(penalty, OLDER_USER_REPEAT_PENALTY)
 
+    def test_current_message_exact_match(self):
+        """Parroting the current user message (not yet in history) => -500."""
+        penalty = compute_repetition_penalty(
+            "I need help with my denial",
+            [],
+            current_message="I need help with my denial",
+        )
+        self.assertEqual(penalty, EXACT_REPEAT_PENALTY)
+
+    def test_current_message_bag_of_words_match(self):
+        """Same words as current message in different order => -75."""
+        penalty = compute_repetition_penalty(
+            "my denial with help",
+            [],
+            current_message="help with my denial",
+        )
+        self.assertEqual(penalty, BAG_OF_WORDS_REPEAT_PENALTY)
+
+    def test_current_message_no_match(self):
+        """Different response from current message => 0."""
+        penalty = compute_repetition_penalty(
+            "Let me look into that for you.",
+            [],
+            current_message="I need help with my denial",
+        )
+        self.assertEqual(penalty, 0.0)
+
+    def test_current_message_case_and_whitespace_insensitive(self):
+        """Current message comparison ignores case and whitespace."""
+        penalty = compute_repetition_penalty(
+            "  HELLO   WORLD  ",
+            [],
+            current_message="hello world",
+        )
+        self.assertEqual(penalty, EXACT_REPEAT_PENALTY)
+
+    def test_first_turn_echo_penalized(self):
+        """On first turn (empty history), parroting the prompt is still caught."""
+        penalty = compute_repetition_penalty(
+            "Tell me about my insurance denial",
+            [],
+            current_message="Tell me about my insurance denial",
+        )
+        self.assertEqual(penalty, EXACT_REPEAT_PENALTY)
+
 
 class TestScoreLlmResponseRepetitionPenalty(TestCase):
     """Integration: repetition penalty within score_llm_response."""
 
-    def test_echoing_user_input_heavily_penalized(self):
-        """Response echoing the user's input should score much lower."""
-        history = [{"role": "user", "content": "I need help with my denial"}]
+    def test_echoing_current_message_heavily_penalized(self):
+        """Response echoing the current user message should score much lower.
+
+        In production, the current message is not yet in chat_history when
+        scoring runs, so current_message must be passed separately.
+        """
+        current_msg = "I need help with my denial"
         echo_result = ("I need help with my denial", "Context")
         good_result = ("I can help you appeal that. Let me look into it.", "Context")
+
+        echo_score = score_llm_response(
+            echo_result, 100, current_message=current_msg
+        )
+        good_score = score_llm_response(
+            good_result, 100, current_message=current_msg
+        )
+        self.assertGreater(good_score, echo_score)
+        self.assertLess(echo_score, 0)
+
+    def test_echoing_history_message_penalized(self):
+        """Response echoing a message from chat history should be penalized."""
+        history = [
+            {"role": "user", "content": "earlier question"},
+            {"role": "assistant", "content": "Here is my response"},
+        ]
+        echo_result = ("Here is my response", "Context")
+        good_result = ("Let me provide updated information.", "Context")
 
         echo_score = score_llm_response(echo_result, 100, chat_history=history)
         good_score = score_llm_response(good_result, 100, chat_history=history)
         self.assertGreater(good_score, echo_score)
-        self.assertLess(echo_score, 0)
 
     def test_bag_of_words_repeat_mildly_penalized(self):
         """Same words rearranged should be penalized but less than exact match."""
-        history = [{"role": "user", "content": "help with my denial please"}]
+        current_msg = "help with my denial please"
         bow_result = ("my denial please help with", "Context")
         exact_result = ("help with my denial please", "Context")
 
-        bow_score = score_llm_response(bow_result, 100, chat_history=history)
-        exact_score = score_llm_response(exact_result, 100, chat_history=history)
+        bow_score = score_llm_response(
+            bow_result, 100, current_message=current_msg
+        )
+        exact_score = score_llm_response(
+            exact_result, 100, current_message=current_msg
+        )
         # Both penalized, but exact match more heavily
         self.assertGreater(bow_score, exact_score)

@@ -24,6 +24,7 @@ from fighthealthinsurance.utils import best_within_timelimit
 def create_simple_retry_scorer(
     call_scores: Dict[Awaitable, int],
     chat_history: Optional[List[Dict[str, str]]] = None,
+    current_message: Optional[str] = None,
 ) -> Callable[[Optional[Tuple[Optional[str], Optional[str]]], Awaitable], float]:
     """
     Create a simplified scoring function for retry attempts.
@@ -34,6 +35,7 @@ def create_simple_retry_scorer(
     Args:
         call_scores: Dict mapping call awaitables to their base scores
         chat_history: Current chat history for context-aware scoring
+        current_message: The user message that triggered this response.
 
     Returns:
         Scoring function compatible with best_within_timelimit
@@ -78,8 +80,10 @@ def create_simple_retry_scorer(
                 score -= 200
 
             # Penalize responses that repeat previous messages
-            if chat_history:
-                score += compute_repetition_penalty(response_text, chat_history)
+            if chat_history or current_message:
+                score += compute_repetition_penalty(
+                    response_text, chat_history or [], current_message
+                )
 
         # Small bonus for context
         if context_part and len(context_part) > MIN_RESPONSE_LENGTH:
@@ -142,7 +146,9 @@ async def retry_llm_with_fallback(
     )
 
     # Create simplified scorer for retries
-    retry_scorer = create_simple_retry_scorer(retry_scores, chat_history=chat_history)
+    retry_scorer = create_simple_retry_scorer(
+        retry_scores, chat_history=chat_history, current_message=current_message
+    )
 
     try:
         retry_response, retry_context = await best_within_timelimit(
