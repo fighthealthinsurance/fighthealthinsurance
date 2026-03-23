@@ -23,6 +23,12 @@
 	        <a href="{% url 'how-to-help' %}" class="btn btn-outline-green smoothScroll tertiary-cta" id="howtohelp">How to Help</a>
 	        <a href="{% url 'pro_version' %}" class="btn btn-outline-green smoothScroll tertiary-cta" id="professional">Professionals</a>
 	      </div>
+	      <div class="trust-strip">
+	        <span class="trust-chip"><span class="trust-chip-icon" aria-hidden="true">&#10003;</span> Free for everyone</span>
+	        <span class="trust-chip"><span class="trust-chip-icon" aria-hidden="true">&#9733;</span> Featured in Forbes, CBS &amp; more</span>
+	        <span class="trust-chip"><span class="trust-chip-icon" aria-hidden="true">&#127482;&#127480;</span> 50-state coverage</span>
+	        <span class="trust-chip"><span class="trust-chip-icon" aria-hidden="true">&#128200;</span> 10,000+ appeals generated</span>
+	      </div>
 	      <div class="value-prop-container">
 		        <div class="benefits-card">
 		          <h5 class="benefits-title">Why Fight Health Insurance?</h5>
@@ -95,6 +101,36 @@
 {% include 'partials/featured_section.html' %}
 {% endblock featured_section %}
 
+{% block start_section %}
+<!-- START WHERE YOU ARE -->
+<section id="start-where-you-are" class="start-section">
+    <div class="container">
+        <h5 class="start-section-title">Not ready to appeal yet? Start here.</h5>
+        <p class="start-section-subtitle">Explore free tools that help you understand your denial &mdash; no commitment needed.</p>
+        <div class="start-cards">
+            <a href="{% url 'explain_denial' %}" class="start-card">
+                <div class="start-card-icon" aria-hidden="true">&#128269;</div>
+                <h6 class="start-card-title">Understand Your Denial</h6>
+                <p class="start-card-desc">Upload your denial letter and get a plain-English explanation of why your claim was denied and what your options are.</p>
+                <span class="start-card-link">Explain my denial &rarr;</span>
+            </a>
+            <a href="{% url 'state_help_index' %}" class="start-card">
+                <div class="start-card-icon" aria-hidden="true">&#127968;</div>
+                <h6 class="start-card-title">Find Your State Resources</h6>
+                <p class="start-card-desc">Every state has agencies that help with insurance disputes. Find free help available in your state.</p>
+                <span class="start-card-link">Browse state help &rarr;</span>
+            </a>
+            <a href="{% url 'blog' %}" class="start-card">
+                <div class="start-card-icon" aria-hidden="true">&#128218;</div>
+                <h6 class="start-card-title">Learn the Process</h6>
+                <p class="start-card-desc">Read guides on how to appeal, what to include, and tips from people who have successfully overturned denials.</p>
+                <span class="start-card-link">Read the blog &rarr;</span>
+            </a>
+        </div>
+    </div>
+</section>
+{% endblock start_section %}
+
 {% block testimonials_section %}
 <!-- HEAR FROM OUR USERS -->
 <section id="testimonials" class="testimonials-section">
@@ -128,31 +164,32 @@
 {% endblock share_section %}
 
 {% block about_section %}
-<section id="about">
+<section id="about" class="about-section-refreshed">
     <div class="container">
-	<div class="row">
-
-	    <div class="col-md-6 col-sm-6">
-		<div class="about-info">
-		    <h2>Hi Friends!</h2>
-		    <div>
-			  Navigating the insurance appeal process methodically is essential. The first step involves scanning your denial letter. This can be done through optical character recognition (OCR) either on <a class="link" href='{% url "scan" %}'>your device/phone (recommended for increased privacy)</a> or on <a class="link" href='{% url "server_side_ocr" %}'>our servers (more accurate)</a>. OCR makes the text understandable to machines, allowing our generative AI model able to produce potential appeals for you to choose from.
-<p>
-			<h4>Steps to Overturn Insurance Denial</h4>
-			<ul>
-			  <li>Gather all necessary documents related to the denied claim.</li>
-			  <li>Thoroughly review the denial letter to understand the reasons provided by the insurance company.</li>
-			  <li>Compile pertinent medical records, recommendations, and any additional documentation that supports your case.</li>
-			  <li>Draft a comprehensive appeal letter, addressing each point of denial with factual and supportive evidence. <b>This is the step where we can help the most!</b></li>
-			  <li>Submit the appeal letter along with the compiled documents to the insurance company.</li>
-			  <li>Follow up with the insurance company regularly to track the status of your appeal. They are typically required to respond within reasonable timeframes, but sometimes do not meet that requirement.</li>
-			</ul>
-</p>
-		    </div>
-		</div>
-	    </div>
-
-	</div>
+        <h5 class="about-section-title">How to Overturn Your Denial</h5>
+        <p class="about-section-subtitle">A step-by-step guide to fighting back &mdash; and where we help.</p>
+        <div class="about-steps">
+            <div class="about-step">
+                <div class="about-step-number">1</div>
+                <h6>Gather your documents</h6>
+                <p>Collect your denial letter, medical records, and supporting documentation.</p>
+            </div>
+            <div class="about-step">
+                <div class="about-step-number">2</div>
+                <h6>Scan your denial letter</h6>
+                <p>Use <a href="{% url 'scan' %}" class="link">on-device</a> or <a href="{% url 'server_side_ocr' %}" class="link">server-side OCR</a> to extract the text.</p>
+            </div>
+            <div class="about-step about-step-highlight">
+                <div class="about-step-number">3</div>
+                <h6>Generate your appeal</h6>
+                <p>Our AI drafts a comprehensive appeal letter. <strong>This is where we help the most.</strong></p>
+            </div>
+            <div class="about-step">
+                <div class="about-step-number">4</div>
+                <h6>Submit and follow up</h6>
+                <p>Send it yourself for free, or let us fax it for you.</p>
+            </div>
+        </div>
     </div>
 </section>
 {% endblock about_section %}
