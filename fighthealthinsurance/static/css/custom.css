@@ -1519,7 +1519,7 @@ section:not(.slider) .share-subcopy {
 /* ===== About Section Refresh ===== */
 #about.about-section-refreshed {
     padding: 3rem 0;
-    background: url('../images/about-bg-alpaca-optimized.jpg') no-repeat right center !important;
+    background: url('../images/about-bg-alpaca-optimized.jpg') no-repeat center !important;
     background-size: contain !important;
     background-color: #fff !important;
 }
