@@ -64,7 +64,7 @@ class EmailPollingActor:
                         count=10
                     )
                     self._logger.info(f"Sent {sent_count} follow-up emails")
-                    await asyncio.sleep(360 * sent_count + 42)
+                    await asyncio.sleep(600 * sent_count + 42)
 
                 # Check if we should clear expired emails (once per day)
                 now = timezone.now()
