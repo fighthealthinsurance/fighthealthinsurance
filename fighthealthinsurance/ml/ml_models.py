@@ -37,22 +37,70 @@ from fighthealthinsurance.utils import all_concrete_subclasses
 _sentence_split_re = re.compile(r"(?<=[.!?])\s+(?=[A-Z])")
 
 
+# ---------------------------------------------------------------------------
+# Shared helpers
+# ---------------------------------------------------------------------------
+
+
+def _count_items(items: list[str]) -> dict[str, int]:
+    """Count occurrences of each normalized (stripped+lowered) item."""
+    counts: dict[str, int] = {}
+    for item in items:
+        key = item.strip().lower()
+        counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
+def _find_consecutive_block_repeat(
+    items: list[str],
+    min_block_size: int = 3,
+    largest_first: bool = True,
+) -> Optional[tuple[int, int, int]]:
+    """Find a consecutive block repetition in *items*.
+
+    Args:
+        items: List of normalized strings to scan.
+        min_block_size: Minimum block length to consider.
+        largest_first: If ``True`` (default), scan from largest block to
+            smallest — good for removal (greedily remove the biggest chunk).
+            If ``False``, scan from smallest to largest — good for scoring
+            (finds the primitive repeating unit, yielding the highest rep count).
+
+    Returns ``(start_index, block_size, total_reps)`` for the first match,
+    or ``None`` if no block repeats consecutively.
+    """
+    n = len(items)
+    if largest_first:
+        sizes = range(n // 2, min_block_size - 1, -1)
+    else:
+        sizes = range(min_block_size, n // 2 + 1)
+    for block_size in sizes:
+        for i in range(n - 2 * block_size + 1):
+            if items[i : i + block_size] == items[i + block_size : i + 2 * block_size]:
+                reps = 2
+                j = i + 2 * block_size
+                while (
+                    j + block_size <= n
+                    and items[j : j + block_size] == items[i : i + block_size]
+                ):
+                    reps += 1
+                    j += block_size
+                return (i, block_size, reps)
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Sentence-level repetition
+# ---------------------------------------------------------------------------
+
+
 def remove_repeated_sentences(
     text: Optional[str], max_repeats: int = 3
 ) -> Optional[str]:
     """Remove repeated sentences from LLM output that has gone into a loop.
 
-    Detects both single-sentence repetition (same sentence N+ times) and
-    alternating patterns (A-B-A-B-A-B). Returns cleaned text with duplicates
-    stripped, or None if the text was so repetitive that stripping leaves
-    less than 30% of the original.
-
-    Args:
-        text: The text to filter, or None.
-        max_repeats: Maximum times a sentence may appear (default 3).
-
-    Returns:
-        Cleaned text, or None if input was None or too severely repetitive.
+    Caps each unique sentence to *max_repeats* occurrences.  Returns ``None``
+    when stripping leaves less than 30 % of the original (unsalvageable).
     """
     if text is None:
         return None
@@ -63,9 +111,6 @@ def remove_repeated_sentences(
     if len(sentences) < 6:
         return text
 
-    # Cap individual sentence repeats — this naturally handles single-sentence
-    # loops, A-B-A-B alternation, A-B-C-A-B-D patterns, and any other form
-    # of repetition by limiting each unique sentence to max_repeats occurrences.
     seen_counts: dict[str, int] = {}
     final_sentences: list[str] = []
     for sent in sentences:
@@ -89,55 +134,48 @@ def has_severe_repetition(text: str, threshold: float = 0.5) -> bool:
 
     Used as a fast check to reject results before the cleaning pipeline.
     Detects two patterns:
-    1. A single sentence accounts for more than ``threshold`` of all sentences.
+    1. A single sentence accounts for more than *threshold* of all sentences.
     2. An alternating pair of two distinct sentences that together account for
-       more than ``threshold`` of all sentences and actually alternate (no two
-       adjacent sentences are the same).
+       more than *threshold* and actually alternate (no two adjacent are the same).
 
-    Note: block-level repetition (repeated multi-line bullet lists, contact
-    info, etc.) is intentionally NOT checked here.  Those cases are salvageable
-    by ``remove_repeated_blocks()`` in the cleaning pipeline, and rejecting
-    them early would discard otherwise good content.
+    Block-level repetition (repeated bullet lists, contact info, etc.) is
+    intentionally NOT checked here — those are salvageable by
+    ``remove_repeated_blocks()`` in the cleaning pipeline.
 
     Requires at least 6 sentences to trigger (short texts are never flagged).
     """
-    # Sentence-level checks
     sentences = _sentence_split_re.split(text.strip())
     if len(sentences) < 6:
         return False
 
+    counts = _count_items(sentences)
     normalized = [s.strip().lower() for s in sentences]
-    counts: dict[str, int] = {}
-    for s in normalized:
-        counts[s] = counts.get(s, 0) + 1
-
     total = len(sentences)
 
     # Single sentence dominating
-    max_count = max(counts.values())
-    if max_count > threshold * total:
+    if max(counts.values()) > threshold * total:
         return True
 
-    # Alternating pair: exactly 2 distinct normalized sentences making up
-    # >threshold of the text, and they actually alternate (adjacent differ).
+    # Alternating pair
     if len(counts) == 2:
-        combined = sum(counts.values())
-        if combined > threshold * total:
-            pair_keys = list(counts.keys())
-            # Count adjacent pairs where both belong to the pair and differ
-            alternating_count = 0
-            for i in range(len(normalized) - 1):
-                if (
-                    normalized[i] != normalized[i + 1]
-                    and normalized[i] in pair_keys
-                    and normalized[i + 1] in pair_keys
-                ):
-                    alternating_count += 1
-            # In a perfect A-B-A-B of length N, there are N-1 alternations
+        if sum(counts.values()) > threshold * total:
+            pair_keys = set(counts.keys())
+            alternating_count = sum(
+                1
+                for i in range(total - 1)
+                if normalized[i] != normalized[i + 1]
+                and normalized[i] in pair_keys
+                and normalized[i + 1] in pair_keys
+            )
             if alternating_count > threshold * (total - 1):
                 return True
 
     return False
+
+
+# ---------------------------------------------------------------------------
+# Block-level repetition
+# ---------------------------------------------------------------------------
 
 
 def remove_repeated_blocks(
@@ -148,94 +186,112 @@ def remove_repeated_blocks(
     """Remove repeated multi-line blocks from LLM output.
 
     Detects when a consecutive block of lines repeats (e.g. bullet-point lists
-    or contact info sections that loop). Keeps the first ``max_repeats``
+    or contact info sections that loop). Keeps the first *max_repeats*
     occurrences and removes subsequent repetitions.
 
-    Args:
-        text: The text to filter, or None.
-        min_block_size: Minimum number of non-empty lines to consider a block.
-        max_repeats: Maximum times a block may appear (default 1).
-
     Returns:
-        Cleaned text with duplicate blocks removed, or None if input was None.
+        Cleaned text with duplicate blocks removed, or ``None`` if input was
+        ``None``.
     """
     if text is None:
         return None
 
     lines = text.split("\n")
 
-    # Build list of (original_index, normalized_line) for non-empty lines
-    non_empty: list[tuple[int, str]] = []
-    for idx, line in enumerate(lines):
-        stripped = line.strip()
-        if stripped:
-            non_empty.append((idx, stripped))
+    # Build parallel lists: normalized (non-empty) lines and their original indices.
+    non_empty: list[tuple[int, str]] = [
+        (idx, line.strip()) for idx, line in enumerate(lines) if line.strip()
+    ]
 
     if len(non_empty) < 2 * min_block_size:
         return text
 
     normalized = [s for _, s in non_empty]
     orig_indices = [i for i, _ in non_empty]
-
-    # Track which original line indices to remove
     to_remove: set[int] = set()
 
-    # Try block sizes from largest to smallest
-    changed = True
-    while changed:
-        changed = False
-        n = len(normalized)
-        for block_size in range(n // 2, min_block_size - 1, -1):
-            i = 0
-            while i <= n - 2 * block_size:
-                block = normalized[i : i + block_size]
-                # Count consecutive repetitions
-                reps = 1
-                j = i + block_size
-                while j + block_size <= n and normalized[j : j + block_size] == block:
-                    reps += 1
-                    j += block_size
-                if reps > max_repeats:
-                    # Mark duplicate occurrences for removal
-                    keep_end = i + block_size * max_repeats
-                    remove_start = keep_end
-                    remove_end = i + block_size * reps
-                    for k in range(remove_start, remove_end):
-                        to_remove.add(orig_indices[k])
-                    # Also remove empty lines between kept and removed blocks
-                    # by finding the range in original indices
-                    if remove_start < len(orig_indices) and keep_end > 0:
-                        orig_start = orig_indices[keep_end - 1] + 1
-                        orig_end = (
-                            orig_indices[remove_end - 1]
-                            if remove_end <= len(orig_indices)
-                            else len(lines)
-                        )
-                        for oi in range(orig_start, orig_end + 1):
-                            if oi < len(lines) and not lines[oi].strip():
-                                to_remove.add(oi)
-                    # Rebuild normalized/orig_indices without removed entries
-                    new_normalized = []
-                    new_orig = []
-                    for k in range(len(normalized)):
-                        if orig_indices[k] not in to_remove:
-                            new_normalized.append(normalized[k])
-                            new_orig.append(orig_indices[k])
-                    normalized = new_normalized
-                    orig_indices = new_orig
-                    changed = True
-                    break  # Restart with updated lists
-                i += 1
-            if changed:
-                break
+    # Repeatedly find and remove the largest repeating block until none remain.
+    while True:
+        match = _find_consecutive_block_repeat(normalized, min_block_size)
+        if match is None:
+            break
+        start, block_size, reps = match
+        if reps <= max_repeats:
+            break
+
+        # Mark duplicate occurrences (keep first max_repeats copies)
+        keep_end = start + block_size * max_repeats
+        remove_end = start + block_size * reps
+        for k in range(keep_end, remove_end):
+            to_remove.add(orig_indices[k])
+
+        # Also remove blank lines that fall within the removed range
+        orig_lo = orig_indices[keep_end - 1] + 1
+        orig_hi = (
+            orig_indices[remove_end - 1]
+            if remove_end <= len(orig_indices)
+            else len(lines)
+        )
+        for oi in range(orig_lo, orig_hi + 1):
+            if oi < len(lines) and not lines[oi].strip():
+                to_remove.add(oi)
+
+        # Rebuild working lists without the removed entries
+        pairs = [
+            (orig_indices[k], normalized[k])
+            for k in range(len(normalized))
+            if orig_indices[k] not in to_remove
+        ]
+        if not pairs:
+            break
+        orig_indices, normalized = [list(t) for t in zip(*pairs)]
 
     if not to_remove:
         return text
 
-    result_lines = [line for idx, line in enumerate(lines) if idx not in to_remove]
-    result = "\n".join(result_lines)
+    return "\n".join(line for idx, line in enumerate(lines) if idx not in to_remove)
 
-    return result
+
+# ---------------------------------------------------------------------------
+# Repetition penalty (for scoring, not rejection)
+# ---------------------------------------------------------------------------
+
+
+def repetition_penalty(text: str, min_block_size: int = 3) -> float:
+    """Return a 0–1 penalty reflecting how repetitive *text* is.
+
+    Combines two signals:
+    * **Sentence-level**: fraction of sentences that are duplicates (i.e.
+      ``1 − unique / total``).
+    * **Block-level**: fraction of non-empty lines that belong to consecutive
+      repeated blocks.
+
+    Returns the maximum of the two ratios so that *any* kind of repetition
+    is penalized.  A return value of 0.0 means no detectable repetition;
+    values approaching 1.0 mean almost entirely repetitive.
+    """
+    # --- sentence-level ---
+    sentence_ratio = 0.0
+    sentences = _sentence_split_re.split(text.strip())
+    if len(sentences) >= 6:
+        counts = _count_items(sentences)
+        total = len(sentences)
+        unique = len(counts)
+        sentence_ratio = 1.0 - unique / total
+
+    # --- block-level ---
+    block_ratio = 0.0
+    lines = [l.strip() for l in text.split("\n") if l.strip()]
+    if len(lines) >= 2 * min_block_size:
+        match = _find_consecutive_block_repeat(
+            lines, min_block_size, largest_first=False
+        )
+        if match is not None:
+            _, block_size, reps = match
+            duplicated = block_size * (reps - 1)
+            block_ratio = duplicated / len(lines)
+
+    return max(sentence_ratio, block_ratio)
 
 
 class RemoteModelLike(DenialBase):

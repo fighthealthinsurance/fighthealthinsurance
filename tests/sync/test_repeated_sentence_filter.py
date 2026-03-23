@@ -6,6 +6,7 @@ from fighthealthinsurance.ml.ml_models import (
     has_severe_repetition,
     remove_repeated_blocks,
     remove_repeated_sentences,
+    repetition_penalty,
 )
 
 
@@ -401,3 +402,76 @@ class TestRemoveRepeatedBlocks(TestCase):
         # Should contain each line exactly once
         for line in block:
             self.assertEqual(result.count(line), 1)
+
+
+class TestRepetitionPenalty(TestCase):
+    """Tests for repetition_penalty()."""
+
+    def test_clean_text_no_penalty(self):
+        """Text with no repetition should have zero penalty."""
+        text = (
+            "The patient was diagnosed with condition X. "
+            "Treatment Y was recommended by Dr. Smith. "
+            "The insurance company denied coverage. "
+            "This denial is not supported by medical evidence. "
+            "We request that you overturn this decision. "
+            "The patient deserves appropriate care."
+        )
+        self.assertAlmostEqual(repetition_penalty(text), 0.0, places=2)
+
+    def test_short_text_no_penalty(self):
+        """Short text should not be penalized."""
+        self.assertAlmostEqual(repetition_penalty("Hello world."), 0.0, places=2)
+
+    def test_sentence_repetition_penalized(self):
+        """Text with repeated sentences should have a positive penalty."""
+        base = "This is a repeated claim."
+        unique = [
+            "First unique point here.",
+            "Second unique point here.",
+            "Third unique point here.",
+            "Fourth unique point here.",
+            "Fifth unique point here.",
+        ]
+        # 5 unique + base repeated 5 times = 10 sentences, 6 unique = 40% duplicates
+        text = " ".join(unique + [base] * 5)
+        penalty = repetition_penalty(text)
+        self.assertGreater(penalty, 0.0)
+        self.assertLess(penalty, 1.0)
+
+    def test_block_repetition_penalized(self):
+        """Text with a repeated block should have a positive penalty."""
+        letter = "Dear Appeals Unit,\nI am writing to appeal.\nPlease review."
+        block = [
+            "• Point A about the case",
+            "• Point B about the case",
+            "• Point C about the case",
+        ]
+        text = letter + "\n" + "\n".join(block * 3)
+        penalty = repetition_penalty(text)
+        self.assertGreater(penalty, 0.0)
+
+    def test_heavy_repetition_high_penalty(self):
+        """Heavily repetitive text should have a penalty close to 1.0."""
+        block = [
+            "• Repeated point one",
+            "• Repeated point two",
+            "• Repeated point three",
+        ]
+        text = "\n".join(block * 20)
+        penalty = repetition_penalty(text)
+        self.assertGreater(penalty, 0.8)
+
+    def test_penalty_increases_with_repetition(self):
+        """More repetition should produce a higher penalty."""
+        block = [
+            "• Point A",
+            "• Point B",
+            "• Point C",
+        ]
+        filler = (
+            "Dear Unit,\nI appeal.\nPlease review.\nThank you.\nSincerely.\nPatient."
+        )
+        text_2x = filler + "\n" + "\n".join(block * 2)
+        text_5x = filler + "\n" + "\n".join(block * 5)
+        self.assertGreater(repetition_penalty(text_5x), repetition_penalty(text_2x))
