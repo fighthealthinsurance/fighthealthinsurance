@@ -446,8 +446,10 @@ class SyncIteratorToAsync(AsyncIterator[T]):
         if self._pending is None:
             loop = asyncio.get_running_loop()
             self._pending = loop.run_in_executor(None, self._next_with_default)
-        item = await self._pending
-        self._pending = None
+        try:
+            item = await self._pending
+        finally:
+            self._pending = None
         if item is self._sentinel:
             self._exhausted = True
             raise StopAsyncIteration
