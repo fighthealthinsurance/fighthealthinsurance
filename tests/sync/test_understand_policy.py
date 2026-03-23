@@ -513,3 +513,103 @@ class FormatAnalysisForChatTest(TestCase):
             analysis, include_disclaimer=False
         )
         self.assertNotIn("Important Disclaimer", output)
+
+    def test_includes_verify_encouragement(self):
+        analysis = self._make_analysis()
+        output = MLPolicyDocHelper.format_analysis_for_chat(analysis)
+        self.assertIn("Please verify", output)
+        self.assertIn("page numbers", output)
+
+
+# --- Regex Search Tests ---
+
+
+class RegexSearchPagesTest(TestCase):
+    """Tests for MLPolicyDocHelper._regex_search_pages."""
+
+    def test_finds_exclusion_pages(self):
+        page_dict = {
+            1: "Welcome to your health plan overview.",
+            2: "The following exclusions apply: cosmetic surgery is not covered.",
+            3: "Your deductible is $500 per year.",
+        }
+        hits = MLPolicyDocHelper._regex_search_pages(page_dict)
+        self.assertIn(2, hits)
+        self.assertTrue(any("exclusion" in d for d in hits[2]))
+
+    def test_finds_appeal_pages(self):
+        page_dict = {
+            1: "Table of contents",
+            5: "You have the right to appeal any denial within 180 days.",
+        }
+        hits = MLPolicyDocHelper._regex_search_pages(page_dict)
+        self.assertIn(5, hits)
+        self.assertTrue(any("appeal" in d for d in hits[5]))
+
+    def test_user_question_adds_patterns(self):
+        page_dict = {
+            1: "Provider directory listing",
+            2: "Physical therapy is covered for up to 30 visits.",
+        }
+        hits = MLPolicyDocHelper._regex_search_pages(
+            page_dict, user_question="Is physical therapy covered?"
+        )
+        self.assertIn(2, hits)
+        self.assertTrue(any("physical" in d for d in hits[2]))
+
+    def test_empty_page_dict(self):
+        hits = MLPolicyDocHelper._regex_search_pages({})
+        self.assertEqual(hits, {})
+
+    def test_no_matches(self):
+        page_dict = {1: "Lorem ipsum dolor sit amet."}
+        hits = MLPolicyDocHelper._regex_search_pages(page_dict)
+        self.assertEqual(hits, {})
+
+    def test_multiple_patterns_same_page(self):
+        page_dict = {
+            1: "Appeal your denial within 30 days. Prior authorization required for surgery."
+        }
+        hits = MLPolicyDocHelper._regex_search_pages(page_dict)
+        self.assertIn(1, hits)
+        self.assertGreater(len(hits[1]), 1)
+
+
+# --- Targeted Chunk Building Tests ---
+
+
+class BuildTargetedChunksTest(TestCase):
+    """Tests for MLPolicyDocHelper._build_targeted_chunks."""
+
+    def test_excludes_scattershot_pages(self):
+        page_dict = {1: "Page one text", 2: "Page two text", 3: "Page three text"}
+        page_hits = {1: {"exclusions"}, 2: {"appeals"}, 3: {"deductibles"}}
+        scattershot_pages = {1, 2}
+        chunks = MLPolicyDocHelper._build_targeted_chunks(
+            page_dict, page_hits, scattershot_pages
+        )
+        # Only page 3 should be in targeted chunks
+        all_pages = [p for c in chunks for p in c["pages"]]
+        self.assertEqual(all_pages, [3])
+
+    def test_empty_when_all_covered(self):
+        page_dict = {1: "Text"}
+        page_hits = {1: {"exclusions"}}
+        scattershot_pages = {1}
+        chunks = MLPolicyDocHelper._build_targeted_chunks(
+            page_dict, page_hits, scattershot_pages
+        )
+        self.assertEqual(chunks, [])
+
+    def test_includes_search_hits(self):
+        page_dict = {5: "Appeal rights section with grievance info"}
+        page_hits = {5: {"appeal rights", "grievance procedures"}}
+        chunks = MLPolicyDocHelper._build_targeted_chunks(page_dict, page_hits, set())
+        self.assertEqual(len(chunks), 1)
+        self.assertIn("search_hits", chunks[0])
+        self.assertGreater(len(chunks[0]["search_hits"]), 0)
+
+    def test_no_hits_returns_empty(self):
+        page_dict = {1: "Text"}
+        chunks = MLPolicyDocHelper._build_targeted_chunks(page_dict, {}, set())
+        self.assertEqual(chunks, [])
