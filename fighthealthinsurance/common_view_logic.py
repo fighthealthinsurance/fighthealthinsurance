@@ -1987,7 +1987,7 @@ class AppealsBackendHelper:
                     content = content.replace(k, str(v))
             # Second pass: regex-based fuzzy matching for model-generated
             # placeholder variants like [Claim # Placeholder]
-            patient_name_value = subs.get("[Patient Name]", "")
+            patient_name_value = subs.get("[Patient Name]", "{{Your Name}}")
             prof_name_value = subs.get("{{Your Name}}", "")
             professional_name_value = subs.get("[Professional Name]", "")
             domain_address_value = subs.get("[Professional Address]", "")
@@ -2035,8 +2035,6 @@ class AppealsBackendHelper:
                 if not value or value == "" or value == "UNKNOWN":
                     continue
                 str_value = str(value)
-                if str_value.startswith("{{"):
-                    continue
                 escaped = str_value.replace("\\", r"\\")
                 content = re.sub(pattern, escaped, content, flags=re.IGNORECASE)
             appeal["content"] = content
