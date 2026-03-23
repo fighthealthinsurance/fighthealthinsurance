@@ -148,6 +148,22 @@ class TestFollowUpEmailSender:
             result = sender.dosend(email=test_followup_sched.email)
             assert result is True
 
+    def test_find_candidates_excludes_old_followups(self, test_denial):
+        """Test that find_candidates excludes follow-ups older than six months."""
+        followup = FollowUpSched.objects.create(
+            email=test_denial.raw_email,
+            denial_id=test_denial,
+            follow_up_date=datetime.date.today() - datetime.timedelta(days=1),
+            follow_up_sent=False,
+        )
+        # Backdate the initial field beyond six months
+        FollowUpSched.objects.filter(pk=followup.pk).update(
+            initial=datetime.date.today() - datetime.timedelta(days=200)
+        )
+        sender = FollowUpEmailSender()
+        candidates = sender.find_candidates()
+        assert len(candidates) == 0
+
     def test_dosend_raises_when_no_params(self):
         """Test that dosend raises when neither email nor follow_up_sched provided."""
         sender = FollowUpEmailSender()
