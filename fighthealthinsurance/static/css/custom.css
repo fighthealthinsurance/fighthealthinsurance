@@ -1519,35 +1519,50 @@ section:not(.slider) .share-subcopy {
 /* ===== About Section Refresh ===== */
 #about.about-section-refreshed {
     padding: 4rem 0;
-    background: linear-gradient(135deg, rgba(165, 196, 34, 0.75) 0%, rgba(123, 146, 10, 0.8) 100%),
-                url('../images/about-bg-alpaca-optimized.jpg') no-repeat top center !important;
-    background-size: cover !important;
+    background: #fff !important;
+    background-image: none !important;
 }
 .about-section-title {
     text-align: center;
     font-size: 1.8rem;
     font-weight: 600;
     margin-bottom: 0.5rem;
-    color: #fff;
-    text-shadow: 1px 1px 3px rgba(0, 0, 0, 0.3);
+    color: #333;
 }
 .about-section-subtitle {
     text-align: center;
     font-size: 1.05rem;
-    color: rgba(255, 255, 255, 0.9);
-    text-shadow: 1px 1px 3px rgba(0, 0, 0, 0.25);
+    color: #666;
     margin-bottom: 2.5rem;
     max-width: 600px;
     margin-left: auto;
     margin-right: auto;
 }
-.about-steps {
+.about-layout {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-    gap: 1.5rem;
+    grid-template-columns: 1fr 1fr;
+    gap: 2.5rem;
+    align-items: center;
     max-width: 1100px;
     margin: 0 auto;
     padding: 0 1rem;
+}
+.about-steps {
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+}
+.about-image {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.about-image img {
+    width: 100%;
+    max-width: 500px;
+    border-radius: 16px;
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.1);
+    object-fit: cover;
 }
 .about-step {
     background: #fff;
@@ -1599,9 +1614,7 @@ section:not(.slider) .share-subcopy {
     margin: 0.75rem auto 0;
     border-radius: 2px;
 }
-.about-section-title::after {
-    background: rgba(255, 255, 255, 0.8);
-}
+
 
 /* ===== Scroll Margin for Sticky Nav ===== */
 .start-section,
@@ -1655,8 +1668,14 @@ section:not(.slider) .share-subcopy {
     #about.about-section-refreshed {
         padding: 2.5rem 0;
     }
-    .about-steps {
+    .about-layout {
         grid-template-columns: 1fr;
+    }
+    .about-image {
+        order: -1;
+    }
+    .about-image img {
+        max-width: 300px;
     }
     .featured-row,
     .featured-row-highlight {
