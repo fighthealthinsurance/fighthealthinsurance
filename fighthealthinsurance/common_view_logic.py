@@ -53,6 +53,7 @@ from fighthealthinsurance.rag_client import get_rag_context_for_denial
 from fighthealthinsurance.utils import (
     extract_file_text,
     interleave_iterator_for_keep_alive,
+    sync_iterator_to_async,
 )
 from .pubmed_tools import PubMedTools
 from .utils import (
@@ -2428,10 +2429,14 @@ class AppealsBackendHelper:
         # Only filters out None
         filtered_appeals: Iterator[str] = filter(lambda x: x != None, appeals)
 
+        # Convert the blocking sync iterator to async so next() calls
+        # run in a thread executor and don't block the event loop.
+        # Without this, as_available_nested()'s concurrent.futures.as_completed()
+        # blocks the event loop, preventing keep-alive newlines from being sent.
+        async_appeals: AsyncIterator[str] = sync_iterator_to_async(filtered_appeals)
+
         # We convert to async here.
-        saved_appeals: AsyncIterator[dict[str, str]] = a.map(
-            save_appeal, filtered_appeals
-        )
+        saved_appeals: AsyncIterator[dict[str, str]] = a.map(save_appeal, async_appeals)
         # Note: we intentionally call save before substution.
         subbed_appeals: AsyncIterator[dict[str, str]] = a.map(
             sub_in_appeals, saved_appeals
