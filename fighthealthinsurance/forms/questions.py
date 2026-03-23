@@ -42,6 +42,18 @@ class InsuranceQuestions(forms.Form):
             response += "This is an in-network claim."
         return response
 
+    def _append_context(
+        self, response: str, field: str, label: str, is_bool: bool = False
+    ) -> str:
+        """Helper to conditionally append a field's value to the context string."""
+        val = self.cleaned_data.get(field)
+        if val:
+            if is_bool:
+                response += f"{label}. "
+            else:
+                response += f"{label}: {val}. "
+        return response
+
     def preface(self):
         if self.prof_pov:
             return [
@@ -93,8 +105,8 @@ class InsuranceQuestions(forms.Form):
             ]
 
 
-class MedicalNeccessaryQuestions(InsuranceQuestions):
-    """Questions to ask for medical necessiety."""
+class MedicalNecessaryQuestions(InsuranceQuestions):
+    """Questions to ask for medical necessity."""
 
     medical_reason = forms.CharField(
         max_length=200,
@@ -107,16 +119,12 @@ class MedicalNeccessaryQuestions(InsuranceQuestions):
 
     def medical_context(self):
         response = ""
-        r = None
-        a = None
-        if "medical_reason" in self.cleaned_data:
-            r = self.cleaned_data["medical_reason"]
-            if r is not None and r != "":
-                response += f"The medical reason may be {r}."
-        if "age" in self.cleaned_data:
-            a = self.cleaned_data["age"]
-            if a is not None and a != "":
-                response += f"The patient age is {a}."
+        r = self.cleaned_data.get("medical_reason")
+        if r:
+            response += f"The medical reason may be {r}."
+        a = self.cleaned_data.get("age")
+        if a:
+            response += f"The patient age is {a}."
         return response
 
     def generate_reason(self):
@@ -132,7 +140,7 @@ class MedicalNeccessaryQuestions(InsuranceQuestions):
         ]
 
 
-class ExperimentalQuestions(MedicalNeccessaryQuestions):
+class ExperimentalQuestions(MedicalNecessaryQuestions):
     medical_reason = forms.CharField(
         max_length=200,
         label="Why do you believe this is not experimental?",
@@ -144,7 +152,7 @@ class ExperimentalQuestions(MedicalNeccessaryQuestions):
     )
 
 
-class NotCoveredQuestions(MedicalNeccessaryQuestions):
+class NotCoveredQuestions(MedicalNecessaryQuestions):
     medical_reason = forms.CharField(
         max_length=200,
         label="Why should this be covered?",
@@ -169,14 +177,10 @@ class OutOfNetworkReimbursement(forms.Form):
         super().__init__(*args, **kwargs)
 
     def medical_context(self):
-        r = self.cleaned_data["why_need_out_of_network"]
-        if r is not None and r != "":
-            return (
-                "One reason why this out of network claim should be accepted could be "
-                + r
-            )
-        else:
-            return ""
+        r = self.cleaned_data.get("why_need_out_of_network")
+        if r:
+            return f"One reason why this out of network claim should be accepted could be {r}"
+        return ""
 
     def main(self):
         if self.prof_pov:
@@ -346,6 +350,7 @@ class GenderAffirmingCareBreastAugmentationQuestions(GenderAffirmingCareQuestion
             3. Age of majority in a given country (if younger, follow the SOC for children and adolescents);
             4. If significant medical or mental health concerns are present, they must be reasonably well
             controlled."""
+        return super().plan_context(denial)
 
 
 class PreventiveCareQuestions(InsuranceQuestions):
@@ -434,7 +439,7 @@ class ThirdPartyQuestions(InsuranceQuestions):
         return super().preface()
 
 
-class StepTherapy(MedicalNeccessaryQuestions):
+class StepTherapy(MedicalNecessaryQuestions):
     """Question to ask for step therapy."""
 
     medically_necessary = forms.CharField(
@@ -578,12 +583,19 @@ class ColonoscopyQuestions(InsuranceQuestions):
             response += "This was a screening (preventive) colonoscopy. "
         elif sd == "diagnostic":
             response += "This was a diagnostic colonoscopy. "
-        if self.cleaned_data.get("age"):
-            response += f"Patient age: {self.cleaned_data['age']}. "
-        if self.cleaned_data.get("polyp_removal"):
-            response += "Polyps were removed during the procedure. "
-        if self.cleaned_data.get("family_history"):
-            response += "Patient has a family history of colorectal cancer. "
+        response = self._append_context(response, "age", "Patient age")
+        response = self._append_context(
+            response,
+            "polyp_removal",
+            "Polyps were removed during the procedure",
+            is_bool=True,
+        )
+        response = self._append_context(
+            response,
+            "family_history",
+            "Patient has a family history of colorectal cancer",
+            is_bool=True,
+        )
         return response
 
     def main(self):
@@ -642,20 +654,19 @@ class WeightLossMedicationQuestions(InsuranceQuestions):
 
     def medical_context(self):
         response = super().medical_context()
-        if self.cleaned_data.get("bmi"):
-            response += f"Patient BMI: {self.cleaned_data['bmi']}. "
-        if self.cleaned_data.get("comorbidities"):
-            response += (
-                f"Weight-related comorbidities: {self.cleaned_data['comorbidities']}. "
-            )
-        if self.cleaned_data.get("tried_lifestyle"):
-            response += (
-                "Patient has tried lifestyle modifications (diet and exercise). "
-            )
-        if self.cleaned_data.get("tried_other_meds"):
-            response += (
-                f"Other treatments tried: {self.cleaned_data['tried_other_meds']}. "
-            )
+        response = self._append_context(response, "bmi", "Patient BMI")
+        response = self._append_context(
+            response, "comorbidities", "Weight-related comorbidities"
+        )
+        response = self._append_context(
+            response,
+            "tried_lifestyle",
+            "Patient has tried lifestyle modifications (diet and exercise)",
+            is_bool=True,
+        )
+        response = self._append_context(
+            response, "tried_other_meds", "Other treatments tried"
+        )
         return response
 
     def main(self):
@@ -711,14 +722,21 @@ class ImagingQuestions(InsuranceQuestions):
 
     def medical_context(self):
         response = super().medical_context()
-        if self.cleaned_data.get("symptoms"):
-            response += f"Symptoms prompting imaging: {self.cleaned_data['symptoms']}. "
-        if self.cleaned_data.get("prior_imaging"):
-            response += (
-                "Less advanced imaging was already performed and was insufficient. "
-            )
-        if self.cleaned_data.get("physician_ordered"):
-            response += "This imaging was ordered by the treating physician based on clinical findings. "
+        response = self._append_context(
+            response, "symptoms", "Symptoms prompting imaging"
+        )
+        response = self._append_context(
+            response,
+            "prior_imaging",
+            "Less advanced imaging was already performed and was insufficient",
+            is_bool=True,
+        )
+        response = self._append_context(
+            response,
+            "physician_ordered",
+            "This imaging was ordered by the treating physician based on clinical findings",
+            is_bool=True,
+        )
         return response
 
     def main(self):
@@ -767,14 +785,18 @@ class MentalHealthQuestions(InsuranceQuestions):
 
     def medical_context(self):
         response = super().medical_context()
-        if self.cleaned_data.get("diagnosis"):
-            response += f"Mental health diagnosis: {self.cleaned_data['diagnosis']}. "
-        if self.cleaned_data.get("treatment_duration"):
-            response += (
-                f"Treatment duration: {self.cleaned_data['treatment_duration']}. "
-            )
-        if self.cleaned_data.get("functional_impairment"):
-            response += "The condition causes significant functional impairment. "
+        response = self._append_context(
+            response, "diagnosis", "Mental health diagnosis"
+        )
+        response = self._append_context(
+            response, "treatment_duration", "Treatment duration"
+        )
+        response = self._append_context(
+            response,
+            "functional_impairment",
+            "The condition causes significant functional impairment",
+            is_bool=True,
+        )
         response += (
             "The Mental Health Parity and Addiction Equity Act (MHPAEA) requires that "
             "mental health benefits be provided on parity with medical/surgical benefits. "
@@ -830,12 +852,21 @@ class EmergencyServicesQuestions(InsuranceQuestions):
 
     def medical_context(self):
         response = super().medical_context()
-        if self.cleaned_data.get("symptoms_at_time"):
-            response += f"Emergency symptoms: {self.cleaned_data['symptoms_at_time']}. "
-        if self.cleaned_data.get("called_911"):
-            response += "911 was called / patient transported by ambulance. "
-        if self.cleaned_data.get("stabilization_needed"):
-            response += "Patient required stabilization treatment in the ER. "
+        response = self._append_context(
+            response, "symptoms_at_time", "Emergency symptoms"
+        )
+        response = self._append_context(
+            response,
+            "called_911",
+            "911 was called / patient transported by ambulance",
+            is_bool=True,
+        )
+        response = self._append_context(
+            response,
+            "stabilization_needed",
+            "Patient required stabilization treatment in the ER",
+            is_bool=True,
+        )
         return response
 
     def main(self):
@@ -903,14 +934,18 @@ class TherapyRehabQuestions(InsuranceQuestions):
         tt = self.cleaned_data.get("therapy_type", "")
         if tt and tt != "other":
             response += f"Therapy type: {tt}. "
-        if self.cleaned_data.get("functional_goals"):
-            response += f"Functional goals: {self.cleaned_data['functional_goals']}. "
-        if self.cleaned_data.get("progress_made"):
-            response += "Patient has demonstrated progress with therapy. "
-        if self.cleaned_data.get("daily_impact"):
-            response += (
-                f"Impact on daily activities: {self.cleaned_data['daily_impact']}. "
-            )
+        response = self._append_context(
+            response, "functional_goals", "Functional goals"
+        )
+        response = self._append_context(
+            response,
+            "progress_made",
+            "Patient has demonstrated progress with therapy",
+            is_bool=True,
+        )
+        response = self._append_context(
+            response, "daily_impact", "Impact on daily activities"
+        )
         return response
 
     def main(self):
@@ -960,14 +995,21 @@ class GeneticTestingQuestions(InsuranceQuestions):
 
     def medical_context(self):
         response = super().medical_context()
-        if self.cleaned_data.get("clinical_indication"):
-            response += f"Clinical indication for testing: {self.cleaned_data['clinical_indication']}. "
-        if self.cleaned_data.get("treatment_impact"):
-            response += "Test results will directly impact the treatment plan. "
-        if self.cleaned_data.get("guideline_recommended"):
-            response += (
-                "This test is recommended by clinical guidelines (e.g., NCCN, ACMG). "
-            )
+        response = self._append_context(
+            response, "clinical_indication", "Clinical indication for testing"
+        )
+        response = self._append_context(
+            response,
+            "treatment_impact",
+            "Test results will directly impact the treatment plan",
+            is_bool=True,
+        )
+        response = self._append_context(
+            response,
+            "guideline_recommended",
+            "This test is recommended by clinical guidelines (e.g., NCCN, ACMG)",
+            is_bool=True,
+        )
         return response
 
     def main(self):
@@ -1017,14 +1059,16 @@ class InpatientHospitalQuestions(InsuranceQuestions):
 
     def medical_context(self):
         response = super().medical_context()
-        if self.cleaned_data.get("admission_reason"):
-            response += f"Reason for inpatient admission: {self.cleaned_data['admission_reason']}. "
-        if self.cleaned_data.get("observation_reclassified"):
-            response += (
-                "The stay was reclassified from inpatient to observation status. "
-            )
-        if self.cleaned_data.get("length_of_stay"):
-            response += f"Length of stay: {self.cleaned_data['length_of_stay']}. "
+        response = self._append_context(
+            response, "admission_reason", "Reason for inpatient admission"
+        )
+        response = self._append_context(
+            response,
+            "observation_reclassified",
+            "The stay was reclassified from inpatient to observation status",
+            is_bool=True,
+        )
+        response = self._append_context(response, "length_of_stay", "Length of stay")
         return response
 
     def main(self):
@@ -1077,14 +1121,11 @@ class SleepStudyQuestions(InsuranceQuestions):
 
     def medical_context(self):
         response = super().medical_context()
-        if self.cleaned_data.get("symptoms"):
-            response += f"Sleep-related symptoms: {self.cleaned_data['symptoms']}. "
-        if self.cleaned_data.get("screening_score"):
-            response += f"Screening score: {self.cleaned_data['screening_score']}. "
-        if self.cleaned_data.get("comorbidities"):
-            response += (
-                f"Relevant comorbidities: {self.cleaned_data['comorbidities']}. "
-            )
+        response = self._append_context(response, "symptoms", "Sleep-related symptoms")
+        response = self._append_context(response, "screening_score", "Screening score")
+        response = self._append_context(
+            response, "comorbidities", "Relevant comorbidities"
+        )
         return response
 
     def main(self):
@@ -1134,12 +1175,21 @@ class LabWorkQuestions(InsuranceQuestions):
 
     def medical_context(self):
         response = super().medical_context()
-        if self.cleaned_data.get("clinical_reason"):
-            response += f"Reason for lab work: {self.cleaned_data['clinical_reason']}. "
-        if self.cleaned_data.get("preventive"):
-            response += "This lab work is part of preventive/routine screening. "
-        if self.cleaned_data.get("medication_monitoring"):
-            response += "This lab work is needed to safely monitor medication. "
+        response = self._append_context(
+            response, "clinical_reason", "Reason for lab work"
+        )
+        response = self._append_context(
+            response,
+            "preventive",
+            "This lab work is part of preventive/routine screening",
+            is_bool=True,
+        )
+        response = self._append_context(
+            response,
+            "medication_monitoring",
+            "This lab work is needed to safely monitor medication",
+            is_bool=True,
+        )
         return response
 
     def main(self):
@@ -1232,12 +1282,13 @@ class AphasiaTreatmentQuestions(InsuranceQuestions):
         cause = self.cleaned_data.get("cause", "")
         if cause and cause != "other":
             response += f"Cause: {cause}. "
-        if self.cleaned_data.get("treatment_type"):
-            response += f"Requested treatment: {self.cleaned_data['treatment_type']}. "
-        if self.cleaned_data.get("onset_date"):
-            response += f"Onset: {self.cleaned_data['onset_date']}. "
-        if self.cleaned_data.get("functional_impact"):
-            response += f"Functional impact: {self.cleaned_data['functional_impact']}. "
+        response = self._append_context(
+            response, "treatment_type", "Requested treatment"
+        )
+        response = self._append_context(response, "onset_date", "Onset")
+        response = self._append_context(
+            response, "functional_impact", "Functional impact"
+        )
         response += (
             "Research from the NIH and ASHA demonstrates that intensive speech-language "
             "therapy for aphasia produces significant improvements in language function. "
@@ -1300,4 +1351,134 @@ class AphasiaTreatmentQuestions(InsuranceQuestions):
             "skilled maintenance therapy must also be covered when it requires the skills "
             "of a qualified therapist."
         )
+        return r
+
+
+class AssistiveDeviceQuestions(InsuranceQuestions):
+    """Questions for assistive device and AAC (Augmentative and Alternative Communication) denial appeals."""
+
+    device_type = forms.ChoiceField(
+        choices=[
+            ("", "---"),
+            (
+                "aac_high_tech",
+                "High-tech AAC device (tablet, speech-generating device)",
+            ),
+            ("aac_low_tech", "Low-tech AAC (picture boards, communication books)"),
+            ("mobility", "Mobility device (wheelchair, walker, scooter)"),
+            ("prosthetic", "Prosthetic device"),
+            ("orthotic", "Orthotic device"),
+            ("hearing", "Hearing aid or cochlear implant"),
+            ("other", "Other assistive device"),
+        ],
+        required=False,
+        label="Type of assistive device?",
+        help_text="The type of device helps determine applicable coverage rules and clinical guidelines.",
+    )
+    underlying_condition = forms.CharField(
+        max_length=300,
+        required=False,
+        label="What condition requires this device?",
+        help_text="E.g., aphasia from stroke, ALS, cerebral palsy, traumatic brain injury, autism spectrum disorder.",
+    )
+    functional_need = forms.CharField(
+        max_length=300,
+        required=False,
+        label="What functional need does this device address?",
+        help_text="E.g., unable to communicate verbally, cannot walk independently, needs support for daily activities.",
+    )
+    professional_evaluation = forms.BooleanField(
+        required=False,
+        label="Has a qualified professional evaluated the patient for this device?",
+        help_text="E.g., SLP evaluation for AAC, PT/OT evaluation for mobility devices, audiologist for hearing aids.",
+    )
+    tried_alternatives = forms.CharField(
+        max_length=300,
+        required=False,
+        label="Other approaches or devices already tried (if any)?",
+        help_text="E.g., gesture training, low-tech communication boards, manual wheelchair before power chair.",
+    )
+
+    def medical_context(self):
+        response = super().medical_context()
+        dt = self.cleaned_data.get("device_type", "")
+        if dt and dt != "other":
+            device_labels = {
+                "aac_high_tech": "High-tech AAC device (speech-generating device/tablet)",
+                "aac_low_tech": "Low-tech AAC (picture boards/communication books)",
+                "mobility": "Mobility device",
+                "prosthetic": "Prosthetic device",
+                "orthotic": "Orthotic device",
+                "hearing": "Hearing aid or cochlear implant",
+            }
+            response += f"Device type: {device_labels.get(dt, dt)}. "
+        response = self._append_context(
+            response, "underlying_condition", "Underlying condition"
+        )
+        response = self._append_context(response, "functional_need", "Functional need")
+        response = self._append_context(
+            response,
+            "professional_evaluation",
+            "Patient has been evaluated by a qualified professional for this device",
+            is_bool=True,
+        )
+        response = self._append_context(
+            response, "tried_alternatives", "Alternative approaches already tried"
+        )
+        return response
+
+    def main(self):
+        r = []
+        dt = self.cleaned_data.get("device_type", "")
+        is_aac = dt in ("aac_high_tech", "aac_low_tech")
+        if is_aac:
+            r.append(
+                "Augmentative and Alternative Communication (AAC) devices are evidence-based "
+                "tools that enable individuals with communication disorders to express needs, "
+                "participate in healthcare decisions, and maintain social connections. ASHA "
+                "(American Speech-Language-Hearing Association) position statements affirm that "
+                "AAC is an appropriate intervention for individuals across the lifespan with "
+                "severe communication impairments."
+            )
+        if self.cleaned_data.get("underlying_condition"):
+            r.append(
+                f"The patient requires this device due to: {self.cleaned_data['underlying_condition']}. "
+                "The underlying condition establishes clear medical necessity for assistive technology."
+            )
+        if self.cleaned_data.get("functional_need"):
+            r.append(
+                f"This device addresses the following functional need: "
+                f"{self.cleaned_data['functional_need']}. Without this device, the patient "
+                "cannot perform essential daily activities independently."
+            )
+        if self.cleaned_data.get("professional_evaluation"):
+            r.append(
+                "A qualified professional has evaluated the patient and determined that "
+                "this specific device is medically necessary. The evaluation considered "
+                "the patient's functional abilities, communication needs, and potential "
+                "for benefit from the device."
+            )
+        if self.cleaned_data.get("tried_alternatives"):
+            r.append(
+                f"The following alternatives have been tried: {self.cleaned_data['tried_alternatives']}. "
+                "These approaches were insufficient to meet the patient's needs, supporting "
+                "the necessity of the requested device."
+            )
+        if is_aac:
+            r.append(
+                "Under the ACA, habilitative and rehabilitative services — including "
+                "speech-language pathology services and related devices — are essential "
+                "health benefits. Medicare covers speech-generating devices as durable "
+                "medical equipment (DME) under 42 U.S.C. § 1395x(n). Many state Medicaid "
+                "programs and private insurers are required to cover AAC devices when "
+                "medically necessary."
+            )
+        else:
+            r.append(
+                "Under the ACA, rehabilitative and habilitative services are essential "
+                "health benefits. Assistive devices that are medically necessary for the "
+                "patient's condition must be covered. Denying coverage for a device that "
+                "enables basic functional independence is inconsistent with standard "
+                "medical practice and coverage requirements."
+            )
         return r

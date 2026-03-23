@@ -73,7 +73,7 @@
   fields:
     name: Medically Necessary
     regex: "(not medically necessary|You do not meet any of these criteria\\.|not medically nocessary|nationally recognized clinical guidelines and resources)"
-    form: MedicalNeccessaryQuestions
+    form: MedicalNecessaryQuestions
     parent: 1
 - model: fighthealthinsurance.denialtypes
   pk: 3
@@ -299,7 +299,7 @@ under the care of [doctor name] at [facility name]."
     name: Weight Loss Medication
     form: WeightLossMedicationQuestions
     procedure_regex: "\\b(zepbound|ozempic|mounjaro|wegovy|tirzepatide|semaglutide|liraglutide|saxenda|contrave|qsymia|anti.?obesity|weight loss (drug|medication)|GLP.?1)\\b"
-    regex: "\\b(zepbound|ozempic|mounjaro|wegovy|tirzepatide|semaglutide|weight loss drug|anti.?obesity|GLP.?1|obesity medication|weight management)\\b"
+    regex: "\\b(zepbound|ozempic|mounjaro|wegovy|tirzepatide|semaglutide|liraglutide|saxenda|contrave|qsymia|weight loss drug|anti.?obesity|GLP.?1|obesity medication|weight management)\\b"
     diagnosis_regex: "\\b(obes|E66|BMI|Z68\\.3|Z68\\.4|overweight)\\b"
     appeal_text: "Anti-obesity medications such as GLP-1 receptor agonists (semaglutide, tirzepatide) are FDA-approved for chronic weight management in patients with BMI >= 30 kg/m² or BMI >= 27 kg/m² with weight-related comorbidities. The American Medical Association recognizes obesity as a disease. Clinical guidelines from the Endocrine Society, AACE, and the Obesity Medicine Association support pharmacotherapy when lifestyle modifications are insufficient. Many state and federal parity laws require coverage of obesity treatments. Excluding FDA-approved anti-obesity medications while covering bariatric surgery or other obesity treatments may constitute discriminatory benefit design."
 # Imaging (MRI/CT) denial type
@@ -386,3 +386,13 @@ under the care of [doctor name] at [facility name]."
     regex: "\\b(aphasia|speech.language|language therapy|speech therapy|language disorder|communication disorder|92507|92508|92521|92522|92523|92524|92526)\\b"
     diagnosis_regex: "\\b(aphasia|R47\\.0|R47\\.01|R47\\.02|I63|I69\\.3|G31\\.0|dysphasia|language impairment)\\b"
     appeal_text: "Aphasia is an acquired language disorder most commonly caused by stroke, affecting approximately 2 million Americans (National Aphasia Association). Research from the National Institutes of Health demonstrates that speech-language therapy produces significant improvements in language outcomes. The American Speech-Language-Hearing Association (ASHA) and the American Academy of Neurology (AAN) clinical practice guidelines support intensive speech-language therapy for aphasia. Evidence-based treatments including Constraint-Induced Language Therapy (CILT), Melodic Intonation Therapy (MIT), and Semantic Feature Analysis (SFA) have demonstrated effectiveness in peer-reviewed research published in journals such as Stroke, Brain, and the Journal of Speech, Language, and Hearing Research. Neuroplasticity research shows that language recovery can continue well beyond the acute period, supporting ongoing therapy even for chronic aphasia. Under the ACA, rehabilitative and habilitative services are essential health benefits. The Jimmo v. Sebelius settlement (2013) clarifies that therapy cannot be denied solely because a patient has plateaued — skilled maintenance therapy must be covered when it requires the skills of a qualified therapist."
+# Assistive Device / AAC denial type
+- model: fighthealthinsurance.denialtypes
+  pk: 37
+  fields:
+    name: Assistive Device / AAC
+    form: AssistiveDeviceQuestions
+    procedure_regex: "\\b(AAC|augmentative|alternative communication|speech.generating device|SGD|communication device|picture board|assistive (device|technology)|durable medical equipment|DME|wheelchair|power chair|walker|prosthes|orthot|hearing aid|cochlear implant|E1399|E2500|E2502|E2504|E2506|E2508|E2510|K0108|V5261|V5014|L8614)\\b"
+    regex: "\\b(AAC|augmentative|alternative communication|speech.generating|communication device|assistive (device|technology)|durable medical equipment|DME|wheelchair|prosthes|orthot|hearing aid|cochlear|not covered|not medically necessary)\\b"
+    diagnosis_regex: "\\b(aphasia|R47\\.0|dysarthria|R47\\.1|ALS|G12\\.21|cerebral palsy|G80|autism|F84|stroke|I63|I69|traumatic brain|S06|laryngect|hearing loss|H90|H91)\\b"
+    appeal_text: "Assistive devices and Augmentative and Alternative Communication (AAC) tools are evidence-based interventions for individuals with severe communication, mobility, or functional impairments. ASHA position statements affirm that AAC is appropriate across the lifespan for individuals with severe communication impairments. Medicare covers speech-generating devices as durable medical equipment (DME) under 42 U.S.C. § 1395x(n). Under the ACA, habilitative and rehabilitative services — including speech-language pathology services and related devices — are essential health benefits. Research published in journals such as the Journal of Speech, Language, and Hearing Research demonstrates that AAC devices improve functional communication, social participation, and quality of life. Denying coverage for a medically necessary assistive device that enables basic functional independence is inconsistent with standard medical practice and ACA coverage requirements."

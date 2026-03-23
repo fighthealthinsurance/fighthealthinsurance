@@ -254,7 +254,7 @@ class SonicFax(FaxSenderBase):
             "https://members.sonic.net/labs/fax/?a=upload",
             files={"filename": (filename, open(path, "rb"))},
         )
-        r.raise_for_status
+        r.raise_for_status()
         r = s.post(
             "https://members.sonic.net/labs/fax/",
             data={
