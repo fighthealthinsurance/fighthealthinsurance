@@ -1277,7 +1277,7 @@ class ChatInterface:
     ) -> bool:
         """
         Handle policy document analysis request.
-        Looks for associated policy documents and triggers analysis.
+        Looks for associated policy documents and triggers chunked parallel analysis.
 
         Returns:
             True if policy analysis was performed and handled, False otherwise.
@@ -1319,9 +1319,22 @@ class ChatInterface:
             if question_match:
                 user_question = question_match.group(1).strip()
 
-            # Get or create analysis
+            # Progress callback for countdown display
+            async def _progress_callback(remaining: int, total: int) -> None:
+                if total == 0:
+                    await self.send_status_message("Finalizing analysis...")
+                elif remaining == total:
+                    await self.send_status_message(
+                        f"Launching {total} analysis agents..."
+                    )
+                else:
+                    await self.send_status_message(
+                        f"Analyzing policy — {remaining} of {total} agents remaining..."
+                    )
+
+            # Get or create analysis with progress updates
             analysis = await MLPolicyDocHelper.get_or_create_analysis(
-                policy_doc, user_question
+                policy_doc, user_question, progress_callback=_progress_callback
             )
 
             if analysis:
