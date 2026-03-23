@@ -3340,10 +3340,6 @@
         "answer": "Current U.S. guidance focuses on men who have sex with men and transgender women who have had a recent bacterial STI like syphilis, chlamydia, or gonorrhea, or who have ongoing high risk of exposure. Your appeal can show that your situation matches those criteria and that the decision was made with shared decision-making."
       },
       {
-        "question": "How is doxy-PEP taken?",
-        "answer": "Guidelines describe a single dose of doxycycline (often 200 mg) taken within a specified window after condomless sex. Your clinician’s note can clarify your dosing plan and emphasize that this is intermittent, post-exposure prevention — not daily long-term antibiotics."
-      },
-      {
         "question": "What if my plan is worried about antibiotic resistance or side effects?",
         "answer": "Your appeal can acknowledge these concerns and explain that your clinician is following guideline criteria, monitoring side effects, and periodically re-evaluating whether doxy-PEP is still appropriate, balancing individual and public health considerations."
       },
@@ -4178,10 +4174,6 @@
       {
         "question": "Do I need to try other biologics before Exdensur?",
         "answer": "Some insurers require step therapy through other IL-5 pathway biologics first. However, you may appeal this requirement if you have specific reasons why Exdensur's twice-yearly dosing is medically necessary for you."
-      },
-      {
-        "question": "How is Exdensur administered?",
-        "answer": "Exdensur is given as a subcutaneous injection every 6 months (twice yearly), making it the longest-acting asthma biologic available. This may be covered under your medical benefit rather than pharmacy benefit."
       }
     ],
     "evidence_snippets": [
@@ -4297,10 +4289,6 @@
       {
         "question": "What if I can't tolerate statins?",
         "answer": "Document your statin intolerance (muscle pain, elevated liver enzymes, etc.) and which statins you've tried. PCSK9 inhibitors are particularly important for statin-intolerant patients who still need aggressive LDL lowering."
-      },
-      {
-        "question": "How is Lerochol different from other PCSK9 inhibitors?",
-        "answer": "Lerochol is dosed once monthly, compared to every 2 weeks for most other PCSK9 inhibitors. This may improve adherence and convenience for some patients."
       }
     ],
     "evidence_snippets": [
@@ -4346,10 +4334,6 @@
       {
         "question": "What documentation do I need for Voyxact coverage?",
         "answer": "Key documentation includes kidney biopsy confirming IgA nephropathy, recent proteinuria levels (typically 1 g/day or higher), eGFR results, and records showing you've been on ACE inhibitors or ARBs for an adequate period."
-      },
-      {
-        "question": "How is Voyxact administered?",
-        "answer": "Voyxact is given as a subcutaneous injection once every 4 weeks and can be self-administered at home after training."
       },
       {
         "question": "What does 'at risk for disease progression' mean?",
@@ -4415,10 +4399,6 @@
       {
         "question": "Do I need to have failed other treatments first?",
         "answer": "Yes, Hyrnuo is approved for patients who have received prior systemic therapy. This typically means at least one prior line of treatment for metastatic disease."
-      },
-      {
-        "question": "How is Hyrnuo taken?",
-        "answer": "Hyrnuo is an oral medication taken daily. This makes it convenient compared to IV therapies, though you'll still need regular monitoring."
       }
     ],
     "evidence_snippets": [
@@ -4485,10 +4465,6 @@
       {
         "question": "What documentation do I need for Redemplo coverage?",
         "answer": "Key documentation includes genetic testing confirming FCS (mutations in LPL, APOC2, APOA5, LMF1, or GPIHBP1), fasting triglyceride levels, history of pancreatitis episodes, and documentation of adherence to strict dietary fat restriction."
-      },
-      {
-        "question": "How is Redemplo administered?",
-        "answer": "Redemplo is given as a subcutaneous injection once every 3 months (quarterly) and can be self-administered at home."
       }
     ],
     "evidence_snippets": [
@@ -4550,10 +4526,6 @@
       {
         "question": "What does 'no satisfactory alternative treatment options' mean?",
         "answer": "This means you've tried other available AML treatments or they are not appropriate for you due to your specific situation, comorbidities, or disease characteristics. Your oncologist should document why Komzifti is the best option."
-      },
-      {
-        "question": "How is Komzifti taken?",
-        "answer": "Komzifti is an oral medication taken once daily, making it more convenient than many other AML treatments that require IV administration."
       }
     ],
     "evidence_snippets": [
@@ -4609,10 +4581,6 @@
       {
         "question": "How do I document hot flash severity?",
         "answer": "Track the number and severity of hot flashes per day, night sweats, sleep disruption, and impact on work and daily activities. Your healthcare provider can also document this in clinical notes."
-      },
-      {
-        "question": "How is Lynkuet different from other menopause treatments?",
-        "answer": "Lynkuet is the first treatment that blocks both NK1 and NK3 receptors, addressing the underlying neurokinin imbalance that causes hot flashes without using hormones."
       }
     ],
     "evidence_snippets": [
@@ -4734,10 +4702,6 @@
       {
         "question": "How do I document CSU severity?",
         "answer": "Track your hives using a diary noting daily hive count, itching severity, sleep disruption, and impact on work/activities. The Urticaria Activity Score (UAS7) is commonly used to document disease severity."
-      },
-      {
-        "question": "How is Rhapsido taken?",
-        "answer": "Rhapsido is an oral tablet taken daily, offering convenience compared to injectable treatments like omalizumab."
       }
     ],
     "evidence_snippets": [
@@ -4929,10 +4893,6 @@
       {
         "question": "How do I document ITP severity?",
         "answer": "Include your platelet count history over time, any bleeding episodes (bruising, nosebleeds, gum bleeding, heavy periods), transfusion requirements, and impact on daily activities."
-      },
-      {
-        "question": "How is Wayrilz different from other ITP treatments?",
-        "answer": "Wayrilz is an oral BTK inhibitor that works by blocking the immune system's destruction of platelets. It offers a different mechanism than steroids or TPO-RAs and may work for patients who haven't responded to those treatments."
       }
     ],
     "evidence_snippets": [
@@ -4990,10 +4950,6 @@
       {
         "question": "What documentation supports my Dawnzera appeal?",
         "answer": "Include your HAE diagnosis confirmation (C4, C1-inhibitor levels, genetic testing), attack diary showing frequency and severity, prior prophylactic treatments tried, and documentation of breakthrough attacks on current therapy."
-      },
-      {
-        "question": "How is Dawnzera different from other HAE prophylaxis?",
-        "answer": "Dawnzera is an antisense oligonucleotide that reduces prekallikrein production, targeting HAE at the RNA level. It's given as a monthly subcutaneous injection."
       },
       {
         "question": "What if I'm currently on another HAE prophylaxis?",
@@ -5178,10 +5134,6 @@
     "cta": "Start your Qfitlia appeal — it takes about 3 minutes.",
     "faq": [
       {
-        "question": "How is Qfitlia different from other hemophilia treatments?",
-        "answer": "Qfitlia works by lowering antithrombin (a natural anticoagulant), which rebalances hemostasis rather than replacing missing clotting factors. It's given just once every 2 months (6 times per year)."
-      },
-      {
         "question": "Can Qfitlia be used with inhibitors?",
         "answer": "Yes, Qfitlia is approved for hemophilia A or B with or without factor inhibitors. This is particularly important for patients with inhibitors who have limited treatment options."
       },
@@ -5249,10 +5201,6 @@
       {
         "question": "What documentation helps my appeal?",
         "answer": "Include urine culture results showing the bacteria causing your UTI, sensitivity testing showing resistance to other antibiotics, documentation of antibiotic allergies, and history of prior UTIs and treatments."
-      },
-      {
-        "question": "How is Blujepa taken?",
-        "answer": "Blujepa is taken as two tablets twice daily for 5 days. Taking it after a meal may help reduce stomach upset."
       }
     ],
     "evidence_snippets": [
@@ -5302,10 +5250,6 @@
       {
         "question": "What documentation shows my HR/HER2 status?",
         "answer": "Include your pathology report showing estrogen receptor positive (ER+) and/or progesterone receptor positive (PR+) status and HER2-negative status by IHC and/or FISH testing."
-      },
-      {
-        "question": "How is Datroway administered?",
-        "answer": "Datroway is given as an IV infusion every 3 weeks at an infusion center or hospital. Your oncology team will monitor you for side effects."
       }
     ],
     "evidence_snippets": [
@@ -5502,10 +5446,6 @@
       {
         "question": "What documentation do I need?",
         "answer": "Include genetic testing confirming TAZ mutation, documentation of current weight (must be at least 30 kg), cardiac function tests showing cardiomyopathy, and muscle strength assessments."
-      },
-      {
-        "question": "How is Forzinity administered?",
-        "answer": "Forzinity is given as a daily subcutaneous injection that can be self-administered at home after training."
       }
     ],
     "evidence_snippets": [
@@ -5565,10 +5505,6 @@
         "answer": "Nuzolvence may be appropriate if you have allergies to cephalosporins or other first-line antibiotics, if there's concern about antibiotic resistance, or if you prefer oral over injectable treatment."
       },
       {
-        "question": "How is Nuzolvence taken?",
-        "answer": "Nuzolvence is taken as a single oral dose, making it convenient for treating uncomplicated gonorrhea without needing an injection."
-      },
-      {
         "question": "Does Nuzolvence treat other STIs?",
         "answer": "Nuzolvence is specifically approved for uncomplicated urogenital gonorrhea. You may still need testing and treatment for other STIs like chlamydia."
       }
@@ -5614,10 +5550,6 @@
       {
         "question": "What prior treatments are typically required?",
         "answer": "Most insurers require trial of conventional therapies like steroids, pyridostigmine, azathioprine, or mycophenolate before approving newer biologics. Document all prior treatments and their results."
-      },
-      {
-        "question": "How is Imaavy administered?",
-        "answer": "Imaavy is given as a weekly subcutaneous injection that can be self-administered at home after training."
       }
     ],
     "evidence_snippets": [
@@ -5737,10 +5669,6 @@
         "answer": "RSV preventives are recommended for all infants under 8 months entering their first RSV season, and for certain high-risk infants up to 19 months. Your pediatrician can determine eligibility."
       },
       {
-        "question": "How is Enflonsia given?",
-        "answer": "Enflonsia is given as a single intramuscular injection, typically before or during RSV season (fall through spring in most areas)."
-      },
-      {
         "question": "Is Enflonsia covered as a vaccine or prescription?",
         "answer": "RSV preventives are typically covered under medical benefits (like vaccines) rather than pharmacy benefits. Check with your insurance about specific coverage."
       }
@@ -5799,10 +5727,6 @@
       {
         "question": "Do I need to try medications first?",
         "answer": "Most insurers require documentation that you've tried and failed or are intolerant to at least one antiarrhythmic medication before approving ablation. Document all medications tried and why they failed."
-      },
-      {
-        "question": "How is the procedure performed?",
-        "answer": "The Abbott Volt system is used during a cardiac catheterization procedure in an electrophysiology lab. Catheters are inserted through blood vessels to reach the heart and deliver PFA energy."
       }
     ],
     "evidence_snippets": [
@@ -5853,10 +5777,6 @@
       {
         "question": "What documentation proves surgical ineligibility?",
         "answer": "Include your surgical risk assessment (STS score), heart team evaluation notes, comorbidities that increase surgical risk, and any prior cardiac surgeries that complicate reoperation."
-      },
-      {
-        "question": "How is the procedure performed?",
-        "answer": "SAPIEN M3 is implanted through the femoral vein using a transseptal approach, avoiding the need for open-heart surgery or chest incision."
       }
     ],
     "evidence_snippets": [
@@ -5911,11 +5831,7 @@
       },
       {
         "question": "What prior treatments are required?",
-        "answer": "SetPoint is approved for patients who have not responded adequately to biologic or targeted synthetic DMARDs. You'll need to document failure or intolerance to multiple biologic therapies."
-      },
-      {
-        "question": "How is the device implanted?",
-        "answer": "The SetPoint device is implanted in a minimally invasive outpatient surgical procedure. A small pulse generator is placed in the chest and connected to the vagus nerve."
+        "answer": "SetPoint is often only approved for patients who have not responded adequately to biologic or targeted synthetic DMARDs. You'll likely need to document failure or intolerance to multiple therapies."
       }
     ],
     "evidence_snippets": [
@@ -6566,10 +6482,6 @@
     "how_we_help": "We help you document your phosphorus levels, why traditional phosphate binders have failed or are inadequate, and how Xphozah's unique mechanism of action addresses your needs.",
     "cta": "Start your Xphozah appeal — it takes about 3 minutes.",
     "faq": [
-      {
-        "question": "How is Xphozah different from phosphate binders?",
-        "answer": "Unlike binders that bind phosphorus in food, Xphozah blocks phosphorus absorption in the intestinal lining. It can be used alone or with binders for additional phosphorus control."
-      },
       {
         "question": "What if I've had side effects from binders?",
         "answer": "Document specific side effects like GI upset, pill burden, or drug interactions. Xphozah offers an alternative mechanism that may be better tolerated."
