@@ -126,6 +126,13 @@ function formatDate(dateStr: string | null): string {
   return new Date(dateStr).toLocaleDateString();
 }
 
+function buildAppealOptions(appeals: AppealSummary[]) {
+  return appeals.map((a) => ({
+    value: String(a.id),
+    label: `${a.insurance_company || "Appeal"} - ${formatDate(a.creation_date)}`,
+  }));
+}
+
 // --- Appeals Tab ---
 
 function AppealsTab() {
@@ -463,10 +470,7 @@ function CallLogsTab({ appeals }: { appeals: AppealSummary[] }) {
     [fetchLogs],
   );
 
-  const appealOptions = appeals.map((a) => ({
-    value: String(a.id),
-    label: `${a.insurance_company || "Appeal"} - ${formatDate(a.creation_date)}`,
-  }));
+  const appealOptions = buildAppealOptions(appeals);
 
   if (loading) return <Loader size="lg" style={{ display: "block", margin: "2rem auto" }} />;
 
@@ -693,10 +697,7 @@ function EvidenceTab({ appeals }: { appeals: AppealSummary[] }) {
     [fetchEvidence],
   );
 
-  const appealOptions = appeals.map((a) => ({
-    value: String(a.id),
-    label: `${a.insurance_company || "Appeal"} - ${formatDate(a.creation_date)}`,
-  }));
+  const appealOptions = buildAppealOptions(appeals);
 
   if (loading) return <Loader size="lg" style={{ display: "block", margin: "2rem auto" }} />;
 
