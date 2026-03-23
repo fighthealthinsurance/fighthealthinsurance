@@ -66,10 +66,12 @@ class ThankyouEmailSender(object):
 
 class FollowUpEmailSender(object):
     def _find_candidates(self):
+        six_months_ago = datetime.date.today() - datetime.timedelta(days=183)
         try:
             candidates = (
                 FollowUpSched.objects.filter(follow_up_sent=False)
                 .filter(follow_up_date__lt=datetime.date.today())
+                .filter(initial__gte=six_months_ago)
                 .distinct("email")
             )
             # Force partial evaluation to catch DISTINCT ON errors
@@ -78,8 +80,10 @@ class FollowUpEmailSender(object):
             return candidates
         except NotSupportedError:
             # Fallback for databases that don't support DISTINCT ON
-            candidates = FollowUpSched.objects.filter(follow_up_sent=False).filter(
-                follow_up_date__lt=datetime.date.today()
+            candidates = (
+                FollowUpSched.objects.filter(follow_up_sent=False)
+                .filter(follow_up_date__lt=datetime.date.today())
+                .filter(initial__gte=six_months_ago)
             )
             return candidates
 
