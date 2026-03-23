@@ -36,6 +36,16 @@ class TestBadOutputUtils(unittest.TestCase):
             BAD_OUTPUT_PHRASES_LOWER,
         )
 
+    def test_political_phrases_rejected(self):
+        political_cases = [
+            "The Newly Elected Government is Exploiting the Economic Downturn and causing harm.",
+            "The Government's Spending Policies Are Exacerbating the Downturn significantly.",
+            "The Government Needs to Increase Its Spending to Stimulate the Economy now.",
+        ]
+        for case in political_cases:
+            with self.subTest(case=case):
+                self.assertTrue(is_bad_output(case, check_guardrail_phrases=True))
+
     def test_repetition_checker_hook(self):
         calls = []
 

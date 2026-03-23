@@ -15,6 +15,9 @@ BAD_OUTPUT_PHRASES: tuple[str, ...] = (
     "As an AI, I do not have the capability",
     "Unfortunately, I cannot directly",
     "I am an AI assistant and do not have the authority to create medical documents",
+    "The Newly Elected Government is Exploiting the Economic Downturn",
+    "The Government's Spending Policies Are Exacerbating the Downturn",
+    "The Government Needs to Increase Its Spending to Stimulate the Economy",
 )
 
 BAD_OUTPUT_PHRASES_LOWER: tuple[str, ...] = tuple(
