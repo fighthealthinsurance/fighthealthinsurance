@@ -52,7 +52,7 @@ class MicrositeContextFetchingTest(APITestCase):
 
         fire_and_forget_patcher = patch(
             "fighthealthinsurance.chat_interface.fire_and_forget_in_new_threadpool",
-            side_effect=mock_fire_and_forget_impl
+            side_effect=mock_fire_and_forget_impl,
         )
         mock_fire_and_forget = fire_and_forget_patcher.start()
 
@@ -69,12 +69,16 @@ class MicrositeContextFetchingTest(APITestCase):
             {"url": "https://example.com/doc1.pdf", "title": "Test Document"}
         ]
         mock_microsite.pubmed_search_terms = []
-        mock_microsite.get_combined_context = AsyncMock(return_value="Extralink context here")
+        mock_microsite.get_combined_context = AsyncMock(
+            return_value="Extralink context here"
+        )
         mock_get_microsite.return_value = mock_microsite
 
         try:
             user = await sync_to_async(User.objects.create_user)(
-                username="extralinkuser", password="testpass", email="extralink@example.com"
+                username="extralinkuser",
+                password="testpass",
+                email="extralink@example.com",
             )
             professional = await sync_to_async(ProfessionalUser.objects.create)(
                 user=user, active=True, npi_number="1111111111"
@@ -116,7 +120,10 @@ class MicrositeContextFetchingTest(APITestCase):
             # Verify get_combined_context was called on the microsite
             mock_microsite.get_combined_context.assert_called_once()
             call_kwargs = mock_microsite.get_combined_context.call_args[1]
-            self.assertIsNone(call_kwargs["pubmed_tools"], "pubmed_tools should be None when no pubmed_search_terms")
+            self.assertIsNone(
+                call_kwargs["pubmed_tools"],
+                "pubmed_tools should be None when no pubmed_search_terms",
+            )
             self.assertEqual(call_kwargs["max_extralink_docs"], 5)
             self.assertEqual(call_kwargs["max_extralink_chars"], 2000)
 
@@ -146,7 +153,7 @@ class MicrositeContextFetchingTest(APITestCase):
 
         fire_and_forget_patcher = patch(
             "fighthealthinsurance.chat_interface.fire_and_forget_in_new_threadpool",
-            side_effect=mock_fire_and_forget_impl
+            side_effect=mock_fire_and_forget_impl,
         )
         mock_fire_and_forget = fire_and_forget_patcher.start()
 
@@ -160,7 +167,9 @@ class MicrositeContextFetchingTest(APITestCase):
         mock_microsite.default_procedure = "Asthma Treatment"
         mock_microsite.extralinks = []
         mock_microsite.pubmed_search_terms = ["asthma inhaler", "bronchodilator"]
-        mock_microsite.get_combined_context = AsyncMock(return_value="PubMed context here")
+        mock_microsite.get_combined_context = AsyncMock(
+            return_value="PubMed context here"
+        )
         mock_get_microsite.return_value = mock_microsite
 
         try:
@@ -202,7 +211,10 @@ class MicrositeContextFetchingTest(APITestCase):
             # Verify get_combined_context was called with pubmed_tools
             mock_microsite.get_combined_context.assert_called_once()
             call_kwargs = mock_microsite.get_combined_context.call_args[1]
-            self.assertIsNotNone(call_kwargs["pubmed_tools"], "pubmed_tools should be provided when pubmed_search_terms exist")
+            self.assertIsNotNone(
+                call_kwargs["pubmed_tools"],
+                "pubmed_tools should be provided when pubmed_search_terms exist",
+            )
             self.assertEqual(call_kwargs["max_pubmed_terms"], 3)
             self.assertEqual(call_kwargs["max_pubmed_articles"], 20)
 
@@ -234,7 +246,7 @@ class MicrositeContextFetchingTest(APITestCase):
 
         fire_and_forget_patcher = patch(
             "fighthealthinsurance.chat_interface.fire_and_forget_in_new_threadpool",
-            side_effect=mock_fire_and_forget_impl
+            side_effect=mock_fire_and_forget_impl,
         )
         mock_fire_and_forget = fire_and_forget_patcher.start()
 
@@ -250,7 +262,9 @@ class MicrositeContextFetchingTest(APITestCase):
             {"url": "https://example.com/doc.pdf", "title": "Doc"}
         ]
         mock_microsite.pubmed_search_terms = ["test treatment"]
-        mock_microsite.get_combined_context = AsyncMock(return_value="Extralink context\n\nPubMed context")
+        mock_microsite.get_combined_context = AsyncMock(
+            return_value="Extralink context\n\nPubMed context"
+        )
         mock_get_microsite.return_value = mock_microsite
 
         try:
@@ -325,13 +339,15 @@ class MicrositeContextFetchingTest(APITestCase):
 
         fire_and_forget_patcher = patch(
             "fighthealthinsurance.chat_interface.fire_and_forget_in_new_threadpool",
-            side_effect=mock_fire_and_forget_impl
+            side_effect=mock_fire_and_forget_impl,
         )
         mock_fire_and_forget = fire_and_forget_patcher.start()
 
         try:
             user = await sync_to_async(User.objects.create_user)(
-                username="nomicrositeuser", password="testpass", email="nomicrosite@example.com"
+                username="nomicrositeuser",
+                password="testpass",
+                email="nomicrosite@example.com",
             )
             professional = await sync_to_async(ProfessionalUser.objects.create)(
                 user=user, active=True, npi_number="4444444444"

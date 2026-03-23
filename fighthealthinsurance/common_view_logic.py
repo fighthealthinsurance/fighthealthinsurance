@@ -1720,7 +1720,7 @@ class DenialCreatorHelper:
             procedure=denial.procedure,
             diagnosis=denial.diagnosis,
         )
-        logger.debug(f"Ok lets rock with {denial_types}")
+        logger.debug(f"Processing {len(denial_types)} denial types")
         for dt in denial_types:
             try:
                 await DenialTypesRelation.objects.acreate(
@@ -2382,7 +2382,7 @@ class AppealsBackendHelper:
         async def save_appeal(appeal_text: str) -> dict[str, str]:
             # Save all of the proposed appeals, so we can use RL later.
             t = time.time()
-            logger.debug(f"{t}: Saving {appeal_text}")
+            logger.debug(f"Saving appeal ({len(appeal_text)} chars)")
             await asyncio.sleep(0)
             # YOLO on saving appeals, sqllite gets sad.
             id = "unknown"
@@ -2396,7 +2396,7 @@ class AppealsBackendHelper:
                 )
                 pass
             passed = time.time() - t
-            logger.debug(f"Saved {appeal_text} after {passed} seconds")
+            logger.debug(f"Saved appeal ({len(appeal_text)} chars) in {passed:.1f}s")
             return {"id": id, "content": appeal_text}
 
         # Yield status: generating appeals

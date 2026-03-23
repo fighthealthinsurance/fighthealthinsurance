@@ -470,7 +470,10 @@ Sincerely, OtherInsuranceCo""",
         # than asserting before the script has had a chance to run.
         try:
             WebDriverWait(self.driver, 2).until(
-                lambda d: d.find_element(By.CSS_SELECTOR, "textarea#health_history").get_attribute("value") == first_health
+                lambda d: d.find_element(
+                    By.CSS_SELECTOR, "textarea#health_history"
+                ).get_attribute("value")
+                == first_health
             )
         except TimeoutException:
             pass  # Timeout is expected — means the old value was NOT restored

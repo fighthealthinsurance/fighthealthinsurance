@@ -804,7 +804,7 @@ class MedicareChatIntegrationTest(TestCase):
                 "default_procedure": "Medicare Work Requirements",
                 "medicare": "true",
                 "microsite_slug": "medicare-work-requirements",
-            }
+            },
         )
         # Should redirect to consent page
         self.assertEqual(response.status_code, 302)

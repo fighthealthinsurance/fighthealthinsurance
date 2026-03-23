@@ -9,14 +9,17 @@ from fighthealthinsurance.fax_actor import FaxActor
 @ray.remote(max_restarts=-1, max_task_retries=-1)
 class FaxPollingActor:
     def __init__(self, i=60):
+        from loguru import logger
+
+        self._logger = logger
         # This is seperate from the global one
         name = "fpa-worker"
-        print(f"Starting fax polling actor")
+        self._logger.info("Starting fax polling actor")
         time.sleep(1)
         self.fax_actor = FaxActor.options(  # type: ignore
             name=name, namespace="fhi", get_if_exists=True
         ).remote()
-        print(f"Created fpa-worker {self.fax_actor}")
+        self._logger.info(f"Created fpa-worker {self.fax_actor}")
         self.interval = i
         self.c = 0
         self.e = 0
@@ -30,24 +33,26 @@ class FaxPollingActor:
         return getattr(self, "running", False)
 
     async def run(self) -> bool:
-        print(f"Starting run")
+        self._logger.info("Starting run")
         self.running = True
         while self.running:
             # Like yield
             await asyncio.sleep(1)
             try:
-                print(f"Checked for delayed remote faxes")
+                self._logger.debug("Checked for delayed remote faxes")
                 c, f = await self.fax_actor.send_delayed_faxes.remote()
                 self.e += f
                 self.c += c
             except Exception as e:
-                print(f"Error {e} while checking outbound faxes")
+                self._logger.opt(exception=True).error(
+                    "Error while checking outbound faxes"
+                )
                 self.aec += 1
             finally:
                 # Success or failure we wait.
-                print(f"Waiting for next run")
-                await asyncio.sleep(60 * 60)
-        print(f"Done running? what?")
+                self._logger.debug("Waiting for next run")
+                await asyncio.sleep(self.interval)
+        self._logger.warning("FaxPollingActor stopped running")
         return True
 
     async def count(self) -> int:

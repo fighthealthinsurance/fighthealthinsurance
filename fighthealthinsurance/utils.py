@@ -309,7 +309,9 @@ def send_fallback_email(subject: str, template_name: str, context, to_email: str
         settings.DEFAULT_FROM_EMAIL,
         to=[to_email],
     )
-    logger.debug(f"Sending email to {to_email} with subject {subject}")
+    logger.debug(
+        f"Sending email to {mask_email_for_logging(to_email)} with subject {subject}"
+    )
 
     # Lastly, attach the HTML content to the email instance and send.
     msg.attach_alternative(html_content, "text/html")
@@ -562,7 +564,7 @@ async def fire_and_forget_in_new_threadpool(task: Coroutine) -> None:
     thread = threading.Thread(target=run_async_task)
     thread.daemon = True  # Thread will exit when main thread exits
     thread.start()
-    logger.debug(f"Task started good bye :p {task}")
+    logger.debug(f"Task {task} started in background thread")
     return
 
 

@@ -165,9 +165,7 @@ class TestExtraLinkContextHelper:
         )
 
         # Get citations
-        citations = await ExtraLinkContextHelper.get_extralink_citations(
-            microsite_slug
-        )
+        citations = await ExtraLinkContextHelper.get_extralink_citations(microsite_slug)
 
         assert len(citations) == 1
         assert "Clinical Guidelines" in citations[0]

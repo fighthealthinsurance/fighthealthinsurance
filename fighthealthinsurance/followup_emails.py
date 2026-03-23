@@ -9,7 +9,7 @@ from django.utils import timezone
 from loguru import logger
 
 from fighthealthinsurance.models import FollowUpSched, InterestedProfessional
-from fighthealthinsurance.utils import send_fallback_email
+from fighthealthinsurance.utils import mask_email_for_logging, send_fallback_email
 
 
 class ThankyouEmailSender(object):
@@ -58,7 +58,9 @@ class ThankyouEmailSender(object):
             return True
         except Exception as e:
             # Log the error for debugging
-            logger.debug(f"Failed to send thank you email to {email}: {str(e)}")
+            logger.warning(
+                f"Failed to send thank you email to {mask_email_for_logging(email)}: {e}"
+            )
             return False
 
 
@@ -137,5 +139,7 @@ class FollowUpEmailSender(object):
             return True
         except Exception as e:
             # Log the error for debugging
-            logger.debug(f"Failed to send follow-up email to {email}: {str(e)}")
+            logger.warning(
+                f"Failed to send follow-up email to {mask_email_for_logging(email)}: {e}"
+            )
             return False
