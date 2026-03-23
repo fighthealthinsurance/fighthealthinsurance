@@ -3,16 +3,17 @@ Helper for analyzing policy documents to extract relevant coverage information.
 
 Uses internal ML models to:
 1. Extract text from policy documents (Summary of Benefits, Medical Policy PDFs/DOCX)
-2. Split documents into chunks and analyze them in parallel
-3. Synthesize chunk summaries into a comprehensive analysis
-4. Generate quotable summaries for use in appeals
+2. Run targeted regex search to find pages likely to contain key clauses
+3. Split documents into chunks and analyze them in parallel (targeted + scattershot)
+4. Synthesize chunk summaries into a comprehensive analysis with page references
+5. Generate quotable summaries for use in appeals
 """
 
 import asyncio
 import io
 import json
-import math
-from typing import Optional, Dict, Any, Callable, Awaitable, List
+import re
+from typing import Optional, Dict, Any, Callable, Awaitable, List, Set
 
 from loguru import logger
 
@@ -24,10 +25,47 @@ from fighthealthinsurance.models import PolicyDocument, PolicyDocumentAnalysis
 from fighthealthinsurance.ml.ml_router import ml_router
 
 # Disclaimer text to include in all outputs
-POLICY_ANALYSIS_DISCLAIMER = """**Important Disclaimer:** This analysis is provided for informational purposes only and is not legal or professional advice. Insurance policies are complex documents, and this AI analysis may not capture all nuances. For definitive interpretations, contact your insurance company directly or consult with a qualified professional."""
+POLICY_ANALYSIS_DISCLAIMER = (
+    "**Important Disclaimer:** This analysis is provided for informational purposes "
+    "only and is not legal or professional advice. Insurance policies are complex "
+    "documents, and this AI analysis may not capture all nuances. **We strongly "
+    "encourage you to verify these findings against your actual policy document "
+    "using the page references provided.** For definitive interpretations, contact "
+    "your insurance company directly or consult with a qualified professional."
+)
 
 # Type alias for the progress callback
 ProgressCallback = Callable[[int, int], Awaitable[None]]
+
+# Regex patterns for finding insurance-relevant sections.
+# Each tuple is (pattern, description) — description is used in logging.
+_INSURANCE_SEARCH_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"exclusion", re.IGNORECASE), "exclusions"),
+    (re.compile(r"not\s+cover", re.IGNORECASE), "coverage exclusions"),
+    (re.compile(r"limitation", re.IGNORECASE), "limitations"),
+    (re.compile(r"appeal", re.IGNORECASE), "appeal rights"),
+    (re.compile(r"grievance", re.IGNORECASE), "grievance procedures"),
+    (re.compile(r"medical\s+necessity", re.IGNORECASE), "medical necessity"),
+    (re.compile(r"prior\s+auth", re.IGNORECASE), "prior authorization"),
+    (re.compile(r"pre-?authorization", re.IGNORECASE), "preauthorization"),
+    (re.compile(r"out.of.pocket", re.IGNORECASE), "out-of-pocket costs"),
+    (re.compile(r"deductible", re.IGNORECASE), "deductibles"),
+    (re.compile(r"co-?pay", re.IGNORECASE), "copayments"),
+    (re.compile(r"coinsurance", re.IGNORECASE), "coinsurance"),
+    (re.compile(r"formulary", re.IGNORECASE), "drug formulary"),
+    (re.compile(r"external\s+review", re.IGNORECASE), "external review"),
+    (re.compile(r"independent\s+review", re.IGNORECASE), "independent review"),
+    (re.compile(r"experimental", re.IGNORECASE), "experimental treatment"),
+    (re.compile(r"investigational", re.IGNORECASE), "investigational treatment"),
+    (re.compile(r"benefit\s+period", re.IGNORECASE), "benefit period"),
+    (re.compile(r"waiting\s+period", re.IGNORECASE), "waiting period"),
+    (re.compile(r"pre-?existing", re.IGNORECASE), "pre-existing conditions"),
+    (re.compile(r"emergency", re.IGNORECASE), "emergency services"),
+    (re.compile(r"urgent\s+care", re.IGNORECASE), "urgent care"),
+    (re.compile(r"claim\s+(?:filing|submission)", re.IGNORECASE), "claim filing"),
+    (re.compile(r"time\s*limit", re.IGNORECASE), "time limits"),
+    (re.compile(r"denied|denial", re.IGNORECASE), "denial language"),
+]
 
 
 class MLPolicyDocHelper:
@@ -207,6 +245,162 @@ class MLPolicyDocHelper:
         return chunks
 
     @classmethod
+    def _regex_search_pages(
+        cls,
+        page_dict: Dict[int, str],
+        user_question: Optional[str] = None,
+    ) -> Dict[int, Set[str]]:
+        """
+        Scan every page with insurance-relevant regex patterns.
+
+        Returns a dict mapping page_number -> set of matched pattern descriptions.
+        Pages with more matches are higher priority for targeted analysis.
+        """
+        page_hits: Dict[int, Set[str]] = {}
+
+        # Build extra patterns from user question keywords (3+ char words)
+        extra_patterns: list[tuple[re.Pattern[str], str]] = []
+        if user_question:
+            words = set(
+                w
+                for w in re.findall(r"[a-zA-Z]{3,}", user_question)
+                if w.lower()
+                not in {
+                    "the",
+                    "and",
+                    "for",
+                    "that",
+                    "this",
+                    "with",
+                    "are",
+                    "from",
+                    "have",
+                    "has",
+                    "was",
+                    "were",
+                    "been",
+                    "will",
+                    "would",
+                    "could",
+                    "should",
+                    "can",
+                    "may",
+                    "does",
+                    "what",
+                    "how",
+                    "why",
+                    "when",
+                    "where",
+                    "which",
+                    "who",
+                    "whom",
+                    "not",
+                    "but",
+                    "about",
+                    "into",
+                    "your",
+                    "you",
+                    "our",
+                    "their",
+                    "its",
+                    "his",
+                    "her",
+                    "any",
+                    "all",
+                    "also",
+                    "other",
+                    "than",
+                    "then",
+                    "some",
+                    "more",
+                    "most",
+                    "such",
+                    "only",
+                    "each",
+                    "very",
+                    "just",
+                    "there",
+                    "here",
+                    "insurance",
+                    "policy",
+                    "plan",
+                    "cover",
+                    "covered",
+                    "coverage",
+                    "health",
+                    "medical",
+                }
+            )
+            for word in words:
+                try:
+                    pat = re.compile(re.escape(word), re.IGNORECASE)
+                    extra_patterns.append((pat, f"user query: {word}"))
+                except re.error:
+                    pass
+
+        all_patterns = _INSURANCE_SEARCH_PATTERNS + extra_patterns
+
+        for page_num, page_text in page_dict.items():
+            for pattern, desc in all_patterns:
+                if pattern.search(page_text):
+                    if page_num not in page_hits:
+                        page_hits[page_num] = set()
+                    page_hits[page_num].add(desc)
+
+        return page_hits
+
+    @classmethod
+    def _build_targeted_chunks(
+        cls,
+        page_dict: Dict[int, str],
+        page_hits: Dict[int, Set[str]],
+        scattershot_pages: Set[int],
+    ) -> list[Dict[str, Any]]:
+        """
+        Build chunks from regex-hit pages that aren't already covered by scattershot chunks.
+        Each targeted chunk is tagged with what patterns matched.
+        """
+        # Only include pages that had hits AND aren't in scattershot
+        targeted_pages = sorted(
+            p for p in page_hits if p not in scattershot_pages and p in page_dict
+        )
+        if not targeted_pages:
+            return []
+
+        chunks: list[Dict[str, Any]] = []
+        current_text = ""
+        current_pages: list[int] = []
+        current_hits: Set[str] = set()
+
+        for page_num in targeted_pages:
+            page_text = page_dict[page_num]
+            if current_text and len(current_text) + len(page_text) > cls.CHUNK_SIZE:
+                chunks.append(
+                    {
+                        "text": current_text,
+                        "pages": list(current_pages),
+                        "search_hits": list(current_hits),
+                    }
+                )
+                current_text = ""
+                current_pages = []
+                current_hits = set()
+            current_text += page_text + "\n"
+            current_pages.append(page_num)
+            current_hits.update(page_hits.get(page_num, set()))
+
+        if current_text.strip():
+            chunks.append(
+                {
+                    "text": current_text,
+                    "pages": list(current_pages),
+                    "search_hits": list(current_hits),
+                }
+            )
+
+        return chunks
+
+    @classmethod
     async def analyze_policy_document(
         cls,
         policy_document: PolicyDocument,
@@ -214,12 +408,16 @@ class MLPolicyDocHelper:
         progress_callback: Optional[ProgressCallback] = None,
     ) -> Optional[PolicyDocumentAnalysis]:
         """
-        Main entry point: Analyze a policy document using chunked parallel analysis.
+        Main entry point: Analyze a policy document using two parallel strategies.
 
-        1. Extract text and split into chunks
-        2. Fan out parallel "relevance check" calls (up to MAX_PARALLEL_CHUNKS)
-        3. Collect relevant chunk summaries
-        4. Synthesize into final analysis
+        Phase 1 (parallel):
+          a) Targeted search — regex patterns find pages with insurance keywords,
+             those pages get sent to analysis agents with extra context about what matched.
+          b) Scattershot — the full document is chunked and all chunks are analyzed
+             for relevance.
+
+        Phase 2: All relevant summaries from both strategies are deduplicated and
+        synthesized into a single structured analysis with page references.
         """
         try:
             file_field = policy_document.document_enc
@@ -252,20 +450,36 @@ class MLPolicyDocHelper:
                     )
                     return None
 
-                # Step 2: Build chunks
-                chunks = cls._build_chunks(page_dict)
-                if not chunks:
+                # Step 2: Build scattershot chunks + run regex search
+                scattershot_chunks = cls._build_chunks(page_dict)
+                page_hits = cls._regex_search_pages(page_dict, user_question)
+
+                # Collect pages already covered by scattershot for dedup
+                scattershot_pages: Set[int] = set()
+                for chunk in scattershot_chunks:
+                    scattershot_pages.update(chunk["pages"])
+
+                # Build targeted chunks from regex-hit pages not in scattershot
+                targeted_chunks = cls._build_targeted_chunks(
+                    page_dict, page_hits, scattershot_pages
+                )
+
+                all_chunks = scattershot_chunks + targeted_chunks
+                if not all_chunks:
                     logger.warning(f"No chunks built from {policy_document.filename}")
                     return None
 
                 logger.info(
-                    f"Split {policy_document.filename} into {len(chunks)} chunks for parallel analysis"
+                    f"Analyzing {policy_document.filename}: "
+                    f"{len(scattershot_chunks)} scattershot chunks + "
+                    f"{len(targeted_chunks)} targeted chunks from "
+                    f"{len(page_hits)} regex-hit pages"
                 )
 
-                # Step 3: Analyze chunks in parallel
+                # Step 3: Analyze all chunks in parallel
                 plan_category = getattr(policy_document, "plan_category", "unknown")
                 chunk_summaries = await cls._analyze_chunks_parallel(
-                    chunks,
+                    all_chunks,
                     user_question=user_question,
                     plan_category=plan_category,
                     progress_callback=progress_callback,
@@ -278,7 +492,8 @@ class MLPolicyDocHelper:
                     return None
 
                 logger.info(
-                    f"Got {len(chunk_summaries)} relevant chunk summaries from {len(chunks)} chunks"
+                    f"Got {len(chunk_summaries)} relevant summaries from "
+                    f"{len(all_chunks)} total chunks"
                 )
 
                 # Step 4: Synthesize chunk summaries into final analysis
@@ -365,9 +580,19 @@ class MLPolicyDocHelper:
             if regulator_info:
                 plan_context = f"Plan context: {regulator_info}\n\n"
 
+        # If this chunk came from targeted search, tell the model what matched
+        search_hint = ""
+        search_hits = chunk.get("search_hits")
+        if search_hits:
+            hits_str = ", ".join(search_hits[:10])
+            search_hint = (
+                f"This section was flagged by keyword search for: {hits_str}. "
+                "Pay special attention to these topics.\n\n"
+            )
+
         prompt = f"""You are analyzing a chunk of a health insurance policy document (pages/sections: {pages_str}).
 
-{question_context}{plan_context}Determine if this chunk contains ANY of the following:
+{question_context}{plan_context}{search_hint}Determine if this chunk contains ANY of the following:
 - Coverage details (what IS covered, benefits)
 - Exclusions (what is NOT covered)
 - Appeal rights, deadlines, or procedures
@@ -676,6 +901,12 @@ Respond in JSON format with the following structure:
 
         if include_disclaimer:
             output_parts.append("\n---\n")
+            output_parts.append(
+                "**Please verify:** We've included page numbers so you can "
+                "double-check each finding against your actual policy document. "
+                "AI analysis can miss nuances — confirming key details yourself "
+                "strengthens your position if you need to appeal.\n\n"
+            )
             output_parts.append(POLICY_ANALYSIS_DISCLAIMER)
 
         return "".join(output_parts)
