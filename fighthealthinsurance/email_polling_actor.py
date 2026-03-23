@@ -65,7 +65,6 @@ class EmailPollingActor:
                     )
                     self._logger.info(f"Sent {sent_count} follow-up emails")
 
-
                 # Check if we should clear expired emails (once per day)
                 now = timezone.now()
                 if (now - self.last_email_clear_check) > datetime.timedelta(hours=24):
