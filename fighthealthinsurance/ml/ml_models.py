@@ -51,11 +51,55 @@ def _count_items(items: list[str]) -> dict[str, int]:
     return counts
 
 
+# Maximum block size (in lines) to scan for repetition.  Real appeal letters
+# rarely have a meaningful repeating unit longer than this; capping it turns
+# the inner loop from O(n) block sizes into O(1) and avoids O(n³) behaviour
+# on very long outputs.
+_MAX_BLOCK_SIZE = 50
+
+# Maximum number of non-empty lines to analyse.  Anything beyond this is
+# truncated before scanning — the first portion is sufficient to detect loops.
+_MAX_LINES = 500
+
+
+def _rolling_hash(items: list[str], block_size: int) -> list[int]:
+    """Return a list of hash values, one per block starting position.
+
+    ``result[i]`` is the hash of ``items[i:i+block_size]``.  Two blocks
+    with equal hashes *may* be equal (collisions are possible); callers
+    must verify with a full comparison on match.
+    """
+    n = len(items)
+    if block_size > n:
+        return []
+
+    # Pre-hash each line so we work with ints.
+    line_hashes = [hash(s) for s in items]
+
+    # Initial window hash (simple XOR + position-weighted mix).
+    h = 0
+    for k in range(block_size):
+        h ^= line_hashes[k] * (k + 1)
+
+    result = [h]
+    for i in range(1, n - block_size + 1):
+        # Slide window: remove items[i-1], add items[i+block_size-1].
+        # Recompute — the position-weighted scheme doesn't roll cheaply,
+        # but at _MAX_BLOCK_SIZE ≤ 50 this is still O(block_size) per
+        # position and dominates nothing.
+        h = 0
+        for k in range(block_size):
+            h ^= line_hashes[i + k] * (k + 1)
+        result.append(h)
+    return result
+
+
 def _find_consecutive_block_repeat(
     items: list[str],
     min_block_size: int = 3,
     largest_first: bool = True,
     min_reps: int = 2,
+    max_block_size: int = _MAX_BLOCK_SIZE,
 ) -> Optional[tuple[int, int, int]]:
     """Find a consecutive block repetition in *items*.
 
@@ -68,28 +112,38 @@ def _find_consecutive_block_repeat(
             (finds the primitive repeating unit, yielding the highest rep count).
         min_reps: Minimum number of consecutive repetitions to report
             (default 2).  Matches with fewer reps are skipped.
+        max_block_size: Upper bound on block size to examine (default 50).
+            Keeps worst-case runtime manageable on long outputs.
 
     Returns ``(start_index, block_size, total_reps)`` for the first match
     with at least *min_reps* repetitions, or ``None`` if none found.
     """
     n = len(items)
+    upper = min(n // 2, max_block_size)
+    if upper < min_block_size:
+        return None
     if largest_first:
-        sizes = range(n // 2, min_block_size - 1, -1)
+        sizes = range(upper, min_block_size - 1, -1)
     else:
-        sizes = range(min_block_size, n // 2 + 1)
+        sizes = range(min_block_size, upper + 1)
     for block_size in sizes:
+        hashes = _rolling_hash(items, block_size)
         for i in range(n - 2 * block_size + 1):
-            if items[i : i + block_size] == items[i + block_size : i + 2 * block_size]:
-                reps = 2
-                j = i + 2 * block_size
-                while (
-                    j + block_size <= n
-                    and items[j : j + block_size] == items[i : i + block_size]
-                ):
-                    reps += 1
-                    j += block_size
-                if reps >= min_reps:
-                    return (i, block_size, reps)
+            # Quick hash pre-check before expensive slice comparison
+            if hashes[i] != hashes[i + block_size]:
+                continue
+            if items[i : i + block_size] != items[i + block_size : i + 2 * block_size]:
+                continue
+            reps = 2
+            j = i + 2 * block_size
+            while (
+                j + block_size <= n
+                and items[j : j + block_size] == items[i : i + block_size]
+            ):
+                reps += 1
+                j += block_size
+            if reps >= min_reps:
+                return (i, block_size, reps)
     return None
 
 
@@ -210,6 +264,11 @@ def remove_repeated_blocks(
     if len(non_empty) < 2 * min_block_size:
         return text
 
+    # Cap the number of lines we analyse to avoid O(n³) on huge outputs.
+    # The first _MAX_LINES lines are enough to detect (and clean) loops.
+    if len(non_empty) > _MAX_LINES:
+        non_empty = non_empty[:_MAX_LINES]
+
     normalized = [s for _, s in non_empty]
     orig_indices = [i for i, _ in non_empty]
     to_remove: set[int] = set()
@@ -286,6 +345,9 @@ def repetition_penalty(text: str, min_block_size: int = 3) -> float:
     # --- block-level ---
     block_ratio = 0.0
     lines = [l.strip() for l in text.split("\n") if l.strip()]
+    total_lines = len(lines)
+    if total_lines > _MAX_LINES:
+        lines = lines[:_MAX_LINES]
     if len(lines) >= 2 * min_block_size:
         match = _find_consecutive_block_repeat(
             lines, min_block_size, largest_first=False
