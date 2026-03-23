@@ -283,3 +283,106 @@ As is evident from my previous medical claims, I was diagnosed with $diagnosis o
 Unfortunately, there is significant impact to my daily life as evidenced by [explain symptoms]. I am currently
 under the care of [doctor name] at [facility name]."
     regex: "migrane|G43"
+# Colonoscopy denial type
+- model: fighthealthinsurance.denialtypes
+  pk: 26
+  fields:
+    name: Colonoscopy
+    form: ColonoscopyQuestions
+    procedure_regex: "\\b(colonoscop|45378|45380|45385|45384|45381|45382|45383|45386|45388|45390|G0121|G0105)\\b"
+    regex: "\\b(colonoscop|45378|45380|45385|45384|colorectal cancer screening|colon cancer screen)\\b"
+    appeal_text: "Screening colonoscopies are recommended by the USPSTF (grade A) for adults aged 45–75 and must be covered without cost-sharing under the ACA (Section 2713). Under the Consolidated Appropriations Act of 2023, polyp removal during a screening colonoscopy does not reclassify the procedure as diagnostic. See https://www.uspreventiveservicestaskforce.org/uspstf/recommendation/colorectal-cancer-screening and CMS FAQ guidance on colonoscopy cost-sharing protections."
+# Weight Loss Medication denial type (parent)
+- model: fighthealthinsurance.denialtypes
+  pk: 27
+  fields:
+    name: Weight Loss Medication
+    form: WeightLossMedicationQuestions
+    procedure_regex: "\\b(zepbound|ozempic|mounjaro|wegovy|tirzepatide|semaglutide|liraglutide|saxenda|contrave|qsymia|anti.?obesity|weight loss (drug|medication)|GLP.?1)\\b"
+    regex: "\\b(zepbound|ozempic|mounjaro|wegovy|tirzepatide|semaglutide|weight loss drug|anti.?obesity|GLP.?1|obesity medication|weight management)\\b"
+    diagnosis_regex: "\\b(obes|E66|BMI|Z68\\.3|Z68\\.4|overweight)\\b"
+    appeal_text: "Anti-obesity medications such as GLP-1 receptor agonists (semaglutide, tirzepatide) are FDA-approved for chronic weight management in patients with BMI >= 30 kg/m² or BMI >= 27 kg/m² with weight-related comorbidities. The American Medical Association recognizes obesity as a disease. Clinical guidelines from the Endocrine Society, AACE, and the Obesity Medicine Association support pharmacotherapy when lifestyle modifications are insufficient. Many state and federal parity laws require coverage of obesity treatments. Excluding FDA-approved anti-obesity medications while covering bariatric surgery or other obesity treatments may constitute discriminatory benefit design."
+# Imaging (MRI/CT) denial type
+- model: fighthealthinsurance.denialtypes
+  pk: 28
+  fields:
+    name: Imaging (MRI/CT)
+    form: ImagingQuestions
+    procedure_regex: "\\b(MRI|CT scan|magnetic resonance|computed tomography|70553|70551|70552|72141|72148|72156|73721|73221|74176|74177|74178|71250|71260|71275)\\b"
+    regex: "\\b(MRI|CT scan|magnetic resonance imaging|computed tomography|imaging study|radiology|diagnostic imaging)\\b"
+    appeal_text: "Diagnostic imaging ordered by the treating physician based on clinical findings is medically necessary for accurate diagnosis and treatment planning. The American College of Radiology Appropriateness Criteria provide evidence-based guidelines for when imaging is indicated. Denying physician-ordered imaging can delay diagnosis and lead to worse patient outcomes and higher costs."
+# Mental Health / Psychotherapy denial type
+- model: fighthealthinsurance.denialtypes
+  pk: 29
+  fields:
+    name: Mental Health / Psychotherapy
+    form: MentalHealthQuestions
+    procedure_regex: "\\b(psychotherapy|90834|90837|90832|90847|90846|90853|therapy session|counseling session|behavioral health|mental health treatment)\\b"
+    regex: "\\b(psychotherapy|mental health|behavioral health|therapy session|counseling|psychiatric|90834|90837|90832)\\b"
+    diagnosis_regex: "\\b(F3[0-9]|F4[0-8]|F2[0-9]|depression|anxiety|PTSD|bipolar|schizophren|mental disorder)\\b"
+    appeal_text: "The Mental Health Parity and Addiction Equity Act (MHPAEA) requires that financial requirements and treatment limitations for mental health and substance use disorder benefits be no more restrictive than those for medical/surgical benefits. See https://www.cms.gov/CCIIO/Programs-and-Initiatives/Other-Insurance-Protections/mhpaea_factsheet and the DOL's self-compliance tool. Quantitative treatment limits (such as visit caps) and non-quantitative treatment limits (such as stricter medical necessity criteria) for mental health must comply with parity requirements."
+# Emergency Services denial type
+- model: fighthealthinsurance.denialtypes
+  pk: 30
+  fields:
+    name: Emergency Services
+    form: EmergencyServicesQuestions
+    procedure_regex: "\\b(emergency room|emergency department|ER visit|ambulance|99281|99282|99283|99284|99285|A0427|A0428|A0429|A0433|emergency transport)\\b"
+    regex: "\\b(emergency room|emergency department|ER visit|ambulance|emergency service|emergency care|99281|99282|99283|99284|99285|prudent layperson)\\b"
+    appeal_text: "Under the prudent layperson standard (42 U.S.C. § 1395dd, ACA Section 2719A, and most state laws), emergency services must be covered based on the patient's symptoms at the time of presentation, not the final diagnosis. The No Surprises Act (effective January 2022) further protects patients from balance billing for emergency services. Under EMTALA, hospitals are required to provide screening and stabilization for emergency conditions. Retroactively denying emergency care based on the final diagnosis violates the prudent layperson standard."
+# Physical/Speech/Occupational Therapy denial type
+- model: fighthealthinsurance.denialtypes
+  pk: 31
+  fields:
+    name: Therapy / Rehabilitation Services
+    form: TherapyRehabQuestions
+    procedure_regex: "\\b(physical therapy|speech therapy|occupational therapy|97110|97140|97530|97535|97542|92507|92508|92526|97161|97162|97163|97165|97166|97167|therapeutic exercise|therapeutic services)\\b"
+    regex: "\\b(physical therapy|speech therapy|occupational therapy|rehabilitation|therapeutic service|PT session|OT session|therapy session|habilitative|rehabilitative)\\b"
+    appeal_text: "Rehabilitation and habilitative services are an essential health benefit under the ACA. The Jimmo v. Sebelius settlement (2013) clarifies that therapy coverage cannot be denied solely because the patient is not improving — skilled maintenance therapy must also be covered when skilled care is required. Many state laws also require coverage for speech therapy, physical therapy, and occupational therapy when medically necessary."
+# Genetic Testing denial type
+- model: fighthealthinsurance.denialtypes
+  pk: 32
+  fields:
+    name: Genetic Testing
+    form: GeneticTestingQuestions
+    procedure_regex: "\\b(genetic test|genomic test|81225|81226|81227|81228|81229|81235|81240|81241|81243|81245|81250|81479|0037U|0022U|clonoSEQ|MRD|molecular test|next.generation sequencing|NGS)\\b"
+    regex: "\\b(genetic test|genomic test|molecular diagnostic|clonoSEQ|MRD|minimal residual disease|hereditary cancer|BRCA|gene panel|pharmacogenomic)\\b"
+    appeal_text: "Genetic and genomic testing recommended by clinical guidelines (NCCN, ACMG, ASCO) is medically necessary when results will inform treatment decisions or risk management. Under 45 CFR § 156.122, health plans must cover medically necessary diagnostic services. BRCA and other hereditary cancer testing are recommended by the USPSTF (grade B) for patients meeting risk criteria and must be covered without cost-sharing under the ACA."
+# Inpatient / Hospital Stay denial type
+- model: fighthealthinsurance.denialtypes
+  pk: 33
+  fields:
+    name: Inpatient Care / Hospital Stay
+    form: InpatientHospitalQuestions
+    procedure_regex: "\\b(inpatient|hospital admission|hospital stay|hospitalization|99221|99222|99223|99231|99232|99233|99238|99239)\\b"
+    regex: "\\b(inpatient|hospital stay|hospital admission|hospitalization|observation status|level of care|not medically necessary.*admission)\\b"
+    appeal_text: "CMS's Two-Midnight Rule (42 CFR § 412.3) provides that hospital stays expected to span two or more midnights should generally be classified as inpatient admissions. Retroactive reclassification from inpatient to observation status may be inappropriate and can result in significant cost-shifting to patients. InterQual and Milliman criteria are proprietary screening tools and should not substitute for the treating physician's clinical judgment regarding the appropriate level of care."
+# Sleep Study denial type
+- model: fighthealthinsurance.denialtypes
+  pk: 34
+  fields:
+    name: Sleep Study
+    form: SleepStudyQuestions
+    procedure_regex: "\\b(sleep study|polysomnography|95810|95811|95800|95801|95782|95783|sleep test|PSG)\\b"
+    regex: "\\b(sleep study|polysomnography|sleep apnea|sleep test|sleep disorder|sleep lab|95810|95811)\\b"
+    diagnosis_regex: "\\b(G47|sleep apnea|insomnia|narcolepsy|hypersomn)\\b"
+    appeal_text: "The American Academy of Sleep Medicine (AASM) clinical practice guidelines recommend polysomnography for the diagnosis of sleep-disordered breathing in patients with signs and symptoms of obstructive sleep apnea. Untreated sleep apnea is associated with increased cardiovascular risk, motor vehicle accidents, and higher overall healthcare utilization. Diagnosing and treating sleep disorders is cost-effective and medically necessary."
+# Lab Work denial type
+- model: fighthealthinsurance.denialtypes
+  pk: 35
+  fields:
+    name: Lab Work / Laboratory Testing
+    form: LabWorkQuestions
+    procedure_regex: "\\b(lab work|laboratory|blood test|blood work|80048|80050|80053|80061|82947|83036|84443|85025|86900|urinalysis|CBC|CMP|BMP|lipid panel|A1C|TSH)\\b"
+    regex: "\\b(lab work|laboratory|blood test|blood work|diagnostic lab|lab test|routine lab|screening lab)\\b"
+    appeal_text: "Laboratory testing ordered by the treating physician is a fundamental component of medical care for diagnosis, monitoring, and prevention. Under the ACA, many screening laboratory tests recommended by the USPSTF with an A or B rating (including diabetes screening, lipid screening, STI screening, and others) must be covered without cost-sharing. Laboratory tests required for safe medication monitoring are an inherent part of the prescribed treatment and are medically necessary."
+# Aphasia Treatment denial type
+- model: fighthealthinsurance.denialtypes
+  pk: 36
+  fields:
+    name: Aphasia Treatment
+    form: AphasiaTreatmentQuestions
+    procedure_regex: "\\b(aphasia|speech.language therapy|speech therapy|92507|92508|92521|92522|92523|92524|92526|96105|96125|CILT|constraint.induced language|melodic intonation therapy|semantic feature analysis)\\b"
+    regex: "\\b(aphasia|speech.language|language therapy|speech therapy|language disorder|communication disorder|92507|92508|92521|92522|92523|92524|92526)\\b"
+    diagnosis_regex: "\\b(aphasia|R47\\.0|R47\\.01|R47\\.02|I63|I69\\.3|G31\\.0|dysphasia|language impairment)\\b"
+    appeal_text: "Aphasia is an acquired language disorder most commonly caused by stroke, affecting approximately 2 million Americans (National Aphasia Association). Research from the National Institutes of Health demonstrates that speech-language therapy produces significant improvements in language outcomes. The American Speech-Language-Hearing Association (ASHA) and the American Academy of Neurology (AAN) clinical practice guidelines support intensive speech-language therapy for aphasia. Evidence-based treatments including Constraint-Induced Language Therapy (CILT), Melodic Intonation Therapy (MIT), and Semantic Feature Analysis (SFA) have demonstrated effectiveness in peer-reviewed research published in journals such as Stroke, Brain, and the Journal of Speech, Language, and Hearing Research. Neuroplasticity research shows that language recovery can continue well beyond the acute period, supporting ongoing therapy even for chronic aphasia. Under the ACA, rehabilitative and habilitative services are essential health benefits. The Jimmo v. Sebelius settlement (2013) clarifies that therapy cannot be denied solely because a patient has plateaued — skilled maintenance therapy must be covered when it requires the skills of a qualified therapist."
