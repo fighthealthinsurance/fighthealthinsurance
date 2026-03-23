@@ -4,9 +4,11 @@
 # Optimizations:
 # - Checksums requirements.txt and requirements-dev.txt to skip pip install when unchanged
 # - Checksums JS source files to skip webpack build when unchanged (via build_static.sh)
+# - Checksums collectstatic/compress inputs to skip when unchanged (via build_static.sh)
 # - Combines Python version and dependency checks into a single invocation
 # - Parallelizes network connectivity checks (kubectl and ping commands)
-# - All optimizations maintain full compatibility and don't skip necessary operations
+# - Parallelizes static build, network checks, and DB setup
+# - Uses a single management command for all DB setup (migrate + fixtures + users)
 #
 # shellcheck disable=SC2068,SC1090
 
@@ -94,7 +96,7 @@ check_and_fix_inotify_limit() {
 			echo "Attempting to increase inotify limit to $recommended_limit..."
 			if sudo sysctl -w fs.inotify.max_user_watches=$recommended_limit >/dev/null 2>&1; then
 				echo "Successfully increased inotify limit to $recommended_limit"
-				
+
 				# Make the change persistent across reboots
 				if [ -d /etc/sysctl.d ]; then
 					echo "fs.inotify.max_user_watches=$recommended_limit" | sudo tee /etc/sysctl.d/99-fighthealthinsurance-watches.conf >/dev/null 2>&1 || true
@@ -122,13 +124,17 @@ set -ex
 check_python_environment
 check_and_fix_inotify_limit
 
-"${SCRIPT_DIR}/build_static.sh"
+# --- Run static build, network checks, and DB setup in parallel ---
 
-# Run network checks in parallel for speed
 # Create a temp directory for storing check results
 TMPDIR=$(mktemp -d)
 trap 'rm -rf "${TMPDIR}"' EXIT
 
+# 1) Static build (background)
+"${SCRIPT_DIR}/build_static.sh" &
+static_pid=$!
+
+# 2) Network checks (all in background)
 check_vllm_health() {
   if kubectl get service -n totallylegitco vllm-health-svc >/dev/null 2>&1; then
     echo "export HEALTH_BACKEND_PORT=4280" > "$TMPDIR/vllm_health"
@@ -167,7 +173,6 @@ check_alpha_backend() {
   fi
 }
 
-# Run all network checks in parallel
 check_vllm_health &
 vllm_pid=$!
 check_vllm_health_slipstream &
@@ -177,29 +182,25 @@ backup_pid=$!
 check_alpha_backend &
 alpha_pid=$!
 
-# Wait for all network checks to complete
-wait $vllm_pid $slipstream_pid $backup_pid $alpha_pid 2>/dev/null || true
+# 3) DB setup (background, unless FAST mode)
+if [ "$FAST" != "FAST" ]; then
+  python manage.py setup_local_db &
+  db_pid=$!
+fi
 
-# Source the results to set environment variables
+# Wait for all parallel tasks
+wait $static_pid || { echo "Static build failed!"; exit 1; }
+wait $vllm_pid $slipstream_pid $backup_pid $alpha_pid 2>/dev/null || true
+if [ -n "$db_pid" ]; then
+  wait $db_pid || { echo "DB setup failed!"; exit 1; }
+fi
+
+# Source the network check results to set environment variables
 for result_file in "$TMPDIR"/*; do
   if [ -f "$result_file" ]; then
     source "$result_file"
   fi
 done
-
-if [ "$FAST" != "FAST" ]; then
-  python manage.py migrate
-  python manage.py loaddata initial
-  python manage.py loaddata followup
-  python manage.py loaddata plan_source
-
-  # Make sure we have an admin user so folks can test the admin view
-  python manage.py ensure_adminuser --username admin --password admin
-
-  # Make a test user with UserDomain and everything
-  python manage.py make_user  --username "test@test.com" --domain testfarts1 --password farts12345678 --email "test@test.com" --visible-phone-number 42 --is-provider true --first-name TestFarts
-  python manage.py make_user  --username "test-patient@test.com" --domain testfarts1 --password farts12345678 --email "test-patient@test.com" --visible-phone-number 42 --is-provider false
-fi
 
 # If --devserver is passed, use Django's dev server for hot-reloading templates
 if [[ "$1" == "--devserver" ]]; then
