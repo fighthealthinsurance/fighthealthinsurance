@@ -43,8 +43,10 @@ from fighthealthinsurance.models import (
     DemoRequests,
     Denial,
     DenialQA,
+    InsuranceCallLog,
     MailingListSubscriber,
     OngoingChat,
+    PatientEvidence,
     PriorAuthRequest,
     ProposedPriorAuth,
     PubMedMiniArticle,
@@ -283,6 +285,20 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
             return serializers.SelectContextArticlesSerializer
         else:
             return None
+
+    @extend_schema(responses=serializers.DenialSummarySerializer(many=True))
+    def list(self, request: Request) -> Response:
+        """List all denials accessible to the current user."""
+        current_user: User = request.user  # type: ignore
+        denials = (
+            Denial.filter_to_allowed_denials(current_user)
+            .select_related(
+                "patient_user", "primary_professional", "creating_professional"
+            )
+            .prefetch_related("denial_type")
+        )
+        output_serializer = serializers.DenialSummarySerializer(denials, many=True)
+        return Response(output_serializer.data)
 
     @extend_schema(responses=serializers.DenialResponseInfoSerializer)
     def create(self, request: Request) -> Response:
@@ -2131,3 +2147,159 @@ class ChooserViewSet(viewsets.ViewSet):
             ).data,
             status=status.HTTP_200_OK,
         )
+
+
+class InsuranceCallLogViewSet(viewsets.ViewSet, SerializerMixin):
+    """ViewSet for managing patient insurance call logs."""
+
+    serializer_class = serializers.InsuranceCallLogSerializer
+
+    def get_serializer_class(self):
+        return serializers.InsuranceCallLogSerializer
+
+    @extend_schema(responses=serializers.InsuranceCallLogSerializer(many=True))
+    def list(self, request: Request) -> Response:
+        """List all call logs for the current user."""
+        logs = InsuranceCallLog.filter_to_allowed(request.user)
+        appeal_id = request.query_params.get("appeal_id")
+        if appeal_id and appeal_id.isdigit():
+            logs = logs.filter(appeal_id=int(appeal_id))
+        output_serializer = serializers.InsuranceCallLogSerializer(logs, many=True)
+        return Response(output_serializer.data)
+
+    @extend_schema(
+        request=serializers.InsuranceCallLogSerializer,
+        responses={201: serializers.InsuranceCallLogSerializer},
+    )
+    def create(self, request: Request) -> Response:
+        """Create a new call log entry."""
+        serializer = self.deserialize(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        current_user: User = request.user  # type: ignore
+        try:
+            patient_user = PatientUser.objects.get(user=current_user)
+        except PatientUser.DoesNotExist:
+            return Response(
+                serializers.ErrorSerializer({"error": "Patient account required"}).data,
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        # Verify appeal belongs to this user if provided
+        appeal = serializer.validated_data.get("appeal")
+        if appeal:
+            get_object_or_404(
+                Appeal.filter_to_allowed_appeals(current_user), id=appeal.id
+            )
+        serializer.save(patient_user=patient_user)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+    @extend_schema(responses=serializers.StatusResponseSerializer)
+    def destroy(self, request: Request, pk: Optional[int] = None) -> Response:
+        """Delete a call log entry."""
+        log = get_object_or_404(InsuranceCallLog.filter_to_allowed(request.user), pk=pk)
+        log.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+# Maximum evidence file size: 10MB
+MAX_EVIDENCE_FILE_SIZE = 10 * 1024 * 1024
+
+ALLOWED_EVIDENCE_MIME_TYPES = {
+    "application/pdf",
+    "image/jpeg",
+    "image/png",
+    "image/gif",
+    "image/webp",
+    "text/plain",
+    "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+}
+
+
+class PatientEvidenceViewSet(viewsets.ViewSet, SerializerMixin):
+    """ViewSet for managing patient evidence documents."""
+
+    serializer_class = serializers.PatientEvidenceSerializer
+
+    def get_serializer_class(self):
+        if self.action == "create":
+            return serializers.PatientEvidenceCreateSerializer
+        return serializers.PatientEvidenceSerializer
+
+    @extend_schema(responses=serializers.PatientEvidenceSerializer(many=True))
+    def list(self, request: Request) -> Response:
+        """List all evidence documents for the current user."""
+        evidence = PatientEvidence.filter_to_allowed(request.user)
+        appeal_id = request.query_params.get("appeal_id")
+        if appeal_id and appeal_id.isdigit():
+            evidence = evidence.filter(appeal_id=int(appeal_id))
+        output_serializer = serializers.PatientEvidenceSerializer(evidence, many=True)
+        return Response(output_serializer.data)
+
+    @extend_schema(
+        request=serializers.PatientEvidenceCreateSerializer,
+        responses={201: serializers.PatientEvidenceSerializer},
+    )
+    def create(self, request: Request) -> Response:
+        """Upload a new evidence document."""
+        current_user: User = request.user  # type: ignore
+        try:
+            patient_user = PatientUser.objects.get(user=current_user)
+        except PatientUser.DoesNotExist:
+            return Response(
+                serializers.ErrorSerializer({"error": "Patient account required"}).data,
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        file = request.FILES.get("file")
+        if not file:
+            return Response(
+                serializers.ErrorSerializer({"error": "No file provided"}).data,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if file.size and file.size > MAX_EVIDENCE_FILE_SIZE:
+            return Response(
+                serializers.ErrorSerializer(
+                    {"error": "File size exceeds 10MB limit"}
+                ).data,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if file.content_type not in ALLOWED_EVIDENCE_MIME_TYPES:
+            return Response(
+                serializers.ErrorSerializer(
+                    {"error": f"File type {file.content_type} not allowed"}
+                ).data,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Verify appeal belongs to this user if provided
+        appeal_id = request.data.get("appeal")
+        appeal = None
+        if appeal_id and str(appeal_id).isdigit():
+            appeal = get_object_or_404(
+                Appeal.filter_to_allowed_appeals(current_user), id=int(appeal_id)
+            )
+
+        evidence = PatientEvidence.objects.create(
+            patient_user=patient_user,
+            appeal=appeal,
+            title=request.data.get("title", file.name),
+            description=request.data.get("description", ""),
+            file=file,
+            filename=file.name,
+            mime_type=file.content_type or "application/octet-stream",
+        )
+        return Response(
+            serializers.PatientEvidenceSerializer(evidence).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+    @extend_schema(responses=serializers.StatusResponseSerializer)
+    def destroy(self, request: Request, pk: Optional[int] = None) -> Response:
+        """Delete an evidence document."""
+        evidence = get_object_or_404(
+            PatientEvidence.filter_to_allowed(request.user), pk=pk
+        )
+        evidence.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)

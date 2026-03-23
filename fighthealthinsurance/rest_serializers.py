@@ -16,8 +16,10 @@ from fighthealthinsurance.models import (
     ChatType,
     DemoRequests,
     Denial,
+    InsuranceCallLog,
     MailingListSubscriber,
     OngoingChat,
+    PatientEvidence,
     PriorAuthRequest,
     ProposedAppeal,
     ProposedPriorAuth,
@@ -836,3 +838,78 @@ class ChooserSkipResponseSerializer(serializers.Serializer):
 
     success = serializers.BooleanField()
     message = serializers.CharField()
+
+
+class DenialSummarySerializer(serializers.ModelSerializer):
+    """Lightweight serializer for patient denial list view."""
+
+    denial_type_names = serializers.SerializerMethodField()
+    has_appeal = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Denial
+        fields = [
+            "denial_id",
+            "uuid",
+            "insurance_company",
+            "procedure",
+            "diagnosis",
+            "denial_date",
+            "date",
+            "denial_type_names",
+            "has_appeal",
+        ]
+
+    @extend_schema_field(serializers.ListField(child=serializers.CharField()))
+    def get_denial_type_names(self, obj: Denial) -> List[str]:
+        return [x.name for x in obj.denial_type.all()]
+
+    @extend_schema_field(serializers.BooleanField())
+    def get_has_appeal(self, obj: Denial) -> bool:
+        return Appeal.objects.filter(for_denial=obj).exists()
+
+
+class InsuranceCallLogSerializer(serializers.ModelSerializer):
+    """Serializer for insurance call log CRUD."""
+
+    class Meta:
+        model = InsuranceCallLog
+        fields = [
+            "id",
+            "appeal",
+            "call_date",
+            "representative_name",
+            "reference_number",
+            "call_outcome",
+            "notes",
+            "follow_up_needed",
+            "follow_up_date",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "created_at", "updated_at"]
+
+
+class PatientEvidenceSerializer(serializers.ModelSerializer):
+    """Serializer for patient evidence documents."""
+
+    class Meta:
+        model = PatientEvidence
+        fields = [
+            "id",
+            "appeal",
+            "title",
+            "description",
+            "filename",
+            "mime_type",
+            "created_at",
+        ]
+        read_only_fields = ["id", "filename", "mime_type", "created_at"]
+
+
+class PatientEvidenceCreateSerializer(serializers.Serializer):
+    """Serializer for creating patient evidence with file upload."""
+
+    appeal = serializers.IntegerField(required=False, allow_null=True)
+    title = serializers.CharField(max_length=300)
+    description = serializers.CharField(required=False, default="")
