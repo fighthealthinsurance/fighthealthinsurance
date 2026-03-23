@@ -85,17 +85,45 @@ def remove_repeated_sentences(
 
 
 def has_severe_repetition(text: str, threshold: float = 0.5) -> bool:
-    """Check if text has severe sentence repetition (>threshold ratio).
+    """Check if text has severe repetition (>threshold ratio).
 
     Used as a fast check to reject results before the cleaning pipeline.
-    Detects two patterns:
+    Detects three patterns:
     1. A single sentence accounts for more than ``threshold`` of all sentences.
     2. An alternating pair of two distinct sentences that together account for
        more than ``threshold`` of all sentences and actually alternate (no two
        adjacent sentences are the same).
+    3. Consecutive multi-line blocks that repeat, where the duplicated lines
+       exceed ``threshold`` of total non-empty lines.
 
-    Requires at least 6 sentences to trigger (short texts are never flagged).
+    Sentence-level checks require at least 6 sentences to trigger.
+    Block-level checks require at least 6 non-empty lines.
     """
+    # Block repetition: consecutive multi-line blocks that repeat.
+    # Checked first because bullet-point/contact-info loops may not split
+    # into sentences at all.
+    lines = [l.strip() for l in text.split("\n") if l.strip()]
+    if len(lines) >= 6:
+        for block_size in range(len(lines) // 2, 2, -1):
+            for i in range(len(lines) - 2 * block_size + 1):
+                if (
+                    lines[i : i + block_size]
+                    == lines[i + block_size : i + 2 * block_size]
+                ):
+                    # Count total consecutive repetitions
+                    reps = 2
+                    j = i + 2 * block_size
+                    while (
+                        j + block_size <= len(lines)
+                        and lines[j : j + block_size] == lines[i : i + block_size]
+                    ):
+                        reps += 1
+                        j += block_size
+                    duplicated_lines = block_size * (reps - 1)
+                    if duplicated_lines > threshold * len(lines):
+                        return True
+
+    # Sentence-level checks
     sentences = _sentence_split_re.split(text.strip())
     if len(sentences) < 6:
         return False
@@ -132,6 +160,104 @@ def has_severe_repetition(text: str, threshold: float = 0.5) -> bool:
                 return True
 
     return False
+
+
+def remove_repeated_blocks(
+    text: Optional[str],
+    min_block_size: int = 3,
+    max_repeats: int = 1,
+) -> Optional[str]:
+    """Remove repeated multi-line blocks from LLM output.
+
+    Detects when a consecutive block of lines repeats (e.g. bullet-point lists
+    or contact info sections that loop). Keeps the first ``max_repeats``
+    occurrences and removes subsequent repetitions.
+
+    Args:
+        text: The text to filter, or None.
+        min_block_size: Minimum number of non-empty lines to consider a block.
+        max_repeats: Maximum times a block may appear (default 1).
+
+    Returns:
+        Cleaned text, or None if input was None or too severely repetitive.
+    """
+    if text is None:
+        return None
+
+    lines = text.split("\n")
+
+    # Build list of (original_index, normalized_line) for non-empty lines
+    non_empty: list[tuple[int, str]] = []
+    for idx, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped:
+            non_empty.append((idx, stripped))
+
+    if len(non_empty) < 2 * min_block_size:
+        return text
+
+    normalized = [s for _, s in non_empty]
+    orig_indices = [i for i, _ in non_empty]
+
+    # Track which original line indices to remove
+    to_remove: set[int] = set()
+
+    # Try block sizes from largest to smallest
+    changed = True
+    while changed:
+        changed = False
+        n = len(normalized)
+        for block_size in range(n // 2, min_block_size - 1, -1):
+            i = 0
+            while i <= n - 2 * block_size:
+                block = normalized[i : i + block_size]
+                # Count consecutive repetitions
+                reps = 1
+                j = i + block_size
+                while j + block_size <= n and normalized[j : j + block_size] == block:
+                    reps += 1
+                    j += block_size
+                if reps > max_repeats:
+                    # Mark duplicate occurrences for removal
+                    keep_end = i + block_size * max_repeats
+                    remove_start = keep_end
+                    remove_end = i + block_size * reps
+                    for k in range(remove_start, remove_end):
+                        to_remove.add(orig_indices[k])
+                    # Also remove empty lines between kept and removed blocks
+                    # by finding the range in original indices
+                    if remove_start < len(orig_indices) and keep_end > 0:
+                        orig_start = orig_indices[keep_end - 1] + 1
+                        orig_end = (
+                            orig_indices[remove_end - 1]
+                            if remove_end <= len(orig_indices)
+                            else len(lines)
+                        )
+                        for oi in range(orig_start, orig_end + 1):
+                            if oi < len(lines) and not lines[oi].strip():
+                                to_remove.add(oi)
+                    # Rebuild normalized/orig_indices without removed entries
+                    new_normalized = []
+                    new_orig = []
+                    for k in range(len(normalized)):
+                        if orig_indices[k] not in to_remove:
+                            new_normalized.append(normalized[k])
+                            new_orig.append(orig_indices[k])
+                    normalized = new_normalized
+                    orig_indices = new_orig
+                    changed = True
+                    break  # Restart with updated lists
+                i += 1
+            if changed:
+                break
+
+    if not to_remove:
+        return text
+
+    result_lines = [line for idx, line in enumerate(lines) if idx not in to_remove]
+    result = "\n".join(result_lines)
+
+    return result
 
 
 class RemoteModelLike(DenialBase):
@@ -1297,14 +1423,18 @@ class RemoteOpenLike(RemoteModel):
                 f"Result {result} is for patient voice so no need to check professional."
             )
 
-        cleaned = remove_repeated_sentences(
-            CleanerUtils.note_remover(
-                CleanerUtils.url_fixer(
-                    CleanerUtils.tla_fixer(result), input_urls=input_urls
-                )
+        after_cleaners = CleanerUtils.note_remover(
+            CleanerUtils.url_fixer(
+                CleanerUtils.tla_fixer(result), input_urls=input_urls
             )
         )
 
+        block_cleaned = remove_repeated_blocks(after_cleaners)
+        if block_cleaned is None:
+            logger.debug(f"Result rejected due to repeated blocks on type {infer_type}")
+            return []
+
+        cleaned = remove_repeated_sentences(block_cleaned)
         if cleaned is None:
             logger.debug(
                 f"Result rejected due to severe repetition on type {infer_type}"
