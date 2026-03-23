@@ -89,12 +89,18 @@ class PatientDashboardSetupMixin:
             hashed_email=Denial.get_hashed_email(self.user_b.email),
         )
 
+    def login_as_patient_a(self):
+        self.client.login(username="patient_a", password="testpass123")
+
+    def login_as_patient_b(self):
+        self.client.login(username="patient_b", password="testpass456")
+
 
 class DenialListTest(PatientDashboardSetupMixin, APITestCase):
     """Tests for the denial list endpoint."""
 
     def test_patient_sees_own_denials(self):
-        self.client.login(username="patient_a", password="testpass123")
+        self.login_as_patient_a()
         response = self.client.get("/ziggy/rest/denials/")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         data = response.json()
@@ -102,20 +108,20 @@ class DenialListTest(PatientDashboardSetupMixin, APITestCase):
         self.assertEqual(data[0]["insurance_company"], "Aetna")
 
     def test_patient_cannot_see_other_patient_denials(self):
-        self.client.login(username="patient_a", password="testpass123")
+        self.login_as_patient_a()
         response = self.client.get("/ziggy/rest/denials/")
         data = response.json()
         companies = [d["insurance_company"] for d in data]
         self.assertNotIn("BlueCross", companies)
 
     def test_denial_has_appeal_flag(self):
-        self.client.login(username="patient_a", password="testpass123")
+        self.login_as_patient_a()
         response = self.client.get("/ziggy/rest/denials/")
         data = response.json()
         self.assertTrue(data[0]["has_appeal"])
 
     def test_denial_without_appeal(self):
-        self.client.login(username="patient_b", password="testpass456")
+        self.login_as_patient_b()
         response = self.client.get("/ziggy/rest/denials/")
         data = response.json()
         self.assertEqual(len(data), 1)
@@ -126,7 +132,7 @@ class AppealListTest(PatientDashboardSetupMixin, APITestCase):
     """Tests for the existing appeal list endpoint with patient filtering."""
 
     def test_patient_sees_own_appeals(self):
-        self.client.login(username="patient_a", password="testpass123")
+        self.login_as_patient_a()
         response = self.client.get("/ziggy/rest/appeals/")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         data = response.json()
@@ -134,7 +140,7 @@ class AppealListTest(PatientDashboardSetupMixin, APITestCase):
         self.assertEqual(data[0]["status"], "pending patient")
 
     def test_patient_cannot_see_other_patient_appeals(self):
-        self.client.login(username="patient_b", password="testpass456")
+        self.login_as_patient_b()
         response = self.client.get("/ziggy/rest/appeals/")
         data = response.json()
         self.assertEqual(len(data), 0)
@@ -144,7 +150,7 @@ class CallLogTest(PatientDashboardSetupMixin, APITestCase):
     """Tests for insurance call log CRUD."""
 
     def test_create_call_log(self):
-        self.client.login(username="patient_a", password="testpass123")
+        self.login_as_patient_a()
         response = self.client.post(
             "/ziggy/rest/call_logs/",
             data={
@@ -163,7 +169,7 @@ class CallLogTest(PatientDashboardSetupMixin, APITestCase):
         self.assertEqual(data["representative_name"], "Jane Doe")
 
     def test_create_call_log_linked_to_appeal(self):
-        self.client.login(username="patient_a", password="testpass123")
+        self.login_as_patient_a()
         response = self.client.post(
             "/ziggy/rest/call_logs/",
             data={
@@ -176,7 +182,7 @@ class CallLogTest(PatientDashboardSetupMixin, APITestCase):
         self.assertEqual(response.json()["appeal"], self.appeal_a.id)
 
     def test_list_call_logs(self):
-        self.client.login(username="patient_a", password="testpass123")
+        self.login_as_patient_a()
         InsuranceCallLog.objects.create(
             patient_user=self.patient_a,
             call_date=timezone.now(),
@@ -187,7 +193,7 @@ class CallLogTest(PatientDashboardSetupMixin, APITestCase):
         self.assertEqual(len(response.json()), 1)
 
     def test_delete_call_log(self):
-        self.client.login(username="patient_a", password="testpass123")
+        self.login_as_patient_a()
         log = InsuranceCallLog.objects.create(
             patient_user=self.patient_a,
             call_date=timezone.now(),
@@ -203,7 +209,7 @@ class CallLogTest(PatientDashboardSetupMixin, APITestCase):
             call_date=timezone.now(),
             representative_name="A's Rep",
         )
-        self.client.login(username="patient_b", password="testpass456")
+        self.login_as_patient_b()
         response = self.client.get("/ziggy/rest/call_logs/")
         self.assertEqual(len(response.json()), 0)
 
@@ -213,7 +219,7 @@ class CallLogTest(PatientDashboardSetupMixin, APITestCase):
             patient_user=self.patient_a,
             call_date=timezone.now(),
         )
-        self.client.login(username="patient_b", password="testpass456")
+        self.login_as_patient_b()
         response = self.client.delete(f"/ziggy/rest/call_logs/{log.id}/")
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
@@ -240,7 +246,7 @@ class EvidenceTest(PatientDashboardSetupMixin, APITestCase):
         return SimpleUploadedFile(name, content, content_type=content_type)
 
     def test_upload_evidence(self):
-        self.client.login(username="patient_a", password="testpass123")
+        self.login_as_patient_a()
         test_file = self._make_test_file()
         response = self.client.post(
             "/ziggy/rest/patient_evidence/",
@@ -257,7 +263,7 @@ class EvidenceTest(PatientDashboardSetupMixin, APITestCase):
         self.assertEqual(data["mime_type"], "application/pdf")
 
     def test_upload_evidence_linked_to_appeal(self):
-        self.client.login(username="patient_a", password="testpass123")
+        self.login_as_patient_a()
         test_file = self._make_test_file()
         response = self.client.post(
             "/ziggy/rest/patient_evidence/",
@@ -272,7 +278,7 @@ class EvidenceTest(PatientDashboardSetupMixin, APITestCase):
         self.assertEqual(response.json()["appeal"], self.appeal_a.id)
 
     def test_reject_oversized_file(self):
-        self.client.login(username="patient_a", password="testpass123")
+        self.login_as_patient_a()
         # Create a file > 10MB
         big_content = b"x" * (10 * 1024 * 1024 + 1)
         test_file = SimpleUploadedFile("big.pdf", big_content, "application/pdf")
@@ -284,7 +290,7 @@ class EvidenceTest(PatientDashboardSetupMixin, APITestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_reject_disallowed_mime_type(self):
-        self.client.login(username="patient_a", password="testpass123")
+        self.login_as_patient_a()
         test_file = SimpleUploadedFile("script.sh", b"#!/bin/bash", "application/x-sh")
         response = self.client.post(
             "/ziggy/rest/patient_evidence/",
@@ -294,7 +300,7 @@ class EvidenceTest(PatientDashboardSetupMixin, APITestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_list_evidence(self):
-        self.client.login(username="patient_a", password="testpass123")
+        self.login_as_patient_a()
         PatientEvidence.objects.create(
             patient_user=self.patient_a,
             title="Test Doc",
@@ -306,7 +312,7 @@ class EvidenceTest(PatientDashboardSetupMixin, APITestCase):
         self.assertEqual(len(response.json()), 1)
 
     def test_delete_evidence(self):
-        self.client.login(username="patient_a", password="testpass123")
+        self.login_as_patient_a()
         ev = PatientEvidence.objects.create(
             patient_user=self.patient_a,
             title="Test Doc",
@@ -325,7 +331,7 @@ class EvidenceTest(PatientDashboardSetupMixin, APITestCase):
             filename="test.pdf",
             mime_type="application/pdf",
         )
-        self.client.login(username="patient_b", password="testpass456")
+        self.login_as_patient_b()
         response = self.client.get("/ziggy/rest/patient_evidence/")
         self.assertEqual(len(response.json()), 0)
 
@@ -337,7 +343,7 @@ class EvidenceTest(PatientDashboardSetupMixin, APITestCase):
             filename="test.pdf",
             mime_type="application/pdf",
         )
-        self.client.login(username="patient_b", password="testpass456")
+        self.login_as_patient_b()
         response = self.client.delete(f"/ziggy/rest/patient_evidence/{ev.id}/")
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 

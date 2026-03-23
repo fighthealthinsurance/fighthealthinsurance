@@ -2171,6 +2171,20 @@ def _filter_by_appeal_param(queryset, request: Request):
     return queryset
 
 
+def _verify_appeal_ownership(request: Request, appeal) -> Optional[Appeal]:
+    """Verify an appeal belongs to the requesting user. Returns Appeal or None.
+
+    Accepts an Appeal object (from serializer.validated_data) or an ID
+    (from request.data). Raises 404 if the appeal doesn't belong to the user.
+    """
+    if appeal is None:
+        return None
+    appeal_id = appeal.id if hasattr(appeal, "id") else int(appeal)
+    return get_object_or_404(
+        Appeal.filter_to_allowed_appeals(request.user), id=appeal_id
+    )
+
+
 class InsuranceCallLogViewSet(viewsets.ViewSet, SerializerMixin):
     """ViewSet for managing patient insurance call logs."""
 
@@ -2196,13 +2210,7 @@ class InsuranceCallLogViewSet(viewsets.ViewSet, SerializerMixin):
         patient_user, err_response = _get_patient_user_or_403(request)
         if err_response:
             return err_response
-        # Verify appeal belongs to this user if provided
-        appeal = serializer.validated_data.get("appeal")
-        if appeal:
-            current_user: User = request.user  # type: ignore
-            get_object_or_404(
-                Appeal.filter_to_allowed_appeals(current_user), id=appeal.id
-            )
+        _verify_appeal_ownership(request, serializer.validated_data.get("appeal"))
         serializer.save(patient_user=patient_user)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
@@ -2281,13 +2289,7 @@ class PatientEvidenceViewSet(viewsets.ViewSet, SerializerMixin):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Verify appeal belongs to this user if provided
-        appeal_id = request.data.get("appeal")
-        appeal = None
-        if appeal_id and str(appeal_id).isdigit():
-            appeal = get_object_or_404(
-                Appeal.filter_to_allowed_appeals(request.user), id=int(appeal_id)
-            )
+        appeal = _verify_appeal_ownership(request, request.data.get("appeal") or None)
 
         evidence = PatientEvidence.objects.create(
             patient_user=patient_user,
