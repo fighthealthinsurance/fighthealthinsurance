@@ -2126,21 +2126,39 @@ class ChooserViewSet(viewsets.ViewSet):
         )
 
 
+def _get_patient_user_or_403(
+    request: Request,
+) -> tuple[PatientUser, None] | tuple[None, Response]:
+    """Return (patient_user, None) or (None, 403 Response)."""
+    current_user: User = request.user  # type: ignore
+    try:
+        return PatientUser.objects.get(user=current_user), None
+    except PatientUser.DoesNotExist:
+        return None, Response(
+            serializers.ErrorSerializer({"error": "Patient account required"}).data,
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+
+def _filter_by_appeal_param(queryset, request: Request):
+    """Optionally filter a queryset by ?appeal_id= query parameter."""
+    appeal_id = request.query_params.get("appeal_id")
+    if appeal_id and appeal_id.isdigit():
+        queryset = queryset.filter(appeal_id=int(appeal_id))
+    return queryset
+
+
 class InsuranceCallLogViewSet(viewsets.ViewSet, SerializerMixin):
     """ViewSet for managing patient insurance call logs."""
 
     serializer_class = serializers.InsuranceCallLogSerializer
 
-    def get_serializer_class(self):
-        return serializers.InsuranceCallLogSerializer
-
     @extend_schema(responses=serializers.InsuranceCallLogSerializer(many=True))
     def list(self, request: Request) -> Response:
         """List all call logs for the current user."""
-        logs = InsuranceCallLog.filter_to_allowed(request.user)
-        appeal_id = request.query_params.get("appeal_id")
-        if appeal_id and appeal_id.isdigit():
-            logs = logs.filter(appeal_id=int(appeal_id))
+        logs = _filter_by_appeal_param(
+            InsuranceCallLog.filter_to_allowed(request.user), request
+        )
         output_serializer = serializers.InsuranceCallLogSerializer(logs, many=True)
         return Response(output_serializer.data)
 
@@ -2152,17 +2170,13 @@ class InsuranceCallLogViewSet(viewsets.ViewSet, SerializerMixin):
         """Create a new call log entry."""
         serializer = self.deserialize(data=request.data)
         serializer.is_valid(raise_exception=True)
-        current_user: User = request.user  # type: ignore
-        try:
-            patient_user = PatientUser.objects.get(user=current_user)
-        except PatientUser.DoesNotExist:
-            return Response(
-                serializers.ErrorSerializer({"error": "Patient account required"}).data,
-                status=status.HTTP_403_FORBIDDEN,
-            )
+        patient_user, err_response = _get_patient_user_or_403(request)
+        if err_response:
+            return err_response
         # Verify appeal belongs to this user if provided
         appeal = serializer.validated_data.get("appeal")
         if appeal:
+            current_user: User = request.user  # type: ignore
             get_object_or_404(
                 Appeal.filter_to_allowed_appeals(current_user), id=appeal.id
             )
@@ -2205,10 +2219,9 @@ class PatientEvidenceViewSet(viewsets.ViewSet, SerializerMixin):
     @extend_schema(responses=serializers.PatientEvidenceSerializer(many=True))
     def list(self, request: Request) -> Response:
         """List all evidence documents for the current user."""
-        evidence = PatientEvidence.filter_to_allowed(request.user)
-        appeal_id = request.query_params.get("appeal_id")
-        if appeal_id and appeal_id.isdigit():
-            evidence = evidence.filter(appeal_id=int(appeal_id))
+        evidence = _filter_by_appeal_param(
+            PatientEvidence.filter_to_allowed(request.user), request
+        )
         output_serializer = serializers.PatientEvidenceSerializer(evidence, many=True)
         return Response(output_serializer.data)
 
@@ -2218,14 +2231,9 @@ class PatientEvidenceViewSet(viewsets.ViewSet, SerializerMixin):
     )
     def create(self, request: Request) -> Response:
         """Upload a new evidence document."""
-        current_user: User = request.user  # type: ignore
-        try:
-            patient_user = PatientUser.objects.get(user=current_user)
-        except PatientUser.DoesNotExist:
-            return Response(
-                serializers.ErrorSerializer({"error": "Patient account required"}).data,
-                status=status.HTTP_403_FORBIDDEN,
-            )
+        patient_user, err_response = _get_patient_user_or_403(request)
+        if err_response:
+            return err_response
 
         file = request.FILES.get("file")
         if not file:
@@ -2255,7 +2263,7 @@ class PatientEvidenceViewSet(viewsets.ViewSet, SerializerMixin):
         appeal = None
         if appeal_id and str(appeal_id).isdigit():
             appeal = get_object_or_404(
-                Appeal.filter_to_allowed_appeals(current_user), id=int(appeal_id)
+                Appeal.filter_to_allowed_appeals(request.user), id=int(appeal_id)
             )
 
         evidence = PatientEvidence.objects.create(

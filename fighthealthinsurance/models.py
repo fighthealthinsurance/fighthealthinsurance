@@ -1708,7 +1708,27 @@ class AppealAttachment(models.Model):
         return cls.objects.filter(appeal__in=allowed_appeals)
 
 
-class InsuranceCallLog(models.Model):
+class PatientOwnedModelMixin:
+    """Mixin for models owned by a PatientUser with standard access filtering.
+
+    Requires the model to have a `patient_user` ForeignKey to PatientUser.
+    """
+
+    @classmethod
+    def filter_to_allowed(cls, user: "User") -> models.QuerySet:
+        """Filter to records the user has permission to access."""
+        if not user.is_authenticated:
+            return cls.objects.none()  # type: ignore[attr-defined]
+        if user.is_superuser or user.is_staff:
+            return cls.objects.all()  # type: ignore[attr-defined]
+        try:
+            patient_user = PatientUser.objects.get(user=user)
+            return cls.objects.filter(patient_user=patient_user)  # type: ignore[attr-defined]
+        except PatientUser.DoesNotExist:
+            return cls.objects.none()  # type: ignore[attr-defined]
+
+
+class InsuranceCallLog(PatientOwnedModelMixin, models.Model):
     """Documents a patient's phone call with their insurance company."""
 
     id = models.AutoField(primary_key=True)
@@ -1732,24 +1752,11 @@ class InsuranceCallLog(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
-    @classmethod
-    def filter_to_allowed(cls, user: "User") -> models.QuerySet["InsuranceCallLog"]:
-        """Filter call logs to only those the user has permission to access."""
-        if not user.is_authenticated:
-            return cls.objects.none()
-        if user.is_superuser or user.is_staff:
-            return cls.objects.all()
-        try:
-            patient_user = PatientUser.objects.get(user=user)
-            return cls.objects.filter(patient_user=patient_user)
-        except PatientUser.DoesNotExist:
-            return cls.objects.none()
-
     class Meta:
         ordering = ["-call_date"]
 
 
-class PatientEvidence(models.Model):
+class PatientEvidence(PatientOwnedModelMixin, models.Model):
     """Supporting document uploaded by a patient for their appeal."""
 
     id = models.AutoField(primary_key=True)
@@ -1769,19 +1776,6 @@ class PatientEvidence(models.Model):
     filename = models.CharField(max_length=255)
     mime_type = models.CharField(max_length=127)
     created_at = models.DateTimeField(auto_now_add=True)
-
-    @classmethod
-    def filter_to_allowed(cls, user: "User") -> models.QuerySet["PatientEvidence"]:
-        """Filter evidence to only those the user has permission to access."""
-        if not user.is_authenticated:
-            return cls.objects.none()
-        if user.is_superuser or user.is_staff:
-            return cls.objects.all()
-        try:
-            patient_user = PatientUser.objects.get(user=user)
-            return cls.objects.filter(patient_user=patient_user)
-        except PatientUser.DoesNotExist:
-            return cls.objects.none()
 
     class Meta:
         ordering = ["-created_at"]
