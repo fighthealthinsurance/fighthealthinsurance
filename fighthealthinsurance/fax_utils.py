@@ -478,7 +478,7 @@ class SshHylaFaxClient(HylaFaxClient):
                 return (exit_code, result_text)
         except Exception as e:
             logger.error(f"Error sending command {command} -- {e}")
-            return (254, f"{e} fron {command}")
+            return (254, f"{e} from {command}")
 
 
 class FaxyMcFaxFace(SshHylaFaxClient):
