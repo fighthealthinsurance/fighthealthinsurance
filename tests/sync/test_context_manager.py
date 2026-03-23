@@ -6,6 +6,9 @@ import pytest
 from unittest.mock import AsyncMock, patch
 
 from fighthealthinsurance.chat.context_manager import (
+    MISSING_CONTEXT_PREFIX,
+    background_generate_summary,
+    make_placeholder,
     prepare_history_for_llm,
     should_store_summary,
     get_current_context,
@@ -104,9 +107,9 @@ class TestPrepareHistoryForLLM:
         assert history[0]["role"] == "user"
         # And alternation should be intact
         for i in range(len(history) - 1):
-            assert history[i]["role"] != history[i + 1]["role"], (
-                f"Messages {i} and {i+1} have same role: {history[i]['role']}"
-            )
+            assert (
+                history[i]["role"] != history[i + 1]["role"]
+            ), f"Messages {i} and {i+1} have same role: {history[i]['role']}"
 
     @pytest.mark.asyncio
     async def test_message_alternation_applied(self):
@@ -217,3 +220,183 @@ class TestEnsureMessageAlternation:
                 if result[i]["role"] == result[i + 1]["role"]:
                     # If same role, content should be merged
                     pass
+
+
+class TestMakePlaceholder:
+    """Tests for the make_placeholder function."""
+
+    def test_placeholder_contains_prefix(self):
+        """Placeholder should contain the standard prefix."""
+        result = make_placeholder(5)
+        assert MISSING_CONTEXT_PREFIX in result
+
+    def test_placeholder_contains_counter(self):
+        """Placeholder should contain the counter value."""
+        result = make_placeholder(42)
+        assert "[42]" in result
+
+    def test_different_counters_produce_different_placeholders(self):
+        """Different counters should produce unique placeholders."""
+        p1 = make_placeholder(1)
+        p2 = make_placeholder(2)
+        assert p1 != p2
+
+    def test_placeholder_is_string(self):
+        """Placeholder should be a string."""
+        assert isinstance(make_placeholder(0), str)
+
+
+@pytest.mark.django_db(transaction=True)
+class TestBackgroundGenerateSummary:
+    """Tests for the background_generate_summary function."""
+
+    @pytest.mark.asyncio
+    @patch(
+        "fighthealthinsurance.chat.context_manager.ml_router.summarize_chat_history",
+        new_callable=AsyncMock,
+    )
+    async def test_replaces_matching_placeholder(self, mock_summarize):
+        """Background task should replace its specific placeholder with the generated summary."""
+        from fighthealthinsurance.models import OngoingChat
+
+        placeholder = make_placeholder(2)
+        chat = await OngoingChat.objects.acreate(
+            chat_history=[
+                {"role": "user", "content": "Hello"},
+                {"role": "assistant", "content": "Hi there!"},
+            ],
+            summary_for_next_call=[placeholder],
+        )
+
+        mock_summarize.return_value = "Patient asking about GLP-1 denial appeal"
+
+        await background_generate_summary(chat.id, placeholder)
+
+        await chat.arefresh_from_db()
+        assert (
+            chat.summary_for_next_call[-1] == "Patient asking about GLP-1 denial appeal"
+        )
+        mock_summarize.assert_called_once()
+
+    @pytest.mark.asyncio
+    @patch(
+        "fighthealthinsurance.chat.context_manager.ml_router.summarize_chat_history",
+        new_callable=AsyncMock,
+    )
+    async def test_does_not_overwrite_if_placeholder_replaced(self, mock_summarize):
+        """If the placeholder has been replaced by a real summary, background task is a no-op."""
+        from fighthealthinsurance.models import OngoingChat
+
+        placeholder = make_placeholder(2)
+        chat = await OngoingChat.objects.acreate(
+            chat_history=[
+                {"role": "user", "content": "Hello"},
+                {"role": "assistant", "content": "Hi!"},
+            ],
+            summary_for_next_call=["Real summary from panda emoji"],
+        )
+
+        mock_summarize.return_value = "Background generated summary"
+
+        await background_generate_summary(chat.id, placeholder)
+
+        await chat.arefresh_from_db()
+        # Should still be the real summary, not overwritten
+        assert chat.summary_for_next_call[-1] == "Real summary from panda emoji"
+        # The ML call should be skipped entirely (early exit)
+        mock_summarize.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch(
+        "fighthealthinsurance.chat.context_manager.ml_router.summarize_chat_history",
+        new_callable=AsyncMock,
+    )
+    async def test_only_replaces_correct_placeholder(self, mock_summarize):
+        """When multiple placeholders exist, only the matching one is replaced."""
+        from fighthealthinsurance.models import OngoingChat
+
+        placeholder_old = make_placeholder(2)
+        placeholder_new = make_placeholder(4)
+        chat = await OngoingChat.objects.acreate(
+            chat_history=[
+                {"role": "user", "content": "msg1"},
+                {"role": "assistant", "content": "resp1"},
+                {"role": "user", "content": "msg2"},
+                {"role": "assistant", "content": "resp2"},
+            ],
+            summary_for_next_call=[placeholder_old, placeholder_new],
+        )
+
+        mock_summarize.return_value = "Summary for message 2"
+
+        # Background task for the OLD placeholder
+        await background_generate_summary(chat.id, placeholder_old)
+
+        await chat.arefresh_from_db()
+        # Old placeholder replaced, new one untouched
+        assert chat.summary_for_next_call[0] == "Summary for message 2"
+        assert chat.summary_for_next_call[1] == placeholder_new
+
+    @pytest.mark.asyncio
+    @patch(
+        "fighthealthinsurance.chat.context_manager.ml_router.summarize_chat_history",
+        new_callable=AsyncMock,
+    )
+    async def test_handles_missing_chat(self, mock_summarize):
+        """Background task should handle a deleted chat gracefully."""
+        import uuid
+
+        # Non-existent chat ID
+        await background_generate_summary(uuid.uuid4(), make_placeholder(1))
+        mock_summarize.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch(
+        "fighthealthinsurance.chat.context_manager.ml_router.summarize_chat_history",
+        new_callable=AsyncMock,
+    )
+    async def test_handles_empty_summary_from_ml(self, mock_summarize):
+        """If summarize_chat_history returns None, placeholder is not replaced."""
+        from fighthealthinsurance.models import OngoingChat
+
+        placeholder = make_placeholder(2)
+        chat = await OngoingChat.objects.acreate(
+            chat_history=[
+                {"role": "user", "content": "Hello"},
+                {"role": "assistant", "content": "Hi!"},
+            ],
+            summary_for_next_call=[placeholder],
+        )
+
+        mock_summarize.return_value = None
+
+        await background_generate_summary(chat.id, placeholder)
+
+        await chat.arefresh_from_db()
+        # Placeholder should still be there
+        assert chat.summary_for_next_call[-1] == placeholder
+
+    @pytest.mark.asyncio
+    @patch(
+        "fighthealthinsurance.chat.context_manager.ml_router.summarize_chat_history",
+        new_callable=AsyncMock,
+    )
+    async def test_handles_summarize_exception(self, mock_summarize):
+        """If summarize_chat_history raises, placeholder is not replaced."""
+        from fighthealthinsurance.models import OngoingChat
+
+        placeholder = make_placeholder(2)
+        chat = await OngoingChat.objects.acreate(
+            chat_history=[
+                {"role": "user", "content": "Hello"},
+                {"role": "assistant", "content": "Hi!"},
+            ],
+            summary_for_next_call=[placeholder],
+        )
+
+        mock_summarize.side_effect = Exception("ML backend unavailable")
+
+        await background_generate_summary(chat.id, placeholder)
+
+        await chat.arefresh_from_db()
+        assert chat.summary_for_next_call[-1] == placeholder
