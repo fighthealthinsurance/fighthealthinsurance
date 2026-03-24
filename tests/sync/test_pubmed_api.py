@@ -361,7 +361,14 @@ class PubMedToolsAsyncTest(TransactionTestCase):
             diagnosis="rheumatoid arthritis",
         )
 
-        # Create cached query data to avoid real API calls
+        # Create per-query cache data (no denial_id, as real API caching does)
+        PubMedQueryData.objects.create(
+            query="physical therapy rheumatoid arthritis",
+            articles=json.dumps(["12345678", "87654321"]),
+            created=timezone.now(),
+        )
+
+        # Create denial-level summary row (with denial_id set)
         PubMedQueryData.objects.create(
             query="physical therapy rheumatoid arthritis",
             articles=json.dumps(["12345678", "87654321"]),
