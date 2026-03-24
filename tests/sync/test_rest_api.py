@@ -1918,8 +1918,21 @@ class UpdateAppealTest(APITestCase):
         self.assertEqual(response.json()["id"], self.appeal.pk)
 
     def test_unauthorized_user_cannot_update_appeal(self):
-        """A different user should not be able to update someone else's appeal."""
-        # Create a separate professional user
+        """A user from a different domain should not be able to update another domain's appeal."""
+        # Assign the appeal and denial to self.domain so domain-scoped auth is exercised
+        self.appeal.domain = self.domain
+        self.appeal.save()
+        ProfessionalDomainRelation.objects.create(
+            professional=self.professional,
+            domain=self.domain,
+            pending_domain_relation=False,
+            admin=True,
+        )
+
+        # Snapshot original state
+        original_pubmed_ids = self.appeal.pubmed_ids_json
+
+        # Create a separate professional in a different domain
         other_user = User.objects.create_user(
             username=f"otheruser🐼{self.domain.id}",
             password="otherpass",
@@ -1927,12 +1940,11 @@ class UpdateAppealTest(APITestCase):
         )
         other_user.is_active = True
         other_user.save()
-        ProfessionalUser.objects.create(
+        other_professional = ProfessionalUser.objects.create(
             user=other_user, active=True, npi_number="9999999999"
         )
         ExtraUserProperties.objects.create(user=other_user, email_verified=True)
 
-        # Create a separate domain for the other user
         other_domain = UserDomain.objects.create(
             name="otherdomain",
             visible_phone_number="5555555555",
@@ -1946,8 +1958,14 @@ class UpdateAppealTest(APITestCase):
             address1="456 Other St",
             zipcode="54321",
         )
+        ProfessionalDomainRelation.objects.create(
+            professional=other_professional,
+            domain=other_domain,
+            pending_domain_relation=False,
+            admin=True,
+        )
 
-        # Login as the other user
+        # Login as the other user with their own domain
         self.client.login(
             username=f"otheruser🐼{self.domain.id}", password="otherpass"
         )
@@ -1964,13 +1982,24 @@ class UpdateAppealTest(APITestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
-        # Verify the appeal was NOT mutated
+        # Verify the appeal was NOT mutated — exact match against original state
         self.appeal.refresh_from_db()
-        self.assertNotEqual(self.appeal.pubmed_ids_json, ["hacked"])
+        self.assertEqual(self.appeal.pubmed_ids_json, original_pubmed_ids)
 
     def test_unauthorized_user_cannot_update_denial(self):
-        """A different user should not be able to update someone else's denial articles."""
-        # Create a separate professional user
+        """A user from a different domain should not be able to update another domain's denial."""
+        # Assign the denial to self.domain so domain-scoped auth is exercised
+        ProfessionalDomainRelation.objects.create(
+            professional=self.professional,
+            domain=self.domain,
+            pending_domain_relation=False,
+            admin=True,
+        )
+
+        # Snapshot original state
+        original_pubmed_ids = self.denial.pubmed_ids_json
+
+        # Create a separate professional in a different domain
         other_user = User.objects.create_user(
             username=f"otheruserD🐼{self.domain.id}",
             password="otherpass",
@@ -1978,7 +2007,7 @@ class UpdateAppealTest(APITestCase):
         )
         other_user.is_active = True
         other_user.save()
-        ProfessionalUser.objects.create(
+        other_professional = ProfessionalUser.objects.create(
             user=other_user, active=True, npi_number="8888888888"
         )
         ExtraUserProperties.objects.create(user=other_user, email_verified=True)
@@ -1995,6 +2024,12 @@ class UpdateAppealTest(APITestCase):
             city="Other City D",
             address1="789 Other St",
             zipcode="99999",
+        )
+        ProfessionalDomainRelation.objects.create(
+            professional=other_professional,
+            domain=other_domain,
+            pending_domain_relation=False,
+            admin=True,
         )
 
         self.client.login(
@@ -2015,6 +2050,6 @@ class UpdateAppealTest(APITestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
-        # Verify the denial was NOT mutated
+        # Verify the denial was NOT mutated — exact match against original state
         self.denial.refresh_from_db()
-        self.assertNotEqual(self.denial.pubmed_ids_json, ["hacked"])
+        self.assertEqual(self.denial.pubmed_ids_json, original_pubmed_ids)
