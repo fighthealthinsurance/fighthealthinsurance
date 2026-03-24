@@ -1495,3 +1495,526 @@ class DuplicateUserDomainTest(APITestCase):
             name=self.domain_name
         ).count()
         self.assertEqual(domains_with_same_name, 1)
+
+
+class UpdateDenialTest(APITestCase):
+    """Test that updating a denial via the create endpoint with denial_id mutates
+    the existing denial rather than creating a new one (issue #302)."""
+
+    fixtures = ["./fighthealthinsurance/fixtures/initial.yaml"]
+
+    def setUp(self):
+        self.domain = UserDomain.objects.create(
+            name="testdomain",
+            visible_phone_number="1234567890",
+            internal_phone_number="0987654321",
+            active=True,
+            display_name="Test Domain",
+            business_name="Test Business",
+            country="USA",
+            state="CA",
+            city="Test City",
+            address1="123 Test St",
+            zipcode="12345",
+        )
+        self.user = User.objects.create_user(
+            username=f"testuser🐼{self.domain.id}",
+            password="testpass",
+            email="test@example.com",
+        )
+        self.username = f"testuser🐼{self.domain.id}"
+        self.password = "testpass"
+        self.prouser = ProfessionalUser.objects.create(
+            user=self.user, active=True, npi_number="1234567890"
+        )
+        self.user.is_active = True
+        self.user.save()
+        ExtraUserProperties.objects.create(user=self.user, email_verified=True)
+        self.client.login(username=self.username, password=self.password)
+        session = self.client.session
+        session["domain_id"] = str(self.domain.id)
+        session.save()
+
+    def _create_denial(self, email, denial_text):
+        """Helper: create a denial and return the response JSON."""
+        url = reverse("denials-list")
+        response = self.client.post(
+            url,
+            json.dumps(
+                {
+                    "email": email,
+                    "denial_text": denial_text,
+                    "pii": "true",
+                    "tos": "true",
+                    "privacy": "true",
+                    "store_raw_email": "true",
+                }
+            ),
+            content_type="application/json",
+        )
+        self.assertTrue(status.is_success(response.status_code))
+        return response.json()
+
+    def test_update_denial_text_mutates_existing(self):
+        """Updating denial_text via denial_id should change the existing denial, not create a new one."""
+        email = "update-test@fighthealthinsurance.com"
+        original_text = "Original denial text for testing"
+        updated_text = "Updated denial text with new information"
+
+        # Create a denial
+        created = self._create_denial(email, original_text)
+        denial_id = created["denial_id"]
+        denial_count_before = Denial.objects.count()
+
+        # Update the same denial
+        url = reverse("denials-list")
+        response = self.client.post(
+            url,
+            json.dumps(
+                {
+                    "email": email,
+                    "denial_text": updated_text,
+                    "pii": "true",
+                    "tos": "true",
+                    "privacy": "true",
+                    "store_raw_email": "true",
+                    "denial_id": denial_id,
+                }
+            ),
+            content_type="application/json",
+        )
+        self.assertTrue(status.is_success(response.status_code))
+        parsed = response.json()
+
+        # Same denial_id should be returned
+        self.assertEqual(parsed["denial_id"], denial_id)
+
+        # No new denial should have been created
+        self.assertEqual(Denial.objects.count(), denial_count_before)
+
+        # The denial text should actually be updated
+        denial = Denial.objects.get(denial_id=int(denial_id))
+        self.assertEqual(denial.denial_text, updated_text)
+
+    def test_update_denial_preserves_creating_professional(self):
+        """Updating a denial should preserve the creating professional."""
+        email = "pro-preserve@fighthealthinsurance.com"
+        created = self._create_denial(email, "Test denial")
+        denial_id = created["denial_id"]
+
+        # Update with new text
+        url = reverse("denials-list")
+        response = self.client.post(
+            url,
+            json.dumps(
+                {
+                    "email": email,
+                    "denial_text": "Updated text",
+                    "pii": "true",
+                    "tos": "true",
+                    "privacy": "true",
+                    "denial_id": denial_id,
+                }
+            ),
+            content_type="application/json",
+        )
+        self.assertTrue(status.is_success(response.status_code))
+
+        denial = Denial.objects.get(denial_id=int(denial_id))
+        self.assertEqual(denial.creating_professional, self.prouser)
+
+    def test_update_denial_does_not_duplicate_appeal(self):
+        """Updating a denial that already has an appeal should not create a second appeal."""
+        email = "no-dup-appeal@fighthealthinsurance.com"
+        created = self._create_denial(email, "Test denial")
+        denial_id = created["denial_id"]
+        denial = Denial.objects.get(denial_id=int(denial_id))
+        appeal_count = Appeal.objects.filter(for_denial=denial).count()
+        self.assertEqual(appeal_count, 1)
+
+        # Update the denial
+        url = reverse("denials-list")
+        response = self.client.post(
+            url,
+            json.dumps(
+                {
+                    "email": email,
+                    "denial_text": "Updated denial",
+                    "pii": "true",
+                    "tos": "true",
+                    "privacy": "true",
+                    "denial_id": denial_id,
+                }
+            ),
+            content_type="application/json",
+        )
+        self.assertTrue(status.is_success(response.status_code))
+
+        # Still only one appeal for this denial
+        appeal_count_after = Appeal.objects.filter(for_denial=denial).count()
+        self.assertEqual(appeal_count_after, 1)
+
+    def test_retrieve_denial(self):
+        """Should be able to retrieve a denial by its pk."""
+        email = "retrieve-test@fighthealthinsurance.com"
+        created = self._create_denial(email, "Test denial for retrieval")
+        denial_id = created["denial_id"]
+        denial = Denial.objects.get(denial_id=int(denial_id))
+
+        url = reverse("denials-detail", args=[denial.pk])
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.json()["denial_id"], denial_id)
+
+    def test_select_articles_for_denial(self):
+        """Selecting PubMed articles should update the denial's pubmed_ids_json."""
+        email = "articles-test@fighthealthinsurance.com"
+        created = self._create_denial(email, "Test denial for articles")
+        denial_id = int(created["denial_id"])
+
+        # Initially no articles
+        denial = Denial.objects.get(denial_id=denial_id)
+        self.assertFalse(denial.pubmed_ids_json)
+
+        # Select articles
+        url = reverse("denials-select-articles")
+        pmids = ["12345678", "87654321"]
+        response = self.client.post(
+            url,
+            json.dumps({"denial_id": denial_id, "pmids": pmids}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        # Verify the denial was mutated
+        denial.refresh_from_db()
+        self.assertEqual(denial.pubmed_ids_json, pmids)
+
+    def test_select_articles_replaces_previous(self):
+        """Selecting new articles should replace, not append to, the previous selection."""
+        email = "replace-articles@fighthealthinsurance.com"
+        created = self._create_denial(email, "Test denial")
+        denial_id = int(created["denial_id"])
+
+        url = reverse("denials-select-articles")
+
+        # First selection
+        self.client.post(
+            url,
+            json.dumps({"denial_id": denial_id, "pmids": ["111", "222"]}),
+            content_type="application/json",
+        )
+        denial = Denial.objects.get(denial_id=denial_id)
+        self.assertEqual(denial.pubmed_ids_json, ["111", "222"])
+
+        # Second selection replaces
+        self.client.post(
+            url,
+            json.dumps({"denial_id": denial_id, "pmids": ["333"]}),
+            content_type="application/json",
+        )
+        denial.refresh_from_db()
+        self.assertEqual(denial.pubmed_ids_json, ["333"])
+
+
+class UpdateAppealTest(APITestCase):
+    """Test that updating an appeal via REST endpoints mutates the existing
+    appeal rather than creating a new one (issue #302)."""
+
+    fixtures = ["./fighthealthinsurance/fixtures/initial.yaml"]
+
+    def setUp(self):
+        # Create domain
+        self.domain = UserDomain.objects.create(
+            name="testdomain",
+            visible_phone_number="1234567890",
+            internal_phone_number="0987654321",
+            active=True,
+            display_name="Test Domain",
+            business_name="Test Business",
+            country="USA",
+            state="CA",
+            city="Test City",
+            address1="123 Test St",
+            zipcode="12345",
+        )
+
+        # Create professional user
+        self.pro_user = User.objects.create_user(
+            username=f"prouser🐼{self.domain.id}",
+            password="testpass",
+            email="pro@example.com",
+        )
+        self.pro_username = f"prouser🐼{self.domain.id}"
+        self.pro_password = "testpass"
+        self.professional = ProfessionalUser.objects.create(
+            user=self.pro_user, active=True, npi_number="1234567890"
+        )
+        self.pro_user.is_active = True
+        self.pro_user.save()
+        ExtraUserProperties.objects.create(user=self.pro_user, email_verified=True)
+
+        # Create patient user
+        self.patient_user = User.objects.create_user(
+            username="patientuser",
+            password="patientpass",
+            email="patient@example.com",
+            first_name="Test",
+            last_name="Patient",
+        )
+        self.patient_user.is_active = True
+        self.patient_user.save()
+        self.patient = PatientUser.objects.create(user=self.patient_user)
+
+        # Create a denial
+        self.denial = Denial.objects.create(
+            denial_text="Test denial for appeal update",
+            primary_professional=self.professional,
+            creating_professional=self.professional,
+            patient_user=self.patient,
+            hashed_email=Denial.get_hashed_email(self.patient_user.email),
+        )
+
+        # Create a pending appeal
+        self.appeal = Appeal.objects.create(
+            for_denial=self.denial,
+            pending=True,
+            appeal_text="Original appeal text",
+            patient_user=self.patient,
+            primary_professional=self.professional,
+            creating_professional=self.professional,
+        )
+
+        # Login as professional
+        self.client.login(username=self.pro_username, password=self.pro_password)
+        session = self.client.session
+        session["domain_id"] = str(self.domain.id)
+        session.save()
+
+    def test_assemble_appeal_updates_existing(self):
+        """assemble_appeal should update the existing pending appeal, not create a new one."""
+        appeal_count_before = Appeal.objects.filter(for_denial=self.denial).count()
+        self.assertEqual(appeal_count_before, 1)
+
+        url = reverse("appeals-assemble-appeal")
+        response = self.client.post(
+            url,
+            json.dumps(
+                {
+                    "denial_id": str(self.denial.denial_id),
+                    "completed_appeal_text": "Updated appeal text with new arguments",
+                    "insurance_company": "Test Insurance Co",
+                    "fax_phone": "5551234567",
+                }
+            ),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        parsed = response.json()
+
+        # Should return the same appeal id
+        self.assertEqual(parsed["appeal_id"], self.appeal.id)
+
+        # Should NOT have created a new appeal
+        appeal_count_after = Appeal.objects.filter(for_denial=self.denial).count()
+        self.assertEqual(appeal_count_after, 1)
+
+        # The existing appeal should have been mutated
+        self.appeal.refresh_from_db()
+        self.assertEqual(self.appeal.appeal_text, "Updated appeal text with new arguments")
+
+    def test_assemble_appeal_twice_updates_same_appeal(self):
+        """Calling assemble_appeal twice should update the same appeal, not create a second one."""
+        url = reverse("appeals-assemble-appeal")
+
+        # First assembly
+        response1 = self.client.post(
+            url,
+            json.dumps(
+                {
+                    "denial_id": str(self.denial.denial_id),
+                    "completed_appeal_text": "First version of appeal text",
+                    "insurance_company": "Test Insurance",
+                }
+            ),
+            content_type="application/json",
+        )
+        self.assertEqual(response1.status_code, status.HTTP_201_CREATED)
+        appeal_id_1 = response1.json()["appeal_id"]
+
+        appeal_count_after_first = Appeal.objects.filter(for_denial=self.denial).count()
+        self.assertEqual(appeal_count_after_first, 1)
+
+        # Second assembly — should update, not create
+        response2 = self.client.post(
+            url,
+            json.dumps(
+                {
+                    "denial_id": str(self.denial.denial_id),
+                    "completed_appeal_text": "Second version of appeal text",
+                    "insurance_company": "Test Insurance",
+                }
+            ),
+            content_type="application/json",
+        )
+        self.assertEqual(response2.status_code, status.HTTP_201_CREATED)
+        appeal_id_2 = response2.json()["appeal_id"]
+
+        # Same appeal ID both times
+        self.assertEqual(appeal_id_1, appeal_id_2)
+
+        # Still only one appeal
+        appeal_count_after_second = Appeal.objects.filter(for_denial=self.denial).count()
+        self.assertEqual(appeal_count_after_second, 1)
+
+        # Text should reflect the second call
+        self.appeal.refresh_from_db()
+        self.assertEqual(self.appeal.appeal_text, "Second version of appeal text")
+
+    def test_select_articles_for_appeal(self):
+        """Selecting PubMed articles should update the appeal's pubmed_ids_json."""
+        self.assertFalse(self.appeal.pubmed_ids_json)
+
+        url = reverse("appeals-select-articles")
+        pmids = ["11111111", "22222222"]
+        response = self.client.post(
+            url,
+            json.dumps({"appeal_id": self.appeal.id, "pmids": pmids}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        # Verify the appeal was mutated
+        self.appeal.refresh_from_db()
+        self.assertEqual(self.appeal.pubmed_ids_json, pmids)
+
+    def test_select_articles_replaces_previous_on_appeal(self):
+        """Selecting new articles should replace the previous selection on the appeal."""
+        url = reverse("appeals-select-articles")
+
+        # First selection
+        self.client.post(
+            url,
+            json.dumps({"appeal_id": self.appeal.id, "pmids": ["aaa", "bbb"]}),
+            content_type="application/json",
+        )
+        self.appeal.refresh_from_db()
+        self.assertEqual(self.appeal.pubmed_ids_json, ["aaa", "bbb"])
+
+        # Second selection replaces
+        self.client.post(
+            url,
+            json.dumps({"appeal_id": self.appeal.id, "pmids": ["ccc"]}),
+            content_type="application/json",
+        )
+        self.appeal.refresh_from_db()
+        self.assertEqual(self.appeal.pubmed_ids_json, ["ccc"])
+
+    def test_retrieve_appeal(self):
+        """Should be able to retrieve an appeal by its pk."""
+        url = reverse("appeals-detail", args=[self.appeal.pk])
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.json()["id"], self.appeal.pk)
+
+    def test_unauthorized_user_cannot_update_appeal(self):
+        """A different user should not be able to update someone else's appeal."""
+        # Create a separate professional user
+        other_user = User.objects.create_user(
+            username=f"otheruser🐼{self.domain.id}",
+            password="otherpass",
+            email="other@example.com",
+        )
+        other_user.is_active = True
+        other_user.save()
+        ProfessionalUser.objects.create(
+            user=other_user, active=True, npi_number="9999999999"
+        )
+        ExtraUserProperties.objects.create(user=other_user, email_verified=True)
+
+        # Create a separate domain for the other user
+        other_domain = UserDomain.objects.create(
+            name="otherdomain",
+            visible_phone_number="5555555555",
+            internal_phone_number="5555555556",
+            active=True,
+            display_name="Other Domain",
+            business_name="Other Business",
+            country="USA",
+            state="NY",
+            city="Other City",
+            address1="456 Other St",
+            zipcode="54321",
+        )
+
+        # Login as the other user
+        self.client.login(
+            username=f"otheruser🐼{self.domain.id}", password="otherpass"
+        )
+        session = self.client.session
+        session["domain_id"] = str(other_domain.id)
+        session.save()
+
+        # Try to select articles on an appeal they don't own
+        url = reverse("appeals-select-articles")
+        response = self.client.post(
+            url,
+            json.dumps({"appeal_id": self.appeal.id, "pmids": ["hacked"]}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+        # Verify the appeal was NOT mutated
+        self.appeal.refresh_from_db()
+        self.assertNotEqual(self.appeal.pubmed_ids_json, ["hacked"])
+
+    def test_unauthorized_user_cannot_update_denial(self):
+        """A different user should not be able to update someone else's denial articles."""
+        # Create a separate professional user
+        other_user = User.objects.create_user(
+            username=f"otheruserD🐼{self.domain.id}",
+            password="otherpass",
+            email="otherD@example.com",
+        )
+        other_user.is_active = True
+        other_user.save()
+        ProfessionalUser.objects.create(
+            user=other_user, active=True, npi_number="8888888888"
+        )
+        ExtraUserProperties.objects.create(user=other_user, email_verified=True)
+
+        other_domain = UserDomain.objects.create(
+            name="otherdomainD",
+            visible_phone_number="4444444444",
+            internal_phone_number="4444444445",
+            active=True,
+            display_name="Other Domain D",
+            business_name="Other Business D",
+            country="USA",
+            state="TX",
+            city="Other City D",
+            address1="789 Other St",
+            zipcode="99999",
+        )
+
+        self.client.login(
+            username=f"otheruserD🐼{self.domain.id}", password="otherpass"
+        )
+        session = self.client.session
+        session["domain_id"] = str(other_domain.id)
+        session.save()
+
+        # Try to select articles on a denial they don't own
+        url = reverse("denials-select-articles")
+        response = self.client.post(
+            url,
+            json.dumps(
+                {"denial_id": self.denial.denial_id, "pmids": ["hacked"]}
+            ),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+        # Verify the denial was NOT mutated
+        self.denial.refresh_from_db()
+        self.assertNotEqual(self.denial.pubmed_ids_json, ["hacked"])
