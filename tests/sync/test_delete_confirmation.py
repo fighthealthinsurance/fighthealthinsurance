@@ -6,7 +6,12 @@ from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
 
-from fighthealthinsurance.models import Denial, DeleteToken, UsedDeleteToken
+from fighthealthinsurance.models import (
+    Denial,
+    DeleteToken,
+    MailingListSubscriber,
+    UsedDeleteToken,
+)
 
 
 class TestRemoveDataView(TestCase):
@@ -333,3 +338,27 @@ class TestConfirmDeleteDataView(TestCase):
         )
         assert response2.status_code == 200
         assert b"already been used" in response2.content
+
+    def test_email_case_insensitive_integration(self):
+        """Integration test: mixed-case stored records are deleted by case-insensitive lookup."""
+        # Store a record with mixed-case email
+        MailingListSubscriber.objects.create(
+            email="Test@Example.COM", name="Test User"
+        )
+        assert MailingListSubscriber.objects.filter(email="Test@Example.COM").exists()
+
+        # Create a token for the lowercase version of the email
+        token = self._create_token(email="test@example.com")
+        url = reverse("confirm_delete_data")
+
+        # POST with lowercase email (as would arrive from the normalized confirmation link)
+        response = self.client.post(
+            url, {"token": token.token, "email": "test@example.com"}
+        )
+        assert response.status_code == 200
+        assert b"data associated with your email has been removed" in response.content
+
+        # The mixed-case record should have been deleted via __iexact lookup
+        assert not MailingListSubscriber.objects.filter(
+            email="Test@Example.COM"
+        ).exists()

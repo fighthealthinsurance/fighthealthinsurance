@@ -1971,8 +1971,8 @@ class OngoingChat(models.Model):
         # Look for chats with matching hashed email
         return OngoingChat.objects.filter(
             Q(hashed_email=hashed_email)
-            | Q(user__email=email)
-            | Q(professional_user__user__email=email)
+            | Q(user__email__iexact=email)
+            | Q(professional_user__user__email__iexact=email)
         )
 
     def summarize_user(self) -> str:

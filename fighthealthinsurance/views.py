@@ -663,9 +663,7 @@ class RemoveDataView(View):
             new_token = uuid.uuid4()
             while UsedDeleteToken.objects.filter(token=str(new_token)).exists():
                 new_token = uuid.uuid4()
-            delete_token = DeleteToken(
-                hashed_email=hashed_email, token=str(new_token)
-            )
+            delete_token = DeleteToken(hashed_email=hashed_email, token=str(new_token))
             delete_token.save()
             # Send confirmation email
             send_delete_confirmation_email(email, str(delete_token.token))
@@ -761,12 +759,19 @@ class ConfirmDeleteDataView(View):
             return self._error_response(request, error)
         email_normalized = email.strip().lower() if email else email
         hashed_email = models.Denial.get_hashed_email(email_normalized)
-        # Record the token as used before deleting it
-        UsedDeleteToken.objects.get_or_create(
+        # Record the token as used; if another request already recorded it, abort
+        _used_token, created = UsedDeleteToken.objects.get_or_create(
             token=delete_token.token,
             defaults={"hashed_email": hashed_email},
         )
-        RemoveDataHelper.remove_data_for_email(email_normalized)
+        if not created:
+            return self._error_response(
+                request,
+                "This confirmation link has already been used. "
+                "Your data has been deleted. "
+                "If you need to delete additional data, please request a new link.",
+            )
+        RemoveDataHelper.remove_data_for_email(email)
         delete_token.delete()
         return render(
             request,
