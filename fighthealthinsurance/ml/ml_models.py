@@ -39,7 +39,10 @@ from llm_result_utils.cleaner_utils import CleanerUtils
 from llm_result_utils.llm_utils import LLMResponseUtils
 
 from fighthealthinsurance.exec import *
-from fighthealthinsurance.ml.bad_output_utils import is_bad_output
+from fighthealthinsurance.ml.bad_output_utils import (
+    is_bad_output,
+    strip_boilerplate_service,
+)
 from fighthealthinsurance.process_denial import DenialBase
 from fighthealthinsurance.utils import all_concrete_subclasses
 
@@ -1569,13 +1572,19 @@ class RemoteOpenLike(RemoteModel):
             )
         ]
 
-    def _clean_procedure_response(self, response):
-        return self.procedure_response_regex.sub("", response)
-
-    def _clean_diagnosis_response(self, response):
+    def _clean_extracted_field(
+        self, response: str, label_regex: re.Pattern[str]
+    ) -> Optional[str]:
         if self.invalid_diag_procedure_regex.search(response):
             return None
-        return self.diagnosis_response_regex.sub("", response)
+        cleaned = label_regex.sub("", response)
+        return strip_boilerplate_service(cleaned)
+
+    def _clean_procedure_response(self, response: str) -> Optional[str]:
+        return self._clean_extracted_field(response, self.procedure_response_regex)
+
+    def _clean_diagnosis_response(self, response: str) -> Optional[str]:
+        return self._clean_extracted_field(response, self.diagnosis_response_regex)
 
     async def generate_prior_auth_response(self, prompt: str) -> Optional[str]:
         """
