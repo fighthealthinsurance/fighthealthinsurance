@@ -250,10 +250,11 @@ class SonicFax(FaxSenderBase):
             raise Exception(f"No CSRF found in {r.text}")
         csrf_key = csrf_matched.group(1)
         filename = self._get_filename(path)
-        r = s.post(
-            "https://members.sonic.net/labs/fax/?a=upload",
-            files={"filename": (filename, open(path, "rb"))},
-        )
+        with open(path, "rb") as f:
+            r = s.post(
+                "https://members.sonic.net/labs/fax/?a=upload",
+                files={"filename": (filename, f)},
+            )
         r.raise_for_status()
         r = s.post(
             "https://members.sonic.net/labs/fax/",

@@ -42,13 +42,11 @@ class InsuranceQuestions(forms.Form):
             response += "This is an in-network claim."
         return response
 
-    def _append_context(
-        self, response: str, field: str, label: str, is_bool: bool = False
-    ) -> str:
-        """Helper to conditionally append a field's value to the context string."""
+    def _append_context(self, response: str, field: str, label: str) -> str:
+        """Append field value to context. Booleans get 'label.', others get 'label: val.'."""
         val = self.cleaned_data.get(field)
         if val:
-            if is_bool:
+            if isinstance(self.fields.get(field), forms.BooleanField):
                 response += f"{label}. "
             else:
                 response += f"{label}: {val}. "
@@ -370,7 +368,7 @@ class PreventiveCareQuestions(InsuranceQuestions):
             "that's the case."
         )
         response = self._append_context(
-            response, "trans_gender", "The patient is transgender", is_bool=True
+            response, "trans_gender", "The patient is transgender"
         )
         response = self._append_context(
             response, "medical_reason", "The patient may be at increased risk due to"
@@ -1210,6 +1208,14 @@ class LabWorkQuestions(InsuranceQuestions):
 class AphasiaTreatmentQuestions(InsuranceQuestions):
     """Questions for aphasia treatment denial appeals."""
 
+    APHASIA_TYPE_LABELS = {
+        "brocas": "Broca's (non-fluent/expressive)",
+        "wernickes": "Wernicke's (fluent/receptive)",
+        "global": "Global",
+        "anomic": "Anomic",
+        "ppa": "Primary Progressive Aphasia",
+    }
+
     aphasia_type = forms.ChoiceField(
         choices=[
             ("", "---"),
@@ -1261,14 +1267,7 @@ class AphasiaTreatmentQuestions(InsuranceQuestions):
         response = super().medical_context()
         at = self.cleaned_data.get("aphasia_type", "")
         if at and at != "other":
-            type_labels = {
-                "brocas": "Broca's (non-fluent/expressive)",
-                "wernickes": "Wernicke's (fluent/receptive)",
-                "global": "Global",
-                "anomic": "Anomic",
-                "ppa": "Primary Progressive Aphasia",
-            }
-            response += f"Aphasia type: {type_labels.get(at, at)}. "
+            response += f"Aphasia type: {self.APHASIA_TYPE_LABELS.get(at, at)}. "
         cause = self.cleaned_data.get("cause", "")
         if cause and cause != "other":
             response += f"Cause: {cause}. "
@@ -1347,6 +1346,15 @@ class AphasiaTreatmentQuestions(InsuranceQuestions):
 class AssistiveDeviceQuestions(InsuranceQuestions):
     """Questions for assistive device and AAC (Augmentative and Alternative Communication) denial appeals."""
 
+    DEVICE_LABELS = {
+        "aac_high_tech": "High-tech AAC device (speech-generating device/tablet)",
+        "aac_low_tech": "Low-tech AAC (picture boards/communication books)",
+        "mobility": "Mobility device",
+        "prosthetic": "Prosthetic device",
+        "orthotic": "Orthotic device",
+        "hearing": "Hearing aid or cochlear implant",
+    }
+
     device_type = forms.ChoiceField(
         choices=[
             ("", "---"),
@@ -1393,15 +1401,7 @@ class AssistiveDeviceQuestions(InsuranceQuestions):
         response = super().medical_context()
         dt = self.cleaned_data.get("device_type", "")
         if dt and dt != "other":
-            device_labels = {
-                "aac_high_tech": "High-tech AAC device (speech-generating device/tablet)",
-                "aac_low_tech": "Low-tech AAC (picture boards/communication books)",
-                "mobility": "Mobility device",
-                "prosthetic": "Prosthetic device",
-                "orthotic": "Orthotic device",
-                "hearing": "Hearing aid or cochlear implant",
-            }
-            response += f"Device type: {device_labels.get(dt, dt)}. "
+            response += f"Device type: {self.DEVICE_LABELS.get(dt, dt)}. "
         response = self._append_context(
             response, "underlying_condition", "Underlying condition"
         )
