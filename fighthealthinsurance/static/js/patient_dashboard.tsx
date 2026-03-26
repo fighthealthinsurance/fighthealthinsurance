@@ -99,7 +99,14 @@ async function apiFetch<T>(url: string, options?: RequestInit): Promise<T> {
     throw new Error("Not authenticated");
   }
   if (!response.ok) {
-    throw new Error(`API error: ${response.status}`);
+    let message = `API error: ${response.status}`;
+    try {
+      const errData = await response.json();
+      if (errData.error) message = errData.error;
+    } catch {
+      // response body wasn't JSON, use default message
+    }
+    throw new Error(message);
   }
   if (response.status === 204) return {} as T;
   return response.json();
@@ -148,7 +155,7 @@ function useDeleteHandler(
         setError(e instanceof Error ? e.message : "Failed to delete");
       }
     },
-    [refetch, setError],
+    [baseUrl, confirmMsg, refetch, setError],
   );
 }
 
