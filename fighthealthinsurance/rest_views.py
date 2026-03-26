@@ -6,7 +6,7 @@ from typing import Optional
 from django.conf import settings
 from django.core.exceptions import SuspiciousFileOperation
 from django.db import IntegrityError, models
-from django.db.models import Count, Q
+from django.db.models import Count, Exists, OuterRef, Q
 from django.http import FileResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -290,12 +290,19 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
     def list(self, request: Request) -> Response:
         """List all denials accessible to the current user."""
         current_user: User = request.user  # type: ignore
+        if not current_user.is_authenticated:
+            return Response([])
         denials = (
             Denial.filter_to_allowed_denials(current_user)
             .select_related(
                 "patient_user", "primary_professional", "creating_professional"
             )
             .prefetch_related("denial_type")
+            .annotate(
+                has_appeal=Exists(
+                    Appeal.objects.filter(for_denial=OuterRef("pk"))
+                )
+            )
         )
         output_serializer = serializers.DenialSummarySerializer(denials, many=True)
         return Response(output_serializer.data)
@@ -2179,7 +2186,13 @@ def _verify_appeal_ownership(request: Request, appeal) -> Optional[Appeal]:
     """
     if appeal is None:
         return None
-    appeal_id = appeal.id if hasattr(appeal, "id") else int(appeal)
+    if hasattr(appeal, "id"):
+        appeal_id = appeal.id
+    else:
+        try:
+            appeal_id = int(appeal)
+        except (ValueError, TypeError):
+            return None
     return get_object_or_404(
         Appeal.filter_to_allowed_appeals(request.user), id=appeal_id
     )

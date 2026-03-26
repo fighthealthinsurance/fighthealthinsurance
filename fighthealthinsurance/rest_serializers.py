@@ -844,7 +844,7 @@ class DenialSummarySerializer(serializers.ModelSerializer):
     """Lightweight serializer for patient denial list view."""
 
     denial_type_names = serializers.SerializerMethodField()
-    has_appeal = serializers.SerializerMethodField()
+    has_appeal = serializers.BooleanField(read_only=True)
 
     class Meta:
         model = Denial
@@ -863,10 +863,6 @@ class DenialSummarySerializer(serializers.ModelSerializer):
     @extend_schema_field(serializers.ListField(child=serializers.CharField()))
     def get_denial_type_names(self, obj: Denial) -> List[str]:
         return [x.name for x in obj.denial_type.all()]
-
-    @extend_schema_field(serializers.BooleanField())
-    def get_has_appeal(self, obj: Denial) -> bool:
-        return Appeal.objects.filter(for_denial=obj).exists()
 
 
 class InsuranceCallLogSerializer(serializers.ModelSerializer):
