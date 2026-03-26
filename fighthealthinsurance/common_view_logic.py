@@ -715,7 +715,7 @@ class FindNextStepsHelper:
         if not journey_already_covered:
             # Check if the microsite has journey documentation items
             has_microsite_journey = False
-            if hasattr(denial, "microsite_slug") and denial.microsite_slug:
+            if denial.microsite_slug:
                 from fighthealthinsurance.microsites import get_microsite
 
                 microsite = get_microsite(denial.microsite_slug)
