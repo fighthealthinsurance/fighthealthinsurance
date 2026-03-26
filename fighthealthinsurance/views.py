@@ -3,7 +3,6 @@ import os
 import random
 import re
 import typing
-import uuid
 from typing import TypedDict
 from urllib.parse import quote, urlencode
 
@@ -659,11 +658,8 @@ class RemoveDataView(View):
             hashed_email = models.Denial.get_hashed_email(email)
             # Delete any existing tokens for this email
             DeleteToken.objects.filter(hashed_email=hashed_email).delete()
-            # Create a new token, avoiding collision with used tokens
-            new_token = uuid.uuid4()
-            while UsedDeleteToken.objects.filter(token=str(new_token)).exists():
-                new_token = uuid.uuid4()
-            delete_token = DeleteToken(hashed_email=hashed_email, token=str(new_token))
+            # Create a new token
+            delete_token = DeleteToken(hashed_email=hashed_email)
             delete_token.save()
             # Send confirmation email
             send_delete_confirmation_email(email, str(delete_token.token))
@@ -771,7 +767,7 @@ class ConfirmDeleteDataView(View):
                 "Your data has been deleted. "
                 "If you need to delete additional data, please request a new link.",
             )
-        RemoveDataHelper.remove_data_for_email(email)
+        RemoveDataHelper.remove_data_for_email(email_normalized)
         delete_token.delete()
         return render(
             request,

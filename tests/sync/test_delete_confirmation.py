@@ -237,9 +237,7 @@ class TestConfirmDeleteDataView(TestCase):
         """After POST deletion, a UsedDeleteToken record should exist."""
         token = self._create_token()
         url = reverse("confirm_delete_data")
-        self.client.post(
-            url, {"token": token.token, "email": "test@example.com"}
-        )
+        self.client.post(url, {"token": token.token, "email": "test@example.com"})
         assert UsedDeleteToken.objects.filter(token=token.token).exists()
         used = UsedDeleteToken.objects.get(token=token.token)
         assert used.hashed_email == self._hashed("test@example.com")
@@ -261,7 +259,7 @@ class TestConfirmDeleteDataView(TestCase):
         )
         assert response.status_code == 200
         assert b"data associated with your email has been removed" in response.content
-        mock_remove.assert_called_once()
+        mock_remove.assert_called_once_with("test@example.com")
 
     @patch("fighthealthinsurance.views.RemoveDataHelper.remove_data_for_email")
     def test_email_with_whitespace_normalization(self, mock_remove):
@@ -280,9 +278,7 @@ class TestConfirmDeleteDataView(TestCase):
         # First deletion
         token1 = self._create_token()
         url = reverse("confirm_delete_data")
-        self.client.post(
-            url, {"token": token1.token, "email": "test@example.com"}
-        )
+        self.client.post(url, {"token": token1.token, "email": "test@example.com"})
         assert UsedDeleteToken.objects.filter(token=token1.token).exists()
         # Request a new token (simulates RemoveDataView.post creating a new one)
         token2 = self._create_token(email="test@example.com")
@@ -342,9 +338,7 @@ class TestConfirmDeleteDataView(TestCase):
     def test_email_case_insensitive_integration(self):
         """Integration test: mixed-case stored records are deleted by case-insensitive lookup."""
         # Store a record with mixed-case email
-        MailingListSubscriber.objects.create(
-            email="Test@Example.COM", name="Test User"
-        )
+        MailingListSubscriber.objects.create(email="Test@Example.COM", name="Test User")
         assert MailingListSubscriber.objects.filter(email="Test@Example.COM").exists()
 
         # Create a token for the lowercase version of the email
