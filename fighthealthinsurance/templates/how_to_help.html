@@ -18,14 +18,12 @@
 
 {% block content %}
 <div class="container mt-5">
-    <!-- Hero -->
     <h2 style="margin-top: 10vh; text-align: center; margin-bottom: 1rem;">Join the Fight Against Unfair Denials</h2>
     <p style="text-align: center; font-size: 1.1rem; max-width: 800px; margin: 0 auto 2rem;">
         Whether you want to help patients directly, contribute code, partner as a healthcare provider,
         or connect us with organizations — there's a way for you to make a real difference.
     </p>
 
-    <!-- Persona Nav Pills -->
     <ul class="nav nav-pills justify-content-center flex-wrap mb-4">
         <li class="nav-item">
             <a class="nav-link active smoothScroll" href="#help-patients">I Want to Help Patients</a>
@@ -41,7 +39,6 @@
         </li>
     </ul>
 
-    <!-- Donation Banner -->
     <section style="text-align: center; padding: 2rem; background-color: #fff8e1; border-radius: 8px; margin-bottom: 3rem;">
         <h3 style="margin-bottom: 1rem;">Help Someone Fight a Denial They Couldn't Afford to Appeal</h3>
         <p style="font-size: 1.05rem; max-width: 700px; margin: 0 auto 1rem;">
@@ -57,7 +54,6 @@
         </a>
     </section>
 
-    <!-- Section: Help Patients -->
     <section id="help-patients" class="persona-section" style="background-color: #f8f9fa;">
         <h3>Help Patients Fight Denials</h3>
         <div class="row">
@@ -78,21 +74,21 @@
                         unfair insurance denials. Every voice makes a difference!
                     </p>
                     <p style="margin-top: 1rem;">
-                        <a href="https://x.com/fighthinsurance" target="_blank" rel="noopener noreferrer" title="Follow on X/Twitter" style="margin-right: 0.75rem;">
+                        <a href="https://x.com/fighthinsurance" target="_blank" rel="noopener noreferrer" aria-label="Follow on X/Twitter" style="margin-right: 0.75rem;">
                             <img src="{% static 'images/twitterlogo.png' %}" alt="X/Twitter" style="width: 28px; height: 28px;">
                         </a>
-                        <a href="https://www.instagram.com/fighthealthinsurance/" target="_blank" rel="noopener noreferrer" title="Follow on Instagram" style="margin-right: 0.75rem;">
-                            <svg xmlns="http://www.w3.org/2000/svg" width="35" height="35" viewBox="0 0 24 24" fill="none" stroke="#888888" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <a href="https://www.instagram.com/fighthealthinsurance/" target="_blank" rel="noopener noreferrer" aria-label="Follow on Instagram" style="margin-right: 0.75rem;">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="35" height="35" viewBox="0 0 24 24" fill="none" stroke="#888888" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                                 <path d="M4 8a4 4 0 0 1 4 -4h8a4 4 0 0 1 4 4v8a4 4 0 0 1 -4 4h-8a4 4 0 0 1 -4 -4z"></path>
                                 <path d="M9 12a3 3 0 1 0 6 0a3 3 0 0 0 -6 0"></path>
                                 <path d="M16.5 7.5v.01"></path>
                             </svg>
                         </a>
-                        <a href="https://www.linkedin.com/company/fight-health-insurance" target="_blank" rel="noopener noreferrer" title="Follow on LinkedIn">
+                        <a href="https://www.linkedin.com/company/fight-health-insurance" target="_blank" rel="noopener noreferrer" aria-label="Follow on LinkedIn">
                             <img src="{% static 'images/linkedinlogo.png' %}" alt="LinkedIn" style="width: 28px; height: 28px;">
                         </a>
-                        <a href="https://www.tiktok.com/@fighthealthinsurancett" target="_blank" rel="noopener noreferrer" title="Follow on TikTok" style="margin-left: 0.75rem;">
-                            <img src="{% static 'images/TikTok_logo.svg' %}" alt="tiktok" style="width: 280px; height: 28px;">
+                        <a href="https://www.tiktok.com/@fighthealthinsurancett" target="_blank" rel="noopener noreferrer" aria-label="Follow on TikTok" style="margin-left: 0.75rem;">
+                            <img src="{% static 'images/TikTok_logo.svg' %}" alt="TikTok" style="width: 280px; height: 28px;">
                         </a>
                     </p>
                 </div>
@@ -107,7 +103,6 @@
         </p>
     </section>
 
-    <!-- Section: Developers -->
     <section id="developers" class="persona-section" style="background-color: #e3f2fd;">
         <h3>Contribute to Open Source Healthcare Tools</h3>
         <p style="margin-bottom: 1.5rem;">
@@ -125,7 +120,6 @@
         </a>
     </section>
 
-    <!-- Section: Healthcare Providers -->
     <section id="providers" class="persona-section" style="background-color: #e8f5e9;">
         <h3>Partner With Us to Help Your Patients</h3>
         <p style="margin-bottom: 1.5rem;">
@@ -141,7 +135,6 @@
         </a>
     </section>
 
-    <!-- Section: Connect Us With Organizations -->
     <section id="connectors" class="persona-section" style="background-color: #f3e5f5;">
         <h3>Connect Us With People Who Need This</h3>
         <p style="margin-bottom: 1rem;">
@@ -166,8 +159,7 @@
         </a>
     </section>
 
-    <!-- Call to Action -->
-    <div style="text-align: center; padding: 3rem 0; background-color: #f8f9fa; border-radius: 8px; margin-top: 3rem;">
+    <section style="text-align: center; padding: 3rem 0; background-color: #f8f9fa; border-radius: 8px; margin-top: 3rem;">
         <h3 style="margin-bottom: 1rem;">Ready to Get Started?</h3>
         <p style="font-size: 1.1rem; margin-bottom: 2rem;">
             Generate your healthcare claim appeal in minutes with AI.
@@ -178,6 +170,6 @@
         <a href="{% url 'chat' %}" class="btn btn-outline-green smoothScroll" style="display: inline-block;">
             AI Chat
         </a>
-    </div>
+    </section>
 </div>
 {% endblock content %}

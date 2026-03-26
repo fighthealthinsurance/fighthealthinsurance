@@ -28,7 +28,7 @@ class TestHowToHelpPage(TestCase):
         self.assertContains(result, "Share the Tool")
         self.assertContains(result, "Contribute to Open Source")
         self.assertContains(
-            result, "Help Someone Fight a Denial They Couldn"
+            result, "Help Someone Fight a Denial They Couldn't Afford to Appeal"
         )
         self.assertContains(result, "Connect Us With People Who Need This")
 
