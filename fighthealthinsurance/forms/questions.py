@@ -118,13 +118,11 @@ class MedicalNecessaryQuestions(InsuranceQuestions):
     )
 
     def medical_context(self):
-        response = ""
-        r = self.cleaned_data.get("medical_reason")
-        if r:
-            response += f"The medical reason may be {r}."
-        a = self.cleaned_data.get("age")
-        if a:
-            response += f"The patient age is {a}."
+        response = super().medical_context()
+        response = self._append_context(
+            response, "medical_reason", "The medical reason may be"
+        )
+        response = self._append_context(response, "age", "The patient age is")
         return response
 
     def generate_reason(self):
@@ -183,14 +181,13 @@ class OutOfNetworkReimbursement(forms.Form):
         return ""
 
     def main(self):
+        reason = self.cleaned_data["why_need_out_of_network"]
         if self.prof_pov:
             return [
-                "Based on my professional assessment, out-of-network services are medically necessary in this case because "
-                + self.cleaned_data["why_need_out_of_network"]
+                f"Based on my professional assessment, out-of-network services are medically necessary in this case because {reason}"
             ]
         return [
-            "I believe you should cover this out of network service since "
-            + self.cleaned_data["why_need_out_of_network"]
+            f"I believe you should cover this out of network service since {reason}"
         ]
 
 
@@ -227,18 +224,15 @@ class PriorAuthQuestions(InsuranceQuestions):
 
     def main(self):
         r: list[str] = []
-        if "emergency" in self.cleaned_data:
+        if self.cleaned_data.get("emergency"):
             r.append(
-                "This service was an emergency so prior auth could not be "
-                + "obtained."
+                "This service was an emergency so prior auth could not be obtained."
             )
-        if "told_prior_auth_not_needed" in self.cleaned_data:
+        if self.cleaned_data.get("told_prior_auth_not_needed"):
             r.append("It was communicated that prior authorization was not necessary.")
-        if "prior_auth_id" in self.cleaned_data:
+        if self.cleaned_data.get("prior_auth_id"):
             r.append(
-                "Prior auth was obtained (id "
-                + self.cleaned_data["prior_auth_id"]
-                + ")"
+                f"Prior auth was obtained (id {self.cleaned_data['prior_auth_id']})"
             )
         return r
 
@@ -368,31 +362,24 @@ class PreventiveCareQuestions(InsuranceQuestions):
         help_text="Some preventive care is only covered for certain genders. If the patient is transgender, insurance may incorrectly deny necessary coverage. Check this box if it applies.",
     )
 
-    def __init__(self, *args, prof_pov: bool = False, **kwargs):
-        self.prof_pov = prof_pov
-        super().__init__(*args, **kwargs)
-
     def medical_context(self):
-        response = (
+        response = super().medical_context()
+        response += (
             "This procedure may be preventive, make sure to include a link to "
             "https://www.healthcare.gov/coverage/preventive-care-benefits/ if "
             "that's the case."
         )
-        if "trans_gender" in self.cleaned_data and self.cleaned_data["trans_gender"]:
-            response += "The patient is transgender."
-        if (
-            "medical_reason" in self.cleaned_data
-            and self.cleaned_data["medical_reason"]
-        ):
-            response += (
-                "The patient may be at increased risk due to "
-                + self.cleaned_data["medical_reason"]
-            )
+        response = self._append_context(
+            response, "trans_gender", "The patient is transgender", is_bool=True
+        )
+        response = self._append_context(
+            response, "medical_reason", "The patient may be at increased risk due to"
+        )
         return response
 
     def main(self):
         r = []
-        if "trans_gender" in self.cleaned_data and self.cleaned_data["trans_gender"]:
+        if self.cleaned_data.get("trans_gender"):
             if self.prof_pov:
                 r.append(
                     "The patient is transgender, so it is important that preventive coverage for all relevant genders is provided."
@@ -401,7 +388,7 @@ class PreventiveCareQuestions(InsuranceQuestions):
                 r.append(
                     "I am trans so it is important that preventive coverage for both genders be covered."
                 )
-        if self.cleaned_data["medical_reason"]:
+        if self.cleaned_data.get("medical_reason"):
             r.append(self.cleaned_data["medical_reason"])
         return r
 
@@ -420,22 +407,15 @@ class ThirdPartyQuestions(InsuranceQuestions):
         help_text="E.g., auto accident with known auto insurance, or workers comp. Check if another insurer should be responsible.",
     )
 
-    def __init__(self, *args, prof_pov=False, **kwargs):
-        self.prof_pov = prof_pov
-        super().__init__(*args, **kwargs)
-
     def preface(self):
-        if "is_known_3rd_party" in self.cleaned_data:
+        if self.cleaned_data.get("is_known_3rd_party"):
+            details = self.cleaned_data["alternate_insurance_details"]
             if self.prof_pov:
                 return [
-                    "As requested, I am providing details regarding third-party insurance coverage for this claim: "
-                    + self.cleaned_data["alternate_insurance_details"]
-                    + ". Please ensure that all relevant coordination of benefits is considered in the review of this claim."
+                    f"As requested, I am providing details regarding third-party insurance coverage for this claim: "
+                    f"{details}. Please ensure that all relevant coordination of benefits is considered in the review of this claim."
                 ]
-            return [
-                "As requested, the third-party insurance is "
-                + self.cleaned_data["alternate_insurance_details"]
-            ]
+            return [f"As requested, the third-party insurance is {details}"]
         return super().preface()
 
 
@@ -487,19 +467,29 @@ class FormularyChangeQuestions(InsuranceQuestions):
 
     def medical_context(self):
         """Return context about continuity of care to inform the LLM."""
-        response = ""
+        response = super().medical_context()
         if self.cleaned_data.get("currently_taking"):
             response += "The patient is currently taking this medication. "
-            if self.cleaned_data.get("how_long_taking"):
-                response += f"They have been taking it for {self.cleaned_data['how_long_taking']}. "
-        if self.cleaned_data.get("medication_working"):
-            response += "The medication is working well and their condition is stable. "
+            response = self._append_context(
+                response, "how_long_taking", "They have been taking it for"
+            )
+        response = self._append_context(
+            response,
+            "medication_working",
+            "The medication is working well and their condition is stable",
+            is_bool=True,
+        )
         if self.cleaned_data.get("tried_alternatives"):
             response += "The patient has tried alternative medications. "
-            if self.cleaned_data.get("alternative_problems"):
-                response += f"Problems with alternatives: {self.cleaned_data['alternative_problems']}. "
-        if self.cleaned_data.get("mid_year_change"):
-            response += "This is a mid-year formulary change, which may trigger additional patient protections. "
+            response = self._append_context(
+                response, "alternative_problems", "Problems with alternatives"
+            )
+        response = self._append_context(
+            response,
+            "mid_year_change",
+            "This is a mid-year formulary change, which may trigger additional patient protections",
+            is_bool=True,
+        )
         return response
 
     def main(self):

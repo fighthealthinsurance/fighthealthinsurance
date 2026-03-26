@@ -271,6 +271,7 @@ class SonicFax(FaxSenderBase):
                 "includeCover": "1",
             },
         )
+        r.raise_for_status()
 
 
 class HylaFaxClient(FaxSenderBase):
