@@ -127,6 +127,12 @@ class DenialListTest(PatientDashboardSetupMixin, APITestCase):
         self.assertEqual(len(data), 1)
         self.assertFalse(data[0]["has_appeal"])
 
+    def test_unauthenticated_gets_empty_denials(self):
+        """Unauthenticated users get an empty list (no data leakage)."""
+        response = self.client.get("/ziggy/rest/denials/")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.json()), 0)
+
 
 class AppealListTest(PatientDashboardSetupMixin, APITestCase):
     """Tests for the existing appeal list endpoint with patient filtering."""
@@ -346,6 +352,18 @@ class EvidenceTest(PatientDashboardSetupMixin, APITestCase):
         self.login_as_patient_b()
         response = self.client.delete(f"/ziggy/rest/patient_evidence/{ev.id}/")
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_unauthenticated_gets_empty_evidence(self):
+        """Unauthenticated users get an empty list (no data leakage)."""
+        PatientEvidence.objects.create(
+            patient_user=self.patient_a,
+            title="Secret Doc",
+            filename="secret.pdf",
+            mime_type="application/pdf",
+        )
+        response = self.client.get("/ziggy/rest/patient_evidence/")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.json()), 0)
 
 
 class DashboardViewTest(APITestCase):
