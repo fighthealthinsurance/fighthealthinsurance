@@ -66,54 +66,21 @@ class JourneyDocumentationHelper:
             List of (question, explanation) tuples where explanation describes
             why this information helps the appeal. Returns empty list on any failure.
         """
-        # Build the prompt with all available context
-        context_parts = []
-
-        if procedure:
-            context_parts.append(f"Denied procedure/medication: {procedure}")
-        if diagnosis:
-            context_parts.append(f"Diagnosis: {diagnosis}")
-        if denial_reason:
-            context_parts.append(f"Denial reason: {denial_reason}")
-        if denial_text:
-            context_parts.append(f"Denial letter text: {denial_text[:2000]}")
-        if patient_context:
-            context_parts.append(
-                f"Known patient context from conversation: {patient_context}"
-            )
-
-        if not context_parts:
+        # Need at least some context to generate useful questions
+        if not any([procedure, diagnosis, denial_text, denial_reason, patient_context]):
             logger.debug("No context provided for journey questions, returning empty")
             return []
 
-        context_str = "\n".join(context_parts)
-
-        # Build documentation items hint if available
-        doc_items_hint = ""
+        # Build plan_context from documentation items (passed to model
+        # via the plan_context parameter of get_appeal_questions)
+        plan_context = None
         if documentation_items:
             items_list = JourneyDocumentationHelper._format_documentation_items(
                 documentation_items
             )
-            doc_items_hint = (
-                f"\nKey documentation categories to ask about:\n{items_list}\n"
+            plan_context = (
+                f"Key documentation categories to ask about:\n{items_list}"
             )
-
-        prompt = f"""Context about the patient's insurance denial:
-{context_str}
-{doc_items_hint}
-Your task: Generate 2-4 specific, patient-friendly questions that help document the patient's medical journey to strengthen their appeal. Focus on:
-1. Prior treatments/medications tried and why they didn't work
-2. Relevant test results or diagnostic evidence
-3. Treatment history and timeline
-4. Clinical rationale for the denied treatment
-
-Format each question on its own line as: QUESTION? | EXPLANATION_OF_WHY_THIS_HELPS
-For example:
-What allergy medications have you tried before, and did any cause side effects? | Documenting failed prior treatments shows medical necessity and that cheaper alternatives were already attempted.
-How long have you been experiencing these symptoms? | A longer symptom history strengthens the argument that this treatment is medically necessary, not elective.
-
-Only ask about information NOT already known from the context above. Do not ask about the denial itself.
-While your reasoning (inside <think></think>) can discuss rationale, do not include it in the answer."""
 
         # Use internal models for this (not external) to keep data private
         models_to_try = ml_router.get_chat_backends(use_external=False)
@@ -135,6 +102,7 @@ While your reasoning (inside <think></think>) can discuss rationale, do not incl
                     procedure=procedure,
                     diagnosis=diagnosis,
                     patient_context=patient_context,
+                    plan_context=plan_context,
                 )
             )
 
