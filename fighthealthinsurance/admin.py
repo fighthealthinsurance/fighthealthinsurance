@@ -233,8 +233,8 @@ class MailingListSubscriberAdmin(admin.ModelAdmin):
 class FollowUpTypeAdmin(admin.ModelAdmin):
     """Admin configuration for FollowUpType model."""
 
-    list_display = ("id", "name", "subject", "duration")
-    search_fields = ("name", "subject", "text")
+    list_display = ("id", "name", "template_name", "subject", "duration")
+    search_fields = ("name", "template_name", "subject", "text")
     ordering = ("name",)
 
 

@@ -164,6 +164,7 @@ class FollowUpType(models.Model):
 
     id = models.AutoField(primary_key=True)
     name = models.CharField(max_length=300, default="")
+    template_name = models.CharField(max_length=100, default="followup", blank=True)
     subject = models.CharField(max_length=300, primary_key=False)
     text = models.TextField(max_length=30000, primary_key=False)
     duration = models.DurationField()

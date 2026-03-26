@@ -523,6 +523,33 @@ class NextStepInfoSerializable:
     semi_sekret: str
 
 
+def schedule_follow_ups(email: str, denial: "Denial") -> None:
+    """Schedule 7-day, 30-day, and 90-day follow-up emails for a denial.
+
+    Skips follow-ups whose date would already be in the past (e.g. when
+    backfilling old denials) and guards against duplicate scheduling.
+    """
+    follow_up_types = FollowUpType.objects.filter(
+        name__in=["followup_7day", "followup_30day", "followup_90day"]
+    )
+    today = datetime.date.today()
+    for fut in follow_up_types:
+        follow_up_date = denial.date + fut.duration
+        # Skip if the follow-up date is already in the past
+        if follow_up_date < today:
+            continue
+        # Guard against duplicates
+        if not FollowUpSched.objects.filter(
+            denial_id=denial, follow_up_type=fut
+        ).exists():
+            FollowUpSched.objects.create(
+                email=email,
+                follow_up_type=fut,
+                follow_up_date=follow_up_date,
+                denial_id=denial,
+            )
+
+
 class FollowUpHelper:
     @classmethod
     def fetch_denial(
@@ -570,13 +597,9 @@ class FollowUpHelper:
             name_for_quote=name_for_quote,
             quote=quote,
         )
-        # If they asked for additional follow up add a new schedule
+        # If they asked for additional follow up add new schedules
         if follow_up_again:
-            FollowUpSched.objects.create(
-                email=denial.raw_email,
-                denial_id=denial,
-                follow_up_date=denial.date + datetime.timedelta(days=15),
-            )
+            schedule_follow_ups(denial.raw_email, denial)
         for document in followup_documents:
             fd = FollowUpDocuments.objects.create(
                 follow_up_document_enc=document, denial=denial, follow_up_id=follow_up
@@ -1139,11 +1162,7 @@ class DenialCreatorHelper:
             denial.save()
 
         if possible_email is not None:
-            FollowUpSched.objects.create(
-                email=possible_email,
-                follow_up_date=denial.date + datetime.timedelta(days=15),
-                denial_id=denial,
-            )
+            schedule_follow_ups(possible_email, denial)
         your_state = None
         if zip is not None and zip != "":
             try:

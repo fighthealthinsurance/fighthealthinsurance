@@ -8,6 +8,7 @@ import ray
 from loguru import logger
 
 from fighthealthinsurance import common_view_logic, forms as core_forms
+from fighthealthinsurance.common_view_logic import schedule_follow_ups
 from fighthealthinsurance.helpers.data_helpers import RemoveDataHelper
 from fighthealthinsurance.followup_emails import (
     FollowUpEmailSender,
@@ -91,11 +92,7 @@ class ScheduleFollowUps(View):
             # Shouldn't happen but makes the type checker happy.
             if denial.raw_email is None:
                 continue
-            FollowUpSched.objects.create(
-                email=denial.raw_email,
-                follow_up_date=denial.date + datetime.timedelta(days=15),
-                denial_id=denial,
-            )
+            schedule_follow_ups(denial.raw_email, denial)
             c = c + 1
         return HttpResponse(str(c))
 

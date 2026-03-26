@@ -1,0 +1,28 @@
+Hello,
+
+It's been about 30 days since you generated your appeal with Fight Health Insurance. We're checking in to see how things are going.
+
+{% if selected_appeal %}
+Have you heard back from your insurance company? Many insurers are required to respond within 30-60 days for standard appeals. Here are some tips:
+
+- If you haven't heard back, call your insurance company and ask for a status update on your appeal. Have your reference number or claim number ready.
+- If your appeal was approved — congratulations! We'd love to hear about it.
+- If your appeal was denied again, you may have the right to file an external review with an independent third party. Don't give up!
+
+Remember: insurance companies count on people giving up. Persistence matters, and the data shows that many appeals are ultimately successful.
+{% else %}
+It looks like we may not have generated an appeal that worked for you last time. If your situation has changed or you'd like to try again, we're here to help.
+{% endif %}
+
+Please update us on your appeal status at {{ followup_link }} — your feedback helps us track outcomes and improve our service for everyone.
+
+Thank you for being part of our community! If you found Fight Health Insurance helpful, there are many ways you can help us and others fighting unfair denials:
+- Share your experience with friends and family who might need help
+- Follow us on social media to help spread awareness
+- Learn more at: https://www.fighthealthinsurance.com/how-to-help
+
+Wishing you the best,
+
+Holden :)
+
+https://www.fighthealthinsurance.com
