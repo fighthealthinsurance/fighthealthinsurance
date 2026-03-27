@@ -1,4 +1,5 @@
 import asyncio
+import io
 import json
 import re
 import sys
@@ -47,6 +48,35 @@ class PubMedTools(object):
     # Rough bias to "recent" articles
     since_list = ["2024", None]
 
+    def _url_sources(
+        self,
+        pmid: str,
+        doi: Optional[str],
+        session: aiohttp.ClientSession,
+        per_source_timeout: float,
+    ) -> List[Tuple[str, Any]]:
+        """Build the ordered list of (name, coroutine-factory) pairs for URL resolution.
+
+        Returns callables (not live coroutines) so the caller can create them lazily,
+        avoiding "coroutine was never awaited" warnings on early return.
+        """
+        t = per_source_timeout
+        sources: List[Tuple[str, Any]] = [
+            ("FindIt", lambda: self._try_findit(pmid, t)),
+            ("PMC", lambda: self._try_pmc(pmid, session, t)),
+            ("Europe PMC", lambda: self._try_europe_pmc(pmid, session, t)),
+        ]
+        if doi:
+            sources += [
+                ("Unpaywall", lambda: self._try_unpaywall(doi, session, t)),
+                (
+                    "preprint server",
+                    lambda: self._try_preprint_servers(doi, session, t),
+                ),
+                ("DOI resolution", lambda: self._try_doi_resolution(doi, session, t)),
+            ]
+        return sources
+
     async def _find_article_url(
         self,
         pmid: str,
@@ -54,62 +84,20 @@ class PubMedTools(object):
         session: Optional[aiohttp.ClientSession] = None,
         per_source_timeout: float = 10.0,
     ) -> Optional[str]:
-        """Aggressively try multiple sources to find a PDF/full-text URL for an article.
-
-        Tries in order:
-        1. metapub FindIt (existing approach)
-        2. PubMed Central (PMC) direct PDF link
-        3. Europe PMC full text
-        4. Unpaywall API (open access finder)
-        5. medRxiv/bioRxiv preprint PDF
-        6. DOI resolution to publisher with PDF link detection
-        """
-        url: Optional[str] = None
+        """Try multiple sources in order to find a PDF/full-text URL for an article."""
         owns_session = session is None
         if owns_session:
             session = aiohttp.ClientSession(headers=_FETCH_HEADERS)
         assert session is not None
 
         try:
-            # 1. metapub FindIt
-            url = await self._try_findit(pmid, per_source_timeout)
-            if url:
-                logger.debug(f"[{pmid}] Found URL via FindIt: {url}")
-                return url
-
-            # 2. PMC direct PDF
-            url = await self._try_pmc(pmid, session, per_source_timeout)
-            if url:
-                logger.debug(f"[{pmid}] Found URL via PMC: {url}")
-                return url
-
-            # 3. Europe PMC
-            url = await self._try_europe_pmc(pmid, session, per_source_timeout)
-            if url:
-                logger.debug(f"[{pmid}] Found URL via Europe PMC: {url}")
-                return url
-
-            # 4. Unpaywall (needs DOI)
-            if doi:
-                url = await self._try_unpaywall(doi, session, per_source_timeout)
+            for name, make_coro in self._url_sources(
+                pmid, doi, session, per_source_timeout
+            ):
+                url = await make_coro()
                 if url:
-                    logger.debug(f"[{pmid}] Found URL via Unpaywall: {url}")
+                    logger.debug(f"[{pmid}] Found URL via {name}: {url}")
                     return url
-
-            # 5. medRxiv/bioRxiv (needs DOI)
-            if doi:
-                url = await self._try_preprint_servers(doi, session, per_source_timeout)
-                if url:
-                    logger.debug(f"[{pmid}] Found URL via preprint server: {url}")
-                    return url
-
-            # 6. DOI resolution
-            if doi:
-                url = await self._try_doi_resolution(doi, session, per_source_timeout)
-                if url:
-                    logger.debug(f"[{pmid}] Found URL via DOI resolution: {url}")
-                    return url
-
             logger.debug(f"[{pmid}] No PDF URL found from any source")
             return None
         finally:
@@ -137,7 +125,6 @@ class PubMedTools(object):
     ) -> Optional[str]:
         """Check if article is in PubMed Central and get its PDF URL."""
         try:
-            # Use NCBI ID converter to find PMC ID
             converter_url = (
                 f"https://www.ncbi.nlm.nih.gov/pmc/utils/idconv/v1.0/"
                 f"?ids={pmid}&format=json&tool=fighthealthinsurance&email=support@fighthealthinsurance.com"
@@ -170,11 +157,9 @@ class PubMedTools(object):
                         results = data.get("resultList", {}).get("result", [])
                         if results:
                             result = results[0]
-                            # Check for full text URLs
                             full_text_urls = result.get("fullTextUrlList", {}).get(
                                 "fullTextUrl", []
                             )
-                            # Prefer PDF, then HTML
                             for ft_url in full_text_urls:
                                 if ft_url.get("documentStyle") == "pdf" and ft_url.get(
                                     "availabilityCode"
@@ -206,7 +191,6 @@ class PubMedTools(object):
                         data = await resp.json()
                         best_oa = data.get("best_oa_location")
                         if best_oa:
-                            # Prefer PDF URL, fall back to landing page
                             pdf_url = best_oa.get("url_for_pdf")
                             if pdf_url:
                                 return str(pdf_url)
@@ -317,11 +301,9 @@ class PubMedTools(object):
                         final_url = str(resp.url)
                         content_type = resp.headers.get("Content-Type", "")
 
-                        # If the DOI resolved directly to a PDF
                         if "application/pdf" in content_type:
                             return final_url
 
-                        # Check for common publisher PDF URL patterns
                         if "text/html" in content_type:
                             html = await resp.text()
                             pdf_url = self._extract_pdf_url_from_html(html, final_url)
@@ -339,7 +321,6 @@ class PubMedTools(object):
     @staticmethod
     def _extract_pdf_url_from_html(html: str, base_url: str) -> Optional[str]:
         """Extract PDF URL from publisher HTML page using common patterns."""
-        # Common meta tag patterns for PDF links
         patterns = [
             r'<meta[^>]*name=["\']citation_pdf_url["\'][^>]*content=["\'](.*?)["\']',
             r'<meta[^>]*content=["\'](.*?)["\'][^>]*name=["\']citation_pdf_url["\']',
@@ -767,18 +748,13 @@ class PubMedTools(object):
                 response.raise_for_status()
                 content_type = response.headers.get("Content-Type", "")
                 if self._is_pdf_response(url, content_type):
-                    with tempfile.NamedTemporaryFile(
-                        suffix=".pdf", delete=False
-                    ) as my_data:
-                        my_data.write(await response.read())
-                        with open(my_data.name, "rb") as open_pdf_file:
-                            read_pdf = PyPDF2.PdfReader(open_pdf_file)
-                            if read_pdf.is_encrypted:
-                                read_pdf.decrypt("")
-                            for page in read_pdf.pages:
-                                article_text += page.extract_text()
+                    pdf_bytes = await response.read()
+                    read_pdf = PyPDF2.PdfReader(io.BytesIO(pdf_bytes))
+                    if read_pdf.is_encrypted:
+                        read_pdf.decrypt("")
+                    for page in read_pdf.pages:
+                        article_text += page.extract_text()
                 else:
-                    # Assume maybe text-ish
                     text = (await response.text()).strip()
                     if " " in text and len(text) > 50:
                         article_text = text
@@ -801,7 +777,6 @@ class PubMedTools(object):
                 url = None
                 doi = getattr(fetched, "doi", None) if fetched else None
 
-                # Use aggressive multi-source URL finder
                 async with aiohttp.ClientSession(headers=_FETCH_HEADERS) as session:
                     url = await self._find_article_url(
                         article_id, doi=doi, session=session
@@ -913,7 +888,6 @@ class PubMedTools(object):
                             f"Stored URL {article.article_url} didn't yield PDF, trying other sources"
                         )
 
-                    # Aggressively search for a PDF URL using all sources
                     url = await self._find_article_url(
                         article_id,
                         doi=article.doi,
