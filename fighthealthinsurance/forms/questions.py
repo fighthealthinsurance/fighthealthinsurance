@@ -1522,9 +1522,6 @@ class JourneyDocumentationQuestions(InsuranceQuestions):
         help_text="If you know, explain why your doctor chose this treatment over alternatives — e.g., other options failed, you have specific risk factors, or clinical guidelines recommend it.",
     )
 
-    def __init__(self, *args, prof_pov: bool = False, **kwargs):
-        super().__init__(*args, prof_pov=prof_pov, **kwargs)
-
     def medical_context(self):
         """Return context about the patient's medical journey."""
         parts = []

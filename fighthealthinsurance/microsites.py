@@ -164,18 +164,17 @@ class Microsite:
         if not self.journey_documentation_items:
             return ""
 
-        items_text = []
-        for item in self.journey_documentation_items:
-            label = item["label"]
-            hint = item.get("prompt_hint", "")
-            if hint:
-                items_text.append(f"- {label} ({hint})")
-            else:
-                items_text.append(f"- {label}")
+        from fighthealthinsurance.ml.ml_journey_helper import (
+            JourneyDocumentationHelper,
+        )
+
+        items_text = JourneyDocumentationHelper._format_documentation_items(
+            self.journey_documentation_items
+        )
 
         return (
             f"For {self.default_procedure}, the following documentation strengthens an appeal:\n"
-            + "\n".join(items_text)
+            + items_text
             + "\n\nProactively ask about these items during the conversation. "
             "Ask about one or two at a time, not all at once. "
             "When the patient provides information, acknowledge it and explain how it helps their appeal."
