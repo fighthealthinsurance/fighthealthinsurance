@@ -625,7 +625,12 @@ class PubMedE2EAppealFlowTest(TransactionTestCase):
                 "Without microsite, query should be just procedure+diagnosis",
             )
             summary_pmids = json.loads(summary.articles)
-            self.assertGreater(len(summary_pmids), 0)
+            # Summary row should contain ALL pmids from queries, not just
+            # the subset that had successful mini-article metadata fetches.
+            self.assertEqual(
+                sorted(summary_pmids),
+                ["11111111", "22222222", "33333333", "44444444"],
+            )
 
             # Verify the two row types don't cross-contaminate
             for cache_row in cache_rows:
