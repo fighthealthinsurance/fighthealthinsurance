@@ -103,6 +103,11 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         staff_member_required(staff_views.SendMailingListMailView.as_view()),
         name="send_mailing_list_mail",
     ),
+    path(
+        "timbit/help/delete_user_data",
+        staff_member_required(staff_views.AdminDeleteDataView.as_view()),
+        name="admin_delete_user_data",
+    ),
     # Authentication
     path("v0/auth/", include("fhi_users.urls")),
     # stripe integration (TODO webhooks go here)

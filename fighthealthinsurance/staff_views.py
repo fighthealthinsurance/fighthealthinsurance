@@ -8,6 +8,7 @@ import ray
 from loguru import logger
 
 from fighthealthinsurance import common_view_logic, forms as core_forms
+from fighthealthinsurance.helpers.data_helpers import RemoveDataHelper
 from fighthealthinsurance.followup_emails import (
     FollowUpEmailSender,
     ThankyouEmailSender,
@@ -25,6 +26,49 @@ from fighthealthinsurance.models import (
 )
 from fighthealthinsurance.type_utils import User
 from fighthealthinsurance.utils import mask_email_for_logging
+
+
+class AdminDeleteDataView(generic.FormView):
+    """Staff view to delete all data for a user by email address.
+
+    Used when handling data deletion requests received via email.
+    Skips the token confirmation flow since staff authentication
+    serves as authorization.
+    """
+
+    template_name = "pro_domain_task.html"
+    form_class = core_forms.DeleteDataForm
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context["title"] = "Delete User Data"
+        context["heading"] = "Delete User Data"
+        context["description"] = (
+            "Enter the email address of the user whose data should be deleted. "
+            "This will permanently remove all associated denials, appeals, "
+            "follow-ups, chats, and mailing list entries."
+        )
+        context["button_text"] = "Delete Data"
+        return context
+
+    def form_valid(self, form):
+        email = form.cleaned_data["email"]
+        masked = mask_email_for_logging(email)
+        try:
+            with transaction.atomic():
+                RemoveDataHelper.remove_data_for_email(email)
+        except Exception:
+            logger.opt(exception=True).error(
+                f"Staff user {self.request.user.username} failed to delete data for {masked}"
+            )
+            return HttpResponse(
+                f"Error deleting data for {masked}. Please try again.",
+                status=500,
+            )
+        logger.info(
+            f"Staff user {self.request.user.username} deleted data for {masked}"
+        )
+        return HttpResponse(f"All data for {masked} has been deleted.")
 
 
 class StaffDashboardView(generic.TemplateView):
