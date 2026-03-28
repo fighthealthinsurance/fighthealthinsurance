@@ -271,6 +271,13 @@ class TestConfirmDeleteDataView(TestCase):
         )
         assert response.status_code == 200
         assert b"Confirm Data Deletion" in response.content
+        # POST with whitespace-padded email
+        response = self.client.post(
+            url, {"token": token.token, "email": "  test@example.com  "}
+        )
+        assert response.status_code == 200
+        assert b"data associated with your email has been removed" in response.content
+        mock_remove.assert_called_once_with("test@example.com")
 
     @patch("fighthealthinsurance.views.RemoveDataHelper.remove_data_for_email")
     def test_new_token_after_previous_deletion(self, mock_remove):

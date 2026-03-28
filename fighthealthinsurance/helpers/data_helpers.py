@@ -30,9 +30,9 @@ class RemoveDataHelper:
         Args:
             email: Email address to remove data for
         """
+        email = email.strip().lower()
         hashed_email: str = Denial.get_hashed_email(email)
-        # Core denial/appeal data (hashed lookups are case-agnostic since
-        # get_hashed_email lowercases before hashing)
+        # Core denial/appeal data
         Denial.objects.filter(hashed_email=hashed_email).delete()
         Appeal.objects.filter(hashed_email=hashed_email).delete()
         # Follow-up related — use __iexact for plaintext email fields so
