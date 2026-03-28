@@ -46,6 +46,8 @@ class InsuranceQuestions(forms.Form):
         """Append field value to context. Booleans get 'label.', others get 'label: val.'."""
         val = self.cleaned_data.get(field)
         if val:
+            if response and not response[-1].isspace():
+                response += " "
             if isinstance(self.fields.get(field), forms.BooleanField):
                 response += f"{label}. "
             else:
@@ -133,6 +135,10 @@ class MedicalNecessaryQuestions(InsuranceQuestions):
         return [
             "The claim was denied as not medically necessary; however, it is medically necessary for {medical_reason}."
         ]
+
+
+# Backwards-compat alias: existing DB records may store the old misspelled name
+MedicalNeccessaryQuestions = MedicalNecessaryQuestions
 
 
 class ExperimentalQuestions(MedicalNecessaryQuestions):
@@ -555,6 +561,12 @@ class ColonoscopyQuestions(InsuranceQuestions):
         label="Were polyps removed during the procedure?",
         help_text="Under the ACA and recent guidance, polyp removal during a screening colonoscopy should still be covered as preventive.",
     )
+    diagnostic_reason = forms.CharField(
+        max_length=300,
+        required=False,
+        label="If diagnostic, what was the indication?",
+        help_text="E.g., symptoms such as rectal bleeding, change in bowel habits, abnormal imaging, surveillance after prior polyp removal.",
+    )
     family_history = forms.BooleanField(
         required=False,
         label="Does the patient have a family history of colorectal cancer?",
@@ -569,6 +581,9 @@ class ColonoscopyQuestions(InsuranceQuestions):
         elif sd == "diagnostic":
             response += "This was a diagnostic colonoscopy. "
         response = self._append_context(response, "age", "Patient age")
+        response = self._append_context(
+            response, "diagnostic_reason", "Diagnostic indication"
+        )
         response = self._append_context(
             response,
             "polyp_removal",
@@ -591,6 +606,24 @@ class ColonoscopyQuestions(InsuranceQuestions):
                 "must be covered without cost-sharing. The USPSTF recommends colorectal "
                 "cancer screening for adults aged 45 to 75."
             )
+        elif sd == "diagnostic":
+            reason = self.cleaned_data.get("diagnostic_reason", "")
+            if reason:
+                r.append(
+                    f"This was a diagnostic colonoscopy indicated by: {reason}. "
+                    "Diagnostic colonoscopies are medically necessary procedures "
+                    "performed to evaluate symptoms, abnormal findings, or for "
+                    "surveillance of prior colorectal conditions. The treating "
+                    "physician determined this procedure was required for appropriate "
+                    "clinical management."
+                )
+            else:
+                r.append(
+                    "This was a diagnostic colonoscopy performed to evaluate clinical "
+                    "findings. Diagnostic colonoscopies are medically necessary "
+                    "procedures that differ from preventive screenings and are indicated "
+                    "by symptoms, abnormal test results, or surveillance needs."
+                )
         if self.cleaned_data.get("polyp_removal"):
             r.append(
                 "Polyps were removed during this procedure. Under the Consolidated "

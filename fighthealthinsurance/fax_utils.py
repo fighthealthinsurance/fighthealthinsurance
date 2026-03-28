@@ -242,7 +242,10 @@ class SonicFax(FaxSenderBase):
         dest_name: Optional[str] = None,
     ):
         r = s.get(
-            "https://members.sonic.net/labs/fax", headers=self.headers, cookies=cookies
+            "https://members.sonic.net/labs/fax",
+            headers=self.headers,
+            cookies=cookies,
+            timeout=30,
         )
         r.raise_for_status()
         csrf_matched = self.csrf_regex.search(r.text)
@@ -254,6 +257,7 @@ class SonicFax(FaxSenderBase):
             r = s.post(
                 "https://members.sonic.net/labs/fax/?a=upload",
                 files={"filename": (filename, f)},
+                timeout=60,
             )
         r.raise_for_status()
         r = s.post(
@@ -271,6 +275,7 @@ class SonicFax(FaxSenderBase):
                 "message": "Fight Health Insurance",
                 "includeCover": "1",
             },
+            timeout=60,
         )
         r.raise_for_status()
 
