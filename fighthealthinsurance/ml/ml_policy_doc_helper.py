@@ -690,32 +690,43 @@ Document chunk:
         if progress_callback:
             await progress_callback(total_chunks, total_chunks)
 
-        # Use a semaphore to limit concurrency
-        semaphore = asyncio.Semaphore(cls.MAX_PARALLEL_CHUNKS)
-
-        async def bounded_analyze(chunk: Dict[str, Any], idx: int) -> Optional[str]:
-            async with semaphore:
-                return await cls._analyze_single_chunk(
-                    chunk=chunk,
-                    chunk_index=idx,
-                    user_question=user_question,
-                    plan_category=plan_category,
-                    remaining_counter=remaining_counter,
-                    remaining_count=remaining_count,
-                    total_chunks=total_chunks,
-                    progress_callback=progress_callback,
-                )
-
-        tasks = [bounded_analyze(chunk, i) for i, chunk in enumerate(chunks)]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-
         summaries: list[str] = []
-        for i, result in enumerate(results):
-            if isinstance(result, Exception):
-                logger.debug(f"Chunk {i} raised exception: {result}")
-            elif result is not None:
-                summaries.append(result)
 
+        # Use a bounded worker pool so we only have O(MAX_PARALLEL_CHUNKS) tasks
+        # alive at any given time, even for very large documents.
+        work_queue: asyncio.Queue[tuple[int, Dict[str, Any]]] = asyncio.Queue()
+        for idx, chunk in enumerate(chunks):
+            work_queue.put_nowait((idx, chunk))
+
+        async def worker() -> None:
+            while True:
+                try:
+                    idx, chunk = work_queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+
+                try:
+                    result = await cls._analyze_single_chunk(
+                        chunk=chunk,
+                        chunk_index=idx,
+                        user_question=user_question,
+                        plan_category=plan_category,
+                        remaining_counter=remaining_counter,
+                        remaining_count=remaining_count,
+                        total_chunks=total_chunks,
+                        progress_callback=progress_callback,
+                    )
+                except Exception as exc:
+                    logger.debug(f"Chunk {idx} raised exception: {exc}")
+                else:
+                    if result is not None:
+                        summaries.append(result)
+
+        # Start at most MAX_PARALLEL_CHUNKS workers (or fewer if there are
+        # not enough chunks), and wait for all work to complete.
+        num_workers = min(cls.MAX_PARALLEL_CHUNKS, total_chunks) or 1
+        worker_tasks = [asyncio.create_task(worker()) for _ in range(num_workers)]
+        await asyncio.gather(*worker_tasks)
         return summaries
 
     @classmethod
@@ -923,24 +934,22 @@ Respond in JSON format with the following structure:
         Includes user_question in cache lookup so different questions get fresh analysis.
         When user_question is None, prefer a generic (no-question) analysis.
         """
-        lookup: Dict[str, Any] = {"policy_document": policy_document}
-        if user_question:
-            lookup["user_question"] = user_question
-        else:
-            lookup["user_question__isnull"] = True
+        # Normalize None (or other falsy values) to the empty string to match storage.
+        normalized_user_question = user_question or ""
+
+        lookup: Dict[str, Any] = {
+            "policy_document": policy_document,
+            "user_question": normalized_user_question,
+        }
 
         existing = await PolicyDocumentAnalysis.objects.filter(**lookup).afirst()
-
-        # Fallback: if no null-question analysis exists, try empty string
-        if not existing and not user_question:
-            existing = await PolicyDocumentAnalysis.objects.filter(
-                policy_document=policy_document, user_question=""
-            ).afirst()
 
         if existing:
             logger.debug(f"Found existing analysis for document {policy_document.id}")
             return existing
 
         return await cls.analyze_policy_document(
-            policy_document, user_question, progress_callback=progress_callback
+            policy_document,
+            normalized_user_question,
+            progress_callback=progress_callback,
         )
