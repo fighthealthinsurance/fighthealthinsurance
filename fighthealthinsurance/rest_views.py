@@ -2170,7 +2170,7 @@ def _get_patient_user_or_403(
         )
 
 
-def _filter_by_appeal_param(queryset, request: Request):
+def _filter_by_appeal_param(queryset: models.QuerySet, request: Request) -> models.QuerySet:
     """Optionally filter a queryset by ?appeal_id= query parameter."""
     appeal_id = request.query_params.get("appeal_id")
     if appeal_id and appeal_id.isdigit():
@@ -2178,7 +2178,7 @@ def _filter_by_appeal_param(queryset, request: Request):
     return queryset
 
 
-def _verify_appeal_ownership(request: Request, appeal) -> Optional[Appeal]:
+def _verify_appeal_ownership(request: Request, appeal: object) -> Optional[Appeal]:
     """Verify an appeal belongs to the requesting user. Returns Appeal or None.
 
     Accepts an Appeal object (from serializer.validated_data) or an ID
@@ -2286,7 +2286,7 @@ class PatientEvidenceViewSet(viewsets.ViewSet, SerializerMixin):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        if file.size and file.size > MAX_EVIDENCE_FILE_SIZE:
+        if file.size is not None and file.size > MAX_EVIDENCE_FILE_SIZE:
             return Response(
                 serializers.ErrorSerializer(
                     {"error": "File size exceeds 10MB limit"}
