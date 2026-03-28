@@ -30,11 +30,13 @@ class TestHowToHelpPage(TestCase):
         self.assertContains(
             result, "Help Someone Fight a Denial They Couldn't Afford to Appeal"
         )
+        self.assertContains(result, "Provide Cloud Resources")
         self.assertContains(result, "Connect Us With People Who Need This")
 
         # Check persona section IDs
         self.assertContains(result, 'id="help-patients"')
         self.assertContains(result, 'id="developers"')
+        self.assertContains(result, 'id="cloud"')
         self.assertContains(result, 'id="providers"')
         self.assertContains(result, 'id="connectors"')
 
