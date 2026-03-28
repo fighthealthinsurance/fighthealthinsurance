@@ -289,8 +289,8 @@ under the care of [doctor name] at [facility name]."
   fields:
     name: Colonoscopy
     form: ColonoscopyQuestions
-    procedure_regex: "\\b(colonoscop|45378|45380|45385|45384|45381|45382|45383|45386|45388|45390|G0121|G0105)\\b"
-    regex: "\\b(colonoscop|45378|45380|45385|45384|colorectal cancer screening|colon cancer screen)\\b"
+    procedure_regex: "\\b(colonoscop\\w*|45378|45380|45385|45384|45381|45382|45383|45386|45388|45390|G0121|G0105)\\b"
+    regex: "\\b(colonoscop\\w*|45378|45380|45385|45384|colorectal cancer screening|colon cancer screen)\\b"
     appeal_text: "Screening colonoscopies are recommended by the USPSTF (grade A) for adults aged 45–75 and must be covered without cost-sharing under the ACA (Section 2713). Under the Consolidated Appropriations Act of 2023, polyp removal during a screening colonoscopy does not reclassify the procedure as diagnostic. See https://www.uspreventiveservicestaskforce.org/uspstf/recommendation/colorectal-cancer-screening and CMS FAQ guidance on colonoscopy cost-sharing protections."
 # Weight Loss Medication denial type (parent)
 - model: fighthealthinsurance.denialtypes
@@ -300,7 +300,7 @@ under the care of [doctor name] at [facility name]."
     form: WeightLossMedicationQuestions
     procedure_regex: "\\b(zepbound|ozempic|mounjaro|wegovy|tirzepatide|semaglutide|liraglutide|saxenda|contrave|qsymia|anti.?obesity|weight loss (drug|medication)|GLP.?1)\\b"
     regex: "\\b(zepbound|ozempic|mounjaro|wegovy|tirzepatide|semaglutide|liraglutide|saxenda|contrave|qsymia|weight loss drug|anti.?obesity|GLP.?1|obesity medication|weight management)\\b"
-    diagnosis_regex: "\\b(obes|E66|BMI|Z68\\.3|Z68\\.4|overweight)\\b"
+    diagnosis_regex: "\\b(obes\\w*|E66|BMI|Z68\\.3|Z68\\.4|overweight)\\b"
     appeal_text: "Anti-obesity medications such as GLP-1 receptor agonists (semaglutide, tirzepatide) are FDA-approved for chronic weight management in patients with BMI >= 30 kg/m² or BMI >= 27 kg/m² with weight-related comorbidities. The American Medical Association recognizes obesity as a disease. Clinical guidelines from the Endocrine Society, AACE, and the Obesity Medicine Association support pharmacotherapy when lifestyle modifications are insufficient. Many state and federal parity laws require coverage of obesity treatments. Excluding FDA-approved anti-obesity medications while covering bariatric surgery or other obesity treatments may constitute discriminatory benefit design."
 # Imaging (MRI/CT) denial type
 - model: fighthealthinsurance.denialtypes
@@ -319,7 +319,7 @@ under the care of [doctor name] at [facility name]."
     form: MentalHealthQuestions
     procedure_regex: "\\b(psychotherapy|90834|90837|90832|90847|90846|90853|therapy session|counseling session|behavioral health|mental health treatment)\\b"
     regex: "\\b(psychotherapy|mental health|behavioral health|therapy session|counseling|psychiatric|90834|90837|90832)\\b"
-    diagnosis_regex: "\\b(F3[0-9]|F4[0-8]|F2[0-9]|depression|anxiety|PTSD|bipolar|schizophren|mental disorder)\\b"
+    diagnosis_regex: "\\b(F3[0-9]|F4[0-8]|F2[0-9]|depression|anxiety|PTSD|bipolar|schizophren\\w*|mental disorder)\\b"
     appeal_text: "The Mental Health Parity and Addiction Equity Act (MHPAEA) requires that financial requirements and treatment limitations for mental health and substance use disorder benefits be no more restrictive than those for medical/surgical benefits. See https://www.cms.gov/CCIIO/Programs-and-Initiatives/Other-Insurance-Protections/mhpaea_factsheet and the DOL's self-compliance tool. Quantitative treatment limits (such as visit caps) and non-quantitative treatment limits (such as stricter medical necessity criteria) for mental health must comply with parity requirements."
 # Emergency Services denial type
 - model: fighthealthinsurance.denialtypes
@@ -365,7 +365,7 @@ under the care of [doctor name] at [facility name]."
     form: SleepStudyQuestions
     procedure_regex: "\\b(sleep study|polysomnography|95810|95811|95800|95801|95782|95783|sleep test|PSG)\\b"
     regex: "\\b(sleep study|polysomnography|sleep apnea|sleep test|sleep disorder|sleep lab|95810|95811)\\b"
-    diagnosis_regex: "\\b(G47|sleep apnea|insomnia|narcolepsy|hypersomn)\\b"
+    diagnosis_regex: "\\b(G47|sleep apnea|insomnia|narcolepsy|hypersomn\\w*)\\b"
     appeal_text: "The American Academy of Sleep Medicine (AASM) clinical practice guidelines recommend polysomnography for the diagnosis of sleep-disordered breathing in patients with signs and symptoms of obstructive sleep apnea. Untreated sleep apnea is associated with increased cardiovascular risk, motor vehicle accidents, and higher overall healthcare utilization. Diagnosing and treating sleep disorders is cost-effective and medically necessary."
 # Lab Work denial type
 - model: fighthealthinsurance.denialtypes
@@ -392,7 +392,7 @@ under the care of [doctor name] at [facility name]."
   fields:
     name: Assistive Device / AAC
     form: AssistiveDeviceQuestions
-    procedure_regex: "\\b(AAC|augmentative|alternative communication|speech.generating device|SGD|communication device|picture board|assistive (device|technology)|durable medical equipment|DME|wheelchair|power chair|walker|prosthes|orthot|hearing aid|cochlear implant|E1399|E2500|E2502|E2504|E2506|E2508|E2510|K0108|V5261|V5014|L8614)\\b"
-    regex: "\\b(AAC|augmentative|alternative communication|speech.generating|communication device|assistive (device|technology)|durable medical equipment|DME|wheelchair|prosthes|orthot|hearing aid|cochlear)\\b"
-    diagnosis_regex: "\\b(aphasia|R47\\.0|dysarthria|R47\\.1|ALS|G12\\.21|cerebral palsy|G80|autism|F84|stroke|I63|I69|traumatic brain|S06|laryngect|hearing loss|H90|H91)\\b"
+    procedure_regex: "\\b(AAC|augmentative|alternative communication|speech.generating device|SGD|communication device|picture board|assistive (device|technology)|durable medical equipment|DME|wheelchair|power chair|walker|prosthe\\w*|orthot\\w*|hearing aid|cochlear implant|E1399|E2500|E2502|E2504|E2506|E2508|E2510|K0108|V5261|V5014|L8614)\\b"
+    regex: "\\b(AAC|augmentative|alternative communication|speech.generating|communication device|assistive (device|technology)|durable medical equipment|DME|wheelchair|prosthe\\w*|orthot\\w*|hearing aid|cochlear)\\b"
+    diagnosis_regex: "\\b(aphasia|R47\\.0|dysarthria|R47\\.1|ALS|G12\\.21|cerebral palsy|G80|autism|F84|stroke|I63|I69|traumatic brain|S06|laryngect\\w*|hearing loss|H90|H91)\\b"
     appeal_text: "Assistive devices and Augmentative and Alternative Communication (AAC) tools are evidence-based interventions for individuals with severe communication, mobility, or functional impairments. ASHA position statements affirm that AAC is appropriate across the lifespan for individuals with severe communication impairments. Medicare covers speech-generating devices as durable medical equipment (DME) under 42 U.S.C. § 1395x(n). Under the ACA, habilitative and rehabilitative services — including speech-language pathology services and related devices — are essential health benefits. Research published in journals such as the Journal of Speech, Language, and Hearing Research demonstrates that AAC devices improve functional communication, social participation, and quality of life. Denying coverage for a medically necessary assistive device that enables basic functional independence is inconsistent with standard medical practice and ACA coverage requirements."
