@@ -475,7 +475,6 @@ class FormularyChangeQuestions(InsuranceQuestions):
             response,
             "medication_working",
             "The medication is working well and their condition is stable",
-            is_bool=True,
         )
         if self.cleaned_data.get("tried_alternatives"):
             response += "The patient has tried alternative medications. "
@@ -486,7 +485,6 @@ class FormularyChangeQuestions(InsuranceQuestions):
             response,
             "mid_year_change",
             "This is a mid-year formulary change, which may trigger additional patient protections",
-            is_bool=True,
         )
         return response
 
@@ -576,13 +574,11 @@ class ColonoscopyQuestions(InsuranceQuestions):
             response,
             "polyp_removal",
             "Polyps were removed during the procedure",
-            is_bool=True,
         )
         response = self._append_context(
             response,
             "family_history",
             "Patient has a family history of colorectal cancer",
-            is_bool=True,
         )
         return response
 
@@ -650,7 +646,6 @@ class WeightLossMedicationQuestions(InsuranceQuestions):
             response,
             "tried_lifestyle",
             "Patient has tried lifestyle modifications (diet and exercise)",
-            is_bool=True,
         )
         response = self._append_context(
             response, "tried_other_meds", "Other treatments tried"
@@ -717,13 +712,11 @@ class ImagingQuestions(InsuranceQuestions):
             response,
             "prior_imaging",
             "Less advanced imaging was already performed and was insufficient",
-            is_bool=True,
         )
         response = self._append_context(
             response,
             "physician_ordered",
             "This imaging was ordered by the treating physician based on clinical findings",
-            is_bool=True,
         )
         return response
 
@@ -783,7 +776,6 @@ class MentalHealthQuestions(InsuranceQuestions):
             response,
             "functional_impairment",
             "The condition causes significant functional impairment",
-            is_bool=True,
         )
         response += (
             "The Mental Health Parity and Addiction Equity Act (MHPAEA) requires that "
@@ -847,13 +839,11 @@ class EmergencyServicesQuestions(InsuranceQuestions):
             response,
             "called_911",
             "911 was called / patient transported by ambulance",
-            is_bool=True,
         )
         response = self._append_context(
             response,
             "stabilization_needed",
             "Patient required stabilization treatment in the ER",
-            is_bool=True,
         )
         return response
 
@@ -929,7 +919,6 @@ class TherapyRehabQuestions(InsuranceQuestions):
             response,
             "progress_made",
             "Patient has demonstrated progress with therapy",
-            is_bool=True,
         )
         response = self._append_context(
             response, "daily_impact", "Impact on daily activities"
@@ -990,13 +979,11 @@ class GeneticTestingQuestions(InsuranceQuestions):
             response,
             "treatment_impact",
             "Test results will directly impact the treatment plan",
-            is_bool=True,
         )
         response = self._append_context(
             response,
             "guideline_recommended",
             "This test is recommended by clinical guidelines (e.g., NCCN, ACMG)",
-            is_bool=True,
         )
         return response
 
@@ -1054,7 +1041,6 @@ class InpatientHospitalQuestions(InsuranceQuestions):
             response,
             "observation_reclassified",
             "The stay was reclassified from inpatient to observation status",
-            is_bool=True,
         )
         response = self._append_context(response, "length_of_stay", "Length of stay")
         return response
@@ -1170,13 +1156,11 @@ class LabWorkQuestions(InsuranceQuestions):
             response,
             "preventive",
             "This lab work is part of preventive/routine screening",
-            is_bool=True,
         )
         response = self._append_context(
             response,
             "medication_monitoring",
             "This lab work is needed to safely monitor medication",
-            is_bool=True,
         )
         return response
 
@@ -1410,7 +1394,6 @@ class AssistiveDeviceQuestions(InsuranceQuestions):
             response,
             "professional_evaluation",
             "Patient has been evaluated by a qualified professional for this device",
-            is_bool=True,
         )
         response = self._append_context(
             response, "tried_alternatives", "Alternative approaches already tried"
