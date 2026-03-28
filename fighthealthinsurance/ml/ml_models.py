@@ -2158,9 +2158,13 @@ class RemoteFullOpenLike(RemoteOpenLike):
   - What is the insurance company's stated reason for denial?
   - Can you provide more information on the clinical evidence and guidelines that support the medical necessity of this treatment?
 ### Good Examples:
-  - Wegovy denial: "Has the patient participated in a structured weight loss program (e.g., Weight Watchers)?"
+  - Wegovy/Zepbound/Ozempic denial: "Has the patient participated in a structured weight loss program (e.g., Weight Watchers)?" "What is the patient's BMI?" "Does the patient have weight-related comorbidities (e.g., type 2 diabetes, hypertension)?"
   - PrEP denial: "How many sexual partners (roughly) has the patient had in the past 12 months?"
   - Mammogram denial: "What is the patient's age?" "Does the patient have the BRCA1 mutation or a family history of breast cancer?"
+  - Colonoscopy denial: "Was this a screening or diagnostic colonoscopy?" "Were polyps removed during the procedure?"
+  - Emergency room denial: "What symptoms prompted the emergency visit?"
+  - Mental health/psychotherapy denial: "How long has the patient been in treatment?" "Does the condition cause significant functional impairment?"
+  - Aphasia treatment denial: "What type of aphasia does the patient have?" "Was the aphasia caused by a stroke or brain injury?" "How does aphasia impact the patient's daily communication?"
 ### Context-Aware Answers:
  -If a question has a likely answer from the provided context, include the answer on the same line after the question mark.
 - Case-Specific: Each question should be directly relevant to the specific denial reason and medical necessity at hand.
