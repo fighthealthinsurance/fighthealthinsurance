@@ -125,10 +125,9 @@ class MedicalNecessaryQuestions(InsuranceQuestions):
 
     def generate_reason(self):
         """Return the reason OR the special tag {medical_reason} where we will ask the LLM why it might be medically necessary."""
-        if self.cleaned_data["medical_reason"] == "":
+        if not self.cleaned_data.get("medical_reason"):
             return "{medical_reason}"
-        else:
-            return [self.cleaned_data["medical_reason"]]
+        return [self.cleaned_data["medical_reason"]]
 
     def main(self):
         return [
@@ -244,25 +243,25 @@ class GenderAffirmingCareQuestions(InsuranceQuestions):
             response += (
                 "As covered in https://calmatters.org/health/2024/08"
                 "/gender-affirming-care-denials/ CA health plans received the "
-                "largest penality ever for gender-affirming care denials. "
+                "largest penalty ever for gender-affirming care denials. "
                 "The plan must follow https://www.insurance.ca.gov/01-consumers/110-health/"
                 "60-resources/upload/CDI-Gender-Nondiscrimination-Regulations.pdf "
                 "and insurers may not discriminate against gender affirming "
                 "care. If the plan fails to approve this claim the patient "
-                "intents to appeal all the way to the relevant regulator."
+                "intends to appeal all the way to the relevant regulator."
             )
         else:
             response += (
                 "As covered in https://calmatters.org/health/2024/08"
                 "/gender-affirming-care-denials/ CA health plans received "
-                "the largest penality ever for gender-affirming care denials "
-                "and some states have similar non-discriminiation requirements."
+                "the largest penalty ever for gender-affirming care denials "
+                "and some states have similar non-discrimination requirements."
             )
 
         if denial.employer_name is not None:
             if self.employer_hrc_lookup(denial.employer_name):
                 response += (
-                    "The employer has stated to the human rights collation "
+                    "The employer has stated to the Human Rights Campaign "
                     "(HRC) that it will cover transgender health care. Should "
                     "the plan deny this claim we intend to follow up with "
                     "both HR and the HRC."
@@ -407,7 +406,7 @@ class ThirdPartyQuestions(InsuranceQuestions):
 
     def preface(self):
         if self.cleaned_data.get("is_known_3rd_party"):
-            details = self.cleaned_data["alternate_insurance_details"]
+            details = self.cleaned_data.get("alternate_insurance_details", "")
             if self.prof_pov:
                 return [
                     f"As requested, I am providing details regarding third-party insurance coverage for this claim: "
