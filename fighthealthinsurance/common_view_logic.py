@@ -42,6 +42,7 @@ from fhi_users.audit import TrackingInfo
 from fhi_users.models import ProfessionalUser, UserDomain
 from fighthealthinsurance import stripe_utils
 from fighthealthinsurance.fax_actor_ref import fax_actor_ref
+from fighthealthinsurance.ml.bad_output_utils import strip_boilerplate_service
 from fighthealthinsurance.form_utils import *
 from fighthealthinsurance.generate_appeal import *
 from fighthealthinsurance.ml.ml_appeal_questions_helper import MLAppealQuestionsHelper
@@ -1280,20 +1281,27 @@ class DenialCreatorHelper:
                 "extract_procedure_diagnosis_finished": True
             }
 
-            if procedure is not None and len(procedure) < 300:
-                update_fields["procedure"] = procedure
-                update_fields["candidate_procedure"] = procedure
+            if procedure is not None:
+                procedure = strip_boilerplate_service(procedure)
+                if procedure is not None and len(procedure) < 300:
+                    update_fields["procedure"] = procedure
+                    update_fields["candidate_procedure"] = procedure
 
-            if diagnosis is not None and len(diagnosis) < 300:
-                update_fields["diagnosis"] = diagnosis
-                update_fields["candidate_diagnosis"] = diagnosis
+            if diagnosis is not None:
+                diagnosis = strip_boilerplate_service(diagnosis)
+                if diagnosis is not None and len(diagnosis) < 300:
+                    update_fields["diagnosis"] = diagnosis
+                    update_fields["candidate_diagnosis"] = diagnosis
 
             # Update all fields in a single atomic database operation
             await Denial.objects.filter(denial_id=denial_id).aupdate(**update_fields)
 
+            # Refresh in-memory denial so enrichment sees updated values.
+            await denial.arefresh_from_db()
+
             # Use fire_and_forget_in_new_threadpool for background PubMed article search
-            # now that we have diagnosis and procedure information
-            if denial.procedure or denial.diagnosis or procedure or diagnosis:
+            # now that we have diagnosis and procedure information.
+            if denial.procedure or denial.diagnosis:
 
                 async def find_pubmed_articles():
                     """
