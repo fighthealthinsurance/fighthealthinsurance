@@ -2779,6 +2779,9 @@ class InsuranceCallLog(PatientOwnedModelMixin, models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    def __str__(self) -> str:
+        return f"Call on {self.call_date:%Y-%m-%d} by {self.patient_user}"
+
     class Meta:
         ordering = ["-call_date"]
 
@@ -2803,6 +2806,9 @@ class PatientEvidence(PatientOwnedModelMixin, models.Model):
     filename = models.CharField(max_length=255)
     mime_type = models.CharField(max_length=127)
     created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self) -> str:
+        return f"{self.title} ({self.filename})"
 
     class Meta:
         ordering = ["-created_at"]

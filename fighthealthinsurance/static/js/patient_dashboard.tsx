@@ -6,6 +6,7 @@ import {
   Box,
   Button,
   Card,
+  Checkbox,
   Container,
   FileInput,
   Group,
@@ -86,13 +87,14 @@ interface Evidence {
 // --- API helpers ---
 
 async function apiFetch<T>(url: string, options?: RequestInit): Promise<T> {
+  const defaultHeaders: Record<string, string> = {
+    "Content-Type": "application/json",
+    "X-CSRFToken": getCSRFToken(),
+  };
   const response = await fetch(url, {
     credentials: "include",
-    headers: {
-      "Content-Type": "application/json",
-      "X-CSRFToken": getCSRFToken(),
-    },
     ...options,
+    headers: { ...defaultHeaders, ...(options?.headers as Record<string, string>) },
   });
   if (response.status === 403 || response.status === 401) {
     window.location.href = "/v0/auth/login";
@@ -419,21 +421,23 @@ interface CallLogFormData {
   appeal: string;
 }
 
-const emptyCallLogForm: CallLogFormData = {
-  call_date: new Date().toISOString().slice(0, 16),
-  representative_name: "",
-  reference_number: "",
-  call_outcome: "",
-  notes: "",
-  follow_up_needed: false,
-  follow_up_date: "",
-  appeal: "",
-};
+function freshCallLogForm(): CallLogFormData {
+  return {
+    call_date: new Date().toISOString().slice(0, 16),
+    representative_name: "",
+    reference_number: "",
+    call_outcome: "",
+    notes: "",
+    follow_up_needed: false,
+    follow_up_date: "",
+    appeal: "",
+  };
+}
 
 function CallLogsTab({ appeals }: { appeals: AppealSummary[] }) {
   const { data: logs, loading, error, setError, refetch } = useFetchList<CallLog>("/ziggy/rest/call_logs/");
   const [showForm, setShowForm] = useState(false);
-  const [formData, setFormData] = useState<CallLogFormData>(emptyCallLogForm);
+  const [formData, setFormData] = useState<CallLogFormData>(freshCallLogForm());
   const [submitting, setSubmitting] = useState(false);
 
   const handleSubmit = useCallback(async () => {
@@ -455,7 +459,7 @@ function CallLogsTab({ appeals }: { appeals: AppealSummary[] }) {
         method: "POST",
         body: JSON.stringify(payload),
       });
-      setFormData(emptyCallLogForm);
+      setFormData(freshCallLogForm());
       setShowForm(false);
       refetch();
     } catch (e) {
@@ -529,6 +533,21 @@ function CallLogsTab({ appeals }: { appeals: AppealSummary[] }) {
             onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
             minRows={2}
           />
+          <Checkbox
+            label="Follow-up needed"
+            checked={formData.follow_up_needed}
+            onChange={(e) =>
+              setFormData({ ...formData, follow_up_needed: e.currentTarget.checked })
+            }
+          />
+          {formData.follow_up_needed && (
+            <TextInput
+              label="Follow-up Date"
+              type="date"
+              value={formData.follow_up_date}
+              onChange={(e) => setFormData({ ...formData, follow_up_date: e.target.value })}
+            />
+          )}
           {appealOptions.length > 0 && (
             <Select
               label="Related Appeal (optional)"
@@ -540,7 +559,7 @@ function CallLogsTab({ appeals }: { appeals: AppealSummary[] }) {
             />
           )}
           <Group justify="flex-end" mt="md">
-            <Button variant="light" onClick={() => setShowForm(false)}>
+            <Button variant="light" onClick={() => { setShowForm(false); setFormData(freshCallLogForm()); }}>
               Cancel
             </Button>
             <Button
@@ -721,7 +740,7 @@ function EvidenceTab({ appeals }: { appeals: AppealSummary[] }) {
             />
           )}
           <Group justify="flex-end" mt="md">
-            <Button variant="light" onClick={() => setShowForm(false)}>
+            <Button variant="light" onClick={() => { setShowForm(false); setTitle(""); setDescription(""); setFile(null); setAppealId(""); }}>
               Cancel
             </Button>
             <Button
