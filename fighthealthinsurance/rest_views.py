@@ -521,6 +521,30 @@ class FollowUpViewSet(viewsets.ViewSet, CreateMixin):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
+class ReportClientError(APIView):
+    """Endpoint for clients to report appeal-related errors server-side for Sentry visibility."""
+
+    permission_classes = [AllowAny]
+    authentication_classes = []  # No auth needed; also avoids CSRF rejection
+
+    def post(self, request: Request) -> Response:
+        # Sanitize inputs: truncate and strip newlines to prevent log injection
+        denial_id = str(request.data.get("denial_id", "unknown"))[:200].replace(
+            "\n", " "
+        )
+        error_message = str(request.data.get("error", "unknown error"))[:500].replace(
+            "\n", " "
+        )
+        browser_info = str(request.data.get("browser_info", ""))[:500].replace(
+            "\n", " "
+        )
+        logger.error(
+            f"Client-reported appeal error for denial {denial_id}: "
+            f"{error_message} | browser: {browser_info}"
+        )
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
 class Ping(APIView):
     """Simple health check endpoint that returns 204 No Content."""
 

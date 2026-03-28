@@ -68,10 +68,13 @@ class StreamingAppealsBackend(AsyncWebsocketConsumer):
                 await self.send(record)
                 await asyncio.sleep(0)
                 await self.send("\n")
-            logger.debug(f"All records, {count} in total, sent.")
+            if count == 0:
+                logger.error("WebSocket appeal session completed with 0 records sent")
+            else:
+                logger.debug(f"All records, {count} in total, sent.")
         except Exception as e:
-            logger.opt(exception=True).debug(f"Error sending back appeals: {e}")
-            raise e
+            logger.opt(exception=True).error(f"Error sending back appeals: {e}")
+            raise
         finally:
             logger.debug("Yielding before closing connection")
             await asyncio.sleep(0.1)
