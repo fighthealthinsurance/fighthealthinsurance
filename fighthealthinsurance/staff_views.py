@@ -79,17 +79,18 @@ class StaffDashboardView(generic.TemplateView):
 
 
 class ScheduleFollowUps(View):
-    """A view to go through and schedule any missing follow ups."""
+    """A view to go through and schedule any missing follow ups.
+
+    Runs schedule_follow_ups on all denials with an email address.
+    The function is idempotent (uses update_or_create and skips
+    past-dated follow-ups) so it's safe to run on denials that
+    already have some or all follow-ups scheduled.
+    """
 
     def get(self, request):
-        denials = (
-            Denial.objects.filter(raw_email__isnull=False)
-            .filter(followupsched__isnull=True)
-            .iterator()
-        )
+        denials = Denial.objects.filter(raw_email__isnull=False).iterator()
         c = 0
         for denial in denials:
-            # Shouldn't happen but makes the type checker happy.
             if denial.raw_email is None:
                 continue
             schedule_follow_ups(denial.raw_email, denial)

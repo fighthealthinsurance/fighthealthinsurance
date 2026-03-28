@@ -6,7 +6,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("fighthealthinsurance", "0152_ongoingchat_edited_chat_history"),
+        ("fighthealthinsurance", "0153_useddeletetoken"),
     ]
 
     operations = [

@@ -382,6 +382,48 @@ class TestScheduleFollowUps:
         scheds = FollowUpSched.objects.filter(denial_id=test_denial)
         assert scheds.count() == 0
 
+    def test_from_date_schedules_relative_to_given_date(
+        self, test_denial, followup_types
+    ):
+        """Test that from_date overrides denial.date for scheduling."""
+        today = datetime.date.today()
+        schedule_follow_ups(test_denial.raw_email, test_denial, from_date=today)
+
+        for sched in FollowUpSched.objects.filter(denial_id=test_denial):
+            expected_date = today + sched.follow_up_type.duration
+            assert sched.follow_up_date == expected_date
+
+    def test_from_date_reschedules_old_denial_from_today(
+        self, test_denial, followup_types
+    ):
+        """Test that passing from_date=today for an old denial creates all 3."""
+        old_date = datetime.date.today() - datetime.timedelta(days=45)
+        Denial.objects.filter(pk=test_denial.pk).update(date=old_date)
+        test_denial.refresh_from_db()
+
+        # Without from_date, only 90-day would be created
+        schedule_follow_ups(test_denial.raw_email, test_denial)
+        assert FollowUpSched.objects.filter(denial_id=test_denial).count() == 1
+
+        # With from_date=today, all 3 should be created
+        schedule_follow_ups(
+            test_denial.raw_email,
+            test_denial,
+            from_date=datetime.date.today(),
+        )
+        assert FollowUpSched.objects.filter(denial_id=test_denial).count() == 3
+
+    def test_upsert_updates_email_on_second_call(self, test_denial, followup_types):
+        """Test that calling with a different email updates existing records."""
+        schedule_follow_ups(test_denial.raw_email, test_denial)
+        new_email = "updated@example.com"
+        schedule_follow_ups(new_email, test_denial)
+
+        scheds = FollowUpSched.objects.filter(denial_id=test_denial)
+        assert scheds.count() == 3
+        for sched in scheds:
+            assert sched.email == new_email
+
     def test_creates_nothing_when_no_matching_followup_types(self, test_denial):
         """Test that nothing is created when the expected FollowUpType records don't exist."""
         # Remove any matching types (may exist from data migration)

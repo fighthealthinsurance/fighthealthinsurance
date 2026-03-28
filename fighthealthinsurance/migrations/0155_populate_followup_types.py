@@ -58,7 +58,7 @@ def remove_followup_types(apps, schema_editor):
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("fighthealthinsurance", "0153_followuptype_template_name"),
+        ("fighthealthinsurance", "0154_followuptype_template_name"),
     ]
 
     operations = [
