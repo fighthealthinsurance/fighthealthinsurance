@@ -4,7 +4,7 @@ import random
 import re
 import typing
 from typing import TypedDict
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 from django import forms
 from django.conf import settings
@@ -39,7 +39,7 @@ from fighthealthinsurance import common_view_logic, forms as core_forms, models
 from fighthealthinsurance.chat_forms import UserConsentForm
 from fighthealthinsurance.helpers.data_helpers import RemoveDataHelper
 from fighthealthinsurance.helpers.stripe_helpers import StripeWebhookHelper
-from fighthealthinsurance.models import DeleteToken, StripeRecoveryInfo
+from fighthealthinsurance.models import DeleteToken, UsedDeleteToken, StripeRecoveryInfo
 from fighthealthinsurance.type_utils import User
 from fighthealthinsurance.utils import send_fallback_email
 
@@ -621,7 +621,7 @@ class ShareAppealView(View):
 
 def send_delete_confirmation_email(email: str, token: str) -> None:
     """Send email asking user to confirm data deletion request."""
-    params = urlencode({"token": token, "email": email})
+    params = urlencode({"token": token, "email": email}, quote_via=quote)
     confirmation_link = (
         f"https://{settings.FIGHT_HEALTH_INSURANCE_DOMAIN}/confirm-delete?{params}"
     )
@@ -704,15 +704,25 @@ class ConfirmDeleteDataView(View):
         """Validate token and email, return (delete_token, error_message) tuple."""
         if not token_str or not email:
             return None, "Invalid confirmation link. Please try again."
+        # Normalize email for consistent hashing
+        email_normalized = email.strip().lower()
+        hashed_email = models.Denial.get_hashed_email(email_normalized)
+        # Check if this token was already used
+        if UsedDeleteToken.objects.filter(token=token_str).exists():
+            return (
+                None,
+                "This confirmation link has already been used. "
+                "Your data has been deleted. "
+                "If you need to delete additional data, please request a new link.",
+            )
         try:
-            hashed_email = models.Denial.get_hashed_email(email)
             delete_token = DeleteToken.objects.get(
                 token=token_str, hashed_email=hashed_email
             )
         except DeleteToken.DoesNotExist:
             return (
                 None,
-                "Invalid or already used confirmation link. Please request a new one.",
+                "Invalid confirmation link. Please request a new one.",
             )
         if delete_token.expires_at < timezone.now():
             delete_token.delete()
@@ -725,12 +735,14 @@ class ConfirmDeleteDataView(View):
         delete_token, error = self._validate_token(token_str, email)
         if error:
             return self._error_response(request, error)
+        # Use normalized email in the template for POST consistency
+        email_normalized = email.strip().lower() if email else email
         return render(
             request,
             "confirm_delete.html",
             context={
                 "title": "Confirm Data Deletion",
-                "email": email,
+                "email": email_normalized,
                 "token": token_str,
             },
         )
@@ -741,7 +753,21 @@ class ConfirmDeleteDataView(View):
         delete_token, error = self._validate_token(token_str, email)
         if error:
             return self._error_response(request, error)
-        RemoveDataHelper.remove_data_for_email(email)
+        email_normalized = email.strip().lower() if email else email
+        hashed_email = models.Denial.get_hashed_email(email_normalized)
+        # Record the token as used; if another request already recorded it, abort
+        _used_token, created = UsedDeleteToken.objects.get_or_create(
+            token=delete_token.token,
+            defaults={"hashed_email": hashed_email},
+        )
+        if not created:
+            return self._error_response(
+                request,
+                "This confirmation link has already been used. "
+                "Your data has been deleted. "
+                "If you need to delete additional data, please request a new link.",
+            )
+        RemoveDataHelper.remove_data_for_email(email_normalized)
         delete_token.delete()
         return render(
             request,

@@ -1971,8 +1971,8 @@ class OngoingChat(models.Model):
         # Look for chats with matching hashed email
         return OngoingChat.objects.filter(
             Q(hashed_email=hashed_email)
-            | Q(user__email=email)
-            | Q(professional_user__user__email=email)
+            | Q(user__email__iexact=email)
+            | Q(professional_user__user__email__iexact=email)
         )
 
     def summarize_user(self) -> str:
@@ -2221,3 +2221,11 @@ class DeleteToken(models.Model):
             else:
                 self.expires_at = timezone.now() + datetime.timedelta(hours=24)
         super().save(*args, **kwargs)
+
+
+class UsedDeleteToken(models.Model):
+    """Records tokens that have been successfully used for data deletion."""
+
+    token = models.CharField(max_length=255, unique=True)
+    hashed_email = models.CharField(max_length=300)
+    used_at = models.DateTimeField(auto_now_add=True)
