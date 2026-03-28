@@ -168,7 +168,7 @@ class JourneyDocumentationHelper:
                     denial_reason=denial_reason,
                     patient_context=patient_context,
                     documentation_items=documentation_items,
-                    timeout=min(30, timeout - 2),
+                    timeout=max(1, min(30, timeout - 2)),
                 ),
                 timeout=timeout,
             )
@@ -199,10 +199,12 @@ def _score_journey_questions(
     try:
         if not result:
             return 0
-        # Prefer 2-4 questions
+        # Prefer 2-4 questions: peak score at 3, penalize too few or too many
         count = len(result)
         if count > 6:
-            return 1  # Too many is bad
-        return count * 10
+            return 1
+        if count <= 4:
+            return count * 15  # 2=30, 3=45, 4=60
+        return (8 - count) * 15  # 5=45, 6=30
     except Exception:
         return 0

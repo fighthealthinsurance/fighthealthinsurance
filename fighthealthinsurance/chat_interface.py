@@ -1051,18 +1051,9 @@ class ChatInterface:
 
                             # Add journey documentation guidance if microsite defines it
                             if microsite.journey_documentation_items:
-                                journey_prompt = (
-                                    microsite.get_journey_documentation_prompt()
-                                )
-                                if journey_prompt:
-                                    all_context_parts.append(
-                                        f"Journey documentation guidance:\n{journey_prompt}"
-                                    )
-                                    logger.info(
-                                        f"Journey documentation guidance added for {microsite.slug}"
-                                    )
-
-                                # Also try ML-generated journey questions (bounded by timeout)
+                                # Use get_journey_guidance_for_chat which combines
+                                # static documentation items + ML-generated questions
+                                # into a single context block (avoids duplicate injection).
                                 try:
                                     from fighthealthinsurance.ml.ml_journey_helper import (
                                         JourneyDocumentationHelper,
@@ -1072,17 +1063,33 @@ class ChatInterface:
                                         procedure=microsite.default_procedure,
                                         diagnosis=microsite.default_condition,
                                         documentation_items=microsite.journey_documentation_items,
-                                        timeout=35,
+                                        timeout=10,
                                     )
                                     if ml_guidance:
                                         all_context_parts.append(ml_guidance)
                                         logger.info(
-                                            f"ML journey guidance added for {microsite.slug}"
+                                            f"Journey documentation guidance added for {microsite.slug}"
                                         )
                                 except Exception as e:
                                     logger.warning(
-                                        f"Failed to get ML journey guidance: {e}"
+                                        f"Failed to get journey guidance: {e}"
                                     )
+
+                                # Fallback: if ML guidance failed, use static prompt
+                                if not any(
+                                    "Journey documentation" in p
+                                    for p in all_context_parts
+                                ):
+                                    journey_prompt = (
+                                        microsite.get_journey_documentation_prompt()
+                                    )
+                                    if journey_prompt:
+                                        all_context_parts.append(
+                                            f"Journey documentation guidance:\n{journey_prompt}"
+                                        )
+                                        logger.info(
+                                            f"Static journey guidance fallback for {microsite.slug}"
+                                        )
 
                             if all_context_parts:
                                 full_context = "\n\n".join(all_context_parts)

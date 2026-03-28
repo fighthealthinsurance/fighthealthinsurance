@@ -33,7 +33,7 @@ CREATE_OR_UPDATE_PRIOR_AUTH_REGEX = (
 )
 
 # Flat JSON only (no nested braces) — LLM sends simple key-value params.
-# Same pattern as MEDICAID_INFO_REGEX / MEDICAID_ELIGIBILITY_REGEX.
+# Non-anchored like MEDICAID_INFO_REGEX (tool appears mid-response, not on its own line).
 GET_DOCUMENTATION_QUESTIONS_REGEX = (
     r"(?:\*\*)?get_documentation_questions\s*(\{[^}]*\})\s*(?:\*\*)?"
 )
