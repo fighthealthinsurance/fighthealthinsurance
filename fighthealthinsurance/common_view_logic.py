@@ -527,7 +527,8 @@ def schedule_follow_ups(email: str, denial: "Denial") -> None:
     """Schedule 7-day, 30-day, and 90-day follow-up emails for a denial.
 
     Skips follow-ups whose date would already be in the past (e.g. when
-    backfilling old denials) and guards against duplicate scheduling.
+    backfilling old denials) and uses update_or_create to prevent duplicates
+    atomically.
     """
     follow_up_types = FollowUpType.objects.filter(
         name__in=["followup_7day", "followup_30day", "followup_90day"]
@@ -538,16 +539,15 @@ def schedule_follow_ups(email: str, denial: "Denial") -> None:
         # Skip if the follow-up date is already in the past
         if follow_up_date < today:
             continue
-        # Guard against duplicates
-        if not FollowUpSched.objects.filter(
-            denial_id=denial, follow_up_type=fut
-        ).exists():
-            FollowUpSched.objects.create(
-                email=email,
-                follow_up_type=fut,
-                follow_up_date=follow_up_date,
-                denial_id=denial,
-            )
+        # Atomic upsert — avoids race condition with exists()+create()
+        FollowUpSched.objects.update_or_create(
+            denial_id=denial,
+            follow_up_type=fut,
+            defaults={
+                "email": email,
+                "follow_up_date": follow_up_date,
+            },
+        )
 
 
 class FollowUpHelper:
@@ -598,7 +598,7 @@ class FollowUpHelper:
             quote=quote,
         )
         # If they asked for additional follow up add new schedules
-        if follow_up_again:
+        if follow_up_again and denial.raw_email:
             schedule_follow_ups(denial.raw_email, denial)
         for document in followup_documents:
             fd = FollowUpDocuments.objects.create(

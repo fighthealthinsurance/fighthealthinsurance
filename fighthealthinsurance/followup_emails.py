@@ -2,7 +2,7 @@ import datetime
 from typing import Optional
 
 from django.db.models import QuerySet
-from django.db.utils import NotSupportedError
+from django.db.utils import NotSupportedError, ProgrammingError
 from django.urls import reverse
 from django.utils import timezone
 
@@ -69,17 +69,21 @@ class FollowUpEmailSender(object):
         six_months_ago = datetime.date.today() - datetime.timedelta(days=183)
         base_qs = (
             FollowUpSched.objects.filter(follow_up_sent=False)
-            .filter(follow_up_date__lt=datetime.date.today())
+            .filter(follow_up_date__lte=datetime.date.today())
             .filter(initial__gte=six_months_ago)
             .order_by("follow_up_date")
         )
         try:
-            candidates = base_qs.distinct("email", "follow_up_type")
+            # PostgreSQL DISTINCT ON requires ORDER BY to start with
+            # the DISTINCT ON columns.
+            candidates = base_qs.order_by(
+                "email", "follow_up_type", "follow_up_date"
+            ).distinct("email", "follow_up_type")
             # Force partial evaluation to catch DISTINCT ON errors
             # Used for SQLite in local dev/test mode.
             candidates.exists()
             return candidates
-        except NotSupportedError:
+        except (NotSupportedError, ProgrammingError):
             # Fallback for databases that don't support DISTINCT ON
             return base_qs
 

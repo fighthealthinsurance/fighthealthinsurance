@@ -215,6 +215,15 @@ class FollowUpSched(models.Model):
     # in either case lets delete the scheduled follow ups.
     denial_id = models.ForeignKey("Denial", on_delete=models.CASCADE)
 
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["denial_id", "follow_up_type"],
+                name="unique_denial_followup_type",
+                condition=models.Q(follow_up_type__isnull=False),
+            ),
+        ]
+
     def __str__(self):
         return f"{self.email} on {self.follow_up_date}"
 
