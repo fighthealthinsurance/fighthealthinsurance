@@ -45,88 +45,61 @@ class UnderstandPolicyFormValidationTest(TestCase):
     ) -> SimpleUploadedFile:
         return SimpleUploadedFile(name, content, content_type=content_type)
 
-    def test_accepts_pdf(self):
-        pdf_content = b"%PDF-1.4 fake pdf content"
-        f = self._make_uploaded_file("test.pdf", pdf_content, "application/pdf")
-        form = UnderstandPolicyForm(
-            data=self._make_form_data(), files={"policy_document": f}
-        )
-        self.assertTrue(form.is_valid(), form.errors)
-
-    def test_accepts_docx(self):
-        docx_content = b"PK\x03\x04 fake docx content"
-        f = self._make_uploaded_file(
+    _VALID_FILES = [
+        ("test.pdf", b"%PDF-1.4 fake pdf content", "application/pdf"),
+        (
             "test.docx",
-            docx_content,
+            b"PK\x03\x04 fake docx content",
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        )
-        form = UnderstandPolicyForm(
-            data=self._make_form_data(), files={"policy_document": f}
-        )
-        self.assertTrue(form.is_valid(), form.errors)
+        ),
+        ("test.txt", b"plain text content", "text/plain"),
+        ("test.rtf", b"rtf content here", "application/rtf"),
+    ]
 
-    def test_accepts_txt(self):
-        f = self._make_uploaded_file("test.txt", b"plain text content", "text/plain")
-        form = UnderstandPolicyForm(
-            data=self._make_form_data(), files={"policy_document": f}
-        )
-        self.assertTrue(form.is_valid(), form.errors)
+    _INVALID_FILES = [
+        ("malware.exe", b"MZ\x90\x00 evil content", "application/x-msdownload"),
+        ("page.html", b"<html>hello</html>", "text/html"),
+        ("image.jpg", b"\xff\xd8\xff\xe0 image data", "image/jpeg"),
+    ]
 
-    def test_accepts_rtf(self):
-        f = self._make_uploaded_file("test.rtf", b"rtf content here", "application/rtf")
-        form = UnderstandPolicyForm(
-            data=self._make_form_data(), files={"policy_document": f}
-        )
-        self.assertTrue(form.is_valid(), form.errors)
-
-    def test_rejects_exe(self):
-        f = self._make_uploaded_file(
-            "malware.exe", b"MZ\x90\x00 evil content", "application/x-msdownload"
-        )
-        form = UnderstandPolicyForm(
-            data=self._make_form_data(), files={"policy_document": f}
-        )
-        self.assertFalse(form.is_valid())
-        self.assertIn("policy_document", form.errors)
-
-    def test_rejects_html(self):
-        f = self._make_uploaded_file("page.html", b"<html>hello</html>", "text/html")
-        form = UnderstandPolicyForm(
-            data=self._make_form_data(), files={"policy_document": f}
-        )
-        self.assertFalse(form.is_valid())
-
-    def test_rejects_jpg(self):
-        f = self._make_uploaded_file(
-            "image.jpg", b"\xff\xd8\xff\xe0 image data", "image/jpeg"
-        )
-        form = UnderstandPolicyForm(
-            data=self._make_form_data(), files={"policy_document": f}
-        )
-        self.assertFalse(form.is_valid())
-
-    def test_rejects_fake_pdf_magic_bytes(self):
-        """A .pdf with non-PDF magic bytes should be rejected."""
-        f = self._make_uploaded_file(
-            "fake.pdf", b"NOT-A-PDF content here", "application/pdf"
-        )
-        form = UnderstandPolicyForm(
-            data=self._make_form_data(), files={"policy_document": f}
-        )
-        self.assertFalse(form.is_valid())
-        self.assertIn("policy_document", form.errors)
-
-    def test_rejects_fake_docx_magic_bytes(self):
-        """A .docx with non-ZIP magic bytes should be rejected."""
-        f = self._make_uploaded_file(
+    _MAGIC_BYTE_MISMATCHES = [
+        ("fake.pdf", b"NOT-A-PDF content here", "application/pdf"),
+        (
             "fake.docx",
             b"NOT-A-DOCX content here",
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        )
-        form = UnderstandPolicyForm(
-            data=self._make_form_data(), files={"policy_document": f}
-        )
-        self.assertFalse(form.is_valid())
+        ),
+    ]
+
+    def test_accepts_valid_file_types(self):
+        for name, content, content_type in self._VALID_FILES:
+            with self.subTest(filename=name):
+                f = self._make_uploaded_file(name, content, content_type)
+                form = UnderstandPolicyForm(
+                    data=self._make_form_data(), files={"policy_document": f}
+                )
+                self.assertTrue(form.is_valid(), f"{name}: {form.errors}")
+
+    def test_rejects_invalid_file_types(self):
+        for name, content, content_type in self._INVALID_FILES:
+            with self.subTest(filename=name):
+                f = self._make_uploaded_file(name, content, content_type)
+                form = UnderstandPolicyForm(
+                    data=self._make_form_data(), files={"policy_document": f}
+                )
+                self.assertFalse(form.is_valid())
+                self.assertIn("policy_document", form.errors)
+
+    def test_rejects_magic_byte_mismatches(self):
+        """Files with wrong magic bytes for their extension should be rejected."""
+        for name, content, content_type in self._MAGIC_BYTE_MISMATCHES:
+            with self.subTest(filename=name):
+                f = self._make_uploaded_file(name, content, content_type)
+                form = UnderstandPolicyForm(
+                    data=self._make_form_data(), files={"policy_document": f}
+                )
+                self.assertFalse(form.is_valid())
+                self.assertIn("policy_document", form.errors)
 
     def test_rejects_oversized_file(self):
         """Files > 20MB should be rejected."""
@@ -527,24 +500,32 @@ class FormatAnalysisForChatTest(TestCase):
 class RegexSearchPagesTest(TestCase):
     """Tests for MLPolicyDocHelper._regex_search_pages."""
 
-    def test_finds_exclusion_pages(self):
-        page_dict = {
-            1: "Welcome to your health plan overview.",
-            2: "The following exclusions apply: cosmetic surgery is not covered.",
-            3: "Your deductible is $500 per year.",
-        }
-        hits = MLPolicyDocHelper._regex_search_pages(page_dict)
-        self.assertIn(2, hits)
-        self.assertTrue(any("exclusion" in d for d in hits[2]))
+    _KEYWORD_PAGE_CASES = [
+        (
+            {
+                1: "Welcome to your health plan overview.",
+                2: "The following exclusions apply: cosmetic surgery is not covered.",
+                3: "Your deductible is $500 per year.",
+            },
+            2,
+            "exclusion",
+        ),
+        (
+            {
+                1: "Table of contents",
+                5: "You have the right to appeal any denial within 180 days.",
+            },
+            5,
+            "appeal",
+        ),
+    ]
 
-    def test_finds_appeal_pages(self):
-        page_dict = {
-            1: "Table of contents",
-            5: "You have the right to appeal any denial within 180 days.",
-        }
-        hits = MLPolicyDocHelper._regex_search_pages(page_dict)
-        self.assertIn(5, hits)
-        self.assertTrue(any("appeal" in d for d in hits[5]))
+    def test_finds_keyword_pages(self):
+        for page_dict, expected_page, keyword in self._KEYWORD_PAGE_CASES:
+            with self.subTest(keyword=keyword):
+                hits = MLPolicyDocHelper._regex_search_pages(page_dict)
+                self.assertIn(expected_page, hits)
+                self.assertTrue(any(keyword in d for d in hits[expected_page]))
 
     def test_user_question_adds_patterns(self):
         page_dict = {

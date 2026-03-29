@@ -51,7 +51,7 @@ def _handle_mailing_list_subscribe(form: forms.Form, source_page: str) -> None:
     name = f"{form.cleaned_data.get('first_name')} {form.cleaned_data.get('last_name')}"
     try:
         models.MailingListSubscriber.objects.create(
-            email=form.cleaned_data.get("email"),
+            email=str(form.cleaned_data.get("email", "")),
             phone=form.cleaned_data.get("phone", ""),
             name=name,
             comments=f"From {source_page}",

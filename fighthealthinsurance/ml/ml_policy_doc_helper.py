@@ -13,7 +13,7 @@ import asyncio
 import io
 import json
 import re
-from typing import Optional, Dict, Any, Callable, Awaitable, List, Set
+from typing import Optional, Dict, Any, Callable, Awaitable, Set
 
 from loguru import logger
 
@@ -67,6 +67,75 @@ _INSURANCE_SEARCH_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"denied|denial", re.IGNORECASE), "denial language"),
 ]
 
+# Common stopwords to exclude when extracting keywords from user questions.
+_STOPWORDS: frozenset[str] = frozenset(
+    {
+        "the",
+        "and",
+        "for",
+        "that",
+        "this",
+        "with",
+        "are",
+        "from",
+        "have",
+        "has",
+        "was",
+        "were",
+        "been",
+        "will",
+        "would",
+        "could",
+        "should",
+        "can",
+        "may",
+        "does",
+        "what",
+        "how",
+        "why",
+        "when",
+        "where",
+        "which",
+        "who",
+        "whom",
+        "not",
+        "but",
+        "about",
+        "into",
+        "your",
+        "you",
+        "our",
+        "their",
+        "its",
+        "his",
+        "her",
+        "any",
+        "all",
+        "also",
+        "other",
+        "than",
+        "then",
+        "some",
+        "more",
+        "most",
+        "such",
+        "only",
+        "each",
+        "very",
+        "just",
+        "there",
+        "here",
+        "insurance",
+        "policy",
+        "plan",
+        "cover",
+        "covered",
+        "coverage",
+        "health",
+        "medical",
+    }
+)
+
 
 class MLPolicyDocHelper:
     """Helper class for ML-powered policy document analysis."""
@@ -83,6 +152,39 @@ class MLPolicyDocHelper:
     SYNTHESIS_TIMEOUT_SECONDS = 90
 
     @classmethod
+    async def _infer_with_fallback(
+        cls,
+        system_prompts: list[str],
+        prompt: str,
+        temperature: float,
+        timeout: float,
+        model_count: int = 3,
+        label: str = "",
+    ) -> Optional[str]:
+        """
+        Try inference across multiple models with timeout, returning the first
+        successful result or None if all models fail.
+        """
+        models = ml_router.internal_models_by_cost[:model_count]
+        for model in models:
+            try:
+                result = await asyncio.wait_for(
+                    model._infer_no_context(
+                        system_prompts=system_prompts,
+                        prompt=prompt,
+                        temperature=temperature,
+                    ),
+                    timeout=timeout,
+                )
+                if result:
+                    return str(result)
+            except asyncio.TimeoutError:
+                logger.warning(f"Timeout on {label} with {model}")
+            except Exception as e:
+                logger.debug(f"Error on {label} with {model}: {e}")
+        return None
+
+    @classmethod
     def _read_and_decrypt_file(cls, file_field: Any) -> Optional[bytes]:
         """
         Read and decrypt bytes from an EncryptedFileField.
@@ -96,7 +198,7 @@ class MLPolicyDocHelper:
                 if not encrypted_bytes:
                     return None
                 try:
-                    return Cryptographer.decrypted(encrypted_bytes)
+                    return bytes(Cryptographer.decrypted(encrypted_bytes))
                 except Exception:
                     # Decryption failed — file may have been stored unencrypted
                     logger.debug("Decryption failed, returning raw bytes as fallback")
@@ -264,72 +366,7 @@ class MLPolicyDocHelper:
             words = set(
                 w
                 for w in re.findall(r"[a-zA-Z]{3,}", user_question)
-                if w.lower()
-                not in {
-                    "the",
-                    "and",
-                    "for",
-                    "that",
-                    "this",
-                    "with",
-                    "are",
-                    "from",
-                    "have",
-                    "has",
-                    "was",
-                    "were",
-                    "been",
-                    "will",
-                    "would",
-                    "could",
-                    "should",
-                    "can",
-                    "may",
-                    "does",
-                    "what",
-                    "how",
-                    "why",
-                    "when",
-                    "where",
-                    "which",
-                    "who",
-                    "whom",
-                    "not",
-                    "but",
-                    "about",
-                    "into",
-                    "your",
-                    "you",
-                    "our",
-                    "their",
-                    "its",
-                    "his",
-                    "her",
-                    "any",
-                    "all",
-                    "also",
-                    "other",
-                    "than",
-                    "then",
-                    "some",
-                    "more",
-                    "most",
-                    "such",
-                    "only",
-                    "each",
-                    "very",
-                    "just",
-                    "there",
-                    "here",
-                    "insurance",
-                    "policy",
-                    "plan",
-                    "cover",
-                    "covered",
-                    "coverage",
-                    "health",
-                    "medical",
-                }
+                if w.lower() not in _STOPWORDS
             )
             for word in words:
                 try:
@@ -361,42 +398,22 @@ class MLPolicyDocHelper:
         Each targeted chunk is tagged with what patterns matched.
         """
         # Only include pages that had hits AND aren't in scattershot
-        targeted_pages = sorted(
+        targeted_pages = {
             p for p in page_hits if p not in scattershot_pages and p in page_dict
-        )
+        }
         if not targeted_pages:
             return []
 
-        chunks: list[Dict[str, Any]] = []
-        current_text = ""
-        current_pages: list[int] = []
-        current_hits: Set[str] = set()
+        # Reuse _build_chunks on the filtered page subset
+        filtered_page_dict = {p: page_dict[p] for p in targeted_pages}
+        chunks = cls._build_chunks(filtered_page_dict)
 
-        for page_num in targeted_pages:
-            page_text = page_dict[page_num]
-            if current_text and len(current_text) + len(page_text) > cls.CHUNK_SIZE:
-                chunks.append(
-                    {
-                        "text": current_text,
-                        "pages": list(current_pages),
-                        "search_hits": list(current_hits),
-                    }
-                )
-                current_text = ""
-                current_pages = []
-                current_hits = set()
-            current_text += page_text + "\n"
-            current_pages.append(page_num)
-            current_hits.update(page_hits.get(page_num, set()))
-
-        if current_text.strip():
-            chunks.append(
-                {
-                    "text": current_text,
-                    "pages": list(current_pages),
-                    "search_hits": list(current_hits),
-                }
-            )
+        # Enrich each chunk with the search hits from its pages
+        for chunk in chunks:
+            hits: Set[str] = set()
+            for page_num in chunk["pages"]:
+                hits.update(page_hits.get(page_num, set()))
+            chunk["search_hits"] = list(hits)
 
         return chunks
 
@@ -616,59 +633,39 @@ RELEVANT: NO
 Document chunk:
 {chunk_text}"""
 
-        models = ml_router.internal_models_by_cost[:2]
+        result = await cls._infer_with_fallback(
+            system_prompts=[
+                "You are an expert at analyzing health insurance policy documents. "
+                "Be concise. Include exact page references for all findings."
+            ],
+            prompt=prompt,
+            temperature=0.1,
+            timeout=cls.CHUNK_TIMEOUT_SECONDS,
+            model_count=2,
+            label=f"chunk {chunk_index}",
+        )
 
-        for model in models:
-            try:
-                result = await asyncio.wait_for(
-                    model._infer_no_context(
-                        system_prompts=[
-                            "You are an expert at analyzing health insurance policy documents. "
-                            "Be concise. Include exact page references for all findings."
-                        ],
-                        prompt=prompt,
-                        temperature=0.1,
-                    ),
-                    timeout=cls.CHUNK_TIMEOUT_SECONDS,
-                )
-
-                if result:
-                    # Update progress
-                    async with remaining_counter:
-                        remaining_count[0] -= 1
-                        current_remaining = remaining_count[0]
-                    if progress_callback:
-                        await progress_callback(current_remaining, total_chunks)
-
-                    # Check if relevant
-                    if "RELEVANT: NO" in result.upper():
-                        logger.debug(
-                            f"Chunk {chunk_index} (pages {pages_str}) not relevant"
-                        )
-                        return None
-
-                    # Extract summary portion
-                    summary_start = result.find("SUMMARY:")
-                    if summary_start >= 0:
-                        return (
-                            f"[Pages {pages_str}]\n{result[summary_start + 8:].strip()}"
-                        )
-                    # If no SUMMARY: header but marked relevant, use the whole response
-                    return f"[Pages {pages_str}]\n{result.strip()}"
-
-            except asyncio.TimeoutError:
-                logger.warning(f"Timeout on chunk {chunk_index} with {model}")
-            except Exception as e:
-                logger.debug(f"Error on chunk {chunk_index} with {model}: {e}")
-
-        # If all models failed, still decrement counter
+        # Update progress regardless of result
         async with remaining_counter:
             remaining_count[0] -= 1
             current_remaining = remaining_count[0]
         if progress_callback:
             await progress_callback(current_remaining, total_chunks)
 
-        return None
+        if not result:
+            return None
+
+        # Check if relevant
+        if "RELEVANT: NO" in result.upper():
+            logger.debug(f"Chunk {chunk_index} (pages {pages_str}) not relevant")
+            return None
+
+        # Extract summary portion
+        summary_start = result.find("SUMMARY:")
+        if summary_start >= 0:
+            return f"[Pages {pages_str}]\n{result[summary_start + 8:].strip()}"
+        # If no SUMMARY: header but marked relevant, use the whole response
+        return f"[Pages {pages_str}]\n{result.strip()}"
 
     @classmethod
     async def _analyze_chunks_parallel(
@@ -788,35 +785,27 @@ Respond in JSON format with the following structure:
     "summary": "2-3 paragraph plain-English summary of coverage, limitations, appeal rights, and regulatory oversight"
 }}"""
 
-        models = ml_router.internal_models_by_cost[:3]
-        num_models = len(models)
+        num_models = len(ml_router.internal_models_by_cost[:3])
         per_model_timeout = cls.SYNTHESIS_TIMEOUT_SECONDS / max(num_models, 1)
 
-        for model in models:
-            try:
-                result = await asyncio.wait_for(
-                    model._infer_no_context(
-                        system_prompts=[
-                            "You are an expert at analyzing health insurance policy documents. "
-                            "Synthesize findings into a clear, structured analysis. "
-                            "Always preserve exact page references. Be thorough but concise."
-                        ],
-                        prompt=prompt,
-                        temperature=0.2,
-                    ),
-                    timeout=per_model_timeout,
-                )
+        result = await cls._infer_with_fallback(
+            system_prompts=[
+                "You are an expert at analyzing health insurance policy documents. "
+                "Synthesize findings into a clear, structured analysis. "
+                "Always preserve exact page references. Be thorough but concise."
+            ],
+            prompt=prompt,
+            temperature=0.2,
+            timeout=per_model_timeout,
+            model_count=3,
+            label="synthesis",
+        )
 
-                if result:
-                    parsed = cls._parse_analysis_response(result)
-                    if parsed:
-                        logger.debug(f"Successfully synthesized analysis with {model}")
-                        return parsed
-
-            except asyncio.TimeoutError:
-                logger.warning(f"Timeout synthesizing with {model}")
-            except Exception as e:
-                logger.debug(f"Error synthesizing with {model}: {e}")
+        if result:
+            parsed = cls._parse_analysis_response(result)
+            if parsed:
+                logger.debug("Successfully synthesized analysis")
+                return parsed
 
         return None
 
@@ -831,8 +820,8 @@ Respond in JSON format with the following structure:
             parsed: Dict[str, Any] = json.loads(response)
             if cls._validate_analysis_structure(parsed):
                 return parsed
-        except (json.JSONDecodeError, ValueError):
-            pass
+        except (json.JSONDecodeError, ValueError) as e:
+            logger.debug(f"Initial JSON parse failed, trying raw_decode fallback: {e}")
 
         # Fall back to finding the first valid JSON object
         try:
