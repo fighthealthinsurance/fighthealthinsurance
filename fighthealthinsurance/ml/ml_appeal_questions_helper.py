@@ -9,6 +9,10 @@ from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance.models import Denial, GenericQuestionGeneration
 from fighthealthinsurance.utils import best_within_timelimit
 
+# Maps a get_appeal_questions coroutine to the originating model's quality score
+QuestionsCoroutine = Coroutine[Any, Any, List[Tuple[str, str]]]
+AwaitableQualityMap = Dict[QuestionsCoroutine, int]
+
 
 class MLAppealQuestionsHelper:
     @staticmethod
@@ -57,8 +61,8 @@ class MLAppealQuestionsHelper:
         # If no cached questions exist, generate them
         model_timeout = max(1, timeout - 5)  # Subtract 5 seconds for processing
 
-        raw_questions_awaitables = []
-        model_quality_map: Dict[Any, int] = {}
+        raw_questions_awaitables: List[QuestionsCoroutine] = []
+        model_quality_map: AwaitableQualityMap = {}
 
         for model in models_to_try:
             awaitable = model.get_appeal_questions(
@@ -99,7 +103,7 @@ class MLAppealQuestionsHelper:
     @staticmethod
     def make_score_fn(
         factor: Callable[[Coroutine[Any, Any, Any]], int],
-        model_quality: Optional[Dict[Any, int]] = None,
+        model_quality: Optional[AwaitableQualityMap] = None,
     ):
         def score_fn(result: Optional[List[Tuple[str, str]]], awaitable):
             my_factor = factor(awaitable)
@@ -177,8 +181,8 @@ class MLAppealQuestionsHelper:
         # If no cached questions exist, generate them
         model_timeout = max(1, timeout - 5)  # Subtract 5 seconds for processing
 
-        raw_questions_awaitables = []
-        model_quality_map: Dict[Any, int] = {}
+        raw_questions_awaitables: List[QuestionsCoroutine] = []
+        model_quality_map: AwaitableQualityMap = {}
 
         for model in models_to_try:
             awaitable = model.get_appeal_questions(
