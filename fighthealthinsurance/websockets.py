@@ -58,9 +58,8 @@ class StreamingAppealsBackend(AsyncWebsocketConsumer):
         try:
             await asyncio.sleep(1)
             await self.send("\n")
-            count = 0
+            appeal_count = 0
             async for record in aitr:
-                count = count + 1
                 await asyncio.sleep(0)
                 await self.send("\n")
                 await asyncio.sleep(0)
@@ -68,10 +67,16 @@ class StreamingAppealsBackend(AsyncWebsocketConsumer):
                 await self.send(record)
                 await asyncio.sleep(0)
                 await self.send("\n")
-            if count == 0:
-                logger.error("WebSocket appeal session completed with 0 records sent")
+                # Count only actual appeal payloads (not status/keepalive frames)
+                stripped = record.strip()
+                if stripped and not stripped.startswith('{"type":'):
+                    appeal_count += 1
+            if appeal_count == 0:
+                logger.error(
+                    "WebSocket appeal session completed with 0 appeal payloads sent"
+                )
             else:
-                logger.debug(f"All records, {count} in total, sent.")
+                logger.debug(f"All appeals sent, {appeal_count} payloads total.")
         except Exception as e:
             logger.opt(exception=True).error(f"Error sending back appeals: {e}")
             raise

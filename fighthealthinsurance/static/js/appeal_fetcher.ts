@@ -370,7 +370,7 @@ let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
 function reportClientError(error: string): void {
   const denialId = (my_data as any).denial_id || (my_data as any).get?.('denial_id') || 'unknown';
   const csrfToken = (my_data as any).csrfmiddlewaretoken || '';
-  const browserInfo = `${navigator.userAgent} | ${window.location.href}`;
+  const browserInfo = `${navigator.userAgent} | ${window.location.pathname}`;
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (csrfToken) {
     headers['X-CSRFToken'] = csrfToken;

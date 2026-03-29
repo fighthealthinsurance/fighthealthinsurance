@@ -528,16 +528,13 @@ class ReportClientError(APIView):
     authentication_classes = []  # No auth needed; also avoids CSRF rejection
 
     def post(self, request: Request) -> Response:
-        # Sanitize inputs: truncate and strip newlines to prevent log injection
-        denial_id = str(request.data.get("denial_id", "unknown"))[:200].replace(
-            "\n", " "
-        )
-        error_message = str(request.data.get("error", "unknown error"))[:500].replace(
-            "\n", " "
-        )
-        browser_info = str(request.data.get("browser_info", ""))[:500].replace(
-            "\n", " "
-        )
+        def _sanitize(val: str, max_len: int) -> str:
+            return val[:max_len].replace("\r", " ").replace("\n", " ")
+
+        # Sanitize inputs: truncate and strip CR/LF to prevent log injection
+        denial_id = _sanitize(str(request.data.get("denial_id", "unknown")), 200)
+        error_message = _sanitize(str(request.data.get("error", "unknown error")), 500)
+        browser_info = _sanitize(str(request.data.get("browser_info", "")), 500)
         logger.error(
             f"Client-reported appeal error for denial {denial_id}: "
             f"{error_message} | browser: {browser_info}"

@@ -2097,8 +2097,8 @@ class AppealsBackendHelper:
         # Yield the existing appeals first
         old = 0
         async for appeal in existing_appeals:
-            old = old + 1
             if appeal.appeal_text is not None:
+                old = old + 1
                 logger.debug(f"Found existing appeal {appeal}, yielding")
                 existing_appeal_dict = await sub_in_appeals(
                     {"id": str(appeal.id), "content": appeal.appeal_text}
