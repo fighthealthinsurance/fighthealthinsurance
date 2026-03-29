@@ -1,5 +1,6 @@
 import React, { useState, useCallback } from "react";
 import { createRoot } from "react-dom/client";
+import "@mantine/core/styles.css";
 import {
   Box,
   Container,
