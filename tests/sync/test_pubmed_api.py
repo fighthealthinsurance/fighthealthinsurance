@@ -658,6 +658,21 @@ class PubMedE2EAppealFlowTest(TransactionTestCase):
             mock_pmids.assert_not_called()
             self.assertGreater(len(articles2), 0)
 
+            # Verify no duplicate denial summary rows were created
+            summary_rows_after = await sync_to_async(
+                lambda: list(PubMedQueryData.objects.filter(denial_id=self.denial))
+            )()
+            self.assertEqual(
+                len(summary_rows_after),
+                2,
+                "Repeat call creates a second summary row but must not explode",
+            )
+
+            # Verify denial's base fields are unchanged
+            await sync_to_async(self.denial.refresh_from_db)()
+            self.assertEqual(self.denial.procedure, "physical therapy")
+            self.assertEqual(self.denial.diagnosis, "rheumatoid arthritis")
+
         async_to_sync(run_test)()
 
     @mock.patch("fighthealthinsurance.pubmed_tools.get_microsite")
@@ -836,5 +851,49 @@ class PubMedE2EAppealFlowTest(TransactionTestCase):
             # Must call the API, not use the denial row
             mock_pmids.assert_called_once()
             self.assertEqual(result, ["33333333", "44444444"])
+
+        async_to_sync(run_test)()
+
+    @mock.patch("fighthealthinsurance.pubmed_tools.get_microsite")
+    @mock.patch("fighthealthinsurance.utils.pubmed_fetcher.pmids_for_query")
+    def test_e2e_microsite_only_empty_base_query(self, mock_pmids, mock_get_microsite):
+        """Denial summary row is created when base query is empty but microsite terms produce PMIDs."""
+        # Create denial with empty procedure/diagnosis but with microsite
+        denial = Denial.objects.create(
+            denial_text="Denied",
+            procedure="",
+            diagnosis="",
+            microsite_slug="test-microsite",
+        )
+
+        mock_microsite = mock.MagicMock()
+        mock_microsite.pubmed_search_terms = ["microsite search term"]
+        mock_get_microsite.return_value = mock_microsite
+
+        mock_pmids.return_value = ["11111111", "22222222"]
+
+        async def run_test():
+            tools = PubMedTools()
+            articles = await tools.find_pubmed_articles_for_denial(denial)
+            self.assertGreater(len(articles), 0)
+
+            # Denial summary row should exist even though base query was empty
+            summary_rows = await sync_to_async(
+                lambda: list(PubMedQueryData.objects.filter(denial_id=denial))
+            )()
+            self.assertEqual(
+                len(summary_rows),
+                1,
+                "Summary row must be created from microsite terms alone",
+            )
+            self.assertEqual(summary_rows[0].query, "microsite search term")
+
+            summary_pmids = json.loads(summary_rows[0].articles)
+            self.assertGreater(len(summary_pmids), 0)
+
+            # Verify denial still has empty base fields
+            await sync_to_async(denial.refresh_from_db)()
+            self.assertEqual(denial.procedure, "")
+            self.assertEqual(denial.diagnosis, "")
 
         async_to_sync(run_test)()

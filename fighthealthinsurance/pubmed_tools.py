@@ -227,9 +227,10 @@ class PubMedTools(object):
         except Exception as e:
             logger.opt(exception=True).debug(f"Unexpected error {e}")
             raise e
-        if query and pmids:
+        valid_queries = sorted(q for q in queries if q and q.strip())
+        if valid_queries and pmids:
             articles_json = json.dumps(pmids)
-            all_queries_str = " | ".join(sorted(queries - {""}))
+            all_queries_str = " | ".join(valid_queries)
             await PubMedQueryData.objects.acreate(
                 denial_id=denial,
                 articles=articles_json,

@@ -8,9 +8,13 @@ def cleanup_empty_pubmed_query_data(apps, schema_editor):
     PubMedQueryData = apps.get_model("fighthealthinsurance", "PubMedQueryData")
     # Delete rows where articles is null, empty string, or empty JSON array.
     # Q(articles__isnull=True) needed because SQL IN doesn't match NULL.
-    deleted, _ = PubMedQueryData.objects.filter(
-        Q(articles__isnull=True) | Q(articles__in=["", "[]", "null"]),
-    ).delete()
+    deleted, _ = (
+        PubMedQueryData.objects.using(schema_editor.connection.alias)
+        .filter(
+            Q(articles__isnull=True) | Q(articles__in=["", "[]", "null"]),
+        )
+        .delete()
+    )
     if deleted:
         print(f"  Deleted {deleted} PubMedQueryData rows with empty articles")
 
