@@ -164,6 +164,7 @@ class FollowUpType(models.Model):
 
     id = models.AutoField(primary_key=True)
     name = models.CharField(max_length=300, default="")
+    template_name = models.CharField(max_length=100, default="followup", blank=True)
     subject = models.CharField(max_length=300, primary_key=False)
     text = models.TextField(max_length=30000, primary_key=False)
     duration = models.DurationField()
@@ -213,6 +214,15 @@ class FollowUpSched(models.Model):
     # If the denial is deleted it's either SPAM or a PII removal request
     # in either case lets delete the scheduled follow ups.
     denial_id = models.ForeignKey("Denial", on_delete=models.CASCADE)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["denial_id", "follow_up_type"],
+                name="unique_denial_followup_type",
+                condition=models.Q(follow_up_type__isnull=False),
+            ),
+        ]
 
     def __str__(self):
         return f"{self.email} on {self.follow_up_date}"

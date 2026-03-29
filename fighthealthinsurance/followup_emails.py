@@ -2,7 +2,7 @@ import datetime
 from typing import Optional
 
 from django.db.models import QuerySet
-from django.db.utils import NotSupportedError
+from django.db.utils import NotSupportedError, ProgrammingError
 from django.urls import reverse
 from django.utils import timezone
 
@@ -67,25 +67,25 @@ class ThankyouEmailSender(object):
 class FollowUpEmailSender(object):
     def _find_candidates(self):
         six_months_ago = datetime.date.today() - datetime.timedelta(days=183)
+        base_qs = (
+            FollowUpSched.objects.filter(follow_up_sent=False)
+            .filter(follow_up_date__lte=datetime.date.today())
+            .filter(initial__gte=six_months_ago)
+            .order_by("follow_up_date")
+        )
         try:
-            candidates = (
-                FollowUpSched.objects.filter(follow_up_sent=False)
-                .filter(follow_up_date__lt=datetime.date.today())
-                .filter(initial__gte=six_months_ago)
-                .distinct("email")
-            )
+            # PostgreSQL DISTINCT ON requires ORDER BY to start with
+            # the DISTINCT ON columns.
+            candidates = base_qs.order_by(
+                "email", "follow_up_type", "follow_up_date"
+            ).distinct("email", "follow_up_type")
             # Force partial evaluation to catch DISTINCT ON errors
             # Used for SQLite in local dev/test mode.
             candidates.exists()
             return candidates
-        except NotSupportedError:
+        except (NotSupportedError, ProgrammingError):
             # Fallback for databases that don't support DISTINCT ON
-            candidates = (
-                FollowUpSched.objects.filter(follow_up_sent=False)
-                .filter(follow_up_date__lt=datetime.date.today())
-                .filter(initial__gte=six_months_ago)
-            )
-            return candidates
+            return base_qs
 
     def find_candidates(self):
         return list(self._find_candidates())
@@ -113,6 +113,22 @@ class FollowUpEmailSender(object):
             raise Exception("One of email and follow_up_sched must be set.")
         # At this point follow_up_sched is guaranteed to be set by the logic above
         assert follow_up_sched is not None
+
+        # Suppress stale follow-ups: if a later follow-up for the same denial
+        # has already been sent, skip this one (e.g. don't send a 7-day email
+        # if the 30-day email was already sent).
+        if follow_up_sched.follow_up_type and follow_up_sched.follow_up_type.duration:
+            later_sent = FollowUpSched.objects.filter(
+                denial_id=follow_up_sched.denial_id,
+                follow_up_sent=True,
+                follow_up_type__duration__gt=follow_up_sched.follow_up_type.duration,
+            ).exists()
+            if later_sent:
+                follow_up_sched.follow_up_sent = True
+                follow_up_sched.follow_up_sent_date = timezone.now()
+                follow_up_sched.save()
+                return True
+
         # Use the email from follow_up_sched to ensure consistency
         email = follow_up_sched.email
         denial = follow_up_sched.denial_id
@@ -130,10 +146,22 @@ class FollowUpEmailSender(object):
             ),
         }
 
+        # Use type-specific template and subject when available,
+        # fall back to generic for legacy records without a type.
+        if (
+            follow_up_sched.follow_up_type
+            and follow_up_sched.follow_up_type.template_name
+        ):
+            template_name = follow_up_sched.follow_up_type.template_name
+            subject = follow_up_sched.follow_up_type.subject
+        else:
+            template_name = "followup"
+            subject = "Following up from Fight Health Insurance"
+
         try:
             send_fallback_email(
-                template_name="followup",
-                subject="Following up from Fight Health Insurance",
+                template_name=template_name,
+                subject=subject,
                 context=context,
                 to_email=email,
             )

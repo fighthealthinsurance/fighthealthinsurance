@@ -523,6 +523,46 @@ class NextStepInfoSerializable:
     semi_sekret: str
 
 
+def schedule_follow_ups(
+    email: str,
+    denial: "Denial",
+    from_date: Optional[datetime.date] = None,
+) -> None:
+    """Schedule 7-day, 30-day, and 90-day follow-up emails for a denial.
+
+    Args:
+        email: Recipient email address.
+        denial: The denial to schedule follow-ups for.
+        from_date: Base date for computing follow-up dates. Defaults to
+            denial.date. Pass datetime.date.today() when re-scheduling
+            (e.g. when a user requests additional follow-up).
+
+    Skips follow-ups whose date would already be in the past (e.g. when
+    backfilling old denials) and uses update_or_create to prevent duplicates
+    atomically.
+    """
+    if from_date is None:
+        from_date = denial.date
+    follow_up_types = FollowUpType.objects.filter(
+        name__in=["followup_7day", "followup_30day", "followup_90day"]
+    )
+    today = datetime.date.today()
+    for fut in follow_up_types:
+        follow_up_date = from_date + fut.duration
+        # Skip if the follow-up date is already in the past
+        if follow_up_date < today:
+            continue
+        # Atomic upsert — avoids race condition with exists()+create()
+        FollowUpSched.objects.update_or_create(
+            denial_id=denial,
+            follow_up_type=fut,
+            defaults={
+                "email": email,
+                "follow_up_date": follow_up_date,
+            },
+        )
+
+
 class FollowUpHelper:
     @classmethod
     def fetch_denial(
@@ -551,8 +591,10 @@ class FollowUpHelper:
         quote: Optional[str] = None,
         name_for_quote: Optional[str] = None,
         use_quote: bool = False,
-        followup_documents=[],
+        followup_documents=None,
     ):
+        if followup_documents is None:
+            followup_documents = []
         denial = cls.fetch_denial(
             uuid=uuid,
             follow_up_semi_sekret=follow_up_semi_sekret,
@@ -570,12 +612,12 @@ class FollowUpHelper:
             name_for_quote=name_for_quote,
             quote=quote,
         )
-        # If they asked for additional follow up add a new schedule
-        if follow_up_again:
-            FollowUpSched.objects.create(
-                email=denial.raw_email,
-                denial_id=denial,
-                follow_up_date=denial.date + datetime.timedelta(days=15),
+        # If they asked for additional follow up, schedule from today
+        # so they get a fresh round of check-ins rather than re-using
+        # the original denial date (which may already be weeks/months ago).
+        if follow_up_again and denial.raw_email:
+            schedule_follow_ups(
+                denial.raw_email, denial, from_date=datetime.date.today()
             )
         for document in followup_documents:
             fd = FollowUpDocuments.objects.create(
@@ -1139,11 +1181,7 @@ class DenialCreatorHelper:
             denial.save()
 
         if possible_email is not None:
-            FollowUpSched.objects.create(
-                email=possible_email,
-                follow_up_date=denial.date + datetime.timedelta(days=15),
-                denial_id=denial,
-            )
+            schedule_follow_ups(possible_email, denial)
         your_state = None
         if zip is not None and zip != "":
             try:
