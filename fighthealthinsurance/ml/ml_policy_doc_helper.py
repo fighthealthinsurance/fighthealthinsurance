@@ -177,7 +177,7 @@ class MLPolicyDocHelper:
                     timeout=timeout,
                 )
                 if result:
-                    return result
+                    return str(result)
             except asyncio.TimeoutError:
                 logger.warning(f"Timeout on {label} with {model}")
             except Exception as e:
@@ -198,7 +198,7 @@ class MLPolicyDocHelper:
                 if not encrypted_bytes:
                     return None
                 try:
-                    return Cryptographer.decrypted(encrypted_bytes)
+                    return bytes(Cryptographer.decrypted(encrypted_bytes))
                 except Exception:
                     # Decryption failed — file may have been stored unencrypted
                     logger.debug("Decryption failed, returning raw bytes as fallback")
