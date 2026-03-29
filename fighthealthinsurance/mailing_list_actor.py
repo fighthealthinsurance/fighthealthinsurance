@@ -38,7 +38,7 @@ class MailingListActor:
         html_content: str,
         text_content: str,
         test_email: Optional[str] = None,
-    ) -> Tuple[int, int]:
+    ) -> Tuple[int, int, int]:
         """
         Send mailing list email to all subscribers or a test email.
 
@@ -49,7 +49,7 @@ class MailingListActor:
             test_email: Optional test email address. If provided, only sends to this address.
 
         Returns:
-            Tuple of (sent_count, failed_count)
+            Tuple of (sent_count, failed_count, blocked_count)
         """
         from django.conf import settings
         from django.core.mail import EmailMultiAlternatives, get_connection
@@ -59,6 +59,7 @@ class MailingListActor:
 
         sent_count = 0
         failed_count = 0
+        blocked_count = 0
 
         if test_email:
             # For test email, we don't include unsubscribe link
@@ -70,9 +71,18 @@ class MailingListActor:
 
         # Use connection reuse for better performance
         connection = get_connection()
+        from fighthealthinsurance.email_utils import is_blocked_email
+
         try:
             connection.open()
             for email, unsubscribe_url in recipients:
+                if is_blocked_email(email):
+                    blocked_count += 1
+                    masked_email = mask_email_for_logging(email)
+                    logger.info(
+                        f"Skipping blocked email in mailing list: {masked_email}"
+                    )
+                    continue
                 try:
                     # Append unsubscribe link to content if available
                     if unsubscribe_url:
@@ -113,7 +123,7 @@ class MailingListActor:
         finally:
             connection.close()
 
-        return (sent_count, failed_count)
+        return (sent_count, failed_count, blocked_count)
 
     def _append_unsubscribe_html(self, html_content: str, unsubscribe_url: str) -> str:
         """Append unsubscribe link to HTML content."""

@@ -41,6 +41,7 @@ from markdown_strings import esc_format
 from metapub import PubMedFetcher
 from requests.exceptions import RequestException
 
+from fighthealthinsurance.email_utils import is_blocked_email
 from fighthealthinsurance.env_utils import *
 
 pubmed_fetcher = PubMedFetcher()
@@ -289,7 +290,10 @@ def mask_email_for_logging(email: Optional[str]) -> str:
 
 
 def send_fallback_email(subject: str, template_name: str, context, to_email: str):
-    if to_email.endswith("-fake@fighthealthinsurance.com"):
+    if is_blocked_email(to_email):
+        logger.info(
+            f"Skipping email to blocked address: {mask_email_for_logging(to_email)}"
+        )
         return
     # First, render the plain text content if present
     text_content = render_to_string(
