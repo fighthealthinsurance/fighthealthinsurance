@@ -69,8 +69,13 @@ class StreamingAppealsBackend(AsyncWebsocketConsumer):
                 await self.send("\n")
                 # Count only actual appeal payloads (not status/keepalive frames)
                 stripped = record.strip()
-                if stripped and not stripped.startswith('{"type":'):
-                    appeal_count += 1
+                if stripped:
+                    try:
+                        parsed = json.loads(stripped)
+                        if isinstance(parsed, dict) and "content" in parsed:
+                            appeal_count += 1
+                    except (json.JSONDecodeError, TypeError):
+                        pass
             if appeal_count == 0:
                 logger.error(
                     "WebSocket appeal session completed with 0 appeal payloads sent"
