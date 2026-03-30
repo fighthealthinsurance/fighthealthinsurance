@@ -610,7 +610,6 @@ class MLPolicyDocHelper:
             if regulator_info:
                 plan_context = f"Plan context: {regulator_info}\n\n"
 
-        # If this chunk came from targeted search, tell the model what matched
         search_hint = ""
         search_hits = chunk.get("search_hits")
         if search_hits:
@@ -658,7 +657,6 @@ Document chunk:
             label=f"chunk {chunk_index}",
         )
 
-        # Update progress regardless of result
         async with remaining_counter:
             remaining_count[0] -= 1
             current_remaining = remaining_count[0]
@@ -668,16 +666,13 @@ Document chunk:
         if not result:
             return None
 
-        # Check if relevant
         if "RELEVANT: NO" in result.upper():
             logger.debug(f"Chunk {chunk_index} (pages {pages_str}) not relevant")
             return None
 
-        # Extract summary portion
         summary_start = result.find("SUMMARY:")
         if summary_start >= 0:
             return f"[Pages {pages_str}]\n{result[summary_start + 8:].strip()}"
-        # If no SUMMARY: header but marked relevant, use the whole response
         return f"[Pages {pages_str}]\n{result.strip()}"
 
     @classmethod
@@ -749,10 +744,21 @@ Document chunk:
         """
         Combine chunk summaries into a final structured analysis.
         """
-        combined_summaries = "\n\n---\n\n".join(chunk_summaries)
-        # Truncate if extremely long (shouldn't happen often with summaries)
-        if len(combined_summaries) > 30000:
-            combined_summaries = combined_summaries[:30000]
+        separator = "\n\n---\n\n"
+        max_synthesis_chars = 30000
+        combined_parts: list[str] = []
+        total_chars = 0
+        for summary in chunk_summaries:
+            added_len = len(summary) + len(separator)
+            if total_chars + added_len > max_synthesis_chars:
+                logger.warning(
+                    f"Truncating synthesis input at {len(combined_parts)}/{len(chunk_summaries)} summaries "
+                    f"({total_chars} chars) to stay within {max_synthesis_chars} char limit"
+                )
+                break
+            combined_parts.append(summary)
+            total_chars += added_len
+        combined_summaries = separator.join(combined_parts)
 
         question_context = ""
         if user_question:
@@ -798,21 +804,28 @@ Respond in JSON format with the following structure:
     "summary": "2-3 paragraph plain-English summary of coverage, limitations, appeal rights, and regulatory oversight"
 }}"""
 
-        num_models = len(ml_router.internal_models_by_cost[:3])
+        num_models = min(len(ml_router.internal_models_by_cost), 3)
         per_model_timeout = cls.SYNTHESIS_TIMEOUT_SECONDS / max(num_models, 1)
 
-        result = await cls._infer_with_fallback(
-            system_prompts=[
-                "You are an expert at analyzing health insurance policy documents. "
-                "Synthesize findings into a clear, structured analysis. "
-                "Always preserve exact page references. Be thorough but concise."
-            ],
-            prompt=prompt,
-            temperature=0.2,
-            timeout=per_model_timeout,
-            model_count=3,
-            label="synthesis",
-        )
+        try:
+            result = await asyncio.wait_for(
+                cls._infer_with_fallback(
+                    system_prompts=[
+                        "You are an expert at analyzing health insurance policy documents. "
+                        "Synthesize findings into a clear, structured analysis. "
+                        "Always preserve exact page references. Be thorough but concise."
+                    ],
+                    prompt=prompt,
+                    temperature=0.2,
+                    timeout=per_model_timeout,
+                    model_count=3,
+                    label="synthesis",
+                ),
+                timeout=cls.SYNTHESIS_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError:
+            logger.warning("Synthesis exceeded global timeout")
+            result = None
 
         if result:
             parsed = cls._parse_analysis_response(result)

@@ -4,6 +4,7 @@ from django import forms
 from django.core.files.uploadedfile import UploadedFile
 
 from fighthealthinsurance.forms import REFERRAL_SOURCE_CHOICES
+from fighthealthinsurance.models import PolicyDocument
 
 SUPPORTED_POLICY_EXTENSIONS = {".pdf", ".docx", ".txt"}
 
@@ -80,12 +81,6 @@ class BaseConsentFieldsMixin(forms.Form):
 class UnderstandPolicyForm(BaseConsentFieldsMixin):
     """Form for uploading policy documents with consent"""
 
-    DOCUMENT_TYPE_CHOICES = [
-        ("summary_of_benefits", "Summary of Benefits"),
-        ("medical_policy", "Medical Policy"),
-        ("other", "Other Policy Document"),
-    ]
-
     policy_document = forms.FileField(
         required=True,
         widget=forms.FileInput(
@@ -99,7 +94,7 @@ class UnderstandPolicyForm(BaseConsentFieldsMixin):
 
     document_type = forms.ChoiceField(
         required=True,
-        choices=DOCUMENT_TYPE_CHOICES,
+        choices=PolicyDocument.DOCUMENT_TYPE_CHOICES,
         initial="summary_of_benefits",
         widget=forms.Select(
             attrs={
