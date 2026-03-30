@@ -2097,8 +2097,8 @@ class AppealsBackendHelper:
         # Yield the existing appeals first
         old = 0
         async for appeal in existing_appeals:
-            old = old + 1
             if appeal.appeal_text is not None:
+                old = old + 1
                 logger.debug(f"Found existing appeal {appeal}, yielding")
                 existing_appeal_dict = await sub_in_appeals(
                     {"id": str(appeal.id), "content": appeal.appeal_text}
@@ -2575,6 +2575,19 @@ class AppealsBackendHelper:
                         logger.debug("Synthesis returned no result, skipping")
             except Exception:
                 logger.opt(exception=True).warning("Final appeal synthesis failed")
+
+        # Log when appeal generation produces no results for Sentry visibility
+        if new + old == 0:
+            logger.error(
+                f"Zero appeals generated for denial {denial_id}, "
+                f"gen_attempts={denial.gen_attempts}"
+            )
+        elif new == 0 and old > 0:
+            logger.warning(
+                f"No new appeals generated for denial {denial_id} "
+                f"(but {old} existing appeals found), "
+                f"gen_attempts={denial.gen_attempts}"
+            )
 
         # Explicit end-of-stream so the client knows exactly what was sent
         yield json.dumps(
