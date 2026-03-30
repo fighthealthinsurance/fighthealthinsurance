@@ -65,16 +65,17 @@ class EmailPollingActor:
                     self._logger.info(f"Sent {sent_count} follow-up emails")
                     await self._jittered_send_delay(sent_count)
 
-                # Send thank-you emails to professionals
-                thankyou_candidates = await self.thankyou_sender.afind_candidates()
-                thankyou_count = len(thankyou_candidates)
-                self._logger.debug(f"Thank you candidates: {thankyou_count}")
-                if thankyou_count > 0:
-                    thankyou_sent = await self.thankyou_sender.asend_all(
-                        count=10, candidates=thankyou_candidates
-                    )
-                    self._logger.info(f"Sent {thankyou_sent} thank-you emails")
-                    await self._jittered_send_delay(thankyou_sent)
+                if False:
+                    # Send thank-you emails to professionals
+                    thankyou_candidates = await self.thankyou_sender.afind_candidates()
+                    thankyou_count = len(thankyou_candidates)
+                    self._logger.debug(f"Thank you candidates: {thankyou_count}")
+                    if thankyou_count > 0:
+                        thankyou_sent = await self.thankyou_sender.asend_all(
+                            count=10, candidates=thankyou_candidates
+                        )
+                        self._logger.info(f"Sent {thankyou_sent} thank-you emails")
+                        await self._jittered_send_delay(thankyou_sent)
 
                 # Check if we should clear expired emails (once per day)
                 now = timezone.now()
