@@ -26,14 +26,20 @@ from fighthealthinsurance.chat.safety_filters import (
     CRISIS_RESOURCES,
     detect_crisis_keywords,
 )
+from fighthealthinsurance.chat.tools.doc_fetcher_tool import (
+    MAX_CHAT_TEXT_LENGTH as doc_max_text_length,
+    validate_url as validate_doc_url,
+)
 from fighthealthinsurance.chat.tools.patterns import (
     CREATE_OR_UPDATE_APPEAL_REGEX as create_or_update_appeal_regex,
     CREATE_OR_UPDATE_PRIOR_AUTH_REGEX as create_or_update_prior_auth_regex,
+    FETCH_DOC_REGEX as fetch_doc_regex,
     MEDICAID_ELIGIBILITY_REGEX as medicaid_eligibility_regex,
     MEDICAID_INFO_REGEX as medicaid_info_lookup_regex,
     PUBMED_QUERY_REGEX as pubmed_query_terms_regex,
 )
 from fighthealthinsurance.extralink_context_helper import ExtraLinkContextHelper
+from fighthealthinsurance.extralink_fetcher import ExtraLinkFetcher
 from fighthealthinsurance.rag_client import get_rag_context_for_denial
 from fighthealthinsurance.ml.ml_models import (
     RemoteModelLike,
@@ -820,8 +826,89 @@ class ChatInterface:
             await self.send_status_message(
                 "Error while processing PubMed query. Continuing with the original response."
             )
+
+        # Handle fetch_doc
+        doc_context_str = ""
+        try:
+            doc_match: Optional[re.Match[str]] = re.search(
+                fetch_doc_regex, response_text, flags=re.IGNORECASE
+            )
+            if doc_match:
+                json_str = doc_match.group(1).strip()
+                cleaned_response = response_text.replace(doc_match.group(0), "").strip()
+                try:
+                    doc_params = json.loads(json_str)
+                    url = doc_params.get("url", "").strip()
+                    if url:
+                        validate_doc_url(url)
+                        await self.send_status_message(
+                            f"Fetching document from {url}..."
+                        )
+                        fetcher = ExtraLinkFetcher()
+                        content, content_type, file_size = await fetcher._fetch_url(url)
+                        doc_type = fetcher._detect_document_type(url, content_type)
+                        extracted_text = await fetcher._extract_text(content, doc_type)
+                        if extracted_text and extracted_text.strip():
+                            if len(extracted_text) > doc_max_text_length:
+                                extracted_text = (
+                                    extracted_text[:doc_max_text_length] + "..."
+                                )
+                            await self.send_status_message(
+                                f"Extracted {len(extracted_text)} characters from {doc_type} document."
+                            )
+                            doc_context_str = (
+                                f"\n\nDocument fetched from {url}:\n"
+                                f"{extracted_text}\n\n"
+                                f"Please incorporate the relevant information from the document above.\n"
+                            )
+                            (
+                                additional_response_text,
+                                additional_context_part,
+                            ) = await self._call_llm_with_actions(
+                                model_backends,
+                                doc_context_str,
+                                previous_context_summary,
+                                history_for_llm,
+                                depth=depth + 1,
+                                is_logged_in=is_logged_in,
+                                is_professional=is_professional,
+                            )
+                            if cleaned_response and additional_response_text:
+                                cleaned_response += additional_response_text
+                            elif additional_response_text:
+                                cleaned_response = additional_response_text
+                            context_part = (
+                                context_part + additional_context_part
+                                if context_part and additional_context_part
+                                else additional_context_part
+                            )
+                            response_text = cleaned_response
+                        else:
+                            await self.send_status_message(
+                                "Could not extract any text from the document."
+                            )
+                            response_text = cleaned_response
+                    else:
+                        response_text = cleaned_response
+                except json.JSONDecodeError as e:
+                    logger.warning(f"Invalid JSON in fetch_doc: {json_str}: {e}")
+                    response_text = cleaned_response
+                except ValueError as e:
+                    logger.warning(f"URL validation failed for fetch_doc: {e}")
+                    await self.send_status_message(f"Cannot fetch document: {e}")
+                    response_text = cleaned_response
+        except Exception as e:
+            logger.warning(
+                f"Error while processing fetch_doc: {e}. Continuing with the original response."
+            )
+            await self.send_status_message(
+                "Error while fetching document. Continuing with the original response."
+            )
+
         context = (
-            context_part + pubmed_context_str if context_part else pubmed_context_str
+            context_part + pubmed_context_str + doc_context_str
+            if context_part
+            else pubmed_context_str + doc_context_str
         )
         logger.debug(f"Return with context {context}.")
         return response_text, context
