@@ -10,6 +10,9 @@
         {% if denial_text %}
         <textarea name="denial_text" style="display:none;">{{ denial_text }}</textarea>
         {% endif %}
+        {% if initial_message %}
+        <textarea name="initial_message" style="display:none;">{{ initial_message }}</textarea>
+        {% endif %}
         {% if default_procedure %}
         <input type="hidden" name="default_procedure" value="{{ default_procedure }}">
         {% endif %}

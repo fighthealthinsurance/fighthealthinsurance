@@ -901,10 +901,16 @@ class ChatInterface:
                     policy_doc = await PolicyDocument.objects.filter(id=doc_id).afirst()
 
             if not policy_doc and session_key:
+                logger.debug(
+                    f"Fallback to session_key lookup for policy doc, session_key={session_key}"
+                )
                 policy_doc = (
                     await PolicyDocument.objects.filter(session_key=session_key)
                     .order_by("-created_at")
                     .afirst()
+                )
+                logger.debug(
+                    f"Session_key fallback result: doc_id={policy_doc.id if policy_doc else None}"
                 )
 
             if not policy_doc:

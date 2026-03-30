@@ -13,7 +13,7 @@ import asyncio
 import io
 import json
 import re
-from typing import Optional, Dict, Any, Callable, Awaitable, Set
+from typing import ClassVar, Optional, Dict, Any, Callable, Awaitable, Set
 
 from loguru import logger
 
@@ -566,7 +566,7 @@ class MLPolicyDocHelper:
         return None
 
     # Map plan categories to their regulatory context for the LLM prompt
-    PLAN_REGULATOR_CONTEXT: Dict[str, str] = {
+    PLAN_REGULATOR_CONTEXT: ClassVar[Dict[str, str]] = {
         "employer_erisa": "This is an ERISA employer-sponsored plan regulated by the U.S. Department of Labor. Appeals go through the DOL/EBSA.",
         "employer_non_erisa": "This is a non-ERISA employer plan (government or church employer). Appeals are typically handled by the state insurance department.",
         "aca_marketplace": "This is an ACA Marketplace plan. Appeals may go through HHS or the state insurance department/exchange.",
