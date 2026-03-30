@@ -22,7 +22,7 @@ def cleanup_empty_pubmed_query_data(apps, schema_editor):
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("fighthealthinsurance", "0153_useddeletetoken"),
+        ("fighthealthinsurance", "0156_followupsched_unique_denial_followup_type"),
     ]
 
     operations = [
