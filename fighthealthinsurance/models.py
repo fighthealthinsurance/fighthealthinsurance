@@ -2337,6 +2337,12 @@ class PolicyDocumentAnalysis(ExportModelOperationsMixin("PolicyDocumentAnalysis"
             models.Index(fields=["policy_document"]),
             models.Index(fields=["created_at"]),
         ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["policy_document", "user_question"],
+                name="unique_policy_analysis",
+            ),
+        ]
         verbose_name = "Policy Document Analysis"
         verbose_name_plural = "Policy Document Analyses"
 

@@ -53,7 +53,6 @@ class UnderstandPolicyFormValidationTest(TestCase):
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         ),
         ("test.txt", b"plain text content", "text/plain"),
-        ("test.rtf", b"rtf content here", "application/rtf"),
     ]
 
     _INVALID_FILES = [

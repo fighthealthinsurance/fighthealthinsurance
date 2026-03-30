@@ -40,7 +40,12 @@ from fighthealthinsurance import common_view_logic, forms as core_forms, models
 from fighthealthinsurance.chat_forms import UnderstandPolicyForm, UserConsentForm
 from fighthealthinsurance.helpers.data_helpers import RemoveDataHelper
 from fighthealthinsurance.helpers.stripe_helpers import StripeWebhookHelper
-from fighthealthinsurance.models import DeleteToken, PolicyDocument, UsedDeleteToken, StripeRecoveryInfo
+from fighthealthinsurance.models import (
+    DeleteToken,
+    PolicyDocument,
+    UsedDeleteToken,
+    StripeRecoveryInfo,
+)
 from fighthealthinsurance.type_utils import User
 from fighthealthinsurance.utils import send_fallback_email
 
@@ -51,15 +56,18 @@ def _handle_mailing_list_subscribe(form: forms.Form, source_page: str) -> None:
         return
     name = f"{form.cleaned_data.get('first_name')} {form.cleaned_data.get('last_name')}"
     try:
-        models.MailingListSubscriber.objects.create(
-            email=str(form.cleaned_data.get("email", "")),
-            phone=form.cleaned_data.get("phone", ""),
-            name=name,
-            comments=f"From {source_page}",
-            referral_source=form.cleaned_data.get("referral_source", ""),
-            referral_source_details=form.cleaned_data.get(
-                "referral_source_details", ""
-            ),
+        email = str(form.cleaned_data.get("email", ""))
+        models.MailingListSubscriber.objects.update_or_create(
+            email=email,
+            defaults={
+                "name": name,
+                "phone": form.cleaned_data.get("phone", ""),
+                "comments": f"From {source_page}",
+                "referral_source": form.cleaned_data.get("referral_source", ""),
+                "referral_source_details": form.cleaned_data.get(
+                    "referral_source_details", ""
+                ),
+            },
         )
     except Exception as e:
         logger.warning(f"Failed to create mailing list subscriber: {e}")
