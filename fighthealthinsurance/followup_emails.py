@@ -1,6 +1,7 @@
 import asyncio
 import datetime
 import random
+from collections import defaultdict
 from typing import Any, Optional
 
 from asgiref.sync import sync_to_async
@@ -132,14 +133,65 @@ class FollowUpEmailSender(AsyncEmailSenderMixin):
     def find_candidates(self):
         return list(self._find_candidates())
 
+    def _group_candidates_by_email(
+        self, candidates: list[FollowUpSched]
+    ) -> list[tuple[FollowUpSched, list[FollowUpSched]]]:
+        """Group candidates by email, picking the best one to send per email.
+
+        Returns a list of (best_candidate, other_candidates) tuples.
+        The "best" candidate is the one with the longest follow_up_type.duration
+        (e.g., 90-day > 30-day > 7-day), since it represents the most
+        significant check-in milestone.
+        """
+        groups: dict[str, list[FollowUpSched]] = defaultdict(list)
+        for candidate in candidates:
+            groups[candidate.email].append(candidate)
+
+        result = []
+        for email, group in groups.items():
+            group.sort(
+                key=lambda s: (
+                    s.follow_up_type.duration
+                    if s.follow_up_type and s.follow_up_type.duration
+                    else datetime.timedelta(0)
+                ),
+                reverse=True,
+            )
+            best = group[0]
+            others = group[1:]
+            result.append((best, others))
+        return result
+
+    def _mark_as_sent_without_sending(
+        self, follow_up_scheds: list[FollowUpSched]
+    ) -> None:
+        """Mark follow-up schedules as sent without actually sending email."""
+        if not follow_up_scheds:
+            return
+        now = timezone.now()
+        pks = [s.pk for s in follow_up_scheds]
+        FollowUpSched.objects.filter(pk__in=pks).update(
+            follow_up_sent=True,
+            follow_up_sent_date=now,
+        )
+
     def send_all(self, count: Optional[int] = None) -> int:
         candidates = self.find_candidates()
-        selected_candidates = candidates
+        grouped = self._group_candidates_by_email(candidates)
         if count is not None:
-            selected_candidates = candidates[:count]
-        return len(
-            list(map(lambda f: self.dosend(follow_up_sched=f), selected_candidates))
-        )
+            grouped = grouped[:count]
+        sent = 0
+        for best, others in grouped:
+            result = self.dosend(follow_up_sched=best)
+            if result:
+                if others:
+                    logger.info(
+                        f"Suppressed {len(others)} duplicate follow-up(s) for "
+                        f"{mask_email_for_logging(best.email)}"
+                    )
+                self._mark_as_sent_without_sending(others)
+                sent += 1
+        return sent
 
     def dosend(
         self,
@@ -216,6 +268,34 @@ class FollowUpEmailSender(AsyncEmailSenderMixin):
                 f"Failed to send follow-up email to {mask_email_for_logging(email)}: {e}"
             )
             return False
+
+    async def asend_all(
+        self, count: Optional[int] = None, candidates: Optional[list] = None
+    ) -> int:
+        """Async send_all with per-email grouping and rate limiting.
+
+        Groups candidates by email address so each recipient gets at most
+        one follow-up email per batch. The best candidate (longest duration)
+        is sent; the rest are marked as sent without emailing.
+        """
+        if candidates is None:
+            candidates = await self.afind_candidates()
+        grouped = await sync_to_async(self._group_candidates_by_email)(candidates)
+        if count is not None:
+            grouped = grouped[:count]
+        sent = 0
+        for best, others in grouped:
+            result = await self.adosend(follow_up_sched=best)
+            if result:
+                if others:
+                    await sync_to_async(self._mark_as_sent_without_sending)(others)
+                    logger.info(
+                        f"Suppressed {len(others)} duplicate follow-up(s) for "
+                        f"{mask_email_for_logging(best.email)}"
+                    )
+                sent += 1
+                await asyncio.sleep(random.uniform(1.0, 3.0))
+        return sent
 
     async def _asend_one(self, candidate: Any) -> bool:
         return await self.adosend(follow_up_sched=candidate)
