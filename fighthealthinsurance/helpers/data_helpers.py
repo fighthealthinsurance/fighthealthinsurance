@@ -14,6 +14,7 @@ from fighthealthinsurance.models import (
     FollowUpSched,
     MailingListSubscriber,
     OngoingChat,
+    PolicyDocument,
 )
 
 
@@ -45,6 +46,8 @@ class RemoveDataHelper:
         # (covers hashed_email, user__email, and professional_user__user__email)
         OngoingChat.find_chats_by_email(email).delete()
         ChatLeads.objects.filter(email__iexact=email).delete()
+        # Policy documents (encrypted files cleaned up via post_delete signal)
+        PolicyDocument.objects.filter(hashed_email=hashed_email).delete()
         # Mailing list and demo requests
         MailingListSubscriber.objects.filter(email__iexact=email).delete()
         DemoRequests.objects.filter(email__iexact=email).delete()

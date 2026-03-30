@@ -2268,6 +2268,22 @@ class PolicyDocument(ExportModelOperationsMixin("PolicyDocument"), models.Model)
         return f"PolicyDocument: {self.filename or self.id} ({self.document_type})"
 
 
+from django.db.models.signals import post_delete
+from django.dispatch import receiver
+
+
+@receiver(post_delete, sender=PolicyDocument)
+def _delete_policy_document_file(
+    sender: type, instance: "PolicyDocument", **kwargs: typing.Any
+) -> None:
+    """Remove the encrypted file blob when a PolicyDocument row is deleted."""
+    if instance.document_enc:
+        try:
+            instance.document_enc.delete(save=False)
+        except Exception:
+            pass
+
+
 class PolicyDocumentAnalysis(ExportModelOperationsMixin("PolicyDocumentAnalysis"), models.Model):  # type: ignore
     """
     Stores AI analysis of policy documents.

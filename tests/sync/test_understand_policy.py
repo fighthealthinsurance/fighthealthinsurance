@@ -372,6 +372,7 @@ class UnderstandPolicyViewTest(TestCase):
         session = self.client.session
         self.assertIn("policy_document_id", session)
         self.assertTrue(session.get("consent_completed"))
+        self.assertIn("policy_document_question", session)
 
 
 # --- Model Tests ---

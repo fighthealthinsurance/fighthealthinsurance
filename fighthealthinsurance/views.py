@@ -1835,9 +1835,12 @@ def chat_interface_view(request):
     if not denial_text:
         denial_text = request.session.pop("denial_text_for_explanation", "")
 
+    # Check for a pre-built initial message (e.g. from policy analysis redirect)
     initial_message = ""
-    if denial_text:
-        # Format the initial message for the chat
+    if request.method == "POST":
+        initial_message = request.POST.get("initial_message", "")
+
+    if not initial_message and denial_text:
         initial_message = (
             "I received this denial letter from my insurance and need help understanding it:\n\n"
             f"{denial_text}\n\n"
@@ -2237,7 +2240,7 @@ class UnderstandPolicyView(FormView):
                 session_key=session_key,
             )
 
-            logger.info(f"Created PolicyDocument {policy_doc.id} for {safe_filename}")
+            logger.info(f"Created PolicyDocument {policy_doc.id}")
 
             # Store the document ID in session for chat to pick up
             self.request.session["policy_document_id"] = str(policy_doc.id)
@@ -2282,7 +2285,7 @@ class UnderstandPolicyView(FormView):
         )
 
         context = {
-            "denial_text": initial_message,
+            "initial_message": initial_message,
             "chat_url": reverse("chat"),
         }
         return render(self.request, "chat_redirect.html", context)

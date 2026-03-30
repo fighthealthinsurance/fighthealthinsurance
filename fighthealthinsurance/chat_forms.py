@@ -104,7 +104,7 @@ class UnderstandPolicyForm(BaseConsentFieldsMixin):
         ),
     )
 
-    PLAN_CATEGORY_CHOICES = [
+    PLAN_CATEGORY_CHOICES = (
         ("employer_erisa", "Employer Plan (ERISA) — regulated by Dept. of Labor"),
         (
             "employer_non_erisa",
@@ -119,7 +119,7 @@ class UnderstandPolicyForm(BaseConsentFieldsMixin):
         ("individual_off_exchange", "Individual Plan (Off-Exchange)"),
         ("short_term", "Short-Term Health Plan"),
         ("unknown", "I'm Not Sure"),
-    ]
+    )
 
     plan_category = forms.ChoiceField(
         required=True,

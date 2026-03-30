@@ -12,17 +12,10 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("fighthealthinsurance", "0156_followupsched_unique_denial_followup_type"),
+        ("fighthealthinsurance", "0158_alter_useddeletetoken_id"),
     ]
 
     operations = [
-        migrations.AlterField(
-            model_name="useddeletetoken",
-            name="id",
-            field=models.BigAutoField(
-                auto_created=True, primary_key=True, serialize=False, verbose_name="ID"
-            ),
-        ),
         migrations.CreateModel(
             name="PolicyDocument",
             fields=[

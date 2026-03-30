@@ -143,21 +143,21 @@
 
                                 <div class="form-check mb-3">
                                     {{ form.tos_agreement }}
-                                    <label for="tos" class="form-check-label">
+                                    <label for="{{ form.tos_agreement.id_for_label }}" class="form-check-label">
                                         I agree to the <a href="{% url 'tos' %}" target="_blank">Terms of Service</a>. I understand this analysis is for informational purposes only and is not legal or professional advice. I understand that my uploaded policy document may be used in de-identified form to train and improve Fight Health Insurance's AI models.*
                                     </label>
                                 </div>
 
                                 <div class="form-check mb-3">
                                     {{ form.privacy_policy }}
-                                    <label for="privacy" class="form-check-label">
+                                    <label for="{{ form.privacy_policy.id_for_label }}" class="form-check-label">
                                         I have read and understand the <a href="{% url 'privacy_policy' %}" target="_blank">Privacy Policy</a>.*
                                     </label>
                                 </div>
 
                                 <div class="form-check mb-3">
                                     {{ form.subscribe }}
-                                    <label for="subscribe" class="form-check-label">
+                                    <label for="{{ form.subscribe.id_for_label }}" class="form-check-label">
                                         I wish to subscribe for updates and news from Fight Health Insurance.
                                     </label>
                                 </div>
