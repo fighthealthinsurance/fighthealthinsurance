@@ -57,6 +57,7 @@ from fighthealthinsurance.utils import (
     sync_iterator_to_async,
 )
 from .pubmed_tools import PubMedTools
+from .email_utils import is_sendable_email
 from .utils import (
     _try_pandoc_engines,
     check_call,
@@ -541,6 +542,8 @@ def schedule_follow_ups(
     backfilling old denials) and uses update_or_create to prevent duplicates
     atomically.
     """
+    if not is_sendable_email(email):
+        return
     if from_date is None:
         from_date = denial.date
     follow_up_types = FollowUpType.objects.filter(

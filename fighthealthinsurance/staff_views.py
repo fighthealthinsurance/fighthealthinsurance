@@ -25,6 +25,7 @@ from fighthealthinsurance.models import (
     ProfessionalUser,
     UserDomain,
 )
+from fighthealthinsurance.email_utils import is_sendable_email
 from fighthealthinsurance.type_utils import User
 from fighthealthinsurance.utils import mask_email_for_logging
 
@@ -247,14 +248,14 @@ class SendMailingListMailView(generic.FormView):
             future = actor.send_mailing_list_email.remote(
                 subject, html_content, text_content, test_email
             )
-            sent_count, failed_count = ray.get(future)
+            sent_count, failed_count, blocked_count = ray.get(future)
 
             if test_email:
                 masked_email = mask_email_for_logging(test_email)
                 return HttpResponse(f"Test email sent successfully to {masked_email}")
             else:
                 return HttpResponse(
-                    f"Mailing list email sent. Success: {sent_count}, Failed: {failed_count}"
+                    f"Mailing list email sent. Success: {sent_count}, Failed: {failed_count}, Blocked: {blocked_count}"
                 )
         except Exception as e:
             logger.opt(exception=True).error(f"Error sending mailing list email: {e}")

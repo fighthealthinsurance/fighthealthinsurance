@@ -1,7 +1,9 @@
+import asyncio
 import datetime
-from typing import Optional
+import random
+from typing import Any, Optional
 
-from django.db.models import QuerySet
+from asgiref.sync import sync_to_async
 from django.db.utils import NotSupportedError, ProgrammingError
 from django.urls import reverse
 from django.utils import timezone
@@ -12,7 +14,45 @@ from fighthealthinsurance.models import FollowUpSched, InterestedProfessional
 from fighthealthinsurance.utils import mask_email_for_logging, send_fallback_email
 
 
-class ThankyouEmailSender(object):
+class AsyncEmailSenderMixin:
+    """Mixin providing async wrappers for email sender classes.
+
+    Requires the subclass to implement find_candidates() and dosend().
+    """
+
+    async def afind_candidates(self) -> list[Any]:
+        return await sync_to_async(self.find_candidates)()  # type: ignore[attr-defined, no-any-return]
+
+    async def adosend(self, **kwargs: Any) -> bool:
+        return await sync_to_async(self.dosend)(**kwargs)  # type: ignore[attr-defined, no-any-return]
+
+    async def asend_all(
+        self, count: Optional[int] = None, candidates: Optional[list] = None
+    ) -> int:
+        """Async send_all with per-email delay for rate limiting.
+
+        Args:
+            count: Maximum number of emails to send.
+            candidates: Pre-fetched candidate list. If None, queries DB.
+        """
+        if candidates is None:
+            candidates = await self.afind_candidates()
+        if count is not None:
+            candidates = candidates[:count]
+        sent = 0
+        for candidate in candidates:
+            result = await self._asend_one(candidate)
+            if result:
+                sent += 1
+                await asyncio.sleep(random.uniform(1.0, 3.0))
+        return sent
+
+    async def _asend_one(self, candidate: Any) -> bool:
+        """Send to a single candidate. Override in subclass for correct kwarg."""
+        raise NotImplementedError
+
+
+class ThankyouEmailSender(AsyncEmailSenderMixin):
     def _find_candidates(self):
         return InterestedProfessional.objects.filter(thankyou_email_sent=False)
 
@@ -57,14 +97,16 @@ class ThankyouEmailSender(object):
             interested_pro.save()
             return True
         except Exception as e:
-            # Log the error for debugging
             logger.warning(
                 f"Failed to send thank you email to {mask_email_for_logging(email)}: {e}"
             )
             return False
 
+    async def _asend_one(self, candidate: Any) -> bool:
+        return await self.adosend(interested_pro=candidate)
 
-class FollowUpEmailSender(object):
+
+class FollowUpEmailSender(AsyncEmailSenderMixin):
     def _find_candidates(self):
         six_months_ago = datetime.date.today() - datetime.timedelta(days=183)
         base_qs = (
@@ -170,8 +212,10 @@ class FollowUpEmailSender(object):
             follow_up_sched.save()
             return True
         except Exception as e:
-            # Log the error for debugging
             logger.warning(
                 f"Failed to send follow-up email to {mask_email_for_logging(email)}: {e}"
             )
             return False
+
+    async def _asend_one(self, candidate: Any) -> bool:
+        return await self.adosend(follow_up_sched=candidate)

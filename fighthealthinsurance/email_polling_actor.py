@@ -1,6 +1,7 @@
 import asyncio
 import datetime
 import os
+import random
 import time
 
 from django.utils import timezone
@@ -53,18 +54,27 @@ class EmailPollingActor:
             await asyncio.sleep(1)  # Yield
             try:
                 self._logger.debug("Getting follow up candidates")
-                # Send follow-up emails
-                followup_candidates = await sync_to_async(
-                    self.followup_sender.find_candidates
-                )()
+                # Send follow-up emails (pass candidates to avoid double DB query)
+                followup_candidates = await self.followup_sender.afind_candidates()
                 followup_count = len(followup_candidates)
                 self._logger.debug(f"Follow up candidates: {followup_count}")
                 if followup_count > 0:
-                    sent_count = await sync_to_async(self.followup_sender.send_all)(
-                        count=10
+                    sent_count = await self.followup_sender.asend_all(
+                        count=10, candidates=followup_candidates
                     )
                     self._logger.info(f"Sent {sent_count} follow-up emails")
-                    await asyncio.sleep(600 * sent_count + 42)
+                    await self._jittered_send_delay(sent_count)
+
+                # Send thank-you emails to professionals
+                thankyou_candidates = await self.thankyou_sender.afind_candidates()
+                thankyou_count = len(thankyou_candidates)
+                self._logger.debug(f"Thank you candidates: {thankyou_count}")
+                if thankyou_count > 0:
+                    thankyou_sent = await self.thankyou_sender.asend_all(
+                        count=10, candidates=thankyou_candidates
+                    )
+                    self._logger.info(f"Sent {thankyou_sent} thank-you emails")
+                    await self._jittered_send_delay(thankyou_sent)
 
                 # Check if we should clear expired emails (once per day)
                 now = timezone.now()
@@ -72,15 +82,30 @@ class EmailPollingActor:
                     await self._clear_expired_emails()
                     self.last_email_clear_check = now
 
-                await asyncio.sleep(10)
+                # Jittered poll interval
+                await asyncio.sleep(random.uniform(8, 15))
                 error_count = 0
             except Exception as e:
                 error_count += 1
-                self._logger.opt(exception=True).error("Error while checking messages")
-                await asyncio.sleep(60)
+                # Exponential backoff with jitter, capped at 30 minutes
+                exponent = min(error_count - 1, 4)
+                backoff = min(60 * (2**exponent), 1800)
+                jitter = random.uniform(0, backoff * 0.1)
+                total_wait = backoff + jitter
+                self._logger.opt(exception=True).error(
+                    f"Error #{error_count} while checking messages, "
+                    f"backing off {total_wait:.0f}s"
+                )
+                await asyncio.sleep(total_wait)
 
         self._logger.warning("EmailPollingActor stopped running")
         return None
+
+    async def _jittered_send_delay(self, sent_count: int) -> None:
+        """Apply jittered delay proportional to emails sent."""
+        base_delay = 600 * sent_count + 42
+        jitter = random.uniform(-60, 60)
+        await asyncio.sleep(max(10, base_delay + jitter))
 
     async def _clear_expired_emails(self) -> None:
         """Clear emails from denials 30 days after follow-up was sent for users who didn't opt in."""

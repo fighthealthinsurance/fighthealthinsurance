@@ -22,22 +22,22 @@ class TestRemoveDataView(TestCase):
 
     def test_post_sends_confirmation_email(self):
         url = reverse("remove_data")
-        response = self.client.post(url, {"email": "test@example.com"})
+        response = self.client.post(url, {"email": "test@test-fhi.com"})
         assert response.status_code == 200
         assert b"Check Your Email" in response.content
         assert len(mail.outbox) >= 1
         assert mail.outbox[0].subject == "Confirm Data Deletion Request"
         assert "confirm-delete" in mail.outbox[0].body
         assert DeleteToken.objects.filter(
-            hashed_email=self._hashed("test@example.com")
+            hashed_email=self._hashed("test@test-fhi.com")
         ).exists()
 
     def test_post_replaces_existing_token(self):
         url = reverse("remove_data")
-        hashed = self._hashed("test@example.com")
-        self.client.post(url, {"email": "test@example.com"})
+        hashed = self._hashed("test@test-fhi.com")
+        self.client.post(url, {"email": "test@test-fhi.com"})
         first_token = DeleteToken.objects.get(hashed_email=hashed).token
-        self.client.post(url, {"email": "test@example.com"})
+        self.client.post(url, {"email": "test@test-fhi.com"})
         second_token = DeleteToken.objects.get(hashed_email=hashed).token
         assert DeleteToken.objects.filter(hashed_email=hashed).count() == 1
         assert first_token != second_token
@@ -51,25 +51,25 @@ class TestRemoveDataView(TestCase):
 
     def test_post_shows_support_email_note(self):
         url = reverse("remove_data")
-        response = self.client.post(url, {"email": "test@example.com"})
+        response = self.client.post(url, {"email": "test@test-fhi.com"})
         assert b"support42@fighthealthinsurance.com" in response.content
 
     @patch("fighthealthinsurance.views.RemoveDataHelper.remove_data_for_email")
     def test_post_does_not_delete_data_immediately(self, mock_remove):
         """Ensure POST only sends email and does NOT delete data."""
         url = reverse("remove_data")
-        self.client.post(url, {"email": "test@example.com"})
+        self.client.post(url, {"email": "test@test-fhi.com"})
         mock_remove.assert_not_called()
 
     def test_confirmation_email_contains_correct_token(self):
         """Verify the email body contains the correct token and email params."""
         url = reverse("remove_data")
-        self.client.post(url, {"email": "test@example.com"})
-        hashed = self._hashed("test@example.com")
+        self.client.post(url, {"email": "test@test-fhi.com"})
+        hashed = self._hashed("test@test-fhi.com")
         token = DeleteToken.objects.get(hashed_email=hashed)
         email_body = mail.outbox[0].body
         assert str(token.token) in email_body
-        assert "test%40example.com" in email_body or "test@example.com" in email_body
+        assert "test%40test-fhi.com" in email_body or "test@test-fhi.com" in email_body
 
     def test_confirmation_email_contains_working_link(self):
         """Extract the link from the email and verify it loads the confirmation page."""
@@ -77,8 +77,8 @@ class TestRemoveDataView(TestCase):
         from urllib.parse import parse_qs, urlparse
 
         url = reverse("remove_data")
-        self.client.post(url, {"email": "test@example.com"})
-        hashed = self._hashed("test@example.com")
+        self.client.post(url, {"email": "test@test-fhi.com"})
+        hashed = self._hashed("test@test-fhi.com")
         token = DeleteToken.objects.get(hashed_email=hashed)
         email_body = mail.outbox[0].body
 
@@ -92,7 +92,7 @@ class TestRemoveDataView(TestCase):
         params = parse_qs(parsed.query)
         assert parsed.path == "/confirm-delete"
         assert params["token"] == [str(token.token)]
-        assert params["email"] == ["test@example.com"]
+        assert params["email"] == ["test@test-fhi.com"]
 
         # Follow the link with the test client (use just path + query)
         response = self.client.get(
@@ -105,12 +105,12 @@ class TestRemoveDataView(TestCase):
     def test_delete_token_stores_hashed_email_not_plaintext(self):
         """Verify that DeleteToken stores a hashed email, not plaintext."""
         url = reverse("remove_data")
-        self.client.post(url, {"email": "test@example.com"})
+        self.client.post(url, {"email": "test@test-fhi.com"})
         token = DeleteToken.objects.first()
         assert token is not None
         # hashed_email should be a SHA-512 hex digest, not the raw email
-        assert token.hashed_email != "test@example.com"
-        assert token.hashed_email == self._hashed("test@example.com")
+        assert token.hashed_email != "test@test-fhi.com"
+        assert token.hashed_email == self._hashed("test@test-fhi.com")
         assert not hasattr(token, "email") or "email" not in [
             f.name for f in token._meta.get_fields()
         ]
@@ -125,7 +125,7 @@ class TestConfirmDeleteDataView(TestCase):
     def _hashed(self, email):
         return Denial.get_hashed_email(email)
 
-    def _create_token(self, email="test@example.com", expired=False):
+    def _create_token(self, email="test@test-fhi.com", expired=False):
         token = DeleteToken(hashed_email=self._hashed(email))
         if expired:
             token.expires_at = timezone.now() - datetime.timedelta(hours=1)
@@ -138,14 +138,14 @@ class TestConfirmDeleteDataView(TestCase):
         token = self._create_token()
         url = reverse("confirm_delete_data")
         response = self.client.get(
-            url, {"token": token.token, "email": "test@example.com"}
+            url, {"token": token.token, "email": "test@test-fhi.com"}
         )
         assert response.status_code == 200
         assert b"Confirm Data Deletion" in response.content
         assert b"Confirm Deletion" in response.content
         mock_remove.assert_not_called()
         assert DeleteToken.objects.filter(
-            hashed_email=self._hashed("test@example.com")
+            hashed_email=self._hashed("test@test-fhi.com")
         ).exists()
 
     @patch("fighthealthinsurance.views.RemoveDataHelper.remove_data_for_email")
@@ -154,19 +154,19 @@ class TestConfirmDeleteDataView(TestCase):
         token = self._create_token()
         url = reverse("confirm_delete_data")
         response = self.client.post(
-            url, {"token": token.token, "email": "test@example.com"}
+            url, {"token": token.token, "email": "test@test-fhi.com"}
         )
         assert response.status_code == 200
         assert b"data associated with your email has been removed" in response.content
-        mock_remove.assert_called_once_with("test@example.com")
+        mock_remove.assert_called_once_with("test@test-fhi.com")
         assert not DeleteToken.objects.filter(
-            hashed_email=self._hashed("test@example.com")
+            hashed_email=self._hashed("test@test-fhi.com")
         ).exists()
 
     def test_invalid_token_shows_error(self):
         url = reverse("confirm_delete_data")
         response = self.client.get(
-            url, {"token": "bad-token", "email": "test@example.com"}
+            url, {"token": "bad-token", "email": "test@test-fhi.com"}
         )
         assert response.status_code == 200
         assert b"Invalid confirmation link" in response.content
@@ -175,12 +175,12 @@ class TestConfirmDeleteDataView(TestCase):
         token = self._create_token(expired=True)
         url = reverse("confirm_delete_data")
         response = self.client.get(
-            url, {"token": token.token, "email": "test@example.com"}
+            url, {"token": token.token, "email": "test@test-fhi.com"}
         )
         assert response.status_code == 200
         assert b"expired" in response.content
         assert not DeleteToken.objects.filter(
-            hashed_email=self._hashed("test@example.com")
+            hashed_email=self._hashed("test@test-fhi.com")
         ).exists()
 
     def test_missing_params_shows_error(self):
@@ -190,10 +190,10 @@ class TestConfirmDeleteDataView(TestCase):
         assert b"Invalid confirmation link" in response.content
 
     def test_wrong_email_for_token_shows_error(self):
-        token = self._create_token(email="correct@example.com")
+        token = self._create_token(email="correct@test-fhi.com")
         url = reverse("confirm_delete_data")
         response = self.client.get(
-            url, {"token": token.token, "email": "wrong@example.com"}
+            url, {"token": token.token, "email": "wrong@test-fhi.com"}
         )
         assert response.status_code == 200
         assert b"Invalid confirmation link" in response.content
@@ -205,19 +205,19 @@ class TestConfirmDeleteDataView(TestCase):
         url = reverse("confirm_delete_data")
         # Use the token
         response = self.client.post(
-            url, {"token": token.token, "email": "test@example.com"}
+            url, {"token": token.token, "email": "test@test-fhi.com"}
         )
         assert response.status_code == 200
         token_value = token.token
         # Try the same token again (GET)
         response = self.client.get(
-            url, {"token": token_value, "email": "test@example.com"}
+            url, {"token": token_value, "email": "test@test-fhi.com"}
         )
         assert response.status_code == 200
         assert b"already been used" in response.content
         # Try the same token again (POST)
         response = self.client.post(
-            url, {"token": token_value, "email": "test@example.com"}
+            url, {"token": token_value, "email": "test@test-fhi.com"}
         )
         assert response.status_code == 200
         assert b"already been used" in response.content
@@ -226,7 +226,7 @@ class TestConfirmDeleteDataView(TestCase):
         """A completely fabricated token should say 'Invalid', not 'already been used'."""
         url = reverse("confirm_delete_data")
         response = self.client.get(
-            url, {"token": "completely-fabricated-token", "email": "test@example.com"}
+            url, {"token": "completely-fabricated-token", "email": "test@test-fhi.com"}
         )
         assert response.status_code == 200
         assert b"Invalid confirmation link" in response.content
@@ -237,47 +237,47 @@ class TestConfirmDeleteDataView(TestCase):
         """After POST deletion, a UsedDeleteToken record should exist."""
         token = self._create_token()
         url = reverse("confirm_delete_data")
-        self.client.post(url, {"token": token.token, "email": "test@example.com"})
+        self.client.post(url, {"token": token.token, "email": "test@test-fhi.com"})
         assert UsedDeleteToken.objects.filter(token=token.token).exists()
         used = UsedDeleteToken.objects.get(token=token.token)
-        assert used.hashed_email == self._hashed("test@example.com")
+        assert used.hashed_email == self._hashed("test@test-fhi.com")
 
     @patch("fighthealthinsurance.views.RemoveDataHelper.remove_data_for_email")
     def test_email_case_insensitive_validation(self, mock_remove):
         """Token created with lowercase email should validate with mixed case."""
-        token = self._create_token(email="test@example.com")
+        token = self._create_token(email="test@test-fhi.com")
         url = reverse("confirm_delete_data")
         # GET with mixed case
         response = self.client.get(
-            url, {"token": token.token, "email": "Test@Example.COM"}
+            url, {"token": token.token, "email": "Test@Test-FHI.COM"}
         )
         assert response.status_code == 200
         assert b"Confirm Data Deletion" in response.content
         # POST with mixed case
         response = self.client.post(
-            url, {"token": token.token, "email": "Test@Example.COM"}
+            url, {"token": token.token, "email": "Test@Test-FHI.COM"}
         )
         assert response.status_code == 200
         assert b"data associated with your email has been removed" in response.content
-        mock_remove.assert_called_once_with("test@example.com")
+        mock_remove.assert_called_once_with("test@test-fhi.com")
 
     @patch("fighthealthinsurance.views.RemoveDataHelper.remove_data_for_email")
     def test_email_with_whitespace_normalization(self, mock_remove):
         """Token should validate even with leading/trailing whitespace in email."""
-        token = self._create_token(email="test@example.com")
+        token = self._create_token(email="test@test-fhi.com")
         url = reverse("confirm_delete_data")
         response = self.client.get(
-            url, {"token": token.token, "email": "  test@example.com  "}
+            url, {"token": token.token, "email": "  test@test-fhi.com  "}
         )
         assert response.status_code == 200
         assert b"Confirm Data Deletion" in response.content
         # POST with whitespace-padded email
         response = self.client.post(
-            url, {"token": token.token, "email": "  test@example.com  "}
+            url, {"token": token.token, "email": "  test@test-fhi.com  "}
         )
         assert response.status_code == 200
         assert b"data associated with your email has been removed" in response.content
-        mock_remove.assert_called_once_with("test@example.com")
+        mock_remove.assert_called_once_with("test@test-fhi.com")
 
     @patch("fighthealthinsurance.views.RemoveDataHelper.remove_data_for_email")
     def test_new_token_after_previous_deletion(self, mock_remove):
@@ -285,14 +285,14 @@ class TestConfirmDeleteDataView(TestCase):
         # First deletion
         token1 = self._create_token()
         url = reverse("confirm_delete_data")
-        self.client.post(url, {"token": token1.token, "email": "test@example.com"})
+        self.client.post(url, {"token": token1.token, "email": "test@test-fhi.com"})
         assert UsedDeleteToken.objects.filter(token=token1.token).exists()
         # Request a new token (simulates RemoveDataView.post creating a new one)
-        token2 = self._create_token(email="test@example.com")
+        token2 = self._create_token(email="test@test-fhi.com")
         assert token2.token != token1.token
         # Use the new token
         response = self.client.post(
-            url, {"token": token2.token, "email": "test@example.com"}
+            url, {"token": token2.token, "email": "test@test-fhi.com"}
         )
         assert response.status_code == 200
         assert b"data associated with your email has been removed" in response.content
@@ -302,7 +302,7 @@ class TestConfirmDeleteDataView(TestCase):
         import re
         from urllib.parse import parse_qs, urlparse
 
-        email = "user+tag@example.com"
+        email = "user+tag@test-fhi.com"
         url = reverse("remove_data")
         self.client.post(url, {"email": email})
         hashed = self._hashed(email)
@@ -331,13 +331,13 @@ class TestConfirmDeleteDataView(TestCase):
         url = reverse("confirm_delete_data")
         # First POST succeeds
         response1 = self.client.post(
-            url, {"token": token.token, "email": "test@example.com"}
+            url, {"token": token.token, "email": "test@test-fhi.com"}
         )
         assert response1.status_code == 200
         assert b"data associated with your email has been removed" in response1.content
         # Second POST with same token
         response2 = self.client.post(
-            url, {"token": token.token, "email": "test@example.com"}
+            url, {"token": token.token, "email": "test@test-fhi.com"}
         )
         assert response2.status_code == 200
         assert b"already been used" in response2.content
@@ -345,21 +345,21 @@ class TestConfirmDeleteDataView(TestCase):
     def test_email_case_insensitive_integration(self):
         """Integration test: mixed-case stored records are deleted by case-insensitive lookup."""
         # Store a record with mixed-case email
-        MailingListSubscriber.objects.create(email="Test@Example.COM", name="Test User")
-        assert MailingListSubscriber.objects.filter(email="Test@Example.COM").exists()
+        MailingListSubscriber.objects.create(email="Test@Test-FHI.COM", name="Test User")
+        assert MailingListSubscriber.objects.filter(email="Test@Test-FHI.COM").exists()
 
         # Create a token for the lowercase version of the email
-        token = self._create_token(email="test@example.com")
+        token = self._create_token(email="test@test-fhi.com")
         url = reverse("confirm_delete_data")
 
         # POST with lowercase email (as would arrive from the normalized confirmation link)
         response = self.client.post(
-            url, {"token": token.token, "email": "test@example.com"}
+            url, {"token": token.token, "email": "test@test-fhi.com"}
         )
         assert response.status_code == 200
         assert b"data associated with your email has been removed" in response.content
 
         # The mixed-case record should have been deleted via __iexact lookup
         assert not MailingListSubscriber.objects.filter(
-            email="Test@Example.COM"
+            email="Test@Test-FHI.COM"
         ).exists()

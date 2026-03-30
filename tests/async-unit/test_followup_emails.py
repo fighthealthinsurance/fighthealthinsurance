@@ -2,20 +2,21 @@
 
 import datetime
 import pytest
+from asgiref.sync import sync_to_async
 from unittest.mock import patch, MagicMock
 from django.core import mail
 from django.template.loader import render_to_string
 from django.utils import timezone
 
 from fighthealthinsurance.models import Denial, FollowUpSched, FollowUpType
-from fighthealthinsurance.followup_emails import FollowUpEmailSender
+from fighthealthinsurance.followup_emails import FollowUpEmailSender, ThankyouEmailSender
 from fighthealthinsurance.common_view_logic import schedule_follow_ups
 
 
 @pytest.fixture
 def test_denial(db):
     """Create a test denial with raw email set."""
-    email = "test@example.com"
+    email = "test@test-fhi.com"
     hashed_email = Denial.get_hashed_email(email)
     denial = Denial.objects.create(
         denial_text="Test denial text",
@@ -144,7 +145,7 @@ class TestFollowUpEmailSender:
         # Create multiple follow-ups
         for i in range(3):
             FollowUpSched.objects.create(
-                email=f"test{i}@example.com",
+                email=f"test{i}@test-fhi.com",
                 denial_id=test_denial,
                 follow_up_date=datetime.date.today() - datetime.timedelta(days=1),
                 follow_up_sent=False,
@@ -162,7 +163,7 @@ class TestFollowUpEmailSender:
         # Create multiple follow-ups
         for i in range(5):
             FollowUpSched.objects.create(
-                email=f"test{i}@example.com",
+                email=f"test{i}@test-fhi.com",
                 denial_id=test_denial,
                 follow_up_date=datetime.date.today() - datetime.timedelta(days=1),
                 follow_up_sent=False,
@@ -214,7 +215,7 @@ class TestFollowUpEmailSender:
         """Test that dosend uses follow_up_sched email when both params provided."""
         sender = FollowUpEmailSender()
         result = sender.dosend(
-            follow_up_sched=test_followup_sched, email="different@example.com"
+            follow_up_sched=test_followup_sched, email="different@test-fhi.com"
         )
 
         assert result is True
@@ -416,7 +417,7 @@ class TestScheduleFollowUps:
     def test_upsert_updates_email_on_second_call(self, test_denial, followup_types):
         """Test that calling with a different email updates existing records."""
         schedule_follow_ups(test_denial.raw_email, test_denial)
-        new_email = "updated@example.com"
+        new_email = "updated@test-fhi.com"
         schedule_follow_ups(new_email, test_denial)
 
         scheds = FollowUpSched.objects.filter(denial_id=test_denial)
@@ -625,3 +626,123 @@ class TestFollowUpEmailTemplates:
         html = render_to_string("emails/followup_90day.html", context)
 
         assert "here for you" in html
+
+@pytest.fixture
+def valid_email_denial(db):
+    """Create a test denial with a valid (non-blocked) email."""
+    email = "patient@gmail.com"
+    hashed_email = Denial.get_hashed_email(email)
+    denial = Denial.objects.create(
+        denial_text="Test denial text",
+        hashed_email=hashed_email,
+        raw_email=email,
+        health_history="",
+    )
+    return denial
+
+
+@pytest.fixture
+def valid_email_followup_sched(valid_email_denial):
+    """Create a test follow-up schedule with a valid email."""
+    followup = FollowUpSched.objects.create(
+        email=valid_email_denial.raw_email,
+        denial_id=valid_email_denial,
+        follow_up_date=datetime.date.today() - datetime.timedelta(days=1),
+        follow_up_sent=False,
+    )
+    return followup
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+class TestFollowUpEmailSenderAsync:
+    """Test the async methods of FollowUpEmailSender."""
+
+    async def test_afind_candidates_returns_same_as_sync(
+        self, valid_email_followup_sched
+    ):
+        sender = FollowUpEmailSender()
+        async_candidates = await sender.afind_candidates()
+        assert len(async_candidates) == 1
+        assert async_candidates[0] == valid_email_followup_sched
+
+    @patch("fighthealthinsurance.followup_emails.send_fallback_email")
+    async def test_adosend_sends_email(
+        self, mock_send_email, valid_email_followup_sched
+    ):
+        sender = FollowUpEmailSender()
+        result = await sender.adosend(follow_up_sched=valid_email_followup_sched)
+        assert result is True
+        mock_send_email.assert_called_once()
+        await sync_to_async(valid_email_followup_sched.refresh_from_db)()
+        assert valid_email_followup_sched.follow_up_sent is True
+
+    @patch("fighthealthinsurance.followup_emails.send_fallback_email")
+    @patch("fighthealthinsurance.followup_emails.asyncio.sleep", return_value=None)
+    async def test_asend_all_sends_and_returns_count(
+        self, mock_sleep, mock_send_email, valid_email_denial
+    ):
+        # Create multiple follow-ups with valid emails
+        for i in range(3):
+            email = f"patient{i}@gmail.com"
+            await sync_to_async(FollowUpSched.objects.create)(
+                email=email,
+                denial_id=valid_email_denial,
+                follow_up_date=datetime.date.today() - datetime.timedelta(days=1),
+                follow_up_sent=False,
+            )
+
+        sender = FollowUpEmailSender()
+        count = await sender.asend_all()
+        assert count == 3
+        assert mock_send_email.call_count == 3
+
+    @patch("fighthealthinsurance.followup_emails.send_fallback_email")
+    @patch("fighthealthinsurance.followup_emails.asyncio.sleep", return_value=None)
+    async def test_asend_all_respects_count_limit(
+        self, mock_sleep, mock_send_email, valid_email_denial
+    ):
+        for i in range(5):
+            email = f"patient{i}@gmail.com"
+            await sync_to_async(FollowUpSched.objects.create)(
+                email=email,
+                denial_id=valid_email_denial,
+                follow_up_date=datetime.date.today() - datetime.timedelta(days=1),
+                follow_up_sent=False,
+            )
+
+        sender = FollowUpEmailSender()
+        count = await sender.asend_all(count=2)
+        assert count == 2
+        assert mock_send_email.call_count == 2
+
+    @patch("fighthealthinsurance.followup_emails.send_fallback_email")
+    @patch("fighthealthinsurance.followup_emails.asyncio.sleep", return_value=None)
+    async def test_asend_all_adds_delay_between_sends(
+        self, mock_sleep, mock_send_email, valid_email_followup_sched
+    ):
+        sender = FollowUpEmailSender()
+        await sender.asend_all()
+        # sleep should have been called at least once for the delay between sends
+        assert mock_sleep.called
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+class TestThankyouEmailSenderAsync:
+    """Test the async methods of ThankyouEmailSender."""
+
+    @patch("fighthealthinsurance.followup_emails.send_fallback_email")
+    @patch("fighthealthinsurance.followup_emails.asyncio.sleep", return_value=None)
+    async def test_asend_all_sends_thankyou_emails(self, mock_sleep, mock_send_email):
+        from fighthealthinsurance.models import InterestedProfessional
+
+        await sync_to_async(InterestedProfessional.objects.create)(
+            name="Dr. Test",
+            email="doctor@hospital.org",
+            thankyou_email_sent=False,
+        )
+        sender = ThankyouEmailSender()
+        count = await sender.asend_all()
+        assert count == 1
+        mock_send_email.assert_called_once()

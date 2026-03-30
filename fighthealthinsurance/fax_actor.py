@@ -184,6 +184,11 @@ class FaxActor:
             else:
                 self._logger.warning(f"No appeal found for professional {fax}")
                 return True
+        from fighthealthinsurance.email_utils import is_blocked_email
+
+        if is_blocked_email(email):
+            self._logger.info("Skipping fax follow-up email to blocked address")
+            return True
         fax_redo_link = "https://www.fighthealthinsurance.com" + reverse(
             "fax-followup",
             kwargs={
