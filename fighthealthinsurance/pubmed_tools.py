@@ -128,20 +128,35 @@ class PubMedTools(object):
         pmids: List[str] = []
         articles: List[PubMedMiniArticle] = []
         logger.debug(f"Looking up pubmed articles...")
+
+        # Re-fetch denial to ensure procedure/diagnosis/microsite_slug are current,
+        # since this method may run in a fire-and-forget after the caller has moved on.
+        denial = await Denial.objects.filter(denial_id=denial.denial_id).aget()
+
         procedure_opt = denial.procedure if denial.procedure else ""
         diagnosis_opt = denial.diagnosis if denial.diagnosis else ""
         query = f"{procedure_opt} {diagnosis_opt}".strip()
-        # Build the set of queries: base query + any microsite search terms
-        queries: Set[str] = {query}
+        # Build an ordered, deduplicated list of queries: base query first,
+        # then microsite search terms. Order matters for deterministic PER_QUERY
+        # truncation when queries share overlapping PubMed results.
+        queries: List[str] = []
+        seen_queries: Set[str] = set()
+        if query:
+            queries.append(query)
+            seen_queries.add(query)
         if denial.microsite_slug:
             try:
                 microsite = get_microsite(denial.microsite_slug)
                 if microsite and microsite.pubmed_search_terms:
-                    if len(microsite.pubmed_search_terms) > 0:
+                    for term in microsite.pubmed_search_terms:
+                        stripped = term.strip()
+                        if stripped and stripped not in seen_queries:
+                            queries.append(stripped)
+                            seen_queries.add(stripped)
+                    if microsite.pubmed_search_terms:
                         logger.debug(
                             f"Adding {len(microsite.pubmed_search_terms)} microsite search terms for {denial.microsite_slug}"
                         )
-                        queries.update(microsite.pubmed_search_terms)
             except Exception as e:
                 logger.opt(exception=True).warning(
                     f"Failed to load microsite search terms: {e}"
@@ -227,7 +242,8 @@ class PubMedTools(object):
         except Exception as e:
             logger.opt(exception=True).debug(f"Unexpected error {e}")
             raise e
-        valid_queries = sorted(q for q in queries if q and q.strip())
+        # queries is already deduplicated and stripped; sort for stable summary string
+        valid_queries = sorted(queries)
         if valid_queries and pmids:
             articles_json = json.dumps(pmids)
             all_queries_str = " | ".join(valid_queries)
