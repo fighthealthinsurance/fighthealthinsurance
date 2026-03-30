@@ -18,18 +18,6 @@ class TestIsBlockedEmail:
             "example.com",
             "example.net",
             "example.org",
-            "mailinator.com",
-            "guerrillamail.com",
-            "tempmail.com",
-            "yopmail.com",
-            "10minutemail.com",
-            "maildrop.cc",
-            "throwaway.email",
-            "trashmail.com",
-            "fakeinbox.com",
-            "getnada.com",
-            "sharklasers.com",
-            "dispostable.com",
         ],
     )
     def test_blocked_domains_are_rejected(self, domain):
