@@ -386,15 +386,14 @@ class MLPolicyDocHelper:
         cls,
         page_dict: Dict[int, str],
         page_hits: Dict[int, Set[str]],
-        scattershot_pages: Set[int],
+        exclude_pages: Set[int],
     ) -> list[Dict[str, Any]]:
         """
-        Build chunks from regex-hit pages that aren't already covered by scattershot chunks.
+        Build chunks from regex-hit pages, excluding any in *exclude_pages*.
         Each targeted chunk is tagged with what patterns matched.
         """
-        # Only include pages that had hits AND aren't in scattershot
         targeted_pages = {
-            p for p in page_hits if p not in scattershot_pages and p in page_dict
+            p for p in page_hits if p not in exclude_pages and p in page_dict
         }
         if not targeted_pages:
             return []
@@ -481,7 +480,7 @@ class MLPolicyDocHelper:
                 }
                 scattershot_chunks = cls._build_chunks(remaining_page_dict)
 
-                all_chunks = scattershot_chunks + targeted_chunks
+                all_chunks = targeted_chunks + scattershot_chunks
                 if not all_chunks:
                     logger.warning(f"No chunks built from {policy_document.filename}")
                     return None
