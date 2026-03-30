@@ -131,7 +131,7 @@ class PubMedTools(object):
 
         # Re-fetch denial to ensure procedure/diagnosis/microsite_slug are current,
         # since this method may run in a fire-and-forget after the caller has moved on.
-        denial = await Denial.objects.filter(denial_id=denial.denial_id).aget()
+        denial = await Denial.objects.aget(pk=denial.denial_id)
 
         procedure_opt = denial.procedure if denial.procedure else ""
         diagnosis_opt = denial.diagnosis if denial.diagnosis else ""
