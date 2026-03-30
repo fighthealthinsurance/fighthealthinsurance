@@ -748,6 +748,9 @@ RULE: Do NOT add any conversational text, questions, or additional explanations 
 """
         pubmed_tool = """**PubMed Research Tool**: For medical research questions, you can search PubMed using: [*pubmed query: search terms*]. This provides access to recent medical literature and research. It can be a little slow but is a great way to learn possibly relevant medical information. Pubmed is not good for insurance information."""
 
+        doc_fetcher_tool = """**Document Fetcher Tool**: If a user shares a URL to a document (insurance plan, medical guidelines, denial letter, etc.), you can fetch and read it using: **fetch_doc {"url": "https://example.com/document.pdf"}**
+This tool can read PDF, DOCX, HTML, and plain text documents. Use it when a user shares a link and you need to reference the document's contents. Only use it for URLs the user has explicitly shared or referenced."""
+
         medicaid_eligibility_tool = """**Medicaid Eligibility Check**: To help check if someone is eligible Medicaid or medicare, you MUST ONLY use this tool format: **medicaid_eligibility {"state": "StateName", "married": false, ...}**
 
 ONLY USE THIS TOOL WHEN ASKED IF SOMEONE IS ELIGIBLE FOR MEDICARE/MEDICAID
@@ -812,6 +815,7 @@ We have a selection of tools to help you. You should try and use these tools whe
 {medicaid_eligibility_tool}
 {medicaid_resources_tool}
 {pubmed_tool}
+{doc_fetcher_tool}
 
 For eligibility determinations if you have a tool you must use the tool rather than guessing on your own.
 This means if someone asks if their eligible for medical, medicaid, medicare, or similar you must use the tool.
@@ -827,6 +831,7 @@ Remember that medicaid can go by many names, including but not limited to: Denal
 We have a selection of tools to help you. You should try and use these tools whenever they are relevant.
 
 {pubmed_tool}
+{doc_fetcher_tool}
 
 If the user asks about Medicaid or Medicare eligibility, let them know you can help with that and ask them to tell you more about their situation. You have specialized tools for Medicaid/Medicare questions that will activate when needed.
 """
