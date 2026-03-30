@@ -117,149 +117,109 @@ class PubMedTools(object):
             logger.debug(f"[{pmid}] FindIt failed")
             return None
 
-    async def _try_pmc(
+    async def _fetch_json(
         self,
-        pmid: str,
         session: aiohttp.ClientSession,
+        url: str,
         timeout_secs: float,
+        label: str = "",
+    ) -> Optional[Dict]:
+        """Fetch JSON from url with timeout. Returns None on any failure."""
+        try:
+            async with async_timeout(timeout_secs):
+                async with session.get(url) as resp:
+                    if resp.status == 200:
+                        return await resp.json()
+        except Exception as e:
+            logger.debug(f"[{label}] JSON fetch failed: {e}")
+        return None
+
+    async def _try_pmc(
+        self, pmid: str, session: aiohttp.ClientSession, timeout_secs: float
     ) -> Optional[str]:
         """Check if article is in PubMed Central and get its PDF URL."""
-        try:
-            converter_url = (
-                f"https://www.ncbi.nlm.nih.gov/pmc/utils/idconv/v1.0/"
-                f"?ids={pmid}&format=json&tool=fighthealthinsurance&email=support@fighthealthinsurance.com"
-            )
-            async with async_timeout(timeout_secs):
-                async with session.get(converter_url) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        records = data.get("records", [])
-                        if records and records[0].get("pmcid"):
-                            pmcid = records[0]["pmcid"]
-                            return f"https://www.ncbi.nlm.nih.gov/pmc/articles/{pmcid}/pdf/"
-        except Exception as e:
-            logger.debug(f"[{pmid}] PMC lookup failed: {e}")
+        url = (
+            f"https://www.ncbi.nlm.nih.gov/pmc/utils/idconv/v1.0/"
+            f"?ids={pmid}&format=json&tool=fighthealthinsurance&email=support@fighthealthinsurance.com"
+        )
+        data = await self._fetch_json(session, url, timeout_secs, pmid)
+        if data:
+            records = data.get("records", [])
+            if records and records[0].get("pmcid"):
+                return f"https://www.ncbi.nlm.nih.gov/pmc/articles/{records[0]['pmcid']}/pdf/"
         return None
 
     async def _try_europe_pmc(
-        self,
-        pmid: str,
-        session: aiohttp.ClientSession,
-        timeout_secs: float,
+        self, pmid: str, session: aiohttp.ClientSession, timeout_secs: float
     ) -> Optional[str]:
         """Try Europe PMC for full text PDF."""
-        try:
-            api_url = f"https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=EXT_ID:{pmid}%20AND%20SRC:MED&resultType=core&format=json"
-            async with async_timeout(timeout_secs):
-                async with session.get(api_url) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        results = data.get("resultList", {}).get("result", [])
-                        if results:
-                            result = results[0]
-                            full_text_urls = result.get("fullTextUrlList", {}).get(
-                                "fullTextUrl", []
-                            )
-                            for ft_url in full_text_urls:
-                                if ft_url.get("documentStyle") == "pdf" and ft_url.get(
-                                    "availabilityCode"
-                                ) in ("OA", "F"):
-                                    return str(ft_url.get("url"))
-                            for ft_url in full_text_urls:
-                                if ft_url.get("availabilityCode") in (
-                                    "OA",
-                                    "F",
-                                ) and ft_url.get("url"):
-                                    return str(ft_url.get("url"))
-        except Exception as e:
-            logger.debug(f"[{pmid}] Europe PMC lookup failed: {e}")
+        url = f"https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=EXT_ID:{pmid}%20AND%20SRC:MED&resultType=core&format=json"
+        data = await self._fetch_json(session, url, timeout_secs, pmid)
+        if not data:
+            return None
+        results = data.get("resultList", {}).get("result", [])
+        if not results:
+            return None
+        ft_urls = results[0].get("fullTextUrlList", {}).get("fullTextUrl", [])
+        for ft in ft_urls:
+            if ft.get("documentStyle") == "pdf" and ft.get("availabilityCode") in (
+                "OA",
+                "F",
+            ):
+                return str(ft.get("url"))
+        for ft in ft_urls:
+            if ft.get("availabilityCode") in ("OA", "F") and ft.get("url"):
+                return str(ft.get("url"))
         return None
 
     async def _try_unpaywall(
-        self,
-        doi: str,
-        session: aiohttp.ClientSession,
-        timeout_secs: float,
+        self, doi: str, session: aiohttp.ClientSession, timeout_secs: float
     ) -> Optional[str]:
         """Try Unpaywall API to find open access PDF."""
-        try:
-            encoded_doi = quote(doi, safe="")
-            api_url = f"https://api.unpaywall.org/v2/{encoded_doi}?email=support@fighthealthinsurance.com"
-            async with async_timeout(timeout_secs):
-                async with session.get(api_url) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        best_oa = data.get("best_oa_location")
-                        if best_oa:
-                            pdf_url = best_oa.get("url_for_pdf")
-                            if pdf_url:
-                                return str(pdf_url)
-                            landing_url = best_oa.get("url_for_landing_page")
-                            if landing_url:
-                                return str(landing_url)
-                        # Try all OA locations
-                        for oa_loc in data.get("oa_locations", []):
-                            pdf_url = oa_loc.get("url_for_pdf")
-                            if pdf_url:
-                                return str(pdf_url)
-        except Exception as e:
-            logger.debug(f"[DOI:{doi}] Unpaywall lookup failed: {e}")
+        url = f"https://api.unpaywall.org/v2/{quote(doi, safe='')}?email=support@fighthealthinsurance.com"
+        data = await self._fetch_json(session, url, timeout_secs, f"DOI:{doi}")
+        if not data:
+            return None
+        best_oa = data.get("best_oa_location")
+        if best_oa:
+            for key in ("url_for_pdf", "url_for_landing_page"):
+                if best_oa.get(key):
+                    return str(best_oa[key])
+        for oa_loc in data.get("oa_locations", []):
+            if oa_loc.get("url_for_pdf"):
+                return str(oa_loc["url_for_pdf"])
         return None
 
-    async def _query_biorxiv_api(
+    async def _query_biorxiv(
         self,
         server: str,
         doi: str,
+        endpoint: str,
         session: aiohttp.ClientSession,
         timeout_secs: float,
     ) -> Optional[str]:
-        """Query biorxiv/medrxiv API for a single server+DOI and return PDF URL if found."""
-        try:
-            api_url = f"https://api.biorxiv.org/details/{server}/{doi}"
-            async with async_timeout(timeout_secs):
-                async with session.get(api_url) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        results = data.get("collection", [])
-                        if results:
-                            jatsxml = results[-1].get("jatsxml")
-                            if jatsxml:
-                                return str(jatsxml).replace(".source.xml", ".full.pdf")
-                            biorxiv_doi = str(results[-1].get("doi", ""))
-                            if biorxiv_doi:
-                                return f"https://www.{server}.org/content/{biorxiv_doi}.full.pdf"
-        except Exception as e:
-            logger.debug(f"[DOI:{doi}] {server} lookup failed: {e}")
-        return None
-
-    async def _query_biorxiv_pubs_api(
-        self,
-        server: str,
-        doi: str,
-        session: aiohttp.ClientSession,
-        timeout_secs: float,
-    ) -> Optional[str]:
-        """Look up a published DOI on biorxiv/medrxiv to find its preprint PDF."""
-        try:
-            api_url = f"https://api.biorxiv.org/pubs/{server}/{doi}"
-            async with async_timeout(timeout_secs):
-                async with session.get(api_url) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        results = data.get("collection", [])
-                        if results:
-                            preprint_doi = str(results[-1].get("preprint_doi", ""))
-                            if preprint_doi:
-                                return f"https://www.{server}.org/content/{preprint_doi}.full.pdf"
-        except Exception as e:
-            logger.debug(f"[DOI:{doi}] {server} pubs lookup failed: {e}")
+        """Query biorxiv/medrxiv API. endpoint is 'details' or 'pubs'."""
+        url = f"https://api.biorxiv.org/{endpoint}/{server}/{doi}"
+        data = await self._fetch_json(session, url, timeout_secs, f"DOI:{doi}")
+        if not data:
+            return None
+        results = data.get("collection", [])
+        if not results:
+            return None
+        last = results[-1]
+        if endpoint == "details":
+            jatsxml = last.get("jatsxml")
+            if jatsxml:
+                return str(jatsxml).replace(".source.xml", ".full.pdf")
+            doi_val = str(last.get("doi", ""))
+        else:
+            doi_val = str(last.get("preprint_doi", ""))
+        if doi_val:
+            return f"https://www.{server}.org/content/{doi_val}.full.pdf"
         return None
 
     async def _try_preprint_servers(
-        self,
-        doi: str,
-        session: aiohttp.ClientSession,
-        timeout_secs: float,
+        self, doi: str, session: aiohttp.ClientSession, timeout_secs: float
     ) -> Optional[str]:
         """Try medRxiv and bioRxiv for preprint PDFs."""
         doi_lower = doi.lower()
@@ -267,18 +227,16 @@ class PubMedTools(object):
             "10.1101/" in doi or "medrxiv" in doi_lower or "biorxiv" in doi_lower
         )
         if is_preprint:
-            # Direct lookup via /details/ endpoint
             for server in ("medrxiv", "biorxiv"):
-                result = await self._query_biorxiv_api(
-                    server, doi, session, timeout_secs
+                result = await self._query_biorxiv(
+                    server, doi, "details", session, timeout_secs
                 )
                 if result:
                     return result
         else:
-            # Published DOI — check if a preprint exists via /pubs/ endpoint
             # Only try medrxiv to limit HTTP calls (most relevant for health appeals)
-            result = await self._query_biorxiv_pubs_api(
-                "medrxiv", doi, session, timeout_secs
+            result = await self._query_biorxiv(
+                "medrxiv", doi, "pubs", session, timeout_secs
             )
             if result:
                 return result
