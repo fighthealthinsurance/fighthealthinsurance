@@ -3,6 +3,10 @@
 
 {% block title %}{{ title }}{% endblock %}
 
+{% block extra_style %}
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@mantine/core@8.3.2/styles.css" crossorigin="anonymous">
+{% endblock extra_style %}
+
 {% block content %}
 <div id="chooser-root"></div>
 <script src="{% static 'js/dist/chooser.bundle.js' %}"></script>
