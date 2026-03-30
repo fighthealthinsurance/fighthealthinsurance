@@ -1094,9 +1094,12 @@ class AppealGenerator(object):
 
         # Backup: Only if user opted in to external, use internal+external together
         backup_calls = []
-        backup_model_names = ml_router.generate_text_backend_names(
-            use_external=denial.use_external
-        ) + ml_router.generate_text_backend_names(use_external=True)
+        backup_model_names = (
+            ml_router.generate_text_backend_names(
+                use_external=denial.use_external
+            ) +
+            ml_router.generate_text_backend_names(use_external=False)
+        )
         backup_calls = [
             {
                 "model_name": model_name,
