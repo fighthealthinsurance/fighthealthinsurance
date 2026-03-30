@@ -31,7 +31,10 @@ class MLAppealQuestionsHelper:
         Returns:
             A list of (question, answer) tuples.
         """
-        models_to_try = ml_router.partial_qa_backends()
+        models_to_try = (
+            ml_router.partial_qa_backends() +
+            ml_router.full_qa_backends()
+            )
 
         # Normalize inputs - trim whitespace and convert to lowercase
         procedure = procedure.strip().lower() if procedure else ""
@@ -73,6 +76,7 @@ class MLAppealQuestionsHelper:
             raw_questions_awaitables.append(awaitable)
             model_quality_map[awaitable] = model.quality()
 
+        logger.debug(f"Using models {models_to_try} to create {raw_questions_awaitables}")
         questions = await best_within_timelimit(
             raw_questions_awaitables,
             score_fn=MLAppealQuestionsHelper.make_score_fn(

@@ -1958,9 +1958,14 @@ class RemoteOpenLike(RemoteModel):
                     }
                     for m in cleaned_messages
                 ]
-                logger.debug(
-                    f"Prepared {len(cleaned_messages)} messages for model {model}: {summary_msg_log}"
-                )
+                if not _is_verbose_logging():
+                    logger.debug(
+                        f"Prepared {len(cleaned_messages)} messages for model {model}: {summary_msg_log}"
+                    )
+                else:
+                    logger.debug(
+                        f"Prepared {len(cleaned_messages)} messages for model {model}: {cleaned_messages}"
+                    )
                 async with s.post(
                     url,
                     headers={"Authorization": f"Bearer {self.token}"},

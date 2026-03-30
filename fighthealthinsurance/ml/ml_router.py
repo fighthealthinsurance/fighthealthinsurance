@@ -331,7 +331,7 @@ class MLRouter(object):
         """
         models: list[RemoteModelLike] = []
         # Always include internal FHI models
-        models += self.internal_models_by_cost[:3]
+        models += self.internal_models_by_cost
         # Add Llama Scout model if available
         if "meta-llama/Llama-4-Scout-17B-16E-Instruct" in self.models_by_name:
             models += self.cheapest("meta-llama/Llama-4-Scout-17B-16E-Instruct")

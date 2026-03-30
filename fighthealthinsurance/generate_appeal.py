@@ -1073,7 +1073,9 @@ class AppealGenerator(object):
             )
         plan_context = "\n\n".join(plan_context_parts) if plan_context_parts else None
         # Primary: Always internal models only (fast, local)
-        model_names = ml_router.generate_text_backend_names(use_external=False)
+        model_names = ml_router.generate_text_backend_names(
+            use_external=False
+        ) + ml_router.generate_text_backend_names(use_external=False)
 
         # Build calls using model names (preserves multi-backend lookup)
         calls = [
@@ -1092,23 +1094,22 @@ class AppealGenerator(object):
 
         # Backup: Only if user opted in to external, use internal+external together
         backup_calls = []
-        if denial.use_external:
-            backup_model_names = ml_router.generate_text_backend_names(
-                use_external=True
-            )
-            backup_calls = [
-                {
-                    "model_name": model_name,
-                    "prompt": open_prompt,
-                    "patient_context": medical_context,
-                    "plan_context": plan_context,
-                    "infer_type": "full",
-                    "pubmed_context": pubmed_context,
-                    "ml_citations_context": ml_citations_context,
-                    "prof_pov": prof_pov,
-                }
-                for model_name in backup_model_names
-            ]
+        backup_model_names = ml_router.generate_text_backend_names(
+            use_external=denial.use_external
+        ) + ml_router.generate_text_backend_names(use_external=True)
+        backup_calls = [
+            {
+                "model_name": model_name,
+                "prompt": open_prompt,
+                "patient_context": medical_context,
+                "plan_context": plan_context,
+                "infer_type": "full",
+                "pubmed_context": pubmed_context,
+                "ml_citations_context": ml_citations_context,
+                "prof_pov": prof_pov,
+            }
+            for model_name in backup_model_names
+        ]
 
         # If we need to know the medical reason ask our friendly LLMs
         static_appeal = template_generator.generate_static()

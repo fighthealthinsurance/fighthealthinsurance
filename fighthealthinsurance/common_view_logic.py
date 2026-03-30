@@ -2498,7 +2498,9 @@ class AppealsBackendHelper:
             # Hack our interleave messages are just newlines
             if i and len(i) > 10:
                 new = new + 1
-            logger.debug(f"Sending appeal count: {new+old}...")
+                logger.debug(f"Sending appeal count: {new+old}...")
+            else:
+                logger.debug("Sending keep alive....")
             yield i
         logger.debug(f"Normal appeals sent {new} and {old}")
         yield json.dumps(

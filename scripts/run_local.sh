@@ -155,17 +155,6 @@ check_vllm_health_slipstream() {
   fi
 }
 
-check_backup_backend() {
-  if ping -c1 -W1 10.69.200.180 >/dev/null 2>&1; then
-    echo "backup reachable"
-    echo "export HEALTH_BACKUP_BACKEND_PORT=8000" > "$TMPDIR/backup"
-    echo "export HEALTH_BACKUP_BACKEND_HOST=10.69.200.180" >> "$TMPDIR/backup"
-    echo "export HEALTH_BACKUP_BACKEND_MODEL=\"/TotallyLegitCo/fighthealthinsurance_model_v0.5\"" >> "$TMPDIR/backup"
-  else
-    echo "backup not reachable."
-  fi
-}
-
 check_alpha_backend() {
   if ping -c1 -W1 scrump.local.pigscanfly.ca >/dev/null 2>&1; then
     echo "alpha reachable"
@@ -177,7 +166,6 @@ check_vllm_health &
 vllm_pid=$!
 check_vllm_health_slipstream &
 slipstream_pid=$!
-check_backup_backend &
 backup_pid=$!
 check_alpha_backend &
 alpha_pid=$!
