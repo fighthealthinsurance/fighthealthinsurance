@@ -39,6 +39,22 @@ class JourneyDocumentationHelper:
         return "\n".join(lines)
 
     @staticmethod
+    def format_questions_as_bullets(
+        questions: List[Tuple[str, str]],
+    ) -> str:
+        """Format (question, explanation) tuples as a bullet list.
+
+        Used by both chat_interface tool handler and get_journey_guidance_for_chat
+        to consistently render question lists for the LLM.
+        """
+        if not questions:
+            return ""
+        return "\n".join(
+            f"- {q}" + (f" (helps because: {a})" if a else "")
+            for q, a in questions
+        )
+
+    @staticmethod
     async def generate_journey_questions(
         procedure: Optional[str] = None,
         diagnosis: Optional[str] = None,
@@ -173,9 +189,8 @@ class JourneyDocumentationHelper:
                 timeout=timeout,
             )
             if ml_questions:
-                q_text = "\n".join(
-                    f"- {q}" + (f" (this helps because: {a})" if a else "")
-                    for q, a in ml_questions
+                q_text = JourneyDocumentationHelper.format_questions_as_bullets(
+                    ml_questions
                 )
                 guidance_parts.append(f"Suggested questions from analysis:\n{q_text}")
         except asyncio.TimeoutError:

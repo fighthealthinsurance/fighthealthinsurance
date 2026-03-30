@@ -551,6 +551,7 @@ class ChatInterface:
                                 # Use get_journey_guidance_for_chat which combines
                                 # static documentation items + ML-generated questions
                                 # into a single context block (avoids duplicate injection).
+                                journey_added = False
                                 try:
                                     from fighthealthinsurance.ml.ml_journey_helper import (
                                         JourneyDocumentationHelper,
@@ -564,6 +565,7 @@ class ChatInterface:
                                     )
                                     if ml_guidance:
                                         all_context_parts.append(ml_guidance)
+                                        journey_added = True
                                         logger.info(
                                             f"Journey documentation guidance added for {microsite.slug}"
                                         )
@@ -573,10 +575,7 @@ class ChatInterface:
                                     )
 
                                 # Fallback: if ML guidance failed, use static prompt
-                                if not any(
-                                    "Journey documentation" in p
-                                    for p in all_context_parts
-                                ):
+                                if not journey_added:
                                     journey_prompt = (
                                         microsite.get_journey_documentation_prompt()
                                     )

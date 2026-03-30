@@ -1,10 +1,27 @@
 """Tests for the journey documentation feature."""
 
 import unittest
-from unittest.mock import patch
 
 from fighthealthinsurance.forms.questions import JourneyDocumentationQuestions
-from fighthealthinsurance.ml.ml_journey_helper import _score_journey_questions
+from fighthealthinsurance.microsites import Microsite, MicrositeValidationError
+from fighthealthinsurance.ml.ml_journey_helper import (
+    JourneyDocumentationHelper,
+    _score_journey_questions,
+)
+
+
+# Minimal valid microsite data dict — extend per test as needed.
+_BASE_MICROSITE = {
+    "slug": "test",
+    "title": "Test",
+    "default_procedure": "Test Proc",
+    "tagline": "t",
+    "hero_h1": "t",
+    "hero_subhead": "t",
+    "intro": "t",
+    "how_we_help": "t",
+    "cta": "t",
+}
 
 
 class TestJourneyDocumentationQuestions(unittest.TestCase):
@@ -126,10 +143,6 @@ class TestJourneyDocumentationHelper(unittest.TestCase):
     """Tests for JourneyDocumentationHelper static methods."""
 
     def test_format_documentation_items_with_hints(self):
-        from fighthealthinsurance.ml.ml_journey_helper import (
-            JourneyDocumentationHelper,
-        )
-
         items = [
             {"label": "Prior meds", "prompt_hint": "Ask about side effects"},
             {"label": "Test results"},
@@ -141,69 +154,51 @@ class TestJourneyDocumentationHelper(unittest.TestCase):
         self.assertNotIn("Test results:", result)
 
     def test_format_documentation_items_empty(self):
-        from fighthealthinsurance.ml.ml_journey_helper import (
-            JourneyDocumentationHelper,
-        )
-
         result = JourneyDocumentationHelper._format_documentation_items([])
+        self.assertEqual(result, "")
+
+    def test_format_questions_as_bullets(self):
+        questions = [("What meds?", "Shows necessity"), ("Any tests?", "")]
+        result = JourneyDocumentationHelper.format_questions_as_bullets(questions)
+        self.assertIn("- What meds? (helps because: Shows necessity)", result)
+        self.assertIn("- Any tests?", result)
+        self.assertNotIn("helps because: )", result)
+
+    def test_format_questions_as_bullets_empty(self):
+        result = JourneyDocumentationHelper.format_questions_as_bullets([])
         self.assertEqual(result, "")
 
 
 class TestMicrositeJourneyDocumentation(unittest.TestCase):
     """Tests for Microsite journey documentation validation and prompt generation."""
 
-    def test_microsite_validates_journey_items(self):
-        from fighthealthinsurance.microsites import Microsite, MicrositeValidationError
-
-        # Missing required 'label' key
+    def test_microsite_validates_journey_items_missing_label(self):
         with self.assertRaises(MicrositeValidationError):
             Microsite(
                 {
-                    "slug": "test",
-                    "title": "Test",
-                    "default_procedure": "Test",
-                    "tagline": "t",
-                    "hero_h1": "t",
-                    "hero_subhead": "t",
-                    "intro": "t",
-                    "how_we_help": "t",
-                    "cta": "t",
+                    **_BASE_MICROSITE,
                     "journey_documentation_items": [{"category": "test"}],
                 }
             )
 
-    def test_microsite_journey_prompt_empty_when_no_items(self):
-        from fighthealthinsurance.microsites import Microsite
+    def test_microsite_validates_journey_items_non_dict(self):
+        with self.assertRaises(MicrositeValidationError):
+            Microsite(
+                {
+                    **_BASE_MICROSITE,
+                    "journey_documentation_items": ["not a dict"],
+                }
+            )
 
-        ms = Microsite(
-            {
-                "slug": "test",
-                "title": "Test",
-                "default_procedure": "Test Proc",
-                "tagline": "t",
-                "hero_h1": "t",
-                "hero_subhead": "t",
-                "intro": "t",
-                "how_we_help": "t",
-                "cta": "t",
-            }
-        )
+    def test_microsite_journey_prompt_empty_when_no_items(self):
+        ms = Microsite(_BASE_MICROSITE)
         self.assertEqual(ms.get_journey_documentation_prompt(), "")
 
     def test_microsite_journey_prompt_with_items(self):
-        from fighthealthinsurance.microsites import Microsite
-
         ms = Microsite(
             {
-                "slug": "test",
-                "title": "Test",
+                **_BASE_MICROSITE,
                 "default_procedure": "MRI Scan",
-                "tagline": "t",
-                "hero_h1": "t",
-                "hero_subhead": "t",
-                "intro": "t",
-                "how_we_help": "t",
-                "cta": "t",
                 "journey_documentation_items": [
                     {
                         "category": "test_results",
