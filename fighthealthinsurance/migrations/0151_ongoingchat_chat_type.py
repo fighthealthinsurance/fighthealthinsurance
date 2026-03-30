@@ -34,7 +34,6 @@ def reverse_backfill(apps, schema_editor):
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
         ("fighthealthinsurance", "0150_pubmedarticlesummarized_authors_and_more"),
     ]
