@@ -542,17 +542,14 @@ class MLPolicyDocHelper:
                         quotable_sections=analysis_results.get("quotable_sections", []),
                     )
                 except IntegrityError:
-                    # Race condition: another request created the analysis first
                     logger.debug(
                         f"Duplicate analysis for {policy_document.id}, fetching existing"
                     )
-                    analysis = await PolicyDocumentAnalysis.objects.filter(
+                    existing = await PolicyDocumentAnalysis.objects.filter(
                         policy_document=policy_document,
                         user_question=normalized_question,
                     ).afirst()
-                    if analysis:
-                        return analysis
-                    return None
+                    return existing
 
                 logger.info(
                     f"Created PolicyDocumentAnalysis {analysis.id} for document {policy_document.filename}"
