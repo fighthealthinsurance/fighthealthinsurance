@@ -1571,9 +1571,9 @@ class DenialCreatorHelper:
                             # Update both plan and company if not already set
                             update_fields: dict[str, Any] = {"insurance_plan_obj": plan}
                             if not denial.insurance_company_obj:
-                                update_fields[
-                                    "insurance_company_obj"
-                                ] = plan.insurance_company
+                                update_fields["insurance_company_obj"] = (
+                                    plan.insurance_company
+                                )
 
                             await Denial.objects.filter(denial_id=denial_id).aupdate(
                                 **update_fields
@@ -2027,9 +2027,9 @@ class AppealsBackendHelper:
                     subs["[Patient Name]"] = patient_name
                     subs["[patient name]"] = patient_name
                 if denial and denial.primary_professional is not None:
-                    subs[
-                        "[Professional Name]"
-                    ] = denial.primary_professional.get_full_name()
+                    subs["[Professional Name]"] = (
+                        denial.primary_professional.get_full_name()
+                    )
                 if denial.domain:
                     subs["[Professional Address]"] = denial.domain.get_address()
             except Exception as e:
