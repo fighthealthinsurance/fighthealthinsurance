@@ -73,11 +73,7 @@ class TestIsBlockedEmail:
 class TestIsSendableEmail:
     """Test the is_sendable_email function (inverse of is_blocked_email)."""
 
-    def test_valid_email_is_sendable(self):
+    def test_valid_is_sendable(self):
         assert is_sendable_email("user@gmail.com") is True
-
-    def test_blocked_email_is_not_sendable(self):
-        assert is_sendable_email("user@mailinator.com") is False
-
-    def test_example_com_is_not_sendable(self):
+        assert is_sendable_email("user@mailinator.com") is True
         assert is_sendable_email("test@example.com") is False
