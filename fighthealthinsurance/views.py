@@ -2252,7 +2252,7 @@ class UnderstandPolicyView(FormView):
 
         # Build initial message for chat — must match the regex in
         # chat_interface._POLICY_ANALYSIS_REGEX so the chat handler picks it up.
-        doc_type_display = dict(UnderstandPolicyForm.DOCUMENT_TYPE_CHOICES).get(
+        doc_type_display = dict(PolicyDocument.DOCUMENT_TYPE_CHOICES).get(
             document_type, "policy document"
         )
 
