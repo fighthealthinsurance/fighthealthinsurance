@@ -5,15 +5,12 @@ from django.core.files.uploadedfile import UploadedFile
 
 from fighthealthinsurance.forms import REFERRAL_SOURCE_CHOICES
 
-SUPPORTED_POLICY_EXTENSIONS = {".pdf", ".docx", ".doc", ".txt", ".rtf"}
+SUPPORTED_POLICY_EXTENSIONS = {".pdf", ".docx", ".txt"}
 
 SUPPORTED_POLICY_CONTENT_TYPES = {
     "application/pdf",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    "application/msword",
     "text/plain",
-    "application/rtf",
-    "text/rtf",
 }
 
 # Magic bytes for file type validation
@@ -95,7 +92,7 @@ class UnderstandPolicyForm(BaseConsentFieldsMixin):
             attrs={
                 "class": "form-control",
                 "id": "policy_document",
-                "accept": ".pdf,.docx,.doc,.txt,.rtf",
+                "accept": ".pdf,.docx,.txt",
             }
         ),
     )

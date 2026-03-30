@@ -19,6 +19,7 @@ from loguru import logger
 
 import pymupdf
 
+from django.db import IntegrityError
 from django_encrypted_filefield.crypt import Cryptographer
 
 from fighthealthinsurance.models import PolicyDocument, PolicyDocumentAnalysis
@@ -308,12 +309,6 @@ class MLPolicyDocHelper:
             return cls._extract_text_from_docx_bytes(data)
         elif lower_name.endswith(".txt"):
             return cls._extract_text_from_plaintext_bytes(data)
-        elif lower_name.endswith((".doc", ".rtf")):
-            logger.warning(
-                f"Unsupported legacy format for text extraction: {filename}. "
-                "Only .pdf, .docx, and .txt files are supported."
-            )
-            return "", {}
         else:
             logger.warning(f"Unsupported file type for text extraction: {filename}")
             return "", {}
@@ -467,19 +462,24 @@ class MLPolicyDocHelper:
                     )
                     return None
 
-                # Step 2: Build scattershot chunks + run regex search
-                scattershot_chunks = cls._build_chunks(page_dict)
+                # Step 2: Run regex search, then build targeted chunks first
                 page_hits = cls._regex_search_pages(page_dict, user_question)
 
-                # Collect pages already covered by scattershot for dedup
-                scattershot_pages: Set[int] = set()
-                for chunk in scattershot_chunks:
-                    scattershot_pages.update(chunk["pages"])
-
-                # Build targeted chunks from regex-hit pages not in scattershot
+                # Build targeted chunks from regex-hit pages (these get priority)
                 targeted_chunks = cls._build_targeted_chunks(
-                    page_dict, page_hits, scattershot_pages
+                    page_dict, page_hits, set()
                 )
+
+                # Compute pages already covered by targeted chunks
+                targeted_pages: Set[int] = set()
+                for chunk in targeted_chunks:
+                    targeted_pages.update(chunk["pages"])
+
+                # Build scattershot chunks only from remaining pages
+                remaining_page_dict = {
+                    p: page_dict[p] for p in page_dict if p not in targeted_pages
+                }
+                scattershot_chunks = cls._build_chunks(remaining_page_dict)
 
                 all_chunks = scattershot_chunks + targeted_chunks
                 if not all_chunks:
@@ -531,15 +531,29 @@ class MLPolicyDocHelper:
                     return None
 
                 # Step 5: Create and save the analysis record
-                analysis = await PolicyDocumentAnalysis.objects.acreate(
-                    policy_document=policy_document,
-                    user_question=user_question or "",
-                    exclusions=analysis_results.get("exclusions", []),
-                    inclusions=analysis_results.get("inclusions", []),
-                    appeal_clauses=analysis_results.get("appeal_clauses", []),
-                    summary=analysis_results.get("summary", ""),
-                    quotable_sections=analysis_results.get("quotable_sections", []),
-                )
+                normalized_question = user_question or ""
+                try:
+                    analysis = await PolicyDocumentAnalysis.objects.acreate(
+                        policy_document=policy_document,
+                        user_question=normalized_question,
+                        exclusions=analysis_results.get("exclusions", []),
+                        inclusions=analysis_results.get("inclusions", []),
+                        appeal_clauses=analysis_results.get("appeal_clauses", []),
+                        summary=analysis_results.get("summary", ""),
+                        quotable_sections=analysis_results.get("quotable_sections", []),
+                    )
+                except IntegrityError:
+                    # Race condition: another request created the analysis first
+                    logger.debug(
+                        f"Duplicate analysis for {policy_document.id}, fetching existing"
+                    )
+                    analysis = await PolicyDocumentAnalysis.objects.filter(
+                        policy_document=policy_document,
+                        user_question=normalized_question,
+                    ).afirst()
+                    if analysis:
+                        return analysis
+                    return None
 
                 logger.info(
                     f"Created PolicyDocumentAnalysis {analysis.id} for document {policy_document.filename}"
