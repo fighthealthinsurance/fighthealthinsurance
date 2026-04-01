@@ -5,7 +5,7 @@ from typing import Optional
 
 from django.conf import settings
 from django.core.exceptions import SuspiciousFileOperation
-from django.db import IntegrityError, connection, models
+from django.db import IntegrityError, models
 from django.db.models import Count, Q
 from django.http import FileResponse
 from django.shortcuts import get_object_or_404
@@ -84,34 +84,10 @@ class ChatViewSet(viewsets.ViewSet):
             logger.warning(f"Professional user not found for user {user.id}")
             return Response({"error": "Professional user not found"}, status=404)
 
-        # Get all chats for this professional user
-        from django.db.models import IntegerField
-        from django.db.models.expressions import RawSQL
-
-        if connection.vendor == "postgresql":
-            sql = "COALESCE(jsonb_array_length(chat_history), 0)"
-        else:
-            sql = "COALESCE(json_array_length(chat_history), 0)"
-
+        # Get all chats for this professional user, ordered by most recently updated
         chats = OngoingChat.objects.filter(
             professional_user=professional_user
-        ).annotate(chat_message_count=RawSQL(sql, [], output_field=IntegerField()))
-
-        # Support ordering via query param (default: -updated_at)
-        ordering = request.query_params.get("ordering", "-updated_at")
-        allowed_orderings = {
-            "updated_at",
-            "-updated_at",
-            "created_at",
-            "-created_at",
-            "message_count",
-            "-message_count",
-        }
-        if ordering in allowed_orderings:
-            db_ordering = ordering.replace("message_count", "chat_message_count")
-            chats = chats.order_by(db_ordering)
-        else:
-            chats = chats.order_by("-updated_at")
+        ).order_by("-updated_at")
 
         # Prepare the response data
         chat_list = []
