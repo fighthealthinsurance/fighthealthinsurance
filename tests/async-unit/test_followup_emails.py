@@ -9,7 +9,10 @@ from django.template.loader import render_to_string
 from django.utils import timezone
 
 from fighthealthinsurance.models import Denial, FollowUpSched, FollowUpType
-from fighthealthinsurance.followup_emails import FollowUpEmailSender, ThankyouEmailSender
+from fighthealthinsurance.followup_emails import (
+    FollowUpEmailSender,
+    ThankyouEmailSender,
+)
 from fighthealthinsurance.common_view_logic import schedule_follow_ups
 
 
@@ -626,6 +629,288 @@ class TestFollowUpEmailTemplates:
         html = render_to_string("emails/followup_90day.html", context)
 
         assert "here for you" in html
+
+
+@pytest.mark.django_db
+class TestFollowUpEmailGrouping:
+    """Test that follow-up emails are grouped by email address."""
+
+    def _create_denial(self, email="patient@gmail.com"):
+        hashed_email = Denial.get_hashed_email(email)
+        return Denial.objects.create(
+            denial_text="Test denial text",
+            hashed_email=hashed_email,
+            raw_email=email,
+            health_history="",
+        )
+
+    @patch("fighthealthinsurance.followup_emails.send_fallback_email")
+    def test_send_all_single_followup_passes_through(
+        self, mock_send_email, followup_types
+    ):
+        """Single denial with one follow-up works through the grouping path."""
+        email = "patient@gmail.com"
+        denial = self._create_denial(email)
+        fut_7, _, _ = followup_types
+
+        sched = FollowUpSched.objects.create(
+            email=email,
+            denial_id=denial,
+            follow_up_type=fut_7,
+            follow_up_date=datetime.date.today() - datetime.timedelta(days=1),
+            follow_up_sent=False,
+        )
+
+        sender = FollowUpEmailSender()
+        count = sender.send_all()
+
+        assert count == 1
+        assert mock_send_email.call_count == 1
+        sched.refresh_from_db()
+        assert sched.follow_up_sent is True
+
+    @patch("fighthealthinsurance.followup_emails.send_fallback_email")
+    def test_send_all_groups_same_email_sends_once(
+        self, mock_send_email, followup_types
+    ):
+        """Two denials for the same email with due follow-ups → only 1 email sent."""
+        email = "patient@gmail.com"
+        denial1 = self._create_denial(email)
+        denial2 = self._create_denial(email)
+        fut_7, _, _ = followup_types
+
+        sched1 = FollowUpSched.objects.create(
+            email=email,
+            denial_id=denial1,
+            follow_up_type=fut_7,
+            follow_up_date=datetime.date.today() - datetime.timedelta(days=1),
+            follow_up_sent=False,
+        )
+        sched2 = FollowUpSched.objects.create(
+            email=email,
+            denial_id=denial2,
+            follow_up_type=fut_7,
+            follow_up_date=datetime.date.today() - datetime.timedelta(days=1),
+            follow_up_sent=False,
+        )
+
+        sender = FollowUpEmailSender()
+        count = sender.send_all()
+
+        assert count == 1
+        assert mock_send_email.call_count == 1
+
+        sched1.refresh_from_db()
+        sched2.refresh_from_db()
+        assert sched1.follow_up_sent is True
+        assert sched2.follow_up_sent is True
+
+    @patch("fighthealthinsurance.followup_emails.send_fallback_email")
+    def test_send_all_picks_longest_duration(self, mock_send_email, followup_types):
+        """When 7-day and 30-day are both due for same email, sends the 30-day."""
+        email = "patient@gmail.com"
+        denial1 = self._create_denial(email)
+        denial2 = self._create_denial(email)
+        fut_7, fut_30, _ = followup_types
+
+        FollowUpSched.objects.create(
+            email=email,
+            denial_id=denial1,
+            follow_up_type=fut_7,
+            follow_up_date=datetime.date.today() - datetime.timedelta(days=1),
+            follow_up_sent=False,
+        )
+        FollowUpSched.objects.create(
+            email=email,
+            denial_id=denial2,
+            follow_up_type=fut_30,
+            follow_up_date=datetime.date.today() - datetime.timedelta(days=1),
+            follow_up_sent=False,
+        )
+
+        sender = FollowUpEmailSender()
+        sender.send_all()
+
+        assert mock_send_email.call_count == 1
+        call_kwargs = mock_send_email.call_args[1]
+        assert call_kwargs["template_name"] == "followup_30day"
+
+    @patch("fighthealthinsurance.followup_emails.send_fallback_email")
+    def test_send_all_different_emails_sent_separately(
+        self, mock_send_email, followup_types
+    ):
+        """Different email addresses each get their own email."""
+        fut_7, _, _ = followup_types
+        denial1 = self._create_denial("alice@gmail.com")
+        denial2 = self._create_denial("bob@gmail.com")
+
+        FollowUpSched.objects.create(
+            email="alice@gmail.com",
+            denial_id=denial1,
+            follow_up_type=fut_7,
+            follow_up_date=datetime.date.today() - datetime.timedelta(days=1),
+            follow_up_sent=False,
+        )
+        FollowUpSched.objects.create(
+            email="bob@gmail.com",
+            denial_id=denial2,
+            follow_up_type=fut_7,
+            follow_up_date=datetime.date.today() - datetime.timedelta(days=1),
+            follow_up_sent=False,
+        )
+
+        sender = FollowUpEmailSender()
+        count = sender.send_all()
+
+        assert count == 2
+        assert mock_send_email.call_count == 2
+
+    @patch("fighthealthinsurance.followup_emails.send_fallback_email")
+    def test_send_all_does_not_mark_others_on_failure(
+        self, mock_send_email, followup_types
+    ):
+        """If sending fails, the grouped others are NOT marked as sent."""
+        mock_send_email.side_effect = Exception("Email sending failed")
+        email = "patient@gmail.com"
+        denial1 = self._create_denial(email)
+        denial2 = self._create_denial(email)
+        fut_7, _, _ = followup_types
+
+        sched1 = FollowUpSched.objects.create(
+            email=email,
+            denial_id=denial1,
+            follow_up_type=fut_7,
+            follow_up_date=datetime.date.today() - datetime.timedelta(days=1),
+            follow_up_sent=False,
+        )
+        sched2 = FollowUpSched.objects.create(
+            email=email,
+            denial_id=denial2,
+            follow_up_type=fut_7,
+            follow_up_date=datetime.date.today() - datetime.timedelta(days=1),
+            follow_up_sent=False,
+        )
+
+        sender = FollowUpEmailSender()
+        count = sender.send_all()
+
+        assert count == 0
+        sched1.refresh_from_db()
+        sched2.refresh_from_db()
+        assert sched1.follow_up_sent is False
+        assert sched2.follow_up_sent is False
+
+    @patch("fighthealthinsurance.followup_emails.send_fallback_email")
+    def test_send_all_count_limits_unique_emails(self, mock_send_email, followup_types):
+        """Count parameter limits the number of unique email groups processed."""
+        fut_7, _, _ = followup_types
+        for i in range(3):
+            email = f"patient{i}@gmail.com"
+            denial = self._create_denial(email)
+            FollowUpSched.objects.create(
+                email=email,
+                denial_id=denial,
+                follow_up_type=fut_7,
+                follow_up_date=datetime.date.today() - datetime.timedelta(days=1),
+                follow_up_sent=False,
+            )
+
+        sender = FollowUpEmailSender()
+        count = sender.send_all(count=1)
+
+        assert count == 1
+        assert mock_send_email.call_count == 1
+
+    def test_group_candidates_picks_longest_duration(self, followup_types):
+        """_group_candidates_by_email picks 90-day over 30-day over 7-day."""
+        email = "patient@gmail.com"
+        denial = self._create_denial(email)
+        fut_7, fut_30, fut_90 = followup_types
+
+        s7 = FollowUpSched.objects.create(
+            email=email,
+            denial_id=denial,
+            follow_up_type=fut_7,
+            follow_up_date=datetime.date.today() - datetime.timedelta(days=1),
+            follow_up_sent=False,
+        )
+        s30 = FollowUpSched.objects.create(
+            email=email,
+            denial_id=denial,
+            follow_up_type=fut_30,
+            follow_up_date=datetime.date.today() - datetime.timedelta(days=1),
+            follow_up_sent=False,
+        )
+        s90 = FollowUpSched.objects.create(
+            email=email,
+            denial_id=denial,
+            follow_up_type=fut_90,
+            follow_up_date=datetime.date.today() - datetime.timedelta(days=1),
+            follow_up_sent=False,
+        )
+
+        sender = FollowUpEmailSender()
+        grouped = sender._group_candidates_by_email([s7, s30, s90])
+
+        assert len(grouped) == 1
+        best, others = grouped[0]
+        assert best == s90
+        assert set(o.pk for o in others) == {s7.pk, s30.pk}
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+class TestFollowUpEmailGroupingAsync:
+    """Test async grouping of follow-up emails."""
+
+    @patch("fighthealthinsurance.followup_emails.send_fallback_email")
+    @patch("fighthealthinsurance.followup_emails.asyncio.sleep", return_value=None)
+    async def test_asend_all_groups_same_email(
+        self, mock_sleep, mock_send_email, followup_types
+    ):
+        """Async: two denials for the same email → only 1 email sent."""
+        email = "patient@gmail.com"
+        hashed = Denial.get_hashed_email(email)
+        denial1 = await sync_to_async(Denial.objects.create)(
+            denial_text="Denial 1",
+            hashed_email=hashed,
+            raw_email=email,
+            health_history="",
+        )
+        denial2 = await sync_to_async(Denial.objects.create)(
+            denial_text="Denial 2",
+            hashed_email=hashed,
+            raw_email=email,
+            health_history="",
+        )
+        fut_7 = followup_types[0]
+
+        sched1 = await sync_to_async(FollowUpSched.objects.create)(
+            email=email,
+            denial_id=denial1,
+            follow_up_type=fut_7,
+            follow_up_date=datetime.date.today() - datetime.timedelta(days=1),
+            follow_up_sent=False,
+        )
+        sched2 = await sync_to_async(FollowUpSched.objects.create)(
+            email=email,
+            denial_id=denial2,
+            follow_up_type=fut_7,
+            follow_up_date=datetime.date.today() - datetime.timedelta(days=1),
+            follow_up_sent=False,
+        )
+
+        sender = FollowUpEmailSender()
+        count = await sender.asend_all()
+
+        assert count == 1
+        assert mock_send_email.call_count == 1
+
+        await sync_to_async(sched1.refresh_from_db)()
+        await sync_to_async(sched2.refresh_from_db)()
+        assert sched1.follow_up_sent is True
+        assert sched2.follow_up_sent is True
+
 
 @pytest.fixture
 def valid_email_denial(db):
