@@ -472,6 +472,36 @@ class ExtraLinkFetcher:
             logger.warning(f"HTML extraction failed: {e}")
             return ""
 
+    async def fetch_and_extract_text(
+        self,
+        url: str,
+        max_length: int = MAX_TEXT_LENGTH,
+    ) -> Tuple[str, str]:
+        """
+        Fetch a document from a URL and extract its text content.
+
+        This is a convenience method that combines fetching, type detection,
+        and text extraction into a single public API call.
+
+        Args:
+            url: The URL to fetch
+            max_length: Maximum characters to return (truncates if longer)
+
+        Returns:
+            Tuple of (extracted_text, doc_type)
+
+        Raises:
+            Exception: If fetch or extraction fails
+        """
+        content, content_type, file_size = await self._fetch_url(url)
+        doc_type = self._detect_document_type(url, content_type)
+        extracted_text = await self._extract_text(content, doc_type)
+
+        if len(extracted_text) > max_length:
+            extracted_text = extracted_text[:max_length]
+
+        return extracted_text, doc_type
+
     async def _ensure_microsite_links(
         self,
         doc: ExtraLinkDocument,

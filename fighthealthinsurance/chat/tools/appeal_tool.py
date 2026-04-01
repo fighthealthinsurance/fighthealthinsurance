@@ -28,6 +28,7 @@ class AppealTool(BaseTool):
     """
 
     pattern = CREATE_OR_UPDATE_APPEAL_REGEX
+    detect_flags = re.DOTALL | re.MULTILINE | re.IGNORECASE
     name = "Appeal"
 
     def __init__(
