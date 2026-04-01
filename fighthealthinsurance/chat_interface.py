@@ -1,7 +1,5 @@
 import asyncio
-import json
-import re
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 from django.utils import timezone
 
@@ -26,20 +24,15 @@ from fighthealthinsurance.chat.safety_filters import (
     CRISIS_RESOURCES,
     detect_crisis_keywords,
 )
-from fighthealthinsurance.chat.tools.doc_fetcher_tool import (
-    MAX_CHAT_TEXT_LENGTH as doc_max_text_length,
-    validate_url as validate_doc_url,
-)
-from fighthealthinsurance.chat.tools.patterns import (
-    CREATE_OR_UPDATE_APPEAL_REGEX as create_or_update_appeal_regex,
-    CREATE_OR_UPDATE_PRIOR_AUTH_REGEX as create_or_update_prior_auth_regex,
-    FETCH_DOC_REGEX as fetch_doc_regex,
-    MEDICAID_ELIGIBILITY_REGEX as medicaid_eligibility_regex,
-    MEDICAID_INFO_REGEX as medicaid_info_lookup_regex,
-    PUBMED_QUERY_REGEX as pubmed_query_terms_regex,
+from fighthealthinsurance.chat.tools import (
+    AppealTool,
+    DocFetcherTool,
+    MedicaidEligibilityTool,
+    MedicaidInfoTool,
+    PriorAuthTool,
+    PubMedTool,
 )
 from fighthealthinsurance.extralink_context_helper import ExtraLinkContextHelper
-from fighthealthinsurance.extralink_fetcher import ExtraLinkFetcher
 from fighthealthinsurance.rag_client import get_rag_context_for_denial
 from fighthealthinsurance.ml.ml_models import (
     RemoteModelLike,
@@ -82,6 +75,7 @@ class ChatInterface:
         self.chat: OngoingChat = chat
         self.user: User = user
         self.use_external_models: bool = use_external_models
+        self._doc_fetch_count: list = [0]
 
     @staticmethod
     def _append_to_history(chat, role: str, content: str):
@@ -315,601 +309,66 @@ class ChatInterface:
             logger.debug("Got empty response from LLM")
             return None, None
 
-        # Use relative links
-        domain = ""
+        # Process tool calls via modular tool handlers
+        context = context_part or ""
 
-        # Process if this is linked to an appeal or prior auth
-        try:
-            # Process create_or_update_appeal token
-            appeal_match = re.search(
-                create_or_update_appeal_regex, response_text, re.DOTALL | re.MULTILINE
-            )
-            if appeal_match:
-                json_data = appeal_match.group(1).strip()
-                try:
-                    appeal_data = json.loads(json_data)
-                    await self.send_status_message("Processing update appeal data...")
-
-                    # Find an existing appeal linked to this chat or create a new one
-                    from fighthealthinsurance.models import Appeal
-
-                    appeal = None
-                    denial = None
-
-                    if await chat.appeals.aexists():
-                        appeal = await chat.appeals.afirst()
-                        if appeal:
-                            await self.send_status_message(
-                                f"Updating existing Appeal #{appeal.id}"
-                            )
-                            denial = await sync_to_async(lambda x: x.denial)(appeal)
-                    else:
-                        pro_user = await sync_to_async(lambda: chat.professional_user)()
-                        denial = await Denial.objects.acreate(
-                            creating_professional=pro_user,
-                        )
-                        appeal = await Appeal.objects.acreate(
-                            chat=chat, creating_professional=pro_user, for_denial=denial
-                        )
-                        if (
-                            "hashed_email" not in appeal_data
-                            and chat.user_id is not None
-                        ):
-                            user_email = await sync_to_async(lambda: chat.user.email)()  # type: ignore
-                            if user_email:
-                                appeal_data["hashed_email"] = Denial.get_hashed_email(
-                                    user_email
-                                )
-
-                    # Update appeal fields
-                    if appeal and denial:
-                        for key, value in appeal_data.items():
-                            set_field = False
-                            if hasattr(appeal, key):
-                                set_field = True
-                                setattr(appeal, key, value)
-                            if hasattr(denial, key):
-                                set_field = True
-                                setattr(denial, key, value)
-
-                            if not set_field:
-                                logger.warning(
-                                    f"Key {key} not found in Appeal or Denial model. Skipping."
-                                )
-                                await self.send_status_message(
-                                    f"Key {key} not found in Appeal or Denial model. The value {value} is not synced back yet."
-                                )
-
-                        await appeal.asave()
-                        await denial.asave()
-
-                        # Replace the token and JSON data with a status message
-                        cleaned_response = response_text.replace(
-                            appeal_match.group(0),
-                            f"I've created/updated [Appeal #{appeal.id}]({domain}/appeals/{appeal.id}) for you.",
-                        )
-                        await self.send_status_message(
-                            f"Appeal #{appeal.id} has been created/updated successfully."
-                        )
-                    else:
-                        # Handle the case where appeal is None
-                        cleaned_response = response_text.replace(
-                            appeal_match.group(0),
-                            "I couldn't create or update the appeal.",
-                        )
-                        await self.send_status_message(
-                            "Failed to create or update appeal."
-                        )
-
-                    response_text = cleaned_response
-
-                except json.JSONDecodeError as e:
-                    logger.warning(
-                        f"Invalid JSON data {e} in create_or_update_appeal token: {json_data}"
-                    )
-                    await self.send_error_message(
-                        f"Error processing appeal data: Invalid JSON format {e} -- {json_data}"
-                    )
-                except Exception as e:
-                    logger.opt(exception=True).warning(
-                        f"Error processing appeal data: {e}"
-                    )
-                    await self.send_error_message(
-                        f"Error processing appeal data: {str(e)}"
-                    )
-
-            # Process create_or_update_prior_auth token
-            prior_auth_match = re.search(
-                create_or_update_prior_auth_regex,
-                response_text,
-                re.DOTALL | re.MULTILINE,
-            )
-            if prior_auth_match:
-                json_data = prior_auth_match.group(1).strip()
-                try:
-                    prior_auth_data = json.loads(json_data)
-                    await self.send_status_message(
-                        "Processing prior authorization update/create data..."
-                    )
-
-                    # Find an existing prior auth linked to this chat or create a new one
-                    prior_auth = None
-
-                    if await chat.prior_auths.aexists():
-                        prior_auth = await chat.prior_auths.afirst()
-                        if prior_auth:
-                            await self.send_status_message(
-                                f"Updating existing Prior Auth Request #{prior_auth.id}"
-                            )
-                    else:
-                        prior_auth = await PriorAuthRequest.objects.acreate(
-                            chat=chat,
-                            creator_professional_user=chat.professional_user,
-                        )
-
-                    # Update prior auth fields
-                    if prior_auth:
-                        for key, value in prior_auth_data.items():
-                            key = key.lower().strip()
-                            if key == "medication" or key == "medication_name":
-                                key = "treatment"
-                            if hasattr(prior_auth, key):
-                                setattr(prior_auth, key, value)
-                            else:
-                                logger.warning(
-                                    f"Key {key} not found in Prior Auth model. Skipping."
-                                )
-
-                        await prior_auth.asave()
-
-                        # Replace the token and JSON data with a status message
-                        cleaned_response = response_text.replace(
-                            prior_auth_match.group(0),
-                            f"I've created/updated [Prior Auth Request #{prior_auth.id}]({domain}/prior-auths/view/{prior_auth.id}) for you.",
-                        )
-                        await self.send_status_message(
-                            f"Prior Auth Request #{prior_auth.id} has been created/updated successfully."
-                        )
-                    else:
-                        # Handle the case where prior_auth is None
-                        cleaned_response = response_text.replace(
-                            prior_auth_match.group(0),
-                            "I couldn't create or update the prior authorization request.",
-                        )
-                        await self.send_status_message(
-                            "Failed to create or update prior authorization request."
-                        )
-
-                    response_text = cleaned_response
-
-                except json.JSONDecodeError:
-                    logger.warning(
-                        f"Invalid JSON data in create_or_update_prior_auth token: {json_data}"
-                    )
-                    await self.send_status_message(
-                        "Error processing prior auth data: Invalid JSON format."
-                    )
-                except Exception as e:
-                    logger.opt(exception=True).warning(
-                        f"Error processing prior auth data: {e}"
-                    )
-                    await self.send_status_message(
-                        f"Error processing prior auth data: {str(e)}"
-                    )
-        except Exception as e:
-            logger.opt(exception=True).warning(f"Error processing special tokens: {e}")
-            await self.send_status_message(f"Error processing special tokens: {str(e)}")
-
-        # Handle Medicaid elgibility lookup
-        try:
-            medicaid_eligibility_matches = list(
-                re.finditer(
-                    medicaid_eligibility_regex,
-                    response_text,
-                    flags=re.DOTALL | re.IGNORECASE,
-                )
-            )
-            if medicaid_eligibility_matches:
-                logger.debug("Medicaid eligibility check.")
-                # Only process the first match
-                medicaid_eligibility_match = medicaid_eligibility_matches[0]
-                if len(medicaid_eligibility_matches) > 1:
-                    logger.warning(
-                        f"Found {len(medicaid_eligibility_matches)} Medicaid eligibility tool calls, processing only the first one"
-                    )
-                    # Remove ALL Medicaid tool calls from the response, not just the first one
-                cleaned_response = response_text
-                loaded = None
-                for ematch in medicaid_eligibility_matches:
-                    cleaned_response = cleaned_response.replace(ematch.group(0), "")
-                    if loaded is None:
-                        try:
-                            loaded = json.loads(ematch.group(1).strip())
-                        except Exception as e:
-                            pass
-                cleaned_response = cleaned_response.strip()
-                if len(cleaned_response) > 1:
-                    await self.send_status_message(
-                        f"Looking up medicaid eligibility, please wait. Remaining information: {cleaned_response}"
-                    )
-                if loaded is None:
-                    loaded = {}
-                if not isinstance(loaded, dict):
-                    raise TypeError(
-                        f"Expected dict, got {type(loaded).__name__} while loading tool call params."
-                    )
-
-                try:
-                    from fighthealthinsurance.medicaid_api import is_eligible
-
-                    await self.send_status_message(
-                        "Processing Medicaid eligibility data"
-                    )
-                    (
-                        eligible_2025,
-                        eligible_2026,
-                        medicare,
-                        alternatives,
-                        missing,
-                    ) = is_eligible(**loaded)
-                    info_text = "We're helping figure out if someone is likely eligible for Medicaid. Be clear this is an approximation and they'll need to confirm with the state to be sure."
-                    if len(missing) > 0:
-                        info_text += f"To figure out if their eligible we have {missing} questions to ask."
-                    else:
-                        if eligible_2025:
-                            info_text += "Our data so far suggests they could be eligible for medicaid under the 2025 rules."
-                        else:
-                            info_text += "Our data so far suggests they may not be eligible for medicaid under the 2025 rules."
-                        if eligible_2026:
-                            info_text += "Our data so far suggests they could be eligible for medicaid under the 2026 rules."
-                        else:
-                            info_text += "Our data so far suggests they may not be eligible for medicaid under the 2026 rules."
-                        if medicare:
-                            info_text += (
-                                "Our data suggests they may be eligible for medicare."
-                            )
-                    if len(alternatives) > 0:
-                        info_text += f"Some possible alternative suggestions to help are {alternatives}."
-                    action_text = "Use this info to ask the user any follow up questions or deliver the news of our determiniation and alternatives. Always be careful to indicate that this is an approximation and they should contact the state to know for sure (you can use the state tool call to get more info to provide to the user). Remember to use the panda emoji and context."
-                    await self.send_status_message("Formatting response...")
-                    # Ok history for LLM should now include the user message
-                    history_for_llm += [
-                        {"role": "user", "content": current_message_for_llm}
-                    ]
-                    history_for_llm += [{"role": "agent", "content": response_text}]
-                    (
-                        additional_response_text,
-                        additional_context_part,
-                    ) = await self._call_llm_with_actions(
-                        model_backends,
-                        current_message_for_llm=info_text + action_text,
-                        previous_context_summary="Medicaid eligibility investigation",
-                        history_for_llm=history_for_llm,
-                        depth=depth + 1,
-                        is_logged_in=is_logged_in,
-                        is_professional=is_professional,
-                    )
-                    if additional_response_text and len(additional_response_text) > 1:
-                        response_text = additional_response_text
-                    if context_part:
-                        if additional_context_part:
-                            context_part += additional_context_part
-                    else:
-                        context_part = additional_context_part
-                except Exception as e:
-                    logger.opt(exception=True).debug(
-                        f"Error parsing params for medicaid eligibility tool: {e}"
-                    )
-                    response_text = "Something went wrong trying to figure out eligibility. Please contact your state for more info."
-        except Exception as e:
-            logger.opt(exception=True).debug(
-                f"Error in medicaid eligibility tool call {e}"
-            )
-
-        # Handle Medicaid info lookup first (before PubMed)
-        try:
-            # Find ALL matches but only process the FIRST one to avoid multiple calls
-            medicaid_info_matches = list(
-                re.finditer(
-                    medicaid_info_lookup_regex,
-                    response_text,
-                    flags=re.DOTALL | re.IGNORECASE,
-                )
-            )
-
-            if medicaid_info_matches:
-                # Only process the first match
-                medicaid_info_match = medicaid_info_matches[0]
-                if len(medicaid_info_matches) > 1:
-                    logger.warning(
-                        f"Found {len(medicaid_info_matches)} Medicaid tool calls, processing only the first one"
-                    )
-
-                logger.debug(
-                    f"Medicaid tool call detected: {medicaid_info_match.group(0)}"
-                )
-
-                # Remove ALL Medicaid tool calls from the response, not just the first one
-                cleaned_response = response_text
-                for match in medicaid_info_matches:
-                    cleaned_response = cleaned_response.replace(match.group(0), "")
-                cleaned_response = cleaned_response.strip()
-
-                json_data = medicaid_info_match.group(1).strip()
-                logger.debug(f"Extracted JSON data: {json_data}")
-                logger.debug(
-                    f"Cleaned response after removing tool calls: {cleaned_response[:200]}..."
-                )
-                try:
-                    medicaid_info_data = json.loads(json_data)
-                    logger.debug(f"Parsed JSON data: {medicaid_info_data}")
-
-                    await self.send_status_message(
-                        "Processing Medicaid info lookup data..."
-                    )
-
-                    from fighthealthinsurance.medicaid_api import get_medicaid_info
-
-                    medicaid_info = get_medicaid_info(medicaid_info_data)
-                    logger.debug(
-                        f"Got Medicaid info response: {medicaid_info[:200] if medicaid_info else 'None'}..."
-                    )
-
-                    if medicaid_info:
-                        await self.send_status_message(
-                            "Medicaid info lookup completed successfully."
-                        )
-                        # Add brief intro and conclusion to the tool data
-                        state_name = medicaid_info_data.get("state", "the state")
-                        medicaid_info_text = f"Here's the official Medicaid information for {state_name}:\n\n{medicaid_info}\n\n -- use it to answer the question {current_message_for_llm}"
-                        # Pass that info to the model
-                        # Ok history for LLM should now include the user message
-                        history_for_llm += [
-                            {"role": "user", "content": current_message_for_llm}
-                        ]
-                        history_for_llm += [{"role": "agent", "content": response_text}]
-                        (
-                            additional_response_text,
-                            additional_context_part,
-                        ) = await self._call_llm_with_actions(
-                            model_backends,
-                            medicaid_info_text,
-                            "",
-                            history_for_llm,
-                            depth=depth + 1,
-                            is_logged_in=is_logged_in,
-                            is_professional=is_professional,
-                        )
-                        # Log the response for debugging
-                        logger.debug(
-                            f"Medicaid with intro/conclusion: {medicaid_info[:200]}..."
-                        )
-                        if cleaned_response and additional_response_text:
-                            cleaned_response += additional_response_text
-                        elif additional_response_text:
-                            cleaned_response = additional_response_text
-                        context_part = (
-                            context_part + additional_context_part
-                            if context_part and additional_context_part
-                            else additional_context_part
-                        )
-                        response_text = cleaned_response
-                    else:
-                        await self.send_status_message(
-                            "No Medicaid info found for the provided data."
-                        )
-                        response_text = "I couldn't find Medicaid information for the requested state. Please check the state name and try again."
-
-                except json.JSONDecodeError:
-                    logger.warning(
-                        f"Invalid JSON data in medicaid_info token: {json_data}"
-                    )
-                    await self.send_status_message(
-                        "Error processing Medicaid info data: Invalid JSON format."
-                    )
-                except Exception as e:
-                    logger.opt(exception=True).warning(
-                        f"Error processing Medicaid info data: {e}"
-                    )
-                    await self.send_status_message(
-                        f"Error processing Medicaid info data: {str(e)}"
-                    )
-        except Exception as e:
-            logger.opt(exception=True).warning(f"Error in Medicaid lookup block: {e}")
-            await self.send_status_message(f"Error in Medicaid lookup block: {str(e)}")
-
-        # Handle pubmed
-        try:
-            # Extract the PubMedQuery terms using regex
-            pmatch: Optional[re.Match[str]] = re.search(
-                pubmed_query_terms_regex, response_text, flags=re.IGNORECASE
-            )
-            # If we match on a tool call, remove the tool call from the result we give to the user.
-            if pmatch:
-                pubmed_query_terms = pmatch.group(1).strip()
-                cleaned_response = response_text.replace(pmatch.group(0), "").strip()
-                if "your search terms" in pubmed_query_terms:
-                    logger.debug(f"Got bad PubMed Query {pubmed_query_terms}")
-                    return cleaned_response, context_part
-                # Short circuit if no query terms
-                if len(pubmed_query_terms.strip()) == 0:
-                    return (cleaned_response, context_part)
-                await self.send_status_message(
-                    f"Searching PubMed for: {pubmed_query_terms}..."
-                )
-
-                recent_article_ids_awaitable = (
-                    self.pubmed_tools.find_pubmed_article_ids_for_query(
-                        query=pubmed_query_terms, since="2024", timeout=30.0
-                    )
-                )
-                all_article_ids_awaitable = (
-                    self.pubmed_tools.find_pubmed_article_ids_for_query(
-                        query=pubmed_query_terms, timeout=30.0
-                    )
-                )
-                article_id_results: tuple[
-                    Union[list[str], None, BaseException],
-                    Union[list[str], None, BaseException],
-                ] = await asyncio.gather(
-                    recent_article_ids_awaitable,
-                    all_article_ids_awaitable,
-                    return_exceptions=True,
-                )
-                recent_article_ids = article_id_results[0]
-                all_article_ids = article_id_results[1]
-                if isinstance(all_article_ids, list) or isinstance(
-                    recent_article_ids, list
-                ):
-                    article_ids_set: set[str] = set()
-                    # Display the higher of all and recent, generally all will be higher unless it failed.
-                    num_articles = 0
-
-                    if isinstance(recent_article_ids, list):
-                        article_ids_set = article_ids_set | set(recent_article_ids[:6])
-                        num_articles = len(recent_article_ids)
-                    if isinstance(all_article_ids, list):
-                        article_ids_set = article_ids_set | set(all_article_ids[:2])
-                        if num_articles < len(all_article_ids):
-                            num_articles = len(all_article_ids)
-                    article_ids = list(article_ids_set)
-                    await self.send_status_message(
-                        f"Found {num_articles} articles. Looking at {len(article_ids)} for context."
-                    )
-                    articles_data = await self.pubmed_tools.get_articles(article_ids)
-                    summaries = []
-                    for art in articles_data:
-                        summary_text = art.abstract if art.abstract else art.text
-                        if art.title and summary_text:
-                            await self.send_status_message(
-                                f"Found article: {art.title}"
-                            )
-                            summaries.append(
-                                f"Title: {art.title}\\nAbstract: {summary_text[:500]}..."
-                            )  # Truncate abstract
-                    if summaries:
-                        pubmed_context_str = (
-                            "\\n\\nWe got back pubmedcontext:[:\\n"
-                            + "\\n\\n".join(summaries)
-                            + "]. If you reference them make sure to include the title and journal.\\n"
-                        )
-                        (
-                            additional_response_text,
-                            additional_context_part,
-                        ) = await self._call_llm_with_actions(
-                            model_backends,
-                            pubmed_context_str,
-                            previous_context_summary,
-                            history_for_llm,
-                            depth=depth + 1,
-                            is_logged_in=is_logged_in,
-                            is_professional=is_professional,
-                        )
-                        if cleaned_response and additional_response_text:
-                            cleaned_response += additional_response_text
-                        elif additional_response_text:
-                            cleaned_response = additional_response_text
-                        context_part = (
-                            context_part + additional_context_part
-                            if context_part and additional_context_part
-                            else additional_context_part
-                        )
-                        response_text = cleaned_response
-                else:
-                    await self.send_status_message(
-                        "No detailed information found for the articles from PubMed."
-                    )
-        except Exception as e:
-            logger.warning(
-                f"Error while processing PubMed query: {e}. Continuing with the original response."
-            )
-            await self.send_status_message(
-                "Error while processing PubMed query. Continuing with the original response."
-            )
-
-        # Handle fetch_doc
-        doc_context_str = ""
-        try:
-            doc_match: Optional[re.Match[str]] = re.search(
-                fetch_doc_regex, response_text, flags=re.IGNORECASE
-            )
-            if doc_match:
-                json_str = doc_match.group(1).strip()
-                cleaned_response = response_text.replace(doc_match.group(0), "").strip()
-                try:
-                    doc_params = json.loads(json_str)
-                    url = doc_params.get("url", "").strip()
-                    if url:
-                        validate_doc_url(url)
-                        await self.send_status_message(
-                            f"Fetching document from {url}..."
-                        )
-                        fetcher = ExtraLinkFetcher()
-                        content, content_type, file_size = await fetcher._fetch_url(url)
-                        doc_type = fetcher._detect_document_type(url, content_type)
-                        extracted_text = await fetcher._extract_text(content, doc_type)
-                        if extracted_text and extracted_text.strip():
-                            if len(extracted_text) > doc_max_text_length:
-                                extracted_text = (
-                                    extracted_text[:doc_max_text_length] + "..."
-                                )
-                            await self.send_status_message(
-                                f"Extracted {len(extracted_text)} characters from {doc_type} document."
-                            )
-                            doc_context_str = (
-                                f"\n\nDocument fetched from {url}:\n"
-                                f"{extracted_text}\n\n"
-                                f"Please incorporate the relevant information from the document above.\n"
-                            )
-                            (
-                                additional_response_text,
-                                additional_context_part,
-                            ) = await self._call_llm_with_actions(
-                                model_backends,
-                                doc_context_str,
-                                previous_context_summary,
-                                history_for_llm,
-                                depth=depth + 1,
-                                is_logged_in=is_logged_in,
-                                is_professional=is_professional,
-                            )
-                            if cleaned_response and additional_response_text:
-                                cleaned_response += additional_response_text
-                            elif additional_response_text:
-                                cleaned_response = additional_response_text
-                            context_part = (
-                                context_part + additional_context_part
-                                if context_part and additional_context_part
-                                else additional_context_part
-                            )
-                            response_text = cleaned_response
-                        else:
-                            await self.send_status_message(
-                                "Could not extract any text from the document."
-                            )
-                            response_text = cleaned_response
-                    else:
-                        response_text = cleaned_response
-                except json.JSONDecodeError as e:
-                    logger.warning(f"Invalid JSON in fetch_doc: {json_str}: {e}")
-                    response_text = cleaned_response
-                except ValueError as e:
-                    logger.warning(f"URL validation failed for fetch_doc: {e}")
-                    await self.send_status_message(f"Cannot fetch document: {e}")
-                    response_text = cleaned_response
-        except Exception as e:
-            logger.warning(
-                f"Error while processing fetch_doc: {e}. Continuing with the original response."
-            )
-            await self.send_status_message(
-                "Error while fetching document. Continuing with the original response."
-            )
-
-        context = (
-            context_part + pubmed_context_str + doc_context_str
-            if context_part
-            else pubmed_context_str + doc_context_str
+        # Shared kwargs for recursive tools (medicaid, pubmed, doc fetcher)
+        tool_kwargs = dict(
+            model_backends=model_backends,
+            current_message_for_llm=current_message_for_llm,
+            previous_context_summary=previous_context_summary,
+            history_for_llm=history_for_llm,
+            depth=depth,
+            is_logged_in=is_logged_in,
+            is_professional=is_professional,
         )
+
+        # Non-recursive tools: appeal, prior auth
+        appeal_tool = AppealTool(self.send_status_message, self.send_error_message)
+        response_text, context, _ = await appeal_tool.handle(
+            response_text, context, chat=chat
+        )
+
+        prior_auth_tool = PriorAuthTool(
+            self.send_status_message, self.send_error_message
+        )
+        response_text, context, _ = await prior_auth_tool.handle(
+            response_text, context, chat=chat
+        )
+
+        # Recursive tools: medicaid eligibility, medicaid info, pubmed, doc fetcher
+        medicaid_elig_tool = MedicaidEligibilityTool(
+            self.send_status_message, self._call_llm_with_actions
+        )
+        response_text, context, _ = await medicaid_elig_tool.handle(
+            response_text, context, **tool_kwargs
+        )
+
+        medicaid_info_tool = MedicaidInfoTool(
+            self.send_status_message, self._call_llm_with_actions
+        )
+        response_text, context, _ = await medicaid_info_tool.handle(
+            response_text, context, **tool_kwargs
+        )
+
+        pubmed_tool = PubMedTool(
+            self.send_status_message,
+            pubmed_tools=self.pubmed_tools,
+            call_llm_callback=self._call_llm_with_actions,
+        )
+        response_text, context, _ = await pubmed_tool.handle(
+            response_text, context, **tool_kwargs
+        )
+
+        doc_fetcher_tool = DocFetcherTool(
+            self.send_status_message,
+            call_llm_callback=self._call_llm_with_actions,
+            fetch_count=self._doc_fetch_count,
+        )
+        response_text, context, _ = await doc_fetcher_tool.handle(
+            response_text, context, **tool_kwargs
+        )
+
         logger.debug(f"Return with context {context}.")
         return response_text, context
 

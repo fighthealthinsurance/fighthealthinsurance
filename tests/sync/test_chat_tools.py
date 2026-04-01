@@ -10,11 +10,14 @@ from fighthealthinsurance.chat.tools import (
     MEDICAID_ELIGIBILITY_REGEX,
     CREATE_OR_UPDATE_APPEAL_REGEX,
     CREATE_OR_UPDATE_PRIOR_AUTH_REGEX,
+    FETCH_DOC_REGEX,
     BaseTool,
     PubMedTool,
     MedicaidInfoTool,
     MedicaidEligibilityTool,
+    DocFetcherTool,
 )
+from fighthealthinsurance.chat.tools.doc_fetcher_tool import validate_url
 
 
 class TestToolPatterns(TestCase):
@@ -194,3 +197,102 @@ class TestMedicaidEligibilityTool(TestCase):
         )
 
         self.assertIn("questions to ask", info)
+
+
+class TestDocFetcherPatterns(TestCase):
+    """Test FETCH_DOC_REGEX pattern matching."""
+
+    def test_fetch_doc_with_stars(self):
+        """Test fetch_doc pattern matches with ** markers."""
+        text = '**fetch_doc {"url": "https://example.com/plan.pdf"}**'
+        match = re.search(FETCH_DOC_REGEX, text, re.IGNORECASE)
+        self.assertIsNotNone(match)
+        self.assertIn("https://example.com/plan.pdf", match.group(1))
+
+    def test_fetch_doc_without_stars(self):
+        """Test fetch_doc pattern matches without markers."""
+        text = 'fetch_doc {"url": "https://example.com/doc.html"}'
+        match = re.search(FETCH_DOC_REGEX, text, re.IGNORECASE)
+        self.assertIsNotNone(match)
+        self.assertIn("https://example.com/doc.html", match.group(1))
+
+    def test_fetch_doc_in_sentence(self):
+        """Test fetch_doc pattern matches when embedded in a sentence."""
+        text = 'Let me look that up. **fetch_doc {"url": "https://example.com/g.pdf"}** I found it.'
+        match = re.search(FETCH_DOC_REGEX, text, re.IGNORECASE)
+        self.assertIsNotNone(match)
+
+    def test_no_false_positive(self):
+        """Test fetch_doc pattern does not match unrelated text."""
+        text = "Please fetch the document from the website."
+        match = re.search(FETCH_DOC_REGEX, text, re.IGNORECASE)
+        self.assertIsNone(match)
+
+
+class TestDocFetcherTool(TestCase):
+    """Test DocFetcherTool detection."""
+
+    def test_detect_fetch_doc(self):
+        """Test DocFetcherTool detects the fetch_doc pattern."""
+        mock_status = AsyncMock()
+        tool = DocFetcherTool(mock_status)
+
+        text = '**fetch_doc {"url": "https://example.com/plan.pdf"}**'
+        match = tool.detect(text)
+
+        self.assertIsNotNone(match)
+
+    def test_does_not_detect_unrelated(self):
+        """Test DocFetcherTool does not match on unrelated text."""
+        mock_status = AsyncMock()
+        tool = DocFetcherTool(mock_status)
+
+        text = "This is just normal text without a tool call"
+        match = tool.detect(text)
+
+        self.assertIsNone(match)
+
+
+class TestValidateUrl(TestCase):
+    """Test SSRF protection in validate_url."""
+
+    def test_rejects_non_http_scheme(self):
+        """Test that non-HTTP(S) schemes are rejected."""
+        with self.assertRaises(ValueError):
+            validate_url("ftp://example.com/file.pdf")
+        with self.assertRaises(ValueError):
+            validate_url("file:///etc/passwd")
+
+    def test_rejects_localhost(self):
+        """Test that localhost is rejected."""
+        with self.assertRaises(ValueError):
+            validate_url("http://localhost/secret")
+        with self.assertRaises(ValueError):
+            validate_url("http://127.0.0.1/secret")
+
+    def test_rejects_local_suffix(self):
+        """Test that .local domains are rejected."""
+        with self.assertRaises(ValueError):
+            validate_url("http://myhost.local/doc.pdf")
+
+    def test_rejects_empty_hostname(self):
+        """Test that URLs without hostname are rejected."""
+        with self.assertRaises(ValueError):
+            validate_url("http:///path")
+
+    def test_accepts_valid_https_url(self):
+        """Test that valid HTTPS URLs pass validation."""
+        # Should not raise
+        validate_url("https://www.example.com/document.pdf")
+
+    def test_accepts_valid_http_url(self):
+        """Test that valid HTTP URLs pass validation."""
+        # Should not raise
+        validate_url("http://www.example.com/document.pdf")
+
+    def test_rejects_unresolvable_hostname(self):
+        """Test that unresolvable hostnames are rejected."""
+        with self.assertRaises(ValueError):
+            validate_url(
+                "https://this-domain-definitely-does-not-exist-abc123xyz.com/doc"
+            )
