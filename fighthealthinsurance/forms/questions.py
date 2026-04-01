@@ -1487,3 +1487,105 @@ class AssistiveDeviceQuestions(InsuranceQuestions):
                 "medical practice and coverage requirements."
             )
         return r
+
+
+class JourneyDocumentationQuestions(InsuranceQuestions):
+    """Questions to help patients document their medical journey for appeals.
+
+    This form captures common evidence that strengthens appeals:
+    prior medications tried, relevant test results, treatment timeline,
+    and clinical rationale. Works with any denial type.
+    """
+
+    prior_medications = forms.CharField(
+        max_length=500,
+        required=False,
+        label="What medications or treatments have you tried before for this condition?",
+        help_text="List any medications, therapies, or treatments you've tried, and note if any caused side effects or didn't work.",
+    )
+    test_results = forms.CharField(
+        max_length=500,
+        required=False,
+        label="Do you have relevant test results or diagnostic findings?",
+        help_text="E.g., lab results, imaging findings, specialist evaluations, or scores from standardized assessments.",
+    )
+    treatment_timeline = forms.CharField(
+        max_length=300,
+        required=False,
+        label="How long have you been dealing with this condition?",
+        help_text="Include when symptoms started, key dates in your treatment history, and how your condition has changed over time.",
+    )
+    why_this_treatment = forms.CharField(
+        max_length=500,
+        required=False,
+        label="Why does your doctor recommend this specific treatment?",
+        help_text="If you know, explain why your doctor chose this treatment over alternatives — e.g., other options failed, you have specific risk factors, or clinical guidelines recommend it.",
+    )
+
+    def medical_context(self):
+        """Return context about the patient's medical journey."""
+        parts = []
+        prior = self.cleaned_data.get("prior_medications")
+        if prior:
+            parts.append(f"Prior medications/treatments tried: {prior}.")
+        results = self.cleaned_data.get("test_results")
+        if results:
+            parts.append(f"Relevant test results: {results}.")
+        timeline = self.cleaned_data.get("treatment_timeline")
+        if timeline:
+            parts.append(f"Treatment timeline: {timeline}.")
+        rationale = self.cleaned_data.get("why_this_treatment")
+        if rationale:
+            parts.append(f"Clinical rationale: {rationale}.")
+        return " ".join(parts)
+
+    def main(self):
+        """Return main appeal text based on journey documentation answers."""
+        r = []
+
+        prior = self.cleaned_data.get("prior_medications")
+        if prior:
+            if self.prof_pov:
+                r.append(
+                    f"The patient has previously tried the following treatments: {prior}. "
+                    "These prior treatment attempts demonstrate that alternative options "
+                    "have been exhausted or are not appropriate for this patient."
+                )
+            else:
+                r.append(
+                    f"I have previously tried the following treatments: {prior}. "
+                    "These were either ineffective or caused unacceptable side effects."
+                )
+
+        results = self.cleaned_data.get("test_results")
+        if results:
+            if self.prof_pov:
+                r.append(
+                    f"Clinical evidence supporting this treatment includes: {results}."
+                )
+            else:
+                r.append(f"My test results and clinical evidence include: {results}.")
+
+        timeline = self.cleaned_data.get("treatment_timeline")
+        if timeline:
+            if self.prof_pov:
+                r.append(
+                    f"The patient's treatment history spans: {timeline}. "
+                    "This duration of illness and treatment history supports "
+                    "the medical necessity of the requested treatment."
+                )
+            else:
+                r.append(f"I have been dealing with this condition for: {timeline}.")
+
+        rationale = self.cleaned_data.get("why_this_treatment")
+        if rationale:
+            if self.prof_pov:
+                r.append(
+                    f"The clinical rationale for this specific treatment is: {rationale}."
+                )
+            else:
+                r.append(
+                    f"My doctor specifically recommended this treatment because: {rationale}."
+                )
+
+        return r
