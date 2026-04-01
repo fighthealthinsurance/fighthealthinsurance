@@ -645,6 +645,31 @@ class TestFollowUpEmailGrouping:
         )
 
     @patch("fighthealthinsurance.followup_emails.send_fallback_email")
+    def test_send_all_single_followup_passes_through(
+        self, mock_send_email, followup_types
+    ):
+        """Single denial with one follow-up works through the grouping path."""
+        email = "patient@gmail.com"
+        denial = self._create_denial(email)
+        fut_7, _, _ = followup_types
+
+        sched = FollowUpSched.objects.create(
+            email=email,
+            denial_id=denial,
+            follow_up_type=fut_7,
+            follow_up_date=datetime.date.today() - datetime.timedelta(days=1),
+            follow_up_sent=False,
+        )
+
+        sender = FollowUpEmailSender()
+        count = sender.send_all()
+
+        assert count == 1
+        assert mock_send_email.call_count == 1
+        sched.refresh_from_db()
+        assert sched.follow_up_sent is True
+
+    @patch("fighthealthinsurance.followup_emails.send_fallback_email")
     def test_send_all_groups_same_email_sends_once(
         self, mock_send_email, followup_types
     ):

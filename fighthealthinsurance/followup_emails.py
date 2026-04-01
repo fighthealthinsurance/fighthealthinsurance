@@ -280,7 +280,7 @@ class FollowUpEmailSender(AsyncEmailSenderMixin):
         """
         if candidates is None:
             candidates = await self.afind_candidates()
-        grouped = await sync_to_async(self._group_candidates_by_email)(candidates)
+        grouped = self._group_candidates_by_email(candidates)
         if count is not None:
             grouped = grouped[:count]
         sent = 0
