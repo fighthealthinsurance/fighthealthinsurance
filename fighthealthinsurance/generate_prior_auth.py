@@ -6,6 +6,7 @@ from concurrent.futures import Future
 from typing import Any, AsyncIterator, Dict, List
 
 from asgiref.sync import async_to_sync, sync_to_async
+from django.db import DatabaseError, IntegrityError
 from loguru import logger
 
 from fighthealthinsurance.exec import executor
@@ -168,8 +169,14 @@ class PriorAuthGenerator:
             # Create and save the proposal in the database, with sqlite this can result in db locked errors.
             try:
                 await self._create_proposal(prior_auth, proposed_id, substituted_text)
-            except:
-                pass
+            except (IntegrityError, DatabaseError) as e:
+                logger.warning(
+                    f"DB error saving proposal {proposed_id} for prior auth {prior_auth.id}: {e}"
+                )
+            except Exception:
+                logger.opt(exception=True).error(
+                    f"Unexpected error saving proposal {proposed_id} for prior auth {prior_auth.id}"
+                )
 
             # Return the result to be streamed to the client
             return {
@@ -179,7 +186,7 @@ class PriorAuthGenerator:
             }
 
         except Exception as e:
-            logger.opt(exception=True).debug(
+            logger.opt(exception=True).warning(
                 f"Error generating proposal with model {index+1}: {e}"
             )
             return {

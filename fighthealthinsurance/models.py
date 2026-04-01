@@ -996,8 +996,8 @@ class FaxesToSend(ExportModelOperationsMixin("FaxesToSend"), models.Model):  # t
             if os.path.exists(target_path):
                 try:
                     os.unlink(target_path)
-                except:
-                    pass
+                except OSError as e:
+                    logger.warning(f"Failed to clean up {target_path}: {e}")
             raise DocumentRegenerationError(
                 f"Failed to regenerate document for fax {self.fax_id}: {e}"
             ) from e

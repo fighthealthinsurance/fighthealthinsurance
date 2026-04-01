@@ -399,7 +399,7 @@ class MedicaidEligibilityTool(BaseTool):
             return cleaned_response, context
 
         except Exception as e:
-            logger.opt(exception=True).debug(
+            logger.opt(exception=True).warning(
                 f"Error parsing params for medicaid eligibility tool: {e}"
             )
             return (

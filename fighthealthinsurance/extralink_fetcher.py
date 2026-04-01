@@ -331,8 +331,8 @@ class ExtraLinkFetcher:
             # Try to decode as text
             try:
                 return content.decode("utf-8", errors="ignore")
-            except Exception:
-                logger.warning(f"Could not decode content of type {doc_type}")
+            except (UnicodeDecodeError, AttributeError) as e:
+                logger.warning(f"Could not decode content of type {doc_type}: {e}")
                 return ""
 
     async def _extract_pdf_text(self, content: bytes) -> str:

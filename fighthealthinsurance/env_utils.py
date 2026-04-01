@@ -19,7 +19,7 @@ def get_env_variable(var_name: str, default: Optional[str] = None) -> str:
                 return r
             else:
                 raise RuntimeError("Missing")
-        except:
+        except (RuntimeError, OSError) as exc:
             if default:
                 return default
             raise RuntimeError(

@@ -179,15 +179,17 @@ class AppealAssemblyHelper:
                         await check_call(command)
                         new_input_path = f"{input_path}.magic.u8.txt"
                         return await self._convert_input(new_input_path)
-                    except:
-                        pass
+                    except Exception as e:
+                        logger.warning(f"iconv conversion failed for {input_path}: {e}")
                 if input_path.endswith(".html") or input_path.endswith(".htm"):
                     html_command = base_convert_command + ["-thtml"]
                     try:
                         await _try_pandoc_engines(html_command)
                         return f"{input_path}.pdf"
-                    except:
-                        pass
+                    except Exception as e:
+                        logger.warning(
+                            f"Pandoc HTML conversion failed for {input_path}: {e}"
+                        )
                 return None
 
     async def assemble_single_output(
