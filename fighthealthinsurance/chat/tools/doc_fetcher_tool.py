@@ -6,10 +6,11 @@ from documents at URLs shared by users (PDFs, DOCX, HTML, plain text).
 """
 
 import ipaddress
+import json
 import re
 import socket
 from typing import Any, Awaitable, Callable, Optional, Tuple
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 
 from loguru import logger
 
@@ -21,12 +22,27 @@ from .patterns import FETCH_DOC_REGEX
 # Maximum characters of extracted text to include in LLM context
 MAX_CHAT_TEXT_LENGTH = 15_000
 
+# Maximum number of fetch_doc calls allowed per chat session
+MAX_FETCHES_PER_SESSION = 3
+
+
+def _sanitize_url_for_display(url: str) -> str:
+    """Strip query params and fragments from a URL for safe display in status messages."""
+    parsed = urlparse(url)
+    return urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", "", ""))
+
 
 def validate_url(url: str) -> None:
     """
     Validate a URL for safety (SSRF protection).
 
     Rejects non-HTTP(S) schemes, private/reserved IPs, and localhost.
+
+    Note: There is a TOCTOU gap here — DNS is resolved for validation, but
+    aiohttp resolves DNS again independently during the actual fetch. A DNS
+    rebinding attack could bypass this check. For production hardening,
+    consider using aiohttp with a custom TCPConnector that validates resolved
+    IPs at connection time.
 
     Args:
         url: The URL to validate
@@ -89,10 +105,21 @@ class DocFetcherTool(BaseTool):
         self,
         send_status_message: Callable[[str], Awaitable[None]],
         call_llm_callback: Optional[Callable[..., Awaitable[Tuple[str, str]]]] = None,
+        fetch_count: Optional[list] = None,
     ):
+        """
+        Initialize the document fetcher tool.
+
+        Args:
+            send_status_message: Async function to send status updates
+            call_llm_callback: Callback to call LLM with additional context
+            fetch_count: Mutable list used as a counter [current_count].
+                Pass the same list across calls to enforce per-session rate limits.
+        """
         super().__init__(send_status_message)
         self.call_llm_callback = call_llm_callback
         self.fetcher = ExtraLinkFetcher()
+        self._fetch_count = fetch_count if fetch_count is not None else [0]
 
     async def execute(
         self,
@@ -107,25 +134,6 @@ class DocFetcherTool(BaseTool):
         is_professional: bool = False,
         **kwargs,
     ) -> Tuple[str, str]:
-        """
-        Execute document fetch and incorporate results.
-
-        Args:
-            match: Regex match containing JSON with URL
-            response_text: Current LLM response
-            context: Current context string
-            model_backends: LLM backends for follow-up calls
-            previous_context_summary: Summary for context
-            history_for_llm: Chat history
-            depth: Current recursion depth
-            is_logged_in: Whether user is logged in
-            is_professional: Whether user is a professional
-
-        Returns:
-            Tuple of (updated_response, updated_context)
-        """
-        import json
-
         json_str = match.group(1).strip()
         cleaned_response = self.clean_response(response_text, match)
 
@@ -140,6 +148,16 @@ class DocFetcherTool(BaseTool):
             logger.warning("fetch_doc called with empty URL")
             return cleaned_response, context
 
+        # Rate limiting
+        if self._fetch_count[0] >= MAX_FETCHES_PER_SESSION:
+            logger.warning(
+                f"fetch_doc rate limit reached ({MAX_FETCHES_PER_SESSION} per session)"
+            )
+            await self.send_status_message(
+                "Document fetch limit reached for this session."
+            )
+            return cleaned_response, context
+
         try:
             validate_url(url)
         except ValueError as e:
@@ -147,16 +165,20 @@ class DocFetcherTool(BaseTool):
             await self.send_status_message(f"Cannot fetch document: {e}")
             return cleaned_response, context
 
-        await self.send_status_message(f"Fetching document from {url}...")
+        safe_url = _sanitize_url_for_display(url)
+        await self.send_status_message(f"Fetching document from {safe_url}...")
 
         try:
-            content, content_type, file_size = await self.fetcher._fetch_url(url)
-            doc_type = self.fetcher._detect_document_type(url, content_type)
-            extracted_text = await self.fetcher._extract_text(content, doc_type)
+            await self.send_status_message("Downloading and extracting content...")
+            extracted_text, doc_type = await self.fetcher.fetch_and_extract_text(
+                url, max_length=MAX_CHAT_TEXT_LENGTH
+            )
         except Exception as e:
-            logger.warning(f"Failed to fetch document from {url}: {e}")
+            logger.warning(f"Failed to fetch document from {safe_url}: {e}")
             await self.send_status_message(f"Failed to fetch document: {e}")
             return cleaned_response, context
+
+        self._fetch_count[0] += 1
 
         if not extracted_text or not extracted_text.strip():
             await self.send_status_message(
@@ -164,16 +186,12 @@ class DocFetcherTool(BaseTool):
             )
             return cleaned_response, context
 
-        # Truncate to fit LLM context
-        if len(extracted_text) > MAX_CHAT_TEXT_LENGTH:
-            extracted_text = extracted_text[:MAX_CHAT_TEXT_LENGTH] + "..."
-
         await self.send_status_message(
             f"Extracted {len(extracted_text)} characters from {doc_type} document."
         )
 
         doc_context = (
-            f"\n\nDocument fetched from {url}:\n"
+            f"\n\nDocument fetched from {safe_url}:\n"
             f"{extracted_text}\n\n"
             f"Please incorporate the relevant information from the document above.\n"
         )
