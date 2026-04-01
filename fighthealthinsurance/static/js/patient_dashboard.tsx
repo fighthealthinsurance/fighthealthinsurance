@@ -664,6 +664,10 @@ function EvidenceTab({ appeals }: { appeals: AppealSummary[] }) {
         },
         body: formData,
       });
+      if (response.status === 403 || response.status === 401) {
+        window.location.href = "/v0/auth/login";
+        throw new Error("Not authenticated");
+      }
       if (!response.ok) {
         const errData = await response.json();
         throw new Error(errData.error || `Upload failed: ${response.status}`);
