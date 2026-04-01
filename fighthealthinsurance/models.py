@@ -1708,6 +1708,85 @@ class AppealAttachment(models.Model):
         return cls.objects.filter(appeal__in=allowed_appeals)
 
 
+class PatientOwnedModelMixin:
+    """Mixin for models owned by a PatientUser with standard access filtering.
+
+    Requires the model to have a `patient_user` ForeignKey to PatientUser.
+    """
+
+    @classmethod
+    def filter_to_allowed(cls, user: "User") -> models.QuerySet:
+        """Filter to records the user has permission to access."""
+        if not user.is_authenticated:
+            return cls.objects.none()  # type: ignore[attr-defined]
+        if user.is_superuser or user.is_staff:
+            return cls.objects.all()  # type: ignore[attr-defined]
+        try:
+            patient_user = PatientUser.objects.get(user=user)
+            return cls.objects.filter(patient_user=patient_user)  # type: ignore[attr-defined]
+        except PatientUser.DoesNotExist:
+            return cls.objects.none()  # type: ignore[attr-defined]
+
+
+class InsuranceCallLog(PatientOwnedModelMixin, models.Model):
+    """Documents a patient's phone call with their insurance company."""
+
+    id = models.AutoField(primary_key=True)
+    patient_user = models.ForeignKey(
+        PatientUser, on_delete=models.CASCADE, related_name="call_logs"
+    )
+    appeal = models.ForeignKey(
+        Appeal,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="call_logs",
+    )
+    call_date = models.DateTimeField()
+    representative_name = models.CharField(max_length=200, blank=True, default="")
+    reference_number = models.CharField(max_length=200, blank=True, default="")
+    call_outcome = models.TextField(blank=True, default="")
+    notes = models.TextField(blank=True, default="")
+    follow_up_needed = models.BooleanField(default=False)
+    follow_up_date = models.DateField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self) -> str:
+        return f"Call on {self.call_date:%Y-%m-%d} by {self.patient_user}"
+
+    class Meta:
+        ordering = ["-call_date"]
+
+
+class PatientEvidence(PatientOwnedModelMixin, models.Model):
+    """Supporting document uploaded by a patient for their appeal."""
+
+    id = models.AutoField(primary_key=True)
+    patient_user = models.ForeignKey(
+        PatientUser, on_delete=models.CASCADE, related_name="evidence"
+    )
+    appeal = models.ForeignKey(
+        Appeal,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="patient_evidence",
+    )
+    title = models.CharField(max_length=300)
+    description = models.TextField(blank=True, default="")
+    file = EncryptedFileField(null=True, storage=settings.COMBINED_STORAGE)
+    filename = models.CharField(max_length=255)
+    mime_type = models.CharField(max_length=127)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self) -> str:
+        return f"{self.title} ({self.filename})"
+
+    class Meta:
+        ordering = ["-created_at"]
+
+
 class StripeRecoveryInfo(models.Model):
     """Stores recovery information for failed Stripe transactions."""
 

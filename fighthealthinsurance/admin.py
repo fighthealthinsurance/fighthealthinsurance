@@ -46,11 +46,37 @@ from fighthealthinsurance.models import (
     PubMedArticleSummarized,
     PubMedQueryData,
     Regulator,
+    InsuranceCallLog,
+    PatientEvidence,
     SecondaryAppealProfessionalRelation,
     SecondaryDenialProfessionalRelation,
     StripePrice,
     StripeProduct,
 )
+
+
+@admin.register(InsuranceCallLog)
+class InsuranceCallLogAdmin(admin.ModelAdmin):
+    """Insurance Call Log"""
+
+    list_display = (
+        "call_date",
+        "patient_user",
+        "representative_name",
+        "follow_up_needed",
+    )
+    list_filter = ("follow_up_needed",)
+    search_fields = ("representative_name", "reference_number", "notes")
+    ordering = ("-call_date",)
+
+
+@admin.register(PatientEvidence)
+class PatientEvidenceAdmin(admin.ModelAdmin):
+    """Patient Evidence"""
+
+    list_display = ("title", "patient_user", "filename", "mime_type", "created_at")
+    search_fields = ("title", "filename")
+    ordering = ("-created_at",)
 
 
 @admin.register(ChatLeads)

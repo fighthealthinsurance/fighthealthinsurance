@@ -399,6 +399,11 @@ urlpatterns += [
         name="chat_consent",
     ),
     path(
+        "my-appeals",
+        views.PatientDashboardView.as_view(),
+        name="patient_dashboard",
+    ),
+    path(
         "chooser/",
         views.ChooserView.as_view(),
         name="chooser",
