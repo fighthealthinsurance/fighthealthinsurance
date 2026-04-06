@@ -69,6 +69,12 @@ class InterestedProfessionalForm(forms.ModelForm):
 
 class DeleteDataForm(forms.Form):
     email = forms.EmailField(required=True)
+    captcha = forms.CharField(required=False, widget=forms.HiddenInput())
+    if "RECAPTCHA_PUBLIC_KEY" in os.environ and (
+        "RECAPTCHA_TESTING" not in os.environ
+        or os.environ["RECAPTCHA_TESTING"].lower() != "true"
+    ):
+        captcha = ReCaptchaField(widget=ReCaptchaV2Checkbox())
 
 
 class ShareAppealForm(forms.Form):
