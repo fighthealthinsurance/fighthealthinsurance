@@ -608,9 +608,8 @@ class ChatInterface:
 
         # Check for policy document analysis request
         if _detect_policy_analysis_request(user_message):
-            handled = await self._handle_policy_analysis(chat, user_message)
-            if handled:
-                return
+            await self._handle_policy_analysis(chat, user_message)
+            return
 
         # Handle chat ↔ appeal/prior auth linking if requested
 
@@ -877,13 +876,11 @@ class ChatInterface:
 
     async def _handle_policy_analysis(
         self, chat: OngoingChat, user_message: str
-    ) -> bool:
+    ) -> None:
         """
         Handle policy document analysis request.
         Looks for associated policy documents and triggers chunked parallel analysis.
-
-        Returns:
-            True if policy analysis was performed and handled, False otherwise.
+        Always sends a response (success or error) so the caller can return immediately.
         """
         try:
             policy_doc: Optional[PolicyDocument] = None
@@ -919,7 +916,7 @@ class ChatInterface:
                     "I couldn't find the uploaded policy document for this chat. "
                     "Please re-upload it from the Understand My Policy page."
                 )
-                return True
+                return
 
             logger.info(f"Found policy document {policy_doc.id} for analysis")
             await self.send_status_message(
@@ -993,12 +990,10 @@ class ChatInterface:
                 await self.send_message_to_client(formatted_analysis)
 
                 logger.info(f"Policy analysis completed for chat {chat.id}")
-                return True
             else:
                 await self.send_status_message(
                     "Could not analyze the policy document. Please try again or contact support."
                 )
-                return True
 
         except Exception as e:
             logger.opt(exception=True).warning(
@@ -1008,4 +1003,3 @@ class ChatInterface:
                 "There was an error analyzing your policy document. "
                 "Please try again or continue with your question."
             )
-            return True
