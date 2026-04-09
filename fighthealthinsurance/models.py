@@ -2216,6 +2216,119 @@ class ChooserSkip(ExportModelOperationsMixin("ChooserSkip"), models.Model):  # t
         return f"Skip of Task {self.task_id} by {self.session_key}"
 
 
+class PolicyDocument(ExportModelOperationsMixin("PolicyDocument"), models.Model):  # type: ignore
+    """
+    Stores uploaded policy documents (Summary of Benefits, Medical Policy PDFs).
+    Used to help users understand their insurance coverage.
+    """
+
+    DOCUMENT_TYPE_CHOICES = [
+        ("summary_of_benefits", "Summary of Benefits"),
+        ("medical_policy", "Medical Policy"),
+        ("other", "Other Policy Document"),
+    ]
+
+    PLAN_CATEGORY_CHOICES = [
+        ("employer_erisa", "Employer Plan (ERISA)"),
+        ("employer_non_erisa", "Employer Plan (Non-ERISA, e.g. government/church)"),
+        ("aca_marketplace", "ACA Marketplace (Healthcare.gov / State Exchange)"),
+        ("medicare_traditional", "Medicare (Traditional/Original)"),
+        ("medicare_advantage", "Medicare Advantage (Part C)"),
+        ("medicaid_chip", "Medicaid / CHIP"),
+        ("tricare", "TRICARE (Military)"),
+        ("va", "VA Health Care"),
+        ("individual_off_exchange", "Individual Plan (Off-Exchange)"),
+        ("short_term", "Short-Term Health Plan"),
+        ("unknown", "I'm Not Sure"),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    document_enc = EncryptedFileField(null=True, storage=settings.COMBINED_STORAGE)
+    document_type = models.CharField(
+        max_length=50, choices=DOCUMENT_TYPE_CHOICES, default="other"
+    )
+    plan_category = models.CharField(
+        max_length=50, choices=PLAN_CATEGORY_CHOICES, default="unknown", blank=True
+    )
+    filename = models.CharField(max_length=255, blank=True)
+    hashed_email = models.CharField(max_length=200, null=True, blank=True)
+    session_key = models.CharField(max_length=100, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["hashed_email"]),
+            models.Index(fields=["session_key"]),
+            models.Index(fields=["created_at"]),
+        ]
+        verbose_name = "Policy Document"
+        verbose_name_plural = "Policy Documents"
+
+    def __str__(self):
+        return f"PolicyDocument: {self.filename or self.id} ({self.document_type})"
+
+
+from django.db import transaction
+from django.db.models.signals import post_delete
+from django.dispatch import receiver
+
+
+@receiver(post_delete, sender=PolicyDocument)
+def _delete_policy_document_file(
+    sender: type, instance: "PolicyDocument", **kwargs: typing.Any
+) -> None:
+    """Remove the encrypted file blob after the row delete commits."""
+    if not instance.document_enc:
+        return
+
+    document_field = instance.document_enc
+    using = kwargs.get("using")
+
+    def _delete_file() -> None:
+        try:
+            document_field.delete(save=False)
+        except Exception:
+            logger.warning(f"Failed to delete PolicyDocument file for {instance.pk}")
+
+    transaction.on_commit(_delete_file, using=using)
+
+
+class PolicyDocumentAnalysis(ExportModelOperationsMixin("PolicyDocumentAnalysis"), models.Model):  # type: ignore
+    """
+    Stores AI analysis of policy documents.
+    Includes extracted exclusions, inclusions, and appeal-relevant clauses.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    policy_document = models.ForeignKey(
+        PolicyDocument, on_delete=models.CASCADE, related_name="analyses"
+    )
+    user_question = models.TextField(blank=True)
+    exclusions = models.JSONField(default=list)
+    inclusions = models.JSONField(default=list)
+    appeal_clauses = models.JSONField(default=list)
+    summary = models.TextField(blank=True)
+    quotable_sections = models.JSONField(default=list)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["policy_document"]),
+            models.Index(fields=["created_at"]),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["policy_document", "user_question"],
+                name="unique_policy_analysis",
+            ),
+        ]
+        verbose_name = "Policy Document Analysis"
+        verbose_name_plural = "Policy Document Analyses"
+
+    def __str__(self):
+        return f"Analysis of {self.policy_document.filename or self.policy_document_id}"
+
+
 class DeleteToken(models.Model):
     """Token for confirming data deletion requests from non-authenticated users."""
 
