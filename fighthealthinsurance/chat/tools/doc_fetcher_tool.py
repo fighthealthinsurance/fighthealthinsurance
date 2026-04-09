@@ -109,7 +109,9 @@ class DocFetcherTool(BaseTool):
     def __init__(
         self,
         send_status_message: Callable[[str], Awaitable[None]],
-        call_llm_callback: Optional[Callable[..., Awaitable[Tuple[str, str]]]] = None,
+        call_llm_callback: Optional[
+            Callable[..., Awaitable[Tuple[Optional[str], Optional[str]]]]
+        ] = None,
         fetch_count: Optional[list[int]] = None,
     ):
         """
