@@ -11,7 +11,6 @@ from urllib.parse import quote, urljoin
 import aiohttp
 import eutils
 import PyPDF2
-import requests
 from asgiref.sync import async_to_sync, sync_to_async
 from loguru import logger
 from metapub import FindIt
@@ -454,18 +453,25 @@ class PubMedTools(object):
                                 if fetched:
                                     doi = getattr(fetched, "doi", None)
                                     t = timeout / 5.0
-                                    logger.debug(
-                                        f"Looking for {pmid} with timeout of {t}"
-                                    )
-                                    url = await asyncio.wait_for(
-                                        self._find_article_url(
-                                            pmid,
-                                            doi=doi,
-                                            session=session,
-                                            per_source_timeout=t / 6,
-                                        ),
-                                        timeout=t,
-                                    )
+                                    url = None
+                                    try:
+                                        logger.debug(
+                                            f"Looking for {pmid} with timeout of {t}"
+                                        )
+                                        url = await asyncio.wait_for(
+                                            self._find_article_url(
+                                                pmid,
+                                                doi=doi,
+                                                session=session,
+                                                per_source_timeout=t / 6,
+                                            ),
+                                            timeout=t,
+                                        )
+                                    except Exception as e:
+                                        logger.debug(
+                                            f"URL discovery failed for {pmid}: {e}"
+                                        )
+                                    # Always create the article, even without a URL
                                     mini_article = (
                                         await PubMedMiniArticle.objects.acreate(
                                             pmid=pmid,
@@ -846,18 +852,17 @@ class PubMedTools(object):
                             f"Stored URL {article.article_url} didn't yield PDF, trying other sources"
                         )
 
-                    url = await self._find_article_url(
-                        article_id,
-                        doi=article.doi,
-                        session=session,
-                        per_source_timeout=5.0,
-                    )
-                    if url:
+                    # Iterate sources individually so non-PDF results don't block fallbacks
+                    for name, make_coro in self._url_sources(
+                        article_id, article.doi, session, 5.0
+                    ):
+                        url = await make_coro()
+                        if not url:
+                            continue
                         result = await self._try_fetch_pdf_to_file(
                             url, prefix=f"{article_id}", session=session
                         )
                         if result:
-                            # Update the stored URL for next time
                             if url != article.article_url:
                                 try:
                                     await PubMedArticleSummarized.objects.filter(
@@ -866,6 +871,9 @@ class PubMedTools(object):
                                 except Exception:
                                     pass
                             return result
+                        logger.debug(
+                            f"[{article_id}] {name} URL {url} didn't yield PDF, continuing"
+                        )
         except Exception as e:
             logger.debug(f"Error {e} fetching article PDF for {article}")
 
