@@ -693,7 +693,7 @@ class OngoingChatAdmin(admin.ModelAdmin):
             )
         else:
             sql = (
-                "CASE WHEN json_typeof(chat_history) = 'array'"
+                "CASE WHEN json_type(chat_history) = 'array'"
                 " THEN json_array_length(chat_history) ELSE 0 END"
             )
         return qs.annotate(
