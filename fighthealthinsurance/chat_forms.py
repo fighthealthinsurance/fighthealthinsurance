@@ -149,6 +149,10 @@ class UnderstandPolicyForm(BaseConsentFieldsMixin):
                     "File size must be less than 20MB. Please upload a smaller file."
                 )
             ext = "." + file.name.rsplit(".", 1)[-1].lower() if "." in file.name else ""
+            if not ext:
+                raise forms.ValidationError(
+                    f"File must have an extension. Please upload a {', '.join(sorted(SUPPORTED_POLICY_EXTENSIONS))} file."
+                )
             if ext not in SUPPORTED_POLICY_EXTENSIONS:
                 raise forms.ValidationError(
                     f"Unsupported file type. Please upload one of: {', '.join(sorted(SUPPORTED_POLICY_EXTENSIONS))}"
