@@ -2310,13 +2310,6 @@ class PolicyDocumentAnalysis(ExportModelOperationsMixin("PolicyDocumentAnalysis"
     summary = models.TextField(blank=True)
     quotable_sections = models.JSONField(default=list)
     created_at = models.DateTimeField(auto_now_add=True)
-    chat = models.ForeignKey(
-        "OngoingChat",
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name="policy_analyses",
-    )
 
     class Meta:
         indexes = [

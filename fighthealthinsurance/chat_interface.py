@@ -1348,10 +1348,6 @@ class ChatInterface:
             )
 
             if analysis:
-                # Link the analysis to this chat
-                analysis.chat = chat
-                await analysis.asave()
-
                 formatted_analysis = MLPolicyDocHelper.format_analysis_for_chat(
                     analysis
                 )

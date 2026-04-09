@@ -8,12 +8,6 @@ from fighthealthinsurance.models import PolicyDocument
 
 SUPPORTED_POLICY_EXTENSIONS = {".pdf", ".docx", ".txt"}
 
-SUPPORTED_POLICY_CONTENT_TYPES = {
-    "application/pdf",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    "text/plain",
-}
-
 # Magic bytes for file type validation
 _PDF_MAGIC = b"%PDF"
 _DOCX_MAGIC = b"PK"  # ZIP-based format
