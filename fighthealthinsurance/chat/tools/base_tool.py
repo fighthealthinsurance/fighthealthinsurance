@@ -23,7 +23,7 @@ class BaseTool(ABC):
     pattern: str = ""
 
     # Regex flags used for detection (subclasses can override)
-    detect_flags: re.RegexFlag = re.IGNORECASE
+    detect_flags: int = re.IGNORECASE
 
     # Human-readable name for status messages
     name: str = "Tool"

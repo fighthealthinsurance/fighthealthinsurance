@@ -26,7 +26,7 @@ class PriorAuthTool(BaseTool):
     """
 
     pattern = CREATE_OR_UPDATE_PRIOR_AUTH_REGEX
-    detect_flags: re.RegexFlag = re.DOTALL | re.MULTILINE | re.IGNORECASE
+    detect_flags: int = re.DOTALL | re.MULTILINE | re.IGNORECASE
     name = "Prior Auth"
 
     # Field name mappings for normalization
