@@ -110,7 +110,7 @@ class DocFetcherTool(BaseTool):
         self,
         send_status_message: Callable[[str], Awaitable[None]],
         call_llm_callback: Optional[Callable[..., Awaitable[Tuple[str, str]]]] = None,
-        fetch_count: Optional[list] = None,
+        fetch_count: Optional[list[int]] = None,
     ):
         """
         Initialize the document fetcher tool.

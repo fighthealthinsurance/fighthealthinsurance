@@ -10,7 +10,7 @@ import hashlib
 import tempfile
 from urllib.parse import urljoin
 import time
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 from django.db import models
 
@@ -477,7 +477,7 @@ class ExtraLinkFetcher:
         self,
         url: str,
         max_length: int = MAX_TEXT_LENGTH,
-        url_validator: Optional[Callable[..., Any]] = None,
+        url_validator: Optional[Callable[[str], Awaitable[None]]] = None,
     ) -> Tuple[str, str]:
         """
         Fetch a document from a URL and extract its text content.
@@ -515,7 +515,7 @@ class ExtraLinkFetcher:
     async def _fetch_url_safe(
         self,
         url: str,
-        url_validator: callable,
+        url_validator: Callable[[str], Awaitable[None]],
         max_redirects: int = 5,
     ) -> Tuple[bytes, str, int]:
         """

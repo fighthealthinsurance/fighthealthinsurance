@@ -75,7 +75,7 @@ class ChatInterface:
         self.chat: OngoingChat = chat
         self.user: User = user
         self.use_external_models: bool = use_external_models
-        self._doc_fetch_count: list = [0]
+        self._doc_fetch_count: list[int] = [0]
 
     @staticmethod
     def _append_to_history(chat, role: str, content: str):
