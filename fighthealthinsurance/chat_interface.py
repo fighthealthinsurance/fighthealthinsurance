@@ -43,7 +43,6 @@ from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance.models import (
     Appeal,
     ChatType,
-    Denial,
     OngoingChat,
     PriorAuthRequest,
 )
