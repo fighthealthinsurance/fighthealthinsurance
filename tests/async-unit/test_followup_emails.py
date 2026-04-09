@@ -821,6 +821,55 @@ class TestFollowUpEmailGrouping:
         assert count == 1
         assert mock_send_email.call_count == 1
 
+    @patch("fighthealthinsurance.followup_emails.send_fallback_email")
+    def test_send_all_skips_stale_best_sends_next(
+        self, mock_send_email, followup_types
+    ):
+        """If best candidate is stale, skip it and send the next non-stale one."""
+        email = "patient@gmail.com"
+        denial1 = self._create_denial(email)
+        denial2 = self._create_denial(email)
+        fut_7, fut_30, _ = followup_types
+
+        # Denial 1: 30-day already sent, making its 7-day stale
+        FollowUpSched.objects.create(
+            email=email,
+            denial_id=denial1,
+            follow_up_type=fut_30,
+            follow_up_date=datetime.date.today() - datetime.timedelta(days=10),
+            follow_up_sent=True,
+            follow_up_sent_date=timezone.now() - datetime.timedelta(days=10),
+        )
+        sched1_7 = FollowUpSched.objects.create(
+            email=email,
+            denial_id=denial1,
+            follow_up_type=fut_7,
+            follow_up_date=datetime.date.today() - datetime.timedelta(days=1),
+            follow_up_sent=False,
+        )
+
+        # Denial 2: 7-day is NOT stale (no later type sent)
+        sched2_7 = FollowUpSched.objects.create(
+            email=email,
+            denial_id=denial2,
+            follow_up_type=fut_7,
+            follow_up_date=datetime.date.today() - datetime.timedelta(days=1),
+            follow_up_sent=False,
+        )
+
+        sender = FollowUpEmailSender()
+        count = sender.send_all()
+
+        # Should send exactly 1 email (for denial2's non-stale follow-up)
+        assert count == 1
+        assert mock_send_email.call_count == 1
+
+        sched1_7.refresh_from_db()
+        sched2_7.refresh_from_db()
+        # Both should be marked as sent
+        assert sched1_7.follow_up_sent is True
+        assert sched2_7.follow_up_sent is True
+
     def test_group_candidates_picks_longest_duration(self, followup_types):
         """_group_candidates_by_email picks 90-day over 30-day over 7-day."""
         email = "patient@gmail.com"
