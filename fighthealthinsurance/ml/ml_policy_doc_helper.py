@@ -729,7 +729,7 @@ Document chunk:
         num_workers = min(cls.MAX_PARALLEL_CHUNKS, total_chunks) or 1
         worker_tasks = [asyncio.create_task(worker()) for _ in range(num_workers)]
         await asyncio.gather(*worker_tasks)
-        return [s for _, s in sorted(summaries)]
+        return [s for _, s in sorted(summaries, key=lambda x: x[0])]
 
     @classmethod
     async def _synthesize_chunk_summaries(

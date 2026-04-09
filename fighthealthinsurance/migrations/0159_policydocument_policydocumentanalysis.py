@@ -140,16 +140,6 @@ class Migration(migrations.Migration):
                 ("quotable_sections", models.JSONField(default=list)),
                 ("created_at", models.DateTimeField(auto_now_add=True)),
                 (
-                    "chat",
-                    models.ForeignKey(
-                        blank=True,
-                        null=True,
-                        on_delete=django.db.models.deletion.SET_NULL,
-                        related_name="policy_analyses",
-                        to="fighthealthinsurance.ongoingchat",
-                    ),
-                ),
-                (
                     "policy_document",
                     models.ForeignKey(
                         on_delete=django.db.models.deletion.CASCADE,

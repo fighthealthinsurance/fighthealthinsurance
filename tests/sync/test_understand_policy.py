@@ -12,7 +12,6 @@ from django.test import Client, TestCase, override_settings
 from django.urls import reverse
 
 from fighthealthinsurance.chat_forms import (
-    SUPPORTED_POLICY_CONTENT_TYPES,
     SUPPORTED_POLICY_EXTENSIONS,
     UnderstandPolicyForm,
 )
