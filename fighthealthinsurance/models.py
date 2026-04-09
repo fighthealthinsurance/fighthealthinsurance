@@ -2307,6 +2307,7 @@ class PolicyDocument(ExportModelOperationsMixin("PolicyDocument"), models.Model)
         return f"PolicyDocument: {self.filename or self.id} ({self.document_type})"
 
 
+from django.db import transaction
 from django.db.models.signals import post_delete
 from django.dispatch import receiver
 
@@ -2315,12 +2316,20 @@ from django.dispatch import receiver
 def _delete_policy_document_file(
     sender: type, instance: "PolicyDocument", **kwargs: typing.Any
 ) -> None:
-    """Remove the encrypted file blob when a PolicyDocument row is deleted."""
-    if instance.document_enc:
+    """Remove the encrypted file blob after the row delete commits."""
+    if not instance.document_enc:
+        return
+
+    document_field = instance.document_enc
+    using = kwargs.get("using")
+
+    def _delete_file() -> None:
         try:
-            instance.document_enc.delete(save=False)
+            document_field.delete(save=False)
         except Exception:
-            pass
+            logger.warning(f"Failed to delete PolicyDocument file for {instance.pk}")
+
+    transaction.on_commit(_delete_file, using=using)
 
 
 class PolicyDocumentAnalysis(ExportModelOperationsMixin("PolicyDocumentAnalysis"), models.Model):  # type: ignore

@@ -915,7 +915,11 @@ class ChatInterface:
 
             if not policy_doc:
                 logger.debug(f"No policy document found for session {session_key}")
-                return False
+                await self.send_status_message(
+                    "I couldn't find the uploaded policy document for this chat. "
+                    "Please re-upload it from the Understand My Policy page."
+                )
+                return True
 
             logger.info(f"Found policy document {policy_doc.id} for analysis")
             await self.send_status_message(
@@ -998,7 +1002,7 @@ class ChatInterface:
                 await self.send_status_message(
                     "Could not analyze the policy document. Please try again or contact support."
                 )
-                return False
+                return True
 
         except Exception as e:
             logger.opt(exception=True).warning(
@@ -1008,4 +1012,4 @@ class ChatInterface:
                 "There was an error analyzing your policy document. "
                 "Please try again or continue with your question."
             )
-            return False
+            return True

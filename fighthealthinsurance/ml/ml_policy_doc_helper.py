@@ -332,7 +332,7 @@ class MLPolicyDocHelper:
                 chunks.append({"text": current_text, "pages": list(current_pages)})
                 current_text = ""
                 current_pages = []
-            current_text += page_text + "\n"
+            current_text += f"[Page/Section {page_num}]\n{page_text}\n"
             current_pages.append(page_num)
 
         # Flush remaining
@@ -692,7 +692,7 @@ Document chunk:
         if progress_callback:
             await progress_callback(total_chunks, total_chunks)
 
-        summaries: list[str] = []
+        summaries: list[tuple[int, str]] = []
 
         # Use a bounded worker pool so we only have O(MAX_PARALLEL_CHUNKS) tasks
         # alive at any given time, even for very large documents.
@@ -722,14 +722,14 @@ Document chunk:
                     logger.debug(f"Chunk {idx} raised exception: {exc}")
                 else:
                     if result is not None:
-                        summaries.append(result)
+                        summaries.append((idx, result))
 
         # Start at most MAX_PARALLEL_CHUNKS workers (or fewer if there are
         # not enough chunks), and wait for all work to complete.
         num_workers = min(cls.MAX_PARALLEL_CHUNKS, total_chunks) or 1
         worker_tasks = [asyncio.create_task(worker()) for _ in range(num_workers)]
         await asyncio.gather(*worker_tasks)
-        return summaries
+        return [s for _, s in sorted(summaries)]
 
     @classmethod
     async def _synthesize_chunk_summaries(
