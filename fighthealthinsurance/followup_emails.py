@@ -185,9 +185,7 @@ class FollowUpEmailSender(AsyncEmailSenderMixin):
             follow_up_sent_date=now,
         )
 
-    def _send_grouped(
-        self, all_candidates: list[FollowUpSched]
-    ) -> bool:
+    def _send_grouped(self, all_candidates: list[FollowUpSched]) -> bool:
         """Send one email for a group of candidates sharing the same address.
 
         Iterates candidates in priority order (longest duration first).
