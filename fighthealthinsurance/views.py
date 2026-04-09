@@ -2217,8 +2217,10 @@ class UnderstandPolicyView(FormView):
             form.add_error("policy_document", "File upload failed.")
             return self.form_invalid(form)
 
-        # Sanitize filename for display
-        safe_filename = re.sub(r"[^\w\s.\-]", "_", uploaded_file.name)[:200]
+        # Sanitize filename, preserving extension for downstream dispatch
+        sanitized = re.sub(r"[^\w .\-]", "_", uploaded_file.name)
+        stem, ext = os.path.splitext(sanitized)
+        safe_filename = f"{stem[:max(1, 200 - len(ext))]}{ext.lower()}"
 
         mark_session_consent(self.request.session, email or "")
 
@@ -2263,9 +2265,7 @@ class UnderstandPolicyView(FormView):
             plan_category, ""
         )
 
-        initial_message = (
-            f"I've uploaded my insurance {doc_type_display}: {safe_filename}\n"
-        )
+        initial_message = f"I've uploaded my insurance {doc_type_display}.\n"
 
         if plan_category and plan_category != "unknown":
             initial_message += f"Plan type: {plan_category_display}\n"
