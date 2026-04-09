@@ -687,9 +687,15 @@ class OngoingChatAdmin(admin.ModelAdmin):
     def get_queryset(self, request):
         qs = super().get_queryset(request)
         if connection.vendor == "postgresql":
-            sql = "COALESCE(jsonb_array_length(chat_history), 0)"
+            sql = (
+                "CASE WHEN jsonb_typeof(chat_history) = 'array'"
+                " THEN jsonb_array_length(chat_history) ELSE 0 END"
+            )
         else:
-            sql = "COALESCE(json_array_length(chat_history), 0)"
+            sql = (
+                "CASE WHEN json_typeof(chat_history) = 'array'"
+                " THEN json_array_length(chat_history) ELSE 0 END"
+            )
         return qs.annotate(
             chat_message_count=RawSQL(sql, [], output_field=IntegerField())
         )
