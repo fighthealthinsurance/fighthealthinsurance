@@ -691,6 +691,11 @@ class OngoingChatAdmin(admin.ModelAdmin):
                 "CASE WHEN jsonb_typeof(chat_history) = 'array'"
                 " THEN jsonb_array_length(chat_history) ELSE 0 END"
             )
+        elif connection.vendor == "mysql":
+            sql = (
+                "CASE WHEN JSON_TYPE(chat_history) = 'ARRAY'"
+                " THEN JSON_LENGTH(chat_history) ELSE 0 END"
+            )
         else:
             sql = (
                 "CASE WHEN json_type(chat_history) = 'array'"
@@ -703,7 +708,7 @@ class OngoingChatAdmin(admin.ModelAdmin):
     @admin.display(description="Messages", ordering="chat_message_count")
     def message_count(self, obj: OngoingChat) -> int:
         if hasattr(obj, "chat_message_count"):
-            return obj.chat_message_count  # type: ignore[return-value]
+            return int(obj.chat_message_count)
         if isinstance(obj.chat_history, list):
             return len(obj.chat_history)
         return 0
