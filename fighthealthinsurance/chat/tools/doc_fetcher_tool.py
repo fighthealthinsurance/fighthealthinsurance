@@ -5,6 +5,7 @@ Handles fetch_doc tool calls from the LLM to fetch and extract text
 from documents at URLs shared by users (PDFs, DOCX, HTML, plain text).
 """
 
+import asyncio
 import ipaddress
 import json
 import re
@@ -32,7 +33,7 @@ def _sanitize_url_for_display(url: str) -> str:
     return urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", "", ""))
 
 
-def validate_url(url: str) -> None:
+async def validate_url(url: str) -> None:
     """
     Validate a URL for safety (SSRF protection).
 
@@ -67,8 +68,12 @@ def validate_url(url: str) -> None:
     ):
         raise ValueError(f"Cannot fetch from local addresses: {hostname}")
 
+    # Run DNS resolution in a thread to avoid blocking the event loop
+    loop = asyncio.get_running_loop()
     try:
-        addr_infos = socket.getaddrinfo(hostname, None)
+        addr_infos = await loop.run_in_executor(
+            None, socket.getaddrinfo, hostname, None
+        )
     except socket.gaierror:
         raise ValueError(f"Cannot resolve hostname: {hostname}")
 
@@ -159,26 +164,27 @@ class DocFetcherTool(BaseTool):
             return cleaned_response, context
 
         try:
-            validate_url(url)
+            await validate_url(url)
         except ValueError as e:
             logger.warning(f"URL validation failed for fetch_doc: {e}")
             await self.send_status_message(f"Cannot fetch document: {e}")
             return cleaned_response, context
 
         safe_url = _sanitize_url_for_display(url)
+        self._fetch_count[0] += 1
         await self.send_status_message(f"Fetching document from {safe_url}...")
 
         try:
             await self.send_status_message("Downloading and extracting content...")
             extracted_text, doc_type = await self.fetcher.fetch_and_extract_text(
-                url, max_length=MAX_CHAT_TEXT_LENGTH
+                url,
+                max_length=MAX_CHAT_TEXT_LENGTH,
+                url_validator=validate_url,
             )
         except Exception as e:
             logger.warning(f"Failed to fetch document from {safe_url}: {e}")
             await self.send_status_message(f"Failed to fetch document: {e}")
             return cleaned_response, context
-
-        self._fetch_count[0] += 1
 
         if not extracted_text or not extracted_text.strip():
             await self.send_status_message(

@@ -1,5 +1,6 @@
 """Tests for chat tool handlers."""
 
+import asyncio
 import re
 from unittest.mock import AsyncMock, MagicMock, patch
 from django.test import TestCase
@@ -256,43 +257,49 @@ class TestDocFetcherTool(TestCase):
 class TestValidateUrl(TestCase):
     """Test SSRF protection in validate_url."""
 
+    def _run(self, coro):
+        """Helper to run async validate_url in sync tests."""
+        return asyncio.get_event_loop().run_until_complete(coro)
+
     def test_rejects_non_http_scheme(self):
         """Test that non-HTTP(S) schemes are rejected."""
         with self.assertRaises(ValueError):
-            validate_url("ftp://example.com/file.pdf")
+            self._run(validate_url("ftp://example.com/file.pdf"))
         with self.assertRaises(ValueError):
-            validate_url("file:///etc/passwd")
+            self._run(validate_url("file:///etc/passwd"))
 
     def test_rejects_localhost(self):
         """Test that localhost is rejected."""
         with self.assertRaises(ValueError):
-            validate_url("http://localhost/secret")
+            self._run(validate_url("http://localhost/secret"))
         with self.assertRaises(ValueError):
-            validate_url("http://127.0.0.1/secret")
+            self._run(validate_url("http://127.0.0.1/secret"))
 
     def test_rejects_local_suffix(self):
         """Test that .local domains are rejected."""
         with self.assertRaises(ValueError):
-            validate_url("http://myhost.local/doc.pdf")
+            self._run(validate_url("http://myhost.local/doc.pdf"))
 
     def test_rejects_empty_hostname(self):
         """Test that URLs without hostname are rejected."""
         with self.assertRaises(ValueError):
-            validate_url("http:///path")
+            self._run(validate_url("http:///path"))
 
     def test_accepts_valid_https_url(self):
         """Test that valid HTTPS URLs pass validation."""
         # Should not raise
-        validate_url("https://www.example.com/document.pdf")
+        self._run(validate_url("https://www.example.com/document.pdf"))
 
     def test_accepts_valid_http_url(self):
         """Test that valid HTTP URLs pass validation."""
         # Should not raise
-        validate_url("http://www.example.com/document.pdf")
+        self._run(validate_url("http://www.example.com/document.pdf"))
 
     def test_rejects_unresolvable_hostname(self):
         """Test that unresolvable hostnames are rejected."""
         with self.assertRaises(ValueError):
-            validate_url(
-                "https://this-domain-definitely-does-not-exist-abc123xyz.com/doc"
+            self._run(
+                validate_url(
+                    "https://this-domain-definitely-does-not-exist-abc123xyz.com/doc"
+                )
             )
