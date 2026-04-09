@@ -31,7 +31,9 @@ class MedicaidInfoTool(BaseTool):
     def __init__(
         self,
         send_status_message: Callable[[str], Awaitable[None]],
-        call_llm_callback: Optional[Callable[..., Awaitable[Tuple[str, str]]]] = None,
+        call_llm_callback: Optional[
+            Callable[..., Awaitable[Tuple[Optional[str], Optional[str]]]]
+        ] = None,
     ):
         """
         Initialize the Medicaid info tool.
@@ -224,7 +226,9 @@ class MedicaidEligibilityTool(BaseTool):
     def __init__(
         self,
         send_status_message: Callable[[str], Awaitable[None]],
-        call_llm_callback: Optional[Callable[..., Awaitable[Tuple[str, str]]]] = None,
+        call_llm_callback: Optional[
+            Callable[..., Awaitable[Tuple[Optional[str], Optional[str]]]]
+        ] = None,
     ):
         """
         Initialize the Medicaid eligibility tool.

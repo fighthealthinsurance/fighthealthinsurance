@@ -35,7 +35,9 @@ class PubMedTool(BaseTool):
         self,
         send_status_message: Callable[[str], Awaitable[None]],
         pubmed_tools: Optional[PubMedTools] = None,
-        call_llm_callback: Optional[Callable[..., Awaitable[Tuple[str, str]]]] = None,
+        call_llm_callback: Optional[
+            Callable[..., Awaitable[Tuple[Optional[str], Optional[str]]]]
+        ] = None,
     ):
         """
         Initialize the PubMed tool.
