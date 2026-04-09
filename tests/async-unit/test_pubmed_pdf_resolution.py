@@ -1,6 +1,7 @@
 """Unit tests for the PDF URL resolution methods in PubMedTools."""
 
 import asyncio
+import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -664,13 +665,21 @@ class TestTryFetchPdfToFile:
         )
         assert result is not None
         assert result.endswith(".pdf")
-        with open(result, "rb") as f:
-            assert f.read() == pdf_content
+        try:
+            with open(result, "rb") as f:
+                assert f.read() == pdf_content
+        finally:
+            os.unlink(result)
 
     @pytest.mark.parametrize(
         "url,content,content_type,status",
         [
-            ("https://example.com/article", b"<html>not a pdf</html>", "text/html", 200),
+            (
+                "https://example.com/article",
+                b"<html>not a pdf</html>",
+                "text/html",
+                200,
+            ),
             ("https://example.com/paper.pdf", b"tiny", "application/pdf", 200),
             ("https://example.com/paper.pdf", b"", "application/pdf", 403),
         ],

@@ -93,7 +93,7 @@ class PubMedTools(object):
             for name, make_coro in self._url_sources(
                 pmid, doi, session, per_source_timeout
             ):
-                url = await make_coro()
+                url: Optional[str] = await make_coro()
                 if url:
                     logger.debug(f"[{pmid}] Found URL via {name}: {url}")
                     return url
@@ -128,7 +128,8 @@ class PubMedTools(object):
             async with async_timeout(timeout_secs):
                 async with session.get(url) as resp:
                     if resp.status == 200:
-                        return await resp.json()
+                        result: Dict = await resp.json()
+                        return result
         except Exception as e:
             logger.debug(f"[{label}] JSON fetch failed: {e}")
         return None
@@ -868,8 +869,10 @@ class PubMedTools(object):
                                     await PubMedArticleSummarized.objects.filter(
                                         pmid=article_id
                                     ).aupdate(article_url=url)
-                                except Exception:
-                                    pass
+                                except Exception as e:
+                                    logger.debug(
+                                        f"[{article_id}] Failed to update article_url to {url}: {e}"
+                                    )
                             return result
                         logger.debug(
                             f"[{article_id}] {name} URL {url} didn't yield PDF, continuing"
