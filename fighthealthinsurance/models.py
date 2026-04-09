@@ -2037,6 +2037,43 @@ class OngoingChat(models.Model):
         return self.user is not None
 
 
+class ChatDocument(models.Model):
+    """Stores documents uploaded during chat sessions, with chunked summaries for retrieval."""
+
+    PROCESSING_STATUS_CHOICES = [
+        ("pending", "Pending"),
+        ("processing", "Processing"),
+        ("completed", "Completed"),
+        ("failed", "Failed"),
+    ]
+
+    id = models.AutoField(primary_key=True)
+    chat = models.ForeignKey(
+        OngoingChat, on_delete=models.CASCADE, related_name="documents"
+    )
+    document_name = models.CharField(max_length=500)
+    full_text = models.TextField()
+    summary = models.TextField(blank=True)
+    chunk_summaries = models.JSONField(default=list, blank=True)
+    processing_status = models.CharField(
+        max_length=20,
+        choices=PROCESSING_STATUS_CHOICES,
+        default="pending",
+    )
+    char_count = models.IntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(
+                fields=["chat", "created_at"], name="chatdoc_chat_created_idx"
+            ),
+        ]
+
+    def __str__(self):
+        return f"ChatDocument {self.id}: {self.document_name} ({self.char_count} chars)"
+
+
 class ChatLeads(ExportModelOperationsMixin("ChatLeads"), models.Model):  # type: ignore
     """
     Stores lead data from trial chat users who have not created a full account.

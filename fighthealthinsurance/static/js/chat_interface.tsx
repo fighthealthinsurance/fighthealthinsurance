@@ -591,9 +591,10 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
         await recognize(file, addText);
 
         // Add a user message showing the file was uploaded
+        const charCount = fileContent.length.toLocaleString();
         const userMessage: ChatMessage = {
           role: "user",
-          content: `I've uploaded a document: ${file.name}`,
+          content: `I've uploaded a document: **${file.name}** (${charCount} characters). The document is being analyzed.`,
           timestamp: new Date().toISOString(),
           status: "done",
         };
@@ -603,6 +604,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
           messages: [...prev.messages, userMessage],
           isLoading: true,
           requestStartTime: Date.now(),
+          statusMessage: `Analyzing document: ${file.name}...`,
         }));
 
         // Get user info for scrubbing

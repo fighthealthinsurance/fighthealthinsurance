@@ -17,6 +17,11 @@ from fighthealthinsurance.chat.context_manager import (
     prepare_history_for_llm,
     should_store_summary,
 )
+from fighthealthinsurance.chat.document_processor import process_uploaded_document
+from fighthealthinsurance.chat.document_search import (
+    get_document_context_for_llm,
+    get_document_summaries_for_context,
+)
 from fighthealthinsurance.chat.llm_client import build_llm_calls, create_response_scorer
 from fighthealthinsurance.chat.retry_handler import (
     retry_llm_with_fallback,
@@ -832,6 +837,8 @@ class ChatInterface:
         iterate_on_appeal: Optional[str] = None,
         iterate_on_prior_auth: Optional[str] = None,
         user: Optional[User] = None,
+        is_document: bool = False,
+        document_name: Optional[str] = None,
     ):
         """
         Handles an incoming chat message, interacts with LLMs, and manages chat history.
@@ -857,6 +864,49 @@ class ChatInterface:
             await chat.asave()
             # Don't continue with normal processing - let the user respond
             return
+
+        # Handle document uploads: store separately and replace with marker in chat
+        if is_document and user_message:
+            doc_name = document_name or "uploaded_document"
+            char_count = len(user_message)
+            logger.info(
+                f"Document uploaded in chat {chat.id}: {doc_name} ({char_count} chars)"
+            )
+
+            # Get denial context if available for context-aware summarization
+            denial_context = None
+            if await chat.appeals.aexists():
+                appeal = await chat.appeals.afirst()
+                if appeal:
+                    linked_denial = await sync_to_async(lambda a: a.denial)(appeal)
+                    if linked_denial:
+                        parts = []
+                        if linked_denial.procedure or linked_denial.candidate_procedure:
+                            parts.append(
+                                f"Procedure: {linked_denial.procedure or linked_denial.candidate_procedure}"
+                            )
+                        if linked_denial.diagnosis or linked_denial.candidate_diagnosis:
+                            parts.append(
+                                f"Diagnosis: {linked_denial.diagnosis or linked_denial.candidate_diagnosis}"
+                            )
+                        if parts:
+                            denial_context = "; ".join(parts)
+
+            await process_uploaded_document(
+                chat=chat,
+                document_name=doc_name,
+                full_text=user_message,
+                denial_context=denial_context,
+            )
+
+            # Replace the full document text with a short marker for chat history
+            user_message = (
+                f"I've uploaded a document: {doc_name} ({char_count:,} characters). "
+                f"The document is being analyzed and its contents are available for reference."
+            )
+            await self.send_status_message(
+                f"Document received: {doc_name}. Analyzing content in background..."
+            )
 
         # Check if this is a new chat BEFORE any linking modifies chat_history
         is_new_chat = not bool(chat.chat_history)
@@ -1125,6 +1175,23 @@ class ChatInterface:
 
         final_response_text = None
         final_context_part = None
+
+        # Inject uploaded document context into the LLM call
+        # Search documents for sections relevant to the user's message
+        document_context = await get_document_context_for_llm(chat.id, user_message)
+        doc_summaries = await get_document_summaries_for_context(chat.id)
+        if document_context or doc_summaries:
+            doc_parts = []
+            if doc_summaries:
+                doc_parts.append(doc_summaries)
+            if document_context:
+                doc_parts.append(document_context)
+            doc_context_str = "\n\n".join(doc_parts)
+            summarized_context = (
+                f"{doc_context_str}\n\n{summarized_context}"
+                if summarized_context
+                else doc_context_str
+            )
 
         if self.is_trial_professional:
             await asyncio.sleep(0.5)  # Half a second delay for trial users.
