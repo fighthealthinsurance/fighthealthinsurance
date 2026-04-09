@@ -920,7 +920,7 @@ class ChatInterface:
 
             logger.info(f"Found policy document {policy_doc.id} for analysis")
             await self.send_status_message(
-                f"Analyzing your policy document: {policy_doc.filename}..."
+                f"Analyzing your {policy_doc.get_document_type_display()} document..."
             )
 
             # Extract user's specific question from the message if present
@@ -964,7 +964,7 @@ class ChatInterface:
                 if not isinstance(chat.summary_for_next_call, list):
                     chat.summary_for_next_call = []
                 chat.summary_for_next_call.append(
-                    f"Policy document analysis for {policy_doc.filename}:\n{formatted_analysis[:4000]}"
+                    f"Policy document analysis ({policy_doc.get_document_type_display()}, id={policy_doc.id}):\n{formatted_analysis[:4000]}"
                 )
 
                 # Add to chat history
