@@ -395,7 +395,7 @@ class MedicaidEligibilityTool(BaseTool):
                 if context:
                     if additional_context:
                         context += additional_context
-                else:
+                elif additional_context:
                     context = additional_context
 
                 return response_text, context
