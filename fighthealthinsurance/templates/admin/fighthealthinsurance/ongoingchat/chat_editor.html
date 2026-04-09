@@ -264,7 +264,7 @@
   }
 </style>
 {{ original.chat_history|json_script:"chat-history-data" }}
-<div id="copy-toast" class="copy-toast">Copied to clipboard!</div>
+<div id="copy-toast" class="copy-toast" role="status" aria-live="polite" aria-atomic="true">Copied to clipboard!</div>
 <div class="chat-editor-container">
   <div class="tab-buttons">
     <button type="button" class="active" data-tab="original" onclick="showTab('original')">Original Chat</button>
@@ -357,13 +357,31 @@
   }
 
   function debounce(fn, delay) {
-    var timer;
-    return function() {
-      var args = arguments, ctx = this;
+    var timer, lastArgs, lastCtx;
+    var debounced = function() {
+      lastArgs = arguments;
+      lastCtx = this;
       clearTimeout(timer);
-      timer = setTimeout(function() { fn.apply(ctx, args); }, delay);
+      timer = setTimeout(function() {
+        fn.apply(lastCtx, lastArgs);
+        lastArgs = lastCtx = null;
+      }, delay);
     };
+    debounced.flush = function() {
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+        if (lastArgs) {
+          fn.apply(lastCtx, lastArgs);
+          lastArgs = lastCtx = null;
+        }
+      }
+    };
+    return debounced;
   }
+
+  // Track debounced updaters so we can flush them before copy
+  var _pendingDebouncers = [];
 
   function renderReadOnlyMessages(containerId, messages) {
     const container = document.getElementById(containerId);
@@ -380,7 +398,7 @@
       div.setAttribute('data-idx', idx);
       div.style.position = 'relative';
       div.innerHTML =
-        '<input type="checkbox" class="chat-message-checkbox" data-idx="' + idx + '" />' +
+        '<input type="checkbox" class="chat-message-checkbox" data-idx="' + idx + '" aria-label="Select message ' + (idx + 1) + ' (' + escapeHtml(role) + ')" />' +
         '<div class="chat-message-header">' +
           '<span class="chat-role-badge">' + escapeHtml(role) + '</span>' +
           (msg.timestamp ? '<span class="chat-timestamp">' + escapeHtml(msg.timestamp) + '</span>' : '') +
@@ -390,7 +408,13 @@
     });
   }
 
+  function flushPendingEdits() {
+    _pendingDebouncers.forEach(function(d) { d.flush(); });
+  }
+
   function renderEditableMessages() {
+    flushPendingEdits();
+    _pendingDebouncers = [];
     const container = document.getElementById('edited-messages');
     const messages = getFieldValue('edited_chat_history');
     container.innerHTML = '';
@@ -406,7 +430,7 @@
       div.setAttribute('data-idx', idx);
       div.style.position = 'relative';
       div.innerHTML =
-        '<input type="checkbox" class="chat-message-checkbox" data-idx="' + idx + '" />' +
+        '<input type="checkbox" class="chat-message-checkbox" data-idx="' + idx + '" aria-label="Select message ' + (idx + 1) + ' (' + escapeHtml(role) + ')" />' +
         '<div class="chat-message-header">' +
           '<select class="chat-role-select" onchange="window._chatEditor.changeRole(' + idx + ', this.value)">' +
             '<option value="user"' + (role === 'user' ? ' selected' : '') + '>USER</option>' +
@@ -428,9 +452,11 @@
       var editable = div.querySelector('.chat-content-editable');
       if (editable) {
         (function(capturedIdx) {
-          editable.addEventListener('input', debounce(function() {
+          var debouncedUpdate = debounce(function() {
             window._chatEditor.updateContent(capturedIdx, this.innerText);
-          }, 300));
+          }, 300);
+          _pendingDebouncers.push(debouncedUpdate);
+          editable.addEventListener('input', debouncedUpdate);
         })(idx);
       }
     });
@@ -534,6 +560,8 @@
     if (tab === 'original') {
       return getFieldValue('chat_history');
     } else {
+      // Flush any pending debounced edits so the textarea JSON is up-to-date
+      flushPendingEdits();
       return getFieldValue('edited_chat_history');
     }
   }
@@ -569,25 +597,32 @@
     return JSON.stringify(clean, null, 2);
   }
 
-  function copyToClipboard(text, label) {
-    navigator.clipboard.writeText(text).then(function() {
+  function fallbackCopyToClipboard(text, label) {
+    var textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.select();
+    try {
+      document.execCommand('copy');
       showCopyToast('Copied ' + label + '!');
-    }, function() {
-      // Fallback for older browsers / non-HTTPS
-      var textarea = document.createElement('textarea');
-      textarea.value = text;
-      textarea.style.position = 'fixed';
-      textarea.style.opacity = '0';
-      document.body.appendChild(textarea);
-      textarea.select();
-      try {
-        document.execCommand('copy');
+    } catch (e) {
+      showCopyToast('Copy failed - please copy manually');
+    }
+    document.body.removeChild(textarea);
+  }
+
+  function copyToClipboard(text, label) {
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(text).then(function() {
         showCopyToast('Copied ' + label + '!');
-      } catch (e) {
-        showCopyToast('Copy failed - please copy manually');
-      }
-      document.body.removeChild(textarea);
-    });
+      }, function() {
+        fallbackCopyToClipboard(text, label);
+      });
+    } else {
+      fallbackCopyToClipboard(text, label);
+    }
   }
 
   window._chatCopy = {
