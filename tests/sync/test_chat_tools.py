@@ -262,8 +262,8 @@ class TestValidateUrl(TestCase):
     """Test SSRF protection in validate_url."""
 
     def _run(self, coro):
-        """Helper to run async validate_url in sync tests."""
-        return asyncio.get_event_loop().run_until_complete(coro)
+        """Helper to run async code in sync tests."""
+        return asyncio.new_event_loop().run_until_complete(coro)
 
     def test_rejects_non_http_scheme(self):
         """Test that non-HTTP(S) schemes are rejected."""
@@ -364,7 +364,7 @@ class TestDocFetcherRateLimit(TestCase):
     """Test rate limiting in DocFetcherTool."""
 
     def _run(self, coro):
-        return asyncio.get_event_loop().run_until_complete(coro)
+        return asyncio.new_event_loop().run_until_complete(coro)
 
     def test_respects_rate_limit(self):
         """Test that rate limit blocks fetches after MAX_FETCHES_PER_SESSION."""
@@ -429,7 +429,7 @@ class TestDocFetcherExecute(TestCase):
     """Test DocFetcherTool.execute end-to-end with mocked fetcher."""
 
     def _run(self, coro):
-        return asyncio.get_event_loop().run_until_complete(coro)
+        return asyncio.new_event_loop().run_until_complete(coro)
 
     def test_invalid_json_returns_cleanly(self):
         """Test that invalid JSON is handled gracefully."""
