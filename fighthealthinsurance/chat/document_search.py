@@ -8,22 +8,16 @@ to find the most relevant sections and includes them in the LLM context.
 import re
 from typing import Dict, List, Optional
 
-from loguru import logger
+from fighthealthinsurance.models import ChatDocument
 
-# Configuration
 MAX_SEARCH_RESULTS = 5
 MAX_CONTEXT_CHARS = 6000
 MIN_QUERY_LENGTH = 3
 
-
-def _extract_search_terms(query: str) -> List[str]:
-    """
-    Extract meaningful search terms from a user query.
-
-    Splits on whitespace, filters stopwords, and extracts key phrases.
-    """
-    # Common stopwords to filter
-    stopwords = {
+# Words excluded from query term extraction. Includes common English stopwords
+# plus conversational filler that isn't meaningful for document search.
+_STOPWORDS = frozenset(
+    {
         "a",
         "an",
         "the",
@@ -146,79 +140,100 @@ def _extract_search_terms(query: str) -> List[str]:
         "uploaded",
         "page",
     }
+)
 
-    # Split into words and filter
-    words = re.findall(r"[a-zA-Z0-9]+(?:[-'][a-zA-Z0-9]+)*", query.lower())
-    terms = [w for w in words if w not in stopwords and len(w) >= MIN_QUERY_LENGTH]
+_WORD_RE = re.compile(r"[a-zA-Z0-9]+(?:[-'][a-zA-Z0-9]+)*")
+_QUOTED_RE = re.compile(r'"([^"]+)"')
 
-    # Also extract quoted phrases if any
-    quoted = re.findall(r'"([^"]+)"', query)
-    terms.extend(q.lower() for q in quoted if len(q) >= MIN_QUERY_LENGTH)
 
+def _extract_search_terms(query: str) -> List[str]:
+    """Extract meaningful search terms from a user query."""
+    words = _WORD_RE.findall(query.lower())
+    terms = [w for w in words if w not in _STOPWORDS and len(w) >= MIN_QUERY_LENGTH]
+    terms.extend(
+        q.lower() for q in _QUOTED_RE.findall(query) if len(q) >= MIN_QUERY_LENGTH
+    )
     return terms
 
 
 def _score_chunk(chunk_text: str, search_terms: List[str]) -> float:
-    """
-    Score a chunk by how well it matches the search terms.
+    """Score a chunk by how well it matches the search terms.
 
-    Uses simple term frequency scoring with bonus for exact phrase matches.
+    Uses simple term frequency with diminishing returns for repeated matches,
+    normalized by query length so long questions don't artificially win.
     """
     if not search_terms or not chunk_text:
         return 0.0
 
     text_lower = chunk_text.lower()
     score = 0.0
-
     for term in search_terms:
-        term_lower = term.lower()
-        # Count occurrences
-        count = text_lower.count(term_lower)
+        count = text_lower.count(term.lower())
         if count > 0:
-            # Diminishing returns for repeated matches
             score += 1.0 + min(count - 1, 4) * 0.25
 
-    # Normalize by number of terms to not favor long queries
-    if search_terms:
-        score = score / len(search_terms)
-
-    return score
+    return score / len(search_terms)
 
 
-async def search_chat_documents(
+def _format_chunk_text(chunk: Dict, full_text: str) -> str:
+    """Return the text for a chunk, reconstructing from offsets if needed."""
+    text = chunk.get("text")
+    if text:
+        return text
+    start = chunk.get("start_char", 0)
+    end = chunk.get("end_char", len(full_text))
+    return full_text[start:end]
+
+
+async def get_document_context_for_message(
     chat_id,
-    query: str,
-    max_results: int = MAX_SEARCH_RESULTS,
+    user_message: str,
     max_chars: int = MAX_CONTEXT_CHARS,
-) -> str:
+    max_results: int = MAX_SEARCH_RESULTS,
+) -> Optional[str]:
+    """Build all document context (listing + relevant chunks) in a single pass.
+
+    Returns None if the chat has no uploaded documents, empty string if
+    documents exist but nothing matches. Single query fetches only the fields
+    needed — full_text is loaded lazily only when reconstructing chunk text
+    for documents that haven't been chunked yet.
     """
-    Search all documents for a chat to find sections relevant to the query.
+    if not await ChatDocument.objects.filter(chat_id=chat_id).aexists():
+        return None
 
-    Args:
-        chat_id: The OngoingChat ID (UUID)
-        query: The user's message/query
-        max_results: Maximum number of chunks to return
-        max_chars: Maximum total characters in returned context
+    search_terms = _extract_search_terms(user_message)
 
-    Returns:
-        Formatted string with relevant document sections, or empty string
-    """
-    from fighthealthinsurance.models import ChatDocument
+    documents = (
+        ChatDocument.objects.filter(chat_id=chat_id)
+        .only(
+            "id",
+            "document_name",
+            "summary",
+            "char_count",
+            "processing_status",
+            "chunk_summaries",
+            "full_text",
+        )
+        .order_by("created_at")
+    )
 
-    search_terms = _extract_search_terms(query)
-    if not search_terms:
-        return ""
-
-    # Get all documents for this chat
-    documents = ChatDocument.objects.filter(chat_id=chat_id)
+    summary_entries: List[str] = []
     scored_chunks: List[Dict] = []
 
     async for doc in documents.aiterator():
+        summary_preview = doc.summary[:200] if doc.summary else "(processing...)"
+        summary_entries.append(
+            f"- {doc.document_name} ({doc.char_count:,} chars, {doc.processing_status}): {summary_preview}"
+        )
+
+        if not search_terms:
+            continue
+
         if not doc.chunk_summaries:
-            # Document hasn't been chunked yet; search the full text directly
-            score = _score_chunk(doc.full_text, search_terms)
+            # Cap scoring on unchunked docs to avoid O(n) work on huge files
+            sample = doc.full_text[: max_chars * 4]
+            score = _score_chunk(sample, search_terms)
             if score > 0:
-                # Return a truncated portion of the full text
                 scored_chunks.append(
                     {
                         "score": score,
@@ -230,7 +245,7 @@ async def search_chat_documents(
             continue
 
         for chunk in doc.chunk_summaries:
-            chunk_text = chunk.get("text", "")
+            chunk_text = _format_chunk_text(chunk, doc.full_text)
             if not chunk_text:
                 continue
             score = _score_chunk(chunk_text, search_terms)
@@ -244,91 +259,29 @@ async def search_chat_documents(
                     }
                 )
 
-    if not scored_chunks:
-        return ""
+    parts: List[str] = []
+    if summary_entries:
+        parts.append("Uploaded documents:\n" + "\n".join(summary_entries))
 
-    # Sort by score descending
-    scored_chunks.sort(key=lambda x: x["score"], reverse=True)
+    if scored_chunks:
+        scored_chunks.sort(key=lambda x: x["score"], reverse=True)
+        formatted: List[str] = []
+        total_chars = 0
+        for chunk in scored_chunks[:max_results]:
+            chunk_text = chunk["text"]
+            if total_chars + len(chunk_text) > max_chars:
+                remaining = max_chars - total_chars
+                if remaining < 200:
+                    break
+                chunk_text = chunk_text[:remaining] + "..."
+            header = f"[Document: {chunk['document_name']}, Section {chunk['chunk_index'] + 1}]"
+            formatted.append(f"{header}\n{chunk_text}")
+            total_chars += len(chunk_text) + len(header)
 
-    # Take top results, respecting char limit
-    results = []
-    total_chars = 0
-    for chunk in scored_chunks[:max_results]:
-        chunk_text = chunk["text"]
-        if total_chars + len(chunk_text) > max_chars:
-            # Truncate this chunk to fit
-            remaining = max_chars - total_chars
-            if remaining < 200:
-                break
-            chunk_text = chunk_text[:remaining] + "..."
+        if formatted:
+            parts.append(
+                "Relevant sections from uploaded documents:\n\n"
+                + "\n\n---\n\n".join(formatted)
+            )
 
-        header = (
-            f"[Document: {chunk['document_name']}, Section {chunk['chunk_index'] + 1}]"
-        )
-        results.append(f"{header}\n{chunk_text}")
-        total_chars += len(chunk_text) + len(header)
-
-    return "\n\n---\n\n".join(results)
-
-
-async def get_document_context_for_llm(
-    chat_id,
-    user_message: str,
-    max_chars: int = MAX_CONTEXT_CHARS,
-) -> Optional[str]:
-    """
-    Get relevant document context to include in LLM calls.
-
-    Checks if the chat has uploaded documents. If so, searches them
-    for sections relevant to the user's current message.
-
-    Args:
-        chat_id: The OngoingChat ID
-        user_message: The user's current message
-        max_chars: Maximum characters of document context
-
-    Returns:
-        Formatted context string, or None if no relevant content found
-    """
-    from fighthealthinsurance.models import ChatDocument
-
-    # Quick check: does this chat have any documents?
-    has_docs = await ChatDocument.objects.filter(chat_id=chat_id).aexists()
-    if not has_docs:
-        return None
-
-    result = await search_chat_documents(chat_id, user_message, max_chars=max_chars)
-    if not result:
-        return None
-
-    return f"Relevant sections from uploaded documents:\n\n{result}"
-
-
-async def get_document_summaries_for_context(chat_id) -> Optional[str]:
-    """
-    Get a brief listing of all uploaded documents and their summaries.
-
-    Used to inform the LLM about what documents are available.
-
-    Args:
-        chat_id: The OngoingChat ID
-
-    Returns:
-        Formatted string listing documents, or None if no documents
-    """
-    from fighthealthinsurance.models import ChatDocument
-
-    documents = ChatDocument.objects.filter(chat_id=chat_id).order_by("created_at")
-    entries = []
-
-    async for doc in documents.aiterator():
-        summary_preview = doc.summary[:200] if doc.summary else "(processing...)"
-        status = doc.processing_status
-        entries.append(
-            f"- {doc.document_name} ({doc.char_count:,} chars, {status}): {summary_preview}"
-        )
-
-    if not entries:
-        return None
-
-    return "Uploaded documents:\n" + "\n".join(entries)
+    return "\n\n".join(parts) if parts else ""

@@ -2040,12 +2040,11 @@ class OngoingChat(models.Model):
 class ChatDocument(models.Model):
     """Stores documents uploaded during chat sessions, with chunked summaries for retrieval."""
 
-    PROCESSING_STATUS_CHOICES = [
-        ("pending", "Pending"),
-        ("processing", "Processing"),
-        ("completed", "Completed"),
-        ("failed", "Failed"),
-    ]
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
+        PROCESSING = "processing", "Processing"
+        COMPLETED = "completed", "Completed"
+        FAILED = "failed", "Failed"
 
     id = models.AutoField(primary_key=True)
     chat = models.ForeignKey(
@@ -2054,11 +2053,14 @@ class ChatDocument(models.Model):
     document_name = models.CharField(max_length=500)
     full_text = models.TextField()
     summary = models.TextField(blank=True)
+    # Each entry: {chunk_index, start_char, end_char, summary}. Text is
+    # reconstructed from full_text[start_char:end_char] to avoid duplicating
+    # storage.
     chunk_summaries = models.JSONField(default=list, blank=True)
     processing_status = models.CharField(
         max_length=20,
-        choices=PROCESSING_STATUS_CHOICES,
-        default="pending",
+        choices=Status.choices,
+        default=Status.PENDING,
     )
     char_count = models.IntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
