@@ -1,6 +1,7 @@
 import os
 
 from django import forms
+from django.conf import settings
 from django.forms import CheckboxInput, ModelForm, Textarea
 
 from django_recaptcha.fields import ReCaptchaField, ReCaptchaV2Checkbox
@@ -68,7 +69,56 @@ class InterestedProfessionalForm(forms.ModelForm):
 
 
 class DeleteDataForm(forms.Form):
+    """Base form for data deletion — email-only, no captcha.
+
+    Used by:
+    - `AdminDeleteDataView` (staff-authenticated deletion flow)
+    - `DeleteDataFormSerializer` / `DataRemovalViewSet` (REST request
+      flow, which creates a delete token and emails a confirmation
+      link rather than deleting immediately — see `request_data_deletion`)
+
+    The public HTML flow uses `PublicDeleteDataForm` (below) which adds
+    a reCAPTCHA field. The REST flow does not use reCAPTCHA because the
+    email-ownership token is the primary protection there; reCAPTCHA
+    widgets aren't feasible for programmatic REST callers.
+    """
+
     email = forms.EmailField(required=True)
+
+
+class PublicDeleteDataForm(DeleteDataForm):
+    """Public-facing delete data form with reCAPTCHA protection.
+
+    Used by the unauthenticated public deletion request flow to prevent
+    bots from spamming deletion request emails. The captcha field defaults
+    to a hidden CharField and is swapped to a real ReCaptchaField at
+    instance construction time when Django settings have both
+    RECAPTCHA_PUBLIC_KEY and RECAPTCHA_PRIVATE_KEY configured and
+    RECAPTCHA_TESTING is not enabled. Gating on django.conf.settings
+    (rather than os.environ at import time) keeps a single source of
+    truth and makes the behavior testable via override_settings.
+    """
+
+    captcha = forms.CharField(required=False, widget=forms.HiddenInput())
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self._is_recaptcha_enabled():
+            self.fields["captcha"] = ReCaptchaField(widget=ReCaptchaV2Checkbox())
+
+    @staticmethod
+    def _is_recaptcha_enabled() -> bool:
+        """Return True when reCAPTCHA should be enforced.
+
+        Requires both RECAPTCHA_PUBLIC_KEY and RECAPTCHA_PRIVATE_KEY to be
+        set (non-empty) and RECAPTCHA_TESTING to not be enabled.
+        """
+        if getattr(settings, "RECAPTCHA_TESTING", False):
+            return False
+        return bool(
+            getattr(settings, "RECAPTCHA_PUBLIC_KEY", "")
+            and getattr(settings, "RECAPTCHA_PRIVATE_KEY", "")
+        )
 
 
 class ShareAppealForm(forms.Form):

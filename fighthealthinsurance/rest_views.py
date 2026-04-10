@@ -178,25 +178,41 @@ class ChatViewSet(viewsets.ViewSet):
         return "Life, the universe and everything? 42"
 
 
-class DataRemovalViewSet(viewsets.ViewSet, DeleteMixin, DeleteOnlyMixin):
+class DataRemovalViewSet(viewsets.ViewSet, DeleteOnlyMixin):
     """
     ViewSet for handling data removal requests.
-    Allows users to request deletion of all their data by email address.
+
+    Receiving a request here does NOT delete data immediately. Instead,
+    it creates a delete token and emails a confirmation link to the
+    supplied address (the same flow as the HTML `RemoveDataView`). The
+    user must click the emailed link and POST to `ConfirmDeleteDataView`
+    before any data is actually removed. This enforces email ownership
+    verification on every public entry point into the deletion flow and
+    keeps the REST surface from being abusable without reCAPTCHA/auth.
     """
 
     serializer_class = serializers.DeleteDataFormSerializer
 
     @extend_schema(
-        responses={204: serializers.SuccessSerializer, 400: serializers.ErrorSerializer}
+        responses={202: serializers.SuccessSerializer, 400: serializers.ErrorSerializer}
     )
-    def perform_delete(self, request: Request, serializer):
+    def delete(self, request: Request, *args, **kwargs) -> Response:
+        from fighthealthinsurance.views import request_data_deletion
+
+        serializer = serializers.DeleteDataFormSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
         email: str = serializer.validated_data["email"]
-        RemoveDataHelper.remove_data_for_email(email)
+        request_data_deletion(email)
         return Response(
             serializers.SuccessSerializer(
-                {"message": "Data deleted successfully"}
+                {
+                    "message": (
+                        "Confirmation email sent. Click the link in the "
+                        "email to complete data deletion."
+                    )
+                }
             ).data,
-            status=status.HTTP_204_NO_CONTENT,
+            status=status.HTTP_202_ACCEPTED,
         )
 
 

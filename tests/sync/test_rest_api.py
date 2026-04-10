@@ -22,8 +22,11 @@ from dateutil.relativedelta import relativedelta
 from rest_framework import status
 from rest_framework.test import APITestCase
 
+from django.core import mail
+
 from fighthealthinsurance.models import (
     Denial,
+    DeleteToken,
     UserDomain,
     ExtraUserProperties,
     ProfessionalUser,
@@ -48,30 +51,78 @@ else:
 
 
 class Delete(APITestCase):
-    """Test just the delete API."""
+    """Test the REST data removal API.
+
+    The REST endpoint mirrors the HTML flow: it does NOT delete data
+    immediately, it creates a delete token and emails a confirmation
+    link. Actual deletion happens once the user POSTs to the HTML
+    `ConfirmDeleteDataView`. This ensures the REST surface cannot be
+    used to abusively delete arbitrary users' data without proving
+    ownership of the email address.
+    """
 
     fixtures = ["./fighthealthinsurance/fixtures/initial.yaml"]
 
-    def test_url_root(self):
+    def test_rest_delete_sends_confirmation_and_does_not_delete(self):
         url = reverse("dataremoval-list")
         email = "timbit@fighthealthinsurance.com"
         hashed_email = hashlib.sha512(email.encode("utf-8")).hexdigest()
-        # Create the object
         Denial.objects.create(denial_text="test", hashed_email=hashed_email).save()
-        denials_for_user_count = Denial.objects.filter(
-            hashed_email=hashed_email
-        ).count()
-        assert denials_for_user_count > 0
-        # Delete it
+        initial_count = Denial.objects.filter(hashed_email=hashed_email).count()
+        assert initial_count > 0
+
         response = self.client.delete(
             url, json.dumps({"email": email}), content_type="application/json"
         )
-        self.assertTrue(status.is_success(response.status_code))
-        # Make sure we did that
-        denials_for_user_count = Denial.objects.filter(
-            hashed_email=hashed_email
-        ).count()
-        assert denials_for_user_count == 0
+
+        # 202 Accepted — request received, action pending confirmation.
+        assert response.status_code == status.HTTP_202_ACCEPTED
+        # Data is NOT deleted yet.
+        assert (
+            Denial.objects.filter(hashed_email=hashed_email).count() == initial_count
+        )
+        # A delete token was created for the email.
+        assert DeleteToken.objects.filter(hashed_email=hashed_email).exists()
+        # A confirmation email was sent. (send_fallback_email sends both
+        # a recipient copy and a BCC copy; we only need to check the
+        # recipient copy, which is first.)
+        assert len(mail.outbox) >= 1
+        assert mail.outbox[0].subject == "Confirm Data Deletion Request"
+        assert "confirm-delete" in mail.outbox[0].body
+
+    def test_rest_delete_confirmation_link_completes_deletion(self):
+        """End-to-end: REST request triggers email, confirmation link deletes."""
+        url = reverse("dataremoval-list")
+        email = "timbit@fighthealthinsurance.com"
+        hashed_email = hashlib.sha512(email.encode("utf-8")).hexdigest()
+        Denial.objects.create(denial_text="test", hashed_email=hashed_email).save()
+
+        # 1. REST request creates token, sends email.
+        response = self.client.delete(
+            url, json.dumps({"email": email}), content_type="application/json"
+        )
+        assert response.status_code == status.HTTP_202_ACCEPTED
+        token = DeleteToken.objects.get(hashed_email=hashed_email).token
+
+        # 2. User clicks the email link and POSTs to confirm-delete.
+        confirm_url = reverse("confirm_delete_data")
+        confirm_response = self.client.post(
+            confirm_url, {"token": str(token), "email": email}
+        )
+        assert confirm_response.status_code == 200
+        # Data is now gone.
+        assert (
+            Denial.objects.filter(hashed_email=hashed_email).count() == 0
+        )
+
+    def test_rest_delete_requires_valid_email(self):
+        url = reverse("dataremoval-list")
+        response = self.client.delete(
+            url, json.dumps({"email": "not-an-email"}), content_type="application/json"
+        )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        # No token created, no email sent.
+        assert not DeleteToken.objects.exists()
 
 
 class DenialLongEmployerName(APITestCase):
