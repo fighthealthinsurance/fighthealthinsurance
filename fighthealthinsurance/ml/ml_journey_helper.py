@@ -7,7 +7,7 @@ FHI internal models with full denial context.
 """
 
 import asyncio
-from typing import Any, List, Optional, Tuple
+from typing import Any, List, Optional, Tuple, cast
 
 from loguru import logger
 
@@ -133,7 +133,7 @@ class JourneyDocumentationHelper:
             return []
 
         if result:
-            return result
+            return cast(List[Tuple[str, str]], result)
         return []
 
     @staticmethod
