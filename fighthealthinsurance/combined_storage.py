@@ -92,6 +92,7 @@ class CombinedStorage(Storage):
                     return backend.url(name)
             except Exception as e:
                 logger.error(f"Error getting URL {e} from {backend}")
+                last_error = e
         if last_error is not None:
             raise last_error
         else:
