@@ -128,6 +128,30 @@ class Microsite:
                     f"Extralink priority must be an integer (0=highest), got {type(link['priority'])}: {link}"
                 )
 
+        # Journey documentation items - structured list of evidence/documentation
+        # patients should gather to support their appeal. Each item has:
+        #   - category: e.g. "prior_medications", "test_results", "treatment_history"
+        #   - label: human-readable description shown to patients
+        #   - prompt_hint: hint for the AI to ask about this item
+        self.journey_documentation_items: list[dict[str, str]] = data.get(
+            "journey_documentation_items", []
+        )
+        if not isinstance(self.journey_documentation_items, list):
+            raise MicrositeValidationError(
+                f"journey_documentation_items must be a list, got {type(self.journey_documentation_items).__name__}"
+            )
+
+        # Validate journey documentation items structure
+        for item in self.journey_documentation_items:
+            if not isinstance(item, dict):
+                raise MicrositeValidationError(
+                    f"Each journey_documentation_item must be a dict, got {type(item)}"
+                )
+            if "category" not in item or "label" not in item:
+                raise MicrositeValidationError(
+                    f"Journey documentation item missing required 'category' or 'label': {item}"
+                )
+
         # Optional WIP (work-in-progress) flag
         # If true, the microsite is excluded from the sitemap but still accessible
         # This allows working on and iterating on microsites before they go live
@@ -135,6 +159,30 @@ class Microsite:
 
     def __repr__(self) -> str:
         return f"<Microsite: {self.slug}>"
+
+    def get_journey_documentation_prompt(self) -> str:
+        """Build a prompt snippet describing what documentation the patient should gather.
+
+        Returns empty string if no journey documentation items are defined.
+        """
+        if not self.journey_documentation_items:
+            return ""
+
+        from fighthealthinsurance.ml.ml_journey_helper import (
+            JourneyDocumentationHelper,
+        )
+
+        items_text = JourneyDocumentationHelper.format_documentation_items(
+            self.journey_documentation_items
+        )
+
+        return (
+            f"For {self.default_procedure}, the following documentation strengthens an appeal:\n"
+            + items_text
+            + "\n\nProactively ask about these items during the conversation. "
+            "Ask about one or two at a time, not all at once. "
+            "When the patient provides information, acknowledge it and explain how it helps their appeal."
+        )
 
     async def get_extralink_context(
         self,

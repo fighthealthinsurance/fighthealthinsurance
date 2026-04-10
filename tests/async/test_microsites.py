@@ -42,6 +42,9 @@ OPTIONAL_MICROSITE_KEYS = {
     "blog_post_url",
     "advocacy_resources",
     "manufacturer",
+    "extralinks",
+    "wip",
+    "journey_documentation_items",
 }
 
 # All valid keys that can appear in a microsite JSON entry
