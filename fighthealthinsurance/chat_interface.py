@@ -667,10 +667,8 @@ class ChatInterface:
                         "Explain to the patient why each piece of information helps their appeal."
                     )
                 elif doc_items:
-                    items_text = (
-                        JourneyDocumentationHelper.format_documentation_items(
-                            doc_items
-                        )
+                    items_text = JourneyDocumentationHelper.format_documentation_items(
+                        doc_items
                     )
                     doc_context = (
                         f"Documentation guidance for this denial:\n{items_text}\n\n"
