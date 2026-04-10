@@ -18,7 +18,11 @@ from fighthealthinsurance.chat.tools import (
     MedicaidEligibilityTool,
     DocFetcherTool,
 )
-from fighthealthinsurance.chat.tools.doc_fetcher_tool import validate_url
+from fighthealthinsurance.chat.tools.doc_fetcher_tool import (
+    MAX_FETCHES_PER_SESSION,
+    _sanitize_url_for_display,
+    validate_url,
+)
 
 
 class TestToolPatterns(TestCase):
@@ -303,3 +307,171 @@ class TestValidateUrl(TestCase):
                     "https://this-domain-definitely-does-not-exist-abc123xyz.com/doc"
                 )
             )
+
+
+class TestSanitizeUrlForDisplay(TestCase):
+    """Test URL sanitization for status messages."""
+
+    def test_strips_query_params(self):
+        """Test that query parameters are stripped."""
+        url = "https://example.com/doc.pdf?token=secret123&user=alice"
+        sanitized = _sanitize_url_for_display(url)
+        self.assertEqual(sanitized, "https://example.com/doc.pdf")
+        self.assertNotIn("secret123", sanitized)
+        self.assertNotIn("alice", sanitized)
+
+    def test_strips_fragment(self):
+        """Test that URL fragments are stripped."""
+        url = "https://example.com/doc.pdf#page=5"
+        sanitized = _sanitize_url_for_display(url)
+        self.assertEqual(sanitized, "https://example.com/doc.pdf")
+
+    def test_strips_both(self):
+        """Test that both query and fragment are stripped."""
+        url = "https://example.com/doc.pdf?key=val#section"
+        sanitized = _sanitize_url_for_display(url)
+        self.assertEqual(sanitized, "https://example.com/doc.pdf")
+
+    def test_preserves_path(self):
+        """Test that path components are preserved."""
+        url = "https://example.com/path/to/resource.pdf"
+        sanitized = _sanitize_url_for_display(url)
+        self.assertEqual(sanitized, "https://example.com/path/to/resource.pdf")
+
+
+class TestDocFetcherRateLimit(TestCase):
+    """Test rate limiting in DocFetcherTool."""
+
+    def _run(self, coro):
+        return asyncio.get_event_loop().run_until_complete(coro)
+
+    def test_respects_rate_limit(self):
+        """Test that rate limit blocks fetches after MAX_FETCHES_PER_SESSION."""
+        mock_status = AsyncMock()
+        # Pre-fill the counter to the max
+        fetch_count = [MAX_FETCHES_PER_SESSION]
+        tool = DocFetcherTool(mock_status, fetch_count=fetch_count)
+
+        # Mock the fetcher so we can detect if it's called
+        tool.fetcher = MagicMock()
+        tool.fetcher.fetch_and_extract_text = AsyncMock()
+
+        match = re.search(
+            FETCH_DOC_REGEX,
+            '**fetch_doc {"url": "https://example.com/doc.pdf"}**',
+            re.IGNORECASE,
+        )
+        response, context = self._run(tool.execute(match, "response text", "context"))
+
+        # Fetcher should NOT have been called
+        tool.fetcher.fetch_and_extract_text.assert_not_called()
+        # Status message should mention the limit
+        mock_status.assert_awaited()
+        status_calls = [c.args[0] for c in mock_status.await_args_list]
+        self.assertTrue(
+            any("limit" in msg.lower() for msg in status_calls),
+            f"Expected rate limit message in {status_calls}",
+        )
+
+    def test_counter_increments_before_fetch(self):
+        """Test that counter increments before fetch (so failures count)."""
+        mock_status = AsyncMock()
+        fetch_count = [0]
+        tool = DocFetcherTool(mock_status, fetch_count=fetch_count)
+
+        # Make the fetcher raise an exception
+        tool.fetcher = MagicMock()
+        tool.fetcher.fetch_and_extract_text = AsyncMock(
+            side_effect=Exception("Network error")
+        )
+
+        match = re.search(
+            FETCH_DOC_REGEX,
+            '**fetch_doc {"url": "https://www.example.com/doc.pdf"}**',
+            re.IGNORECASE,
+        )
+
+        # Patch validate_url to skip DNS resolution
+        with patch(
+            "fighthealthinsurance.chat.tools.doc_fetcher_tool.validate_url",
+            new=AsyncMock(return_value=None),
+        ):
+            response, context = self._run(
+                tool.execute(match, "response text", "context")
+            )
+
+        # Counter should have incremented even though fetch failed
+        self.assertEqual(fetch_count[0], 1)
+
+
+class TestDocFetcherExecute(TestCase):
+    """Test DocFetcherTool.execute end-to-end with mocked fetcher."""
+
+    def _run(self, coro):
+        return asyncio.get_event_loop().run_until_complete(coro)
+
+    def test_invalid_json_returns_cleanly(self):
+        """Test that invalid JSON is handled gracefully."""
+        mock_status = AsyncMock()
+        tool = DocFetcherTool(mock_status)
+        tool.fetcher = MagicMock()
+        tool.fetcher.fetch_and_extract_text = AsyncMock()
+
+        match = re.search(
+            FETCH_DOC_REGEX,
+            "**fetch_doc {not valid json}**",
+            re.IGNORECASE,
+        )
+        self.assertIsNotNone(match)
+        response, context = self._run(tool.execute(match, "original", "ctx"))
+        # Fetcher should not have been called
+        tool.fetcher.fetch_and_extract_text.assert_not_called()
+        # Response should have the tool call stripped
+        self.assertNotIn("fetch_doc", response)
+
+    def test_empty_url_returns_cleanly(self):
+        """Test that empty URL in JSON is handled gracefully."""
+        mock_status = AsyncMock()
+        tool = DocFetcherTool(mock_status)
+        tool.fetcher = MagicMock()
+        tool.fetcher.fetch_and_extract_text = AsyncMock()
+
+        match = re.search(
+            FETCH_DOC_REGEX,
+            '**fetch_doc {"url": ""}**',
+            re.IGNORECASE,
+        )
+        response, context = self._run(tool.execute(match, "original", "ctx"))
+        tool.fetcher.fetch_and_extract_text.assert_not_called()
+
+    def test_successful_fetch_appends_to_context(self):
+        """Test that a successful fetch appends extracted text to context."""
+        mock_status = AsyncMock()
+        tool = DocFetcherTool(mock_status)
+        tool.fetcher = MagicMock()
+        tool.fetcher.fetch_and_extract_text = AsyncMock(
+            return_value=("Extracted document text", "pdf")
+        )
+
+        match = re.search(
+            FETCH_DOC_REGEX,
+            '**fetch_doc {"url": "https://www.example.com/doc.pdf"}**',
+            re.IGNORECASE,
+        )
+
+        with patch(
+            "fighthealthinsurance.chat.tools.doc_fetcher_tool.validate_url",
+            new=AsyncMock(return_value=None),
+        ):
+            response, context = self._run(
+                tool.execute(
+                    match,
+                    '**fetch_doc {"url": "https://www.example.com/doc.pdf"}**',
+                    "",
+                )
+            )
+
+        self.assertIn("Extracted document text", context)
+        self.assertIn("https://www.example.com/doc.pdf", context)
+        # Tool call should be stripped from response
+        self.assertNotIn("fetch_doc", response)
