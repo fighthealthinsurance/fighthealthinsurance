@@ -1,6 +1,7 @@
 import os
 
 from django import forms
+from django.conf import settings
 from django.forms import CheckboxInput, ModelForm, Textarea
 
 from django_recaptcha.fields import ReCaptchaField, ReCaptchaV2Checkbox
@@ -77,16 +78,35 @@ class PublicDeleteDataForm(DeleteDataForm):
     """Public-facing delete data form with reCAPTCHA protection.
 
     Used by the unauthenticated public deletion request flow to prevent
-    bots from spamming deletion request emails.
+    bots from spamming deletion request emails. The captcha field defaults
+    to a hidden CharField and is swapped to a real ReCaptchaField at
+    instance construction time when Django settings have both
+    RECAPTCHA_PUBLIC_KEY and RECAPTCHA_PRIVATE_KEY configured and
+    RECAPTCHA_TESTING is not enabled. Gating on django.conf.settings
+    (rather than os.environ at import time) keeps a single source of
+    truth and makes the behavior testable via override_settings.
     """
 
     captcha = forms.CharField(required=False, widget=forms.HiddenInput())
-    if (
-        os.environ.get("RECAPTCHA_PUBLIC_KEY")
-        and os.environ.get("RECAPTCHA_PRIVATE_KEY")
-        and os.environ.get("RECAPTCHA_TESTING", "").lower() != "true"
-    ):
-        captcha = ReCaptchaField(widget=ReCaptchaV2Checkbox())
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self._is_recaptcha_enabled():
+            self.fields["captcha"] = ReCaptchaField(widget=ReCaptchaV2Checkbox())
+
+    @staticmethod
+    def _is_recaptcha_enabled() -> bool:
+        """Return True when reCAPTCHA should be enforced.
+
+        Requires both RECAPTCHA_PUBLIC_KEY and RECAPTCHA_PRIVATE_KEY to be
+        set (non-empty) and RECAPTCHA_TESTING to not be enabled.
+        """
+        if getattr(settings, "RECAPTCHA_TESTING", False):
+            return False
+        return bool(
+            getattr(settings, "RECAPTCHA_PUBLIC_KEY", "")
+            and getattr(settings, "RECAPTCHA_PRIVATE_KEY", "")
+        )
 
 
 class ShareAppealForm(forms.Form):
