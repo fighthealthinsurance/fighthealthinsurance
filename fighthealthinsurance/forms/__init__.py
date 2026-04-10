@@ -68,11 +68,23 @@ class InterestedProfessionalForm(forms.ModelForm):
 
 
 class DeleteDataForm(forms.Form):
+    """Base form for data deletion. No captcha — used by admin staff flow."""
+
     email = forms.EmailField(required=True)
+
+
+class PublicDeleteDataForm(DeleteDataForm):
+    """Public-facing delete data form with reCAPTCHA protection.
+
+    Used by the unauthenticated public deletion request flow to prevent
+    bots from spamming deletion request emails.
+    """
+
     captcha = forms.CharField(required=False, widget=forms.HiddenInput())
-    if "RECAPTCHA_PUBLIC_KEY" in os.environ and (
-        "RECAPTCHA_TESTING" not in os.environ
-        or os.environ["RECAPTCHA_TESTING"].lower() != "true"
+    if (
+        os.environ.get("RECAPTCHA_PUBLIC_KEY")
+        and os.environ.get("RECAPTCHA_PRIVATE_KEY")
+        and os.environ.get("RECAPTCHA_TESTING", "").lower() != "true"
     ):
         captcha = ReCaptchaField(widget=ReCaptchaV2Checkbox())
 

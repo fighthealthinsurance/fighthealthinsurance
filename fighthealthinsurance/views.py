@@ -646,12 +646,12 @@ class RemoveDataView(View):
             "remove_data.html",
             context={
                 "title": "Remove My Data",
-                "form": core_forms.DeleteDataForm(),
+                "form": core_forms.PublicDeleteDataForm(),
             },
         )
 
     def post(self, request):
-        form = core_forms.DeleteDataForm(request.POST)
+        form = core_forms.PublicDeleteDataForm(request.POST)
 
         if form.is_valid():
             email = form.cleaned_data["email"]
@@ -695,7 +695,7 @@ class ConfirmDeleteDataView(View):
             "remove_data.html",
             context={
                 "title": "Remove My Data",
-                "form": core_forms.DeleteDataForm(),
+                "form": core_forms.PublicDeleteDataForm(),
                 "error": error_message,
             },
         )
