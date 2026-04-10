@@ -1,6 +1,7 @@
 import asyncio
 import os
 import re
+import shlex
 import subprocess
 import tempfile
 import time
@@ -340,8 +341,8 @@ class HylaFaxClient(FaxSenderBase):
     async def _run_command(self, command: list[str]) -> Tuple[int, str]:
         """Return the command and it's output"""
         logger.debug(f"Sending command {command}")
-        proc = await asyncio.create_subprocess_shell(
-            " ".join(command),
+        proc = await asyncio.create_subprocess_exec(
+            *command,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -475,7 +476,7 @@ class SshHylaFaxClient(HylaFaxClient):
         try:
             async with self._create_async_ssh_client() as conn:
                 logger.debug(f"Sending remote command {command}")
-                process = conn.run(" ".join(command))
+                process = conn.run(" ".join(shlex.quote(c) for c in command))
                 result = await process
                 logger.debug("Sent command")
                 exit_code: int = result.exit_status

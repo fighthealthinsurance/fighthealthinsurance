@@ -1,3 +1,4 @@
+import html
 import json
 import os
 import random
@@ -975,8 +976,8 @@ class ChooseAppeal(View):
         # Add the possible articles for inclusion
         if candidate_articles is not None:
             for article in candidate_articles[0:6]:
-                article_id = article.pmid
-                title = article.title
+                article_id = html.escape(article.pmid or "")
+                title = html.escape(article.title or "")
                 link = f"http://www.ncbi.nlm.nih.gov/pubmed/{article_id}"
                 label = mark_safe(
                     f"Include Summary* of PubMed Article "
@@ -1674,16 +1675,9 @@ class CompletePaymentView(View):
 
     def get(self, request):
         try:
-            # Extract parameters from URL query string
             session_id = request.GET.get("session_id")
-            cancel_url = request.GET.get(
-                "cancel_url", "https://www.fighthealthinsurance.com/?q=ohno"
-            )
-
-            # Create data dictionary similar to what we'd get from POST
             data = {
                 "session_id": session_id,
-                "cancel_url": cancel_url,
             }
 
             return self.process_payment(data)
@@ -1757,7 +1751,7 @@ class CompletePaymentView(View):
         except Exception as e:
             logger.opt(exception=e).error("Error in finishing payment")
             return HttpResponse(
-                json.dumps({"error": f"Error {e}"}),
+                json.dumps({"error": "An internal error occurred"}),
                 status=500,
                 content_type="application/json",
             )

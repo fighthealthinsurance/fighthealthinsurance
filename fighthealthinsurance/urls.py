@@ -55,7 +55,7 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
     ),
     path(
         "stripe/finish",
-        csrf_exempt(views.CompletePaymentView.as_view()),
+        views.CompletePaymentView.as_view(),
         name="complete_payment",
     ),
     path(
