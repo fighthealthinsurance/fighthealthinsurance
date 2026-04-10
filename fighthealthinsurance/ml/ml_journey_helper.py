@@ -24,7 +24,7 @@ class JourneyDocumentationHelper:
     """
 
     @staticmethod
-    def _format_documentation_items(
+    def format_documentation_items(
         documentation_items: list[dict[str, str]],
     ) -> str:
         """Format documentation items into a bullet list string."""
@@ -86,14 +86,19 @@ class JourneyDocumentationHelper:
             logger.debug("No context provided for journey questions, returning empty")
             return []
 
-        # Build plan_context from documentation items (passed to model
-        # via the plan_context parameter of get_appeal_questions)
-        plan_context = None
+        # Build plan_context from documentation items and denial reason
+        # (passed to model via the plan_context parameter of get_appeal_questions)
+        plan_context_parts = []
         if documentation_items:
-            items_list = JourneyDocumentationHelper._format_documentation_items(
+            items_list = JourneyDocumentationHelper.format_documentation_items(
                 documentation_items
             )
-            plan_context = f"Key documentation categories to ask about:\n{items_list}"
+            plan_context_parts.append(
+                f"Key documentation categories to ask about:\n{items_list}"
+            )
+        if denial_reason:
+            plan_context_parts.append(f"Denial reason to address: {denial_reason}")
+        plan_context = "\n\n".join(plan_context_parts) if plan_context_parts else None
 
         # Use internal models for this (not external) to keep data private
         models_to_try = ml_router.get_chat_backends(use_external=False)
@@ -159,7 +164,7 @@ class JourneyDocumentationHelper:
         guidance_parts = []
 
         if documentation_items:
-            items_text = JourneyDocumentationHelper._format_documentation_items(
+            items_text = JourneyDocumentationHelper.format_documentation_items(
                 documentation_items
             )
             proc_name = procedure or "the denied treatment"

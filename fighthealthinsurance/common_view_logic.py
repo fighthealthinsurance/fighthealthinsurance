@@ -583,12 +583,12 @@ class FollowUpHelper:
     ):
         try:
             denial = Denial.objects.filter(
-                uuid=uuid, follow_up_semi_sekret=follow_up_semi_sekret
+                uuid=uuid,
+                follow_up_semi_sekret=follow_up_semi_sekret,
+                hashed_email=hashed_email,
             ).get()
         except Denial.DoesNotExist:
-            raise Exception(
-                f"Failed to find denial for {uuid} & {follow_up_semi_sekret}"
-            )
+            raise Exception(f"Failed to find denial for uuid={uuid}") from None
         return denial
 
     @classmethod
@@ -726,7 +726,7 @@ class FindNextStepsHelper:
             has_journey_form_types = bool(
                 denial_type_forms
                 & {
-                    "MedicalNeccessaryQuestions",
+                    "MedicalNecessaryQuestions",
                     "PriorAuthQuestions",
                     "ExperimentalQuestions",
                     "NotCoveredQuestions",

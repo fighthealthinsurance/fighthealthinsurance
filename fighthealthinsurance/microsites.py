@@ -136,6 +136,10 @@ class Microsite:
         self.journey_documentation_items: list[dict[str, str]] = data.get(
             "journey_documentation_items", []
         )
+        if not isinstance(self.journey_documentation_items, list):
+            raise MicrositeValidationError(
+                f"journey_documentation_items must be a list, got {type(self.journey_documentation_items).__name__}"
+            )
 
         # Validate journey documentation items structure
         for item in self.journey_documentation_items:
@@ -168,7 +172,7 @@ class Microsite:
             JourneyDocumentationHelper,
         )
 
-        items_text = JourneyDocumentationHelper._format_documentation_items(
+        items_text = JourneyDocumentationHelper.format_documentation_items(
             self.journey_documentation_items
         )
 

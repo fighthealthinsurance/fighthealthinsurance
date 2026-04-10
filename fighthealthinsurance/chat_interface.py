@@ -666,6 +666,17 @@ class ChatInterface:
                         "Use these to guide the conversation. Ask about one or two items at a time. "
                         "Explain to the patient why each piece of information helps their appeal."
                     )
+                elif doc_items:
+                    items_text = (
+                        JourneyDocumentationHelper.format_documentation_items(
+                            doc_items
+                        )
+                    )
+                    doc_context = (
+                        f"Documentation guidance for this denial:\n{items_text}\n\n"
+                        "Use these to guide the conversation. Ask about one or two items at a time. "
+                        "Explain to the patient why each piece of information helps their appeal."
+                    )
                 else:
                     doc_context = (
                         "Could not generate specific documentation questions. "

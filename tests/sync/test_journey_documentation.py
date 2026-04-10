@@ -61,6 +61,22 @@ class TestJourneyDocumentationQuestions(unittest.TestCase):
         self.assertIn("Aspirin", ctx)
         self.assertNotIn("test results", ctx.lower())
 
+    def test_medical_context_includes_parent_insurance_context(self):
+        """Parent InsuranceQuestions urgent/pre-service context must be preserved."""
+        form = self._make_form(
+            {
+                "prior_medications": "Metformin",
+                "urgent": "on",
+                "pre_service": "on",
+            }
+        )
+        ctx = form.medical_context()
+        # Parent context fields should be included
+        self.assertIn("urgent", ctx.lower())
+        self.assertIn("pre-service", ctx.lower())
+        # Local fields still present
+        self.assertIn("Metformin", ctx)
+
     def test_main_patient_pov(self):
         form = self._make_form(
             {"prior_medications": "Humira", "test_results": "CRP elevated"},
@@ -147,14 +163,14 @@ class TestJourneyDocumentationHelper(unittest.TestCase):
             {"label": "Prior meds", "prompt_hint": "Ask about side effects"},
             {"label": "Test results"},
         ]
-        result = JourneyDocumentationHelper._format_documentation_items(items)
+        result = JourneyDocumentationHelper.format_documentation_items(items)
         self.assertIn("- Prior meds: Ask about side effects", result)
         self.assertIn("- Test results", result)
         # Item without hint should NOT have a colon suffix
         self.assertNotIn("Test results:", result)
 
     def test_format_documentation_items_empty(self):
-        result = JourneyDocumentationHelper._format_documentation_items([])
+        result = JourneyDocumentationHelper.format_documentation_items([])
         self.assertEqual(result, "")
 
     def test_format_questions_as_bullets(self):
