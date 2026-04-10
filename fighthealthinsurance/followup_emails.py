@@ -1,6 +1,7 @@
 import asyncio
 import datetime
 import random
+from collections import defaultdict
 from typing import Any, Optional
 
 from asgiref.sync import sync_to_async
@@ -132,14 +133,103 @@ class FollowUpEmailSender(AsyncEmailSenderMixin):
     def find_candidates(self):
         return list(self._find_candidates())
 
-    def send_all(self, count: Optional[int] = None) -> int:
-        candidates = self.find_candidates()
-        selected_candidates = candidates
-        if count is not None:
-            selected_candidates = candidates[:count]
-        return len(
-            list(map(lambda f: self.dosend(follow_up_sched=f), selected_candidates))
+    def _group_candidates_by_email(
+        self, candidates: list[FollowUpSched]
+    ) -> list[tuple[FollowUpSched, list[FollowUpSched]]]:
+        """Group candidates by email, picking the best one to send per email.
+
+        Returns a list of (best_candidate, other_candidates) tuples.
+        The "best" candidate is the one with the longest follow_up_type.duration
+        (e.g., 90-day > 30-day > 7-day), since it represents the most
+        significant check-in milestone.
+        """
+        groups: dict[str, list[FollowUpSched]] = defaultdict(list)
+        for candidate in candidates:
+            groups[candidate.email].append(candidate)
+
+        result = []
+        for group in groups.values():
+            group.sort(
+                key=lambda s: (
+                    s.follow_up_type.duration
+                    if s.follow_up_type and s.follow_up_type.duration
+                    else datetime.timedelta(0)
+                ),
+                reverse=True,
+            )
+            best = group[0]
+            others = group[1:]
+            result.append((best, others))
+        return result
+
+    def _is_stale(self, follow_up_sched: FollowUpSched) -> bool:
+        """Check if a follow-up is stale (a later type for same denial already sent)."""
+        if follow_up_sched.follow_up_type and follow_up_sched.follow_up_type.duration:
+            return FollowUpSched.objects.filter(
+                denial_id=follow_up_sched.denial_id,
+                follow_up_sent=True,
+                follow_up_type__duration__gt=follow_up_sched.follow_up_type.duration,
+            ).exists()
+        return False
+
+    def _mark_as_sent_without_sending(
+        self, follow_up_scheds: list[FollowUpSched]
+    ) -> None:
+        """Mark follow-up schedules as sent without actually sending email."""
+        if not follow_up_scheds:
+            return
+        now = timezone.now()
+        pks = [s.pk for s in follow_up_scheds]
+        FollowUpSched.objects.filter(pk__in=pks).update(
+            follow_up_sent=True,
+            follow_up_sent_date=now,
         )
+
+    def _send_grouped(self, all_candidates: list[FollowUpSched]) -> bool:
+        """Send one email for a group of candidates sharing the same address.
+
+        Iterates candidates in priority order (longest duration first).
+        Skips stale candidates, sends the first non-stale one, and marks
+        the rest as sent without emailing. Returns True if an email was sent.
+        """
+        to_suppress: list[FollowUpSched] = []
+        email_sent = False
+        for candidate in all_candidates:
+            if email_sent:
+                to_suppress.append(candidate)
+                continue
+            if self._is_stale(candidate):
+                to_suppress.append(candidate)
+                continue
+            result = self.dosend(follow_up_sched=candidate)
+            if result:
+                email_sent = True
+            else:
+                break
+        if to_suppress:
+            if email_sent:
+                logger.info(
+                    f"Suppressed {len(to_suppress)} follow-up(s) for "
+                    f"{mask_email_for_logging(all_candidates[0].email)}"
+                )
+            self._mark_as_sent_without_sending(to_suppress)
+        return email_sent
+
+    def send_all(
+        self,
+        count: Optional[int] = None,
+        candidates: Optional[list] = None,
+    ) -> int:
+        if candidates is None:
+            candidates = self.find_candidates()
+        grouped = self._group_candidates_by_email(candidates)
+        if count is not None:
+            grouped = grouped[:count]
+        sent = 0
+        for best, others in grouped:
+            if self._send_grouped([best] + others):
+                sent += 1
+        return sent
 
     def dosend(
         self,
@@ -216,6 +306,28 @@ class FollowUpEmailSender(AsyncEmailSenderMixin):
                 f"Failed to send follow-up email to {mask_email_for_logging(email)}: {e}"
             )
             return False
+
+    async def asend_all(
+        self, count: Optional[int] = None, candidates: Optional[list] = None
+    ) -> int:
+        """Async send_all with per-email grouping and rate limiting.
+
+        Groups candidates by email address so each recipient gets at most
+        one follow-up email per batch. Iterates candidates in priority order,
+        skips stale ones, sends the first valid one, and marks the rest as sent.
+        """
+        if candidates is None:
+            candidates = await self.afind_candidates()
+        grouped = await sync_to_async(self._group_candidates_by_email)(candidates)
+        if count is not None:
+            grouped = grouped[:count]
+        sent = 0
+        for best, others in grouped:
+            result = await sync_to_async(self._send_grouped)([best] + others)
+            if result:
+                sent += 1
+                await asyncio.sleep(random.uniform(1.0, 3.0))
+        return sent
 
     async def _asend_one(self, candidate: Any) -> bool:
         return await self.adosend(follow_up_sched=candidate)

@@ -18,7 +18,7 @@ class TestSendFallbackEmailFiltering:
             subject="Test",
             template_name="followup",
             context={},
-            to_email="user@mailinator.com",
+            to_email="user@example.org",
         )
         assert len(mail.outbox) == 0
 
