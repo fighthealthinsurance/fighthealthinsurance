@@ -1,5 +1,6 @@
 """Tests for chat tool handlers."""
 
+import asyncio
 import re
 from unittest.mock import AsyncMock, MagicMock, patch
 from django.test import TestCase
@@ -10,10 +11,17 @@ from fighthealthinsurance.chat.tools import (
     MEDICAID_ELIGIBILITY_REGEX,
     CREATE_OR_UPDATE_APPEAL_REGEX,
     CREATE_OR_UPDATE_PRIOR_AUTH_REGEX,
+    FETCH_DOC_REGEX,
     BaseTool,
     PubMedTool,
     MedicaidInfoTool,
     MedicaidEligibilityTool,
+    DocFetcherTool,
+)
+from fighthealthinsurance.chat.tools.doc_fetcher_tool import (
+    MAX_FETCHES_PER_SESSION,
+    _sanitize_url_for_display,
+    validate_url,
 )
 
 
@@ -194,3 +202,297 @@ class TestMedicaidEligibilityTool(TestCase):
         )
 
         self.assertIn("questions to ask", info)
+
+
+class TestDocFetcherPatterns(TestCase):
+    """Test FETCH_DOC_REGEX pattern matching."""
+
+    def test_fetch_doc_with_stars(self):
+        """Test fetch_doc pattern matches with ** markers."""
+        text = '**fetch_doc {"url": "https://example.com/plan.pdf"}**'
+        match = re.search(FETCH_DOC_REGEX, text, re.IGNORECASE)
+        self.assertIsNotNone(match)
+        self.assertIn("https://example.com/plan.pdf", match.group(1))
+
+    def test_fetch_doc_without_stars(self):
+        """Test fetch_doc pattern matches without markers."""
+        text = 'fetch_doc {"url": "https://example.com/doc.html"}'
+        match = re.search(FETCH_DOC_REGEX, text, re.IGNORECASE)
+        self.assertIsNotNone(match)
+        self.assertIn("https://example.com/doc.html", match.group(1))
+
+    def test_fetch_doc_in_sentence(self):
+        """Test fetch_doc pattern matches when embedded in a sentence."""
+        text = 'Let me look that up. **fetch_doc {"url": "https://example.com/g.pdf"}** I found it.'
+        match = re.search(FETCH_DOC_REGEX, text, re.IGNORECASE)
+        self.assertIsNotNone(match)
+
+    def test_no_false_positive(self):
+        """Test fetch_doc pattern does not match unrelated text."""
+        text = "Please fetch the document from the website."
+        match = re.search(FETCH_DOC_REGEX, text, re.IGNORECASE)
+        self.assertIsNone(match)
+
+
+class TestDocFetcherTool(TestCase):
+    """Test DocFetcherTool detection."""
+
+    def test_detect_fetch_doc(self):
+        """Test DocFetcherTool detects the fetch_doc pattern."""
+        mock_status = AsyncMock()
+        tool = DocFetcherTool(mock_status)
+
+        text = '**fetch_doc {"url": "https://example.com/plan.pdf"}**'
+        match = tool.detect(text)
+
+        self.assertIsNotNone(match)
+
+    def test_does_not_detect_unrelated(self):
+        """Test DocFetcherTool does not match on unrelated text."""
+        mock_status = AsyncMock()
+        tool = DocFetcherTool(mock_status)
+
+        text = "This is just normal text without a tool call"
+        match = tool.detect(text)
+
+        self.assertIsNone(match)
+
+
+class TestValidateUrl(TestCase):
+    """Test SSRF protection in validate_url."""
+
+    def _run(self, coro):
+        """Helper to run async code in sync tests."""
+        return asyncio.run(coro)
+
+    def test_rejects_non_http_scheme(self):
+        """Test that non-HTTP(S) schemes are rejected."""
+        with self.assertRaises(ValueError):
+            self._run(validate_url("ftp://example.com/file.pdf"))
+        with self.assertRaises(ValueError):
+            self._run(validate_url("file:///etc/passwd"))
+
+    def test_rejects_localhost(self):
+        """Test that localhost is rejected."""
+        with self.assertRaises(ValueError):
+            self._run(validate_url("http://localhost/secret"))
+        with self.assertRaises(ValueError):
+            self._run(validate_url("http://127.0.0.1/secret"))
+
+    def test_rejects_local_suffix(self):
+        """Test that .local domains are rejected."""
+        with self.assertRaises(ValueError):
+            self._run(validate_url("http://myhost.local/doc.pdf"))
+
+    def test_rejects_empty_hostname(self):
+        """Test that URLs without hostname are rejected."""
+        with self.assertRaises(ValueError):
+            self._run(validate_url("http:///path"))
+
+    def test_accepts_valid_https_url(self):
+        """Test that valid HTTPS URLs pass validation."""
+        # Mock DNS to avoid network dependency and return a public IP
+        with patch(
+            "fighthealthinsurance.chat.tools.doc_fetcher_tool.socket.getaddrinfo",
+            return_value=[(None, None, None, None, ("93.184.216.34", 0))],
+        ):
+            # Should not raise
+            self._run(validate_url("https://www.example.com/document.pdf"))
+
+    def test_accepts_valid_http_url(self):
+        """Test that valid HTTP URLs pass validation."""
+        # Mock DNS to avoid network dependency and return a public IP
+        with patch(
+            "fighthealthinsurance.chat.tools.doc_fetcher_tool.socket.getaddrinfo",
+            return_value=[(None, None, None, None, ("93.184.216.34", 0))],
+        ):
+            # Should not raise
+            self._run(validate_url("http://www.example.com/document.pdf"))
+
+    def test_rejects_unresolvable_hostname(self):
+        """Test that unresolvable hostnames are rejected."""
+        import socket as socket_mod
+
+        with patch(
+            "fighthealthinsurance.chat.tools.doc_fetcher_tool.socket.getaddrinfo",
+            side_effect=socket_mod.gaierror("Name or service not known"),
+        ):
+            with self.assertRaises(ValueError):
+                self._run(validate_url("https://some-unresolvable-host.example/doc"))
+
+    def test_rejects_private_ip_after_resolution(self):
+        """Test that a hostname resolving to a private IP is rejected."""
+        with patch(
+            "fighthealthinsurance.chat.tools.doc_fetcher_tool.socket.getaddrinfo",
+            return_value=[(None, None, None, None, ("10.0.0.1", 0))],
+        ):
+            with self.assertRaises(ValueError):
+                self._run(validate_url("https://sneaky.example.com/doc"))
+
+
+class TestSanitizeUrlForDisplay(TestCase):
+    """Test URL sanitization for status messages."""
+
+    def test_strips_query_params(self):
+        """Test that query parameters are stripped."""
+        url = "https://example.com/doc.pdf?token=secret123&user=alice"
+        sanitized = _sanitize_url_for_display(url)
+        self.assertEqual(sanitized, "https://example.com/doc.pdf")
+        self.assertNotIn("secret123", sanitized)
+        self.assertNotIn("alice", sanitized)
+
+    def test_strips_fragment(self):
+        """Test that URL fragments are stripped."""
+        url = "https://example.com/doc.pdf#page=5"
+        sanitized = _sanitize_url_for_display(url)
+        self.assertEqual(sanitized, "https://example.com/doc.pdf")
+
+    def test_strips_both(self):
+        """Test that both query and fragment are stripped."""
+        url = "https://example.com/doc.pdf?key=val#section"
+        sanitized = _sanitize_url_for_display(url)
+        self.assertEqual(sanitized, "https://example.com/doc.pdf")
+
+    def test_preserves_path(self):
+        """Test that path components are preserved."""
+        url = "https://example.com/path/to/resource.pdf"
+        sanitized = _sanitize_url_for_display(url)
+        self.assertEqual(sanitized, "https://example.com/path/to/resource.pdf")
+
+
+class TestDocFetcherRateLimit(TestCase):
+    """Test rate limiting in DocFetcherTool."""
+
+    def _run(self, coro):
+        return asyncio.run(coro)
+
+    def test_respects_rate_limit(self):
+        """Test that rate limit blocks fetches after MAX_FETCHES_PER_SESSION."""
+        mock_status = AsyncMock()
+        # Pre-fill the counter to the max
+        fetch_count = [MAX_FETCHES_PER_SESSION]
+        tool = DocFetcherTool(mock_status, fetch_count=fetch_count)
+
+        # Mock the fetcher so we can detect if it's called
+        tool.fetcher = MagicMock()
+        tool.fetcher.fetch_and_extract_text = AsyncMock()
+
+        match = re.search(
+            FETCH_DOC_REGEX,
+            '**fetch_doc {"url": "https://example.com/doc.pdf"}**',
+            re.IGNORECASE,
+        )
+        _response, _context = self._run(tool.execute(match, "response text", "context"))
+
+        # Fetcher should NOT have been called
+        tool.fetcher.fetch_and_extract_text.assert_not_called()
+        # Status message should mention the limit
+        mock_status.assert_awaited()
+        status_calls = [c.args[0] for c in mock_status.await_args_list]
+        self.assertTrue(
+            any("limit" in msg.lower() for msg in status_calls),
+            f"Expected rate limit message in {status_calls}",
+        )
+
+    def test_counter_increments_before_fetch(self):
+        """Test that counter increments before fetch (so failures count)."""
+        mock_status = AsyncMock()
+        fetch_count = [0]
+        tool = DocFetcherTool(mock_status, fetch_count=fetch_count)
+
+        # Make the fetcher raise an exception
+        tool.fetcher = MagicMock()
+        tool.fetcher.fetch_and_extract_text = AsyncMock(
+            side_effect=Exception("Network error")
+        )
+
+        match = re.search(
+            FETCH_DOC_REGEX,
+            '**fetch_doc {"url": "https://www.example.com/doc.pdf"}**',
+            re.IGNORECASE,
+        )
+
+        # Patch validate_url to skip DNS resolution
+        with patch(
+            "fighthealthinsurance.chat.tools.doc_fetcher_tool.validate_url",
+            new=AsyncMock(return_value=None),
+        ):
+            _response, _context = self._run(
+                tool.execute(match, "response text", "context")
+            )
+
+        # Counter should have incremented even though fetch failed
+        self.assertEqual(fetch_count[0], 1)
+
+
+class TestDocFetcherExecute(TestCase):
+    """Test DocFetcherTool.execute end-to-end with mocked fetcher."""
+
+    def _run(self, coro):
+        return asyncio.run(coro)
+
+    def test_invalid_json_returns_cleanly(self):
+        """Test that invalid JSON is handled gracefully."""
+        mock_status = AsyncMock()
+        tool = DocFetcherTool(mock_status)
+        tool.fetcher = MagicMock()
+        tool.fetcher.fetch_and_extract_text = AsyncMock()
+
+        match = re.search(
+            FETCH_DOC_REGEX,
+            "**fetch_doc {not valid json}**",
+            re.IGNORECASE,
+        )
+        self.assertIsNotNone(match)
+        response, _context = self._run(tool.execute(match, "original", "ctx"))
+        # Fetcher should not have been called
+        tool.fetcher.fetch_and_extract_text.assert_not_called()
+        # Response should have the tool call stripped
+        self.assertNotIn("fetch_doc", response)
+
+    def test_empty_url_returns_cleanly(self):
+        """Test that empty URL in JSON is handled gracefully."""
+        mock_status = AsyncMock()
+        tool = DocFetcherTool(mock_status)
+        tool.fetcher = MagicMock()
+        tool.fetcher.fetch_and_extract_text = AsyncMock()
+
+        match = re.search(
+            FETCH_DOC_REGEX,
+            '**fetch_doc {"url": ""}**',
+            re.IGNORECASE,
+        )
+        _response, _context = self._run(tool.execute(match, "original", "ctx"))
+        tool.fetcher.fetch_and_extract_text.assert_not_called()
+
+    def test_successful_fetch_appends_to_context(self):
+        """Test that a successful fetch appends extracted text to context."""
+        mock_status = AsyncMock()
+        tool = DocFetcherTool(mock_status)
+        tool.fetcher = MagicMock()
+        tool.fetcher.fetch_and_extract_text = AsyncMock(
+            return_value=("Extracted document text", "pdf")
+        )
+
+        match = re.search(
+            FETCH_DOC_REGEX,
+            '**fetch_doc {"url": "https://www.example.com/doc.pdf"}**',
+            re.IGNORECASE,
+        )
+
+        with patch(
+            "fighthealthinsurance.chat.tools.doc_fetcher_tool.validate_url",
+            new=AsyncMock(return_value=None),
+        ):
+            response, context = self._run(
+                tool.execute(
+                    match,
+                    '**fetch_doc {"url": "https://www.example.com/doc.pdf"}**',
+                    "",
+                )
+            )
+
+        self.assertIn("Extracted document text", context)
+        self.assertIn("https://www.example.com/doc.pdf", context)
+        # Tool call should be stripped from response
+        self.assertNotIn("fetch_doc", response)

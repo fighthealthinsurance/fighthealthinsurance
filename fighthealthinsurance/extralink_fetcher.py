@@ -8,8 +8,9 @@ linked in microsites. Supports PDF, DOCX, HTML, and plain text documents.
 import asyncio
 import hashlib
 import tempfile
+from urllib.parse import urljoin
 import time
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 from django.db import models
 
@@ -471,6 +472,102 @@ class ExtraLinkFetcher:
         except Exception as e:
             logger.warning(f"HTML extraction failed: {e}")
             return ""
+
+    async def fetch_and_extract_text(
+        self,
+        url: str,
+        max_length: int = MAX_TEXT_LENGTH,
+        url_validator: Optional[Callable[[str], Awaitable[None]]] = None,
+    ) -> Tuple[str, str]:
+        """
+        Fetch a document from a URL and extract its text content.
+
+        This is a convenience method that combines fetching, type detection,
+        and text extraction into a single public API call.
+
+        Args:
+            url: The URL to fetch
+            max_length: Maximum characters to return (truncates if longer)
+            url_validator: Optional async callable to validate URLs (used to
+                check redirect targets for SSRF protection). If provided,
+                redirects are followed manually with validation at each hop.
+
+        Returns:
+            Tuple of (extracted_text, doc_type)
+
+        Raises:
+            Exception: If fetch or extraction fails
+        """
+        if url_validator:
+            content, content_type, _file_size = await self._fetch_url_safe(
+                url, url_validator
+            )
+        else:
+            content, content_type, _file_size = await self._fetch_url(url)
+        doc_type = self._detect_document_type(url, content_type)
+        extracted_text = await self._extract_text(content, doc_type)
+
+        if len(extracted_text) > max_length:
+            extracted_text = extracted_text[:max_length]
+
+        return extracted_text, doc_type
+
+    async def _fetch_url_safe(
+        self,
+        url: str,
+        url_validator: Callable[[str], Awaitable[None]],
+        max_redirects: int = 5,
+    ) -> Tuple[bytes, str, int]:
+        """
+        Fetch URL content via HTTP with redirect validation.
+
+        Unlike _fetch_url, this method follows redirects manually and validates
+        each redirect target using the provided validator to prevent SSRF via
+        open redirects.
+
+        Args:
+            url: The URL to fetch
+            url_validator: Async callable that raises ValueError for unsafe URLs
+            max_redirects: Maximum number of redirects to follow
+
+        Returns:
+            Tuple of (content_bytes, content_type, file_size)
+        """
+        timeout = aiohttp.ClientTimeout(total=self.FETCH_TIMEOUT)
+        headers = {
+            "User-Agent": "FightHealthInsurance/1.0 (https://www.fighthealthinsurance.com; medical research bot)"
+        }
+
+        current_url = url
+        # Validate the initial URL too, not just redirect targets
+        await url_validator(current_url)
+        async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
+            for _ in range(max_redirects + 1):
+                async with session.get(current_url, allow_redirects=False) as response:
+                    if response.status in (301, 302, 303, 307, 308):
+                        redirect_url = response.headers.get("Location", "")
+                        if not redirect_url:
+                            raise ValueError("Redirect without Location header")
+                        # Resolve relative redirects
+                        redirect_url = urljoin(current_url, redirect_url)
+                        # Validate the redirect target
+                        await url_validator(redirect_url)
+                        current_url = redirect_url
+                        continue
+
+                    response.raise_for_status()
+                    content_type = response.headers.get("Content-Type", "unknown")
+                    content = await response.read()
+
+                    if len(content) > self.MAX_FILE_SIZE:
+                        raise ValueError(
+                            f"File too large: {len(content)} bytes "
+                            f"(max {self.MAX_FILE_SIZE})"
+                        )
+
+                    return content, content_type, len(content)
+
+            raise ValueError(f"Too many redirects (max {max_redirects})")
 
     async def _ensure_microsite_links(
         self,

@@ -28,6 +28,7 @@ class AppealTool(BaseTool):
     """
 
     pattern = CREATE_OR_UPDATE_APPEAL_REGEX
+    detect_flags: int = re.DOTALL | re.MULTILINE | re.IGNORECASE
     name = "Appeal"
 
     def __init__(
@@ -141,30 +142,22 @@ class AppealTool(BaseTool):
                 await self.send_status_message(f"Updating existing Appeal #{appeal.id}")
                 denial = await sync_to_async(lambda x: x.for_denial)(appeal)
         else:
-            # Check if we have an email - required for creating new appeals
-            user_email = None
-            if hasattr(chat, "user") and chat.user:
-                user_email = await sync_to_async(lambda: chat.user.email)()
-
-            email_from_data = appeal_data.get("email") or appeal_data.get(
-                "hashed_email"
-            )
-            if not user_email and not email_from_data:
-                await self.send_status_message(
-                    "Cannot create appeal without an email address. "
-                    "Please provide an email to continue."
-                )
-                return None, None
-
             pro_user = await sync_to_async(lambda: chat.professional_user)()
             denial = await Denial.objects.acreate(creating_professional=pro_user)
             appeal = await Appeal.objects.acreate(
                 chat=chat, creating_professional=pro_user, for_denial=denial
             )
 
-            # Add hashed email if not provided and user exists
-            if "hashed_email" not in appeal_data and user_email:
-                appeal_data["hashed_email"] = Denial.get_hashed_email(user_email)
+            # Add hashed email if not provided
+            if "hashed_email" not in appeal_data:
+                if chat.hashed_email:
+                    appeal_data["hashed_email"] = chat.hashed_email
+                elif chat.user_id is not None:
+                    user_email = await sync_to_async(lambda: chat.user.email)()
+                    if user_email:
+                        appeal_data["hashed_email"] = Denial.get_hashed_email(
+                            user_email
+                        )
 
         return appeal, denial
 
