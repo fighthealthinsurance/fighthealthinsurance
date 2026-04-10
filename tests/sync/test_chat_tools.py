@@ -291,22 +291,43 @@ class TestValidateUrl(TestCase):
 
     def test_accepts_valid_https_url(self):
         """Test that valid HTTPS URLs pass validation."""
-        # Should not raise
-        self._run(validate_url("https://www.example.com/document.pdf"))
+        # Mock DNS to avoid network dependency and return a public IP
+        with patch(
+            "fighthealthinsurance.chat.tools.doc_fetcher_tool.socket.getaddrinfo",
+            return_value=[(None, None, None, None, ("93.184.216.34", 0))],
+        ):
+            # Should not raise
+            self._run(validate_url("https://www.example.com/document.pdf"))
 
     def test_accepts_valid_http_url(self):
         """Test that valid HTTP URLs pass validation."""
-        # Should not raise
-        self._run(validate_url("http://www.example.com/document.pdf"))
+        # Mock DNS to avoid network dependency and return a public IP
+        with patch(
+            "fighthealthinsurance.chat.tools.doc_fetcher_tool.socket.getaddrinfo",
+            return_value=[(None, None, None, None, ("93.184.216.34", 0))],
+        ):
+            # Should not raise
+            self._run(validate_url("http://www.example.com/document.pdf"))
 
     def test_rejects_unresolvable_hostname(self):
         """Test that unresolvable hostnames are rejected."""
-        with self.assertRaises(ValueError):
-            self._run(
-                validate_url(
-                    "https://this-domain-definitely-does-not-exist-abc123xyz.com/doc"
-                )
-            )
+        import socket as socket_mod
+
+        with patch(
+            "fighthealthinsurance.chat.tools.doc_fetcher_tool.socket.getaddrinfo",
+            side_effect=socket_mod.gaierror("Name or service not known"),
+        ):
+            with self.assertRaises(ValueError):
+                self._run(validate_url("https://some-unresolvable-host.example/doc"))
+
+    def test_rejects_private_ip_after_resolution(self):
+        """Test that a hostname resolving to a private IP is rejected."""
+        with patch(
+            "fighthealthinsurance.chat.tools.doc_fetcher_tool.socket.getaddrinfo",
+            return_value=[(None, None, None, None, ("10.0.0.1", 0))],
+        ):
+            with self.assertRaises(ValueError):
+                self._run(validate_url("https://sneaky.example.com/doc"))
 
 
 class TestSanitizeUrlForDisplay(TestCase):
