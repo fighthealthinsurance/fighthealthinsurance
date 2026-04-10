@@ -31,7 +31,14 @@ class MLAppealQuestionsHelper:
         Returns:
             A list of (question, answer) tuples.
         """
-        models_to_try = ml_router.partial_qa_backends() + ml_router.full_qa_backends()
+        # Dedupe by object identity: the same backend can appear in both
+        # partial and full lists and we don't want to query it twice.
+        _seen_ids: set[int] = set()
+        models_to_try = []
+        for _m in ml_router.partial_qa_backends() + ml_router.full_qa_backends():
+            if id(_m) not in _seen_ids:
+                _seen_ids.add(id(_m))
+                models_to_try.append(_m)
 
         # Normalize inputs - trim whitespace and convert to lowercase
         procedure = procedure.strip().lower() if procedure else ""
