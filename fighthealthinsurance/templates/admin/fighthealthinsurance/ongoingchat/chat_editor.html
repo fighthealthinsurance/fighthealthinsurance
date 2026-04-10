@@ -151,6 +151,77 @@
   .copy-to-edited-btn:hover {
     opacity: 0.9;
   }
+  /* Copy toolbar */
+  .copy-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-items: center;
+    margin-bottom: 12px;
+    padding: 8px 12px;
+    background: var(--darkened-bg, #f0f0f0);
+    border: 1px solid var(--border-color, #ccc);
+    border-radius: 6px;
+  }
+  .copy-toolbar button {
+    padding: 4px 12px;
+    border: 1px solid var(--border-color, #ccc);
+    border-radius: 4px;
+    background: var(--body-bg, #fff);
+    cursor: pointer;
+    font-size: 0.82em;
+    white-space: nowrap;
+  }
+  .copy-toolbar button:hover {
+    background: var(--darkened-bg, #e8e8e8);
+  }
+  .copy-toolbar button.primary-copy-btn {
+    background: var(--button-bg, #417690);
+    color: white;
+    border-color: transparent;
+  }
+  .copy-toolbar button.primary-copy-btn:hover {
+    opacity: 0.9;
+  }
+  .copy-toolbar .separator {
+    width: 1px;
+    height: 20px;
+    background: var(--border-color, #ccc);
+    margin: 0 4px;
+  }
+  .copy-toast {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    background: #2e7d32;
+    color: white;
+    padding: 10px 20px;
+    border-radius: 6px;
+    font-size: 0.9em;
+    z-index: 9999;
+    opacity: 0;
+    transition: opacity 0.3s;
+    pointer-events: none;
+  }
+  .copy-toast.visible {
+    opacity: 1;
+  }
+  /* Message checkboxes */
+  .chat-message-checkbox {
+    position: absolute;
+    left: -28px;
+    top: 12px;
+    width: 18px;
+    height: 18px;
+    cursor: pointer;
+    accent-color: var(--button-bg, #417690);
+  }
+  .chat-message.has-checkbox {
+    margin-left: 36px;
+  }
+  .chat-message.role-user.has-checkbox {
+    margin-left: 68px;
+  }
   .tab-buttons {
     display: flex;
     gap: 0;
@@ -193,6 +264,7 @@
   }
 </style>
 {{ original.chat_history|json_script:"chat-history-data" }}
+<div id="copy-toast" class="copy-toast" role="status" aria-live="polite" aria-atomic="true">Copied to clipboard!</div>
 <div class="chat-editor-container">
   <div class="tab-buttons">
     <button type="button" class="active" data-tab="original" onclick="showTab('original')">Original Chat</button>
@@ -202,6 +274,16 @@
     <!-- Original (read-only) tab -->
     <div id="tab-original">
       <h3>Original Chat History (read-only)</h3>
+      <div class="copy-toolbar" id="original-copy-toolbar">
+        <button type="button" onclick="window._chatCopy.selectAll('original')">Select All</button>
+        <button type="button" onclick="window._chatCopy.deselectAll('original')">Deselect All</button>
+        <div class="separator"></div>
+        <button type="button" class="primary-copy-btn" onclick="window._chatCopy.copySelectedAsText('original')" title="Copy selected messages as plain text for pasting into another agent">Copy Selected as Text</button>
+        <button type="button" onclick="window._chatCopy.copySelectedAsJSON('original')">Copy Selected as JSON</button>
+        <div class="separator"></div>
+        <button type="button" onclick="window._chatCopy.copyAllAsText('original')">Copy All as Text</button>
+        <button type="button" onclick="window._chatCopy.copyAllAsJSON('original')">Copy All as JSON</button>
+      </div>
       <div class="chat-panel" id="original-chat-panel">
         <div class="chat-messages" id="original-messages"></div>
       </div>
@@ -213,6 +295,16 @@
       <button type="button" class="copy-to-edited-btn" onclick="copyOriginalToEdited()">
         Copy original to edited
       </button>
+      <div class="copy-toolbar" id="edited-copy-toolbar">
+        <button type="button" onclick="window._chatCopy.selectAll('edited')">Select All</button>
+        <button type="button" onclick="window._chatCopy.deselectAll('edited')">Deselect All</button>
+        <div class="separator"></div>
+        <button type="button" class="primary-copy-btn" onclick="window._chatCopy.copySelectedAsText('edited')" title="Copy selected messages as plain text for pasting into another agent">Copy Selected as Text</button>
+        <button type="button" onclick="window._chatCopy.copySelectedAsJSON('edited')">Copy Selected as JSON</button>
+        <div class="separator"></div>
+        <button type="button" onclick="window._chatCopy.copyAllAsText('edited')">Copy All as Text</button>
+        <button type="button" onclick="window._chatCopy.copyAllAsJSON('edited')">Copy All as JSON</button>
+      </div>
       <div class="chat-panel edited-chat-panel" id="edited-chat-panel">
         <div class="chat-messages" id="edited-messages"></div>
         <button type="button" class="add-message-btn" onclick="addMessage()">+ Add message</button>
@@ -265,13 +357,31 @@
   }
 
   function debounce(fn, delay) {
-    var timer;
-    return function() {
-      var args = arguments, ctx = this;
+    var timer, lastArgs, lastCtx;
+    var debounced = function() {
+      lastArgs = arguments;
+      lastCtx = this;
       clearTimeout(timer);
-      timer = setTimeout(function() { fn.apply(ctx, args); }, delay);
+      timer = setTimeout(function() {
+        fn.apply(lastCtx, lastArgs);
+        lastArgs = lastCtx = null;
+      }, delay);
     };
+    debounced.flush = function() {
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+        if (lastArgs) {
+          fn.apply(lastCtx, lastArgs);
+          lastArgs = lastCtx = null;
+        }
+      }
+    };
+    return debounced;
   }
+
+  // Track debounced updaters so we can flush them before copy
+  var _pendingDebouncers = [];
 
   function renderReadOnlyMessages(containerId, messages) {
     const container = document.getElementById(containerId);
@@ -280,12 +390,15 @@
       container.innerHTML = '<p style="color: #999; text-align: center;">No messages</p>';
       return;
     }
-    messages.forEach(function(msg) {
+    messages.forEach(function(msg, idx) {
       const role = sanitizeRole(msg.role);
       const content = typeof msg.content === 'string' ? msg.content : String(msg.content || '');
       const div = document.createElement('div');
-      div.className = 'chat-message role-' + role;
+      div.className = 'chat-message role-' + role + ' has-checkbox';
+      div.setAttribute('data-idx', idx);
+      div.style.position = 'relative';
       div.innerHTML =
+        '<input type="checkbox" class="chat-message-checkbox" data-idx="' + idx + '" aria-label="Select message ' + (idx + 1) + ' (' + escapeHtml(role) + ')" />' +
         '<div class="chat-message-header">' +
           '<span class="chat-role-badge">' + escapeHtml(role) + '</span>' +
           (msg.timestamp ? '<span class="chat-timestamp">' + escapeHtml(msg.timestamp) + '</span>' : '') +
@@ -295,7 +408,13 @@
     });
   }
 
+  function flushPendingEdits() {
+    _pendingDebouncers.forEach(function(d) { d.flush(); });
+  }
+
   function renderEditableMessages() {
+    flushPendingEdits();
+    _pendingDebouncers = [];
     const container = document.getElementById('edited-messages');
     const messages = getFieldValue('edited_chat_history');
     container.innerHTML = '';
@@ -307,9 +426,11 @@
       const role = sanitizeRole(msg.role);
       const content = typeof msg.content === 'string' ? msg.content : String(msg.content || '');
       const div = document.createElement('div');
-      div.className = 'chat-message role-' + role;
+      div.className = 'chat-message role-' + role + ' has-checkbox';
       div.setAttribute('data-idx', idx);
+      div.style.position = 'relative';
       div.innerHTML =
+        '<input type="checkbox" class="chat-message-checkbox" data-idx="' + idx + '" aria-label="Select message ' + (idx + 1) + ' (' + escapeHtml(role) + ')" />' +
         '<div class="chat-message-header">' +
           '<select class="chat-role-select" onchange="window._chatEditor.changeRole(' + idx + ', this.value)">' +
             '<option value="user"' + (role === 'user' ? ' selected' : '') + '>USER</option>' +
@@ -331,9 +452,11 @@
       var editable = div.querySelector('.chat-content-editable');
       if (editable) {
         (function(capturedIdx) {
-          editable.addEventListener('input', debounce(function() {
+          var debouncedUpdate = debounce(function() {
             window._chatEditor.updateContent(capturedIdx, this.innerText);
-          }, 300));
+          }, 300);
+          _pendingDebouncers.push(debouncedUpdate);
+          editable.addEventListener('input', debouncedUpdate);
         })(idx);
       }
     });
@@ -423,6 +546,134 @@
     buttons.forEach(function(btn) {
       btn.classList.toggle('active', btn.dataset.tab === tabName);
     });
+  };
+
+  // Copy/paste API
+  function showCopyToast(message) {
+    var toast = document.getElementById('copy-toast');
+    toast.textContent = message || 'Copied to clipboard!';
+    toast.classList.add('visible');
+    setTimeout(function() { toast.classList.remove('visible'); }, 2000);
+  }
+
+  function getMessagesForTab(tab) {
+    if (tab === 'original') {
+      return getFieldValue('chat_history');
+    } else {
+      // Flush any pending debounced edits so the textarea JSON is up-to-date
+      flushPendingEdits();
+      return getFieldValue('edited_chat_history');
+    }
+  }
+
+  function getContainerId(tab) {
+    return tab === 'original' ? 'original-messages' : 'edited-messages';
+  }
+
+  function getSelectedIndices(tab) {
+    var containerId = getContainerId(tab);
+    var container = document.getElementById(containerId);
+    var checkboxes = container.querySelectorAll('.chat-message-checkbox:checked');
+    var indices = [];
+    checkboxes.forEach(function(cb) {
+      indices.push(parseInt(cb.getAttribute('data-idx'), 10));
+    });
+    return indices;
+  }
+
+  function formatMessagesAsText(messages) {
+    return messages.map(function(msg) {
+      var role = (msg.role || 'user').toUpperCase();
+      var content = typeof msg.content === 'string' ? msg.content : String(msg.content || '');
+      return role + ': ' + content;
+    }).join('\n\n');
+  }
+
+  function formatMessagesAsJSON(messages) {
+    // Strip timestamps for cleaner copy, keep role + content
+    var clean = messages.map(function(msg) {
+      return { role: msg.role || 'user', content: msg.content || '' };
+    });
+    return JSON.stringify(clean, null, 2);
+  }
+
+  function fallbackCopyToClipboard(text, label) {
+    var textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.select();
+    try {
+      document.execCommand('copy');
+      showCopyToast('Copied ' + label + '!');
+    } catch (e) {
+      showCopyToast('Copy failed - please copy manually');
+    }
+    document.body.removeChild(textarea);
+  }
+
+  function copyToClipboard(text, label) {
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(text).then(function() {
+        showCopyToast('Copied ' + label + '!');
+      }, function() {
+        fallbackCopyToClipboard(text, label);
+      });
+    } else {
+      fallbackCopyToClipboard(text, label);
+    }
+  }
+
+  window._chatCopy = {
+    selectAll: function(tab) {
+      var container = document.getElementById(getContainerId(tab));
+      container.querySelectorAll('.chat-message-checkbox').forEach(function(cb) {
+        cb.checked = true;
+      });
+    },
+    deselectAll: function(tab) {
+      var container = document.getElementById(getContainerId(tab));
+      container.querySelectorAll('.chat-message-checkbox').forEach(function(cb) {
+        cb.checked = false;
+      });
+    },
+    copySelectedAsText: function(tab) {
+      var messages = getMessagesForTab(tab);
+      var indices = getSelectedIndices(tab);
+      if (indices.length === 0) {
+        showCopyToast('No messages selected');
+        return;
+      }
+      var selected = indices.map(function(i) { return messages[i]; }).filter(Boolean);
+      copyToClipboard(formatMessagesAsText(selected), selected.length + ' message(s) as text');
+    },
+    copySelectedAsJSON: function(tab) {
+      var messages = getMessagesForTab(tab);
+      var indices = getSelectedIndices(tab);
+      if (indices.length === 0) {
+        showCopyToast('No messages selected');
+        return;
+      }
+      var selected = indices.map(function(i) { return messages[i]; }).filter(Boolean);
+      copyToClipboard(formatMessagesAsJSON(selected), selected.length + ' message(s) as JSON');
+    },
+    copyAllAsText: function(tab) {
+      var messages = getMessagesForTab(tab);
+      if (!messages || messages.length === 0) {
+        showCopyToast('No messages to copy');
+        return;
+      }
+      copyToClipboard(formatMessagesAsText(messages), messages.length + ' message(s) as text');
+    },
+    copyAllAsJSON: function(tab) {
+      var messages = getMessagesForTab(tab);
+      if (!messages || messages.length === 0) {
+        showCopyToast('No messages to copy');
+        return;
+      }
+      copyToClipboard(formatMessagesAsJSON(messages), messages.length + ' message(s) as JSON');
+    }
   };
 
   // Initial render
