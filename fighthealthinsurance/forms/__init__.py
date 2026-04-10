@@ -69,7 +69,19 @@ class InterestedProfessionalForm(forms.ModelForm):
 
 
 class DeleteDataForm(forms.Form):
-    """Base form for data deletion. No captcha — used by admin staff flow."""
+    """Base form for data deletion — email-only, no captcha.
+
+    Used by:
+    - `AdminDeleteDataView` (staff-authenticated deletion flow)
+    - `DeleteDataFormSerializer` / `DataRemovalViewSet` (REST request
+      flow, which creates a delete token and emails a confirmation
+      link rather than deleting immediately — see `request_data_deletion`)
+
+    The public HTML flow uses `PublicDeleteDataForm` (below) which adds
+    a reCAPTCHA field. The REST flow does not use reCAPTCHA because the
+    email-ownership token is the primary protection there; reCAPTCHA
+    widgets aren't feasible for programmatic REST callers.
+    """
 
     email = forms.EmailField(required=True)
 
