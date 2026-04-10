@@ -1523,8 +1523,14 @@ class JourneyDocumentationQuestions(InsuranceQuestions):
     )
 
     def medical_context(self):
-        """Return context about the patient's medical journey."""
+        """Return context about the patient's medical journey.
+
+        Includes parent insurance context (urgent/pre-service/in-network) when set.
+        """
         parts = []
+        base_context = super().medical_context()
+        if base_context:
+            parts.append(base_context.strip())
         prior = self.cleaned_data.get("prior_medications")
         if prior:
             parts.append(f"Prior medications/treatments tried: {prior}.")
