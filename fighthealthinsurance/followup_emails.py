@@ -148,7 +148,7 @@ class FollowUpEmailSender(AsyncEmailSenderMixin):
             groups[candidate.email].append(candidate)
 
         result = []
-        for email, group in groups.items():
+        for group in groups.values():
             group.sort(
                 key=lambda s: (
                     s.follow_up_type.duration
@@ -215,8 +215,13 @@ class FollowUpEmailSender(AsyncEmailSenderMixin):
             self._mark_as_sent_without_sending(to_suppress)
         return email_sent
 
-    def send_all(self, count: Optional[int] = None) -> int:
-        candidates = self.find_candidates()
+    def send_all(
+        self,
+        count: Optional[int] = None,
+        candidates: Optional[list] = None,
+    ) -> int:
+        if candidates is None:
+            candidates = self.find_candidates()
         grouped = self._group_candidates_by_email(candidates)
         if count is not None:
             grouped = grouped[:count]
