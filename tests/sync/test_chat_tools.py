@@ -263,7 +263,7 @@ class TestValidateUrl(TestCase):
 
     def _run(self, coro):
         """Helper to run async code in sync tests."""
-        return asyncio.new_event_loop().run_until_complete(coro)
+        return asyncio.run(coro)
 
     def test_rejects_non_http_scheme(self):
         """Test that non-HTTP(S) schemes are rejected."""
@@ -364,7 +364,7 @@ class TestDocFetcherRateLimit(TestCase):
     """Test rate limiting in DocFetcherTool."""
 
     def _run(self, coro):
-        return asyncio.new_event_loop().run_until_complete(coro)
+        return asyncio.run(coro)
 
     def test_respects_rate_limit(self):
         """Test that rate limit blocks fetches after MAX_FETCHES_PER_SESSION."""
@@ -382,7 +382,7 @@ class TestDocFetcherRateLimit(TestCase):
             '**fetch_doc {"url": "https://example.com/doc.pdf"}**',
             re.IGNORECASE,
         )
-        response, context = self._run(tool.execute(match, "response text", "context"))
+        _response, _context = self._run(tool.execute(match, "response text", "context"))
 
         # Fetcher should NOT have been called
         tool.fetcher.fetch_and_extract_text.assert_not_called()
@@ -417,7 +417,7 @@ class TestDocFetcherRateLimit(TestCase):
             "fighthealthinsurance.chat.tools.doc_fetcher_tool.validate_url",
             new=AsyncMock(return_value=None),
         ):
-            response, context = self._run(
+            _response, _context = self._run(
                 tool.execute(match, "response text", "context")
             )
 
@@ -429,7 +429,7 @@ class TestDocFetcherExecute(TestCase):
     """Test DocFetcherTool.execute end-to-end with mocked fetcher."""
 
     def _run(self, coro):
-        return asyncio.new_event_loop().run_until_complete(coro)
+        return asyncio.run(coro)
 
     def test_invalid_json_returns_cleanly(self):
         """Test that invalid JSON is handled gracefully."""
@@ -444,7 +444,7 @@ class TestDocFetcherExecute(TestCase):
             re.IGNORECASE,
         )
         self.assertIsNotNone(match)
-        response, context = self._run(tool.execute(match, "original", "ctx"))
+        response, _context = self._run(tool.execute(match, "original", "ctx"))
         # Fetcher should not have been called
         tool.fetcher.fetch_and_extract_text.assert_not_called()
         # Response should have the tool call stripped
@@ -462,7 +462,7 @@ class TestDocFetcherExecute(TestCase):
             '**fetch_doc {"url": ""}**',
             re.IGNORECASE,
         )
-        response, context = self._run(tool.execute(match, "original", "ctx"))
+        _response, _context = self._run(tool.execute(match, "original", "ctx"))
         tool.fetcher.fetch_and_extract_text.assert_not_called()
 
     def test_successful_fetch_appends_to_context(self):

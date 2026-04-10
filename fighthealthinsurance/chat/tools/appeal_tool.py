@@ -148,11 +148,16 @@ class AppealTool(BaseTool):
                 chat=chat, creating_professional=pro_user, for_denial=denial
             )
 
-            # Add hashed email if not provided and user exists
-            if "hashed_email" not in appeal_data and chat.user_id is not None:
-                user_email = await sync_to_async(lambda: chat.user.email)()
-                if user_email:
-                    appeal_data["hashed_email"] = Denial.get_hashed_email(user_email)
+            # Add hashed email if not provided
+            if "hashed_email" not in appeal_data:
+                if chat.hashed_email:
+                    appeal_data["hashed_email"] = chat.hashed_email
+                elif chat.user_id is not None:
+                    user_email = await sync_to_async(lambda: chat.user.email)()
+                    if user_email:
+                        appeal_data["hashed_email"] = Denial.get_hashed_email(
+                            user_email
+                        )
 
         return appeal, denial
 

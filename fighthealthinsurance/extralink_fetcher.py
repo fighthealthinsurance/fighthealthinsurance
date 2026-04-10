@@ -499,11 +499,11 @@ class ExtraLinkFetcher:
             Exception: If fetch or extraction fails
         """
         if url_validator:
-            content, content_type, file_size = await self._fetch_url_safe(
+            content, content_type, _file_size = await self._fetch_url_safe(
                 url, url_validator
             )
         else:
-            content, content_type, file_size = await self._fetch_url(url)
+            content, content_type, _file_size = await self._fetch_url(url)
         doc_type = self._detect_document_type(url, content_type)
         extracted_text = await self._extract_text(content, doc_type)
 
@@ -539,6 +539,8 @@ class ExtraLinkFetcher:
         }
 
         current_url = url
+        # Validate the initial URL too, not just redirect targets
+        await url_validator(current_url)
         async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
             for _ in range(max_redirects + 1):
                 async with session.get(current_url, allow_redirects=False) as response:

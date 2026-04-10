@@ -302,8 +302,6 @@ class ChatInterface:
 
         logger.debug(f"Using best result {response_text:.20}...")
 
-        pubmed_context_str = ""
-
         if not response_text:
             logger.debug("Got empty response from LLM")
             return None, None
