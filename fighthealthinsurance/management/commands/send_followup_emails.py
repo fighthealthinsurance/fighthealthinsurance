@@ -47,11 +47,25 @@ class Command(BaseCommand):
             self.stdout.write(self.style.WARNING("Dry run mode - not sending emails."))
             selected = grouped[:count] if count else grouped
             for best, others in selected:
-                suppressed = f" (+{len(others)} suppressed)" if others else ""
-                self.stdout.write(f"  Would send to: {best.email}{suppressed}")
+                # Mirror _send_grouped: skip stale candidates and pick the
+                # first non-stale one as the actual recipient.
+                all_in_group = [best] + others
+                to_send = next(
+                    (c for c in all_in_group if not sender._is_stale(c)),
+                    None,
+                )
+                if to_send is None:
+                    self.stdout.write(
+                        f"  Would suppress all {len(all_in_group)} follow-up(s) "
+                        f"for {best.email} (all stale)"
+                    )
+                    continue
+                suppressed = len(all_in_group) - 1
+                suffix = f" (+{suppressed} suppressed)" if suppressed else ""
+                self.stdout.write(f"  Would send to: {to_send.email}{suffix}")
             return
 
-        sent_count = sender.send_all(count=count)
+        sent_count = sender.send_all(count=count, candidates=candidates)
         self.stdout.write(
             self.style.SUCCESS(f"Successfully sent {sent_count} follow-up emails.")
         )
