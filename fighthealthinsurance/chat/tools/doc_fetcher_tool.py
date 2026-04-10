@@ -74,8 +74,8 @@ async def validate_url(url: str) -> None:
         addr_infos = await loop.run_in_executor(
             None, socket.getaddrinfo, hostname, None
         )
-    except socket.gaierror:
-        raise ValueError(f"Cannot resolve hostname: {hostname}")
+    except socket.gaierror as e:
+        raise ValueError(f"Cannot resolve hostname: {hostname}") from e
 
     for addr_info in addr_infos:
         ip_str = addr_info[4][0]
