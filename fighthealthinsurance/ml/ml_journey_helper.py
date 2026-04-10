@@ -50,8 +50,7 @@ class JourneyDocumentationHelper:
         if not questions:
             return ""
         return "\n".join(
-            f"- {q}" + (f" (helps because: {a})" if a else "")
-            for q, a in questions
+            f"- {q}" + (f" (helps because: {a})" if a else "") for q, a in questions
         )
 
     @staticmethod
@@ -94,9 +93,7 @@ class JourneyDocumentationHelper:
             items_list = JourneyDocumentationHelper._format_documentation_items(
                 documentation_items
             )
-            plan_context = (
-                f"Key documentation categories to ask about:\n{items_list}"
-            )
+            plan_context = f"Key documentation categories to ask about:\n{items_list}"
 
         # Use internal models for this (not external) to keep data private
         models_to_try = ml_router.get_chat_backends(use_external=False)
