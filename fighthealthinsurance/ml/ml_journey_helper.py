@@ -216,7 +216,7 @@ def _score_journey_questions(
     try:
         if not result:
             return 0
-        # Prefer 2-4 questions: peak score at 3, penalize too few or too many
+        # Prefer 2-4 questions: peak score at 4, penalize too few or too many
         count = len(result)
         if count > 6:
             return 1
