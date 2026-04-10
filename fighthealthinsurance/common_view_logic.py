@@ -251,7 +251,7 @@ class AppealAssemblyHelper:
                 except Denial.DoesNotExist:
                     raise Exception(
                         f"Could not find denial {denial_id} for the provided email and secret."
-                    )
+                    ) from None
         if denial is None:
             raise Exception("No denial ID or denial provided.")
         # Build our cover page
@@ -487,7 +487,7 @@ class ChooseAppealHelper:
         except Denial.DoesNotExist:
             raise Exception(
                 f"Could not find denial {denial_id} for the provided email and secret."
-            )
+            ) from None
         denial.appeal_text = appeal_text
         denial.save()
         pa = ProposedAppeal(appeal_text=appeal_text, for_denial=denial, chosen=True)
