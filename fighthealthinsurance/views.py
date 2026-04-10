@@ -976,8 +976,8 @@ class ChooseAppeal(View):
         # Add the possible articles for inclusion
         if candidate_articles is not None:
             for article in candidate_articles[0:6]:
-                article_id = html.escape(article.pmid)
-                title = html.escape(article.title)
+                article_id = html.escape(article.pmid or "")
+                title = html.escape(article.title or "")
                 link = f"http://www.ncbi.nlm.nih.gov/pubmed/{article_id}"
                 label = mark_safe(
                     f"Include Summary* of PubMed Article "
