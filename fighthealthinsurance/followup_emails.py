@@ -108,30 +108,39 @@ class ThankyouEmailSender(AsyncEmailSenderMixin):
 
 
 class FollowUpEmailSender(AsyncEmailSenderMixin):
-    def _find_candidates(self):
+    def _find_due(self):
+        """Base query: all unsent follow-ups that are due and not too old."""
         six_months_ago = datetime.date.today() - datetime.timedelta(days=183)
-        base_qs = (
+        return (
             FollowUpSched.objects.filter(follow_up_sent=False)
             .filter(follow_up_date__lte=datetime.date.today())
             .filter(initial__gte=six_months_ago)
+            .select_related("follow_up_type")
             .order_by("follow_up_date")
         )
+
+    def _find_candidates(self):
+        base_qs = self._find_due()
         try:
-            # PostgreSQL DISTINCT ON requires ORDER BY to start with
-            # the DISTINCT ON columns.
             candidates = base_qs.order_by(
                 "email", "follow_up_type", "follow_up_date"
             ).distinct("email", "follow_up_type")
-            # Force partial evaluation to catch DISTINCT ON errors
-            # Used for SQLite in local dev/test mode.
             candidates.exists()
             return candidates
         except (NotSupportedError, ProgrammingError):
-            # Fallback for databases that don't support DISTINCT ON
             return base_qs
 
     def find_candidates(self):
         return list(self._find_candidates())
+
+    def find_all_due(self) -> list[FollowUpSched]:
+        """Return ALL due follow-ups without DISTINCT ON dedup.
+
+        send_all/asend_all need the complete set so that suppressed
+        rows across multiple denials for the same email/type are all
+        marked as sent.
+        """
+        return list(self._find_due())
 
     def _group_candidates_by_email(
         self, candidates: list[FollowUpSched]
@@ -201,7 +210,7 @@ class FollowUpEmailSender(AsyncEmailSenderMixin):
             if self._is_stale(candidate):
                 to_suppress.append(candidate)
                 continue
-            result = self.dosend(follow_up_sched=candidate)
+            result = self.dosend(follow_up_sched=candidate, _skip_stale_check=True)
             if result:
                 email_sent = True
             else:
@@ -221,7 +230,7 @@ class FollowUpEmailSender(AsyncEmailSenderMixin):
         candidates: Optional[list] = None,
     ) -> int:
         if candidates is None:
-            candidates = self.find_candidates()
+            candidates = self.find_all_due()
         grouped = self._group_candidates_by_email(candidates)
         if count is not None:
             grouped = grouped[:count]
@@ -235,31 +244,21 @@ class FollowUpEmailSender(AsyncEmailSenderMixin):
         self,
         follow_up_sched: Optional[FollowUpSched] = None,
         email: Optional[str] = None,
+        _skip_stale_check: bool = False,
     ) -> bool:
         if follow_up_sched is None and email is not None:
             follow_up_sched = FollowUpSched.objects.filter(email=email).filter(
                 follow_up_sent=False
             )[0]
         elif follow_up_sched is None and email is None:
-            # Both are None
             raise Exception("One of email and follow_up_sched must be set.")
-        # At this point follow_up_sched is guaranteed to be set by the logic above
         assert follow_up_sched is not None
 
-        # Suppress stale follow-ups: if a later follow-up for the same denial
-        # has already been sent, skip this one (e.g. don't send a 7-day email
-        # if the 30-day email was already sent).
-        if follow_up_sched.follow_up_type and follow_up_sched.follow_up_type.duration:
-            later_sent = FollowUpSched.objects.filter(
-                denial_id=follow_up_sched.denial_id,
-                follow_up_sent=True,
-                follow_up_type__duration__gt=follow_up_sched.follow_up_type.duration,
-            ).exists()
-            if later_sent:
-                follow_up_sched.follow_up_sent = True
-                follow_up_sched.follow_up_sent_date = timezone.now()
-                follow_up_sched.save()
-                return True
+        if not _skip_stale_check and self._is_stale(follow_up_sched):
+            follow_up_sched.follow_up_sent = True
+            follow_up_sched.follow_up_sent_date = timezone.now()
+            follow_up_sched.save()
+            return True
 
         # Use the email from follow_up_sched to ensure consistency
         email = follow_up_sched.email
@@ -317,7 +316,7 @@ class FollowUpEmailSender(AsyncEmailSenderMixin):
         skips stale ones, sends the first valid one, and marks the rest as sent.
         """
         if candidates is None:
-            candidates = await self.afind_candidates()
+            candidates = await sync_to_async(self.find_all_due)()
         grouped = await sync_to_async(self._group_candidates_by_email)(candidates)
         if count is not None:
             grouped = grouped[:count]
