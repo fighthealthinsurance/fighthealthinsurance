@@ -81,15 +81,11 @@ async def validate_url(url: str) -> None:
         ip_str = addr_info[4][0]
         try:
             ip = ipaddress.ip_address(ip_str)
-            if ip.is_private or ip.is_reserved or ip.is_loopback or ip.is_link_local:
-                raise ValueError(
-                    f"Cannot fetch from private/reserved IP address: {ip_str}"
-                )
-        except ValueError as e:
-            if "Cannot fetch" in str(e):
-                raise
+        except ValueError:
             # If ip_address parsing fails, skip this entry
             continue
+        if ip.is_private or ip.is_reserved or ip.is_loopback or ip.is_link_local:
+            raise ValueError(f"Cannot fetch from private/reserved IP address: {ip_str}")
 
 
 class DocFetcherTool(BaseTool):
