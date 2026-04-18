@@ -227,7 +227,7 @@ class FollowUpEmailSender(AsyncEmailSenderMixin):
     def send_all(
         self,
         count: Optional[int] = None,
-        candidates: Optional[list] = None,
+        candidates: Optional[list[FollowUpSched]] = None,
     ) -> int:
         if candidates is None:
             candidates = self.find_all_due()
@@ -307,7 +307,9 @@ class FollowUpEmailSender(AsyncEmailSenderMixin):
             return False
 
     async def asend_all(
-        self, count: Optional[int] = None, candidates: Optional[list] = None
+        self,
+        count: Optional[int] = None,
+        candidates: Optional[list[FollowUpSched]] = None,
     ) -> int:
         """Async send_all with per-email grouping and rate limiting.
 
