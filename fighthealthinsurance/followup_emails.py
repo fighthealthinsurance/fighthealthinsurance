@@ -224,6 +224,32 @@ class FollowUpEmailSender(AsyncEmailSenderMixin):
             self._mark_as_sent_without_sending(to_suppress)
         return email_sent
 
+    def group_due_followups(
+        self, candidates: Optional[list[FollowUpSched]] = None
+    ) -> list[tuple[FollowUpSched, list[FollowUpSched]]]:
+        """Group due follow-ups by email, sorted by priority (longest duration first).
+
+        Public API for both send_all and the management command.
+        """
+        if candidates is None:
+            candidates = self.find_all_due()
+        return self._group_candidates_by_email(candidates)
+
+    def preview_grouped_send(
+        self, all_candidates: list[FollowUpSched]
+    ) -> tuple[Optional[FollowUpSched], int]:
+        """Preview which candidate would be sent for a group.
+
+        Returns (candidate_to_send, suppressed_count).
+        candidate_to_send is None if all candidates are stale.
+        """
+        to_send = next(
+            (c for c in all_candidates if not self._is_stale(c)),
+            None,
+        )
+        suppressed = len(all_candidates) - (1 if to_send else 0)
+        return to_send, suppressed
+
     def send_all(
         self,
         count: Optional[int] = None,

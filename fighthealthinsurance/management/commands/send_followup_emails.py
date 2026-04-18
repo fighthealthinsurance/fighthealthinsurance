@@ -37,7 +37,7 @@ class Command(BaseCommand):
             )
             return
 
-        grouped = sender._group_candidates_by_email(candidates)
+        grouped = sender.group_due_followups(candidates)
         self.stdout.write(
             f"Found {candidate_count} pending follow-up records "
             f"for {len(grouped)} unique email(s)."
@@ -47,20 +47,13 @@ class Command(BaseCommand):
             self.stdout.write(self.style.WARNING("Dry run mode - not sending emails."))
             selected = grouped[:count] if count else grouped
             for best, others in selected:
-                # Mirror _send_grouped: skip stale candidates and pick the
-                # first non-stale one as the actual recipient.
-                all_in_group = [best] + others
-                to_send = next(
-                    (c for c in all_in_group if not sender._is_stale(c)),
-                    None,
-                )
+                to_send, suppressed = sender.preview_grouped_send([best] + others)
                 if to_send is None:
                     self.stdout.write(
-                        f"  Would suppress all {len(all_in_group)} follow-up(s) "
+                        f"  Would suppress all {len(others) + 1} follow-up(s) "
                         f"for {best.email} (all stale)"
                     )
                     continue
-                suppressed = len(all_in_group) - 1
                 suffix = f" (+{suppressed} suppressed)" if suppressed else ""
                 self.stdout.write(f"  Would send to: {to_send.email}{suffix}")
             return
