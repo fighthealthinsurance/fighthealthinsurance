@@ -1,3 +1,4 @@
+import html
 import json
 import os
 import random
@@ -977,14 +978,19 @@ class ChooseAppeal(View):
         # Add the possible articles for inclusion
         if candidate_articles is not None:
             for article in candidate_articles[0:6]:
-                article_id = article.pmid
-                title = article.title
-                link = f"http://www.ncbi.nlm.nih.gov/pubmed/{article_id}"
+                pmid = article.pmid or ""
+                if not pmid:
+                    # fax_views.form_valid round-trips the pmid through the key
+                    # `pubmed_<pmid>`; without a pmid the submission is useless
+                    # and empty keys collide across articles.
+                    continue
+                title = article.title or ""
+                link = f"https://www.ncbi.nlm.nih.gov/pubmed/{quote(pmid, safe='')}"
                 label = mark_safe(
                     f"Include Summary* of PubMed Article "
-                    f"<a href='{link}'>{title} -- {article_id}</a>"
+                    f"<a href='{link}'>{html.escape(title)} -- {html.escape(pmid)}</a>"
                 )
-                fax_form.fields["pubmed_" + article_id] = forms.BooleanField(
+                fax_form.fields["pubmed_" + pmid] = forms.BooleanField(
                     label=label,
                     required=False,
                     initial=True,
@@ -1676,16 +1682,9 @@ class CompletePaymentView(View):
 
     def get(self, request):
         try:
-            # Extract parameters from URL query string
             session_id = request.GET.get("session_id")
-            cancel_url = request.GET.get(
-                "cancel_url", "https://www.fighthealthinsurance.com/?q=ohno"
-            )
-
-            # Create data dictionary similar to what we'd get from POST
             data = {
                 "session_id": session_id,
-                "cancel_url": cancel_url,
             }
 
             return self.process_payment(data)
@@ -1759,7 +1758,7 @@ class CompletePaymentView(View):
         except Exception as e:
             logger.opt(exception=e).error("Error in finishing payment")
             return HttpResponse(
-                json.dumps({"error": f"Error {e}"}),
+                json.dumps({"error": "An internal error occurred"}),
                 status=500,
                 content_type="application/json",
             )
