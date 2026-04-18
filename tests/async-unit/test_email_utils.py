@@ -45,9 +45,9 @@ class TestIsBlockedEmail:
         assert is_blocked_email(email) is False
 
     def test_case_insensitive_domain_matching(self):
-        assert is_blocked_email("user@GMAIL.COM") is False
+        assert is_blocked_email("user@MAILINATOR.COM") is False
         assert is_blocked_email("user@Example.Com") is True
-        assert is_blocked_email("user@YAHOO.COM") is False
+        assert is_blocked_email("user@TEMPMAIL.COM") is False
 
     def test_empty_email_is_blocked(self):
         assert is_blocked_email("") is True
@@ -62,9 +62,9 @@ class TestIsBlockedEmail:
         assert is_blocked_email("   ") is True
 
     def test_email_with_whitespace_is_handled(self):
-        assert is_blocked_email(" user@gmail.com ") is False
+        assert is_blocked_email(" user@mailinator.com ") is False
         assert is_blocked_email(" user@example.com ") is True
-        assert is_blocked_email(" user@yahoo.com ") is False
+        assert is_blocked_email(" user@gmail.com ") is False
 
     def test_blocked_domains_set_is_frozen(self):
         assert isinstance(BLOCKED_EMAIL_DOMAINS, frozenset)
@@ -75,5 +75,5 @@ class TestIsSendableEmail:
 
     def test_valid_is_sendable(self):
         assert is_sendable_email("user@gmail.com") is True
-        assert is_sendable_email("user@yahoo.com") is True
+        assert is_sendable_email("user@mailinator.com") is True
         assert is_sendable_email("test@example.com") is False

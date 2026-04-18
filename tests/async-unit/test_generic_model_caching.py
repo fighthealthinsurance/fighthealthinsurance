@@ -30,13 +30,10 @@ async def test_generic_question_generation_cache():
         # Create a mock model with the get_appeal_questions method
         mock_model = mock.AsyncMock()
         mock_model.get_appeal_questions.return_value = mock_questions
-        # quality() is called sync on the model; must return an int, not a coroutine
-        mock_model.quality = mock.MagicMock(return_value=50)
 
-        # generate_generic_questions concatenates partial + full backends.
-        # Return the model only from partial to avoid duplicate calls.
+        # Configure the mock_full_qa_backends to return our mock model
+        mock_full_qa_backends.return_value = [mock_model]
         mock_partial_qa_backends.return_value = [mock_model]
-        mock_full_qa_backends.return_value = []
 
         # First call should create a new cache entry
         result1 = await MLAppealQuestionsHelper.generate_generic_questions(
