@@ -22,6 +22,9 @@ class BaseTool(ABC):
     # Regex pattern to detect this tool in LLM output
     pattern: str = ""
 
+    # Regex flags used for detection (subclasses can override)
+    detect_flags: int = re.IGNORECASE
+
     # Human-readable name for status messages
     name: str = "Tool"
 
@@ -49,7 +52,7 @@ class BaseTool(ABC):
         """
         if not self.pattern:
             return None
-        return re.search(self.pattern, text, flags=re.IGNORECASE)
+        return re.search(self.pattern, text, flags=self.detect_flags)
 
     def clean_response(self, text: str, match: re.Match[str]) -> str:
         """

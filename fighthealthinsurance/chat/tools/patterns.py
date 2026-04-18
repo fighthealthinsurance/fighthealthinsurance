@@ -32,6 +32,10 @@ CREATE_OR_UPDATE_PRIOR_AUTH_REGEX = (
     r"^\s*\*{0,4}create_or_update_prior_auth\*{0,4}\s*(\{.*\})\s*$"
 )
 
+# Document fetcher tool - captures JSON with URL
+# Matches: fetch_doc {JSON} or **fetch_doc {JSON}**
+FETCH_DOC_REGEX = r"(?:\*\*)?fetch_doc\s*(\{[^}]*\})\s*(?:\*\*)?"
+
 # List of all tool patterns for scoring/detection
 ALL_TOOL_PATTERNS = [
     PUBMED_QUERY_REGEX,
@@ -39,4 +43,5 @@ ALL_TOOL_PATTERNS = [
     MEDICAID_ELIGIBILITY_REGEX,
     CREATE_OR_UPDATE_APPEAL_REGEX,
     CREATE_OR_UPDATE_PRIOR_AUTH_REGEX,
+    FETCH_DOC_REGEX,
 ]
