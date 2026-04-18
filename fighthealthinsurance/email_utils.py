@@ -10,7 +10,7 @@ BLOCKED_EMAIL_DOMAINS: frozenset[str] = frozenset(
         "example.net",
         "example.org",
         "invalid",
-        "test"
+        "test",
     }
 )
 

@@ -29,7 +29,6 @@ from stopit import ThreadingTimeout as Timeout
 from fhi_users.auth import auth_utils
 from fhi_users.models import PatientUser, ProfessionalUser, UserDomain
 from fighthealthinsurance import common_view_logic, rest_serializers as serializers
-from fighthealthinsurance.helpers.data_helpers import RemoveDataHelper
 from fighthealthinsurance.helpers.fax_helpers import SendFaxHelper
 from fighthealthinsurance.ml.health_status import health_status
 from fighthealthinsurance.ml.ml_router import ml_router
