@@ -523,7 +523,7 @@ class Test(Dev):
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.sqlite3",
-            "TIMEOUT": 1,
+            "TIMEOUT": 30,
             "CONN_MAX_AGE": 0,
             "NAME": "memory",
         },
