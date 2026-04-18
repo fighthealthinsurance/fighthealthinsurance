@@ -37,7 +37,9 @@ class DocumentationQuestionsTool(BaseTool):
     def __init__(
         self,
         send_status_message: Callable[[str], Awaitable[None]],
-        call_llm_callback: Callable[..., Awaitable[Tuple[Optional[str], Optional[str]]]],
+        call_llm_callback: Callable[
+            ..., Awaitable[Tuple[Optional[str], Optional[str]]]
+        ],
         chat: Optional[object] = None,
     ):
         super().__init__(send_status_message)
@@ -52,9 +54,7 @@ class DocumentationQuestionsTool(BaseTool):
         try:
             params = json.loads(match.group(1).strip())
         except Exception as json_err:
-            logger.debug(
-                f"Failed to parse documentation questions JSON: {json_err}"
-            )
+            logger.debug(f"Failed to parse documentation questions JSON: {json_err}")
             params = {}
 
         if not isinstance(params, dict):
@@ -67,8 +67,9 @@ class DocumentationQuestionsTool(BaseTool):
         # Get microsite documentation items if available
         doc_items = None
         chat = self.chat
-        if chat and getattr(chat, "microsite_slug", None):
-            microsite = get_microsite(chat.microsite_slug)
+        microsite_slug = getattr(chat, "microsite_slug", None) if chat else None
+        if microsite_slug:
+            microsite = get_microsite(microsite_slug)
             if microsite and microsite.journey_documentation_items:
                 doc_items = microsite.journey_documentation_items
 
@@ -99,7 +100,9 @@ class DocumentationQuestionsTool(BaseTool):
                 "Explain to the patient why each piece of information helps their appeal."
             )
         elif doc_items:
-            items_text = JourneyDocumentationHelper.format_documentation_items(doc_items)
+            items_text = JourneyDocumentationHelper.format_documentation_items(
+                doc_items
+            )
             doc_context = (
                 f"Documentation guidance for this denial:\n{items_text}\n\n"
                 "Use these to guide the conversation. Ask about one or two items at a time. "
