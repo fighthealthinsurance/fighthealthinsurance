@@ -1,5 +1,8 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
+from django.db import connection
+from django.db.models import IntegerField
+from django.db.models.expressions import RawSQL
 
 from fhi_users.audit import AuditLog
 from fhi_users.models import (
@@ -681,8 +684,31 @@ class OngoingChatAdmin(admin.ModelAdmin):
         ),
     )
 
-    @admin.display(description="Messages")
+    def get_queryset(self, request):
+        qs = super().get_queryset(request)
+        if connection.vendor == "postgresql":
+            sql = (
+                "CASE WHEN jsonb_typeof(chat_history) = 'array'"
+                " THEN jsonb_array_length(chat_history) ELSE 0 END"
+            )
+        elif connection.vendor == "mysql":
+            sql = (
+                "CASE WHEN JSON_TYPE(chat_history) = 'ARRAY'"
+                " THEN JSON_LENGTH(chat_history) ELSE 0 END"
+            )
+        else:
+            sql = (
+                "CASE WHEN json_type(chat_history) = 'array'"
+                " THEN json_array_length(chat_history) ELSE 0 END"
+            )
+        return qs.annotate(
+            chat_message_count=RawSQL(sql, [], output_field=IntegerField())
+        )
+
+    @admin.display(description="Messages", ordering="chat_message_count")
     def message_count(self, obj: OngoingChat) -> int:
+        if hasattr(obj, "chat_message_count"):
+            return int(obj.chat_message_count)
         if isinstance(obj.chat_history, list):
             return len(obj.chat_history)
         return 0
