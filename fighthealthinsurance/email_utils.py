@@ -10,13 +10,7 @@ BLOCKED_EMAIL_DOMAINS: frozenset[str] = frozenset(
         "example.net",
         "example.org",
         "invalid",
-        "test",
-        # Disposable/temporary email providers
-        "mailinator.com",
-        "guerrillamail.com",
-        "tempmail.com",
-        "throwaway.email",
-        "yopmail.com",
+        "test"
     }
 )
 
