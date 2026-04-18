@@ -446,17 +446,17 @@ class TestDocFetcherExecute(TestCase):
         tool.fetcher = MagicMock()
         tool.fetcher.fetch_and_extract_text = AsyncMock()
 
-        match = re.search(
-            FETCH_DOC_REGEX,
-            "**fetch_doc {not valid json}**",
-            re.IGNORECASE,
-        )
+        tool_call = "**fetch_doc {not valid json}**"
+        match = re.search(FETCH_DOC_REGEX, tool_call, re.IGNORECASE)
         self.assertIsNotNone(match)
-        response, _context = self._run(tool.execute(match, "original", "ctx"))
+        response, _context = self._run(
+            tool.execute(match, f"Here is info. {tool_call} More text.", "ctx")
+        )
         # Fetcher should not have been called
         tool.fetcher.fetch_and_extract_text.assert_not_called()
         # Response should have the tool call stripped
         self.assertNotIn("fetch_doc", response)
+        self.assertIn("Here is info.", response)
 
     def test_empty_url_returns_cleanly(self):
         """Test that empty URL in JSON is handled gracefully."""
