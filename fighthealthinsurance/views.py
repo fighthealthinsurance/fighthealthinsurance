@@ -634,13 +634,7 @@ def send_delete_confirmation_email(email: str, token: str) -> None:
 
 
 def request_data_deletion(email: str) -> None:
-    """Create a delete token for the given email and send a confirmation email.
-
-    Shared by both the HTML `RemoveDataView` and the REST
-    `DataRemovalViewSet` so that every public entry point into the
-    deletion flow goes through the same email-ownership verification
-    step (instead of deleting data immediately).
-    """
+    """Create a delete token for the given email and send a confirmation email."""
     hashed_email = models.Denial.get_hashed_email(email)
     # Replace any existing token for this email so only one link is live.
     DeleteToken.objects.filter(hashed_email=hashed_email).delete()

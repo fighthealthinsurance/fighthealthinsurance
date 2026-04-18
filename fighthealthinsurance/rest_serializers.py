@@ -86,13 +86,6 @@ class HealthHistoryFormSerializer(FormSerializer):
         form = core_forms.HealthHistory
 
 
-class DeleteDataFormSerializer(FormSerializer):
-    """Serializer for data deletion request form."""
-
-    class Meta(object):
-        form = core_forms.DeleteDataForm
-
-
 class ShareAppealFormSerializer(FormSerializer):
     """Serializer for sharing an appeal with another user."""
 

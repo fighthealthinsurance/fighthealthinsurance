@@ -26,12 +26,6 @@ router.register(r"chats", rest_views.ChatViewSet, basename="chats")
 router.register(r"chat-leads", chat_lead_views.ChatLeadsViewSet, basename="chat-leads")
 
 
-router.register(
-    r"data_removal",
-    rest_views.DataRemovalViewSet,
-    basename="dataremoval",
-)
-
 router.register(r"appeals", rest_views.AppealViewSet, basename="appeals")
 router.register(
     r"appeal_attachments",
