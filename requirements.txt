@@ -2,6 +2,7 @@ aiohttp
 httpx>=0.27,<1
 async-timeout
 asyncssh
+fido2<2.2.0
 asyncstdlib
 argon2-cffi
 beautifulsoup4==4.12.3
