@@ -13,7 +13,7 @@ _PDF_MAGIC = b"%PDF"
 _DOCX_MAGIC = b"PK"  # ZIP-based format
 
 
-class BaseConsentFieldsMixin(forms.Form):
+class BaseConsentForm(forms.Form):
     """Shared consent fields for forms that collect user info + TOS agreement."""
 
     first_name = forms.CharField(
@@ -72,7 +72,7 @@ class BaseConsentFieldsMixin(forms.Form):
     )
 
 
-class UnderstandPolicyForm(BaseConsentFieldsMixin):
+class UnderstandPolicyForm(BaseConsentForm):
     """Form for uploading policy documents with consent"""
 
     policy_document = forms.FileField(
@@ -171,7 +171,7 @@ class UnderstandPolicyForm(BaseConsentFieldsMixin):
         return file
 
 
-class UserConsentForm(BaseConsentFieldsMixin):
+class UserConsentForm(BaseConsentForm):
     """Form for user TOS consent and personal information collection"""
 
     phone = forms.CharField(

@@ -48,7 +48,6 @@ from fighthealthinsurance.models import (
     ChatType,
     OngoingChat,
     PolicyDocument,
-    PolicyDocumentAnalysis,
     PriorAuthRequest,
 )
 from fighthealthinsurance.microsites import get_microsite

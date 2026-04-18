@@ -1,10 +1,7 @@
 """Tests for the Understand Your Policy feature."""
 
-import io
 import json
-import uuid
 from typing import Any, Dict
-from unittest.mock import MagicMock, patch
 
 import pymupdf
 from django.core.files.uploadedfile import SimpleUploadedFile

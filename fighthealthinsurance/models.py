@@ -8,7 +8,9 @@ import typing
 import uuid
 
 from django.conf import settings
-from django.db import models
+from django.db import models, transaction
+from django.db.models.signals import post_delete
+from django.dispatch import receiver
 from django.db.models import Q
 from django.db.models.functions import Now
 from django.utils import timezone
@@ -2307,11 +2309,6 @@ class PolicyDocument(ExportModelOperationsMixin("PolicyDocument"), models.Model)
         return f"PolicyDocument: {self.filename or self.id} ({self.document_type})"
 
 
-from django.db import transaction
-from django.db.models.signals import post_delete
-from django.dispatch import receiver
-
-
 @receiver(post_delete, sender=PolicyDocument)
 def _delete_policy_document_file(
     sender: type, instance: "PolicyDocument", **kwargs: typing.Any
@@ -2327,7 +2324,9 @@ def _delete_policy_document_file(
         try:
             document_field.delete(save=False)
         except Exception:
-            logger.warning(f"Failed to delete PolicyDocument file for {instance.pk}")
+            logger.opt(exception=True).warning(
+                f"Failed to delete PolicyDocument file for {instance.pk}"
+            )
 
     transaction.on_commit(_delete_file, using=using)
 
