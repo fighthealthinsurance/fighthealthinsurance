@@ -898,9 +898,7 @@ class ChatInterface:
                     policy_doc = await PolicyDocument.objects.filter(id=doc_id).afirst()
 
             if not policy_doc and session_key:
-                logger.debug(
-                    f"Fallback to session_key lookup for policy doc, session_key={session_key}"
-                )
+                logger.debug("Fallback to session_key lookup for policy doc")
                 policy_doc = (
                     await PolicyDocument.objects.filter(session_key=session_key)
                     .order_by("-created_at")
@@ -911,8 +909,8 @@ class ChatInterface:
                 )
 
             if not policy_doc:
-                logger.debug(f"No policy document found for session {session_key}")
-                await self.send_status_message(
+                logger.debug("No policy document found for session")
+                await self.send_error_message(
                     "I couldn't find the uploaded policy document for this chat. "
                     "Please re-upload it from the Understand My Policy page."
                 )
@@ -991,7 +989,7 @@ class ChatInterface:
 
                 logger.info(f"Policy analysis completed for chat {chat.id}")
             else:
-                await self.send_status_message(
+                await self.send_error_message(
                     "Could not analyze the policy document. Please try again or contact support."
                 )
 
@@ -999,7 +997,7 @@ class ChatInterface:
             logger.opt(exception=True).warning(
                 f"Error handling policy analysis for chat {chat.id}: {e}"
             )
-            await self.send_status_message(
+            await self.send_error_message(
                 "There was an error analyzing your policy document. "
                 "Please try again or continue with your question."
             )

@@ -327,12 +327,13 @@ class MLPolicyDocHelper:
 
         for page_num in sorted(page_dict.keys()):
             page_text = page_dict[page_num]
+            marked = f"[Page/Section {page_num}]\n{page_text}\n"
             # If adding this page would exceed chunk size, flush current chunk
-            if current_text and len(current_text) + len(page_text) > cls.CHUNK_SIZE:
+            if current_text and len(current_text) + len(marked) > cls.CHUNK_SIZE:
                 chunks.append({"text": current_text, "pages": list(current_pages)})
                 current_text = ""
                 current_pages = []
-            current_text += f"[Page/Section {page_num}]\n{page_text}\n"
+            current_text += marked
             current_pages.append(page_num)
 
         # Flush remaining
