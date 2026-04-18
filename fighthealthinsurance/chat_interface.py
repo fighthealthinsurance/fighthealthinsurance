@@ -923,14 +923,22 @@ class ChatInterface:
 
             # Extract user's specific question from the message if present
             user_question = None
-            question_match = re.search(r"My question:\s*(.+?)(?:\n|$)", user_message)
+            question_match = re.search(
+                r"My question:\s*(.+?)(?:\n\s*\n|(?:\n)?Please analyze\b|$)",
+                user_message,
+                re.DOTALL,
+            )
             if question_match:
-                user_question = question_match.group(1).strip()
+                user_question = re.sub(r"\s+", " ", question_match.group(1)).strip()
 
             # Progress callback for countdown display
             async def _progress_callback(remaining: int, total: int) -> None:
                 if total == 0:
                     await self.send_status_message("Finalizing analysis...")
+                elif total == 1 and remaining == 1:
+                    await self.send_status_message(
+                        "Combining findings into final analysis..."
+                    )
                 elif remaining == total:
                     await self.send_status_message(
                         f"Launching {total} analysis agents..."

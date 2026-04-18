@@ -515,7 +515,7 @@ class MLPolicyDocHelper:
 
                 # Step 4: Synthesize chunk summaries into final analysis
                 if progress_callback:
-                    await progress_callback(0, 1)
+                    await progress_callback(1, 1)
 
                 analysis_results = await cls._synthesize_chunk_summaries(
                     chunk_summaries,

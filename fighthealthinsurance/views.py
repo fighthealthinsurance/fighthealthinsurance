@@ -2273,8 +2273,9 @@ class UnderstandPolicyView(FormView):
 
         initial_message += "\n"
 
-        if user_question:
-            initial_message += f"My question: {user_question}\n\n"
+        normalized_question = re.sub(r"\s+", " ", user_question).strip()
+        if normalized_question:
+            initial_message += f"My question: {normalized_question}\n\n"
 
         initial_message += (
             "Please analyze this document and help me understand:\n"
