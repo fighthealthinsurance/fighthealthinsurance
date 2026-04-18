@@ -318,6 +318,8 @@ class ChatInterface:
             depth=depth,
             is_logged_in=is_logged_in,
             is_professional=is_professional,
+            fallback_backends=fallback_backends,
+            full_history=full_history,
         )
 
         # Non-recursive tools: appeal, prior auth
@@ -366,7 +368,7 @@ class ChatInterface:
             response_text, context, **tool_kwargs
         )
 
-        logger.debug(f"Return with context {context}.")
+        logger.debug(f"Return with context length {len(context) if context else 0}.")
         return response_text, context
 
     async def handle_chat_message(

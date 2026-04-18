@@ -167,7 +167,8 @@ class DocFetcherTool(BaseTool):
             logger.warning("fetch_doc called with empty URL")
             return cleaned_response, context
 
-        # Rate limiting
+        # Rate limiting — increment before validation so DNS resolution
+        # attempts also count toward the per-session limit
         if self._fetch_count[0] >= MAX_FETCHES_PER_SESSION:
             logger.warning(
                 f"fetch_doc rate limit reached ({MAX_FETCHES_PER_SESSION} per session)"
@@ -177,6 +178,8 @@ class DocFetcherTool(BaseTool):
             )
             return cleaned_response, context
 
+        self._fetch_count[0] += 1
+
         try:
             await validate_url(url)
         except ValueError as e:
@@ -185,7 +188,6 @@ class DocFetcherTool(BaseTool):
             return cleaned_response, context
 
         safe_url = _sanitize_url_for_display(url)
-        self._fetch_count[0] += 1
         await self.send_status_message(f"Fetching document from {safe_url}...")
 
         try:
