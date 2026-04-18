@@ -28,9 +28,19 @@ MAX_FETCHES_PER_SESSION = 3
 
 
 def _sanitize_url_for_display(url: str) -> str:
-    """Strip query params and fragments from a URL for safe display in status messages."""
+    """Strip sensitive URL components for safe display in status messages."""
     parsed = urlparse(url)
-    return urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", "", ""))
+    hostname = parsed.hostname
+    if hostname is not None:
+        display_host = f"[{hostname}]" if ":" in hostname else hostname
+        try:
+            port = parsed.port
+        except ValueError:
+            port = None
+        netloc = f"{display_host}:{port}" if port is not None else display_host
+    else:
+        netloc = parsed.netloc.rsplit("@", 1)[-1]
+    return urlunparse((parsed.scheme, netloc, parsed.path, "", "", ""))
 
 
 async def validate_url(url: str) -> None:
@@ -82,10 +92,9 @@ async def validate_url(url: str) -> None:
         try:
             ip = ipaddress.ip_address(ip_str)
         except ValueError:
-            # If ip_address parsing fails, skip this entry
             continue
-        if ip.is_private or ip.is_reserved or ip.is_loopback or ip.is_link_local:
-            raise ValueError(f"Cannot fetch from private/reserved IP address: {ip_str}")
+        if not ip.is_global:
+            raise ValueError(f"Cannot fetch from non-global IP address: {ip_str}")
 
 
 class DocFetcherTool(BaseTool):
@@ -146,7 +155,14 @@ class DocFetcherTool(BaseTool):
             logger.warning(f"Invalid JSON in fetch_doc: {json_str}: {e}")
             return cleaned_response, context
 
-        url = params.get("url", "").strip()
+        if not isinstance(params, dict):
+            logger.warning(
+                f"fetch_doc called with non-object JSON: {type(params).__name__}"
+            )
+            return cleaned_response, context
+
+        url_value = params.get("url", "")
+        url = url_value.strip() if isinstance(url_value, str) else ""
         if not url:
             logger.warning("fetch_doc called with empty URL")
             return cleaned_response, context

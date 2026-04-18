@@ -359,6 +359,14 @@ class TestSanitizeUrlForDisplay(TestCase):
         sanitized = _sanitize_url_for_display(url)
         self.assertEqual(sanitized, "https://example.com/path/to/resource.pdf")
 
+    def test_strips_userinfo(self):
+        """Test that userinfo (credentials) is stripped from netloc."""
+        url = "https://user:pass@example.com/doc.pdf"
+        sanitized = _sanitize_url_for_display(url)
+        self.assertNotIn("user", sanitized)
+        self.assertNotIn("pass", sanitized)
+        self.assertIn("example.com", sanitized)
+
 
 class TestDocFetcherRateLimit(TestCase):
     """Test rate limiting in DocFetcherTool."""

@@ -158,6 +158,10 @@ class AppealTool(BaseTool):
                         appeal_data["hashed_email"] = Denial.get_hashed_email(
                             user_email
                         )
+                elif appeal_data.get("email"):
+                    appeal_data["hashed_email"] = Denial.get_hashed_email(
+                        appeal_data["email"]
+                    )
 
         return appeal, denial
 

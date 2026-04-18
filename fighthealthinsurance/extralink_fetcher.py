@@ -557,14 +557,27 @@ class ExtraLinkFetcher:
 
                     response.raise_for_status()
                     content_type = response.headers.get("Content-Type", "unknown")
-                    content = await response.read()
 
-                    if len(content) > self.MAX_FILE_SIZE:
-                        raise ValueError(
-                            f"File too large: {len(content)} bytes "
-                            f"(max {self.MAX_FILE_SIZE})"
-                        )
+                    # Reject early if Content-Length exceeds limit
+                    content_length = response.headers.get("Content-Length")
+                    if content_length and content_length.isdigit():
+                        if int(content_length) > self.MAX_FILE_SIZE:
+                            raise ValueError(
+                                f"File too large: {content_length} bytes "
+                                f"(max {self.MAX_FILE_SIZE})"
+                            )
 
+                    # Stream response to avoid memory spikes on large files
+                    chunks = bytearray()
+                    async for chunk in response.content.iter_chunked(64 * 1024):
+                        chunks.extend(chunk)
+                        if len(chunks) > self.MAX_FILE_SIZE:
+                            raise ValueError(
+                                f"File too large: >{self.MAX_FILE_SIZE} bytes "
+                                f"(max {self.MAX_FILE_SIZE})"
+                            )
+
+                    content = bytes(chunks)
                     return content, content_type, len(content)
 
             raise ValueError(f"Too many redirects (max {max_redirects})")
