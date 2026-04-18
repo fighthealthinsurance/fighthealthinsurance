@@ -256,6 +256,35 @@ class TestTryEuropePmc:
         session = _make_mock_session(responses=[resp])
         assert await tools._try_europe_pmc("12345", session, timeout_secs=5.0) is None
 
+    async def test_skips_entry_with_missing_url(self, tools):
+        # Regression: first-pass scan must not return "None" string when url key is absent
+        resp = _make_mock_response(
+            json_data={
+                "resultList": {
+                    "result": [
+                        {
+                            "fullTextUrlList": {
+                                "fullTextUrl": [
+                                    {
+                                        "documentStyle": "pdf",
+                                        "availabilityCode": "OA",
+                                    },
+                                    {
+                                        "documentStyle": "html",
+                                        "availabilityCode": "OA",
+                                        "url": "https://europepmc.org/article/12345",
+                                    },
+                                ]
+                            }
+                        }
+                    ]
+                }
+            }
+        )
+        session = _make_mock_session(responses=[resp])
+        result = await tools._try_europe_pmc("12345", session, timeout_secs=5.0)
+        assert result == "https://europepmc.org/article/12345"
+
 
 @pytest.mark.asyncio
 class TestTryUnpaywall:
@@ -443,6 +472,9 @@ class TestQueryBiorxiv:
             ("details", {"collection": []}),
             ("pubs", {"collection": []}),
             ("pubs", {"collection": [{"some_other_field": "value"}]}),
+            # Regression: explicit null doi must not build "None" URL
+            ("details", {"collection": [{"doi": None}]}),
+            ("pubs", {"collection": [{"preprint_doi": None}]}),
         ],
     )
     async def test_returns_none_on_empty_or_missing_data(

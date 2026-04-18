@@ -162,14 +162,15 @@ class PubMedTools(object):
             return None
         ft_urls = results[0].get("fullTextUrlList", {}).get("fullTextUrl", [])
         for ft in ft_urls:
-            if ft.get("documentStyle") == "pdf" and ft.get("availabilityCode") in (
-                "OA",
-                "F",
+            if (
+                ft.get("documentStyle") == "pdf"
+                and ft.get("availabilityCode") in ("OA", "F")
+                and ft.get("url")
             ):
-                return str(ft.get("url"))
+                return str(ft["url"])
         for ft in ft_urls:
             if ft.get("availabilityCode") in ("OA", "F") and ft.get("url"):
-                return str(ft.get("url"))
+                return str(ft["url"])
         return None
 
     async def _try_unpaywall(
@@ -211,9 +212,9 @@ class PubMedTools(object):
             jatsxml = last.get("jatsxml")
             if jatsxml:
                 return str(jatsxml).replace(".source.xml", ".full.pdf")
-            doi_val = str(last.get("doi", ""))
+            doi_val = last.get("doi") or ""
         else:
-            doi_val = str(last.get("preprint_doi", ""))
+            doi_val = last.get("preprint_doi") or ""
         if doi_val:
             return f"https://www.{server}.org/content/{doi_val}.full.pdf"
         return None
