@@ -377,6 +377,13 @@
         }
       }
     };
+    debounced.cancel = function() {
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+        lastArgs = lastCtx = null;
+      }
+    };
     return debounced;
   }
 
@@ -412,8 +419,12 @@
     _pendingDebouncers.forEach(function(d) { d.flush(); });
   }
 
+  function cancelPendingEdits() {
+    _pendingDebouncers.forEach(function(d) { d.cancel(); });
+  }
+
   function renderEditableMessages() {
-    flushPendingEdits();
+    cancelPendingEdits();
     _pendingDebouncers = [];
     const container = document.getElementById('edited-messages');
     const messages = getFieldValue('edited_chat_history');
@@ -465,6 +476,7 @@
   // Public API
   window._chatEditor = {
     changeRole: function(idx, newRole) {
+      flushPendingEdits();
       const messages = getFieldValue('edited_chat_history');
       if (messages[idx]) {
         messages[idx].role = newRole;
@@ -483,12 +495,14 @@
       if (!confirm('Delete this message?')) {
         return;
       }
+      flushPendingEdits();
       const messages = getFieldValue('edited_chat_history');
       messages.splice(idx, 1);
       setFieldValue('edited_chat_history', messages);
       renderEditableMessages();
     },
     moveUp: function(idx) {
+      flushPendingEdits();
       const messages = getFieldValue('edited_chat_history');
       if (idx > 0) {
         const tmp = messages[idx];
@@ -499,6 +513,7 @@
       }
     },
     moveDown: function(idx) {
+      flushPendingEdits();
       const messages = getFieldValue('edited_chat_history');
       if (idx < messages.length - 1) {
         const tmp = messages[idx];
