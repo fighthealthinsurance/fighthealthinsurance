@@ -976,14 +976,14 @@ class ChooseAppeal(View):
         # Add the possible articles for inclusion
         if candidate_articles is not None:
             for article in candidate_articles[0:6]:
-                article_id = html.escape(article.pmid or "")
-                title = html.escape(article.title or "")
-                link = f"http://www.ncbi.nlm.nih.gov/pubmed/{article_id}"
+                pmid = article.pmid or ""
+                title = article.title or ""
+                link = f"http://www.ncbi.nlm.nih.gov/pubmed/{html.escape(pmid)}"
                 label = mark_safe(
                     f"Include Summary* of PubMed Article "
-                    f"<a href='{link}'>{title} -- {article_id}</a>"
+                    f"<a href='{link}'>{html.escape(title)} -- {html.escape(pmid)}</a>"
                 )
-                fax_form.fields["pubmed_" + article_id] = forms.BooleanField(
+                fax_form.fields["pubmed_" + pmid] = forms.BooleanField(
                     label=label,
                     required=False,
                     initial=True,
