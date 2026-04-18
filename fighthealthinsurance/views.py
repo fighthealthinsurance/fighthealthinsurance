@@ -977,8 +977,13 @@ class ChooseAppeal(View):
         if candidate_articles is not None:
             for article in candidate_articles[0:6]:
                 pmid = article.pmid or ""
+                if not pmid:
+                    # fax_views.form_valid round-trips the pmid through the key
+                    # `pubmed_<pmid>`; without a pmid the submission is useless
+                    # and empty keys collide across articles.
+                    continue
                 title = article.title or ""
-                link = f"http://www.ncbi.nlm.nih.gov/pubmed/{html.escape(pmid)}"
+                link = f"https://www.ncbi.nlm.nih.gov/pubmed/{quote(pmid, safe='')}"
                 label = mark_safe(
                     f"Include Summary* of PubMed Article "
                     f"<a href='{link}'>{html.escape(title)} -- {html.escape(pmid)}</a>"
