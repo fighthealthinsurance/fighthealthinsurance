@@ -242,7 +242,10 @@ class SonicFax(FaxSenderBase):
         dest_name: Optional[str] = None,
     ):
         r = s.get(
-            "https://members.sonic.net/labs/fax", headers=self.headers, cookies=cookies
+            "https://members.sonic.net/labs/fax",
+            headers=self.headers,
+            cookies=cookies,
+            timeout=30,
         )
         r.raise_for_status()
         csrf_matched = self.csrf_regex.search(r.text)
@@ -250,11 +253,13 @@ class SonicFax(FaxSenderBase):
             raise Exception(f"No CSRF found in {r.text}")
         csrf_key = csrf_matched.group(1)
         filename = self._get_filename(path)
-        r = s.post(
-            "https://members.sonic.net/labs/fax/?a=upload",
-            files={"filename": (filename, open(path, "rb"))},
-        )
-        r.raise_for_status
+        with open(path, "rb") as f:
+            r = s.post(
+                "https://members.sonic.net/labs/fax/?a=upload",
+                files={"filename": (filename, f)},
+                timeout=60,
+            )
+        r.raise_for_status()
         r = s.post(
             "https://members.sonic.net/labs/fax/",
             data={
@@ -270,7 +275,9 @@ class SonicFax(FaxSenderBase):
                 "message": "Fight Health Insurance",
                 "includeCover": "1",
             },
+            timeout=60,
         )
+        r.raise_for_status()
 
 
 class HylaFaxClient(FaxSenderBase):

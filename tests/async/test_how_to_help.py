@@ -23,19 +23,27 @@ class TestHowToHelpPage(TestCase):
         url = reverse("how-to-help")
         result = self.client.get(url)
 
-        # Check for key sections
-        self.assertContains(result, "How You Can Help")
-        self.assertContains(result, "Share With Your Network")
-        self.assertContains(result, "Help Us Learn & Improve")
-        self.assertContains(result, "Contribute on GitHub")
-        self.assertContains(result, "Support Our Development")
+        # Check hero and persona sections
+        self.assertContains(result, "Join the Fight Against Unfair Denials")
+        self.assertContains(result, "Share the Tool")
+        self.assertContains(result, "Contribute to Open Source")
+        self.assertContains(
+            result, "Help Someone Fight a Denial They Couldn't Afford to Appeal"
+        )
+        self.assertContains(result, "Provide Cloud Resources")
+        self.assertContains(result, "Connect Us With People Who Need This")
+
+        # Check persona section IDs
+        self.assertContains(result, 'id="help-patients"')
+        self.assertContains(result, 'id="developers"')
+        self.assertContains(result, 'id="cloud"')
+        self.assertContains(result, 'id="providers"')
+        self.assertContains(result, 'id="connectors"')
 
         # Check for links to key components
-        self.assertContains(result, "chooser")  # Link to chooser interface
-        self.assertContains(
-            result, "github.com/orgs/fighthealthinsurance"
-        )  # GitHub link
-        self.assertContains(result, "buy.stripe.com")  # Donation link
+        self.assertContains(result, "chooser")
+        self.assertContains(result, "github.com/orgs/fighthealthinsurance")
+        self.assertContains(result, "buy.stripe.com")
 
     def test_how_to_help_template_used(self):
         """Test that the correct template is used."""

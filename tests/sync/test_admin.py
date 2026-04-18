@@ -2,7 +2,7 @@
 
 import json
 
-from django.test import TestCase, Client
+from django.test import TestCase, Client, RequestFactory
 from django.contrib.admin.sites import AdminSite
 from django.contrib.auth import get_user_model
 
@@ -147,6 +147,82 @@ class TestOngoingChatAdmin(TestCase):
         chat = OngoingChat(edited_chat_history=[{"role": "user", "content": "edited"}])
         self.assertTrue(self.admin.has_edited(chat))
 
+    def test_message_count_has_admin_order_field(self):
+        """message_count should be sortable via chat_message_count annotation."""
+        self.assertEqual(
+            OngoingChatAdmin.message_count.admin_order_field, "chat_message_count"
+        )
+
+    def test_message_count_prefers_annotation(self):
+        """message_count should use the annotated value when present."""
+        chat = OngoingChat(chat_history=[{"role": "user", "content": "hi"}])
+        chat.chat_message_count = 42  # Simulated annotation
+        self.assertEqual(self.admin.message_count(chat), 42)
+
+
+class TestOngoingChatAdminQueryset(TestCase):
+    """Test OngoingChatAdmin.get_queryset annotation for message count sorting."""
+
+    def setUp(self):
+        self.site = AdminSite()
+        self.admin = OngoingChatAdmin(OngoingChat, self.site)
+        self.factory = RequestFactory()
+        self.admin_user = User.objects.create_superuser(
+            username="admin", email="admin@test.com", password="adminpass123"
+        )
+
+    def _request(self):
+        request = self.factory.get("/")
+        request.user = self.admin_user
+        return request
+
+    def test_get_queryset_annotates_message_count_for_list(self):
+        """get_queryset should expose chat_message_count matching list length."""
+        OngoingChat.objects.create(chat_history=[])
+        OngoingChat.objects.create(chat_history=[{"role": "user", "content": "a"}])
+        OngoingChat.objects.create(
+            chat_history=[
+                {"role": "user", "content": "a"},
+                {"role": "assistant", "content": "b"},
+                {"role": "user", "content": "c"},
+            ]
+        )
+        qs = self.admin.get_queryset(self._request())
+        counts = sorted(chat.chat_message_count for chat in qs)
+        self.assertEqual(counts, [0, 1, 3])
+
+    def test_get_queryset_handles_non_array_chat_history(self):
+        """get_queryset should return 0 for non-array JSON (malformed data)."""
+        # Default empty list
+        OngoingChat.objects.create(chat_history=[])
+        # Dict (not an array) - should count as 0
+        OngoingChat.objects.create(chat_history={"not": "an array"})
+        # Scalar - should count as 0
+        OngoingChat.objects.create(chat_history=42)
+        qs = self.admin.get_queryset(self._request())
+        counts = sorted(chat.chat_message_count for chat in qs)
+        self.assertEqual(counts, [0, 0, 0])
+
+    def test_get_queryset_enables_ordering_by_message_count(self):
+        """Annotation should allow ORDER BY chat_message_count."""
+        small = OngoingChat.objects.create(
+            chat_history=[{"role": "user", "content": "hi"}]
+        )
+        big = OngoingChat.objects.create(
+            chat_history=[
+                {"role": "user", "content": "a"},
+                {"role": "assistant", "content": "b"},
+            ]
+        )
+        qs = self.admin.get_queryset(self._request()).order_by("chat_message_count")
+        ordered_ids = list(qs.values_list("id", flat=True))
+        self.assertEqual(ordered_ids, [small.id, big.id])
+        # Reverse ordering
+        qs_desc = self.admin.get_queryset(self._request()).order_by(
+            "-chat_message_count"
+        )
+        self.assertEqual(list(qs_desc.values_list("id", flat=True)), [big.id, small.id])
+
 
 class TestAdminAccess(TestCase):
     """Test admin page access for superusers."""
@@ -229,6 +305,62 @@ class TestAdminAccess(TestCase):
         self.assertNotContains(response, 'id="original-messages"')
         # The CSS hiding rule should NOT be emitted on the add page
         self.assertNotContains(response, ".field-chat_history,")
+
+    def test_ongoingchat_change_form_has_copy_toolbar(self):
+        """Change form should include copy toolbar buttons for both tabs."""
+        self.client.login(username="admin", password="adminpass123")
+        chat = OngoingChat.objects.create(
+            chat_history=[{"role": "user", "content": "test"}]
+        )
+        response = self.client.get(
+            f"{self.ADMIN_URL}fighthealthinsurance/ongoingchat/{chat.pk}/change/"
+        )
+        self.assertEqual(response.status_code, 200)
+        # Both tabs should have toolbars
+        self.assertContains(response, 'id="original-copy-toolbar"')
+        self.assertContains(response, 'id="edited-copy-toolbar"')
+        # Copy buttons should be present
+        self.assertContains(response, "Copy Selected as Text")
+        self.assertContains(response, "Copy Selected as JSON")
+        self.assertContains(response, "Copy All as Text")
+        self.assertContains(response, "Copy All as JSON")
+        self.assertContains(response, "Select All")
+        self.assertContains(response, "Deselect All")
+
+    def test_ongoingchat_change_form_has_accessible_toast(self):
+        """Change form should include an accessible live region for copy feedback."""
+        self.client.login(username="admin", password="adminpass123")
+        chat = OngoingChat.objects.create(chat_history=[])
+        response = self.client.get(
+            f"{self.ADMIN_URL}fighthealthinsurance/ongoingchat/{chat.pk}/change/"
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'id="copy-toast"')
+        self.assertContains(response, 'role="status"')
+        self.assertContains(response, 'aria-live="polite"')
+        self.assertContains(response, 'aria-atomic="true"')
+
+    def test_ongoingchat_changelist_sortable_by_message_count(self):
+        """Changelist should load when sorted by the message_count column."""
+        self.client.login(username="admin", password="adminpass123")
+        OngoingChat.objects.create(chat_history=[{"role": "user", "content": "a"}])
+        OngoingChat.objects.create(
+            chat_history=[
+                {"role": "user", "content": "a"},
+                {"role": "assistant", "content": "b"},
+            ]
+        )
+        # Django admin sort uses 1-indexed list_display position; message_count is
+        # the 8th entry in list_display. Verify the URL works without SQL errors.
+        response = self.client.get(
+            f"{self.ADMIN_URL}fighthealthinsurance/ongoingchat/?o=8"
+        )
+        self.assertEqual(response.status_code, 200)
+        # Descending sort
+        response = self.client.get(
+            f"{self.ADMIN_URL}fighthealthinsurance/ongoingchat/?o=-8"
+        )
+        self.assertEqual(response.status_code, 200)
 
 
 class TestOngoingChatAdminEditing(TestCase):

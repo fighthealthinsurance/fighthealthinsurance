@@ -283,6 +283,7 @@ class ChatInterface:
             call_scores,
             primary_calls=calls,
             chat_history=chat.chat_history,
+            current_message=current_message_for_llm,
         )
 
         try:

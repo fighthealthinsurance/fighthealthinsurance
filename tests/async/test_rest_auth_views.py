@@ -48,7 +48,7 @@ class RestAuthViewsTests(TestCase):
         self.user = User.objects.create_user(
             username=f"testuser🐼{self.domain.id}",
             password=self.user_password,
-            email="test@example.com",
+            email="test@test-fhi.com",
         )
         self.user.is_active = True
         self.user.save()
@@ -117,7 +117,7 @@ class RestAuthViewsTests(TestCase):
         data = {
             "username": "newuser",
             "password": "newLongerPasswordMagicCheetoCheeto123",
-            "email": "newuser1289@example.com",
+            "email": "newuser1289@test-fhi.com",
             "provider_phone_number": "1234567890",
             "country": "USA",
             "state": "CA",
@@ -130,7 +130,7 @@ class RestAuthViewsTests(TestCase):
         response = self.client.post(url, data, format="json")
         self.assertIn(response.status_code, range(200, 300))
         self.assertEqual(response.json()["status"], "pending")
-        new_user = User.objects.get(email="newuser1289@example.com")
+        new_user = User.objects.get(email="newuser1289@test-fhi.com")
         token = VerificationToken.objects.get(user=new_user)
         new_user_user_extra_properties = ExtraUserProperties.objects.get(user=new_user)
         self.assertFalse(new_user_user_extra_properties.email_verified)
@@ -168,9 +168,9 @@ class RestAuthViewsTests(TestCase):
         url = reverse("patient_user-list")
         # Test with first_name and last_name
         data = {
-            "username": "nameuser1@example.com",
+            "username": "nameuser1@test-fhi.com",
             "password": "SecurePassword123",
-            "email": "nameuser1@example.com",
+            "email": "nameuser1@test-fhi.com",
             "first_name": "Test",
             "last_name": "User",
             "provider_phone_number": "1234567890",
@@ -186,7 +186,7 @@ class RestAuthViewsTests(TestCase):
         self.assertEqual(response.json()["status"], "pending")
 
         # Verify user was created with correct name
-        new_user1 = User.objects.get(email="nameuser1@example.com")
+        new_user1 = User.objects.get(email="nameuser1@test-fhi.com")
         self.assertEqual(new_user1.first_name, "Test")
         self.assertEqual(new_user1.last_name, "User")
 
@@ -212,7 +212,7 @@ class RestAuthViewsTests(TestCase):
         data = {
             "username": "newuser",
             "password": "newLongerPasswordMagicCheetoCheeto123",
-            "email": "newuser1289@example.com",
+            "email": "newuser1289@test-fhi.com",
             "provider_phone_number": "1234567890",
             "country": "USA",
             "state": "CA",
@@ -224,7 +224,7 @@ class RestAuthViewsTests(TestCase):
         }
         response = self.client.post(url, data, format="json")
         self.assertIn(response.status_code, range(200, 300))
-        new_user = User.objects.get(email="newuser1289@example.com")
+        new_user = User.objects.get(email="newuser1289@test-fhi.com")
         token = VerificationToken.objects.get(user=new_user)
         self.assertIsNotNone(token)
         # Check that two messages have been sent (one to BCC)
@@ -286,7 +286,7 @@ class RestAuthViewsTests(TestCase):
             "user_signup_info": {
                 "username": "newprouser",
                 "password": "newLongerPasswordMagicCheetoCheeto123",
-                "email": "newprouser@example.com",
+                "email": "newprouser@test-fhi.com",
                 "first_name": "New",
                 "last_name": "User",
                 "domain_name": "newdomain",
@@ -318,7 +318,7 @@ class RestAuthViewsTests(TestCase):
             "user_signup_info": {
                 "username": "newprouser2",
                 "password": "newLongerPasswordMagicCheetoCheeto123",
-                "email": "newprouser2@example.com",
+                "email": "newprouser2@test-fhi.com",
                 "first_name": "New",
                 "last_name": "User",
                 "domain_name": "testdomain",
@@ -349,7 +349,7 @@ class RestAuthViewsTests(TestCase):
             "user_signup_info": {
                 "username": "newprouser2",
                 "password": "newLongerPasswordMagicCheetoCheeto123",
-                "email": "newprouser2@example.com",
+                "email": "newprouser2@test-fhi.com",
                 "first_name": "New",
                 "last_name": "User",
                 "domain_name": "testdomain",
@@ -367,7 +367,7 @@ class RestAuthViewsTests(TestCase):
             "user_signup_info": {
                 "username": "newprouser3",
                 "password": "newLongerPasswordMagicCheetoCheeto123",
-                "email": "newprouser3@example.com",
+                "email": "newprouser3@test-fhi.com",
                 "first_name": "New",
                 "last_name": "User",
                 "domain_name": "anothernewdomain",
@@ -654,7 +654,7 @@ class RestAuthViewsTests(TestCase):
             "user_signup_info": {
                 "username": "shortpass",
                 "password": "short",  # Too short password
-                "email": "shortpass@example.com",
+                "email": "shortpass@test-fhi.com",
                 "first_name": "Short",
                 "last_name": "Pass",
                 "domain_name": "newshortpass",
@@ -683,9 +683,9 @@ class RestAuthViewsTests(TestCase):
         url = reverse("patient_user-list")
         # Create first patient user
         data = {
-            "username": "duplicate_patient@example.com",
+            "username": "duplicate_patient@test-fhi.com",
             "password": "SecurePassword123",
-            "email": "duplicate_patient@example.com",
+            "email": "duplicate_patient@test-fhi.com",
             "provider_phone_number": "1234567890",
             "country": "USA",
             "state": "CA",
@@ -701,12 +701,12 @@ class RestAuthViewsTests(TestCase):
 
         # Verify user was created
         self.assertTrue(
-            User.objects.filter(email="duplicate_patient@example.com").exists()
+            User.objects.filter(email="duplicate_patient@test-fhi.com").exists()
         )
 
         # Try to create a second user with the same email and username
         data2 = dict(data)
-        data2["username"] = "duplicate_patient@example.com"
+        data2["username"] = "duplicate_patient@test-fhi.com"
 
         response2 = self.client.post(url, data2, format="json")
 
@@ -724,7 +724,7 @@ class RestAuthViewsTests(TestCase):
         test_user = User.objects.create_user(
             username=f"throttleuser🐼{self.domain.id}",
             password="testpass123",
-            email="throttle@example.com",
+            email="throttle@test-fhi.com",
         )
         test_user.is_active = False
         test_user.save()
@@ -766,7 +766,7 @@ class RestAuthViewsTests(TestCase):
         test_user = User.objects.create_user(
             username=f"firstonlyuser🐼{self.domain.id}",
             password="testpass123",
-            email="firstonly@example.com",
+            email="firstonly@test-fhi.com",
         )
         test_user.is_active = False
         test_user.save()
@@ -805,9 +805,9 @@ class TestE2EProfessionalUserSignupFlow(TestCase):
         signup_url = reverse("professional_user-list")
         data = {
             "user_signup_info": {
-                "username": "testpro@example.com",
+                "username": "testpro@test-fhi.com",
                 "password": "temp12345",
-                "email": "testpro@example.com",
+                "email": "testpro@test-fhi.com",
                 "first_name": "Test",
                 "last_name": "Pro",
                 "domain_name": domain_name,
@@ -834,7 +834,7 @@ class TestE2EProfessionalUserSignupFlow(TestCase):
         self.assertEqual(len(mail.outbox), old_outbox)
 
         # Simulate Stripe webhook call to trigger the email
-        new_user = User.objects.get(email="testpro@example.com")
+        new_user = User.objects.get(email="testpro@test-fhi.com")
         from fighthealthinsurance.helpers.stripe_helpers import StripeWebhookHelper
 
         stripe_event = {
@@ -875,7 +875,7 @@ class TestE2EProfessionalUserSignupFlow(TestCase):
         # Ok but hit the rest endpoint for the login so we have a domain id
         login_url = reverse("rest_login-login")
         data = {
-            "username": "testpro@example.com",
+            "username": "testpro@test-fhi.com",
             "password": "temp12345",
             "domain": domain_name,
         }
@@ -885,7 +885,7 @@ class TestE2EProfessionalUserSignupFlow(TestCase):
         # Have the now logged in pro-user start to make an appeal
         get_pending_url = reverse("patient_user-get-or-create-pending")
         data = {
-            "username": "testpro@example.com",
+            "username": "testpro@test-fhi.com",
             "first_name": "fname",
             "last_name": "lname",
         }
@@ -899,7 +899,7 @@ class TestE2EProfessionalUserSignupFlow(TestCase):
         denial_data = {
             "insurance_company": "Test Insurer",
             "denial_text": "Sample denial text",
-            "email": "testpro@example.com",
+            "email": "testpro@test-fhi.com",
             "patient_id": patient_id,
             "pii": True,
             "tos": True,
@@ -919,7 +919,7 @@ class TestE2EProfessionalUserSignupFlow(TestCase):
         # Do initial signup
         domain_name = "retry_domain"
         phone_number = "5551234567"
-        email = "retry@example.com"
+        email = "retry@test-fhi.com"
 
         signup_url = reverse("professional_user-list")
         data = {
@@ -998,7 +998,7 @@ class TestE2EProfessionalUserSignupFlow(TestCase):
         # Initial signup
         domain_name = "active_domain"
         phone_number = "5551111111"
-        email = "active@example.com"
+        email = "active@test-fhi.com"
 
         signup_url = reverse("professional_user-list")
         data = {
@@ -1046,7 +1046,7 @@ class TestE2EProfessionalUserSignupFlow(TestCase):
         # Initial signup
         domain_name = "shared_domain"
         phone_number = "5552222222"
-        email = "first@example.com"
+        email = "first@test-fhi.com"
 
         signup_url = reverse("professional_user-list")
         data = {
@@ -1081,8 +1081,8 @@ class TestE2EProfessionalUserSignupFlow(TestCase):
         # Second user with same domain name
         data2 = data.copy()
         data2["user_signup_info"] = data["user_signup_info"].copy()
-        data2["user_signup_info"]["email"] = "second@example.com"
-        data2["user_signup_info"]["username"] = "second@example.com"
+        data2["user_signup_info"]["email"] = "second@test-fhi.com"
+        data2["user_signup_info"]["username"] = "second@test-fhi.com"
 
         # Attempt signup with different email but same domain name
         response = self.client.post(signup_url, data2, format="json")
@@ -1094,7 +1094,7 @@ class TestE2EProfessionalUserSignupFlow(TestCase):
         # Initial signup
         domain_name = "session_domain"
         phone_number = "5553333333"
-        email = "session@example.com"
+        email = "session@test-fhi.com"
 
         signup_url = reverse("professional_user-list")
         data = {
@@ -1167,7 +1167,7 @@ class ProfessionalInvitationTests(TestCase):
         self.admin_user = User.objects.create_user(
             username=f"adminuser🐼{self.domain.id}",
             password=self.admin_password,
-            email="admin@example.com",
+            email="admin@test-fhi.com",
             first_name="Admin",
             last_name="User",
         )
@@ -1194,7 +1194,7 @@ class ProfessionalInvitationTests(TestCase):
         self.regular_user = User.objects.create_user(
             username=f"regularuser🐼{self.domain.id}",
             password=self.regular_password,
-            email="regular@example.com",
+            email="regular@test-fhi.com",
             first_name="Regular",
             last_name="User",
         )
@@ -1234,7 +1234,7 @@ class ProfessionalInvitationTests(TestCase):
         # Send invitation
         invite_url = reverse("professional_user-invite")
         invite_data = {
-            "user_email": "newinvite@example.com",
+            "user_email": "newinvite@test-fhi.com",
             "name": "New Professional",
         }
 
@@ -1248,7 +1248,7 @@ class ProfessionalInvitationTests(TestCase):
         # Verify email was sent + BCC
         self.assertEqual(len(mail.outbox), mail_count_before + 2)
         self.assertEqual(mail.outbox[-2].subject, "Invitation to Join Practice")
-        self.assertIn("newinvite@example.com", mail.outbox[-2].to)
+        self.assertIn("newinvite@test-fhi.com", mail.outbox[-2].to)
 
         # Check email content
         email_content = mail.outbox[-2].body
@@ -1271,7 +1271,7 @@ class ProfessionalInvitationTests(TestCase):
         # Try to send invitation
         invite_url = reverse("professional_user-invite")
         invite_data = {
-            "user_email": "newinvite@example.com",
+            "user_email": "newinvite@test-fhi.com",
             "name": "New Professional",
         }
 
@@ -1285,7 +1285,7 @@ class ProfessionalInvitationTests(TestCase):
         # Try to send invitation without logging in
         invite_url = reverse("professional_user-invite")
         invite_data = {
-            "user_email": "newinvite@example.com",
+            "user_email": "newinvite@test-fhi.com",
             "name": "New Professional",
         }
 
@@ -1393,7 +1393,7 @@ class CreateProfessionalInDomainTests(TestCase):
         self.admin_user = User.objects.create_user(
             username=f"adminuser🐼{self.domain.id}",
             password=self.admin_password,
-            email="admin@example.com",
+            email="admin@test-fhi.com",
             first_name="Admin",
             last_name="User",
         )
@@ -1420,7 +1420,7 @@ class CreateProfessionalInDomainTests(TestCase):
         self.regular_user = User.objects.create_user(
             username=f"regularuser🐼{self.domain.id}",
             password=self.regular_password,
-            email="regular@example.com",
+            email="regular@test-fhi.com",
             first_name="Regular",
             last_name="User",
         )
@@ -1460,7 +1460,7 @@ class CreateProfessionalInDomainTests(TestCase):
         # Create provider
         create_url = reverse("professional_user-create-professional-in-current-domain")
         provider_data = {
-            "email": "newprovider@example.com",
+            "email": "newprovider@test-fhi.com",
             "first_name": "New",
             "last_name": "Provider",
             "npi_number": "1234567890",
@@ -1475,7 +1475,7 @@ class CreateProfessionalInDomainTests(TestCase):
         self.assertEqual(response.json()["status"], "professional_created")
 
         # Check that user was created
-        new_user = User.objects.get(email="newprovider@example.com")
+        new_user = User.objects.get(email="newprovider@test-fhi.com")
         self.assertEqual(new_user.first_name, "New")
         self.assertEqual(new_user.last_name, "Provider")
         # User object should not be active so they can not log in yet
@@ -1594,7 +1594,7 @@ class GetBillingUrlTests(TestCase):
         self.admin_user = User.objects.create_user(
             username=f"adminbillinguser🐼{self.domain.id}",
             password=self.admin_password,
-            email="adminbilling@example.com",
+            email="adminbilling@test-fhi.com",
             first_name="Admin",
             last_name="Billing",
         )
@@ -1615,7 +1615,7 @@ class GetBillingUrlTests(TestCase):
         self.regular_user = User.objects.create_user(
             username=f"regularbillinguser🐼{self.domain.id}",
             password=self.regular_password,
-            email="regularbilling@example.com",
+            email="regularbilling@test-fhi.com",
             first_name="Regular",
             last_name="Billing",
         )

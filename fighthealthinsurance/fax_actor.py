@@ -4,15 +4,50 @@ import uuid
 from datetime import timedelta
 from typing import Tuple, Union
 
-from django.core.mail import EmailMultiAlternatives
+from django.conf import settings
+from django.core.mail import EmailMultiAlternatives, send_mail
 from django.template.loader import render_to_string
 from django.urls import reverse
 from django.utils import timezone
 
 import ray
 
+from loguru import logger
+
 from fighthealthinsurance.fax_utils import *
 from fighthealthinsurance.utils import get_env_variable
+
+
+def send_fax_status_notification(
+    fax, fax_success, missing_destination, missing_denial=False
+):
+    """Send internal notification email about fax status to support."""
+    notify = get_env_variable("FAX_STATUS_NOTIFICATIONS", "true").lower() == "true"
+    if not notify:
+        return
+    status = "SUCCESS" if fax_success else "FAILED"
+    if missing_destination:
+        status = "FAILED (missing destination)"
+    if missing_denial:
+        status = "FAILED (missing denial)"
+    denial_id = getattr(fax.denial_id, "pk", None)
+    body = (
+        f"Fax Status: {status}\n"
+        f"Fax ID: {fax.fax_id}\n"
+        f"UUID: {fax.uuid}\n"
+        f"Destination: {fax.destination or 'N/A'}\n"
+        f"Denial ID: {denial_id}\n"
+        f"Professional: {fax.professional}\n"
+    )
+    try:
+        send_mail(
+            f"Fax {status} - ID {fax.fax_id}",
+            body,
+            settings.DEFAULT_FROM_EMAIL,
+            ["support42@fighthealthinsurance.com"],
+        )
+    except Exception:
+        logger.opt(exception=True).error("Error sending fax status notification")
 
 
 @ray.remote(max_restarts=-1, max_task_retries=-1)
@@ -137,6 +172,7 @@ class FaxActor:
         fax.sent = True
         fax.fax_success = fax_success
         fax.save()
+        send_fax_status_notification(fax, fax_success, missing_destination)
         self._logger.debug(f"Checking if we should notify user of result {fax_success}")
         if fax.professional:
             self._logger.debug("Professional fax, updating appeal")
@@ -148,6 +184,11 @@ class FaxActor:
             else:
                 self._logger.warning(f"No appeal found for professional {fax}")
                 return True
+        from fighthealthinsurance.email_utils import is_blocked_email
+
+        if is_blocked_email(email):
+            self._logger.info("Skipping fax follow-up email to blocked address")
+            return True
         fax_redo_link = "https://www.fighthealthinsurance.com" + reverse(
             "fax-followup",
             kwargs={
@@ -187,6 +228,7 @@ class FaxActor:
         denial = fax.denial_id
         if denial is None:
             self._logger.warning(f"Fax {fax} has no denial id")
+            send_fax_status_notification(fax, False, False, missing_denial=True)
             return False
         if fax.destination is None:
             self._logger.warning(f"Fax {fax} has no destination")

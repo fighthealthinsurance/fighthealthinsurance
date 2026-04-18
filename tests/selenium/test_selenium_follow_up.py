@@ -20,6 +20,18 @@ class SeleniumFollowUp(BaseCase, StaticLiveServerTestCase):
         super(StaticLiveServerTestCase, cls).tearDownClass()
         super(BaseCase, cls).tearDownClass()
 
+    def setUp(self):
+        # Prevent Chrome from routing localhost through an HTTP proxy,
+        # matching the pattern in FHISeleniumBase.
+        import seleniumbase.config as sb_config
+
+        existing = getattr(sb_config, "chromium_arg", None)
+        if not existing:
+            sb_config.chromium_arg = "--no-proxy-server"
+        elif "--no-proxy-server" not in existing:
+            sb_config.chromium_arg = existing + ";--no-proxy-server"
+        super().setUp()
+
     def test_follow_up_page_loads(self):
         email = "timbit@test.com"
         hashed_email = Denial.get_hashed_email(email)
@@ -57,9 +69,9 @@ class SeleniumFollowUp(BaseCase, StaticLiveServerTestCase):
         self.click("input#id_follow_up_again")
         self.click("button#submit")
         self.assert_title("Thank you!")
-        # Make sure we add a 2nd follow up
+        # Make sure we add follow ups for the next round (7-day, 30-day, 90-day)
         follow_up_count = FollowUpSched.objects.filter(email=email).count()
-        assert follow_up_count == 1
+        assert follow_up_count == 3
 
     def test_follow_up_page_loads_fails(self):
         email = "timbit@test.com"

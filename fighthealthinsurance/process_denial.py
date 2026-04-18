@@ -164,7 +164,7 @@ class ProcessDenialRegex(DenialBase):
 
     async def get_regulator(self, text):
         regulators = []
-        for r in self.regulators:
+        async for r in self.regulators:
             if (
                 r.regex.search(text) is not None
                 and r.negative_regex.search(text) is None
@@ -174,10 +174,13 @@ class ProcessDenialRegex(DenialBase):
 
     async def get_plan_type(self, text):
         plans = []
-        for p in self.planTypes:
+        async for p in self.planTypes:
             if p.regex.pattern != "" and p.regex.search(text) is not None:
                 logger.debug(f"positive regex match for plan {p}")
-                if p.negative_regex != "" or p.negative_regex.search(text) is None:
+                if (
+                    p.negative_regex.pattern == ""
+                    or p.negative_regex.search(text) is None
+                ):
                     plans.append(p)
             else:
                 logger.debug(f"no match {p}")

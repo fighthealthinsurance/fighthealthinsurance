@@ -14,6 +14,7 @@ from fighthealthinsurance.chat.llm_client import (
     MIN_RESPONSE_LENGTH,
     _extract_document_names_from_history,
     build_retry_calls,
+    compute_repetition_penalty,
 )
 from fighthealthinsurance.chat.safety_filters import detect_false_promises
 from fighthealthinsurance.ml.ml_models import RemoteModelLike
@@ -23,6 +24,7 @@ from fighthealthinsurance.utils import best_within_timelimit
 def create_simple_retry_scorer(
     call_scores: Dict[Awaitable, int],
     chat_history: Optional[List[Dict[str, str]]] = None,
+    current_message: Optional[str] = None,
 ) -> Callable[[Optional[Tuple[Optional[str], Optional[str]]], Awaitable], float]:
     """
     Create a simplified scoring function for retry attempts.
@@ -33,6 +35,7 @@ def create_simple_retry_scorer(
     Args:
         call_scores: Dict mapping call awaitables to their base scores
         chat_history: Current chat history for context-aware scoring
+        current_message: The user message that triggered this response.
 
     Returns:
         Scoring function compatible with best_within_timelimit
@@ -48,7 +51,7 @@ def create_simple_retry_scorer(
         result: Optional[Tuple[Optional[str], Optional[str]]],
         original_task: Awaitable,
     ) -> float:
-        score = call_scores.get(original_task, 0)
+        score: float = call_scores.get(original_task, 0)
 
         if result is None:
             return float("-inf")
@@ -75,6 +78,12 @@ def create_simple_retry_scorer(
             # Always penalize asking for patient name — it's known client-side
             if ASKS_FOR_PATIENT_NAME.search(response_text):
                 score -= 200
+
+            # Penalize responses that repeat previous messages
+            if chat_history or current_message:
+                score += compute_repetition_penalty(
+                    response_text, chat_history or [], current_message
+                )
 
         # Small bonus for context
         if context_part and len(context_part) > MIN_RESPONSE_LENGTH:
@@ -137,7 +146,9 @@ async def retry_llm_with_fallback(
     )
 
     # Create simplified scorer for retries
-    retry_scorer = create_simple_retry_scorer(retry_scores, chat_history=chat_history)
+    retry_scorer = create_simple_retry_scorer(
+        retry_scores, chat_history=chat_history, current_message=current_message
+    )
 
     try:
         retry_response, retry_context = await best_within_timelimit(

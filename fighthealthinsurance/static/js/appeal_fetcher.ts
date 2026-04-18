@@ -367,6 +367,25 @@ let usingRestFallback = false;
 
 let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
 
+function reportClientError(error: string): void {
+  const denialId = (my_data as any).denial_id || (my_data as any).get?.('denial_id') || 'unknown';
+  const csrfToken = (my_data as any).csrfmiddlewaretoken || '';
+  const browserInfo = `${navigator.userAgent} | ${window.location.pathname}`;
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (csrfToken) {
+    headers['X-CSRFToken'] = csrfToken;
+  }
+  fetch('/ziggy/rest/report_client_error', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      denial_id: denialId,
+      error,
+      browser_info: browserInfo,
+    }),
+  }).catch(() => {}); // fire-and-forget
+}
+
 function done(): void {
   // If we've reached stream end but also less than maxRetries appeals retry
   if (appealsSoFar.length < 3 && retries < maxRetries) {
@@ -374,6 +393,9 @@ function done(): void {
     retries = retries + 1;
     doQuery(my_backend_url, my_data, my_rest_fallback_url);
   } else {
+    if (appealsSoFar.length === 0) {
+      reportClientError(`Client exhausted ${retries} retries with 0 appeals received`);
+    }
     clearTimeout(timeoutHandle!);
     hideLoading();
   }
@@ -473,6 +495,7 @@ function processResponseChunk(chunk: string): void {
             console.log(`Server stream complete: ${total} total appeals (${newAppeals} new, ${existing} existing), client has ${appealsSoFar.length}`);
             if (total > 0 && appealsSoFar.length === 0) {
               console.error(`BUG: Server sent ${total} appeals but client received none!`);
+              reportClientError(`Server sent ${total} appeals but client received 0`);
             }
             markAllDone();
             renderChecklist();

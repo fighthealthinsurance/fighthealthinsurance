@@ -30,19 +30,21 @@ class RemoveDataHelper:
         Args:
             email: Email address to remove data for
         """
+        email = email.strip().lower()
         hashed_email: str = Denial.get_hashed_email(email)
         # Core denial/appeal data
         Denial.objects.filter(hashed_email=hashed_email).delete()
         Appeal.objects.filter(hashed_email=hashed_email).delete()
-        # Follow-up related
-        FollowUpSched.objects.filter(email=email).delete()
+        # Follow-up related — use __iexact for plaintext email fields so
+        # mixed-case stored addresses are reliably matched
+        FollowUpSched.objects.filter(email__iexact=email).delete()
         FollowUp.objects.filter(hashed_email=hashed_email).delete()
         FaxesToSend.objects.filter(hashed_email=hashed_email).delete()
-        FaxesToSend.objects.filter(email=email).delete()
+        FaxesToSend.objects.filter(email__iexact=email).delete()
         # Chat data - use find_chats_by_email to catch all related chats
         # (covers hashed_email, user__email, and professional_user__user__email)
         OngoingChat.find_chats_by_email(email).delete()
-        ChatLeads.objects.filter(email=email).delete()
+        ChatLeads.objects.filter(email__iexact=email).delete()
         # Mailing list and demo requests
-        MailingListSubscriber.objects.filter(email=email).delete()
-        DemoRequests.objects.filter(email=email).delete()
+        MailingListSubscriber.objects.filter(email__iexact=email).delete()
+        DemoRequests.objects.filter(email__iexact=email).delete()

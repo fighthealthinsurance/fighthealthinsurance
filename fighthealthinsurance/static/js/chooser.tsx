@@ -326,6 +326,7 @@ const ChooserInterface: React.FC = () => {
 	  </Paper>
 	  <Paper shadow="sm" p="md" radius="md" withBorder style={{ width: "100%", maxWidth: "760px" }}>
 	    <Checkbox
+	      size="sm"
 	      aria-label="Agree to Terms of Service"
 	      checked={hasAcceptedTos}
 	      onChange={(event) => setHasAcceptedTos(event.currentTarget.checked)}

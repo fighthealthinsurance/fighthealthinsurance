@@ -1,0 +1,26 @@
+Hello,
+
+It's been about 90 days since you generated your appeal with Fight Health Insurance. We wanted to do a final check-in and see how everything turned out.
+
+{% if selected_appeal %}
+What was the outcome of your appeal? Whether your appeal was successful or not, we'd really appreciate hearing from you:
+
+- If your appeal was approved — that's wonderful! Your story can inspire others to keep fighting.
+- If your appeal was denied, you may still have options. Depending on your plan, you could be eligible for an external review or even file a complaint with your state's insurance commissioner.
+- If you're still waiting, consider contacting your insurance company again. Long delays can sometimes be a sign that your appeal needs a nudge.
+{% else %}
+If you still need help with your denial, we're here for you. Health insurance denials can be reversed — don't give up.
+{% endif %}
+
+Please share your experience with us at {{ followup_link }} — hearing about outcomes helps us improve and helps others in similar situations know what to expect.
+
+Thank you for being part of our community! If you found Fight Health Insurance helpful, there are many ways you can help us and others fighting unfair denials:
+- Share your experience with friends and family who might need help
+- Follow us on social media to help spread awareness
+- Learn more at: https://www.fighthealthinsurance.com/how-to-help
+
+Thank you for fighting for the care you deserve,
+
+Holden :)
+
+https://www.fighthealthinsurance.com

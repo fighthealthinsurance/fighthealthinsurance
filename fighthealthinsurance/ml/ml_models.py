@@ -39,7 +39,10 @@ from llm_result_utils.cleaner_utils import CleanerUtils
 from llm_result_utils.llm_utils import LLMResponseUtils
 
 from fighthealthinsurance.exec import *
-from fighthealthinsurance.ml.bad_output_utils import is_bad_output
+from fighthealthinsurance.ml.bad_output_utils import (
+    is_bad_output,
+    strip_boilerplate_service,
+)
 from fighthealthinsurance.process_denial import DenialBase
 from fighthealthinsurance.utils import all_concrete_subclasses
 
@@ -1143,7 +1146,7 @@ class RemoteOpenLike(RemoteModel):
         self.model = model
         self.system_prompts_map = system_prompts_map
         self.max_len = max_len or 4096 * 8
-        self._timeout = 150
+        self._timeout = 300
         self.backup_model = backup_model or model
         self.invalid_diag_procedure_regex = re.compile(
             r"(not (available|provided|specified|applicable)|unknown|as per reviewer)",
@@ -1569,13 +1572,19 @@ class RemoteOpenLike(RemoteModel):
             )
         ]
 
-    def _clean_procedure_response(self, response):
-        return self.procedure_response_regex.sub("", response)
-
-    def _clean_diagnosis_response(self, response):
+    def _clean_extracted_field(
+        self, response: str, label_regex: re.Pattern[str]
+    ) -> Optional[str]:
         if self.invalid_diag_procedure_regex.search(response):
             return None
-        return self.diagnosis_response_regex.sub("", response)
+        cleaned = label_regex.sub("", response)
+        return strip_boilerplate_service(cleaned)
+
+    def _clean_procedure_response(self, response: str) -> Optional[str]:
+        return self._clean_extracted_field(response, self.procedure_response_regex)
+
+    def _clean_diagnosis_response(self, response: str) -> Optional[str]:
+        return self._clean_extracted_field(response, self.diagnosis_response_regex)
 
     async def generate_prior_auth_response(self, prompt: str) -> Optional[str]:
         """
@@ -1949,9 +1958,14 @@ class RemoteOpenLike(RemoteModel):
                     }
                     for m in cleaned_messages
                 ]
-                logger.debug(
-                    f"Prepared {len(cleaned_messages)} messages for model {model}: {summary_msg_log}"
-                )
+                if not _is_verbose_logging():
+                    logger.debug(
+                        f"Prepared {len(cleaned_messages)} messages for model {model}: {summary_msg_log}"
+                    )
+                else:
+                    logger.debug(
+                        f"Prepared {len(cleaned_messages)} messages for model {model}: {cleaned_messages}"
+                    )
                 async with s.post(
                     url,
                     headers={"Authorization": f"Bearer {self.token}"},
@@ -2149,9 +2163,13 @@ class RemoteFullOpenLike(RemoteOpenLike):
   - What is the insurance company's stated reason for denial?
   - Can you provide more information on the clinical evidence and guidelines that support the medical necessity of this treatment?
 ### Good Examples:
-  - Wegovy denial: "Has the patient participated in a structured weight loss program (e.g., Weight Watchers)?"
+  - Wegovy/Zepbound/Ozempic denial: "Has the patient participated in a structured weight loss program (e.g., Weight Watchers)?" "What is the patient's BMI?" "Does the patient have weight-related comorbidities (e.g., type 2 diabetes, hypertension)?"
   - PrEP denial: "How many sexual partners (roughly) has the patient had in the past 12 months?"
   - Mammogram denial: "What is the patient's age?" "Does the patient have the BRCA1 mutation or a family history of breast cancer?"
+  - Colonoscopy denial: "Was this a screening or diagnostic colonoscopy?" "Were polyps removed during the procedure?"
+  - Emergency room denial: "What symptoms prompted the emergency visit?"
+  - Mental health/psychotherapy denial: "How long has the patient been in treatment?" "Does the condition cause significant functional impairment?"
+  - Aphasia treatment denial: "What type of aphasia does the patient have?" "Was the aphasia caused by a stroke or brain injury?" "How does aphasia impact the patient's daily communication?"
 ### Context-Aware Answers:
  -If a question has a likely answer from the provided context, include the answer on the same line after the question mark.
 - Case-Specific: Each question should be directly relevant to the specific denial reason and medical necessity at hand.

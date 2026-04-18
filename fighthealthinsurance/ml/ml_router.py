@@ -294,8 +294,8 @@ class MLRouter(object):
     def full_qa_backends(self, use_external=False) -> list[RemoteModelLike]:
         """
         Return models for handling question-answer pairs for appeal generation.
-        If use_external is True, includes external models like Perplexity and Llama,
-        otherwise returns an empty list (no models).
+        Always includes internal FHI models. When use_external is True, also
+        includes external models like Llama Scout and Perplexity.
 
         Args:
             use_external: Whether to use external models
@@ -303,28 +303,39 @@ class MLRouter(object):
         Returns:
             List of RemoteModelLike models suitable for QA tasks
         """
-        if not use_external:
-            return []
+        forced = self._get_forced_models("for QA", use_external=use_external)
+        if forced:
+            return forced
 
-        # Add Llama Scout model if available
-        if "meta-llama/Llama-4-Scout-17B-16E-Instruct" in self.models_by_name:
-            return self.cheapest("meta-llama/Llama-4-Scout-17B-16E-Instruct")
+        models: list[RemoteModelLike] = []
+        # Always include internal FHI models for question generation
+        models += self.internal_models_by_cost[:3]
 
-        return []
+        if use_external:
+            # Add Llama Scout model if available
+            if "meta-llama/Llama-4-Scout-17B-16E-Instruct" in self.models_by_name:
+                models += self.cheapest("meta-llama/Llama-4-Scout-17B-16E-Instruct")
+            # Add Perplexity for web-informed questions
+            if "sonar" in self.models_by_name:
+                models += self.cheapest("sonar")
+
+        return models
 
     def partial_qa_backends(self) -> list[RemoteModelLike]:
         """
         Return models for handling partial question-answer pairs (when we have less context).
-        Always returns Perplexity models since we're only using
-        diagnosis and procedure.
+        Includes internal FHI models and Llama Scout if available.
 
         Returns:
             List of RemoteModelLike models suitable for partial QA tasks
         """
+        models: list[RemoteModelLike] = []
+        # Always include internal FHI models
+        models += self.internal_models_by_cost
         # Add Llama Scout model if available
         if "meta-llama/Llama-4-Scout-17B-16E-Instruct" in self.models_by_name:
-            return self.cheapest("meta-llama/Llama-4-Scout-17B-16E-Instruct")
-        return []
+            models += self.cheapest("meta-llama/Llama-4-Scout-17B-16E-Instruct")
+        return models
 
     def full_find_citation_backends(self, use_external=False) -> list[RemoteModelLike]:
         """

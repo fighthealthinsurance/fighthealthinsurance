@@ -59,6 +59,11 @@ router.register(r"chooser", rest_views.ChooserViewSet, basename="chooser")
 urlpatterns = [
     # Non-viewset but still rest API endpoints.
     path("ping", rest_views.Ping.as_view(), name="ping"),
+    path(
+        "report_client_error",
+        rest_views.ReportClientError.as_view(),
+        name="report_client_error",
+    ),
     path("check_storage", rest_views.CheckStorage.as_view(), name="check_storage"),
     path(
         "check_ml_backend", rest_views.CheckMlBackend.as_view(), name="check_ml_backend"

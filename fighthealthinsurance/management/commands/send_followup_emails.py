@@ -28,8 +28,8 @@ class Command(BaseCommand):
         count = options.get("count")
         dry_run = options.get("dry_run", False)
 
-        candidates = sender._find_candidates()
-        candidate_count = candidates.count()
+        candidates = sender.find_all_due()
+        candidate_count = len(candidates)
 
         if candidate_count == 0:
             self.stdout.write(
@@ -37,15 +37,28 @@ class Command(BaseCommand):
             )
             return
 
-        self.stdout.write(f"Found {candidate_count} pending follow-up emails.")
+        grouped = sender.group_due_followups(candidates)
+        self.stdout.write(
+            f"Found {candidate_count} pending follow-up records "
+            f"for {len(grouped)} unique email(s)."
+        )
 
         if dry_run:
             self.stdout.write(self.style.WARNING("Dry run mode - not sending emails."))
-            for candidate in candidates[:count] if count else candidates:
-                self.stdout.write(f"  Would send to: {candidate.email}")
+            selected = grouped[:count] if count else grouped
+            for best, others in selected:
+                to_send, suppressed = sender.preview_grouped_send([best] + others)
+                if to_send is None:
+                    self.stdout.write(
+                        f"  Would suppress all {len(others) + 1} follow-up(s) "
+                        f"for {best.email} (all stale)"
+                    )
+                    continue
+                suffix = f" (+{suppressed} suppressed)" if suppressed else ""
+                self.stdout.write(f"  Would send to: {to_send.email}{suffix}")
             return
 
-        sent_count = sender.send_all(count=count)
+        sent_count = sender.send_all(count=count, candidates=candidates)
         self.stdout.write(
             self.style.SUCCESS(f"Successfully sent {sent_count} follow-up emails.")
         )

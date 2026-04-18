@@ -14,6 +14,7 @@ from loguru import logger
 
 from fhi_users.audit import TrackingInfo, extract_tracking_info_from_scope
 from fighthealthinsurance import common_view_logic
+from fighthealthinsurance.ml.bad_output_utils import strip_boilerplate_service
 from fighthealthinsurance.generate_prior_auth import prior_auth_generator
 from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance.models import (
@@ -57,9 +58,8 @@ class StreamingAppealsBackend(AsyncWebsocketConsumer):
         try:
             await asyncio.sleep(1)
             await self.send("\n")
-            count = 0
+            appeal_count = 0
             async for record in aitr:
-                count = count + 1
                 await asyncio.sleep(0)
                 await self.send("\n")
                 await asyncio.sleep(0)
@@ -67,10 +67,24 @@ class StreamingAppealsBackend(AsyncWebsocketConsumer):
                 await self.send(record)
                 await asyncio.sleep(0)
                 await self.send("\n")
-            logger.debug(f"All records, {count} in total, sent.")
+                # Count only actual appeal payloads (not status/keepalive frames)
+                stripped = record.strip()
+                if stripped:
+                    try:
+                        parsed = json.loads(stripped)
+                        if isinstance(parsed, dict) and "content" in parsed:
+                            appeal_count += 1
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+            if appeal_count == 0:
+                logger.error(
+                    "WebSocket appeal session completed with 0 appeal payloads sent"
+                )
+            else:
+                logger.debug(f"All appeals sent, {appeal_count} payloads total.")
         except Exception as e:
-            logger.opt(exception=True).debug(f"Error sending back appeals: {e}")
-            raise e
+            logger.opt(exception=True).error(f"Error sending back appeals: {e}")
+            raise
         finally:
             logger.debug("Yielding before closing connection")
             await asyncio.sleep(0.1)
@@ -360,13 +374,9 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                                 f"[DEBUG] chat_id={chat_id} denied_item={denied_item!r} denied_reason={denied_reason!r} (raw analysis_data={analysis_data!r})"
                             )
 
-                            # Guardrails: Only store if both are non-empty, not null, and not generic/unclear
-                            def is_clear(val):
-                                if not val:
-                                    return False
-                                val_str = str(val).strip().lower()
-
-                                unclear_phrases = [
+                            # Guardrails: Only store if non-empty, not null, and not generic/unclear
+                            _UNCLEAR_PHRASES = frozenset(
+                                {
                                     "not clear",
                                     "unknown",
                                     "unclear",
@@ -376,17 +386,35 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                                     "",
                                     "no denial",
                                     "could not determine",
-                                ]
-                                return val_str not in unclear_phrases
+                                }
+                            )
+
+                            def is_clear(val):
+                                if not val:
+                                    return False
+                                return str(val).strip().lower() not in _UNCLEAR_PHRASES
 
                             updated = False
+                            # Strip boilerplate from denied_item, then
+                            # clarity-check the *stripped* result.
+                            if denied_item:
+                                denied_item = strip_boilerplate_service(
+                                    str(denied_item)
+                                )
                             if is_clear(denied_item):
                                 chat.denied_item = denied_item
                                 updated = True
                                 logger.info(
                                     f"Updated chat {chat_id} with denied item: {denied_item}"
                                 )
+                            # denied_reason: boilerplate phrases like
+                            # "not medically necessary" are valid reasons,
+                            # so no stripping — just the clarity check.
                             if is_clear(denied_reason):
+                                denied_reason = str(denied_reason).strip()
+                            else:
+                                denied_reason = None
+                            if denied_reason:
                                 chat.denied_reason = denied_reason
                                 updated = True
                                 logger.info(

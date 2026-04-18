@@ -1,13 +1,17 @@
 import asyncio
 import re
 import time
-from typing import Any, Callable, Coroutine, List, Optional, Tuple, cast
+from typing import Any, Callable, Coroutine, Dict, List, Optional, Tuple, cast
 
 from loguru import logger
 
 from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance.models import Denial, GenericQuestionGeneration
 from fighthealthinsurance.utils import best_within_timelimit
+
+# Maps a get_appeal_questions coroutine to the originating model's quality score
+QuestionsCoroutine = Coroutine[Any, Any, List[Tuple[str, str]]]
+AwaitableQualityMap = Dict[QuestionsCoroutine, int]
 
 
 class MLAppealQuestionsHelper:
@@ -27,7 +31,11 @@ class MLAppealQuestionsHelper:
         Returns:
             A list of (question, answer) tuples.
         """
-        models_to_try = ml_router.partial_qa_backends()
+        models_to_try = list(
+            dict.fromkeys(
+                ml_router.partial_qa_backends() + ml_router.full_qa_backends()
+            )
+        )
 
         # Normalize inputs - trim whitespace and convert to lowercase
         procedure = procedure.strip().lower() if procedure else ""
@@ -57,20 +65,26 @@ class MLAppealQuestionsHelper:
         # If no cached questions exist, generate them
         model_timeout = max(1, timeout - 5)  # Subtract 5 seconds for processing
 
-        raw_questions_awaitables = []
+        raw_questions_awaitables: List[QuestionsCoroutine] = []
+        model_quality_map: AwaitableQualityMap = {}
 
         for model in models_to_try:
-            raw_questions_awaitables.append(
-                model.get_appeal_questions(
-                    denial_text=None,
-                    procedure=procedure,
-                    diagnosis=diagnosis,
-                )
+            awaitable = model.get_appeal_questions(
+                denial_text=None,
+                procedure=procedure,
+                diagnosis=diagnosis,
             )
+            raw_questions_awaitables.append(awaitable)
+            model_quality_map[awaitable] = model.quality()
 
+        logger.debug(
+            f"Using models {models_to_try} to create {raw_questions_awaitables}"
+        )
         questions = await best_within_timelimit(
             raw_questions_awaitables,
-            score_fn=MLAppealQuestionsHelper.make_score_fn(lambda x: 1),
+            score_fn=MLAppealQuestionsHelper.make_score_fn(
+                lambda x: 1, model_quality=model_quality_map
+            ),
             timeout=model_timeout,
         )
         # Generic should not have answers
@@ -94,23 +108,43 @@ class MLAppealQuestionsHelper:
         return questions if questions else []
 
     @staticmethod
-    def make_score_fn(factor: Callable[[Coroutine[Any, Any, Any]], int]):
+    def make_score_fn(
+        factor: Callable[[Coroutine[Any, Any, Any]], int],
+        model_quality: Optional[AwaitableQualityMap] = None,
+    ):
         def score_fn(result: Optional[List[Tuple[str, str]]], awaitable):
             my_factor = factor(awaitable)
-            # Score the result based on a mixture of source and length
             if result is None:
                 return 0
             try:
-                if result:
-                    # The result should already be in the correct format for question-answer tuples
-                    question_score = len(result)
-                    # More than 4 is bad news
-                    if question_score > 4:
-                        question_score = 1
-                    return my_factor * question_score
-                return 0
+                if not result:
+                    return 0
+
+                n = len(result)
+
+                # Ideal: 2-3 questions. 1 is ok, 4 is decent, >4 is bad
+                if 2 <= n <= 3:
+                    question_score = n * 2  # bonus for ideal count
+                elif n == 1:
+                    question_score = 1
+                elif n == 4:
+                    question_score = 3
+                else:  # > 4
+                    question_score = 1
+
+                # Bonus for well-formed questions (actually end with "?")
+                valid_questions = sum(1 for q, _ in result if q.strip().endswith("?"))
+                if valid_questions == n:
+                    question_score += 1
+
+                # Light model quality bonus (quality/100, so ~1-2 points)
+                quality_bonus = 0.0
+                if model_quality and awaitable in model_quality:
+                    quality_bonus = model_quality[awaitable] / 100.0
+
+                return my_factor * question_score + quality_bonus
             except Exception as e:
-                logger.debug(f"Failed to parse: {e}")
+                logger.debug(f"Failed to score: {e}")
                 return 0
 
         return score_fn
@@ -154,21 +188,24 @@ class MLAppealQuestionsHelper:
         # If no cached questions exist, generate them
         model_timeout = max(1, timeout - 5)  # Subtract 5 seconds for processing
 
-        raw_questions_awaitables = []
+        raw_questions_awaitables: List[QuestionsCoroutine] = []
+        model_quality_map: AwaitableQualityMap = {}
 
         for model in models_to_try:
-            raw_questions_awaitables.append(
-                model.get_appeal_questions(
-                    denial_text=denial_text,
-                    patient_context=patient_context,
-                    procedure=procedure,
-                    diagnosis=diagnosis,
-                )
+            awaitable = model.get_appeal_questions(
+                denial_text=denial_text,
+                patient_context=patient_context,
+                procedure=procedure,
+                diagnosis=diagnosis,
             )
+            raw_questions_awaitables.append(awaitable)
+            model_quality_map[awaitable] = model.quality()
 
         questions = await best_within_timelimit(
             raw_questions_awaitables,
-            score_fn=MLAppealQuestionsHelper.make_score_fn(lambda x: 1),
+            score_fn=MLAppealQuestionsHelper.make_score_fn(
+                lambda x: 1, model_quality=model_quality_map
+            ),
             timeout=model_timeout,
         )
         return questions if questions else []

@@ -8,6 +8,8 @@ import ray
 from loguru import logger
 
 from fighthealthinsurance import common_view_logic, forms as core_forms
+from fighthealthinsurance.common_view_logic import schedule_follow_ups
+from fighthealthinsurance.helpers.data_helpers import RemoveDataHelper
 from fighthealthinsurance.followup_emails import (
     FollowUpEmailSender,
     ThankyouEmailSender,
@@ -23,8 +25,52 @@ from fighthealthinsurance.models import (
     ProfessionalUser,
     UserDomain,
 )
+from fighthealthinsurance.email_utils import is_sendable_email
 from fighthealthinsurance.type_utils import User
 from fighthealthinsurance.utils import mask_email_for_logging
+
+
+class AdminDeleteDataView(generic.FormView):
+    """Staff view to delete all data for a user by email address.
+
+    Used when handling data deletion requests received via email.
+    Skips the token confirmation flow since staff authentication
+    serves as authorization.
+    """
+
+    template_name = "pro_domain_task.html"
+    form_class = core_forms.DeleteDataForm
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context["title"] = "Delete User Data"
+        context["heading"] = "Delete User Data"
+        context["description"] = (
+            "Enter the email address of the user whose data should be deleted. "
+            "This will permanently remove all associated denials, appeals, "
+            "follow-ups, chats, and mailing list entries."
+        )
+        context["button_text"] = "Delete Data"
+        return context
+
+    def form_valid(self, form):
+        email = form.cleaned_data["email"]
+        masked = mask_email_for_logging(email)
+        try:
+            with transaction.atomic():
+                RemoveDataHelper.remove_data_for_email(email)
+        except Exception:
+            logger.opt(exception=True).error(
+                f"Staff user {self.request.user.username} failed to delete data for {masked}"
+            )
+            return HttpResponse(
+                f"Error deleting data for {masked}. Please try again.",
+                status=500,
+            )
+        logger.info(
+            f"Staff user {self.request.user.username} deleted data for {masked}"
+        )
+        return HttpResponse(f"All data for {masked} has been deleted.")
 
 
 class StaffDashboardView(generic.TemplateView):
@@ -34,24 +80,21 @@ class StaffDashboardView(generic.TemplateView):
 
 
 class ScheduleFollowUps(View):
-    """A view to go through and schedule any missing follow ups."""
+    """A view to go through and schedule any missing follow ups.
+
+    Runs schedule_follow_ups on all denials with an email address.
+    The function is idempotent (uses update_or_create and skips
+    past-dated follow-ups) so it's safe to run on denials that
+    already have some or all follow-ups scheduled.
+    """
 
     def get(self, request):
-        denials = (
-            Denial.objects.filter(raw_email__isnull=False)
-            .filter(followupsched__isnull=True)
-            .iterator()
-        )
+        denials = Denial.objects.filter(raw_email__isnull=False).iterator()
         c = 0
         for denial in denials:
-            # Shouldn't happen but makes the type checker happy.
             if denial.raw_email is None:
                 continue
-            FollowUpSched.objects.create(
-                email=denial.raw_email,
-                follow_up_date=denial.date + datetime.timedelta(days=15),
-                denial_id=denial,
-            )
+            schedule_follow_ups(denial.raw_email, denial)
             c = c + 1
         return HttpResponse(str(c))
 
@@ -205,14 +248,14 @@ class SendMailingListMailView(generic.FormView):
             future = actor.send_mailing_list_email.remote(
                 subject, html_content, text_content, test_email
             )
-            sent_count, failed_count = ray.get(future)
+            sent_count, failed_count, blocked_count = ray.get(future)
 
             if test_email:
                 masked_email = mask_email_for_logging(test_email)
                 return HttpResponse(f"Test email sent successfully to {masked_email}")
             else:
                 return HttpResponse(
-                    f"Mailing list email sent. Success: {sent_count}, Failed: {failed_count}"
+                    f"Mailing list email sent. Success: {sent_count}, Failed: {failed_count}, Blocked: {blocked_count}"
                 )
         except Exception as e:
             logger.opt(exception=True).error(f"Error sending mailing list email: {e}")

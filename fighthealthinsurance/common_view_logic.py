@@ -42,6 +42,7 @@ from fhi_users.audit import TrackingInfo
 from fhi_users.models import ProfessionalUser, UserDomain
 from fighthealthinsurance import stripe_utils
 from fighthealthinsurance.fax_actor_ref import fax_actor_ref
+from fighthealthinsurance.ml.bad_output_utils import strip_boilerplate_service
 from fighthealthinsurance.form_utils import *
 from fighthealthinsurance.generate_appeal import *
 from fighthealthinsurance.ml.ml_appeal_questions_helper import MLAppealQuestionsHelper
@@ -56,6 +57,7 @@ from fighthealthinsurance.utils import (
     sync_iterator_to_async,
 )
 from .pubmed_tools import PubMedTools
+from .email_utils import is_sendable_email
 from .utils import (
     _try_pandoc_engines,
     check_call,
@@ -522,6 +524,48 @@ class NextStepInfoSerializable:
     semi_sekret: str
 
 
+def schedule_follow_ups(
+    email: str,
+    denial: "Denial",
+    from_date: Optional[datetime.date] = None,
+) -> None:
+    """Schedule 7-day, 30-day, and 90-day follow-up emails for a denial.
+
+    Args:
+        email: Recipient email address.
+        denial: The denial to schedule follow-ups for.
+        from_date: Base date for computing follow-up dates. Defaults to
+            denial.date. Pass datetime.date.today() when re-scheduling
+            (e.g. when a user requests additional follow-up).
+
+    Skips follow-ups whose date would already be in the past (e.g. when
+    backfilling old denials) and uses update_or_create to prevent duplicates
+    atomically.
+    """
+    if not is_sendable_email(email):
+        return
+    if from_date is None:
+        from_date = denial.date
+    follow_up_types = FollowUpType.objects.filter(
+        name__in=["followup_7day", "followup_30day", "followup_90day"]
+    )
+    today = datetime.date.today()
+    for fut in follow_up_types:
+        follow_up_date = from_date + fut.duration
+        # Skip if the follow-up date is already in the past
+        if follow_up_date < today:
+            continue
+        # Atomic upsert — avoids race condition with exists()+create()
+        FollowUpSched.objects.update_or_create(
+            denial_id=denial,
+            follow_up_type=fut,
+            defaults={
+                "email": email,
+                "follow_up_date": follow_up_date,
+            },
+        )
+
+
 class FollowUpHelper:
     @classmethod
     def fetch_denial(
@@ -550,8 +594,10 @@ class FollowUpHelper:
         quote: Optional[str] = None,
         name_for_quote: Optional[str] = None,
         use_quote: bool = False,
-        followup_documents=[],
+        followup_documents=None,
     ):
+        if followup_documents is None:
+            followup_documents = []
         denial = cls.fetch_denial(
             uuid=uuid,
             follow_up_semi_sekret=follow_up_semi_sekret,
@@ -569,12 +615,12 @@ class FollowUpHelper:
             name_for_quote=name_for_quote,
             quote=quote,
         )
-        # If they asked for additional follow up add a new schedule
-        if follow_up_again:
-            FollowUpSched.objects.create(
-                email=denial.raw_email,
-                denial_id=denial,
-                follow_up_date=denial.date + datetime.timedelta(days=15),
+        # If they asked for additional follow up, schedule from today
+        # so they get a fresh round of check-ins rather than re-using
+        # the original denial date (which may already be weeks/months ago).
+        if follow_up_again and denial.raw_email:
+            schedule_follow_ups(
+                denial.raw_email, denial, from_date=datetime.date.today()
             )
         for document in followup_documents:
             fd = FollowUpDocuments.objects.create(
@@ -1138,11 +1184,7 @@ class DenialCreatorHelper:
             denial.save()
 
         if possible_email is not None:
-            FollowUpSched.objects.create(
-                email=possible_email,
-                follow_up_date=denial.date + datetime.timedelta(days=15),
-                denial_id=denial,
-            )
+            schedule_follow_ups(possible_email, denial)
         your_state = None
         if zip is not None and zip != "":
             try:
@@ -1280,20 +1322,27 @@ class DenialCreatorHelper:
                 "extract_procedure_diagnosis_finished": True
             }
 
-            if procedure is not None and len(procedure) < 300:
-                update_fields["procedure"] = procedure
-                update_fields["candidate_procedure"] = procedure
+            if procedure is not None:
+                procedure = strip_boilerplate_service(procedure)
+                if procedure is not None and len(procedure) < 300:
+                    update_fields["procedure"] = procedure
+                    update_fields["candidate_procedure"] = procedure
 
-            if diagnosis is not None and len(diagnosis) < 300:
-                update_fields["diagnosis"] = diagnosis
-                update_fields["candidate_diagnosis"] = diagnosis
+            if diagnosis is not None:
+                diagnosis = strip_boilerplate_service(diagnosis)
+                if diagnosis is not None and len(diagnosis) < 300:
+                    update_fields["diagnosis"] = diagnosis
+                    update_fields["candidate_diagnosis"] = diagnosis
 
             # Update all fields in a single atomic database operation
             await Denial.objects.filter(denial_id=denial_id).aupdate(**update_fields)
 
+            # Refresh in-memory denial so enrichment sees updated values.
+            await denial.arefresh_from_db()
+
             # Use fire_and_forget_in_new_threadpool for background PubMed article search
-            # now that we have diagnosis and procedure information
-            if denial.procedure or denial.diagnosis or procedure or diagnosis:
+            # now that we have diagnosis and procedure information.
+            if denial.procedure or denial.diagnosis:
 
                 async def find_pubmed_articles():
                     """
@@ -2051,8 +2100,8 @@ class AppealsBackendHelper:
         # Yield the existing appeals first
         old = 0
         async for appeal in existing_appeals:
-            old = old + 1
             if appeal.appeal_text is not None:
+                old = old + 1
                 logger.debug(f"Found existing appeal {appeal}, yielding")
                 existing_appeal_dict = await sub_in_appeals(
                     {"id": str(appeal.id), "content": appeal.appeal_text}
@@ -2452,7 +2501,9 @@ class AppealsBackendHelper:
             # Hack our interleave messages are just newlines
             if i and len(i) > 10:
                 new = new + 1
-            logger.debug(f"Sending appeal count: {new+old}...")
+                logger.debug(f"Sending appeal count: {new+old}...")
+            else:
+                logger.debug("Sending keep alive....")
             yield i
         logger.debug(f"Normal appeals sent {new} and {old}")
         yield json.dumps(
@@ -2529,6 +2580,19 @@ class AppealsBackendHelper:
                         logger.debug("Synthesis returned no result, skipping")
             except Exception:
                 logger.opt(exception=True).warning("Final appeal synthesis failed")
+
+        # Log when appeal generation produces no results for Sentry visibility
+        if new + old == 0:
+            logger.error(
+                f"Zero appeals generated for denial {denial_id}, "
+                f"gen_attempts={denial.gen_attempts}"
+            )
+        elif new == 0 and old > 0:
+            logger.warning(
+                f"No new appeals generated for denial {denial_id} "
+                f"(but {old} existing appeals found), "
+                f"gen_attempts={denial.gen_attempts}"
+            )
 
         # Explicit end-of-stream so the client knows exactly what was sent
         yield json.dumps(

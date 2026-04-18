@@ -68,6 +68,7 @@ class PubMedTools(object):
                     query=query,
                     created__gte=month_ago,
                     since=since,
+                    denial_id__isnull=True,
                 ).order_by("-created")
 
                 if await existing_queries.aexists():
@@ -78,8 +79,8 @@ class PubMedTools(object):
                                 article_ids: list[str] = json.loads(
                                     query_data.articles.replace("\x00", "")
                                 )
-                                # Return the cached IDs
-                                return article_ids
+                                if article_ids:
+                                    return article_ids
                             except json.JSONDecodeError:
                                 logger.error(
                                     f"Error parsing cached articles JSON for {query}"
@@ -127,39 +128,52 @@ class PubMedTools(object):
         pmids: List[str] = []
         articles: List[PubMedMiniArticle] = []
         logger.debug(f"Looking up pubmed articles...")
+
+        # Re-fetch denial to ensure procedure/diagnosis/microsite_slug are current,
+        # since this method may run in a fire-and-forget after the caller has moved on.
+        denial = await Denial.objects.aget(pk=denial.denial_id)
+
+        procedure_opt = denial.procedure if denial.procedure else ""
+        diagnosis_opt = denial.diagnosis if denial.diagnosis else ""
+        query = f"{procedure_opt} {diagnosis_opt}".strip()
+        # Build an ordered, deduplicated list of queries: base query first,
+        # then microsite search terms. Order matters for deterministic PER_QUERY
+        # truncation when queries share overlapping PubMed results.
+        queries: List[str] = []
+        seen_queries: Set[str] = set()
+        if query:
+            queries.append(query)
+            seen_queries.add(query)
+        if denial.microsite_slug:
+            try:
+                microsite = get_microsite(denial.microsite_slug)
+                if microsite and microsite.pubmed_search_terms:
+                    for term in microsite.pubmed_search_terms:
+                        stripped = term.strip()
+                        if stripped and stripped not in seen_queries:
+                            queries.append(stripped)
+                            seen_queries.add(stripped)
+                    if microsite.pubmed_search_terms:
+                        logger.debug(
+                            f"Adding {len(microsite.pubmed_search_terms)} microsite search terms for {denial.microsite_slug}"
+                        )
+            except Exception as e:
+                logger.opt(exception=True).warning(
+                    f"Failed to load microsite search terms: {e}"
+                )
+
         try:
             async with async_timeout(timeout):
-                procedure_opt = denial.procedure if denial.procedure else ""
-                diagnosis_opt = denial.diagnosis if denial.diagnosis else ""
-                query = f"{procedure_opt} {diagnosis_opt}".strip()
                 # Allow us to remove duplicates while preserving order
                 unique_pmids: Set[str] = set()
-                queries: Set[str] = {
-                    query,
-                }
-
-                # Add microsite pubmed search terms if available
-                if denial.microsite_slug:
-                    try:
-                        microsite = get_microsite(denial.microsite_slug)
-                        if microsite and microsite.pubmed_search_terms:
-                            if len(microsite.pubmed_search_terms) > 0:
-                                logger.debug(
-                                    f"Adding {len(microsite.pubmed_search_terms)} microsite search terms for {denial.microsite_slug}"
-                                )
-                                queries.update(microsite.pubmed_search_terms)
-                    except Exception as e:
-                        logger.opt(exception=True).warning(
-                            f"Failed to load microsite search terms: {e}"
-                        )
 
                 for since in self.since_list:
-                    for query in queries:
+                    for q in queries:
                         count = 0
-                        if query is None or query.strip() == "":
+                        if q is None or q.strip() == "":
                             continue
                         new_pmids = await self.find_pubmed_article_ids_for_query(
-                            query, since=since
+                            q, since=since
                         )
                         for pmid in new_pmids:
                             if pmid not in unique_pmids:
@@ -228,13 +242,16 @@ class PubMedTools(object):
         except Exception as e:
             logger.opt(exception=True).debug(f"Unexpected error {e}")
             raise e
-        articles_json = json.dumps(list(map(lambda a: a.pmid, articles)))
-        await PubMedQueryData.objects.acreate(
-            denial_id=denial,
-            articles=articles_json,
-            query=f"{denial.procedure or ''} {denial.diagnosis or ''}".strip()
-            or "denial_articles",
-        )
+        # queries is already deduplicated and stripped; sort for stable summary string
+        valid_queries = sorted(queries)
+        if valid_queries and pmids:
+            articles_json = json.dumps(pmids)
+            all_queries_str = " | ".join(valid_queries)
+            await PubMedQueryData.objects.acreate(
+                denial_id=denial,
+                articles=articles_json,
+                query=all_queries_str,
+            )
         logger.debug(f"Found {articles} for denial {denial}")
         return articles
 

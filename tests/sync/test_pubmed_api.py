@@ -26,7 +26,7 @@ from fighthealthinsurance.models import (
     PubMedQueryData,
     PubMedArticleSummarized,
 )
-from fighthealthinsurance.pubmed_tools import PubMedTools
+from fighthealthinsurance.pubmed_tools import PubMedTools, PER_QUERY
 from fighthealthinsurance.common_view_logic import AppealAssemblyHelper
 
 if __name__ == "__main__":
@@ -361,7 +361,14 @@ class PubMedToolsAsyncTest(TransactionTestCase):
             diagnosis="rheumatoid arthritis",
         )
 
-        # Create cached query data to avoid real API calls
+        # Create per-query cache data (no denial_id, as real API caching does)
+        PubMedQueryData.objects.create(
+            query="physical therapy rheumatoid arthritis",
+            articles=json.dumps(["12345678", "87654321"]),
+            created=timezone.now(),
+        )
+
+        # Create denial-level summary row (with denial_id set)
         PubMedQueryData.objects.create(
             query="physical therapy rheumatoid arthritis",
             articles=json.dumps(["12345678", "87654321"]),
@@ -519,4 +526,374 @@ class PubMedToolsAsyncTest(TransactionTestCase):
                         self.assertEqual(new_articles[0].title, "New Test Article")
 
         # Run the async test in a sync context
+        async_to_sync(run_test)()
+
+
+class PubMedE2EAppealFlowTest(TransactionTestCase):
+    """E2E tests validating PubMed query flow through to appeal context generation.
+
+    Tests the full pipeline:
+      find_pubmed_articles_for_denial → per-query cache rows + denial summary row
+      → find_context_for_denial → formatted context string for appeal generation.
+    """
+
+    def setUp(self):
+        self.denial = Denial.objects.create(
+            denial_text="Denied coverage for physical therapy for rheumatoid arthritis",
+            procedure="physical therapy",
+            diagnosis="rheumatoid arthritis",
+        )
+        # Pre-populate PubMedMiniArticle so find_pubmed_articles_for_denial
+        # doesn't need to call the real PubMed article_by_pmid API.
+        for pmid, title, abstract in [
+            (
+                "11111111",
+                "PT effectiveness in RA",
+                "Study showing PT helps RA patients...",
+            ),
+            (
+                "22222222",
+                "Exercise for arthritis",
+                "Exercise reduces joint stiffness...",
+            ),
+            ("33333333", "Recent PT advances", "New protocols for PT in RA..."),
+            ("44444444", "Older PT study", "Classic study on PT and RA outcomes..."),
+        ]:
+            PubMedMiniArticle.objects.create(
+                pmid=pmid,
+                title=title,
+                abstract=abstract,
+                article_url=f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",
+            )
+            PubMedArticleSummarized.objects.create(
+                pmid=pmid,
+                title=title,
+                abstract=abstract,
+                doi=f"10.1000/{pmid}",
+                basic_summary=f"Summary for article {pmid}: {title}",
+            )
+
+    @mock.patch("fighthealthinsurance.utils.pubmed_fetcher.pmids_for_query")
+    @mock.patch("fighthealthinsurance.ml.ml_router.ml_router.summarize")
+    def test_e2e_without_microsite(self, mock_summarize, mock_pmids):
+        """Full pipeline without microsite: articles_for_denial → context_for_denial."""
+
+        # pmids_for_query returns different results per (query, since) combo
+        def fake_pmids(query, since=None):
+            if since == "2024":
+                return ["11111111", "22222222"]
+            return ["33333333", "44444444"]
+
+        mock_pmids.side_effect = fake_pmids
+
+        async def fake_summarize(*args, **kwargs):
+            return "Summarized PubMed context for appeal"
+
+        mock_summarize.side_effect = fake_summarize
+
+        async def run_test():
+            tools = PubMedTools()
+
+            # --- Step 1: find_pubmed_articles_for_denial ---
+            articles = await tools.find_pubmed_articles_for_denial(self.denial)
+
+            # Should have found articles (PER_QUERY=2 per (query, since) combo,
+            # 1 query × 2 since values = up to 4 articles)
+            self.assertGreater(len(articles), 0)
+            self.assertLessEqual(len(articles), PER_QUERY * 2)
+
+            # Verify per-query cache rows were created (denial_id=NULL)
+            cache_rows = await sync_to_async(
+                lambda: list(PubMedQueryData.objects.filter(denial_id__isnull=True))
+            )()
+            self.assertGreater(len(cache_rows), 0, "Per-query cache rows should exist")
+            for row in cache_rows:
+                self.assertIsNone(row.denial_id_id)
+                parsed = json.loads(row.articles)
+                self.assertIsInstance(parsed, list)
+                self.assertGreater(len(parsed), 0, "Cache rows should not be empty")
+
+            # Verify denial summary row was created (denial_id=self.denial)
+            summary_rows = await sync_to_async(
+                lambda: list(PubMedQueryData.objects.filter(denial_id=self.denial))
+            )()
+            self.assertEqual(len(summary_rows), 1, "Exactly one denial summary row")
+            summary = summary_rows[0]
+            self.assertEqual(
+                summary.query,
+                "physical therapy rheumatoid arthritis",
+                "Without microsite, query should be just procedure+diagnosis",
+            )
+            summary_pmids = json.loads(summary.articles)
+            # Summary row should contain ALL pmids from queries, not just
+            # the subset that had successful mini-article metadata fetches.
+            self.assertEqual(
+                sorted(summary_pmids),
+                ["11111111", "22222222", "33333333", "44444444"],
+            )
+
+            # Verify the two row types don't cross-contaminate
+            for cache_row in cache_rows:
+                self.assertIsNone(cache_row.denial_id_id)
+            self.assertIsNotNone(summary_rows[0].denial_id_id)
+
+            # --- Step 2: find_context_for_denial (appeal generation path) ---
+            # Set pubmed_ids_json so _find_context_for_denial uses pre-selected articles
+            article_pmids = [a.pmid for a in articles]
+            await Denial.objects.filter(denial_id=self.denial.denial_id).aupdate(
+                pubmed_ids_json=article_pmids
+            )
+            await sync_to_async(self.denial.refresh_from_db)()
+
+            context = await tools.find_context_for_denial(self.denial)
+
+            # Context should be the summarized string
+            self.assertEqual(context, "Summarized PubMed context for appeal")
+            mock_summarize.assert_called()
+
+            # --- Step 3: Verify cache is used on repeat call ---
+            mock_pmids.reset_mock()
+            articles2 = await tools.find_pubmed_articles_for_denial(self.denial)
+            # Should use cached per-query rows and NOT call the API again
+            mock_pmids.assert_not_called()
+            self.assertGreater(len(articles2), 0)
+
+            # Verify no duplicate denial summary rows were created
+            summary_rows_after = await sync_to_async(
+                lambda: list(PubMedQueryData.objects.filter(denial_id=self.denial))
+            )()
+            self.assertEqual(
+                len(summary_rows_after),
+                2,
+                "Repeat call creates a second summary row but must not explode",
+            )
+
+            # Verify denial's base fields are unchanged
+            await sync_to_async(self.denial.refresh_from_db)()
+            self.assertEqual(self.denial.procedure, "physical therapy")
+            self.assertEqual(self.denial.diagnosis, "rheumatoid arthritis")
+
+        async_to_sync(run_test)()
+
+    @mock.patch("fighthealthinsurance.pubmed_tools.get_microsite")
+    @mock.patch("fighthealthinsurance.utils.pubmed_fetcher.pmids_for_query")
+    @mock.patch("fighthealthinsurance.ml.ml_router.ml_router.summarize")
+    def test_e2e_with_microsite(self, mock_summarize, mock_pmids, mock_get_microsite):
+        """Full pipeline with microsite: microsite search terms are included in queries."""
+
+        # Set microsite_slug on denial
+        self.denial.microsite_slug = "test-arthritis"
+        self.denial.save()
+
+        # Configure mock microsite with pubmed_search_terms
+        mock_microsite = mock.MagicMock()
+        mock_microsite.pubmed_search_terms = [
+            "arthritis biologic therapy",
+            "TNF inhibitor RA",
+        ]
+        mock_get_microsite.return_value = mock_microsite
+
+        call_log = []
+
+        def fake_pmids(query, since=None):
+            call_log.append((query, since))
+            if "biologic" in query:
+                return ["55555555", "66666666"]
+            if "TNF" in query:
+                return ["77777777", "88888888"]
+            if since == "2024":
+                return ["11111111", "22222222"]
+            return ["33333333", "44444444"]
+
+        mock_pmids.side_effect = fake_pmids
+
+        # Add extra mini articles for microsite terms
+        for pmid, title in [
+            ("55555555", "Biologic therapy for RA"),
+            ("66666666", "Advanced biologics"),
+            ("77777777", "TNF inhibitors in RA"),
+            ("88888888", "Anti-TNF outcomes"),
+        ]:
+            PubMedMiniArticle.objects.create(
+                pmid=pmid,
+                title=title,
+                abstract=f"Abstract for {title}",
+                article_url=f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",
+            )
+            PubMedArticleSummarized.objects.create(
+                pmid=pmid,
+                title=title,
+                abstract=f"Abstract for {title}",
+                doi=f"10.1000/{pmid}",
+                basic_summary=f"Summary: {title}",
+            )
+
+        async def fake_summarize(*args, **kwargs):
+            return "Summarized context with microsite articles"
+
+        mock_summarize.side_effect = fake_summarize
+
+        async def run_test():
+            tools = PubMedTools()
+
+            articles = await tools.find_pubmed_articles_for_denial(self.denial)
+
+            # Should have articles from base query AND microsite terms
+            self.assertGreater(len(articles), 0)
+
+            # Verify microsite search terms were used in queries
+            queried_terms = {q for q, s in call_log}
+            self.assertIn(
+                "arthritis biologic therapy",
+                queried_terms,
+                "Microsite search term should be queried",
+            )
+            self.assertIn(
+                "TNF inhibitor RA",
+                queried_terms,
+                "Microsite search term should be queried",
+            )
+            self.assertIn(
+                "physical therapy rheumatoid arthritis",
+                queried_terms,
+                "Base query should still be queried",
+            )
+
+            # Verify denial summary row has composite query string
+            summary_rows = await sync_to_async(
+                lambda: list(PubMedQueryData.objects.filter(denial_id=self.denial))
+            )()
+            self.assertEqual(len(summary_rows), 1)
+            # all_queries_str is sorted and joined with " | "
+            summary_query = summary_rows[0].query
+            self.assertIn("|", summary_query, "Should be a composite query string")
+            # All three terms should be represented
+            for term in [
+                "physical therapy rheumatoid arthritis",
+                "arthritis biologic therapy",
+                "TNF inhibitor RA",
+            ]:
+                self.assertIn(term, summary_query)
+
+            # Verify per-query cache rows don't have denial_id
+            cache_rows = await sync_to_async(
+                lambda: list(PubMedQueryData.objects.filter(denial_id__isnull=True))
+            )()
+            self.assertGreater(len(cache_rows), 0)
+            # Should have cache rows for each unique (query, since) combo that hit the API
+            cached_queries = {r.query for r in cache_rows}
+            # At minimum, the base query + microsite terms should each have cache entries
+            self.assertTrue(
+                len(cached_queries) >= 2,
+                f"Expected cache entries for multiple queries, got: {cached_queries}",
+            )
+
+            # --- Verify context generation works ---
+            article_pmids = [a.pmid for a in articles]
+            await Denial.objects.filter(denial_id=self.denial.denial_id).aupdate(
+                pubmed_ids_json=article_pmids
+            )
+            await sync_to_async(self.denial.refresh_from_db)()
+
+            context = await tools.find_context_for_denial(self.denial)
+            self.assertEqual(context, "Summarized context with microsite articles")
+
+        async_to_sync(run_test)()
+
+    @mock.patch("fighthealthinsurance.utils.pubmed_fetcher.pmids_for_query")
+    def test_empty_results_dont_create_denial_summary(self, mock_pmids):
+        """Verify that empty PubMed results don't create a denial summary row."""
+        mock_pmids.return_value = []
+
+        async def run_test():
+            tools = PubMedTools()
+            articles = await tools.find_pubmed_articles_for_denial(self.denial)
+
+            self.assertEqual(len(articles), 0)
+
+            # No denial summary row should be created
+            summary_count = await sync_to_async(
+                PubMedQueryData.objects.filter(denial_id=self.denial).count
+            )()
+            self.assertEqual(
+                summary_count, 0, "Empty results should not create summary row"
+            )
+
+            # No per-query cache rows either (empty results aren't cached)
+            cache_count = await sync_to_async(
+                PubMedQueryData.objects.filter(denial_id__isnull=True).count
+            )()
+            self.assertEqual(
+                cache_count, 0, "Empty results should not create cache rows"
+            )
+
+        async_to_sync(run_test)()
+
+    @mock.patch("fighthealthinsurance.utils.pubmed_fetcher.pmids_for_query")
+    def test_cache_isolation_denial_rows_not_used_as_cache(self, mock_pmids):
+        """Denial summary rows must NOT be returned by per-query cache lookups."""
+        # Pre-seed a denial summary row (as find_pubmed_articles_for_denial does)
+        PubMedQueryData.objects.create(
+            query="physical therapy rheumatoid arthritis",
+            articles=json.dumps(["11111111", "22222222"]),
+            denial_id=self.denial,
+            created=timezone.now(),
+        )
+
+        # The API should be called because the denial row is not a valid cache hit
+        mock_pmids.return_value = ["33333333", "44444444"]
+
+        async def run_test():
+            tools = PubMedTools()
+            result = await tools.find_pubmed_article_ids_for_query(
+                "physical therapy rheumatoid arthritis"
+            )
+            # Must call the API, not use the denial row
+            mock_pmids.assert_called_once()
+            self.assertEqual(result, ["33333333", "44444444"])
+
+        async_to_sync(run_test)()
+
+    @mock.patch("fighthealthinsurance.pubmed_tools.get_microsite")
+    @mock.patch("fighthealthinsurance.utils.pubmed_fetcher.pmids_for_query")
+    def test_e2e_microsite_only_empty_base_query(self, mock_pmids, mock_get_microsite):
+        """Denial summary row is created when base query is empty but microsite terms produce PMIDs."""
+        # Create denial with empty procedure/diagnosis but with microsite
+        denial = Denial.objects.create(
+            denial_text="Denied",
+            procedure="",
+            diagnosis="",
+            microsite_slug="test-microsite",
+        )
+
+        mock_microsite = mock.MagicMock()
+        mock_microsite.pubmed_search_terms = ["microsite search term"]
+        mock_get_microsite.return_value = mock_microsite
+
+        mock_pmids.return_value = ["11111111", "22222222"]
+
+        async def run_test():
+            tools = PubMedTools()
+            articles = await tools.find_pubmed_articles_for_denial(denial)
+            self.assertGreater(len(articles), 0)
+
+            # Denial summary row should exist even though base query was empty
+            summary_rows = await sync_to_async(
+                lambda: list(PubMedQueryData.objects.filter(denial_id=denial))
+            )()
+            self.assertEqual(
+                len(summary_rows),
+                1,
+                "Summary row must be created from microsite terms alone",
+            )
+            self.assertEqual(summary_rows[0].query, "microsite search term")
+
+            summary_pmids = json.loads(summary_rows[0].articles)
+            self.assertGreater(len(summary_pmids), 0)
+
+            # Verify denial still has empty base fields
+            await sync_to_async(denial.refresh_from_db)()
+            self.assertEqual(denial.procedure, "")
+            self.assertEqual(denial.diagnosis, "")
+
         async_to_sync(run_test)()

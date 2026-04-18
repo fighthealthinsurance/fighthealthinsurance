@@ -172,7 +172,7 @@ class TestSendMailingListMailView(TestCase):
         mock_actor = MagicMock()
         mock_actor_ref.get = mock_actor
         mock_actor.send_mailing_list_email.remote.return_value = "future"
-        mock_ray.get.return_value = (1, 0)
+        mock_ray.get.return_value = (1, 0, 0)
 
         self.client.login(username="staffuser", password="testpass123")
         response = self.client.post(
