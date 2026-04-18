@@ -1,6 +1,6 @@
 """Email validation utilities for filtering disposable/temporary email domains."""
 
-# Domains known to provide disposable/temporary email addresses.
+# Known invalid domains (temporary mail is _ok_ and should not be included).
 # Emails to these domains will never be delivered successfully or read,
 # so we skip sending to avoid wasting resources and hurting sender reputation.
 BLOCKED_EMAIL_DOMAINS: frozenset[str] = frozenset(

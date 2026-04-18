@@ -47,33 +47,6 @@ else:
     User = get_user_model()
 
 
-class Delete(APITestCase):
-    """Test just the delete API."""
-
-    fixtures = ["./fighthealthinsurance/fixtures/initial.yaml"]
-
-    def test_url_root(self):
-        url = reverse("dataremoval-list")
-        email = "timbit@fighthealthinsurance.com"
-        hashed_email = hashlib.sha512(email.encode("utf-8")).hexdigest()
-        # Create the object
-        Denial.objects.create(denial_text="test", hashed_email=hashed_email).save()
-        denials_for_user_count = Denial.objects.filter(
-            hashed_email=hashed_email
-        ).count()
-        assert denials_for_user_count > 0
-        # Delete it
-        response = self.client.delete(
-            url, json.dumps({"email": email}), content_type="application/json"
-        )
-        self.assertTrue(status.is_success(response.status_code))
-        # Make sure we did that
-        denials_for_user_count = Denial.objects.filter(
-            hashed_email=hashed_email
-        ).count()
-        assert denials_for_user_count == 0
-
-
 class DenialLongEmployerName(APITestCase):
     """Test denial with long employer name."""
 

@@ -29,7 +29,6 @@ from stopit import ThreadingTimeout as Timeout
 from fhi_users.auth import auth_utils
 from fhi_users.models import PatientUser, ProfessionalUser, UserDomain
 from fighthealthinsurance import common_view_logic, rest_serializers as serializers
-from fighthealthinsurance.helpers.data_helpers import RemoveDataHelper
 from fighthealthinsurance.helpers.fax_helpers import SendFaxHelper
 from fighthealthinsurance.ml.health_status import health_status
 from fighthealthinsurance.ml.ml_router import ml_router
@@ -176,28 +175,6 @@ class ChatViewSet(viewsets.ViewSet):
                     return title
 
         return "Life, the universe and everything? 42"
-
-
-class DataRemovalViewSet(viewsets.ViewSet, DeleteMixin, DeleteOnlyMixin):
-    """
-    ViewSet for handling data removal requests.
-    Allows users to request deletion of all their data by email address.
-    """
-
-    serializer_class = serializers.DeleteDataFormSerializer
-
-    @extend_schema(
-        responses={204: serializers.SuccessSerializer, 400: serializers.ErrorSerializer}
-    )
-    def perform_delete(self, request: Request, serializer):
-        email: str = serializer.validated_data["email"]
-        RemoveDataHelper.remove_data_for_email(email)
-        return Response(
-            serializers.SuccessSerializer(
-                {"message": "Data deleted successfully"}
-            ).data,
-            status=status.HTTP_204_NO_CONTENT,
-        )
 
 
 class HealthHistoryViewSet(viewsets.ViewSet, CreateMixin):

@@ -633,6 +633,16 @@ def send_delete_confirmation_email(email: str, token: str) -> None:
     )
 
 
+def request_data_deletion(email: str) -> None:
+    """Create a delete token for the given email and send a confirmation email."""
+    hashed_email = models.Denial.get_hashed_email(email)
+    # Replace any existing token for this email so only one link is live.
+    DeleteToken.objects.filter(hashed_email=hashed_email).delete()
+    delete_token = DeleteToken(hashed_email=hashed_email)
+    delete_token.save()
+    send_delete_confirmation_email(email, str(delete_token.token))
+
+
 class RemoveDataView(View):
     """View for users to request deletion of their data.
 
@@ -646,23 +656,15 @@ class RemoveDataView(View):
             "remove_data.html",
             context={
                 "title": "Remove My Data",
-                "form": core_forms.DeleteDataForm(),
+                "form": core_forms.PublicDeleteDataForm(),
             },
         )
 
     def post(self, request):
-        form = core_forms.DeleteDataForm(request.POST)
+        form = core_forms.PublicDeleteDataForm(request.POST)
 
         if form.is_valid():
-            email = form.cleaned_data["email"]
-            hashed_email = models.Denial.get_hashed_email(email)
-            # Delete any existing tokens for this email
-            DeleteToken.objects.filter(hashed_email=hashed_email).delete()
-            # Create a new token
-            delete_token = DeleteToken(hashed_email=hashed_email)
-            delete_token.save()
-            # Send confirmation email
-            send_delete_confirmation_email(email, str(delete_token.token))
+            request_data_deletion(form.cleaned_data["email"])
             return render(
                 request,
                 "delete_data_email_sent.html",
@@ -695,7 +697,7 @@ class ConfirmDeleteDataView(View):
             "remove_data.html",
             context={
                 "title": "Remove My Data",
-                "form": core_forms.DeleteDataForm(),
+                "form": core_forms.PublicDeleteDataForm(),
                 "error": error_message,
             },
         )
