@@ -451,7 +451,10 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
             await self.send(json.dumps({"error": "Invalid JSON format"}))
             await self.close()
             return
-        logger.debug(f"Received message for ongoing chat {data}")
+        log_meta = {k: v for k, v in data.items() if k not in ("content", "message")}
+        content = data.get("message", data.get("content", ""))
+        log_meta["content_length"] = len(content) if isinstance(content, str) else 0
+        logger.debug(f"Received message for ongoing chat {log_meta}")
 
         # Get the required data -- note the message should be sent as "content"
         # but we also accept "message" for backward compatibility.

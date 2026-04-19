@@ -73,9 +73,10 @@ def chunk_document(
             )
             chunk_index += 1
 
-        start = max(end - overlap, start + 1)
-        if start >= len(text):
+        if end >= len(text):
             break
+
+        start = max(end - overlap, start + 1)
 
     return chunks
 
@@ -230,16 +231,23 @@ async def summarize_chunks(
                 )
 
         successful_summaries = [c["summary"] for c in chunk_results if c.get("summary")]
-        overall_summary = ""
-        if successful_summaries:
-            overall = await _generate_overall_summary(
-                successful_summaries, doc.document_name, denial_context
-            )
-            if overall:
-                overall_summary = overall
-
         doc.chunk_summaries = chunk_results
-        doc.summary = overall_summary or doc.summary
+
+        if not successful_summaries:
+            doc.processing_status = ChatDocument.Status.FAILED
+            await doc.asave(update_fields=["chunk_summaries", "processing_status"])
+            logger.warning(
+                f"No chunk summaries generated for ChatDocument {chat_document_id} "
+                f"({len(chunks)} chunks attempted)"
+            )
+            return
+
+        overall = await _generate_overall_summary(
+            successful_summaries, doc.document_name, denial_context
+        )
+        if overall:
+            doc.summary = overall
+
         doc.processing_status = ChatDocument.Status.COMPLETED
         await doc.asave(
             update_fields=["chunk_summaries", "summary", "processing_status"]
@@ -279,8 +287,7 @@ async def process_uploaded_document(
     )
 
     logger.info(
-        f"Created ChatDocument {doc.id} for chat {chat.id}: "
-        f"{document_name} ({len(full_text)} chars)"
+        f"Created ChatDocument {doc.id} for chat {chat.id} " f"({len(full_text)} chars)"
     )
 
     await fire_and_forget_in_new_threadpool(
