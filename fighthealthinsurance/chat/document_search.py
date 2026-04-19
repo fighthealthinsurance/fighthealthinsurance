@@ -178,10 +178,10 @@ def _score_chunk(chunk_text: str, search_terms: List[str]) -> float:
 def _format_chunk_text(chunk: Dict, full_text: str) -> str:
     """Return the text for a chunk, reconstructing from offsets if needed."""
     text = chunk.get("text")
-    if text:
+    if isinstance(text, str) and text:
         return text
-    start = chunk.get("start_char", 0)
-    end = chunk.get("end_char", len(full_text))
+    start: int = chunk.get("start_char", 0)
+    end: int = chunk.get("end_char", len(full_text))
     return full_text[start:end]
 
 
