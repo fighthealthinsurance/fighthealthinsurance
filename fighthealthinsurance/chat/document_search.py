@@ -248,8 +248,12 @@ async def get_document_context_for_message(
                 )
 
     parts: List[str] = []
+    listing_budget = max_chars // 4
     if summary_entries:
-        parts.append("Uploaded documents:\n" + "\n".join(summary_entries))
+        listing = "Uploaded documents:\n" + "\n".join(summary_entries)
+        if len(listing) > listing_budget:
+            listing = listing[:listing_budget] + "..."
+        parts.append(listing)
 
     if scored_chunks:
         scored_chunks.sort(key=lambda x: x["score"], reverse=True)

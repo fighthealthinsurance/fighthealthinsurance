@@ -388,9 +388,10 @@ class ChatInterface:
         """
         chat = self.chat
 
-        # SAFETY: Check for crisis/self-harm indicators first
-        # If detected, provide crisis resources immediately alongside any response
-        crisis_detected = detect_crisis_keywords(user_message)
+        # SAFETY: Check for crisis/self-harm indicators in user-authored messages.
+        # Skip for document uploads — OCR'd clinical text often contains
+        # phrases that match crisis patterns but aren't user distress signals.
+        crisis_detected = not is_document and detect_crisis_keywords(user_message)
         if crisis_detected:
             logger.warning(
                 f"Crisis keywords detected in chat {chat.id}, providing resources"
