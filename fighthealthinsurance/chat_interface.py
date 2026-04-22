@@ -63,7 +63,7 @@ from fighthealthinsurance.ml.ml_policy_doc_helper import MLPolicyDocHelper
 # UnderstandPolicyView.form_valid(). This avoids false positives from normal
 # chat messages that mention "summary of benefits" or "what is covered".
 _POLICY_ANALYSIS_REGEX: re.Pattern[str] = re.compile(
-    r"I've uploaded my insurance .+\nPlease analyze this document",
+    r"I've uploaded my insurance .+\r?\nPlease analyze this document",
     re.IGNORECASE | re.DOTALL,
 )
 

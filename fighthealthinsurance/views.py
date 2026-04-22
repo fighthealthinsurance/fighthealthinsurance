@@ -57,18 +57,26 @@ def _handle_mailing_list_subscribe(form: forms.Form, source_page: str) -> None:
     name = f"{form.cleaned_data.get('first_name')} {form.cleaned_data.get('last_name')}"
     try:
         email = str(form.cleaned_data.get("email", ""))
-        models.MailingListSubscriber.objects.update_or_create(
-            email=email,
-            defaults={
-                "name": name,
-                "phone": form.cleaned_data.get("phone", ""),
-                "comments": f"From {source_page}",
-                "referral_source": form.cleaned_data.get("referral_source", ""),
-                "referral_source_details": form.cleaned_data.get(
-                    "referral_source_details", ""
-                ),
-            },
+        defaults = {
+            "name": name,
+            "phone": form.cleaned_data.get("phone", ""),
+            "comments": f"From {source_page}",
+            "referral_source": form.cleaned_data.get("referral_source", ""),
+            "referral_source_details": form.cleaned_data.get(
+                "referral_source_details", ""
+            ),
+        }
+        existing = (
+            models.MailingListSubscriber.objects.filter(email=email)
+            .order_by("-pk")
+            .first()
         )
+        if existing is not None:
+            for field, value in defaults.items():
+                setattr(existing, field, value)
+            existing.save(update_fields=list(defaults.keys()))
+        else:
+            models.MailingListSubscriber.objects.create(email=email, **defaults)
     except Exception as e:
         logger.warning(f"Failed to create mailing list subscriber: {e}")
 
