@@ -16,6 +16,8 @@ from fighthealthinsurance.chat.context_manager import (
     should_store_summary,
 )
 from fighthealthinsurance.chat.llm_client import build_llm_calls, create_response_scorer
+from fighthealthinsurance.chat.document_processor import process_uploaded_document
+from fighthealthinsurance.chat.document_search import get_document_context_for_message
 from fighthealthinsurance.chat.retry_handler import (
     retry_llm_with_fallback,
     should_retry_response,
@@ -363,6 +365,7 @@ class ChatInterface:
             self.send_status_message,
             call_llm_callback=self._call_llm_with_actions,
             fetch_count=self._doc_fetch_count,
+            chat=self.chat,
         )
         response_text, context, _ = await doc_fetcher_tool.handle(
             response_text, context, **tool_kwargs
@@ -377,15 +380,18 @@ class ChatInterface:
         iterate_on_appeal: Optional[str] = None,
         iterate_on_prior_auth: Optional[str] = None,
         user: Optional[User] = None,
+        is_document: bool = False,
+        document_name: Optional[str] = None,
     ):
         """
         Handles an incoming chat message, interacts with LLMs, and manages chat history.
         """
         chat = self.chat
 
-        # SAFETY: Check for crisis/self-harm indicators first
-        # If detected, provide crisis resources immediately alongside any response
-        crisis_detected = detect_crisis_keywords(user_message)
+        # SAFETY: Check for crisis/self-harm indicators in user-authored messages.
+        # Skip for document uploads — OCR'd clinical text often contains
+        # phrases that match crisis patterns but aren't user distress signals.
+        crisis_detected = not is_document and detect_crisis_keywords(user_message)
         if crisis_detected:
             logger.warning(
                 f"Crisis keywords detected in chat {chat.id}, providing resources"
@@ -402,6 +408,49 @@ class ChatInterface:
             await chat.asave()
             # Don't continue with normal processing - let the user respond
             return
+
+        # Handle document uploads: store separately and replace with marker in chat
+        if is_document and user_message:
+            doc_name = document_name or "uploaded_document"
+            char_count = len(user_message)
+            logger.info(
+                f"Document uploaded in chat {chat.id}: {doc_name} ({char_count} chars)"
+            )
+
+            denial_context = None
+            appeal = (
+                await Appeal.objects.select_related("for_denial")
+                .filter(chat=chat)
+                .afirst()
+            )
+            if appeal and appeal.for_denial:
+                linked_denial = appeal.for_denial
+                parts = []
+                if linked_denial.procedure or linked_denial.candidate_procedure:
+                    parts.append(
+                        f"Procedure: {linked_denial.procedure or linked_denial.candidate_procedure}"
+                    )
+                if linked_denial.diagnosis or linked_denial.candidate_diagnosis:
+                    parts.append(
+                        f"Diagnosis: {linked_denial.diagnosis or linked_denial.candidate_diagnosis}"
+                    )
+                if parts:
+                    denial_context = "; ".join(parts)
+
+            await process_uploaded_document(
+                chat=chat,
+                document_name=doc_name,
+                full_text=user_message,
+                denial_context=denial_context,
+            )
+
+            user_message = (
+                f"I've uploaded a document: {doc_name} ({char_count:,} characters). "
+                f"The document is being analyzed and its contents are available for reference."
+            )
+            await self.send_status_message(
+                f"Document received: {doc_name}. Analyzing content in background..."
+            )
 
         # Check if this is a new chat BEFORE any linking modifies chat_history
         is_new_chat = not bool(chat.chat_history)
@@ -670,6 +719,15 @@ class ChatInterface:
 
         final_response_text = None
         final_context_part = None
+
+        # Inject uploaded document context into the LLM call
+        doc_context_str = await get_document_context_for_message(chat.id, user_message)
+        if doc_context_str:
+            summarized_context = (
+                f"{doc_context_str}\n\n{summarized_context}"
+                if summarized_context
+                else doc_context_str
+            )
 
         if self.is_trial_professional:
             await asyncio.sleep(0.5)  # Half a second delay for trial users.

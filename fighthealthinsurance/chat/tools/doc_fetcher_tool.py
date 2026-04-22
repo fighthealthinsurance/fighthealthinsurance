@@ -15,6 +15,7 @@ from urllib.parse import urlparse, urlunparse
 
 from loguru import logger
 
+from fighthealthinsurance.chat.document_processor import process_uploaded_document
 from fighthealthinsurance.extralink_fetcher import ExtraLinkFetcher
 
 from .base_tool import BaseTool
@@ -118,20 +119,13 @@ class DocFetcherTool(BaseTool):
             Callable[..., Awaitable[Tuple[Optional[str], Optional[str]]]]
         ] = None,
         fetch_count: Optional[list[int]] = None,
+        chat=None,
     ):
-        """
-        Initialize the document fetcher tool.
-
-        Args:
-            send_status_message: Async function to send status updates
-            call_llm_callback: Callback to call LLM with additional context
-            fetch_count: Mutable list used as a counter [current_count].
-                Pass the same list across calls to enforce per-session rate limits.
-        """
         super().__init__(send_status_message)
         self.call_llm_callback = call_llm_callback
         self.fetcher = ExtraLinkFetcher()
         self._fetch_count = fetch_count if fetch_count is not None else [0]
+        self.chat = chat
 
     async def execute(
         self,
@@ -192,9 +186,8 @@ class DocFetcherTool(BaseTool):
 
         try:
             await self.send_status_message("Downloading and extracting content...")
-            extracted_text, doc_type = await self.fetcher.fetch_and_extract_text(
+            full_text, doc_type = await self.fetcher.fetch_and_extract_text(
                 url,
-                max_length=MAX_CHAT_TEXT_LENGTH,
                 url_validator=validate_url,
             )
         except Exception as e:
@@ -202,19 +195,35 @@ class DocFetcherTool(BaseTool):
             await self.send_status_message(f"Failed to fetch document: {e}")
             return cleaned_response, context
 
-        if not extracted_text or not extracted_text.strip():
+        if not full_text or not full_text.strip():
             await self.send_status_message(
                 "Could not extract any text from the document."
             )
             return cleaned_response, context
 
         await self.send_status_message(
-            f"Extracted {len(extracted_text)} characters from {doc_type} document."
+            f"Extracted {len(full_text)} characters from {doc_type} document."
         )
 
+        # Store full document for chunking, summarization, and back-searching
+        if self.chat:
+            try:
+                await process_uploaded_document(
+                    chat=self.chat,
+                    document_name=safe_url,
+                    full_text=full_text,
+                )
+                await self.send_status_message(
+                    "Document stored for analysis and future reference."
+                )
+            except Exception as e:
+                logger.warning(f"Failed to store fetched document: {e}")
+
+        # Truncate for immediate LLM context only
+        llm_text = full_text[:MAX_CHAT_TEXT_LENGTH]
         doc_context = (
             f"\n\nDocument fetched from {safe_url}:\n"
-            f"{extracted_text}\n\n"
+            f"{llm_text}\n\n"
             f"Please incorporate the relevant information from the document above.\n"
         )
 
