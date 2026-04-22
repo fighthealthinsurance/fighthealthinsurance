@@ -182,13 +182,13 @@ class PubMedTools(object):
         if not data:
             return None
         best_oa = data.get("best_oa_location")
-        if best_oa:
-            for key in ("url_for_pdf", "url_for_landing_page"):
-                if best_oa.get(key):
-                    return str(best_oa[key])
+        if best_oa and best_oa.get("url_for_pdf"):
+            return str(best_oa["url_for_pdf"])
         for oa_loc in data.get("oa_locations", []):
             if oa_loc.get("url_for_pdf"):
                 return str(oa_loc["url_for_pdf"])
+        if best_oa and best_oa.get("url_for_landing_page"):
+            return str(best_oa["url_for_landing_page"])
         return None
 
     async def _query_biorxiv(
@@ -275,7 +275,9 @@ class PubMedTools(object):
     @staticmethod
     def _is_pdf_response(url: str, content_type: str) -> bool:
         """Check if a URL or content-type indicates a PDF response."""
-        return ".pdf" in url or "application/pdf" in content_type
+        if "application/pdf" in content_type.lower():
+            return True
+        return url.lower().split("?", 1)[0].endswith(".pdf")
 
     @staticmethod
     def _extract_pdf_url_from_html(html: str, base_url: str) -> Optional[str]:
@@ -445,6 +447,27 @@ class PubMedTools(object):
                             pmid=pmid
                         ).afirst()
                         if mini_article:
+                            if not mini_article.article_url:
+                                try:
+                                    t = timeout / 5.0
+                                    url = await asyncio.wait_for(
+                                        self._find_article_url(
+                                            pmid,
+                                            doi=getattr(mini_article, "doi", None),
+                                            session=session,
+                                            per_source_timeout=t / 6,
+                                        ),
+                                        timeout=t,
+                                    )
+                                    if url:
+                                        await PubMedMiniArticle.objects.filter(
+                                            pmid=pmid
+                                        ).aupdate(article_url=url)
+                                        mini_article.article_url = url
+                                except Exception as e:
+                                    logger.debug(
+                                        f"URL re-resolution failed for cached {pmid}: {e}"
+                                    )
                             articles.append(mini_article)
                         else:
                             # Create a new mini article
@@ -706,24 +729,26 @@ class PubMedTools(object):
         self,
         url: str,
         session: aiohttp.ClientSession,
+        timeout_secs: float = 15.0,
     ) -> str:
         """Fetch article text from a URL, handling both PDF and HTML content."""
         article_text = ""
         try:
-            async with session.get(url, headers=_FETCH_HEADERS) as response:
-                response.raise_for_status()
-                content_type = response.headers.get("Content-Type", "")
-                if self._is_pdf_response(url, content_type):
-                    pdf_bytes = await response.read()
-                    read_pdf = PyPDF2.PdfReader(io.BytesIO(pdf_bytes))
-                    if read_pdf.is_encrypted:
-                        read_pdf.decrypt("")
-                    for page in read_pdf.pages:
-                        article_text += page.extract_text()
-                else:
-                    text = (await response.text()).strip()
-                    if " " in text and len(text) > 50:
-                        article_text = text
+            async with async_timeout(timeout_secs):
+                async with session.get(url, headers=_FETCH_HEADERS) as response:
+                    response.raise_for_status()
+                    content_type = response.headers.get("Content-Type", "")
+                    if self._is_pdf_response(url, content_type):
+                        pdf_bytes = await response.read()
+                        read_pdf = PyPDF2.PdfReader(io.BytesIO(pdf_bytes))
+                        if read_pdf.is_encrypted:
+                            read_pdf.decrypt("")
+                        for page in read_pdf.pages:
+                            article_text += page.extract_text()
+                    else:
+                        text = (await response.text()).strip()
+                        if " " in text and len(text) > 50:
+                            article_text = text
         except Exception as e:
             logger.debug(f"Error fetching text from {url}: {e}")
         return article_text
@@ -825,7 +850,7 @@ class PubMedTools(object):
                     content_type = response.headers.get("Content-Type", "")
                     if self._is_pdf_response(url, content_type):
                         content = await response.read()
-                        if len(content) > 20:
+                        if len(content) > 512 and content.lstrip().startswith(b"%PDF"):
                             with tempfile.NamedTemporaryFile(
                                 prefix=prefix, suffix=".pdf", delete=False
                             ) as my_data:

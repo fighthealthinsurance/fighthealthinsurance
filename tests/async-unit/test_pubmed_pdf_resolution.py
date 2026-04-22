@@ -329,6 +329,22 @@ class TestTryUnpaywall:
         result = await tools._try_unpaywall("10.1000/test", session, timeout_secs=5.0)
         assert result == "https://repo.org/pdf/article.pdf"
 
+    async def test_prefers_oa_locations_pdf_over_landing_page(self, tools):
+        resp = _make_mock_response(
+            json_data={
+                "best_oa_location": {
+                    "url_for_pdf": None,
+                    "url_for_landing_page": "https://publisher.com/article",
+                },
+                "oa_locations": [
+                    {"url_for_pdf": "https://repo.org/pdf/article.pdf"},
+                ],
+            }
+        )
+        session = _make_mock_session(responses=[resp])
+        result = await tools._try_unpaywall("10.1000/test", session, timeout_secs=5.0)
+        assert result == "https://repo.org/pdf/article.pdf"
+
     @pytest.mark.parametrize(
         "json_data,status",
         [
@@ -689,7 +705,7 @@ class TestTryFetchPdfToFile:
     """Tests for _try_fetch_pdf_to_file method."""
 
     async def test_saves_pdf_to_temp_file(self, tools):
-        pdf_content = b"%PDF-1.4 " + b"x" * 100
+        pdf_content = b"%PDF-1.4 " + b"x" * 600
         resp = _make_mock_response(content=pdf_content, content_type="application/pdf")
         session = _make_mock_session(responses=[resp])
         result = await tools._try_fetch_pdf_to_file(
@@ -714,6 +730,12 @@ class TestTryFetchPdfToFile:
             ),
             ("https://example.com/paper.pdf", b"tiny", "application/pdf", 200),
             ("https://example.com/paper.pdf", b"", "application/pdf", 403),
+            (
+                "https://example.com/paper.pdf",
+                b"<html>Error 404</html>" + b"x" * 600,
+                "application/pdf",
+                200,
+            ),
         ],
     )
     async def test_returns_none_on_invalid(
