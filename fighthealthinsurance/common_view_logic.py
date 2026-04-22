@@ -2251,6 +2251,22 @@ class AppealsBackendHelper:
                     if dt.appeal_text is not None:
                         main.append(dt.appeal_text)
 
+        # Process JourneyDocumentationQuestions if the user submitted journey fields.
+        # This form is added by _build_question_forms but isn't tied to a denial type,
+        # so the denial_type loop above doesn't pick it up.
+        from fighthealthinsurance.forms.questions import JourneyDocumentationQuestions
+
+        journey_form = JourneyDocumentationQuestions(
+            parameters, prof_pov=professional_to_finish
+        )
+        if journey_form.is_valid():
+            jmc = journey_form.medical_context()
+            if jmc:
+                medical_context.add(jmc)
+            for m in journey_form.main():
+                if m not in main:
+                    main.append(m)
+
         # Add the context to the denial
         if medical_context is not None:
             qa_context = {}

@@ -117,10 +117,27 @@ class DocumentationQuestionsTool(BaseTool):
 
         await self.send_status_message("Documentation guidance ready")
 
-        # Call LLM with the documentation context
+        # Call LLM with the documentation context (matching PubMed tool pattern)
+        model_backends = kwargs.get("model_backends")
+        previous_context_summary = kwargs.get("previous_context_summary")
+        history_for_llm = kwargs.get("history_for_llm", [])
+        depth = kwargs.get("depth", 0)
+        is_logged_in = kwargs.get("is_logged_in", False)
+        is_professional = kwargs.get("is_professional", False)
+
+        # Add cleaned response to history before recursive call
+        history_for_llm = list(history_for_llm) + [
+            {"role": "agent", "content": cleaned_response}
+        ]
+
         additional_response, additional_context = await self.call_llm_callback(
-            **kwargs,
-            current_message_for_llm=doc_context,
+            model_backends,
+            doc_context,
+            previous_context_summary,
+            history_for_llm,
+            depth=depth + 1,
+            is_logged_in=is_logged_in,
+            is_professional=is_professional,
         )
 
         # Append additional response to cleaned text (matching PubMed pattern)
