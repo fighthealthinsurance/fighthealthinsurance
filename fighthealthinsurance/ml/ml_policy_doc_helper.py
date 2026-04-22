@@ -10,20 +10,20 @@ Uses internal ML models to:
 """
 
 import asyncio
-import io
 import json
 import re
 from typing import ClassVar, Optional, Dict, Any, Callable, Awaitable, Set
 
 from loguru import logger
 
-import pymupdf
-
 from django.db import IntegrityError
-from django_encrypted_filefield.crypt import Cryptographer
 
 from fighthealthinsurance.models import PolicyDocument, PolicyDocumentAnalysis
-from fighthealthinsurance.ml.ml_router import ml_router
+from fighthealthinsurance.ml.ml_inference import infer_with_fallback
+from fighthealthinsurance.ml.ml_document_extraction import (
+    extract_text_from_bytes,
+    read_and_decrypt_file,
+)
 
 # Disclaimer text to include in all outputs
 POLICY_ANALYSIS_DISCLAIMER = (
@@ -151,167 +151,6 @@ class MLPolicyDocHelper:
     CHUNK_TIMEOUT_SECONDS = 60
     # Timeout for the final synthesis call
     SYNTHESIS_TIMEOUT_SECONDS = 90
-
-    @classmethod
-    async def _infer_with_fallback(
-        cls,
-        system_prompts: list[str],
-        prompt: str,
-        temperature: float,
-        timeout: float,
-        model_count: int = 3,
-        label: str = "",
-    ) -> Optional[str]:
-        """
-        Try inference across multiple models with timeout, returning the first
-        successful result or None if all models fail.
-        """
-        models = ml_router.internal_models_by_cost[:model_count]
-        for model in models:
-            try:
-                result = await asyncio.wait_for(
-                    model._infer_no_context(
-                        system_prompts=system_prompts,
-                        prompt=prompt,
-                        temperature=temperature,
-                    ),
-                    timeout=timeout,
-                )
-                if result:
-                    return str(result)
-            except asyncio.TimeoutError:
-                logger.warning(f"Timeout on {label} with {model}")
-            except Exception as e:
-                logger.debug(f"Error on {label} with {model}: {e}")
-        return None
-
-    @classmethod
-    def _read_and_decrypt_file(cls, file_field: Any) -> Optional[bytes]:
-        """
-        Read and decrypt bytes from an EncryptedFileField.
-
-        Returns:
-            Decrypted bytes if successful, None on failure.
-        """
-        try:
-            with file_field.open() as f:
-                encrypted_bytes: bytes = f.read()
-                if not encrypted_bytes:
-                    return None
-                try:
-                    return bytes(Cryptographer.decrypted(encrypted_bytes))
-                except Exception:
-                    # Decryption failed — file may have been stored unencrypted
-                    logger.debug("Decryption failed, returning raw bytes as fallback")
-                    return encrypted_bytes
-        except Exception as e:
-            logger.warning(f"Error reading encrypted file: {e}")
-            return None
-
-    @classmethod
-    def _extract_text_from_pdf_bytes(cls, data: bytes) -> tuple[str, Dict[int, str]]:
-        """
-        Extract text from PDF bytes with page number tracking.
-
-        Returns:
-            Tuple of (full_text, page_dict) where page_dict maps page numbers to text
-        """
-        full_text = ""
-        page_dict: Dict[int, str] = {}
-
-        try:
-            with pymupdf.open(stream=data, filetype="pdf") as doc:
-                for page_num, page in enumerate(doc, start=1):
-                    page_text = page.get_text()
-                    if page_text.strip():
-                        page_dict[page_num] = page_text
-                        full_text += f"\n\n[Page {page_num}]\n{page_text}"
-        except Exception as e:
-            logger.warning(f"Error extracting text from PDF bytes: {e}")
-
-        return full_text, page_dict
-
-    @classmethod
-    def _extract_text_from_docx_bytes(cls, data: bytes) -> tuple[str, Dict[int, str]]:
-        """
-        Extract text from DOCX bytes.
-
-        Returns:
-            Tuple of (full_text, page_dict). DOCX does not have reliable page
-            numbers, so page_dict uses paragraph-group indices as pseudo-pages.
-        """
-        full_text = ""
-        page_dict: Dict[int, str] = {}
-
-        try:
-            import docx
-
-            doc = docx.Document(io.BytesIO(data))
-            # Group paragraphs into pseudo-pages (~3000 chars each)
-            current_page = 1
-            current_page_text = ""
-            for para in doc.paragraphs:
-                text = para.text.strip()
-                if not text:
-                    continue
-                current_page_text += text + "\n"
-                if len(current_page_text) > 3000:
-                    page_dict[current_page] = current_page_text
-                    full_text += f"\n\n[Section {current_page}]\n{current_page_text}"
-                    current_page += 1
-                    current_page_text = ""
-            # Add remaining text
-            if current_page_text.strip():
-                page_dict[current_page] = current_page_text
-                full_text += f"\n\n[Section {current_page}]\n{current_page_text}"
-        except Exception as e:
-            logger.warning(f"Error extracting text from DOCX bytes: {e}")
-
-        return full_text, page_dict
-
-    @classmethod
-    def _extract_text_from_plaintext_bytes(
-        cls, data: bytes
-    ) -> tuple[str, Dict[int, str]]:
-        """
-        Extract text from plain text file bytes.
-
-        Returns:
-            Tuple of (full_text, page_dict) with a single pseudo-page.
-        """
-        full_text = ""
-        page_dict: Dict[int, str] = {}
-
-        try:
-            content = data.decode("utf-8", errors="replace")
-            if content.strip():
-                page_dict[1] = content
-                full_text = f"\n\n[Section 1]\n{content}"
-        except Exception as e:
-            logger.warning(f"Error reading plaintext bytes: {e}")
-
-        return full_text, page_dict
-
-    @classmethod
-    def extract_text_from_bytes(
-        cls, data: bytes, filename: str
-    ) -> tuple[str, Dict[int, str]]:
-        """
-        Extract text from document bytes, dispatching by filename extension.
-
-        Returns:
-            Tuple of (full_text, page_dict)
-        """
-        lower_name = filename.lower()
-        if lower_name.endswith(".pdf"):
-            return cls._extract_text_from_pdf_bytes(data)
-        elif lower_name.endswith(".docx"):
-            return cls._extract_text_from_docx_bytes(data)
-        elif lower_name.endswith(".txt"):
-            return cls._extract_text_from_plaintext_bytes(data)
-        else:
-            logger.warning(f"Unsupported file type for text extraction: {filename}")
-            return "", {}
 
     @classmethod
     def _build_chunks(cls, page_dict: Dict[int, str]) -> list[Dict[str, Any]]:
@@ -442,7 +281,7 @@ class MLPolicyDocHelper:
             async with asyncio.timeout(cls.TIMEOUT_SECONDS):
                 # Step 1: Read and decrypt the file, then extract text
                 decrypted_bytes = await asyncio.to_thread(
-                    cls._read_and_decrypt_file, file_field
+                    read_and_decrypt_file, file_field
                 )
                 if not decrypted_bytes:
                     logger.warning(
@@ -451,7 +290,7 @@ class MLPolicyDocHelper:
                     return None
 
                 full_text, page_dict = await asyncio.to_thread(
-                    cls.extract_text_from_bytes,
+                    extract_text_from_bytes,
                     decrypted_bytes,
                     policy_document.filename,
                 )
@@ -643,7 +482,7 @@ RELEVANT: NO
 Document chunk:
 {chunk_text}"""
 
-        result = await cls._infer_with_fallback(
+        result = await infer_with_fallback(
             system_prompts=[
                 "You are an expert at analyzing health insurance policy documents. "
                 "Be concise. Include exact page references for all findings."
@@ -802,12 +641,11 @@ Respond in JSON format with the following structure:
     "summary": "2-3 paragraph plain-English summary of coverage, limitations, appeal rights, and regulatory oversight"
 }}"""
 
-        num_models = min(len(ml_router.internal_models_by_cost), 3)
-        per_model_timeout = cls.SYNTHESIS_TIMEOUT_SECONDS / max(num_models, 1)
+        per_model_timeout = cls.SYNTHESIS_TIMEOUT_SECONDS / 3
 
         try:
             result = await asyncio.wait_for(
-                cls._infer_with_fallback(
+                infer_with_fallback(
                     system_prompts=[
                         "You are an expert at analyzing health insurance policy documents. "
                         "Synthesize findings into a clear, structured analysis. "

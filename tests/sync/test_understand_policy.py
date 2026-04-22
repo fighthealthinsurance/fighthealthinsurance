@@ -13,6 +13,11 @@ from fighthealthinsurance.chat_forms import (
     UnderstandPolicyForm,
 )
 from fighthealthinsurance.chat_interface import _detect_policy_analysis_request
+from fighthealthinsurance.ml.ml_document_extraction import (
+    extract_text_from_bytes,
+    extract_text_from_pdf_bytes,
+    extract_text_from_plaintext_bytes,
+)
 from fighthealthinsurance.ml.ml_policy_doc_helper import MLPolicyDocHelper
 from fighthealthinsurance.models import PolicyDocument, PolicyDocumentAnalysis
 
@@ -148,13 +153,13 @@ class TextExtractionTest(TestCase):
         pdf_bytes = doc.tobytes()
         doc.close()
 
-        full_text, page_dict = MLPolicyDocHelper._extract_text_from_pdf_bytes(pdf_bytes)
+        full_text, page_dict = extract_text_from_pdf_bytes(pdf_bytes)
         self.assertIn("page 1", full_text.lower())
         self.assertIn(1, page_dict)
 
     def test_extract_text_from_plaintext(self):
         content = b"This is a plain text policy document with coverage details."
-        full_text, page_dict = MLPolicyDocHelper._extract_text_from_plaintext_bytes(
+        full_text, page_dict = extract_text_from_plaintext_bytes(
             content
         )
         self.assertIn("plain text policy", full_text)
@@ -167,26 +172,26 @@ class TextExtractionTest(TestCase):
         pdf_bytes = doc.tobytes()
         doc.close()
 
-        full_text, _ = MLPolicyDocHelper.extract_text_from_bytes(
+        full_text, _ = extract_text_from_bytes(
             pdf_bytes, "policy.pdf"
         )
         self.assertIn("Dispatcher PDF test", full_text)
 
     def test_extract_text_dispatcher_txt(self):
-        full_text, _ = MLPolicyDocHelper.extract_text_from_bytes(
+        full_text, _ = extract_text_from_bytes(
             b"Hello world", "notes.txt"
         )
         self.assertIn("Hello world", full_text)
 
     def test_extract_text_dispatcher_unsupported(self):
-        full_text, page_dict = MLPolicyDocHelper.extract_text_from_bytes(
+        full_text, page_dict = extract_text_from_bytes(
             b"data", "file.xyz"
         )
         self.assertEqual(full_text, "")
         self.assertEqual(page_dict, {})
 
     def test_corrupt_pdf_returns_empty(self):
-        full_text, page_dict = MLPolicyDocHelper._extract_text_from_pdf_bytes(
+        full_text, page_dict = extract_text_from_pdf_bytes(
             b"not a pdf at all"
         )
         self.assertEqual(full_text, "")

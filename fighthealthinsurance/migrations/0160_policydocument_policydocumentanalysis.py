@@ -12,7 +12,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("fighthealthinsurance", "0158_alter_useddeletetoken_id"),
+        ("fighthealthinsurance", "0159_chatdocument"),
     ]
 
     operations = [
