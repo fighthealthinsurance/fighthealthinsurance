@@ -297,6 +297,7 @@ class ChatInterface:
                 timeout=35.0,
                 status_callback=self.send_status_message,
                 chat_history=chat.chat_history,
+                full_history=full_history,
             )
             if retry_response and len(retry_response.strip()) > 5:
                 response_text = retry_response
