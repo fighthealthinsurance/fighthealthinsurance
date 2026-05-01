@@ -28,6 +28,7 @@ from typing import (
     Union,
     cast,
 )
+from email.utils import formataddr
 from uuid import UUID
 
 from django.conf import settings
@@ -289,7 +290,15 @@ def mask_email_for_logging(email: Optional[str]) -> str:
     return f"{masked_local}@{domain}"
 
 
-def send_fallback_email(subject: str, template_name: str, context, to_email: str):
+def send_fallback_email(
+    subject: str,
+    template_name: str,
+    context,
+    to_email: str,
+    from_name: Optional[str] = None,
+    reply_to: Optional[str] = None,
+    extra_headers: Optional[Dict[str, str]] = None,
+):
     if is_blocked_email(to_email):
         logger.info(
             f"Skipping email to blocked address: {mask_email_for_logging(to_email)}"
@@ -306,12 +315,28 @@ def send_fallback_email(subject: str, template_name: str, context, to_email: str
         f"emails/{template_name}.html",
         context=context,
     )
-    # Then, create a multipart email instance.
+    # Build a From: with a display name so mailbox providers show a recognizable
+    # sender (e.g. "Fight Health Insurance Support") instead of a bare address,
+    # which both helps users find/trust the mail and is one of several signals
+    # spam filters look at.
+    display_name = from_name or "Fight Health Insurance Support"
+    from_address = formataddr((display_name, settings.DEFAULT_FROM_EMAIL))
+    reply_to_address = reply_to or settings.DEFAULT_FROM_EMAIL
+    # Mark these as transactional auto-generated mail per RFC 3834 so providers
+    # don't treat them as bulk and don't generate auto-replies back to us.
+    headers: Dict[str, str] = {
+        "Auto-Submitted": "auto-generated",
+        "X-Auto-Response-Suppress": "All",
+    }
+    if extra_headers:
+        headers.update(extra_headers)
     msg = EmailMultiAlternatives(
         subject,
         text_content,
-        settings.DEFAULT_FROM_EMAIL,
+        from_address,
         to=[to_email],
+        reply_to=[reply_to_address],
+        headers=headers,
     )
     logger.debug(
         f"Sending email to {mask_email_for_logging(to_email)} with subject {subject}"
@@ -324,8 +349,10 @@ def send_fallback_email(subject: str, template_name: str, context, to_email: str
         second_msg = EmailMultiAlternatives(
             subject + " -- " + to_email,
             text_content,
-            settings.DEFAULT_FROM_EMAIL,
+            from_address,
             to=settings.BCC_EMAILS,
+            reply_to=[reply_to_address],
+            headers=headers,
         )
         second_msg.attach_alternative(html_content, "text/html")
         second_msg.send()

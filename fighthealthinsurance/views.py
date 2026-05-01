@@ -627,7 +627,7 @@ def send_delete_confirmation_email(email: str, token: str) -> None:
         f"https://{settings.FIGHT_HEALTH_INSURANCE_DOMAIN}/confirm-delete?{params}"
     )
     send_fallback_email(
-        "Confirm Data Deletion Request",
+        "Fight Health Insurance: Confirm your data deletion request",
         "delete_data_confirmation",
         {"confirmation_link": confirmation_link, "email": email},
         email,

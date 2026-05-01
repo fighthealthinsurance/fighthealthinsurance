@@ -26,7 +26,10 @@ class TestRemoveDataView(TestCase):
         assert response.status_code == 200
         assert b"Check Your Email" in response.content
         assert len(mail.outbox) >= 1
-        assert mail.outbox[0].subject == "Confirm Data Deletion Request"
+        assert (
+            mail.outbox[0].subject
+            == "Fight Health Insurance: Confirm your data deletion request"
+        )
         assert "confirm-delete" in mail.outbox[0].body
         assert DeleteToken.objects.filter(
             hashed_email=self._hashed("test@test-fhi.com")
