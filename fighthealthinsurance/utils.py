@@ -324,12 +324,13 @@ def send_fallback_email(
     reply_to_address = reply_to or settings.DEFAULT_FROM_EMAIL
     # Mark these as transactional auto-generated mail per RFC 3834 so providers
     # don't treat them as bulk and don't generate auto-replies back to us.
-    headers: Dict[str, str] = {
-        "Auto-Submitted": "auto-generated",
-        "X-Auto-Response-Suppress": "All",
-    }
+    # These are set after extra_headers so callers can't accidentally clobber
+    # them.
+    headers: Dict[str, str] = {}
     if extra_headers:
         headers.update(extra_headers)
+    headers["Auto-Submitted"] = "auto-generated"
+    headers["X-Auto-Response-Suppress"] = "All"
     msg = EmailMultiAlternatives(
         subject,
         text_content,

@@ -75,6 +75,7 @@ class Base(Configuration):
     FIGHT_HEALTH_INSURANCE_DOMAIN = "localhost:8000"
 
     BCC_EMAILS = ["auto-user-messages@fighthealthinsurance.com"]
+    DEFAULT_FROM_EMAIL = "support42@fighthealthinsurance.com"
 
     # Session cookie configs
     SESSION_COOKIE_SECURE = True  # https only (up to the browser to enforce)
@@ -684,7 +685,6 @@ class Prod(Base):
     EMAIL_USE_TLS = EMAIL_PORT != "465"
     EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "support")
     EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
-    DEFAULT_FROM_EMAIL = "support42@fighthealthinsurance.com"
     RECAPTCHA_PUBLIC_KEY = os.getenv("RECAPTCHA_PUBLIC_KEY", "")
     RECAPTCHA_PRIVATE_KEY = os.getenv("RECAPTCHA_PRIVATE_KEY", "")
     RECAPTCHA_REQUIRED_SCORE = 0.85
