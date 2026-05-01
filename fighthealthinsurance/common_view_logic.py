@@ -239,14 +239,19 @@ class AppealAssemblyHelper:
     ) -> Appeal:
         if denial is None:
             if denial_id is not None:
-                denial = (
-                    Denial.objects.filter(denial_id=denial_id)
-                    .filter(
-                        hashed_email=Denial.get_hashed_email(email),
-                        semi_sekret=semi_sekret,
+                try:
+                    denial = (
+                        Denial.objects.filter(denial_id=denial_id)
+                        .filter(
+                            hashed_email=Denial.get_hashed_email(email),
+                            semi_sekret=semi_sekret,
+                        )
+                        .get()
                     )
-                    .get()
-                )
+                except Denial.DoesNotExist:
+                    raise Exception(
+                        f"Could not find denial {denial_id} for the provided email and secret."
+                    ) from None
         if denial is None:
             raise Exception("No denial ID or denial provided.")
         # Build our cover page
@@ -475,9 +480,14 @@ class ChooseAppealHelper:
     ]:
         hashed_email = Denial.get_hashed_email(email)
         # Get the current info
-        denial: Denial = Denial.objects.filter(
-            denial_id=denial_id, hashed_email=hashed_email, semi_sekret=semi_sekret
-        ).get()
+        try:
+            denial: Denial = Denial.objects.filter(
+                denial_id=denial_id, hashed_email=hashed_email, semi_sekret=semi_sekret
+            ).get()
+        except Denial.DoesNotExist:
+            raise Exception(
+                f"Could not find denial {denial_id} for the provided email and secret."
+            ) from None
         denial.appeal_text = appeal_text
         denial.save()
         pa = ProposedAppeal(appeal_text=appeal_text, for_denial=denial, chosen=True)
@@ -571,13 +581,14 @@ class FollowUpHelper:
     def fetch_denial(
         cls, uuid: str, follow_up_semi_sekret: str, hashed_email: str, **kwargs
     ):
-        denial = Denial.objects.filter(
-            uuid=uuid, follow_up_semi_sekret=follow_up_semi_sekret
-        ).get()
-        if denial is None:
-            raise Exception(
-                f"Failed to find denial for {uuid} & {follow_up_semi_sekret}"
-            )
+        try:
+            denial = Denial.objects.filter(
+                uuid=uuid,
+                follow_up_semi_sekret=follow_up_semi_sekret,
+                hashed_email=hashed_email,
+            ).get()
+        except Denial.DoesNotExist:
+            raise Exception(f"Failed to find denial for uuid={uuid}") from None
         return denial
 
     @classmethod
@@ -678,14 +689,53 @@ class FindNextStepsHelper:
         question_forms = []
         prof_pov = denial.professional_to_finish
 
-        # Add forms for each denial type
+        # Add forms for each denial type, tracking which form classes are used
+        denial_type_forms = set()
         for dt in denial.denial_type.all():
             new_form = dt.get_form()
             if new_form is not None:
+                denial_type_forms.add(new_form.__name__)
                 new_form = new_form(
                     initial={"medical_reason": dt.appeal_text}, prof_pov=prof_pov
                 )
                 question_forms.append(new_form)
+
+        # Add journey documentation form when denial has medical necessity / prior auth
+        # types — or when a microsite defines journey items.
+        # Skip if StepTherapy or FormularyChangeQuestions already cover medication history.
+        from fighthealthinsurance.forms.questions import JourneyDocumentationQuestions
+
+        # Add journey form if the denial type forms don't already cover medication/treatment history
+        # (StepTherapy and FormularyChangeQuestions already ask about these)
+        journey_already_covered = denial_type_forms & {
+            "StepTherapy",
+            "FormularyChangeQuestions",
+        }
+
+        if not journey_already_covered:
+            # Check if the microsite has journey documentation items
+            has_microsite_journey = False
+            if denial.microsite_slug:
+                from fighthealthinsurance.microsites import get_microsite
+
+                microsite = get_microsite(denial.microsite_slug)
+                if microsite and microsite.journey_documentation_items:
+                    has_microsite_journey = True
+
+            # Add journey form for medical necessity, prior auth, or microsite-guided denials
+            has_journey_form_types = bool(
+                denial_type_forms
+                & {
+                    "MedicalNecessaryQuestions",
+                    "PriorAuthQuestions",
+                    "ExperimentalQuestions",
+                    "NotCoveredQuestions",
+                    "NotCoveredByQuestions",
+                }
+            )
+
+            if has_journey_form_types or has_microsite_journey:
+                question_forms.append(JourneyDocumentationQuestions(prof_pov=prof_pov))
 
         # Add generated questions form if available
         if denial.generated_questions:
@@ -2200,6 +2250,22 @@ class AppealsBackendHelper:
                 else:
                     if dt.appeal_text is not None:
                         main.append(dt.appeal_text)
+
+        # Process JourneyDocumentationQuestions if the user submitted journey fields.
+        # This form is added by _build_question_forms but isn't tied to a denial type,
+        # so the denial_type loop above doesn't pick it up.
+        from fighthealthinsurance.forms.questions import JourneyDocumentationQuestions
+
+        journey_form = JourneyDocumentationQuestions(
+            parameters, prof_pov=professional_to_finish
+        )
+        if journey_form.is_valid():
+            jmc = journey_form.medical_context()
+            if jmc:
+                medical_context.add(jmc)
+            for m in journey_form.main():
+                if m not in main:
+                    main.append(m)
 
         # Add the context to the denial
         if medical_context is not None:

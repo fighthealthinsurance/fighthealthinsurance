@@ -34,6 +34,9 @@ from fighthealthinsurance.chat.tools import (
     PriorAuthTool,
     PubMedTool,
 )
+from fighthealthinsurance.chat.tools.documentation_questions_tool import (
+    DocumentationQuestionsTool,
+)
 from fighthealthinsurance.extralink_context_helper import ExtraLinkContextHelper
 from fighthealthinsurance.rag_client import get_rag_context_for_denial
 from fighthealthinsurance.ml.ml_models import (
@@ -371,6 +374,15 @@ class ChatInterface:
             response_text, context, **tool_kwargs
         )
 
+        doc_questions_tool = DocumentationQuestionsTool(
+            self.send_status_message,
+            call_llm_callback=self._call_llm_with_actions,
+            chat=chat,
+        )
+        response_text, context, _ = await doc_questions_tool.handle(
+            response_text, context, **tool_kwargs
+        )
+
         logger.debug(f"Return with context length {len(context) if context else 0}.")
         return response_text, context
 
@@ -533,6 +545,47 @@ class ChatInterface:
                                 logger.info(
                                     f"RAG context added to chat for microsite {microsite.slug}"
                                 )
+
+                            # Add journey documentation guidance if microsite defines it
+                            if microsite.journey_documentation_items:
+                                # Use get_journey_guidance_for_chat which combines
+                                # static documentation items + ML-generated questions
+                                # into a single context block (avoids duplicate injection).
+                                journey_added = False
+                                try:
+                                    from fighthealthinsurance.ml.ml_journey_helper import (
+                                        JourneyDocumentationHelper,
+                                    )
+
+                                    ml_guidance = await JourneyDocumentationHelper.get_journey_guidance_for_chat(
+                                        procedure=microsite.default_procedure,
+                                        diagnosis=microsite.default_condition,
+                                        documentation_items=microsite.journey_documentation_items,
+                                        timeout=10,
+                                    )
+                                    if ml_guidance:
+                                        all_context_parts.append(ml_guidance)
+                                        journey_added = True
+                                        logger.info(
+                                            f"Journey documentation guidance added for {microsite.slug}"
+                                        )
+                                except Exception as e:
+                                    logger.warning(
+                                        f"Failed to get journey guidance: {e}"
+                                    )
+
+                                # Fallback: if ML guidance failed, use static prompt
+                                if not journey_added:
+                                    journey_prompt = (
+                                        microsite.get_journey_documentation_prompt()
+                                    )
+                                    if journey_prompt:
+                                        all_context_parts.append(
+                                            f"Journey documentation guidance:\n{journey_prompt}"
+                                        )
+                                        logger.info(
+                                            f"Static journey guidance fallback for {microsite.slug}"
+                                        )
 
                             if all_context_parts:
                                 full_context = "\n\n".join(all_context_parts)
