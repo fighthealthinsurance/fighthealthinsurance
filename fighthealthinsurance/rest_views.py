@@ -276,9 +276,7 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
             )
             .prefetch_related("denial_type")
             .annotate(
-                has_appeal=Exists(
-                    Appeal.objects.filter(for_denial=OuterRef("pk"))
-                )
+                has_appeal=Exists(Appeal.objects.filter(for_denial=OuterRef("pk")))
             )
         )
         output_serializer = serializers.DenialSummarySerializer(denials, many=True)
@@ -2147,7 +2145,9 @@ def _get_patient_user_or_403(
         )
 
 
-def _filter_by_appeal_param(queryset: models.QuerySet, request: Request) -> models.QuerySet:
+def _filter_by_appeal_param(
+    queryset: models.QuerySet, request: Request
+) -> models.QuerySet:
     """Optionally filter a queryset by ?appeal_id= query parameter."""
     appeal_id = request.query_params.get("appeal_id")
     if appeal_id and appeal_id.isdigit():
@@ -2159,7 +2159,8 @@ def _verify_appeal_ownership(request: Request, appeal: object) -> Optional[Appea
     """Verify an appeal belongs to the requesting user. Returns Appeal or None.
 
     Accepts an Appeal object (from serializer.validated_data) or an ID
-    (from request.data). Raises 404 if the appeal doesn't belong to the user.
+    (from request.data). Raises Http404 if the appeal doesn't belong to the user
+    or ValidationError if the ID is malformed.
     """
     if appeal is None:
         return None
@@ -2169,7 +2170,7 @@ def _verify_appeal_ownership(request: Request, appeal: object) -> Optional[Appea
         try:
             appeal_id = int(appeal)
         except (ValueError, TypeError):
-            return None
+            raise ValidationError(f"Invalid appeal ID: {appeal}")
     return get_object_or_404(
         Appeal.filter_to_allowed_appeals(request.user), id=appeal_id
     )
@@ -2281,15 +2282,30 @@ class PatientEvidenceViewSet(viewsets.ViewSet, SerializerMixin):
 
         appeal = _verify_appeal_ownership(request, request.data.get("appeal") or None)
 
-        evidence = PatientEvidence.objects.create(
-            patient_user=patient_user,
-            appeal=appeal,
-            title=request.data.get("title", file.name),
-            description=request.data.get("description", ""),
-            file=file,
-            filename=file.name,
-            mime_type=file.content_type or "application/octet-stream",
-        )
+        try:
+            evidence = PatientEvidence.objects.create(
+                patient_user=patient_user,
+                appeal=appeal,
+                title=request.data.get("title", file.name),
+                description=request.data.get("description", ""),
+                file=file,
+                filename=file.name,
+                mime_type=file.content_type or "application/octet-stream",
+            )
+        except SuspiciousFileOperation:
+            from fighthealthinsurance.utils import (
+                generate_random_filename_with_extension,
+            )
+
+            evidence = PatientEvidence.objects.create(
+                patient_user=patient_user,
+                appeal=appeal,
+                title=request.data.get("title", file.name),
+                description=request.data.get("description", ""),
+                file=file,
+                filename=generate_random_filename_with_extension(file.name),
+                mime_type=file.content_type or "application/octet-stream",
+            )
         return Response(
             serializers.PatientEvidenceSerializer(evidence).data,
             status=status.HTTP_201_CREATED,

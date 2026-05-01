@@ -1722,7 +1722,7 @@ class PatientOwnedModelMixin:
         if user.is_superuser or user.is_staff:
             return cls.objects.all()  # type: ignore[attr-defined]
         try:
-            patient_user = PatientUser.objects.get(user=user)
+            patient_user = PatientUser.objects.get(user=user, active=True)
             return cls.objects.filter(patient_user=patient_user)  # type: ignore[attr-defined]
         except PatientUser.DoesNotExist:
             return cls.objects.none()  # type: ignore[attr-defined]
