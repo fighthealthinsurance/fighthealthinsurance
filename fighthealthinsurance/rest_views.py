@@ -2137,7 +2137,7 @@ def _get_patient_user_or_403(
     """Return (patient_user, None) or (None, 403 Response)."""
     current_user: User = request.user  # type: ignore
     try:
-        return PatientUser.objects.get(user=current_user), None
+        return PatientUser.objects.get(user=current_user, active=True), None
     except PatientUser.DoesNotExist:
         return None, Response(
             serializers.ErrorSerializer({"error": "Patient account required"}).data,
@@ -2165,14 +2165,15 @@ def _verify_appeal_ownership(request: Request, appeal: object) -> Optional[Appea
     if appeal is None:
         return None
     if hasattr(appeal, "id"):
-        appeal_id = appeal.id
+        appeal_id = appeal.id  # type: ignore[union-attr]
     else:
         try:
-            appeal_id = int(appeal)
+            appeal_id = int(appeal)  # type: ignore[call-overload]
         except (ValueError, TypeError):
             raise ValidationError(f"Invalid appeal ID: {appeal}")
-    return get_object_or_404(
-        Appeal.filter_to_allowed_appeals(request.user), id=appeal_id
+    current_user: User = request.user  # type: ignore
+    return get_object_or_404(  # type: ignore[no-any-return]
+        Appeal.filter_to_allowed_appeals(current_user), id=appeal_id
     )
 
 
@@ -2184,9 +2185,8 @@ class InsuranceCallLogViewSet(viewsets.ViewSet, SerializerMixin):
     @extend_schema(responses=serializers.InsuranceCallLogSerializer(many=True))
     def list(self, request: Request) -> Response:
         """List all call logs for the current user."""
-        logs = _filter_by_appeal_param(
-            InsuranceCallLog.filter_to_allowed(request.user), request
-        )
+        allowed = InsuranceCallLog.filter_to_allowed(request.user)  # type: ignore[arg-type]
+        logs = _filter_by_appeal_param(allowed, request)
         output_serializer = serializers.InsuranceCallLogSerializer(logs, many=True)
         return Response(output_serializer.data)
 
@@ -2201,6 +2201,7 @@ class InsuranceCallLogViewSet(viewsets.ViewSet, SerializerMixin):
         patient_user, err_response = _get_patient_user_or_403(request)
         if err_response:
             return err_response
+        assert patient_user is not None
         _verify_appeal_ownership(request, serializer.validated_data.get("appeal"))
         serializer.save(patient_user=patient_user)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
@@ -2208,7 +2209,8 @@ class InsuranceCallLogViewSet(viewsets.ViewSet, SerializerMixin):
     @extend_schema(responses=serializers.StatusResponseSerializer)
     def destroy(self, request: Request, pk: Optional[int] = None) -> Response:
         """Delete a call log entry."""
-        log = get_object_or_404(InsuranceCallLog.filter_to_allowed(request.user), pk=pk)
+        allowed = InsuranceCallLog.filter_to_allowed(request.user)  # type: ignore[arg-type]
+        log = get_object_or_404(allowed, pk=pk)
         log.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -2241,9 +2243,8 @@ class PatientEvidenceViewSet(viewsets.ViewSet, SerializerMixin):
     @extend_schema(responses=serializers.PatientEvidenceSerializer(many=True))
     def list(self, request: Request) -> Response:
         """List all evidence documents for the current user."""
-        evidence = _filter_by_appeal_param(
-            PatientEvidence.filter_to_allowed(request.user), request
-        )
+        allowed = PatientEvidence.filter_to_allowed(request.user)  # type: ignore[arg-type]
+        evidence = _filter_by_appeal_param(allowed, request)
         output_serializer = serializers.PatientEvidenceSerializer(evidence, many=True)
         return Response(output_serializer.data)
 
@@ -2256,6 +2257,13 @@ class PatientEvidenceViewSet(viewsets.ViewSet, SerializerMixin):
         patient_user, err_response = _get_patient_user_or_403(request)
         if err_response:
             return err_response
+        assert patient_user is not None
+
+        input_serializer = serializers.PatientEvidenceCreateSerializer(
+            data=request.data
+        )
+        input_serializer.is_valid(raise_exception=True)
+        validated = input_serializer.validated_data
 
         file = request.FILES.get("file")
         if not file:
@@ -2280,16 +2288,19 @@ class PatientEvidenceViewSet(viewsets.ViewSet, SerializerMixin):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        appeal = _verify_appeal_ownership(request, request.data.get("appeal") or None)
+        appeal = _verify_appeal_ownership(request, validated.get("appeal"))
+        title: str = validated.get("title") or file.name or "upload"
+        description: str = validated.get("description", "")
+        filename: str = file.name or "upload"
 
         try:
             evidence = PatientEvidence.objects.create(
                 patient_user=patient_user,
                 appeal=appeal,
-                title=request.data.get("title", file.name),
-                description=request.data.get("description", ""),
+                title=title,
+                description=description,
                 file=file,
-                filename=file.name,
+                filename=filename,
                 mime_type=file.content_type or "application/octet-stream",
             )
         except SuspiciousFileOperation:
@@ -2300,10 +2311,10 @@ class PatientEvidenceViewSet(viewsets.ViewSet, SerializerMixin):
             evidence = PatientEvidence.objects.create(
                 patient_user=patient_user,
                 appeal=appeal,
-                title=request.data.get("title", file.name),
-                description=request.data.get("description", ""),
+                title=title,
+                description=description,
                 file=file,
-                filename=generate_random_filename_with_extension(file.name),
+                filename=generate_random_filename_with_extension(filename),
                 mime_type=file.content_type or "application/octet-stream",
             )
         return Response(
@@ -2314,8 +2325,7 @@ class PatientEvidenceViewSet(viewsets.ViewSet, SerializerMixin):
     @extend_schema(responses=serializers.StatusResponseSerializer)
     def destroy(self, request: Request, pk: Optional[int] = None) -> Response:
         """Delete an evidence document."""
-        evidence = get_object_or_404(
-            PatientEvidence.filter_to_allowed(request.user), pk=pk
-        )
+        allowed = PatientEvidence.filter_to_allowed(request.user)  # type: ignore[arg-type]
+        evidence = get_object_or_404(allowed, pk=pk)
         evidence.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)

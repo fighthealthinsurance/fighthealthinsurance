@@ -190,7 +190,17 @@ function StatusBadge({ status }: { status: string }) {
 
 function formatDate(dateStr: string | null): string {
   if (!dateStr) return "N/A";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+    const [year, month, day] = dateStr.split("-").map(Number);
+    return new Date(year, month - 1, day).toLocaleDateString();
+  }
   return new Date(dateStr).toLocaleDateString();
+}
+
+function localDateTimeNow(): string {
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
 }
 
 function buildAppealOptions(appeals: AppealSummary[]) {
@@ -256,8 +266,17 @@ function AppealsTab({ appeals, loading, error }: { appeals: AppealSummary[]; loa
           padding="lg"
           radius={THEME.borderRadius.card}
           withBorder
+          role="button"
+          tabIndex={0}
+          aria-expanded={expandedId === appeal.id}
           style={{ cursor: "pointer" }}
           onClick={() => handleExpand(appeal.id)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              void handleExpand(appeal.id);
+            }
+          }}
         >
           <Group justify="space-between" mb="xs">
             <Group gap="sm">
@@ -423,7 +442,7 @@ interface CallLogFormData {
 
 function freshCallLogForm(): CallLogFormData {
   return {
-    call_date: new Date().toISOString().slice(0, 16),
+    call_date: localDateTimeNow(),
     representative_name: "",
     reference_number: "",
     call_outcome: "",
@@ -450,7 +469,7 @@ function CallLogsTab({ appeals }: { appeals: AppealSummary[] }) {
         call_outcome: formData.call_outcome,
         notes: formData.notes,
         follow_up_needed: formData.follow_up_needed,
-        follow_up_date: formData.follow_up_date || null,
+        follow_up_date: formData.follow_up_needed ? formData.follow_up_date || null : null,
       };
       if (formData.appeal) {
         payload.appeal = parseInt(formData.appeal, 10);
@@ -536,9 +555,10 @@ function CallLogsTab({ appeals }: { appeals: AppealSummary[] }) {
           <Checkbox
             label="Follow-up needed"
             checked={formData.follow_up_needed}
-            onChange={(e) =>
-              setFormData({ ...formData, follow_up_needed: e.currentTarget.checked })
-            }
+            onChange={(e) => {
+              const checked = e.currentTarget.checked;
+              setFormData({ ...formData, follow_up_needed: checked, follow_up_date: checked ? formData.follow_up_date : "" });
+            }}
           />
           {formData.follow_up_needed && (
             <TextInput

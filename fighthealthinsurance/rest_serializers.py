@@ -899,6 +899,7 @@ class PatientEvidenceSerializer(serializers.ModelSerializer):
 class PatientEvidenceCreateSerializer(serializers.Serializer):
     """Serializer for creating patient evidence with file upload."""
 
+    file = serializers.FileField()
     appeal = serializers.IntegerField(required=False, allow_null=True)
-    title = serializers.CharField(max_length=300)
+    title = serializers.CharField(max_length=300, required=False, default="")
     description = serializers.CharField(required=False, default="")

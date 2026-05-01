@@ -1718,14 +1718,14 @@ class PatientOwnedModelMixin:
     def filter_to_allowed(cls, user: "User") -> models.QuerySet:
         """Filter to records the user has permission to access."""
         if not user.is_authenticated:
-            return cls.objects.none()  # type: ignore[attr-defined]
+            return cls.objects.none()  # type: ignore[attr-defined, no-any-return]
         if user.is_superuser or user.is_staff:
-            return cls.objects.all()  # type: ignore[attr-defined]
+            return cls.objects.all()  # type: ignore[attr-defined, no-any-return]
         try:
             patient_user = PatientUser.objects.get(user=user, active=True)
-            return cls.objects.filter(patient_user=patient_user)  # type: ignore[attr-defined]
+            return cls.objects.filter(patient_user=patient_user)  # type: ignore[attr-defined, no-any-return]
         except PatientUser.DoesNotExist:
-            return cls.objects.none()  # type: ignore[attr-defined]
+            return cls.objects.none()  # type: ignore[attr-defined, no-any-return]
 
 
 class InsuranceCallLog(PatientOwnedModelMixin, models.Model):
