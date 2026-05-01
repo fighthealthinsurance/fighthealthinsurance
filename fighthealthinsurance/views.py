@@ -620,6 +620,11 @@ class ShareAppealView(View):
             return render(request, "thankyou.html")
 
 
+DELETE_CONFIRMATION_SUBJECT = (
+    "Fight Health Insurance: Confirm your data deletion request"
+)
+
+
 def send_delete_confirmation_email(email: str, token: str) -> None:
     """Send email asking user to confirm data deletion request."""
     params = urlencode({"token": token, "email": email}, quote_via=quote)
@@ -627,7 +632,7 @@ def send_delete_confirmation_email(email: str, token: str) -> None:
         f"https://{settings.FIGHT_HEALTH_INSURANCE_DOMAIN}/confirm-delete?{params}"
     )
     send_fallback_email(
-        "Confirm Data Deletion Request",
+        DELETE_CONFIRMATION_SUBJECT,
         "delete_data_confirmation",
         {"confirmation_link": confirmation_link, "email": email},
         email,
@@ -671,6 +676,8 @@ class RemoveDataView(View):
                 "delete_data_email_sent.html",
                 context={
                     "title": "Check Your Email",
+                    "delete_confirmation_subject": DELETE_CONFIRMATION_SUBJECT,
+                    "support_email": settings.DEFAULT_FROM_EMAIL,
                 },
             )
 
