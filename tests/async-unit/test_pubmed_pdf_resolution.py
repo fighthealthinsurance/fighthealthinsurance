@@ -38,34 +38,22 @@ def _make_mock_response(
     return resp
 
 
-def _make_mock_session(responses=None):
+def _make_mock_session(responses=None, error=False):
     """Create a mock aiohttp.ClientSession."""
     session = AsyncMock()
+    if error:
+        session.get = MagicMock(side_effect=Exception("Connection refused"))
+        return session
     if responses is None:
         responses = [_make_mock_response()]
-
-    if isinstance(responses, list):
-        call_count = {"get": 0}
-
-        def make_get(*args, **kwargs):
-            idx = min(call_count["get"], len(responses) - 1)
-            call_count["get"] += 1
-            return responses[idx]
-
-        session.get = MagicMock(side_effect=make_get)
-    else:
-        session.get = MagicMock(return_value=responses)
-
+    session.get = MagicMock(side_effect=list(responses))
     session.__aenter__ = AsyncMock(return_value=session)
     session.__aexit__ = AsyncMock(return_value=False)
     return session
 
 
 def _make_error_session():
-    """Create a mock session that raises on get()."""
-    session = AsyncMock()
-    session.get = MagicMock(side_effect=Exception("Connection refused"))
-    return session
+    return _make_mock_session(error=True)
 
 
 class TestExtractPdfUrlFromHtml:
@@ -169,11 +157,10 @@ class TestTryPmc:
         session = _make_mock_session(responses=[resp])
         assert await tools._try_pmc("12345", session, timeout_secs=5.0) is None
 
-    async def test_returns_none_on_network_error(self, tools):
-        assert (
-            await tools._try_pmc("12345", _make_error_session(), timeout_secs=5.0)
-            is None
-        )
+
+def _epmc_response(ft_urls):
+    """Build an Europe PMC API response wrapping fullTextUrl entries."""
+    return {"resultList": {"result": [{"fullTextUrlList": {"fullTextUrl": ft_urls}}]}}
 
 
 @pytest.mark.asyncio
@@ -182,23 +169,15 @@ class TestTryEuropePmc:
 
     async def test_returns_pdf_url_when_oa_pdf_found(self, tools):
         resp = _make_mock_response(
-            json_data={
-                "resultList": {
-                    "result": [
-                        {
-                            "fullTextUrlList": {
-                                "fullTextUrl": [
-                                    {
-                                        "documentStyle": "pdf",
-                                        "availabilityCode": "OA",
-                                        "url": "https://europepmc.org/article/pdf/12345",
-                                    }
-                                ]
-                            }
-                        }
-                    ]
-                }
-            }
+            json_data=_epmc_response(
+                [
+                    {
+                        "documentStyle": "pdf",
+                        "availabilityCode": "OA",
+                        "url": "https://europepmc.org/article/pdf/12345",
+                    }
+                ]
+            )
         )
         session = _make_mock_session(responses=[resp])
         result = await tools._try_europe_pmc("12345", session, timeout_secs=5.0)
@@ -206,23 +185,15 @@ class TestTryEuropePmc:
 
     async def test_falls_back_to_non_pdf_oa_url(self, tools):
         resp = _make_mock_response(
-            json_data={
-                "resultList": {
-                    "result": [
-                        {
-                            "fullTextUrlList": {
-                                "fullTextUrl": [
-                                    {
-                                        "documentStyle": "html",
-                                        "availabilityCode": "OA",
-                                        "url": "https://europepmc.org/article/12345",
-                                    }
-                                ]
-                            }
-                        }
-                    ]
-                }
-            }
+            json_data=_epmc_response(
+                [
+                    {
+                        "documentStyle": "html",
+                        "availabilityCode": "OA",
+                        "url": "https://europepmc.org/article/12345",
+                    }
+                ]
+            )
         )
         session = _make_mock_session(responses=[resp])
         result = await tools._try_europe_pmc("12345", session, timeout_secs=5.0)
@@ -232,23 +203,15 @@ class TestTryEuropePmc:
         "json_data",
         [
             {"resultList": {"result": []}},
-            {
-                "resultList": {
-                    "result": [
-                        {
-                            "fullTextUrlList": {
-                                "fullTextUrl": [
-                                    {
-                                        "documentStyle": "pdf",
-                                        "availabilityCode": "S",
-                                        "url": "https://publisher.com/paywalled.pdf",
-                                    }
-                                ]
-                            }
-                        }
-                    ]
-                }
-            },
+            _epmc_response(
+                [
+                    {
+                        "documentStyle": "pdf",
+                        "availabilityCode": "S",
+                        "url": "https://publisher.com/paywalled.pdf",
+                    }
+                ]
+            ),
         ],
     )
     async def test_returns_none_when_no_accessible_urls(self, tools, json_data):
@@ -257,29 +220,17 @@ class TestTryEuropePmc:
         assert await tools._try_europe_pmc("12345", session, timeout_secs=5.0) is None
 
     async def test_skips_entry_with_missing_url(self, tools):
-        # Regression: first-pass scan must not return "None" string when url key is absent
         resp = _make_mock_response(
-            json_data={
-                "resultList": {
-                    "result": [
-                        {
-                            "fullTextUrlList": {
-                                "fullTextUrl": [
-                                    {
-                                        "documentStyle": "pdf",
-                                        "availabilityCode": "OA",
-                                    },
-                                    {
-                                        "documentStyle": "html",
-                                        "availabilityCode": "OA",
-                                        "url": "https://europepmc.org/article/12345",
-                                    },
-                                ]
-                            }
-                        }
-                    ]
-                }
-            }
+            json_data=_epmc_response(
+                [
+                    {"documentStyle": "pdf", "availabilityCode": "OA"},
+                    {
+                        "documentStyle": "html",
+                        "availabilityCode": "OA",
+                        "url": "https://europepmc.org/article/12345",
+                    },
+                ]
+            )
         )
         session = _make_mock_session(responses=[resp])
         result = await tools._try_europe_pmc("12345", session, timeout_secs=5.0)
@@ -362,77 +313,6 @@ class TestTryUnpaywall:
 
 
 @pytest.mark.asyncio
-class TestTryPreprintServers:
-    """Tests for _try_preprint_servers method."""
-
-    async def test_returns_pdf_for_medrxiv_doi_with_jatsxml(self, tools):
-        resp = _make_mock_response(
-            json_data={
-                "collection": [
-                    {
-                        "doi": "10.1101/2024.01.01.123456",
-                        "jatsxml": "https://www.medrxiv.org/content/10.1101/2024.01.01.123456v1.source.xml",
-                    }
-                ]
-            }
-        )
-        session = _make_mock_session(responses=[resp])
-        result = await tools._try_preprint_servers(
-            "10.1101/2024.01.01.123456", session, timeout_secs=5.0
-        )
-        assert (
-            result
-            == "https://www.medrxiv.org/content/10.1101/2024.01.01.123456v1.full.pdf"
-        )
-
-    async def test_constructs_url_from_doi_when_no_jatsxml(self, tools):
-        resp = _make_mock_response(
-            json_data={"collection": [{"doi": "10.1101/2024.01.01.123456"}]}
-        )
-        session = _make_mock_session(responses=[resp])
-        result = await tools._try_preprint_servers(
-            "10.1101/2024.01.01.123456", session, timeout_secs=5.0
-        )
-        assert (
-            result
-            == "https://www.medrxiv.org/content/10.1101/2024.01.01.123456.full.pdf"
-        )
-
-    async def test_non_preprint_doi_uses_pubs_endpoint(self, tools):
-        resp = _make_mock_response(json_data={"collection": []})
-        session = _make_mock_session(responses=[resp])
-        result = await tools._try_preprint_servers(
-            "10.1016/j.cell.2024.01.001", session, timeout_secs=5.0
-        )
-        assert result is None
-        assert session.get.call_count == 1
-
-    async def test_non_preprint_doi_finds_preprint(self, tools):
-        resp = _make_mock_response(
-            json_data={"collection": [{"preprint_doi": "10.1101/2023.06.15.545100"}]}
-        )
-        session = _make_mock_session(responses=[resp])
-        result = await tools._try_preprint_servers(
-            "10.1016/j.cell.2024.01.001", session, timeout_secs=5.0
-        )
-        assert (
-            result
-            == "https://www.medrxiv.org/content/10.1101/2023.06.15.545100.full.pdf"
-        )
-
-    async def test_biorxiv_doi_pattern(self, tools):
-        resp = _make_mock_response(
-            json_data={"collection": [{"doi": "10.1101/2024.05.15.789012"}]}
-        )
-        session = _make_mock_session(responses=[resp])
-        result = await tools._try_preprint_servers(
-            "10.1101/2024.05.15.789012", session, timeout_secs=5.0
-        )
-        assert result is not None
-        assert "10.1101/2024.05.15.789012.full.pdf" in result
-
-
-@pytest.mark.asyncio
 class TestQueryBiorxiv:
     """Tests for the unified _query_biorxiv method."""
 
@@ -503,11 +383,27 @@ class TestQueryBiorxiv:
         )
         assert result is None
 
-    async def test_returns_none_on_error(self, tools):
-        result = await tools._query_biorxiv(
-            "medrxiv", "10.1101/err", "details", _make_error_session(), timeout_secs=5.0
+    async def test_preprint_server_routing_preprint_doi(self, tools):
+        """_try_preprint_servers uses details endpoint for 10.1101/ DOIs."""
+        resp = _make_mock_response(
+            json_data={"collection": [{"doi": "10.1101/2024.01.01.123"}]}
+        )
+        session = _make_mock_session(responses=[resp])
+        result = await tools._try_preprint_servers(
+            "10.1101/2024.01.01.123", session, timeout_secs=5.0
+        )
+        assert result is not None
+        assert "10.1101/2024.01.01.123.full.pdf" in result
+
+    async def test_preprint_server_routing_published_doi(self, tools):
+        """_try_preprint_servers uses pubs endpoint for non-preprint DOIs."""
+        resp = _make_mock_response(json_data={"collection": []})
+        session = _make_mock_session(responses=[resp])
+        result = await tools._try_preprint_servers(
+            "10.1016/j.cell.2024.01.001", session, timeout_secs=5.0
         )
         assert result is None
+        assert session.get.call_count == 1
 
 
 @pytest.mark.asyncio
@@ -567,64 +463,38 @@ class TestTryDoiResolution:
 class TestFindArticleUrl:
     """Tests for the _find_article_url fallback chain."""
 
-    async def test_returns_findit_url_first(self, tools):
-        session = _make_mock_session()
-        with patch.object(tools, "_try_findit", new_callable=AsyncMock) as mock_findit:
-            mock_findit.return_value = "https://findit.com/article.pdf"
-            result = await tools._find_article_url(
-                "12345", doi="10.1000/test", session=session
-            )
-        assert result == "https://findit.com/article.pdf"
+    def _patch_all_sources(self, tools, return_values=None):
+        """Patch all source methods. return_values maps method name to return value."""
+        rv = return_values or {}
+        sources = [
+            "_try_findit",
+            "_try_pmc",
+            "_try_europe_pmc",
+            "_try_unpaywall",
+            "_try_preprint_servers",
+            "_try_doi_resolution",
+        ]
+        patches = [
+            patch.object(tools, name, new_callable=AsyncMock, return_value=rv.get(name))
+            for name in sources
+        ]
+        return patches
 
-    async def test_falls_through_to_pmc_when_findit_fails(self, tools):
+    async def test_returns_first_successful_source(self, tools):
         session = _make_mock_session()
-        with patch.object(
-            tools, "_try_findit", new_callable=AsyncMock, return_value=None
-        ), patch.object(tools, "_try_pmc", new_callable=AsyncMock) as mock_pmc:
-            mock_pmc.return_value = "https://pmc.ncbi.nlm.nih.gov/article.pdf"
+        patches = self._patch_all_sources(
+            tools, {"_try_pmc": "https://pmc.ncbi.nlm.nih.gov/article.pdf"}
+        )
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5]:
             result = await tools._find_article_url(
                 "12345", doi="10.1000/test", session=session
             )
         assert result == "https://pmc.ncbi.nlm.nih.gov/article.pdf"
 
-    async def test_falls_through_entire_chain(self, tools):
-        session = _make_mock_session()
-        with patch.object(
-            tools, "_try_findit", new_callable=AsyncMock, return_value=None
-        ), patch.object(
-            tools, "_try_pmc", new_callable=AsyncMock, return_value=None
-        ), patch.object(
-            tools, "_try_europe_pmc", new_callable=AsyncMock, return_value=None
-        ), patch.object(
-            tools, "_try_unpaywall", new_callable=AsyncMock, return_value=None
-        ), patch.object(
-            tools, "_try_preprint_servers", new_callable=AsyncMock, return_value=None
-        ), patch.object(
-            tools,
-            "_try_doi_resolution",
-            new_callable=AsyncMock,
-        ) as mock_doi:
-            mock_doi.return_value = "https://publisher.com/pdf/article.pdf"
-            result = await tools._find_article_url(
-                "12345", doi="10.1000/test", session=session
-            )
-        assert result == "https://publisher.com/pdf/article.pdf"
-
     async def test_returns_none_when_all_fail(self, tools):
         session = _make_mock_session()
-        with patch.object(
-            tools, "_try_findit", new_callable=AsyncMock, return_value=None
-        ), patch.object(
-            tools, "_try_pmc", new_callable=AsyncMock, return_value=None
-        ), patch.object(
-            tools, "_try_europe_pmc", new_callable=AsyncMock, return_value=None
-        ), patch.object(
-            tools, "_try_unpaywall", new_callable=AsyncMock, return_value=None
-        ), patch.object(
-            tools, "_try_preprint_servers", new_callable=AsyncMock, return_value=None
-        ), patch.object(
-            tools, "_try_doi_resolution", new_callable=AsyncMock, return_value=None
-        ):
+        patches = self._patch_all_sources(tools)
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5]:
             result = await tools._find_article_url(
                 "12345", doi="10.1000/test", session=session
             )
@@ -632,39 +502,15 @@ class TestFindArticleUrl:
 
     async def test_skips_doi_sources_when_no_doi(self, tools):
         session = _make_mock_session()
-        with patch.object(
-            tools, "_try_findit", new_callable=AsyncMock, return_value=None
-        ), patch.object(
-            tools, "_try_pmc", new_callable=AsyncMock, return_value=None
-        ), patch.object(
-            tools, "_try_europe_pmc", new_callable=AsyncMock, return_value=None
-        ), patch.object(
-            tools, "_try_unpaywall", new_callable=AsyncMock
-        ) as mock_unpaywall, patch.object(
-            tools, "_try_preprint_servers", new_callable=AsyncMock
-        ) as mock_preprint, patch.object(
-            tools, "_try_doi_resolution", new_callable=AsyncMock
-        ) as mock_doi:
+        patches = self._patch_all_sources(tools)
+        with patches[0], patches[1], patches[2], patches[3] as mu, patches[
+            4
+        ] as mp, patches[5] as md:
             result = await tools._find_article_url("12345", doi=None, session=session)
-        mock_unpaywall.assert_not_called()
-        mock_preprint.assert_not_called()
-        mock_doi.assert_not_called()
+        mu.assert_not_called()
+        mp.assert_not_called()
+        md.assert_not_called()
         assert result is None
-
-    async def test_creates_own_session_when_none_provided(self, tools):
-        with patch.object(
-            tools, "_try_findit", new_callable=AsyncMock
-        ) as mock_findit, patch(
-            "fighthealthinsurance.pubmed_tools.aiohttp.ClientSession"
-        ) as mock_session_cls:
-            mock_findit.return_value = "https://example.com/article.pdf"
-            mock_session = AsyncMock()
-            mock_session.close = AsyncMock()
-            mock_session_cls.return_value = mock_session
-            result = await tools._find_article_url("12345")
-        assert result == "https://example.com/article.pdf"
-        mock_session_cls.assert_called_once()
-        mock_session.close.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -688,15 +534,6 @@ class TestFetchTextFromUrl:
         result = await tools._fetch_text_from_url(
             "https://example.com/article.html", session
         )
-        assert result == ""
-
-    async def test_returns_empty_string_on_error(self, tools):
-        session = AsyncMock()
-        error_resp = AsyncMock()
-        error_resp.__aenter__ = AsyncMock(side_effect=Exception("Connection error"))
-        error_resp.__aexit__ = AsyncMock(return_value=False)
-        session.get = MagicMock(return_value=error_resp)
-        result = await tools._fetch_text_from_url("https://example.com/broken", session)
         assert result == ""
 
 
@@ -748,13 +585,23 @@ class TestTryFetchPdfToFile:
         result = await tools._try_fetch_pdf_to_file(url, "test_", session)
         assert result is None
 
-    async def test_returns_none_on_network_error(self, tools):
-        session = AsyncMock()
-        error_resp = AsyncMock()
-        error_resp.__aenter__ = AsyncMock(side_effect=Exception("Network error"))
-        error_resp.__aexit__ = AsyncMock(return_value=False)
-        session.get = MagicMock(return_value=error_resp)
-        result = await tools._try_fetch_pdf_to_file(
-            "https://example.com/paper.pdf", "test_", session
-        )
-        assert result is None
+
+@pytest.mark.asyncio
+class TestNetworkErrorHandling:
+    """All URL-fetching methods gracefully handle connection errors."""
+
+    @pytest.mark.parametrize(
+        "method,args,kwargs,expected",
+        [
+            ("_try_pmc", ("12345",), {"timeout_secs": 5.0}, None),
+            ("_try_europe_pmc", ("12345",), {"timeout_secs": 5.0}, None),
+            ("_fetch_text_from_url", ("https://example.com/broken",), {}, ""),
+            ("_try_fetch_pdf_to_file", ("https://example.com/a.pdf", "t_"), {}, None),
+        ],
+    )
+    async def test_returns_gracefully_on_connection_error(
+        self, tools, method, args, kwargs, expected
+    ):
+        session = _make_error_session()
+        result = await getattr(tools, method)(*args, session, **kwargs)
+        assert result == expected

@@ -161,17 +161,15 @@ class PubMedTools(object):
         if not results:
             return None
         ft_urls = results[0].get("fullTextUrlList", {}).get("fullTextUrl", [])
+        fallback = None
         for ft in ft_urls:
-            if (
-                ft.get("documentStyle") == "pdf"
-                and ft.get("availabilityCode") in ("OA", "F")
-                and ft.get("url")
-            ):
+            if ft.get("availabilityCode") not in ("OA", "F") or not ft.get("url"):
+                continue
+            if ft.get("documentStyle") == "pdf":
                 return str(ft["url"])
-        for ft in ft_urls:
-            if ft.get("availabilityCode") in ("OA", "F") and ft.get("url"):
-                return str(ft["url"])
-        return None
+            if fallback is None:
+                fallback = str(ft["url"])
+        return fallback
 
     async def _try_unpaywall(
         self, doi: str, session: aiohttp.ClientSession, timeout_secs: float
@@ -441,6 +439,8 @@ class PubMedTools(object):
                                     break
 
                 # Check if articles already exist in database
+                url_timeout = timeout / 5.0
+                per_source = url_timeout / 6
                 async with aiohttp.ClientSession(headers=_FETCH_HEADERS) as session:
                     for pmid in pmids:
                         mini_article = await PubMedMiniArticle.objects.filter(
@@ -449,15 +449,14 @@ class PubMedTools(object):
                         if mini_article:
                             if not mini_article.article_url:
                                 try:
-                                    t = timeout / 5.0
                                     url = await asyncio.wait_for(
                                         self._find_article_url(
                                             pmid,
                                             doi=getattr(mini_article, "doi", None),
                                             session=session,
-                                            per_source_timeout=t / 6,
+                                            per_source_timeout=per_source,
                                         ),
-                                        timeout=t,
+                                        timeout=url_timeout,
                                     )
                                     if url:
                                         await PubMedMiniArticle.objects.filter(
@@ -477,20 +476,16 @@ class PubMedTools(object):
                                 )(pmid)
                                 if fetched:
                                     doi = getattr(fetched, "doi", None)
-                                    t = timeout / 5.0
                                     url = None
                                     try:
-                                        logger.debug(
-                                            f"Looking for {pmid} with timeout of {t}"
-                                        )
                                         url = await asyncio.wait_for(
                                             self._find_article_url(
                                                 pmid,
                                                 doi=doi,
                                                 session=session,
-                                                per_source_timeout=t / 6,
+                                                per_source_timeout=per_source,
                                             ),
-                                            timeout=t,
+                                            timeout=url_timeout,
                                         )
                                     except Exception as e:
                                         logger.debug(
@@ -784,39 +779,23 @@ class PubMedTools(object):
                 ):
                     article_text = fetched.content.text
 
-                title = (fetched.title if hasattr(fetched, "title") else "").strip()
-                abstract = (
-                    fetched.abstract if hasattr(fetched, "abstract") else ""
-                ).strip()
+                title = (getattr(fetched, "title", "") or "").strip()
+                abstract = (getattr(fetched, "abstract", "") or "").strip()
                 if article_text:
                     article_text = article_text.strip()
-
-                # Extract authors, journal, and year from metapub
-                authors_str = ""
-                if hasattr(fetched, "authors") and fetched.authors:
-                    authors_str = ", ".join(fetched.authors)
-                journal_str = (
-                    fetched.journal
-                    if hasattr(fetched, "journal") and fetched.journal
-                    else ""
-                )
-                year_str = (
-                    str(fetched.year)
-                    if hasattr(fetched, "year") and fetched.year
-                    else ""
-                )
+                authors = getattr(fetched, "authors", None)
+                authors_str = ", ".join(authors) if authors else ""
+                journal_str = getattr(fetched, "journal", "") or ""
+                year_val = getattr(fetched, "year", None)
+                year_str = str(year_val) if year_val else ""
 
                 if fetched is not None and (
-                    (
-                        hasattr(fetched, "abstract")
-                        and fetched.abstract
-                        and len(fetched.abstract) > 40
-                    )
+                    (abstract and len(abstract) > 40)
                     or (article_text and len(article_text) > 40)
                 ):
                     article = await PubMedArticleSummarized.objects.acreate(
                         pmid=article_id,
-                        doi=fetched.doi if hasattr(fetched, "doi") else "",
+                        doi=getattr(fetched, "doi", "") or "",
                         title=title,
                         authors=authors_str,
                         journal=journal_str,
