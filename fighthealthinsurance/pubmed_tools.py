@@ -449,10 +449,18 @@ class PubMedTools(object):
                         if mini_article:
                             if not mini_article.article_url:
                                 try:
+                                    fetched = await sync_to_async(
+                                        pubmed_fetcher.article_by_pmid
+                                    )(pmid)
+                                    doi = (
+                                        getattr(fetched, "doi", None)
+                                        if fetched
+                                        else None
+                                    )
                                     url = await asyncio.wait_for(
                                         self._find_article_url(
                                             pmid,
-                                            doi=getattr(mini_article, "doi", None),
+                                            doi=doi,
                                             session=session,
                                             per_source_timeout=per_source,
                                         ),
