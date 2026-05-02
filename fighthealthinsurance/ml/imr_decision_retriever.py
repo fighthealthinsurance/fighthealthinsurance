@@ -79,34 +79,17 @@ class IMRDecisionRetriever:
         diagnosis: str,
         state: Optional[str],
     ) -> QuerySet:
-        proc_tokens = _tokens(procedure)
-        diag_tokens = _tokens(diagnosis)
-
-        # Need at least one signal to retrieve anything meaningful
-        if not proc_tokens and not diag_tokens:
+        # Query against the denormalized `search_text` column populated at
+        # save() time. Postgres has a GIN trigram index on it (migration 0162);
+        # SQLite falls back to a sequential icontains scan.
+        all_tokens = _tokens(procedure) + _tokens(diagnosis)
+        if not all_tokens:
             return IMRDecision.objects.none()
 
-        qs = IMRDecision.objects.all()
-
-        # Build a match filter: any token from procedure or diagnosis matches
-        # any of treatment / treatment_category / treatment_subcategory /
-        # diagnosis / diagnosis_category.
-        match_q: Optional[Q] = None
-        for field in (
-            "treatment",
-            "treatment_category",
-            "treatment_subcategory",
-            "diagnosis",
-            "diagnosis_category",
-        ):
-            for tokens in (proc_tokens, diag_tokens):
-                clause = _build_text_q(field, tokens)
-                if clause is not None:
-                    match_q = clause if match_q is None else match_q | clause
-
+        match_q = _build_text_q("search_text", all_tokens)
         if match_q is None:
             return IMRDecision.objects.none()
-        qs = qs.filter(match_q)
+        qs = IMRDecision.objects.filter(match_q)
 
         # Score: overturned > overturned_in_part > other > upheld; same-state bonus.
         determination_score = Case(
@@ -128,10 +111,9 @@ class IMRDecisionRetriever:
         else:
             state_score = Value(0, output_field=IntegerField())
 
-        qs = qs.annotate(
+        return qs.annotate(
             _det_score=determination_score, _state_score=state_score
         ).order_by("-_det_score", "-_state_score", "-decision_year", "-id")
-        return qs
 
     @classmethod
     async def retrieve_for_denial(

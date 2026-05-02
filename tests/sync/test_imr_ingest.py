@@ -167,6 +167,53 @@ class TestIterCsvRows:
 
 
 @pytest.mark.django_db
+class TestSearchText:
+    def test_compute_search_text_lowercases_and_concatenates(self):
+        d = IMRDecision(
+            source=IMRDecision.SOURCE_CA_DMHC,
+            case_id="X",
+            state="CA",
+            treatment="Trastuzumab",
+            treatment_category="Pharmacy",
+            diagnosis="Breast Cancer",
+            diagnosis_category="Cancer",
+        )
+        assert d.compute_search_text() == "trastuzumab pharmacy breast cancer cancer"
+
+    def test_compute_search_text_skips_blank_fields(self):
+        d = IMRDecision(
+            source=IMRDecision.SOURCE_CA_DMHC,
+            case_id="X",
+            state="CA",
+            treatment="Inhaler",
+        )
+        assert d.compute_search_text() == "inhaler"
+
+    def test_save_populates_search_text(self):
+        d = IMRDecision.objects.create(
+            source=IMRDecision.SOURCE_NY_DFS,
+            case_id="NY-S1",
+            state="NY",
+            treatment="CGM",
+            diagnosis="Type 1 Diabetes",
+        )
+        d.refresh_from_db()
+        assert d.search_text == "cgm type 1 diabetes"
+
+    def test_save_recomputes_on_field_change(self):
+        d = IMRDecision.objects.create(
+            source=IMRDecision.SOURCE_NY_DFS,
+            case_id="NY-S2",
+            state="NY",
+            treatment="Old",
+        )
+        d.treatment = "New"
+        d.save()
+        d.refresh_from_db()
+        assert d.search_text == "new"
+
+
+@pytest.mark.django_db
 class TestLoadParsedRows:
     @staticmethod
     def _sample_row():

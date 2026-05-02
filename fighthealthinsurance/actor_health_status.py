@@ -37,6 +37,7 @@ def check_actor_health() -> Dict[str, Any]:
         ("email_polling_actor", "fhi"),
         ("fax_polling_actor", "fhi"),
         ("chooser_refill_actor", "fhi"),
+        ("imr_refresh_actor", "fhi"),
     ]
 
     details: List[ActorHealthDetail] = []
@@ -119,17 +120,20 @@ def relaunch_actors(force: bool = False) -> Dict[str, Any]:
     from fighthealthinsurance.chooser_refill_actor_ref import chooser_refill_actor_ref
     from fighthealthinsurance.email_polling_actor_ref import email_polling_actor_ref
     from fighthealthinsurance.fax_polling_actor_ref import fax_polling_actor_ref
+    from fighthealthinsurance.imr_refresh_actor_ref import imr_refresh_actor_ref
 
     results: Dict[str, Dict[str, Any]] = {
         "email_polling_actor": {"status": "pending"},
         "fax_polling_actor": {"status": "pending"},
         "chooser_refill_actor": {"status": "pending"},
+        "imr_refresh_actor": {"status": "pending"},
     }
 
     actors = [
         ("email_polling_actor", email_polling_actor_ref),
         ("fax_polling_actor", fax_polling_actor_ref),
         ("chooser_refill_actor", chooser_refill_actor_ref),
+        ("imr_refresh_actor", imr_refresh_actor_ref),
     ]
 
     for actor_name, actor_ref in actors:
@@ -155,6 +159,8 @@ def relaunch_actors(force: bool = False) -> Dict[str, Any]:
                     actor_ref.fax_polling_actor = None  # type: ignore
                 elif actor_name == "chooser_refill_actor":
                     actor_ref.chooser_refill_actor = None  # type: ignore
+                elif actor_name == "imr_refresh_actor":
+                    actor_ref.imr_refresh_actor = None  # type: ignore
 
                 # Clear the cached property by deleting it from the instance
                 try:

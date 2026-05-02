@@ -170,6 +170,10 @@ class IMRDecision(ExportModelOperationsMixin("IMRDecision"), models.Model):  # t
     summary = models.TextField(default="", blank=True)
     source_url = models.URLField(max_length=500, default="", blank=True)
     raw_data = models.JSONField(null=True, blank=True)
+    # Lowercased concatenation of treatment + diagnosis fields. Lets the
+    # retriever filter on a single column instead of OR-ing icontains across
+    # five, and is the column the Postgres trigram GIN index targets.
+    search_text = models.TextField(default="", blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -186,6 +190,20 @@ class IMRDecision(ExportModelOperationsMixin("IMRDecision"), models.Model):  # t
                 name="imrdecision_unique_source_case",
             ),
         ]
+
+    def compute_search_text(self) -> str:
+        parts = [
+            self.treatment,
+            self.treatment_category,
+            self.treatment_subcategory,
+            self.diagnosis,
+            self.diagnosis_category,
+        ]
+        return " ".join(p.lower() for p in parts if p).strip()
+
+    def save(self, *args, **kwargs):
+        self.search_text = self.compute_search_text()
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"IMR {self.source}/{self.case_id}: {self.determination} {self.treatment} for {self.diagnosis}"
