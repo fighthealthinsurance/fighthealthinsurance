@@ -2144,8 +2144,13 @@ class AppealsBackendHelper:
             )
         )
 
-        algorithmic_detection = detect_algorithmic_review_terms(denial.denial_text or "")
-        if algorithmic_detection.matched and algorithmic_detection.confidence in {"medium", "high"}:
+        algorithmic_detection = detect_algorithmic_review_terms(
+            denial.denial_text or ""
+        )
+        if algorithmic_detection.matched and algorithmic_detection.confidence in {
+            "medium",
+            "high",
+        }:
             non_ai_appeals.extend(
                 render_template_blocks(algorithmic_detection.suggested_template_blocks)
             )

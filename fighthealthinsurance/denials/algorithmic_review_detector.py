@@ -79,9 +79,13 @@ def _dedupe_overlapping_terms(matched_terms: list[str]) -> list[str]:
 
 def detect_algorithmic_review_terms(text: str) -> AlgorithmicReviewDetectionResult:
     lower = (text or "").lower()
-    matched_terms = [name for name, pat in TERM_PATTERNS.items() if re.search(pat, lower)]
+    matched_terms = [
+        name for name, pat in TERM_PATTERNS.items() if re.search(pat, lower)
+    ]
     matched_terms = _dedupe_overlapping_terms(matched_terms)
-    vendor_matches = [name for name, pat in VENDOR_PATTERNS.items() if re.search(pat, lower)]
+    vendor_matches = [
+        name for name, pat in VENDOR_PATTERNS.items() if re.search(pat, lower)
+    ]
 
     matched = bool(matched_terms or vendor_matches)
     score = sum(TERM_WEIGHTS.get(term, 1.0) for term in matched_terms) + (
@@ -101,12 +105,17 @@ def detect_algorithmic_review_terms(text: str) -> AlgorithmicReviewDetectionResu
 
     blocks: list[str] = []
     if matched:
-        blocks.extend([
-            "algorithmic_review_general",
-            "request_criteria_and_human_review",
-        ])
+        blocks.extend(
+            [
+                "algorithmic_review_general",
+                "request_criteria_and_human_review",
+            ]
+        )
 
-    if re.search(r"\bmedicare\s+advantage\b|\bpart\s*c\b|\bma\s+plan\b", lower) and matched:
+    if (
+        re.search(r"\bmedicare\s+advantage\b|\bpart\s*c\b|\bma\s+plan\b", lower)
+        and matched
+    ):
         blocks.append("algorithmic_review_medicare_advantage")
 
     if any(v == "NaviHealth" for v in vendor_matches):
