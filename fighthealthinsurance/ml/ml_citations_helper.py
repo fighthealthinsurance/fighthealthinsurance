@@ -1,15 +1,44 @@
 import asyncio
+import datetime
 from typing import Any, Callable, Coroutine, Dict, List, Optional, cast
 
+from django.utils import timezone
 from loguru import logger
 
+from fighthealthinsurance.cms_coverage_api import get_cms_coverage_citations
 from fighthealthinsurance.extralink_context_helper import (
     ExtraLinkContextHelper,
 )
 from fighthealthinsurance.microsites import get_microsite
 from fighthealthinsurance.ml.ml_router import ml_router
-from fighthealthinsurance.models import Denial, GenericContextGeneration
+from fighthealthinsurance.models import (
+    CMSCoverageCache,
+    Denial,
+    GenericContextGeneration,
+)
 from fighthealthinsurance.utils import best_within_timelimit
+
+# Refresh CMS coverage cache entries that are older than this. NCD/LCD
+# documents change rarely, so a long TTL is fine; we just don't want
+# entries to live forever in case the public URLs or titles change.
+_CMS_CACHE_TTL = datetime.timedelta(days=30)
+
+
+async def _denial_is_medicare_plan(denial: Optional[Denial]) -> bool:
+    """Return True if the denial's plan_source indicates a Medicare plan.
+
+    Medicare and Medicare Advantage denials get stronger CMS-binding
+    framing in the citations we return.
+    """
+    if denial is None or denial.pk is None:
+        return False
+    try:
+        return await denial.plan_source.filter(
+            name__in=["Medicare Advantage", "Medicare Regular"]
+        ).aexists()
+    except Exception as e:
+        logger.debug(f"Could not determine Medicare plan source: {e}")
+        return False
 
 
 class MLCitationsHelper:
@@ -330,6 +359,88 @@ class MLCitationsHelper:
             return []
 
     @classmethod
+    async def generate_cms_coverage_citations(
+        cls,
+        denial: Optional[Denial] = None,
+        procedure_opt: Optional[str] = None,
+        diagnosis_opt: Optional[str] = None,
+        max_results: int = 3,
+    ) -> List[str]:
+        """Pull CMS Medicare Coverage Database citations for procedure/diagnosis.
+
+        Results are cached in CMSCoverageCache keyed by procedure+diagnosis
+        with a 30-day TTL. Two parallel cached lists are kept — generic and
+        Medicare-binding — and the right one is returned based on the
+        denial's plan_source.
+
+        Returns an empty list if procedure and diagnosis are both missing
+        or the CMS API is unreachable.
+        """
+        if denial is not None:
+            procedure = denial.procedure.strip().lower() if denial.procedure else ""
+            diagnosis = denial.diagnosis.strip().lower() if denial.diagnosis else ""
+        else:
+            procedure = procedure_opt.strip().lower() if procedure_opt else ""
+            diagnosis = diagnosis_opt.strip().lower() if diagnosis_opt else ""
+
+        if not procedure and not diagnosis:
+            return []
+
+        medicare_plan = await _denial_is_medicare_plan(denial)
+        cache_field = "medicare_citations" if medicare_plan else "generic_citations"
+
+        cache_entry: Optional[CMSCoverageCache] = None
+        try:
+            cache_entry = await CMSCoverageCache.objects.filter(
+                procedure=procedure, diagnosis=diagnosis
+            ).afirst()
+        except Exception as e:
+            logger.debug(f"Could not read CMSCoverageCache: {e}")
+
+        if cache_entry is not None:
+            cached = getattr(cache_entry, cache_field) or []
+            fresh = (
+                cache_entry.updated_at is not None
+                and (timezone.now() - cache_entry.updated_at) < _CMS_CACHE_TTL
+            )
+            if cached and fresh:
+                logger.debug(
+                    f"Using cached CMS citations for {procedure}/{diagnosis} "
+                    f"(medicare_plan={medicare_plan})"
+                )
+                return list(cached)[:max_results]
+
+        try:
+            citations = await get_cms_coverage_citations(
+                procedure=procedure or None,
+                diagnosis=diagnosis or None,
+                medicare_plan=medicare_plan,
+                max_results=max_results,
+            )
+        except Exception as e:
+            logger.opt(exception=True).debug(f"CMS coverage citation fetch failed: {e}")
+            citations = []
+
+        if citations:
+            try:
+                if cache_entry is None:
+                    await CMSCoverageCache.objects.acreate(
+                        procedure=procedure,
+                        diagnosis=diagnosis,
+                        **{cache_field: citations},
+                    )
+                else:
+                    await CMSCoverageCache.objects.filter(pk=cache_entry.pk).aupdate(
+                        **{cache_field: citations}
+                    )
+            except Exception as e:
+                logger.opt(exception=True).debug(
+                    f"Failed to persist CMS coverage cache: {e}"
+                )
+
+        return citations
+
+    @classmethod
     async def _generate_citations_for_denial(
         cls,
         denial: Denial,
@@ -346,6 +457,15 @@ class MLCitationsHelper:
         """
         if denial.ml_citation_context and len(denial.ml_citation_context) > 0:
             return denial.ml_citation_context  # type: ignore
+
+        # Run CMS Medicare Coverage Database lookup alongside the ML
+        # backends. It hits a public API + DB cache, so it won't compete for
+        # ML capacity, and we want its output to augment whatever the
+        # backends produce rather than replace it.
+        cms_task = asyncio.create_task(
+            cls.generate_cms_coverage_citations(denial=denial)
+        )
+
         try:
             model_timeout = timeout - 10
 
@@ -358,31 +478,44 @@ class MLCitationsHelper:
             if (not denial.denial_text or len(denial.denial_text) < 5) and (
                 not denial.health_history or len(denial.health_history) < 5
             ):
-                return await no_context_awaitable
-
-            context_awaitable = cls.generate_specific_citations(
-                denial=denial,
-                timeout=model_timeout,
-            )
-
-            def is_full_backend(awaitable: Coroutine) -> int:
-                if awaitable == context_awaitable:
-                    return 2
-                return 1
-
-            # Get the best result within the timeout
-            result = (
-                await best_within_timelimit(
-                    [no_context_awaitable, context_awaitable],
-                    score_fn=cls.make_score_fn(is_full_backend),
-                    timeout=timeout,
+                ml_result = await no_context_awaitable
+            else:
+                context_awaitable = cls.generate_specific_citations(
+                    denial=denial,
+                    timeout=model_timeout,
                 )
-                or []
-            )
-            return result
+
+                def is_full_backend(awaitable: Coroutine) -> int:
+                    if awaitable == context_awaitable:
+                        return 2
+                    return 1
+
+                ml_result = (
+                    await best_within_timelimit(
+                        [no_context_awaitable, context_awaitable],
+                        score_fn=cls.make_score_fn(is_full_backend),
+                        timeout=timeout,
+                    )
+                    or []
+                )
         except Exception as e:
             logger.opt(exception=True).warning(f"Failed to generate citations: {e}")
-            return []
+            ml_result = []
+
+        try:
+            cms_citations = await cms_task
+        except Exception as e:
+            logger.opt(exception=True).debug(f"CMS coverage task failed: {e}")
+            cms_citations = []
+
+        if cms_citations:
+            # Append CMS citations after ML citations, dedup by exact string.
+            seen = {c for c in ml_result if isinstance(c, str)}
+            for c in cms_citations:
+                if c not in seen:
+                    ml_result.append(c)
+                    seen.add(c)
+        return ml_result
 
     @classmethod
     async def generate_citations_for_denial(

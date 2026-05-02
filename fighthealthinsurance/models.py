@@ -78,6 +78,33 @@ class GenericContextGeneration(ExportModelOperationsMixin("GenericContextGenerat
         return f"Generic Context: {self.procedure} / {self.diagnosis}"
 
 
+class CMSCoverageCache(ExportModelOperationsMixin("CMSCoverageCache"), models.Model):  # type: ignore
+    """Caches CMS Medicare Coverage Database lookups for a procedure/diagnosis.
+
+    Two cached citation lists are stored: a "generic" list (no Medicare-binding
+    framing, used for commercial plans) and a "medicare" list (used when the
+    denial's plan_source is Medicare or Medicare Advantage). Caching is keyed
+    by procedure+diagnosis; entries are refreshed when older than the TTL the
+    caller chooses to enforce.
+    """
+
+    id = models.AutoField(primary_key=True)
+    procedure = models.CharField(max_length=300)
+    diagnosis = models.CharField(max_length=300)
+    generic_citations = models.JSONField(default=list)
+    medicare_citations = models.JSONField(default=list)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["procedure", "diagnosis"]),
+        ]
+
+    def __str__(self):
+        return f"CMS Coverage: {self.procedure} / {self.diagnosis}"
+
+
 # Money related :p
 class InterestedProfessional(ExportModelOperationsMixin("InterestedProfessional"), models.Model):  # type: ignore
     """
