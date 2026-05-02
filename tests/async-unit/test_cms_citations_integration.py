@@ -189,7 +189,10 @@ class TestMLCitationsHelperCMSIntegration:
     @patch.object(
         MLCitationsHelper, "generate_generic_citations", new_callable=AsyncMock
     )
-    @patch("fighthealthinsurance.ml.ml_citations_helper.best_within_timelimit")
+    @patch(
+        "fighthealthinsurance.ml.ml_citations_helper.best_within_timelimit",
+        new_callable=AsyncMock,
+    )
     async def test_underscore_helper_appends_cms_citations(
         self, mock_best, mock_generic, mock_specific, mock_cms
     ):
@@ -215,7 +218,10 @@ class TestMLCitationsHelperCMSIntegration:
     @patch.object(
         MLCitationsHelper, "generate_generic_citations", new_callable=AsyncMock
     )
-    @patch("fighthealthinsurance.ml.ml_citations_helper.best_within_timelimit")
+    @patch(
+        "fighthealthinsurance.ml.ml_citations_helper.best_within_timelimit",
+        new_callable=AsyncMock,
+    )
     async def test_underscore_helper_dedupes_overlap(
         self, mock_best, mock_generic, mock_specific, mock_cms
     ):
