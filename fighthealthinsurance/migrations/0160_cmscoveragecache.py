@@ -28,6 +28,12 @@ class Migration(migrations.Migration):
                 ("created_at", models.DateTimeField(auto_now_add=True)),
             ],
             options={
+                "constraints": [
+                    models.UniqueConstraint(
+                        fields=["procedure", "diagnosis"],
+                        name="cms_cov_proc_diag_uniq",
+                    ),
+                ],
                 "indexes": [
                     models.Index(
                         fields=["procedure", "diagnosis"],

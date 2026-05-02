@@ -60,6 +60,7 @@ class TestMLCitationsHelperCMSIntegration:
         mock_qs = MagicMock()
         mock_qs.afirst = AsyncMock(return_value=cache_entry)
         mock_cache_cls.objects.filter.return_value = mock_qs
+        mock_cache_cls.objects.aupdate_or_create = AsyncMock()
 
         result = await MLCitationsHelper.generate_cms_coverage_citations(
             denial=self.mock_denial
@@ -67,6 +68,7 @@ class TestMLCitationsHelperCMSIntegration:
 
         assert result == ["Cached NCD A", "Cached NCD B"]
         mock_fetch.assert_not_called()
+        mock_cache_cls.objects.aupdate_or_create.assert_not_awaited()
 
     @pytest.mark.asyncio
     @patch("fighthealthinsurance.ml.ml_citations_helper.CMSCoverageCache")
@@ -81,9 +83,10 @@ class TestMLCitationsHelperCMSIntegration:
 
         mock_qs = MagicMock()
         mock_qs.afirst = AsyncMock(return_value=cache_entry)
-        mock_qs.aupdate = AsyncMock()
         mock_cache_cls.objects.filter.return_value = mock_qs
-        mock_cache_cls.objects.acreate = AsyncMock()
+        mock_cache_cls.objects.aupdate_or_create = AsyncMock(
+            return_value=(cache_entry, False)
+        )
 
         mock_fetch.return_value = ["Fresh citation"]
 
@@ -93,11 +96,12 @@ class TestMLCitationsHelperCMSIntegration:
 
         assert result == ["Fresh citation"]
         mock_fetch.assert_awaited_once()
-        mock_qs.aupdate.assert_awaited_once()
-        # Updates the generic field plus its timestamp for non-Medicare plans
-        kwargs = mock_qs.aupdate.await_args.kwargs
-        assert "generic_citations" in kwargs
-        assert "generic_updated_at" in kwargs
+        mock_cache_cls.objects.aupdate_or_create.assert_awaited_once()
+        kwargs = mock_cache_cls.objects.aupdate_or_create.await_args.kwargs
+        assert kwargs["procedure"] == "mri"
+        assert kwargs["diagnosis"] == "headache"
+        assert "generic_citations" in kwargs["defaults"]
+        assert "generic_updated_at" in kwargs["defaults"]
 
     @pytest.mark.asyncio
     @patch("fighthealthinsurance.ml.ml_citations_helper.CMSCoverageCache")
@@ -116,8 +120,10 @@ class TestMLCitationsHelperCMSIntegration:
 
         mock_qs = MagicMock()
         mock_qs.afirst = AsyncMock(return_value=cache_entry)
-        mock_qs.aupdate = AsyncMock()
         mock_cache_cls.objects.filter.return_value = mock_qs
+        mock_cache_cls.objects.aupdate_or_create = AsyncMock(
+            return_value=(cache_entry, False)
+        )
         mock_fetch.return_value = ["Fresh generic citation"]
 
         result = await MLCitationsHelper.generate_cms_coverage_citations(
@@ -136,7 +142,9 @@ class TestMLCitationsHelperCMSIntegration:
         mock_qs = MagicMock()
         mock_qs.afirst = AsyncMock(return_value=None)
         mock_cache_cls.objects.filter.return_value = mock_qs
-        mock_cache_cls.objects.acreate = AsyncMock()
+        mock_cache_cls.objects.aupdate_or_create = AsyncMock(
+            return_value=(MagicMock(), True)
+        )
 
         mock_fetch.return_value = ["New citation"]
 
@@ -145,12 +153,12 @@ class TestMLCitationsHelperCMSIntegration:
         )
 
         assert result == ["New citation"]
-        mock_cache_cls.objects.acreate.assert_awaited_once()
-        kwargs = mock_cache_cls.objects.acreate.await_args.kwargs
+        mock_cache_cls.objects.aupdate_or_create.assert_awaited_once()
+        kwargs = mock_cache_cls.objects.aupdate_or_create.await_args.kwargs
         assert kwargs["procedure"] == "mri"
         assert kwargs["diagnosis"] == "headache"
-        assert kwargs["generic_citations"] == ["New citation"]
-        assert kwargs.get("generic_updated_at") is not None
+        assert kwargs["defaults"]["generic_citations"] == ["New citation"]
+        assert kwargs["defaults"].get("generic_updated_at") is not None
 
     @pytest.mark.asyncio
     @patch("fighthealthinsurance.ml.ml_citations_helper.CMSCoverageCache")
@@ -161,7 +169,7 @@ class TestMLCitationsHelperCMSIntegration:
         mock_qs = MagicMock()
         mock_qs.afirst = AsyncMock(return_value=None)
         mock_cache_cls.objects.filter.return_value = mock_qs
-        mock_cache_cls.objects.acreate = AsyncMock()
+        mock_cache_cls.objects.aupdate_or_create = AsyncMock()
         mock_fetch.return_value = []
 
         result = await MLCitationsHelper.generate_cms_coverage_citations(
@@ -169,12 +177,18 @@ class TestMLCitationsHelperCMSIntegration:
         )
 
         assert result == []
-        mock_cache_cls.objects.acreate.assert_not_awaited()
+        mock_cache_cls.objects.aupdate_or_create.assert_not_awaited()
 
     @pytest.mark.asyncio
-    @patch.object(MLCitationsHelper, "generate_cms_coverage_citations")
-    @patch.object(MLCitationsHelper, "generate_specific_citations")
-    @patch.object(MLCitationsHelper, "generate_generic_citations")
+    @patch.object(
+        MLCitationsHelper, "generate_cms_coverage_citations", new_callable=AsyncMock
+    )
+    @patch.object(
+        MLCitationsHelper, "generate_specific_citations", new_callable=AsyncMock
+    )
+    @patch.object(
+        MLCitationsHelper, "generate_generic_citations", new_callable=AsyncMock
+    )
     @patch("fighthealthinsurance.ml.ml_citations_helper.best_within_timelimit")
     async def test_underscore_helper_appends_cms_citations(
         self, mock_best, mock_generic, mock_specific, mock_cms
@@ -192,9 +206,15 @@ class TestMLCitationsHelperCMSIntegration:
         assert "CMS NCD 220.5" in result
 
     @pytest.mark.asyncio
-    @patch.object(MLCitationsHelper, "generate_cms_coverage_citations")
-    @patch.object(MLCitationsHelper, "generate_specific_citations")
-    @patch.object(MLCitationsHelper, "generate_generic_citations")
+    @patch.object(
+        MLCitationsHelper, "generate_cms_coverage_citations", new_callable=AsyncMock
+    )
+    @patch.object(
+        MLCitationsHelper, "generate_specific_citations", new_callable=AsyncMock
+    )
+    @patch.object(
+        MLCitationsHelper, "generate_generic_citations", new_callable=AsyncMock
+    )
     @patch("fighthealthinsurance.ml.ml_citations_helper.best_within_timelimit")
     async def test_underscore_helper_dedupes_overlap(
         self, mock_best, mock_generic, mock_specific, mock_cms
@@ -213,8 +233,12 @@ class TestMLCitationsHelperCMSIntegration:
         assert "Unique CMS citation" in result
 
     @pytest.mark.asyncio
-    @patch.object(MLCitationsHelper, "generate_cms_coverage_citations")
-    @patch.object(MLCitationsHelper, "generate_generic_citations")
+    @patch.object(
+        MLCitationsHelper, "generate_cms_coverage_citations", new_callable=AsyncMock
+    )
+    @patch.object(
+        MLCitationsHelper, "generate_generic_citations", new_callable=AsyncMock
+    )
     async def test_underscore_helper_short_circuits_with_cms_only(
         self, mock_generic, mock_cms
     ):

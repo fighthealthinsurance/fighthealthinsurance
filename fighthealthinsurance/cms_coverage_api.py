@@ -1,18 +1,24 @@
 """Client for the CMS Medicare Coverage Database (MCD) Coverage API.
 
-Fetches National Coverage Determinations (NCDs) and Local Coverage
-Determinations (LCDs) so we can cite Medicare coverage policy in appeal
-letters. Medicare rules are not automatically binding on commercial
-plans, but they are strong evidence for medical necessity and
-non-experimental status, and Medicare Advantage plans are generally
-required to follow them.
+Fetches National Coverage Determinations (NCDs) so we can point at relevant
+Medicare coverage policy in appeal letters. Medicare rules are not
+automatically binding on commercial plans, but they are strong evidence for
+medical-necessity standards, and Medicare/Medicare Advantage plans are
+generally required to follow them.
+
+We deliberately do not assert what each NCD says — NCDs come in coverage,
+non-coverage, and limited-coverage varieties, and we don't fetch the
+determination text. Citations are framed as neutral pointers ("see this
+NCD") so the appeal-generation LLM can read the URL without us inserting
+a factually wrong claim.
 
 The Coverage API is public (no auth required) as of 2024-02-08.
 Docs: https://api.coverage.cms.gov/docs/swagger/index.html
 """
 
+import re
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import List, Optional
 
 import httpx
@@ -24,6 +30,37 @@ from fighthealthinsurance.env_utils import get_env_variable
 # returns a relative `url` like "/data/ncd?ncdid=108&ncdver=1"; prepending
 # this host yields the human-readable page.
 CMS_MCD_WEB_BASE = "https://www.cms.gov/medicare-coverage-database"
+
+# Generic English words that show up in many medical-procedure phrases but
+# carry no signal for matching against NCD titles.
+_STOPWORDS = frozenset(
+    {
+        "a",
+        "an",
+        "and",
+        "as",
+        "by",
+        "for",
+        "from",
+        "in",
+        "is",
+        "of",
+        "on",
+        "or",
+        "the",
+        "to",
+        "with",
+    }
+)
+
+
+def _tokenize(text: str) -> List[str]:
+    """Split text into lowercase alphanumeric tokens, dropping stopwords."""
+    return [
+        t
+        for t in re.findall(r"[a-z0-9]+", text.lower())
+        if t not in _STOPWORDS and len(t) >= 2
+    ]
 
 
 @dataclass
@@ -47,54 +84,30 @@ class NCDDocument:
         return f"{CMS_MCD_WEB_BASE}{path}"
 
     def as_citation(self, medicare_plan: bool = False) -> str:
-        """Format as a single citation string suitable for an appeal letter."""
-        binding = (
-            "Medicare coverage policy that this plan must follow"
-            if medicare_plan
-            else "Medicare coverage policy"
-        )
+        """Format as a neutral pointer to the NCD document.
+
+        We don't assert what the NCD says (some NCDs are non-coverage or
+        narrowly limited determinations). The citation is a reference: the
+        appeal-generation LLM can use the linked policy as authority for
+        Medicare's medical-necessity criteria, but we don't preemptively
+        characterize it as favorable.
+        """
         url = self.public_url
         url_part = f" ({url})" if url else ""
+        if medicare_plan:
+            tail = (
+                "; Medicare-administered plans are bound by this NCD's "
+                "coverage standard."
+            )
+        else:
+            tail = (
+                "; Medicare's coverage standard is widely treated as "
+                "evidence of medical necessity."
+            )
         return (
             f"CMS National Coverage Determination {self.document_display_id} — "
-            f'"{self.title}"{url_part}: {binding} recognizing this service as '
-            "covered when the Medicare medical-necessity criteria are met."
-        )
-
-
-@dataclass
-class LCDDocument:
-    """A single Local Coverage Determination summary record."""
-
-    document_id: int
-    document_display_id: str
-    title: str
-    last_updated: Optional[str] = None
-    url_path: Optional[str] = None
-    contractor: Optional[str] = None
-    state: Optional[str] = None
-    jurisdictions: List[str] = field(default_factory=list)
-
-    @property
-    def public_url(self) -> str:
-        if not self.url_path:
-            return ""
-        path = self.url_path if self.url_path.startswith("/") else f"/{self.url_path}"
-        return f"{CMS_MCD_WEB_BASE}{path}"
-
-    def as_citation(self, medicare_plan: bool = False) -> str:
-        binding = (
-            "Local Medicare coverage policy that this plan must follow"
-            if medicare_plan
-            else "Local Medicare coverage policy"
-        )
-        url = self.public_url
-        url_part = f" ({url})" if url else ""
-        scope = f" ({self.contractor})" if self.contractor else ""
-        return (
-            f"CMS Local Coverage Determination {self.document_display_id}{scope} — "
-            f'"{self.title}"{url_part}: {binding} recognizing this service '
-            "as reasonable and necessary under Medicare criteria."
+            f'"{self.title}"{url_part}: see this Medicare coverage policy for '
+            f"the applicable coverage criteria{tail}"
         )
 
 
@@ -126,60 +139,39 @@ def _parse_ncd_record(record: dict) -> Optional[NCDDocument]:
         return None
 
 
-def _parse_lcd_record(record: dict) -> Optional[LCDDocument]:
-    try:
-        document_id = record.get("document_id")
-        title = record.get("title")
-        if document_id is None or not title:
-            return None
-        jurisdictions_raw = record.get("jurisdictions") or []
-        if isinstance(jurisdictions_raw, str):
-            jurisdictions = [jurisdictions_raw]
-        else:
-            jurisdictions = [str(j) for j in jurisdictions_raw]
-        return LCDDocument(
-            document_id=int(document_id),
-            document_display_id=str(record.get("document_display_id", "")),
-            title=str(title),
-            last_updated=record.get("last_updated"),
-            url_path=record.get("url"),
-            contractor=record.get("contractor"),
-            state=record.get("state"),
-            jurisdictions=jurisdictions,
-        )
-    except (TypeError, ValueError) as e:
-        logger.debug(f"Skipping malformed LCD record: {e}")
-        return None
-
-
 def _filter_by_keyword(
     records: List[NCDDocument], keyword: str, max_results: int
 ) -> List[NCDDocument]:
-    """Keyword-filter NCD titles client-side.
+    """Token-based keyword filter on NCD titles.
+
+    Tokenizes both the input keyword and each NCD title (dropping stopwords
+    and short tokens), then returns titles ranked by how many input tokens
+    they share. This lets multi-word inputs like "MRI brain" match titles
+    like "MRI of the Brain" or "Magnetic Resonance Imaging — Brain".
 
     The MCD reports endpoints don't reliably accept a keyword filter, so we
-    pull the report and filter title matches locally. The full report is
-    small enough (~hundreds of NCDs) that this is cheap.
+    pull the report and filter locally. The full report is small enough
+    (~hundreds of NCDs) that this is cheap.
     """
-    if not keyword:
-        return records[:max_results]
-    needle = keyword.strip().lower()
-    if not needle:
-        return records[:max_results]
-    matches: List[NCDDocument] = []
+    tokens = _tokenize(keyword) if keyword else []
+    if not tokens:
+        return []
+    scored: List[tuple] = []
     for r in records:
-        if needle in r.title.lower():
-            matches.append(r)
-            if len(matches) >= max_results:
-                break
-    return matches
+        title_tokens = set(_tokenize(r.title))
+        if not title_tokens:
+            continue
+        match_count = sum(1 for t in tokens if t in title_tokens)
+        if match_count == 0:
+            continue
+        # Sort key: more matches first, then shorter title (more specific).
+        scored.append((-match_count, len(r.title), r))
+    scored.sort(key=lambda x: (x[0], x[1]))
+    return [r for _, _, r in scored[:max_results]]
 
 
 class CMSCoverageClient:
     """Async client for the CMS Medicare Coverage Database Coverage API."""
-
-    _HEALTH_CACHE_TTL = 300.0  # 5 min on success
-    _HEALTH_CACHE_TTL_FAILURE = 30.0  # 30s on failure
 
     # The full NCD report is small and stable; keep it in-process for the
     # life of the client to avoid refetching for every denial.
@@ -195,8 +187,6 @@ class CMSCoverageClient:
         )
         self.timeout = httpx.Timeout(timeout, connect=5.0)
         self._client: Optional[httpx.AsyncClient] = None
-        self._health_ok: Optional[bool] = None
-        self._health_checked_at: float = 0.0
         self._ncd_report_cache: Optional[List[NCDDocument]] = None
         self._ncd_report_cached_at: float = 0.0
 
@@ -214,33 +204,14 @@ class CMSCoverageClient:
             await self._client.aclose()
             self._client = None
 
-    async def health_check(self) -> bool:
-        now = time.monotonic()
-        if self._health_ok is not None:
-            ttl = (
-                self._HEALTH_CACHE_TTL
-                if self._health_ok
-                else self._HEALTH_CACHE_TTL_FAILURE
-            )
-            if (now - self._health_checked_at) < ttl:
-                return self._health_ok
-        try:
-            client = await self._get_client()
-            # The reports endpoint always returns a JSON envelope with meta;
-            # we don't depend on a dedicated /health/ route the API doesn't
-            # advertise.
-            response = await client.get(
-                "/v1/reports/national-coverage-ncd", params={"page_size": 1}
-            )
-            self._health_ok = response.status_code == 200
-        except Exception as e:
-            logger.debug(f"CMS Coverage API health check failed: {e}")
-            self._health_ok = False
-        self._health_checked_at = now
-        return self._health_ok
-
     async def _fetch_ncd_report(self) -> List[NCDDocument]:
-        """Fetch (and cache) the full NCD report."""
+        """Fetch (and cache) the full NCD report.
+
+        On any error, returns the previously-cached report if we have one,
+        otherwise an empty list. This means transient CMS outages don't
+        zero out our citations as long as the in-process cache still has
+        data from a prior successful fetch.
+        """
         now = time.monotonic()
         if (
             self._ncd_report_cache is not None
@@ -277,54 +248,14 @@ class CMSCoverageClient:
     async def search_ncds(
         self, keyword: str, max_results: int = 5
     ) -> List[NCDDocument]:
-        """Search NCDs whose title contains the given keyword.
+        """Search NCDs whose title shares meaningful tokens with the keyword.
 
-        Returns up to `max_results` documents ordered as the API returned
-        them. Empty list if the API is unavailable.
+        Empty list if the API is unavailable and we have no cached report.
         """
         if not keyword or not keyword.strip():
             return []
         records = await self._fetch_ncd_report()
         return _filter_by_keyword(records, keyword, max_results)
-
-    async def search_lcds(
-        self, keyword: str, state: Optional[str] = None, max_results: int = 5
-    ) -> List[LCDDocument]:
-        """Search final LCDs whose title contains the given keyword.
-
-        Optionally restricts to a state (two-letter code).
-        """
-        if not keyword or not keyword.strip():
-            return []
-        try:
-            client = await self._get_client()
-            params: dict = {}
-            if state:
-                params["state"] = state.upper()
-            response = await client.get(
-                "/v1/reports/local-coverage-final-lcds", params=params
-            )
-            if response.status_code != 200:
-                logger.debug(f"CMS LCD report returned status {response.status_code}")
-                return []
-            payload = response.json()
-            records = [
-                doc
-                for doc in (_parse_lcd_record(r) for r in _extract_records(payload))
-                if doc is not None
-            ]
-            needle = keyword.strip().lower()
-            matches = [r for r in records if needle in r.title.lower()]
-            return matches[:max_results]
-        except httpx.TimeoutException:
-            logger.warning("CMS LCD request timed out")
-            return []
-        except httpx.RequestError as e:
-            logger.warning(f"CMS LCD request failed: {e}")
-            return []
-        except Exception as e:
-            logger.opt(exception=True).warning(f"Unexpected error fetching LCDs: {e}")
-            return []
 
 
 _cms_client: Optional[CMSCoverageClient] = None
@@ -370,16 +301,18 @@ async def get_cms_coverage_citations(
 ) -> List[str]:
     """Return formatted CMS coverage citations for a procedure/diagnosis.
 
-    `medicare_plan=True` triggers stronger framing emphasizing that
+    `medicare_plan=True` triggers framing emphasizing that
     Medicare-administered plans are bound by these policies.
+
+    Returns an empty list if no usable keywords are present or if the CMS
+    API is unreachable AND we have no cached report. Transient outages
+    where the in-process report cache is still warm continue to return
+    citations from the cached data.
     """
     keywords = _candidate_keywords(procedure, diagnosis)
     if not keywords:
         return []
     client = get_cms_coverage_client()
-    if not await client.health_check():
-        logger.info("CMS Coverage API not reachable, skipping enrichment")
-        return []
     citations: List[str] = []
     seen_ids: set = set()
     for keyword in keywords:

@@ -426,21 +426,18 @@ class MLCitationsHelper:
             citations = []
 
         if citations:
-            # Explicitly write the variant timestamp: aupdate() bypasses
-            # auto_now and acreate() needs the right field set for this
-            # variant.
+            # `aupdate_or_create` is atomic against the (procedure, diagnosis)
+            # unique constraint, which closes the race where two concurrent
+            # cache misses could otherwise create duplicate rows. We write
+            # the variant timestamp explicitly because `aupdate` bypasses
+            # `auto_now`.
             now = timezone.now()
             try:
-                if cache_entry is None:
-                    await CMSCoverageCache.objects.acreate(
-                        procedure=procedure,
-                        diagnosis=diagnosis,
-                        **{cache_field: citations, timestamp_field: now},
-                    )
-                else:
-                    await CMSCoverageCache.objects.filter(pk=cache_entry.pk).aupdate(
-                        **{cache_field: citations, timestamp_field: now},
-                    )
+                await CMSCoverageCache.objects.aupdate_or_create(
+                    procedure=procedure,
+                    diagnosis=diagnosis,
+                    defaults={cache_field: citations, timestamp_field: now},
+                )
             except Exception as e:
                 logger.opt(exception=True).debug(
                     f"Failed to persist CMS coverage cache: {e}"

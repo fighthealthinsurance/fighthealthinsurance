@@ -101,6 +101,12 @@ class CMSCoverageCache(ExportModelOperationsMixin("CMSCoverageCache"), models.Mo
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["procedure", "diagnosis"],
+                name="cms_cov_proc_diag_uniq",
+            ),
+        ]
         indexes = [
             models.Index(fields=["procedure", "diagnosis"]),
         ]
