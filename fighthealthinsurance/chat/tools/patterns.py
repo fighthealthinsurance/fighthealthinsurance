@@ -46,6 +46,10 @@ LOOKUP_PA_REQUIREMENT_REGEX = (
     r"(?:\*\*)?lookup_pa_requirement\s*(\{[^}]*\})\s*(?:\*\*)?"
 )
 
+# RxNorm drug normalization tool - captures the drug name (free-text)
+# Matches: [rxnorm_lookup: drug name], **rxnorm_lookup: drug name**, etc.
+RXNORM_LOOKUP_REGEX = r"[\[\*]{0,4}rxnorm[ _]?lookup:?\s*([^*\[\]\n]+)"
+
 # List of all tool patterns for scoring/detection
 ALL_TOOL_PATTERNS = [
     PUBMED_QUERY_REGEX,
@@ -56,4 +60,5 @@ ALL_TOOL_PATTERNS = [
     FETCH_DOC_REGEX,
     USPSTF_LOOKUP_REGEX,
     LOOKUP_PA_REQUIREMENT_REGEX,
+    RXNORM_LOOKUP_REGEX,
 ]
