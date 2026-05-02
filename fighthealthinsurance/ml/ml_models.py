@@ -1852,6 +1852,10 @@ class RemoteOpenLike(RemoteModel):
                     )
                     return backup_response
 
+        except aiohttp.ClientResponseError:
+            # Let subclasses handle status-specific HTTP errors (e.g., 429
+            # rate limiting in RemoteGroq / RemoteAnthropic).
+            raise
         except Exception as e:
             logger.opt(exception=True).error(f"Error {e} calling {self.api_base}")
 

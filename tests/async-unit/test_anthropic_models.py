@@ -266,6 +266,44 @@ class TestRemoteAnthropicInfer(unittest.TestCase):
         """Run the async test."""
         asyncio.run(self.async_test_infer_other_http_errors_propagate())
 
+    @patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"})
+    async def async_test_infer_429_through_real_infer_marks_exhausted(self):
+        """End-to-end: a 429 from the underlying HTTP call must reach the
+        subclass handler and trigger backoff, not be swallowed by the parent's
+        catch-all exception handler.
+
+        Mocks the inner `__infer` (the actual HTTP request) rather than the
+        subclass's `_infer`, so the real `RemoteOpenLike._infer` runs in
+        between and any regression in its exception handling will surface.
+        """
+        model = RemoteAnthropic(model="claude-sonnet-4-6")
+
+        error = aiohttp.ClientResponseError(
+            request_info=MagicMock(),
+            history=(),
+            status=429,
+            message="Rate limited",
+            headers={"Retry-After": "120"},
+        )
+
+        # Name-mangled private method on RemoteOpenLike
+        with patch.object(
+            model,
+            "_RemoteOpenLike__infer",
+            new_callable=AsyncMock,
+            side_effect=error,
+        ):
+            result = await model._infer(
+                system_prompts=["You are helpful."], prompt="Test prompt"
+            )
+
+        self.assertIsNone(result)
+        self.assertTrue(model.rate_limiter.get_status()["exhausted"])
+
+    def test_infer_429_through_real_infer_marks_exhausted(self):
+        """Run the async test."""
+        asyncio.run(self.async_test_infer_429_through_real_infer_marks_exhausted())
+
 
 class TestRemoteAnthropicModelIsOk(unittest.TestCase):
     """Tests for RemoteAnthropic.model_is_ok method."""
