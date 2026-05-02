@@ -282,9 +282,16 @@ def extract_publication_types(article: Any) -> List[str]:
         if isinstance(value, dict):
             value = list(value.values())
         if isinstance(value, str):
-            return [value]
+            stripped = value.strip()
+            if stripped:
+                return [stripped]
+            continue
         if isinstance(value, (list, tuple, set)):
-            return [str(v) for v in value if v]
+            cleaned = [str(v) for v in value if v]
+            if cleaned:
+                return cleaned
+            # Fall through so an empty list on this attr doesn't shadow a
+            # populated fallback attr (providers vary in which field they fill).
     return []
 
 

@@ -193,6 +193,27 @@ class TestPubTypeExtraction:
         article = MagicMock(spec=[])
         assert extract_publication_types(article) == []
 
+    def test_empty_first_attr_falls_through_to_fallback(self):
+        # Regression: an empty list on the primary attr must not shadow a
+        # populated fallback attr. metapub-like providers sometimes fill
+        # `pubtype` but leave `publication_types` empty (or vice versa).
+        article = MagicMock(spec=["publication_types", "pubtype"])
+        article.publication_types = []
+        article.pubtype = ["Meta-Analysis"]
+        assert extract_publication_types(article) == ["Meta-Analysis"]
+
+    def test_empty_string_first_attr_falls_through(self):
+        article = MagicMock(spec=["publication_types", "pubtype"])
+        article.publication_types = ""
+        article.pubtype = ["Review"]
+        assert extract_publication_types(article) == ["Review"]
+
+    def test_empty_dict_first_attr_falls_through(self):
+        article = MagicMock(spec=["publication_types", "pub_types"])
+        article.publication_types = {}
+        article.pub_types = ["Guideline"]
+        assert extract_publication_types(article) == ["Guideline"]
+
     def test_normalize_pub_type(self):
         assert normalize_pub_type("Meta-Analysis") == "meta-analysis"
         assert normalize_pub_type(" Review  ") == "review"
