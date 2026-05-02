@@ -50,11 +50,12 @@ class TestMLCitationsHelperCMSIntegration:
     @patch("fighthealthinsurance.ml.ml_citations_helper.CMSCoverageCache")
     @patch("fighthealthinsurance.ml.ml_citations_helper.get_cms_coverage_citations")
     async def test_uses_fresh_cache_when_available(self, mock_fetch, mock_cache_cls):
-        # Simulate a fresh DB cache hit
+        # Simulate a fresh DB cache hit on the variant-specific timestamp
         cache_entry = MagicMock()
         cache_entry.generic_citations = ["Cached NCD A", "Cached NCD B"]
         cache_entry.medicare_citations = []
-        cache_entry.updated_at = timezone.now()
+        cache_entry.generic_updated_at = timezone.now()
+        cache_entry.medicare_updated_at = None
 
         mock_qs = MagicMock()
         mock_qs.afirst = AsyncMock(return_value=cache_entry)
@@ -75,7 +76,8 @@ class TestMLCitationsHelperCMSIntegration:
         cache_entry.pk = 7
         cache_entry.generic_citations = ["Stale citation"]
         cache_entry.medicare_citations = []
-        cache_entry.updated_at = timezone.now() - datetime.timedelta(days=60)
+        cache_entry.generic_updated_at = timezone.now() - datetime.timedelta(days=60)
+        cache_entry.medicare_updated_at = None
 
         mock_qs = MagicMock()
         mock_qs.afirst = AsyncMock(return_value=cache_entry)
@@ -92,9 +94,38 @@ class TestMLCitationsHelperCMSIntegration:
         assert result == ["Fresh citation"]
         mock_fetch.assert_awaited_once()
         mock_qs.aupdate.assert_awaited_once()
-        # Updates the generic field for non-Medicare plans
+        # Updates the generic field plus its timestamp for non-Medicare plans
         kwargs = mock_qs.aupdate.await_args.kwargs
         assert "generic_citations" in kwargs
+        assert "generic_updated_at" in kwargs
+
+    @pytest.mark.asyncio
+    @patch("fighthealthinsurance.ml.ml_citations_helper.CMSCoverageCache")
+    @patch("fighthealthinsurance.ml.ml_citations_helper.get_cms_coverage_citations")
+    async def test_refetches_when_other_variant_is_fresh_but_ours_is_missing(
+        self, mock_fetch, mock_cache_cls
+    ):
+        # Medicare side was just refreshed, but generic side has never been
+        # populated. We're a non-Medicare denial, so we must refetch.
+        cache_entry = MagicMock()
+        cache_entry.pk = 9
+        cache_entry.generic_citations = []
+        cache_entry.medicare_citations = ["Some Medicare citation"]
+        cache_entry.generic_updated_at = None
+        cache_entry.medicare_updated_at = timezone.now()
+
+        mock_qs = MagicMock()
+        mock_qs.afirst = AsyncMock(return_value=cache_entry)
+        mock_qs.aupdate = AsyncMock()
+        mock_cache_cls.objects.filter.return_value = mock_qs
+        mock_fetch.return_value = ["Fresh generic citation"]
+
+        result = await MLCitationsHelper.generate_cms_coverage_citations(
+            denial=self.mock_denial
+        )
+
+        assert result == ["Fresh generic citation"]
+        mock_fetch.assert_awaited_once()
 
     @pytest.mark.asyncio
     @patch("fighthealthinsurance.ml.ml_citations_helper.CMSCoverageCache")
@@ -119,6 +150,7 @@ class TestMLCitationsHelperCMSIntegration:
         assert kwargs["procedure"] == "mri"
         assert kwargs["diagnosis"] == "headache"
         assert kwargs["generic_citations"] == ["New citation"]
+        assert kwargs.get("generic_updated_at") is not None
 
     @pytest.mark.asyncio
     @patch("fighthealthinsurance.ml.ml_citations_helper.CMSCoverageCache")

@@ -388,6 +388,9 @@ class MLCitationsHelper:
 
         medicare_plan = await _denial_is_medicare_plan(denial)
         cache_field = "medicare_citations" if medicare_plan else "generic_citations"
+        timestamp_field = (
+            "medicare_updated_at" if medicare_plan else "generic_updated_at"
+        )
 
         cache_entry: Optional[CMSCoverageCache] = None
         try:
@@ -399,9 +402,10 @@ class MLCitationsHelper:
 
         if cache_entry is not None:
             cached = getattr(cache_entry, cache_field) or []
+            variant_updated_at = getattr(cache_entry, timestamp_field, None)
             fresh = (
-                cache_entry.updated_at is not None
-                and (timezone.now() - cache_entry.updated_at) < _CMS_CACHE_TTL
+                variant_updated_at is not None
+                and (timezone.now() - variant_updated_at) < _CMS_CACHE_TTL
             )
             if cached and fresh:
                 logger.debug(
@@ -422,16 +426,20 @@ class MLCitationsHelper:
             citations = []
 
         if citations:
+            # Explicitly write the variant timestamp: aupdate() bypasses
+            # auto_now and acreate() needs the right field set for this
+            # variant.
+            now = timezone.now()
             try:
                 if cache_entry is None:
                     await CMSCoverageCache.objects.acreate(
                         procedure=procedure,
                         diagnosis=diagnosis,
-                        **{cache_field: citations},
+                        **{cache_field: citations, timestamp_field: now},
                     )
                 else:
                     await CMSCoverageCache.objects.filter(pk=cache_entry.pk).aupdate(
-                        **{cache_field: citations}
+                        **{cache_field: citations, timestamp_field: now},
                     )
             except Exception as e:
                 logger.opt(exception=True).debug(

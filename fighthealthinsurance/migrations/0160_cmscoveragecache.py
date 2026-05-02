@@ -17,8 +17,15 @@ class Migration(migrations.Migration):
                 ("diagnosis", models.CharField(max_length=300)),
                 ("generic_citations", models.JSONField(default=list)),
                 ("medicare_citations", models.JSONField(default=list)),
+                (
+                    "generic_updated_at",
+                    models.DateTimeField(blank=True, null=True),
+                ),
+                (
+                    "medicare_updated_at",
+                    models.DateTimeField(blank=True, null=True),
+                ),
                 ("created_at", models.DateTimeField(auto_now_add=True)),
-                ("updated_at", models.DateTimeField(auto_now=True)),
             ],
             options={
                 "indexes": [

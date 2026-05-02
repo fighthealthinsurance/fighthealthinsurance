@@ -84,8 +84,8 @@ class CMSCoverageCache(ExportModelOperationsMixin("CMSCoverageCache"), models.Mo
     Two cached citation lists are stored: a "generic" list (no Medicare-binding
     framing, used for commercial plans) and a "medicare" list (used when the
     denial's plan_source is Medicare or Medicare Advantage). Caching is keyed
-    by procedure+diagnosis; entries are refreshed when older than the TTL the
-    caller chooses to enforce.
+    by procedure+diagnosis; each variant has its own freshness timestamp so
+    refreshing one doesn't make the other look fresh.
     """
 
     id = models.AutoField(primary_key=True)
@@ -93,8 +93,12 @@ class CMSCoverageCache(ExportModelOperationsMixin("CMSCoverageCache"), models.Mo
     diagnosis = models.CharField(max_length=300)
     generic_citations = models.JSONField(default=list)
     medicare_citations = models.JSONField(default=list)
+    # Per-variant freshness timestamps. Tracked separately because the two
+    # variants are refreshed independently — a write to one shouldn't make
+    # the other look fresh.
+    generic_updated_at = models.DateTimeField(null=True, blank=True)
+    medicare_updated_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         indexes = [
