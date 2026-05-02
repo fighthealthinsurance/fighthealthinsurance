@@ -2,13 +2,17 @@
 
 set -ex
 
+SCRIPT_DIR="$(dirname "$0")"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/utils/retry.sh"
+
 python min_version.py
 
 # shellcheck disable=SC1091
 python -m venv .venv &&
   . .venv/bin/activate &&
-  pip install -r requirements.txt &&
-  pip install -r requirements-dev.txt
+  retry pip install -r requirements.txt &&
+  retry pip install -r requirements-dev.txt
 
 package_command=''
 if command -v apt-get; then
