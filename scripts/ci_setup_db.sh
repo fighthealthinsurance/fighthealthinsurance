@@ -6,7 +6,7 @@ set -e
 
 SCRIPT_DIR="$(dirname "$0")"
 # shellcheck disable=SC1091
-source "${SCRIPT_DIR}/lib/retry.sh"
+source "${SCRIPT_DIR}/utils/retry.sh"
 
 uv venv
 # shellcheck disable=SC1091

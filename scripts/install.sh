@@ -4,7 +4,7 @@ set -ex
 
 SCRIPT_DIR="$(dirname "$0")"
 # shellcheck disable=SC1091
-source "${SCRIPT_DIR}/lib/retry.sh"
+source "${SCRIPT_DIR}/utils/retry.sh"
 
 python min_version.py
 
