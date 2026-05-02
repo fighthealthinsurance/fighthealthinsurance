@@ -189,11 +189,49 @@ class TestPostSurgicalRehabAppealMatches(unittest.TestCase):
             )
         )
 
+    def test_does_not_match_bare_acl_repair_denial(self):
+        # Denial of the surgery itself (with no rehab context) must not
+        # be classified as a post-surgical rehab denial.
+        self.assertFalse(
+            PostSurgicalRehabAppeal.matches(
+                "ACL repair is not medically necessary.",
+                procedure="ACL reconstruction",
+            )
+        )
+
+    def test_does_not_match_bare_rotator_cuff_denial(self):
+        self.assertFalse(
+            PostSurgicalRehabAppeal.matches(
+                "Rotator cuff repair surgery is denied.",
+            )
+        )
+
+    def test_matches_post_surgical_therapy_phrase(self):
+        self.assertTrue(
+            PostSurgicalRehabAppeal.matches(
+                "Post-operative physical therapy following ACL "
+                "reconstruction is denied.",
+            )
+        )
+
     def test_static_appeal_cites_cms_chapters(self):
         text = PostSurgicalRehabAppeal.static_appeal()
         self.assertIn("Medicare Benefit Policy Manual", text)
         self.assertIn("Jimmo", text)
         self.assertIn("CMS 2024 Final Rule", text)
+
+
+class TestNoUnresolvedMedicalReasonInStaticAppeals(unittest.TestCase):
+    """Specialized templates feed `non_ai_appeals` directly; sub_in_appeals
+    only handles {insurance_company}, {claim_id}, {procedure}, and
+    {diagnosis}. Any leftover {medical_reason} placeholder would surface
+    verbatim in the user's appeal letter.
+    """
+
+    def test_no_medical_reason_placeholder_in_any_static_appeal(self):
+        for cls in SPECIALIZED_DENIAL_TEMPLATES:
+            with self.subTest(template=cls.__name__):
+                self.assertNotIn("{medical_reason}", cls.static_appeal())
 
 
 class TestDetectSpecializedTemplates(unittest.TestCase):

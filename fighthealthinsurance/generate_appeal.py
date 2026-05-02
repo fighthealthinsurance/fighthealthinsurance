@@ -175,7 +175,6 @@ class MentalHealthParityAppeal(SpecializedDenialTemplate):
             "designated essential health benefits and may not be effectively "
             "excluded by NQTLs that are more restrictive than those used on "
             "the medical/surgical side.\n\n"
-            "{medical_reason}\n\n"
             "I respectfully request that you (a) overturn this denial, "
             "(b) provide the MHPAEA NQTL comparative analysis for the "
             "criterion applied, and (c) confirm in writing what role, if any, "
@@ -237,7 +236,6 @@ class AdvancedImagingAppeal(SpecializedDenialTemplate):
             "the sole basis for the adverse decision. Please disclose "
             "whether such a tool was used and provide the reviewer's "
             "clinical rationale.\n\n"
-            "{medical_reason}\n\n"
             "Delaying or denying this imaging risks missed diagnoses and "
             "downstream cost from lower-yield workups. I respectfully "
             "request that the denial be overturned.\n\n"
@@ -307,7 +305,6 @@ class SpecialtyMedicationAppeal(SpecializedDenialTemplate):
             "denial must still rest on an individualized clinical review by "
             "a qualified human reviewer applying this patient's full "
             "clinical picture, not solely on an algorithmic output.\n\n"
-            "{medical_reason}\n\n"
             "I respectfully request that the denial be overturned and the "
             "medication authorized without further delay.\n\n"
             "Sincerely,\n[Name]\n"
@@ -376,7 +373,6 @@ class PhysicalTherapyContinuationAppeal(SpecializedDenialTemplate):
             "rest on an individualized clinical review by a qualified human "
             "reviewer; the algorithm may not be the sole basis for the "
             "adverse decision.\n\n"
-            "{medical_reason}\n\n"
             "I respectfully request the denial be overturned and the "
             "additional sessions authorized.\n\n"
             "Sincerely,\n[Name]\n"
@@ -385,6 +381,11 @@ class PhysicalTherapyContinuationAppeal(SpecializedDenialTemplate):
 
 class PostSurgicalRehabAppeal(SpecializedDenialTemplate):
     name = "Post-surgical rehabilitation denial"
+    # Every pattern requires explicit rehab/therapy/SNF/IRF context so we
+    # don't mistake denials of the surgery itself (e.g., a bare "ACL
+    # repair" denial) for denials of the post-surgical rehabilitation.
+    # Specific surgery names without rehab context are intentionally not
+    # listed here.
     text_patterns = (
         r"\bpost[\s\-]?(surgical|operative|op)\b.*\b(rehab|therapy|care)\b",
         r"\b(rehab|therapy|care)\b.*\bpost[\s\-]?(surgical|operative|op)\b",
@@ -394,12 +395,12 @@ class PostSurgicalRehabAppeal(SpecializedDenialTemplate):
         r"\bSNF\b",
         r"\bacute\s+rehab\b",
         r"\bjoint\s+replacement\b.*\b(rehab|therapy)\b",
-        r"\bACL\s+(repair|reconstruction)\b",
-        r"\brotator\s+cuff\b",
         r"\bspinal\s+(fusion|surgery)\b.*\b(rehab|therapy)\b",
     )
     procedure_patterns = (
-        r"\b(post[\s\-]?op|post[\s\-]?surgical)\b",
+        # Procedure-only matches must be unambiguous rehab/post-acute
+        # contexts; "post-op" alone can describe the surgical episode and
+        # is intentionally excluded here.
         r"\binpatient\s+rehab",
         r"\bskilled\s+nursing\b|\bSNF\b",
     )
@@ -450,7 +451,6 @@ class PostSurgicalRehabAppeal(SpecializedDenialTemplate):
             "denial, the carrier must produce an individualized human "
             "clinical review; the algorithm cannot be the sole basis for "
             "the adverse decision.\n\n"
-            "{medical_reason}\n\n"
             "I respectfully request that the denial be overturned and the "
             "post-surgical rehabilitation authorized.\n\n"
             "Sincerely,\n[Name]\n"
@@ -686,7 +686,7 @@ class AppealGenerator(object):
             return None
         for name, instances in ml_router.models_by_name.items():
             if best in instances:
-                return name
+                return str(name)
         return None
 
     @staticmethod
