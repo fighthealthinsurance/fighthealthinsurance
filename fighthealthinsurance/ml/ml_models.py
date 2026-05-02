@@ -2974,6 +2974,213 @@ class RemoteGroq(RemoteFullOpenLike):
         return self.rate_limiter.can_request()
 
 
+class RemoteAnthropic(RemoteFullOpenLike):
+    """
+    Anthropic Claude API backend.
+
+    Uses Anthropic's OpenAI-compatible endpoint at /v1/chat/completions, which
+    accepts standard OpenAI-format requests and Bearer-token authentication.
+    See: https://docs.anthropic.com/en/api/openai-sdk
+
+    Features:
+    - Per-model backoff when rate limited (429 responses with Retry-After)
+    - Three tiers: Haiku (speed), Sonnet (quality), Opus (premium)
+    - All Claude models support 200K input context
+
+    Environment variables:
+    - ANTHROPIC_API_KEY: API key for Anthropic (required)
+    """
+
+    # Model specifications - all Claude models support 200K input context
+    MODEL_SPECS: ClassVar[dict[str, dict[str, str]]] = {
+        "claude-haiku-4-5-20251001": {
+            "tier": "speed",
+            "description": "Claude Haiku 4.5 - fast, cost-effective",
+        },
+        "claude-sonnet-4-6": {
+            "tier": "quality",
+            "description": "Claude Sonnet 4.6 - balanced quality and speed",
+        },
+        "claude-opus-4-7": {
+            "tier": "premium",
+            "description": "Claude Opus 4.7 - highest quality, most capable",
+        },
+    }
+
+    # Shared rate limiters per model (class-level, initialized lazily)
+    _rate_limiters: ClassVar[dict[str, RateLimiter]] = {}
+    _rate_limiter_lock: ClassVar[threading.Lock] = threading.Lock()
+
+    def __init__(self, model: str, dual_mode: bool = False):
+        """
+        Initialize an Anthropic Claude model backend.
+
+        Args:
+            model: The Anthropic model identifier (e.g., 'claude-sonnet-4-6')
+            dual_mode: Whether to run primary and backup concurrently
+        """
+        api_base = "https://api.anthropic.com/v1"
+        token = os.getenv("ANTHROPIC_API_KEY")
+        if token is None or len(token) < 1:
+            raise EnvironmentError(
+                "No API key found for Anthropic. Please set the ANTHROPIC_API_KEY environment variable "
+                "in your environment or .env file."
+            )
+
+        # All Claude models support 200K input context
+        super().__init__(
+            api_base, token, model=model, dual_mode=dual_mode, max_len=200000
+        )
+
+        self._ensure_rate_limiter(model)
+
+        model_spec = self.MODEL_SPECS.get(model, {})
+        logger.debug(
+            f"RemoteAnthropic initialized: model={model}, "
+            f"tier={model_spec.get('tier', 'unknown')}"
+        )
+
+    @classmethod
+    def _ensure_rate_limiter(cls, model: str) -> None:
+        """
+        Ensure a rate limiter exists for the given model.
+        Creates one if it doesn't exist (thread-safe).
+        """
+        if model not in cls._rate_limiters:
+            with cls._rate_limiter_lock:
+                if model not in cls._rate_limiters:
+                    cls._rate_limiters[model] = RateLimiter(
+                        name=f"anthropic-{model}",
+                    )
+                    logger.info(f"Created rate limiter for anthropic-{model}")
+
+    @property
+    def rate_limiter(self) -> RateLimiter:
+        """Get the rate limiter for this model instance."""
+        return self._rate_limiters[self.model]
+
+    @property
+    def supports_system(self):
+        return True
+
+    @property
+    def external(self):
+        return True
+
+    def get_tier(self) -> str:
+        """Get the tier (speed/quality/premium) for this model."""
+        return self.MODEL_SPECS.get(self.model, {}).get("tier", "unknown")
+
+    async def _infer(
+        self,
+        system_prompts: list[str],
+        prompt: str,
+        patient_context: Optional[str] = None,
+        plan_context: Optional[str] = None,
+        pubmed_context: Optional[str] = None,
+        ml_citations_context: Optional[List[str]] = None,
+        history: Optional[List[dict[str, str]]] = None,
+        temperature: float = 0.7,
+    ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
+        """
+        Perform inference with rate limit checking and 429 handling.
+
+        Checks the rate limiter before making the API call. If rate limited,
+        returns None immediately to allow fallback to other backends.
+        On 429 response, marks the limiter as exhausted and returns None.
+        """
+        if not self.rate_limiter.can_request():
+            logger.debug(f"RemoteAnthropic._infer: Skipping {self.model} - backing off")
+            return None
+
+        try:
+            return await super()._infer(
+                system_prompts=system_prompts,
+                prompt=prompt,
+                patient_context=patient_context,
+                plan_context=plan_context,
+                pubmed_context=pubmed_context,
+                ml_citations_context=ml_citations_context,
+                history=history,
+                temperature=temperature,
+            )
+        except aiohttp.ClientResponseError as e:
+            if e.status == 429:
+                retry_after = 60.0
+                if hasattr(e, "headers") and e.headers:
+                    retry_header = e.headers.get("Retry-After", "")
+                    if retry_header:
+                        try:
+                            retry_after = float(retry_header)
+                        except ValueError:
+                            logger.debug(
+                                f"RemoteAnthropic._infer: Non-numeric Retry-After header "
+                                f"'{retry_header}' for {self.model}; using default {retry_after}s"
+                            )
+
+                retry_after = max(1.0, min(retry_after, 600.0))
+
+                self.rate_limiter.mark_exhausted(retry_after)
+                logger.warning(
+                    f"RemoteAnthropic._infer: 429 from Anthropic for {self.model}, "
+                    f"backing off for {retry_after}s"
+                )
+                return None
+            else:
+                raise
+        except Exception as e:
+            logger.warning(f"RemoteAnthropic._infer error for {self.model}: {e}")
+            return None
+
+    @classmethod
+    def models(cls) -> List[ModelDescription]:
+        """
+        Return available Anthropic Claude models with cost tiers.
+
+        Costs are set to reflect Anthropic's pricing tiers relative to other
+        external backends. Haiku is positioned as a mid-cost speed option,
+        Sonnet as a quality option comparable to Llama-4-Maverick, and Opus
+        as a premium option for the highest-quality output.
+        """
+        if not os.getenv("ANTHROPIC_API_KEY"):
+            logger.debug("RemoteAnthropic.models: ANTHROPIC_API_KEY not set, skipping")
+            return []
+
+        return [
+            # Speed tier - cheapest Claude option
+            ModelDescription(
+                cost=25,
+                name="anthropic/claude-haiku-4-5",
+                internal_name="claude-haiku-4-5-20251001",
+            ),
+            # Quality tier - mid-priced, similar to DeepInfra's largest llama
+            ModelDescription(
+                cost=90,
+                name="anthropic/claude-sonnet-4-6",
+                internal_name="claude-sonnet-4-6",
+            ),
+            # Premium tier - highest cost, only used when other backends fail
+            # or are explicitly preferred for quality.
+            ModelDescription(
+                cost=250,
+                name="anthropic/claude-opus-4-7",
+                internal_name="claude-opus-4-7",
+            ),
+        ]
+
+    def model_is_ok(self) -> bool:
+        """
+        Check if the model is available (API key set and not rate limited).
+
+        Note: We don't query the /models endpoint because Anthropic's
+        OpenAI-compatibility layer historically has limited support for it,
+        and we'd rather fail fast on actual inference than block startup.
+        """
+        if not os.getenv("ANTHROPIC_API_KEY"):
+            return False
+        return self.rate_limiter.can_request()
+
+
 class TailscaleModelBackend(RemoteFullOpenLike):
     """
     Backend that auto-discovers model servers via Tailscale DNS.
