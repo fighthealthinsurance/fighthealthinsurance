@@ -72,6 +72,13 @@ CLINICAL_TRIALS_QUERY_REGEX = (
     r"([^*\[\]\n]+?)\s*(?:[\]\*]{1,4}|$|(?=\n))"
 )
 
+# Financial assistance directory tool - captures JSON with drug/diagnosis/state
+# Matches: financial_assistance {JSON} or **financial_assistance {JSON}**
+# Looks up pharmacy discount programs (GoodRx, Cost Plus, Amazon Pharmacy),
+# diagnosis-specific copay foundations, manufacturer programs, safety-net
+# clinics (340B), and state Medicaid pathways.
+FINANCIAL_ASSISTANCE_REGEX = r"(?:\*\*)?financial_assistance\s*(\{[^}]*\})\s*(?:\*\*)?"
+
 # List of all tool patterns for scoring/detection
 ALL_TOOL_PATTERNS = [
     PUBMED_QUERY_REGEX,
@@ -84,4 +91,5 @@ ALL_TOOL_PATTERNS = [
     LOOKUP_PA_REQUIREMENT_REGEX,
     RXNORM_LOOKUP_REGEX,
     CLINICAL_TRIALS_QUERY_REGEX,
+    FINANCIAL_ASSISTANCE_REGEX,
 ]

@@ -88,6 +88,12 @@ class DenialResponseInfoSerializer(serializers.Serializer):
     claim_id = serializers.CharField(required=False)
     insurance_company = serializers.CharField(required=False)
     date_of_service = serializers.CharField(required=False)
+    # Pharmacy discount + financial-assistance suggestions populated by
+    # DenialCreatorHelper when the denial concerns a prescription drug.
+    # Both are loose JSONFields so we don't lock the directory schema in;
+    # the frontend renders them based on the keys it knows about.
+    pharmacy_coupon_suggestion = serializers.JSONField(required=False, allow_null=True)
+    financial_assistance = serializers.JSONField(required=False, allow_null=True)
 
 
 # Form Serializers
