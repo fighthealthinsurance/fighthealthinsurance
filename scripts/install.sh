@@ -1,23 +1,11 @@
 #!/bin/bash
 
-set -e
+set -ex
 
-# Retry helper: runs a command up to max_attempts times with exponential backoff.
-retry() {
-  local max_attempts=3
-  local attempt=1
-  until "$@"; do
-    if [ "${attempt}" -ge "${max_attempts}" ]; then
-      echo "Command failed after ${max_attempts} attempts: $*" >&2
-      return 1
-    fi
-    echo "Attempt ${attempt} failed. Waiting before retry..." >&2
-    sleep $((attempt * 5))
-    attempt=$((attempt + 1))
-  done
-}
+SCRIPT_DIR="$(dirname "$0")"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/lib/retry.sh"
 
-set -x
 python min_version.py
 
 # shellcheck disable=SC1091

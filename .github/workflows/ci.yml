@@ -113,7 +113,7 @@ jobs:
           restore-keys: npm-
 
       - name: Install system level packages
-        run: (sudo apt-get update || echo "apt-get update failed, retrying...") && sudo apt-get install -y tesseract-ocr texlive libgirepository1.0-dev pkg-config python3-dev && sudo apt-get clean
+        run: (sudo apt-get update || echo "apt-get update failed, continuing with existing package lists...") && sudo apt-get install -y tesseract-ocr texlive libgirepository1.0-dev pkg-config python3-dev && sudo apt-get clean
 
       - uses: actions/setup-python@v5
         with:
@@ -189,7 +189,7 @@ jobs:
           restore-keys: npm-
 
       - name: Install system level packages
-        run: (sudo apt-get update || echo "apt-get update failed, retrying...") && sudo apt-get install -y tesseract-ocr texlive libgirepository1.0-dev pkg-config python3-dev && sudo apt-get clean
+        run: (sudo apt-get update || echo "apt-get update failed, continuing with existing package lists...") && sudo apt-get install -y tesseract-ocr texlive libgirepository1.0-dev pkg-config python3-dev && sudo apt-get clean
 
       - uses: actions/setup-python@v5
         with:
@@ -260,7 +260,7 @@ jobs:
           restore-keys: npm-
 
       - name: Install system level packages
-        run: (sudo apt-get update || echo "apt-get update failed, retrying...") && sudo apt-get install -y tesseract-ocr texlive libgirepository1.0-dev pkg-config python3-dev && sudo apt-get clean
+        run: (sudo apt-get update || echo "apt-get update failed, continuing with existing package lists...") && sudo apt-get install -y tesseract-ocr texlive libgirepository1.0-dev pkg-config python3-dev && sudo apt-get clean
 
       - uses: actions/setup-python@v5
         with:
@@ -410,7 +410,7 @@ jobs:
           restore-keys: npm-
 
       - name: Install system level packages
-        run: (sudo apt-get update || echo "apt-get update failed, retrying...") && sudo apt-get install -y tesseract-ocr texlive libgirepository1.0-dev pkg-config python3-dev && sudo apt-get clean
+        run: (sudo apt-get update || echo "apt-get update failed, continuing with existing package lists...") && sudo apt-get install -y tesseract-ocr texlive libgirepository1.0-dev pkg-config python3-dev && sudo apt-get clean
 
       - uses: actions/setup-python@v5
         with:
@@ -491,7 +491,7 @@ jobs:
           restore-keys: npm-
 
       - name: Install system level packages
-        run: (sudo apt-get update || echo "apt-get update failed, retrying...") && sudo apt-get install -y tesseract-ocr texlive libgirepository1.0-dev pkg-config python3-dev && sudo apt-get clean
+        run: (sudo apt-get update || echo "apt-get update failed, continuing with existing package lists...") && sudo apt-get install -y tesseract-ocr texlive libgirepository1.0-dev pkg-config python3-dev && sudo apt-get clean
 
       - uses: actions/setup-python@v5
         with:
