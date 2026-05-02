@@ -297,7 +297,7 @@ class MLPolicyDocHelper:
 
                 if not full_text or len(full_text.strip()) < 100:
                     logger.warning(
-                        f"Insufficient text extracted from {policy_document.filename}"
+                        f"Insufficient text extracted from {policy_document.id}"
                     )
                     return None
 
@@ -322,11 +322,11 @@ class MLPolicyDocHelper:
 
                 all_chunks = targeted_chunks + scattershot_chunks
                 if not all_chunks:
-                    logger.warning(f"No chunks built from {policy_document.filename}")
+                    logger.warning(f"No chunks built from {policy_document.id}")
                     return None
 
                 logger.info(
-                    f"Analyzing {policy_document.filename}: "
+                    f"Analyzing {policy_document.id}: "
                     f"{len(scattershot_chunks)} scattershot chunks + "
                     f"{len(targeted_chunks)} targeted chunks from "
                     f"{len(page_hits)} regex-hit pages"
@@ -342,9 +342,7 @@ class MLPolicyDocHelper:
                 )
 
                 if not chunk_summaries:
-                    logger.warning(
-                        f"No relevant chunks found in {policy_document.filename}"
-                    )
+                    logger.warning(f"No relevant chunks found in {policy_document.id}")
                     return None
 
                 logger.info(
@@ -366,7 +364,7 @@ class MLPolicyDocHelper:
                     await progress_callback(0, 0)
 
                 if not analysis_results:
-                    logger.warning(f"Synthesis failed for {policy_document.filename}")
+                    logger.warning(f"Synthesis failed for {policy_document.id}")
                     return None
 
                 # Step 5: Create and save the analysis record
@@ -392,7 +390,7 @@ class MLPolicyDocHelper:
                     return existing
 
                 logger.info(
-                    f"Created PolicyDocumentAnalysis {analysis.id} for document {policy_document.filename}"
+                    f"Created PolicyDocumentAnalysis {analysis.id} for document {policy_document.id}"
                 )
                 return analysis
 

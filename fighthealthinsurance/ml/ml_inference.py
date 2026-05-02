@@ -5,6 +5,7 @@ Provides model-fallback inference used across document helpers and chat processi
 """
 
 import asyncio
+from collections.abc import Callable
 from typing import Optional
 
 from loguru import logger
@@ -20,11 +21,14 @@ async def infer_with_fallback(
     model_count: int = 3,
     min_length: int = 0,
     label: str = "",
+    validator: Optional[Callable[[str], bool]] = None,
 ) -> Optional[str]:
     """
     Try inference across multiple internal models with timeout.
 
     Returns the first successful result or None if all models fail.
+    If validator is provided, the result must also pass validation;
+    otherwise the next model is tried.
     """
     models = ml_router.internal_models_by_cost[:model_count]
     for model in models:
@@ -37,8 +41,11 @@ async def infer_with_fallback(
                 ),
                 timeout=timeout,
             )
-            if result and len(str(result).strip()) > min_length:
-                return str(result).strip()
+            text = str(result).strip() if result else ""
+            if text and len(text) > min_length:
+                if validator is None or validator(text):
+                    return text
+                logger.debug(f"Rejected {label} output from {model}; trying next model")
         except asyncio.TimeoutError:
             logger.warning(f"Timeout on {label} with {model}")
         except Exception as e:

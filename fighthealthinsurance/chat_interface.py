@@ -895,7 +895,10 @@ class ChatInterface:
 
                 doc_id = await sync_to_async(_get_session_doc_id)(session_key)
                 if doc_id:
-                    policy_doc = await PolicyDocument.objects.filter(id=doc_id).afirst()
+                    policy_doc = await PolicyDocument.objects.filter(
+                        id=doc_id,
+                        session_key=session_key,
+                    ).afirst()
 
             if not policy_doc and session_key:
                 logger.debug("Fallback to session_key lookup for policy doc")

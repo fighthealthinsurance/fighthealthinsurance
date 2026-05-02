@@ -120,17 +120,17 @@
 
                                 <div class="row">
                                     <div class="col-md-6 mb-3">
-                                        <label for="store_fname" class="form-label">First Name*</label>
+                                        <label for="{{ form.first_name.id_for_label }}" class="form-label">First Name*</label>
                                         {{ form.first_name }}
                                     </div>
                                     <div class="col-md-6 mb-3">
-                                        <label for="store_lname" class="form-label">Last Name*</label>
+                                        <label for="{{ form.last_name.id_for_label }}" class="form-label">Last Name*</label>
                                         {{ form.last_name }}
                                     </div>
                                 </div>
 
                                 <div class="mb-3">
-                                    <label for="email" class="form-label">Email*</label>
+                                    <label for="{{ form.email.id_for_label }}" class="form-label">Email*</label>
                                     {{ form.email }}
                                 </div>
                             </div>
