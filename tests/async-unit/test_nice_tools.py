@@ -440,6 +440,18 @@ class TestNICEContextFormatting:
         qs.aupdate.assert_awaited_once_with(nice_context=expected)
 
 
+def _make_live_nice_tools() -> NICETools:
+    """Construct NICETools wired to the REAL NICE API for live integration tests.
+
+    Test settings override NICE_API_BASE_URL to an unroutable address to prevent
+    incidental network calls from other tests; we restore the real URL here so
+    these explicit live tests can reach the syndication endpoint.
+    """
+    tools = NICETools(api_key=os.environ["NICE_API_KEY"])
+    tools.base_url = os.environ.get("NICE_API_LIVE_URL", "https://api.nice.org.uk")
+    return tools
+
+
 @skip_if_no_nice_api_key
 @pytest.mark.asyncio
 class TestNICESyndicationLive:
@@ -453,7 +465,7 @@ class TestNICESyndicationLive:
     """
 
     async def test_search_returns_guidance_for_common_query(self):
-        tools = NICETools(api_key=os.environ["NICE_API_KEY"])
+        tools = _make_live_nice_tools()
         with _mock_nice_query_cache() as mock_objects:
             items = await tools.search_guidance("diabetes type 2", timeout=30.0)
 
@@ -474,7 +486,7 @@ class TestNICESyndicationLive:
 
     async def test_search_returns_empty_for_nonsense_query(self):
         """A clearly nonsensical query should return an empty list, not raise."""
-        tools = NICETools(api_key=os.environ["NICE_API_KEY"])
+        tools = _make_live_nice_tools()
         with _mock_nice_query_cache() as mock_objects:
             items = await tools.search_guidance(
                 "zzznotarealmedicalconditionxyz123",
