@@ -8,7 +8,7 @@ from django.db import migrations, models
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("fighthealthinsurance", "0159_chatdocument"),
+        ("fighthealthinsurance", "0160_cmscoveragecache"),
     ]
 
     operations = [

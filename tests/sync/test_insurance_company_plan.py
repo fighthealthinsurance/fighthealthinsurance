@@ -554,15 +554,43 @@ class ExtractInsuranceCompanyMatchingTests(TestCase):
         self.assertEqual(match, self.empire)
 
     def test_negative_regex_excludes_match(self):
-        """Anthem.negative_regex='empire' should prevent Anthem matching when
-        the denial text mentions Empire instead."""
+        """A company whose positive regex matches but whose negative_regex
+        also fires should be excluded from the regex-fallback matches."""
         from fighthealthinsurance.common_view_logic import DenialCreatorHelper
 
+        # Carrier whose positive regex matches "kaiser" but whose
+        # negative_regex excludes "foundation health" (a different entity).
+        # When BOTH match, the company must be excluded.
+        excluded = InsuranceCompany.objects.create(
+            name="Kaiser Permanente Test",
+            regex=r"kaiser",
+            negative_regex=r"foundation",
+        )
+        # A second carrier that does match cleanly so we can confirm the
+        # excluded one was actually skipped (vs. just no match).
+        winner = InsuranceCompany.objects.create(
+            name="Other Carrier Test",
+            regex=r"foundation\s*health",
+        )
+
+        # Text where both positive regexes hit, but excluded's negative_regex
+        # also fires. Without negative_regex handling, ``excluded`` would tie
+        # or beat ``winner`` since both regex matches score 60.0.
+        text = "kaiser foundation health denied the claim"
         match = async_to_sync(DenialCreatorHelper._match_insurance_company)(
             extracted_name=None,
-            denial_text="Empire BlueCross BlueShield denied your claim",
+            denial_text=text,
         )
-        self.assertEqual(match, self.empire)
+        self.assertEqual(match, winner)
+        self.assertNotEqual(match, excluded)
+
+        # And confirm the excluded company is matched on a text where
+        # negative_regex does NOT fire.
+        match2 = async_to_sync(DenialCreatorHelper._match_insurance_company)(
+            extracted_name=None,
+            denial_text="kaiser denied my claim",
+        )
+        self.assertEqual(match2, excluded)
 
     def test_match_plan_by_regex_takes_precedence_over_state(self):
         from fighthealthinsurance.common_view_logic import DenialCreatorHelper

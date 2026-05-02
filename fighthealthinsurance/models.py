@@ -530,25 +530,27 @@ class InsurancePlan(models.Model):
     def appeal_destinations(self) -> dict[str, str]:
         """Plan-level appeal routing falling back to the parent company.
 
-        Returns the same shape as InsuranceCompany.appeal_destinations(),
-        preferring plan-specific values when present.
+        Returns the same shape as InsuranceCompany.appeal_destinations()
+        with the same preferred key order (portal, fax, address, email,
+        phone). Plan-specific values win; company values fill gaps.
         """
-        company_destinations = self.insurance_company.appeal_destinations()
-        plan_destinations: dict[str, str] = {}
-        if self.appeals_portal_url:
-            plan_destinations["portal"] = self.appeals_portal_url
-        if self.appeal_fax_number:
-            plan_destinations["fax"] = self.appeal_fax_number
-        if self.appeal_address:
-            plan_destinations["address"] = self.appeal_address
-        if self.appeal_email:
-            plan_destinations["email"] = self.appeal_email
-        if self.appeal_phone_number:
-            plan_destinations["phone"] = self.appeal_phone_number
-        # Merge: plan values win, company values fill gaps
-        merged = dict(company_destinations)
-        merged.update(plan_destinations)
-        return merged
+        company = self.insurance_company
+        # Build in the preferred order so callers iterating the dict get a
+        # consistent "best channel" sequence regardless of which fields are
+        # set on the plan vs the company.
+        candidates = [
+            ("portal", self.appeals_portal_url, company.appeals_portal_url),
+            ("fax", self.appeal_fax_number, company.appeal_fax_number),
+            ("address", self.appeal_address, company.appeal_address),
+            ("email", self.appeal_email, company.appeal_email),
+            ("phone", self.appeal_phone_number, company.appeal_phone_number),
+        ]
+        destinations: dict[str, str] = {}
+        for key, plan_value, company_value in candidates:
+            value = plan_value or company_value
+            if value:
+                destinations[key] = value
+        return destinations
 
 
 class Diagnosis(models.Model):

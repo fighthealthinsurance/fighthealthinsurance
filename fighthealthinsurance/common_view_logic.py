@@ -1411,6 +1411,10 @@ class DenialCreatorHelper:
         """
         from fighthealthinsurance.models import InsuranceCompany
 
+        # No useful input: nothing to match against.
+        if not extracted_name and not denial_text:
+            return None
+
         # 1. Exact match on the LLM-extracted name
         if extracted_name:
             matched = await InsuranceCompany.objects.filter(
@@ -1421,11 +1425,26 @@ class DenialCreatorHelper:
 
         # 2. Specificity-scored substring/alt_name match against extracted name.
         # Cache companies during the iteration so step 3 doesn't have to re-query.
+        # Only fetch the columns we actually use to keep the working set small
+        # even as the routing TextFields grow.
         matches: list[tuple[InsuranceCompany, float]] = []
         all_companies: list[InsuranceCompany] = []
         text_lower = extracted_name.lower() if extracted_name else ""
 
-        async for company in InsuranceCompany.objects.all():
+        # Restrict to the matching-relevant + propagation-relevant columns to
+        # keep working-set size bounded as the routing TextFields grow. The
+        # caller (extract_set_insurance_company) reads ``appeal_fax_number``
+        # off the returned record for propagation; everything else (e.g.
+        # appeal_address) is fetched separately on demand.
+        company_qs = InsuranceCompany.objects.only(
+            "id",
+            "name",
+            "alt_names",
+            "regex",
+            "negative_regex",
+            "appeal_fax_number",
+        )
+        async for company in company_qs:
             all_companies.append(company)
             if not text_lower:
                 continue
