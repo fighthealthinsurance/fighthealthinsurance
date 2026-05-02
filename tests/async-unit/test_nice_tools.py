@@ -43,12 +43,17 @@ def _make_mock_session(response):
 
 
 @contextmanager
-def _mock_nice_query_cache(cached_results=None):
-    """Patch NICEQueryData.objects so callers can simulate cache miss or hit.
+def _mock_nice_query_cache(cached_results=None, cached_denial_query=None):
+    """Patch NICEQueryData.objects to simulate cache state in two paths:
 
-    Yields the patched objects manager; pass ``cached_results`` (a list) to
-    simulate a cache hit, or omit it for a miss. ``acreate`` is always patched
-    so callers can assert against it.
+    * Search-level cache: filter(query=, ...).order_by(...).afirst() → row.results
+      Pass ``cached_results`` (a list) to simulate a hit, or omit for a miss.
+    * Denial-level cache: filter(denial_id=...).order_by(...).values_list(
+          "query", flat=True).afirst() → str
+      Pass ``cached_denial_query`` to simulate the query string used for the
+      most recent NICEQueryData row tied to this denial.
+
+    ``acreate`` is always patched so callers can assert against it.
     """
     with patch("fighthealthinsurance.nice_tools.NICEQueryData.objects") as mock_objects:
         qs = MagicMock()
@@ -58,6 +63,11 @@ def _mock_nice_query_cache(cached_results=None):
             cached_row.results = json.dumps(cached_results)
         qs.afirst = AsyncMock(return_value=cached_row)
         qs.order_by = MagicMock(return_value=qs)
+
+        values_list_qs = MagicMock()
+        values_list_qs.afirst = AsyncMock(return_value=cached_denial_query)
+        qs.values_list = MagicMock(return_value=values_list_qs)
+
         mock_objects.filter = MagicMock(return_value=qs)
         mock_objects.acreate = AsyncMock()
         yield mock_objects
@@ -178,13 +188,15 @@ class TestNICESearchGuidance:
         assert await tools.search_guidance("   ") == []
 
     async def test_skips_api_call_without_key(self):
+        """Without a key: skip both the network call AND the DB cache lookup."""
         tools = NICETools(api_key="")
-        with _mock_nice_query_cache(), patch(
+        with _mock_nice_query_cache() as mock_objects, patch(
             "aiohttp.ClientSession"
         ) as mock_session_cls:
             result = await tools.search_guidance("knee replacement")
             assert result == []
             mock_session_cls.assert_not_called()
+            mock_objects.filter.assert_not_called()
 
     async def test_returns_normalized_items_from_api(self):
         tools = NICETools(api_key="key")
@@ -301,22 +313,51 @@ class TestNICEContextFormatting:
             assert await tools._find_context_for_denial(denial) == ""
 
     async def test_find_context_uses_existing_persisted_context(self):
+        """Cached context returned only when the cached query matches current."""
         tools = NICETools(api_key="key")
         denial = MagicMock()
         denial.denial_id = 1
         denial.nice_context = "previously computed context"
         denial.procedure = "x"
         denial.diagnosis = "y"
-        # Should not call find_guidance_for_denial when nice_context is already set.
-        with patch.object(
+        with _mock_nice_query_cache(cached_denial_query="x y"), patch.object(
             tools, "find_guidance_for_denial", new_callable=AsyncMock
         ) as mock_find:
             result = await tools._find_context_for_denial(denial)
             mock_find.assert_not_called()
         assert result == "previously computed context"
 
+    async def test_find_context_refetches_when_query_changed(self):
+        """When procedure/diagnosis change, stale cache must be invalidated."""
+        tools = NICETools(api_key="key")
+        denial = MagicMock()
+        denial.denial_id = 1
+        denial.nice_context = "guidance for OLD query"
+        denial.procedure = "new procedure"
+        denial.diagnosis = "new diagnosis"
+
+        guidance = MagicMock()
+        guidance.guidance_id = "NG99"
+        guidance.guidance_type = "NICE guideline"
+        guidance.title = "Fresh guidance"
+        guidance.url = ""
+        guidance.summary = ""
+
+        with _mock_nice_query_cache(
+            cached_denial_query="old procedure old diagnosis"
+        ), patch.object(
+            tools,
+            "find_guidance_for_denial",
+            new_callable=AsyncMock,
+            return_value=[guidance],
+        ) as mock_find:
+            result = await tools._find_context_for_denial(denial)
+            mock_find.assert_awaited_once()
+        assert "Fresh guidance" in result
+        assert "OLD query" not in result
+
     async def test_find_context_short_circuits_without_api_key(self):
-        """Without a key we shouldn't hit the database or the network."""
+        """Without a key we shouldn't hit the network. Empty cache → empty result."""
         tools = NICETools(api_key="")
         denial = MagicMock()
         denial.denial_id = 1
@@ -330,6 +371,26 @@ class TestNICEContextFormatting:
             mock_find.assert_not_called()
         assert result == ""
 
+    async def test_find_context_returns_cached_when_no_key(self):
+        """No key + cached context (regardless of staleness) → return cached.
+
+        Without an API key we have nothing better to return, so honor whatever
+        was persisted from a prior key-enabled run.
+        """
+        tools = NICETools(api_key="")
+        denial = MagicMock()
+        denial.denial_id = 1
+        denial.nice_context = "stale cached context"
+        denial.procedure = "x"
+        denial.diagnosis = "y"
+        # cached_denial_query=None simulates "no prior query record" → mismatch.
+        with _mock_nice_query_cache(), patch.object(
+            tools, "find_guidance_for_denial", new_callable=AsyncMock
+        ) as mock_find:
+            result = await tools._find_context_for_denial(denial)
+            mock_find.assert_not_called()
+        assert result == "stale cached context"
+
     async def test_find_context_skips_aupdate_when_value_unchanged(self):
         """Re-running with an already-correct nice_context should not write."""
         tools = NICETools(api_key="key")
@@ -339,10 +400,12 @@ class TestNICEContextFormatting:
         denial = MagicMock()
         denial.denial_id = 1
         denial.nice_context = cached_value
+        denial.procedure = "knee replacement"
+        denial.diagnosis = "osteoarthritis"
 
-        with patch(
-            "fighthealthinsurance.nice_tools.Denial.objects"
-        ) as mock_denial_objs:
+        with _mock_nice_query_cache(
+            cached_denial_query="knee replacement osteoarthritis"
+        ), patch("fighthealthinsurance.nice_tools.Denial.objects") as mock_denial_objs:
             qs = MagicMock()
             qs.aupdate = AsyncMock()
             mock_denial_objs.filter = MagicMock(return_value=qs)
@@ -350,6 +413,31 @@ class TestNICEContextFormatting:
 
         assert result == cached_value
         qs.aupdate.assert_not_awaited()
+
+    async def test_find_context_persists_new_value(self):
+        """When result differs from denial.nice_context, aupdate must be called."""
+        tools = NICETools(api_key="key")
+        denial = MagicMock()
+        denial.denial_id = 42
+        denial.nice_context = ""
+        denial.procedure = "knee replacement"
+        denial.diagnosis = "osteoarthritis"
+
+        expected = f"{INTERNATIONAL_GUIDANCE_CAVEAT}\nNICE NG54; Title: T"
+        with patch.object(
+            tools,
+            "_find_context_for_denial",
+            new_callable=AsyncMock,
+            return_value=expected,
+        ), patch("fighthealthinsurance.nice_tools.Denial.objects") as mock_denial_objs:
+            qs = MagicMock()
+            qs.aupdate = AsyncMock()
+            mock_denial_objs.filter = MagicMock(return_value=qs)
+            result = await tools.find_context_for_denial(denial)
+
+        assert result == expected
+        mock_denial_objs.filter.assert_called_once_with(denial_id=42)
+        qs.aupdate.assert_awaited_once_with(nice_context=expected)
 
 
 @skip_if_no_nice_api_key

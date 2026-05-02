@@ -2417,6 +2417,9 @@ class AppealsBackendHelper:
                 logger.debug("Used saved contexts")
         else:
             logger.debug("Too many retries, skipping ML/pubmed/RAG ctx")
+            # Reuse the persisted NICE context; otherwise it'd be dropped on
+            # the very retry path that's supposed to use previous results.
+            nice_context = denial.nice_context
             yield json.dumps(
                 {
                     "type": "status",

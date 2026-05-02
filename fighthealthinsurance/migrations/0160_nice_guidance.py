@@ -42,7 +42,7 @@ class Migration(migrations.Migration):
                     "internal_id",
                     models.AutoField(primary_key=True, serialize=False),
                 ),
-                ("query", models.CharField(max_length=300)),
+                ("query", models.TextField()),
                 ("results", models.TextField(null=True)),
                 (
                     "created",

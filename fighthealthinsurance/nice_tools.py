@@ -303,10 +303,23 @@ class NICETools:
         timeout: float = 30.0,
     ) -> str:
         """Worker that builds the NICE context string without persisting it."""
-        if denial.nice_context and len(denial.nice_context) > 1:
-            return denial.nice_context
+        current_query = self._build_query(
+            denial.procedure or "", denial.diagnosis or ""
+        )
+        cached_context = denial.nice_context or ""
+
+        # Only honor the cached context when it matches the current query;
+        # otherwise procedure/diagnosis edits would surface stale guidance.
+        if cached_context and len(cached_context) > 1 and current_query:
+            if await self._cached_query_matches(denial, current_query):
+                return cached_context
 
         if not self.api_key:
+            # Without a key we can't refetch — return whatever's cached so a
+            # prior key-enabled run's results still survive a regen.
+            return cached_context
+
+        if not current_query:
             return ""
 
         try:
@@ -328,6 +341,28 @@ class NICETools:
         ]
         body = "\n".join(formatted)
         return f"{INTERNATIONAL_GUIDANCE_CAVEAT}\n{body}"
+
+    @staticmethod
+    async def _cached_query_matches(denial: Denial, current_query: str) -> bool:
+        """Return True iff the most recent NICEQueryData for this denial used
+        the same query string as `current_query`.
+
+        Returns False on any DB error or if no prior query was recorded — both
+        force a refetch, which is the safe default when in doubt.
+        """
+        try:
+            last_query = await (
+                NICEQueryData.objects.filter(denial_id=denial.denial_id)
+                .order_by("-created")
+                .values_list("query", flat=True)
+                .afirst()
+            )
+        except Exception as e:
+            logger.opt(exception=True).debug(
+                f"NICE cached-query lookup failed for denial {denial.denial_id}: {e}"
+            )
+            return False
+        return last_query == current_query
 
     @staticmethod
     def format_guidance_short(guidance: NICEGuidance) -> str:
