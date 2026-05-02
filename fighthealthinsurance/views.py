@@ -1687,6 +1687,11 @@ class StripeWebhookView(View):
 class CompletePaymentView(View):
     """View for completing payment after Stripe checkout redirect."""
 
+    # Row ids issued before the secure_token migration (#763) that we still
+    # honor when passed as ?session_id=<id>; everything above this id was
+    # created with a token so legacy lookups should be denied.
+    LEGACY_SESSION_ID_CUTOFF = 600
+
     def get(self, request):
         try:
             data = {
@@ -1711,11 +1716,6 @@ class CompletePaymentView(View):
     def do_post(self, request):
         data = json.loads(request.body)
         return self.process_payment(data)
-
-    # Row ids issued before the secure_token migration (#763) that we still
-    # honor when passed as ?session_id=<id>; everything above this id was
-    # created with a token so legacy lookups should be denied.
-    LEGACY_SESSION_ID_CUTOFF = 600
 
     def process_payment(self, data):
         token = data.get("token")
