@@ -1687,11 +1687,16 @@ class StripeWebhookView(View):
 class CompletePaymentView(View):
     """View for completing payment after Stripe checkout redirect."""
 
+    # Row ids issued before the secure_token migration (#763) that we still
+    # honor when passed as ?session_id=<id>; everything above this id was
+    # created with a token so legacy lookups should be denied.
+    LEGACY_SESSION_ID_CUTOFF = 600
+
     def get(self, request):
         try:
-            session_id = request.GET.get("session_id")
             data = {
-                "session_id": session_id,
+                "token": request.GET.get("token"),
+                "session_id": request.GET.get("session_id"),
             }
 
             return self.process_payment(data)
@@ -1713,17 +1718,39 @@ class CompletePaymentView(View):
         return self.process_payment(data)
 
     def process_payment(self, data):
+        token = data.get("token")
         session_id = data.get("session_id")
 
-        if not session_id:
-            return HttpResponse(
-                json.dumps({"error": "Missing session_id"}),
-                status=400,
-                content_type="application/json",
-            )
-
         try:
-            lost_session = models.LostStripeSession.objects.get(session_id=session_id)
+            if token:
+                lost_session = models.LostStripeSession.objects.get(secure_token=token)
+            elif session_id:
+                # Legacy emails sent before the token rollout used the row id
+                # as ?session_id=<int>. Honor those for ids below the cutoff
+                # only; anything else must come through the secure token, so
+                # that post-cutoff sessions can't be brute-forced or accessed
+                # by passing a Stripe session_id string.
+                legacy_id: typing.Optional[int] = None
+                try:
+                    legacy_id = int(session_id)
+                except (TypeError, ValueError):
+                    pass
+                if (
+                    legacy_id is None
+                    or not 0 < legacy_id < self.LEGACY_SESSION_ID_CUTOFF
+                ):
+                    return HttpResponse(
+                        json.dumps({"error": "Invalid or expired link"}),
+                        status=400,
+                        content_type="application/json",
+                    )
+                lost_session = models.LostStripeSession.objects.get(id=legacy_id)
+            else:
+                return HttpResponse(
+                    json.dumps({"error": "Missing token"}),
+                    status=400,
+                    content_type="application/json",
+                )
             continue_url = lost_session.success_url
             cancel_url = lost_session.cancel_url
             payment_type = lost_session.payment_type

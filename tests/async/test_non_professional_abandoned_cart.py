@@ -23,17 +23,17 @@ def test_non_professional_abandoned_cart():
         email=email,
         metadata=metadata,
     )
+    token = lost_session.secure_token
 
-    # Test POST method
+    # Test POST method (token-based)
     with patch("stripe.checkout.Session.create") as mock_create:
         mock_create.return_value.url = "https://checkout.stripe.com/test"
 
-        # Call the CompletePaymentView
         response = client.post(
             reverse("complete_payment"),
             data=json.dumps(
                 {
-                    "session_id": session_id,
+                    "token": token,
                     "continue_url": "https://example.com/success",
                     "cancel_url": "https://example.com/cancel",
                 }
@@ -45,23 +45,61 @@ def test_non_professional_abandoned_cart():
         assert "next_url" in response.json()
         assert response.json()["next_url"] == "https://checkout.stripe.com/test"
 
-    # Test GET method
+    # Test GET method (token-based)
     with patch("stripe.checkout.Session.create") as mock_create:
         mock_create.return_value.url = "https://checkout.stripe.com/test"
 
-        # Call the CompletePaymentView with GET parameters
-        query_params = urlencode(
-            {
-                "session_id": session_id,
-                "continue_url": "https://example.com/success",
-                "cancel_url": "https://example.com/cancel",
-            }
-        )
+        query_params = urlencode({"token": token})
         response = client.get(f"{reverse('complete_payment')}?{query_params}")
 
         assert response.status_code == 200
         assert "next_url" in response.json()
         assert response.json()["next_url"] == "https://checkout.stripe.com/test"
+
+    # Brute-forcing a post-rollout row id (>= the legacy cutoff) must not work —
+    # only the secure_token grants access for new sessions.
+    high_id_session = LostStripeSession(
+        pk=9999,
+        session_id="high_id_stripe_session",
+        payment_type="non_professional_item",
+        email=email,
+        metadata=metadata,
+    )
+    high_id_session.save()
+    response = client.get(
+        f"{reverse('complete_payment')}?session_id={high_id_session.pk}"
+    )
+    assert response.status_code == 400
+
+    # An unknown / forged token must be rejected.
+    response = client.get(f"{reverse('complete_payment')}?token=not-a-real-token")
+    assert response.status_code == 400
+
+    # Passing the raw Stripe session_id string is no longer a valid lookup —
+    # post-cutoff sessions must use the token.
+    response = client.get(
+        f"{reverse('complete_payment')}?session_id={high_id_session.session_id}"
+    )
+    assert response.status_code == 400
+
+    # Legacy support: rows created before the token rollout were emailed with
+    # ?session_id=<row_id>; honor that for ids below the cutoff so old emails
+    # still work.
+    legacy_session = LostStripeSession(
+        pk=42,
+        session_id="legacy_stripe_session",
+        payment_type="non_professional_item",
+        email=email,
+        metadata=metadata,
+    )
+    legacy_session.save()
+    with patch("stripe.checkout.Session.create") as mock_create:
+        mock_create.return_value.url = "https://checkout.stripe.com/legacy"
+        response = client.get(
+            f"{reverse('complete_payment')}?session_id={legacy_session.pk}"
+        )
+        assert response.status_code == 200
+        assert response.json()["next_url"] == "https://checkout.stripe.com/legacy"
 
     # Simulate Stripe webhook call to trigger the email
     stripe_event = {
