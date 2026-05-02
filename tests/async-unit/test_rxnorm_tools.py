@@ -560,3 +560,172 @@ class TestRxNormLookupToolHandle:
         rxnorm = RxNormTools()
         tool = RxNormLookupTool(send_status, rxnorm_tools=rxnorm)
         assert tool.detect(formatted) is None
+
+
+class TestPubMedToolsDrugExpansion:
+    """Cover PubMedTools._looks_like_single_drug_term and
+    ._expand_drug_term_for_search — used in find_pubmed_articles_for_denial
+    and the extralink prefetch actor."""
+
+    def test_looks_like_single_drug_short(self):
+        from fighthealthinsurance.pubmed_tools import PubMedTools
+
+        assert PubMedTools._looks_like_single_drug_term("Lipitor")
+        assert PubMedTools._looks_like_single_drug_term("metformin 500mg")
+
+    def test_rejects_multi_concept(self):
+        from fighthealthinsurance.pubmed_tools import PubMedTools
+
+        # Connector words and 3+ tokens are out.
+        assert not PubMedTools._looks_like_single_drug_term("Lipitor and atorvastatin")
+        assert not PubMedTools._looks_like_single_drug_term(
+            "physical therapy arthritis"
+        )
+        assert not PubMedTools._looks_like_single_drug_term("")
+
+    @pytest.mark.asyncio
+    async def test_expand_drug_term_returns_canonical_and_synonyms(self):
+        from fighthealthinsurance.pubmed_tools import PubMedTools
+
+        rxnorm = RxNormTools()
+        tools = PubMedTools(rxnorm_tools=rxnorm)
+        with patch.object(
+            rxnorm, "normalize", new_callable=AsyncMock
+        ) as mock_normalize:
+            mock_normalize.return_value = NormalizedDrug(
+                query="lipitor",
+                rxcui="153165",
+                canonical_name="atorvastatin",
+                tty="BN",
+                score=100,
+                related={
+                    "IN": [{"rxcui": "83367", "name": "atorvastatin"}],
+                    "BN": [
+                        {"rxcui": "153165", "name": "Lipitor"},
+                        {"rxcui": "1000048", "name": "Atorvaliq"},
+                    ],
+                },
+            )
+            terms = await tools._expand_drug_term_for_search("Lipitor")
+
+        # Canonical first, then ingredients, then brand names. Capped at
+        # _MAX_DRUG_EXPANSIONS (2). The original input is excluded.
+        assert "Lipitor" not in terms
+        assert "atorvastatin" in terms
+        assert len(terms) <= PubMedTools._MAX_DRUG_EXPANSIONS
+
+    @pytest.mark.asyncio
+    async def test_expand_skips_multi_concept_query(self):
+        from fighthealthinsurance.pubmed_tools import PubMedTools
+
+        rxnorm = RxNormTools()
+        tools = PubMedTools(rxnorm_tools=rxnorm)
+        with patch.object(
+            rxnorm, "normalize", new_callable=AsyncMock
+        ) as mock_normalize:
+            terms = await tools._expand_drug_term_for_search(
+                "physical therapy arthritis"
+            )
+
+        assert terms == []
+        mock_normalize.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_expand_skips_low_score_match(self):
+        from fighthealthinsurance.pubmed_tools import PubMedTools
+
+        rxnorm = RxNormTools()
+        tools = PubMedTools(rxnorm_tools=rxnorm)
+        with patch.object(
+            rxnorm, "normalize", new_callable=AsyncMock
+        ) as mock_normalize:
+            mock_normalize.return_value = NormalizedDrug(
+                query="atrovstatn",
+                rxcui="83367",
+                canonical_name="atorvastatin",
+                tty="IN",
+                score=55,
+            )
+            terms = await tools._expand_drug_term_for_search("atrovstatn")
+
+        # Below the 75 confidence threshold — leave it alone.
+        assert terms == []
+
+    @pytest.mark.asyncio
+    async def test_expand_no_match(self):
+        from fighthealthinsurance.pubmed_tools import PubMedTools
+
+        rxnorm = RxNormTools()
+        tools = PubMedTools(rxnorm_tools=rxnorm)
+        with patch.object(
+            rxnorm, "normalize", new_callable=AsyncMock
+        ) as mock_normalize:
+            mock_normalize.return_value = NormalizedDrug(
+                query="nonexistent",
+                rxcui="",
+                canonical_name="",
+            )
+            terms = await tools._expand_drug_term_for_search("nonexistent")
+
+        assert terms == []
+
+
+class TestPriorAuthRxNormContext:
+    """Cover the RxNorm hint that gets added to the prior-auth prompt."""
+
+    def test_drug_match_adds_canonical_hint(self):
+        from fighthealthinsurance.generate_prior_auth import _build_rxnorm_context
+
+        normalized = NormalizedDrug(
+            query="lipitor",
+            rxcui="153165",
+            canonical_name="atorvastatin",
+            tty="BN",
+            score=100,
+            related={
+                "IN": [{"rxcui": "83367", "name": "atorvastatin"}],
+                "BN": [{"rxcui": "153165", "name": "Lipitor"}],
+            },
+        )
+        hint = _build_rxnorm_context("Lipitor", normalized)
+
+        assert "atorvastatin" in hint
+        # The prompt should explicitly tell the LLM to keep the user's
+        # wording in the rendered letter.
+        assert "use" in hint.lower()
+        assert "Lipitor" in hint
+
+    def test_no_match_returns_empty_hint(self):
+        from fighthealthinsurance.generate_prior_auth import _build_rxnorm_context
+
+        normalized = NormalizedDrug(
+            query="mri",
+            rxcui="",
+            canonical_name="",
+        )
+        assert _build_rxnorm_context("MRI", normalized) == ""
+
+    def test_low_score_returns_empty_hint(self):
+        from fighthealthinsurance.generate_prior_auth import _build_rxnorm_context
+
+        normalized = NormalizedDrug(
+            query="atrovstatn",
+            rxcui="83367",
+            canonical_name="atorvastatin",
+            tty="IN",
+            score=55,
+        )
+        assert _build_rxnorm_context("atrovstatn", normalized) == ""
+
+    def test_already_canonical_returns_empty_hint(self):
+        from fighthealthinsurance.generate_prior_auth import _build_rxnorm_context
+
+        # Treatment is already the canonical name — no rewriting needed.
+        normalized = NormalizedDrug(
+            query="atorvastatin",
+            rxcui="83367",
+            canonical_name="atorvastatin",
+            tty="IN",
+            score=100,
+        )
+        assert _build_rxnorm_context("atorvastatin", normalized) == ""
