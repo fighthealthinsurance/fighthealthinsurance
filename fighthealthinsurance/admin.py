@@ -403,6 +403,7 @@ class InsurancePlanAdmin(admin.ModelAdmin):
                     "appeal_address",
                     "appeal_fax_number",
                     "appeal_phone_number",
+                    "appeal_email",
                     "appeals_portal_url",
                     "appeals_info_url",
                 ),

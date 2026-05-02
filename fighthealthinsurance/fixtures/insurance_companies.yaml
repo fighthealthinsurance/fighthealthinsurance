@@ -275,7 +275,6 @@
       BCBSTX
       Blue Cross Texas
     regex: (?:blue\s*cross\s*blue\s*shield|bcbs).*texas|texas.*(?:blue\s*cross\s*blue\s*shield|bcbs)
-    parent_company: 17
     website: https://www.bcbstx.com
     member_services_url: https://www.bcbstx.com/contact-us
     appeals_info_url: https://www.bcbstx.com/chip/member-resources/complaints-and-appeals
@@ -285,7 +284,7 @@
       P.O. Box 660717
       Dallas, TX 75266-0717
     appeal_phone_number: 888-657-6061
-    notes: Largest health insurer in Texas. Part of Health Care Service Corporation.
+    notes: Largest health insurer in Texas. Part of Health Care Service Corporation (pk 17).
 
 - model: fighthealthinsurance.insurancecompany
   pk: 15
@@ -296,7 +295,6 @@
       BCBS Florida
       BCBSFL
     regex: florida\s*blue|(?:blue\s*cross\s*blue\s*shield|bcbs).*florida|florida.*(?:blue\s*cross\s*blue\s*shield|bcbs)
-    parent_company: 58
     website: https://www.floridablue.com
     member_services_url: https://www.floridablue.com/help/contact-us-quick-reference-guide
     appeals_info_url: https://www.floridablue.com/help/contact-us-quick-reference-guide

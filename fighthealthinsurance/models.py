@@ -504,6 +504,10 @@ class InsurancePlan(models.Model):
         blank=True,
         help_text="Plan-specific appeals phone number (overrides company default)",
     )
+    appeal_email = models.EmailField(
+        blank=True,
+        help_text="Plan-specific email for submitting appeals (overrides company default)",
+    )
     appeals_portal_url = models.URLField(
         blank=True,
         help_text="Plan-specific online appeals portal URL",
@@ -537,6 +541,8 @@ class InsurancePlan(models.Model):
             plan_destinations["fax"] = self.appeal_fax_number
         if self.appeal_address:
             plan_destinations["address"] = self.appeal_address
+        if self.appeal_email:
+            plan_destinations["email"] = self.appeal_email
         if self.appeal_phone_number:
             plan_destinations["phone"] = self.appeal_phone_number
         # Merge: plan values win, company values fill gaps

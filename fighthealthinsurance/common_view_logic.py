@@ -1404,9 +1404,10 @@ class DenialCreatorHelper:
         3. Regex match against the full denial text using each company's
            ``regex`` pattern (with ``negative_regex`` exclusion).
 
-        Step 3 is a fallback that catches cases where the LLM extraction was
-        weak or missing - the curated regex patterns in the fixtures
-        (e.g. ``empire.*(?:blue\\s*cross|bcbs)``) can still fire.
+        Step 3 is a fallback for when steps 1-2 don't produce a name match
+        (LLM extraction missing, or none of the carriers' names/alt_names
+        appeared in the extracted text). Running it lazily avoids paying the
+        regex-search cost on every extraction.
         """
         from fighthealthinsurance.models import InsuranceCompany
 
@@ -1418,41 +1419,47 @@ class DenialCreatorHelper:
             if matched:
                 return matched
 
-        # 2. Specificity-scored substring/alt_name match against extracted name
+        # 2. Specificity-scored substring/alt_name match against extracted name.
+        # Cache companies during the iteration so step 3 doesn't have to re-query.
         matches: list[tuple[InsuranceCompany, float]] = []
+        all_companies: list[InsuranceCompany] = []
         text_lower = extracted_name.lower() if extracted_name else ""
 
         async for company in InsuranceCompany.objects.all():
+            all_companies.append(company)
+            if not text_lower:
+                continue
             company_lower = company.name.lower()
 
-            if text_lower:
-                if company_lower == text_lower:
-                    matches.append((company, 100.0))
-                elif company_lower in text_lower:
-                    score = len(company_lower) / len(text_lower) * 90
-                    matches.append((company, score))
-                elif text_lower in company_lower:
-                    score = len(text_lower) / len(company_lower) * 80
-                    matches.append((company, score))
+            if company_lower == text_lower:
+                matches.append((company, 100.0))
+            elif company_lower in text_lower:
+                score = len(company_lower) / len(text_lower) * 90
+                matches.append((company, score))
+            elif text_lower in company_lower:
+                score = len(text_lower) / len(company_lower) * 80
+                matches.append((company, score))
 
-                if company.alt_names:
-                    for alt in company.alt_names.split("\n"):
-                        alt = alt.strip().lower()
-                        if not alt:
-                            continue
-                        if alt == text_lower:
-                            matches.append((company, 95.0))
-                        elif alt in text_lower:
-                            score = len(alt) / len(text_lower) * 85
-                            matches.append((company, score))
-                        elif text_lower in alt:
-                            score = len(text_lower) / len(alt) * 75
-                            matches.append((company, score))
+            if company.alt_names:
+                for alt in company.alt_names.split("\n"):
+                    alt = alt.strip().lower()
+                    if not alt:
+                        continue
+                    if alt == text_lower:
+                        matches.append((company, 95.0))
+                    elif alt in text_lower:
+                        score = len(alt) / len(text_lower) * 85
+                        matches.append((company, score))
+                    elif text_lower in alt:
+                        score = len(text_lower) / len(alt) * 75
+                        matches.append((company, score))
 
-            # 3. Regex fallback against the full denial text. Only counted if
-            # nothing better has matched - the score (60.0) keeps it below
-            # name-based matches but above nothing.
-            if denial_text and company.regex and company.regex.pattern:
+        # 3. Regex fallback - only run when name/alt_name matching produced
+        # no candidates. Score 60.0 keeps these below any name-based match.
+        if not matches and denial_text:
+            for company in all_companies:
+                if not company.regex or not company.regex.pattern:
+                    continue
                 try:
                     if company.regex.search(denial_text):
                         if (
@@ -1568,9 +1575,17 @@ class DenialCreatorHelper:
                     f"Error matching structured insurance models: {e}"
                 )
 
+            # The text field gets the LLM extraction when present; otherwise,
+            # fall back to the matched company's canonical name so callers and
+            # the stored text field stay consistent (the method also returns
+            # this resolved name).
+            resolved_name: Optional[str] = extracted_name
+            if not resolved_name and matched_company:
+                resolved_name = matched_company.name
+
             update_fields: dict[str, Any] = {}
-            if extracted_name:
-                update_fields["insurance_company"] = extracted_name
+            if resolved_name:
+                update_fields["insurance_company"] = resolved_name
             if matched_company:
                 update_fields["insurance_company_obj"] = matched_company
                 logger.debug(f"Matched to structured company: {matched_company.name}")
@@ -1605,9 +1620,9 @@ class DenialCreatorHelper:
                     **update_fields
                 )
                 logger.debug(
-                    f"Successfully extracted insurance company: {extracted_name}"
+                    f"Successfully extracted insurance company: {resolved_name}"
                 )
-            return extracted_name
+            return resolved_name
         except Exception as e:
             logger.opt(exception=True).warning(
                 f"Failed to extract insurance company for denial {denial_id}: {e}"

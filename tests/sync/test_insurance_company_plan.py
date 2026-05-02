@@ -669,6 +669,37 @@ class ExtractInsuranceCompanyPropagationTests(TestCase):
         # Existing fax must NOT be overwritten
         self.assertEqual(denial.appeal_fax_number, "555-000-0000")
 
+    def test_resolved_name_set_when_only_regex_matches(self):
+        """When LLM extraction returns nothing but a company is matched via
+        regex fallback, the denial's text ``insurance_company`` field and the
+        method return value should both be the matched company's canonical
+        name - not None."""
+        from fighthealthinsurance.common_view_logic import DenialCreatorHelper
+
+        # Create an insurance company with a regex that will match the denial text
+        # but no name overlap with anything in the text
+        bcbs_carrier = InsuranceCompany.objects.create(
+            name="Acme Carrier Long Name",
+            regex=r"acme.*denial",
+            appeal_fax_number="800-111-2222",
+        )
+        denial = Denial.objects.create(
+            denial_text="This is an acme denial letter from a third party.",
+            hashed_email="a@b.com",
+        )
+        with patch(
+            "fighthealthinsurance.common_view_logic.appealGenerator.get_insurance_company",
+            new_callable=AsyncMock,
+            return_value=None,  # LLM extraction failed
+        ):
+            result = async_to_sync(DenialCreatorHelper.extract_set_insurance_company)(
+                denial.denial_id
+            )
+        denial.refresh_from_db()
+        self.assertEqual(denial.insurance_company_obj, bcbs_carrier)
+        self.assertEqual(denial.insurance_company, "Acme Carrier Long Name")
+        self.assertEqual(result, "Acme Carrier Long Name")
+
 
 class ExtractSetFaxNumberTests(TestCase):
     """Regression tests for extract_set_fax_number's fax-preservation rules."""

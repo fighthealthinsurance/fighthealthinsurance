@@ -111,6 +111,15 @@ class Migration(migrations.Migration):
         ),
         migrations.AddField(
             model_name="insuranceplan",
+            name="appeal_email",
+            field=models.EmailField(
+                blank=True,
+                help_text="Plan-specific email for submitting appeals (overrides company default)",
+                max_length=254,
+            ),
+        ),
+        migrations.AddField(
+            model_name="insuranceplan",
             name="appeals_portal_url",
             field=models.URLField(
                 blank=True,
