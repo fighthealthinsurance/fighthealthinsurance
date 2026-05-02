@@ -7,6 +7,7 @@ Provides utilities for processing Stripe payment webhooks.
 from typing import Any, Optional
 from urllib.parse import urlencode
 
+from django.conf import settings
 from django.urls import reverse
 
 from loguru import logger
@@ -233,10 +234,12 @@ class StripeWebhookHelper:
             )
             if finish_link is None:
                 # Use the unguessable secure_token rather than the row id so the
-                # recovery URL can't be brute-forced by enumerating ids.
+                # recovery URL can't be brute-forced by enumerating ids. Build
+                # the host from settings so non-prod environments don't email
+                # users a production link.
                 params = urlencode({"token": lost_session.secure_token})
                 finish_link = (
-                    f"https://www.fightpaperwork.com"
+                    f"https://{settings.FIGHT_PAPERWORK_DOMAIN}"
                     f"{reverse('complete_payment')}?{params}"
                 )
             if finish_link:

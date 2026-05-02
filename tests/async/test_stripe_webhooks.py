@@ -1,6 +1,7 @@
 import unittest
 from unittest.mock import patch, MagicMock
 
+from django.conf import settings
 from django.test import TestCase
 from django.urls import reverse
 from django.contrib.auth import get_user_model
@@ -140,8 +141,10 @@ class StripeWebhookTests(TestCase):
         link = mock_send_email.call_args.kwargs["link"]
 
         lost_session = LostStripeSession.objects.get(session_id=mock_session.id)
-        # Link must be absolute and carry the unguessable token, never the row id.
-        self.assertTrue(link.startswith("https://www.fightpaperwork.com/"))
+        # Link must be absolute, target the configured host (so non-prod
+        # environments don't email production links), and carry the
+        # unguessable token rather than the row id.
+        self.assertTrue(link.startswith(f"https://{settings.FIGHT_PAPERWORK_DOMAIN}/"))
         self.assertIn(f"token={lost_session.secure_token}", link)
         self.assertNotIn(f"session_id={lost_session.id}", link)
         self.assertNotIn(f"session_id={lost_session.pk}", link)
