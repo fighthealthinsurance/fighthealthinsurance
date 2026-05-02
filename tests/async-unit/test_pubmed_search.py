@@ -12,6 +12,7 @@ The end-to-end ``structured_search`` test is wrapped with the Django
 ``TransactionTestCase`` so the article materialization step can use the ORM.
 """
 
+import asyncio
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -138,12 +139,28 @@ class TestBuildStructuredQuery:
 
     def test_reserved_chars_are_stripped(self):
         sq = build_structured_query(condition="asthma[ti] (pediatric)")
-        # Brackets and parentheses must be removed so the user can't inject
-        # arbitrary PubMed search field tags.
+        # Bracketed/parenthesized segments must be removed *as a unit* so the
+        # field tag ("ti") doesn't leak back as a free-text token. Otherwise
+        # the user can inject arbitrary PubMed search field semantics.
         assert "[" not in sq.condition
         assert "]" not in sq.condition
         assert "(" not in sq.condition
         assert ")" not in sq.condition
+        assert "ti" not in sq.condition.split()
+        assert "pediatric" not in sq.condition.split()
+        assert "asthma" in sq.condition
+
+    def test_nested_bracket_injection_is_stripped(self):
+        sq = build_structured_query(condition='diabetes "AND" cancer[mh]')
+        # The injected field-tag contents and the user-supplied stray quotes
+        # are gone; only the outer phrase quotes added by `_quote_phrase`
+        # remain. Otherwise a user could embed ``[mh]`` to coerce free-text
+        # into a MeSH lookup.
+        assert "mh" not in sq.condition.split()
+        # Strip the outer phrase quotes added by quoting; nothing else should
+        # remain.
+        inner = sq.condition.strip('"')
+        assert '"' not in inner
 
     def test_combination_of_all_filters(self):
         sq = build_structured_query(
@@ -527,6 +544,79 @@ async def test_fetch_mesh_and_pub_types_handles_malformed_xml():
     assert out == {}
 
 
+@pytest.mark.asyncio
+async def test_fetch_mesh_and_pub_types_chunks_large_input():
+    """Verify >batch_size PMIDs are split into multiple requests, not jammed
+    into one over-long URL."""
+    tools = PubMedTools()
+    # Two batches of 3 → two GET calls. Each batch returns its slice of XML.
+    pmids = [str(i) for i in range(1, 7)]
+
+    def fixture_for(batch_ids):
+        articles = "".join(
+            f"<PubmedArticle><MedlineCitation><PMID>{pid}</PMID>"
+            f"<Article><PublicationTypeList>"
+            f"<PublicationType>Review</PublicationType>"
+            f"</PublicationTypeList></Article></MedlineCitation></PubmedArticle>"
+            for pid in batch_ids
+        )
+        return f"<PubmedArticleSet>{articles}</PubmedArticleSet>"
+
+    responses = [
+        _make_aiohttp_response(text=fixture_for(pmids[0:3])),
+        _make_aiohttp_response(text=fixture_for(pmids[3:6])),
+    ]
+    session = AsyncMock()
+    session.get = MagicMock(side_effect=responses)
+
+    out = await tools.fetch_mesh_and_pub_types(
+        pmids, session=session, batch_size=3, timeout=5.0
+    )
+    assert session.get.call_count == 2
+    assert set(out.keys()) == set(pmids)
+    # Each GET call's `id` param should be the comma-joined batch.
+    first_params = session.get.call_args_list[0].kwargs["params"]
+    second_params = session.get.call_args_list[1].kwargs["params"]
+    assert first_params["id"] == "1,2,3"
+    assert second_params["id"] == "4,5,6"
+
+
+@pytest.mark.asyncio
+async def test_fetch_mesh_and_pub_types_reraises_cancelled():
+    """CancelledError must propagate so request cancellation works."""
+    tools = PubMedTools()
+    session = AsyncMock()
+    session.get = MagicMock(side_effect=asyncio.CancelledError())
+    with pytest.raises(asyncio.CancelledError):
+        await tools.fetch_mesh_and_pub_types(["1"], session=session, timeout=5.0)
+
+
+@pytest.mark.asyncio
+async def test_fetch_mesh_and_pub_types_partial_batch_failure_still_returns_rest():
+    """If one batch errors out mid-stream, prior batches' results survive."""
+    tools = PubMedTools()
+    good_xml = (
+        "<PubmedArticleSet>"
+        "<PubmedArticle><MedlineCitation><PMID>1</PMID>"
+        "<Article><PublicationTypeList>"
+        "<PublicationType>Review</PublicationType>"
+        "</PublicationTypeList></Article></MedlineCitation></PubmedArticle>"
+        "</PubmedArticleSet>"
+    )
+    responses = [
+        _make_aiohttp_response(text=good_xml),
+        _make_aiohttp_response(status=500, text=""),
+    ]
+    session = AsyncMock()
+    session.get = MagicMock(side_effect=responses)
+
+    out = await tools.fetch_mesh_and_pub_types(
+        ["1", "2"], session=session, batch_size=1, timeout=5.0
+    )
+    # Batch 1 succeeded; batch 2 failed → at least the first PMID is present.
+    assert "1" in out
+
+
 # ---------------------------------------------------------------------------
 # PubMedTools.find_related_pmids
 # ---------------------------------------------------------------------------
@@ -603,6 +693,15 @@ async def test_find_related_pmids_handles_http_error():
     assert related == []
 
 
+@pytest.mark.asyncio
+async def test_find_related_pmids_reraises_cancelled():
+    tools = PubMedTools()
+    session = AsyncMock()
+    session.get = MagicMock(side_effect=asyncio.CancelledError())
+    with pytest.raises(asyncio.CancelledError):
+        await tools.find_related_pmids("11111111", session=session, max_results=5)
+
+
 # ---------------------------------------------------------------------------
 # PubMedTools.structured_search end-to-end (DB + mocked PubMed API)
 # ---------------------------------------------------------------------------
@@ -675,6 +774,22 @@ class StructuredSearchE2ETest(TransactionTestCase):
         assert set(buckets.keys()) == set(EvidenceStrength)
         for tier in EvidenceStrength:
             assert buckets[tier] == []
+
+    def test_structured_search_reraises_cancelled(self):
+        tools = PubMedTools()
+
+        async def fake_find_ids(query, since=None, timeout=60.0):
+            raise asyncio.CancelledError()
+
+        with patch.object(
+            tools, "find_pubmed_article_ids_for_query", side_effect=fake_find_ids
+        ):
+
+            async def run():
+                await tools.structured_search(condition="asthma")
+
+            with pytest.raises(asyncio.CancelledError):
+                async_to_sync(run)()
 
     def test_structured_search_with_expand_with_related(self):
         tools = PubMedTools()

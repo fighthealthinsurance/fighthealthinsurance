@@ -114,20 +114,27 @@ PUB_TYPE_PRESETS: Dict[str, Sequence[str]] = {
 }
 
 
-# Characters that have meaning inside a PubMed query string. We escape them
-# (or strip them) when interpolating user-provided text into a query.
-_PUBMED_QUERY_RESERVED_RE = re.compile(r'[\[\]\(\)"]')
+# Drop bracketed/parenthesized segments as a whole (so user-supplied
+# `asthma[ti]` doesn't leave "ti" behind as an injected free-text token).
+# Stray closing or stranded delimiter chars are then stripped, and any
+# remaining double quotes — also reserved by PubMed — are removed.
+_PUBMED_BRACKETED_RE = re.compile(r"\[[^\]]*\]|\([^\)]*\)")
+_PUBMED_STRAY_DELIM_RE = re.compile(r'[\[\]\(\)"]')
 
 
 def _sanitize_term(term: str) -> str:
-    """Strip control chars and PubMed-reserved punctuation from a search term.
+    """Strip PubMed field-tag injection vectors and reserved punctuation.
 
-    Preserves spaces and basic ASCII letters/digits/hyphens so that multi-word
-    medical phrases ("rheumatoid arthritis", "anti-tnf") survive unchanged.
+    Removes bracketed/parenthesized segments as a unit so attempted field
+    tags like ``[ti]`` or ``[mh]`` don't leak their contents back into the
+    query as free-text tokens. Preserves spaces and basic ASCII
+    letters/digits/hyphens so multi-word medical phrases ("rheumatoid
+    arthritis", "anti-tnf") survive unchanged.
     """
     if not term:
         return ""
-    cleaned = _PUBMED_QUERY_RESERVED_RE.sub(" ", term)
+    cleaned = _PUBMED_BRACKETED_RE.sub(" ", term)
+    cleaned = _PUBMED_STRAY_DELIM_RE.sub(" ", cleaned)
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
     return cleaned
 
@@ -180,8 +187,8 @@ def build_structured_query(
         treatment: The procedure/medication being appealed (e.g., "physical
             therapy", "infliximab").
         pub_type_preset: Name of a preset from ``PUB_TYPE_PRESETS`` (e.g.,
-            ``"guidelines_and_systematic_reviews"``). Mutually inclusive with
-            ``pub_type_filters`` — both are combined with ``OR``.
+            ``"guidelines_and_systematic_reviews"``). Not mutually exclusive
+            with ``pub_type_filters``; both are combined with ``OR``.
         pub_type_filters: Explicit list of filter keys from
             ``PUB_TYPE_FILTERS`` (e.g., ``["rct", "meta_analysis"]``).
         mesh_terms: MeSH terms to require (joined with ``AND``). Each is

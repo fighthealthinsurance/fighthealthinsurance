@@ -58,6 +58,10 @@ _EUTILS_PARAMS = {
     "email": "support@fighthealthinsurance.com",
 }
 
+# NCBI documents 200 IDs as the practical limit for an efetch GET; chunk to
+# stay well under URL-length caps regardless of caller-supplied list size.
+_EFETCH_BATCH_SIZE = 200
+
 
 @asynccontextmanager
 async def _ensure_session(
@@ -407,65 +411,81 @@ class PubMedTools(object):
         pmids: List[str],
         session: Optional[aiohttp.ClientSession] = None,
         timeout: float = 15.0,
+        batch_size: int = _EFETCH_BATCH_SIZE,
     ) -> Dict[str, Dict[str, List[str]]]:
         """Fetch MeSH terms and publication types for a list of PMIDs via efetch.
 
         Returns ``{pmid: {"mesh": [...], "pub_types": [...]}}``. Missing PMIDs
-        are simply absent from the result rather than raising. A network error
-        or parse failure yields ``{}`` so callers can degrade gracefully.
+        are simply absent from the result rather than raising. Network errors
+        and XML parse failures degrade to a partial (or empty) result.
+        ``CancelledError`` is re-raised so request cancellation propagates;
+        ``TimeoutError`` returns whatever was collected so far.
 
-        Hits ``efetch?rettype=xml`` once for the whole batch (PubMed accepts a
-        comma-separated PMID list) to keep the request count low.
+        Splits ``pmids`` into ``batch_size`` chunks to avoid URL-length caps
+        and NCBI's recommended single-request limit. ``timeout`` applies to
+        the whole batched operation.
         """
         if not pmids:
             return {}
 
         result: Dict[str, Dict[str, List[str]]] = {}
-        params = {
-            **_EUTILS_PARAMS,
-            "db": "pubmed",
-            "id": ",".join(pmids),
-            "rettype": "xml",
-            "retmode": "xml",
-        }
         url = f"{_EUTILS_BASE}/efetch.fcgi"
         try:
             async with _ensure_session(session) as s:
                 async with async_timeout(timeout):
-                    async with s.get(url, params=params) as resp:
-                        if resp.status != 200:
-                            logger.debug(
-                                f"efetch returned {resp.status} for pmids {pmids}"
-                            )
-                            return result
-                        body = await resp.text()
-            try:
-                root = ET.fromstring(body)
-            except ET.ParseError as e:
-                logger.debug(f"Failed to parse efetch XML: {e}")
-                return result
-
-            for art in root.findall(".//PubmedArticle"):
-                pmid_el = art.find(".//PMID")
-                if pmid_el is None or not pmid_el.text:
-                    continue
-                pmid = pmid_el.text.strip()
-                mesh_terms = [
-                    descriptor.text.strip()
-                    for descriptor in art.findall(".//MeshHeading/DescriptorName")
-                    if descriptor.text
-                ]
-                pub_types = [
-                    pt.text.strip()
-                    for pt in art.findall(".//PublicationTypeList/PublicationType")
-                    if pt.text
-                ]
-                result[pmid] = {"mesh": mesh_terms, "pub_types": pub_types}
-        except (asyncio.TimeoutError, asyncio.CancelledError) as e:
-            logger.debug(f"Timeout/cancel in fetch_mesh_and_pub_types: {e}")
+                    for i in range(0, len(pmids), batch_size):
+                        batch = pmids[i : i + batch_size]
+                        params = {
+                            **_EUTILS_PARAMS,
+                            "db": "pubmed",
+                            "id": ",".join(batch),
+                            "rettype": "xml",
+                            "retmode": "xml",
+                        }
+                        async with s.get(url, params=params) as resp:
+                            if resp.status != 200:
+                                logger.debug(
+                                    f"efetch returned {resp.status} for batch starting at {i}"
+                                )
+                                continue
+                            body = await resp.text()
+                        self._merge_efetch_xml_into(body, result)
+        except asyncio.CancelledError:
+            raise
+        except asyncio.TimeoutError as e:
+            logger.debug(f"Timeout in fetch_mesh_and_pub_types: {e}")
         except Exception as e:
             logger.opt(exception=True).debug(f"Error in fetch_mesh_and_pub_types: {e}")
         return result
+
+    @staticmethod
+    def _merge_efetch_xml_into(
+        body: str, result: Dict[str, Dict[str, List[str]]]
+    ) -> None:
+        """Parse an efetch XML body and merge ``{pmid: {mesh, pub_types}}`` rows
+        into ``result``. Silently skips a malformed body so one bad batch
+        doesn't poison the rest."""
+        try:
+            root = ET.fromstring(body)
+        except ET.ParseError as e:
+            logger.debug(f"Failed to parse efetch XML: {e}")
+            return
+        for art in root.findall(".//PubmedArticle"):
+            pmid_el = art.find(".//PMID")
+            if pmid_el is None or not pmid_el.text:
+                continue
+            pmid = pmid_el.text.strip()
+            mesh_terms = [
+                descriptor.text.strip()
+                for descriptor in art.findall(".//MeshHeading/DescriptorName")
+                if descriptor.text
+            ]
+            pub_types = [
+                pt.text.strip()
+                for pt in art.findall(".//PublicationTypeList/PublicationType")
+                if pt.text
+            ]
+            result[pmid] = {"mesh": mesh_terms, "pub_types": pub_types}
 
     async def find_related_pmids(
         self,
@@ -510,8 +530,10 @@ class PubMedTools(object):
                             related.append(related_id_str)
                         if len(related) >= max_results:
                             return related
-        except (asyncio.TimeoutError, asyncio.CancelledError) as e:
-            logger.debug(f"Timeout/cancel in find_related_pmids({pmid}): {e}")
+        except asyncio.CancelledError:
+            raise
+        except asyncio.TimeoutError as e:
+            logger.debug(f"Timeout in find_related_pmids({pmid}): {e}")
         except Exception as e:
             logger.opt(exception=True).debug(
                 f"Error in find_related_pmids({pmid}): {e}"
@@ -618,10 +640,10 @@ class PubMedTools(object):
                 return categorize_articles_by_strength(
                     articles, pub_types_lookup=pub_types_lookup
                 )
+        except asyncio.CancelledError:
+            raise
         except asyncio.TimeoutError:
             logger.debug(f"Timeout in structured_search: {structured.query}")
-        except asyncio.CancelledError:
-            logger.debug(f"Cancelled in structured_search: {structured.query}")
         except Exception as e:
             logger.opt(exception=True).debug(f"Error in structured_search: {e}")
         return empty_buckets
