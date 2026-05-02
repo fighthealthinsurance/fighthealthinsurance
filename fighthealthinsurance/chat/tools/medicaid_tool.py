@@ -26,6 +26,7 @@ class MedicaidInfoTool(BaseTool):
     """
 
     pattern = MEDICAID_INFO_REGEX
+    detect_flags = re.DOTALL | re.IGNORECASE
     name = "Medicaid Info"
 
     def __init__(
@@ -193,6 +194,7 @@ class MedicaidEligibilityTool(BaseTool):
     """
 
     pattern = MEDICAID_ELIGIBILITY_REGEX
+    detect_flags = re.DOTALL | re.IGNORECASE
     name = "Medicaid Eligibility"
 
     def __init__(

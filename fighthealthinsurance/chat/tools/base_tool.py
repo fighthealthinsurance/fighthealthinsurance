@@ -26,7 +26,8 @@ class BaseTool(ABC):
     detect_flags: int = re.IGNORECASE
 
     # Regex flags used by detect_all() — defaults match the JSON-payload tools
-    # (medicaid, doc fetcher, USPSTF) which need DOTALL for multi-line JSON.
+    # (medicaid, doc fetcher, USPSTF, PA requirement) which need DOTALL for
+    # multi-line JSON.
     detect_all_flags: int = re.DOTALL | re.IGNORECASE
 
     # Human-readable name for status messages
@@ -58,6 +59,16 @@ class BaseTool(ABC):
             return None
         return re.search(self.pattern, text, flags=self.detect_flags)
 
+    def detect_all(self, text: str) -> List[re.Match[str]]:
+        """Find every tool-call match in the text.
+
+        Useful when an LLM emits multiple invocations of the same tool in a
+        single response and the handler needs to enumerate them.
+        """
+        if not self.pattern:
+            return []
+        return list(re.finditer(self.pattern, text, flags=self.detect_all_flags))
+
     def clean_response(self, text: str, match: re.Match[str]) -> str:
         """
         Remove the tool call from the response text.
@@ -70,16 +81,6 @@ class BaseTool(ABC):
             Response text with the tool call removed
         """
         return text.replace(match.group(0), "").strip()
-
-    def detect_all(self, text: str) -> List[re.Match[str]]:
-        """Find every tool-call match in the text.
-
-        Useful when an LLM emits multiple invocations of the same tool in a
-        single response and the handler needs to enumerate them.
-        """
-        if not self.pattern:
-            return []
-        return list(re.finditer(self.pattern, text, flags=self.detect_all_flags))
 
     def clean_all_matches(self, text: str, matches: List[re.Match[str]]) -> str:
         """Strip every tool-call match from the response text."""
