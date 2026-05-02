@@ -55,9 +55,14 @@ APPROX_MISS: Dict[str, Any] = {"approximateGroup": {"candidate": []}}
 
 
 def _make_fetch_json_mock(routes: Dict[str, Optional[Dict[str, Any]]]):
-    """Build a side-effect that returns canned JSON keyed by URL substring."""
+    """Build a side-effect that returns canned JSON keyed by URL substring.
 
-    async def _fetch(url: str) -> Optional[Dict[str, Any]]:
+    Accepts ``(url, session)`` because ``RxNormTools._fetch_json`` now
+    threads a shared session through every HTTP helper. The session arg
+    is ignored — the mock just keys on the URL.
+    """
+
+    async def _fetch(url: str, session: Any = None) -> Optional[Dict[str, Any]]:
         for needle, payload in routes.items():
             if needle in url:
                 return payload
@@ -269,6 +274,9 @@ class TestGetBrandsAndGenerics:
         assert info["canonical_name"] == "atorvastatin"
         assert info["ingredients"] == ["atorvastatin"]
         assert "Lipitor" in info["brand_names"]
+        # Exact matches surface a score of 100 so callers can distinguish
+        # them from approximate hits.
+        assert info["score"] == 100
 
     async def test_unmatched_returns_empty_lists(self):
         tools = RxNormTools()
@@ -318,3 +326,237 @@ class TestModuleHelpers:
         # max_terms is forwarded to the underlying tool.
         kwargs = mock_expand.await_args.kwargs
         assert kwargs.get("max_terms") == 3
+
+
+class TestPubMedSingleDrugHeuristic:
+    """Cover PubMedTool._looks_like_single_drug_query / _normalize_drug_terms."""
+
+    def test_looks_like_drug_for_short_unitary_query(self):
+        from fighthealthinsurance.chat.tools.pubmed_tool import PubMedTool
+
+        assert PubMedTool._looks_like_single_drug_query("Lipitor")
+        assert PubMedTool._looks_like_single_drug_query("metformin 500mg")
+        assert PubMedTool._looks_like_single_drug_query("co-trimoxazole")
+
+    def test_rejects_multi_concept_query(self):
+        from fighthealthinsurance.chat.tools.pubmed_tool import PubMedTool
+
+        # Multi-concept queries that would lose information if collapsed
+        # to a canonical drug name.
+        assert not PubMedTool._looks_like_single_drug_query(
+            "metformin and kidney disease"
+        )
+        assert not PubMedTool._looks_like_single_drug_query("Lipitor vs simvastatin")
+        assert not PubMedTool._looks_like_single_drug_query("metformin, atorvastatin")
+        # Three-or-more-token query — even without a connector, refuse to
+        # rewrite, since "metformin kidney disease" looks lexically like a
+        # drug+dose pair but means drug+condition.
+        assert not PubMedTool._looks_like_single_drug_query("metformin kidney disease")
+
+    def test_rejects_empty(self):
+        from fighthealthinsurance.chat.tools.pubmed_tool import PubMedTool
+
+        assert not PubMedTool._looks_like_single_drug_query("")
+        assert not PubMedTool._looks_like_single_drug_query("   ")
+
+    @pytest.mark.asyncio
+    async def test_normalize_drug_terms_skips_multi_concept(self):
+        from fighthealthinsurance.chat.tools.pubmed_tool import PubMedTool
+
+        send_status = AsyncMock()
+        rxnorm = RxNormTools()
+        # If the heuristic were bypassed and normalize() ran, we'd see a call.
+        with patch.object(
+            rxnorm, "normalize", new_callable=AsyncMock
+        ) as mock_normalize:
+            tool = PubMedTool(send_status, rxnorm_tools=rxnorm)
+            result = await tool._normalize_drug_terms("metformin kidney disease")
+
+        assert result == "metformin kidney disease"
+        mock_normalize.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_normalize_drug_terms_rewrites_single_drug(self):
+        from fighthealthinsurance.chat.tools.pubmed_tool import PubMedTool
+
+        send_status = AsyncMock()
+        rxnorm = RxNormTools()
+        with patch.object(
+            rxnorm, "normalize", new_callable=AsyncMock
+        ) as mock_normalize:
+            mock_normalize.return_value = NormalizedDrug(
+                query="lipitor",
+                rxcui="153165",
+                canonical_name="atorvastatin",
+                tty="IN",
+                score=100,
+            )
+            tool = PubMedTool(send_status, rxnorm_tools=rxnorm)
+            result = await tool._normalize_drug_terms("Lipitor")
+
+        assert result == "atorvastatin"
+        mock_normalize.assert_awaited_once_with("Lipitor")
+
+
+class TestRxNormLookupToolFormatting:
+    """Cover RxNormLookupTool._format_context (score gating, _merge)."""
+
+    def test_low_score_treated_as_miss(self):
+        from fighthealthinsurance.chat.tools.rxnorm_tool import RxNormLookupTool
+
+        info = {
+            "matched": True,
+            "rxcui": "83367",
+            "canonical_name": "atorvastatin",
+            "tty": "IN",
+            "score": 50,
+            "ingredients": ["atorvastatin"],
+            "brand_names": ["Lipitor"],
+        }
+        out = RxNormLookupTool._format_context("atrovstatn", info)
+        # Below threshold — should not include the canonical name; should
+        # advise falling back to the user's spelling.
+        assert "atorvastatin" not in out
+        assert "no canonical RxNorm record" in out
+
+    def test_exact_match_includes_canonical(self):
+        from fighthealthinsurance.chat.tools.rxnorm_tool import RxNormLookupTool
+
+        info = {
+            "matched": True,
+            "rxcui": "83367",
+            "canonical_name": "atorvastatin",
+            "tty": "IN",
+            "score": 100,
+            "ingredients": ["atorvastatin"],
+            "brand_names": ["Lipitor"],
+        }
+        out = RxNormLookupTool._format_context("Atorvastatin", info)
+        assert "canonical name: atorvastatin" in out
+        assert "Lipitor" in out
+
+    def test_merge_inserts_separator(self):
+        from fighthealthinsurance.chat.tools.rxnorm_tool import RxNormLookupTool
+
+        merged = RxNormLookupTool._merge("first sentence.", "second sentence.")
+        assert merged == "first sentence.\n\nsecond sentence."
+
+    def test_merge_handles_empties(self):
+        from fighthealthinsurance.chat.tools.rxnorm_tool import RxNormLookupTool
+
+        assert RxNormLookupTool._merge("", "") == ""
+        assert RxNormLookupTool._merge(None, None) == ""
+        assert RxNormLookupTool._merge("only", "") == "only"
+        assert RxNormLookupTool._merge("", "only") == "only"
+
+
+class TestRxNormLookupToolHandle:
+    """End-to-end coverage of RxNormLookupTool.handle()/execute().
+
+    Mocks the underlying ``RxNormTools`` so we don't hit the network.
+    Specifically guards against regressions in: wrapper cleanup
+    (``[...]`` / ``**...**``), score-based gating, and self-recursion
+    safety on the resulting context.
+    """
+
+    @pytest.mark.asyncio
+    async def test_handle_strips_bracket_wrapper(self):
+        from fighthealthinsurance.chat.tools.rxnorm_tool import RxNormLookupTool
+
+        send_status = AsyncMock()
+        rxnorm = RxNormTools()
+        with patch.object(
+            rxnorm, "get_brands_and_generics", new_callable=AsyncMock
+        ) as mock_info:
+            mock_info.return_value = {
+                "matched": True,
+                "rxcui": "153165",
+                "canonical_name": "atorvastatin",
+                "tty": "IN",
+                "score": 100,
+                "ingredients": ["atorvastatin"],
+                "brand_names": ["Lipitor"],
+            }
+            tool = RxNormLookupTool(send_status, rxnorm_tools=rxnorm)
+            response_text = "Some response. [rxnorm_lookup: Lipitor] Trailing text."
+            cleaned, ctx, handled = await tool.handle(response_text, "")
+
+        assert handled
+        # Trailing `]` from the tool call should be consumed entirely;
+        # the surrounding response text should remain readable.
+        assert "[rxnorm_lookup" not in cleaned
+        assert "]" not in cleaned.split(".")[1]  # nothing dangling on second sentence
+        assert "atorvastatin" in ctx
+        mock_info.assert_awaited_once_with("Lipitor")
+
+    @pytest.mark.asyncio
+    async def test_handle_strips_asterisk_wrapper(self):
+        from fighthealthinsurance.chat.tools.rxnorm_tool import RxNormLookupTool
+
+        send_status = AsyncMock()
+        rxnorm = RxNormTools()
+        with patch.object(
+            rxnorm, "get_brands_and_generics", new_callable=AsyncMock
+        ) as mock_info:
+            mock_info.return_value = {
+                "matched": True,
+                "rxcui": "6809",
+                "canonical_name": "metformin",
+                "tty": "IN",
+                "score": 100,
+                "ingredients": ["metformin"],
+                "brand_names": ["Glucophage"],
+            }
+            tool = RxNormLookupTool(send_status, rxnorm_tools=rxnorm)
+            cleaned, ctx, handled = await tool.handle(
+                "**rxnorm_lookup: glucophage** continuing.", ""
+            )
+
+        assert handled
+        # Both leading and trailing ** should be consumed.
+        assert "**rxnorm_lookup" not in cleaned
+        assert "**" not in cleaned.split("continuing")[0]
+        assert "metformin" in ctx
+
+    @pytest.mark.asyncio
+    async def test_handle_does_not_match_prose(self):
+        """Plain prose without an explicit tool call should be ignored."""
+        from fighthealthinsurance.chat.tools.rxnorm_tool import RxNormLookupTool
+
+        send_status = AsyncMock()
+        rxnorm = RxNormTools()
+        with patch.object(
+            rxnorm, "get_brands_and_generics", new_callable=AsyncMock
+        ) as mock_info:
+            tool = RxNormLookupTool(send_status, rxnorm_tools=rxnorm)
+            cleaned, ctx, handled = await tool.handle(
+                "I might do an RxNorm lookup for the medication.", ""
+            )
+
+        assert not handled
+        assert "RxNorm lookup for the medication" in cleaned
+        mock_info.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_emitted_context_is_not_self_triggering(self):
+        """The formatted context must not contain a phrase that re-triggers
+        the tool when the LLM echoes it back."""
+        from fighthealthinsurance.chat.tools.rxnorm_tool import RxNormLookupTool
+
+        info = {
+            "matched": True,
+            "rxcui": "153165",
+            "canonical_name": "atorvastatin",
+            "tty": "IN",
+            "score": 100,
+            "ingredients": ["atorvastatin"],
+            "brand_names": ["Lipitor"],
+        }
+        formatted = RxNormLookupTool._format_context("Lipitor", info)
+
+        # Run the formatted output back through the tool's pattern; if a
+        # match is found, the tool would recurse on itself.
+        send_status = AsyncMock()
+        rxnorm = RxNormTools()
+        tool = RxNormLookupTool(send_status, rxnorm_tools=rxnorm)
+        assert tool.detect(formatted) is None

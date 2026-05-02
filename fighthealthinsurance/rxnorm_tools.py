@@ -28,9 +28,10 @@ Public entry points:
 import asyncio
 import re
 import sys
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, AsyncIterator, Dict, List, Optional
 from urllib.parse import quote
 
 import aiohttp
@@ -115,10 +116,13 @@ def _clean_query(name: str) -> str:
 class RxNormTools:
     """Async client for RxNav with database-backed caching.
 
-    Instances are cheap to create and stateless aside from an optional
-    shared :py:class:`aiohttp.ClientSession`. In long-running consumers
-    (chat workers, prefetch actors) reuse a single instance per request to
-    benefit from connection pooling.
+    Sessions are owned at the level of a single :py:meth:`normalize` (or
+    :py:meth:`expand_query_terms` / :py:meth:`get_brands_and_generics`)
+    call: we open one :py:class:`aiohttp.ClientSession` at the start of
+    each call and reuse it for the 1-3 HTTP requests that follow, then
+    close it. Callers can also pass in an external session via the
+    constructor, in which case all calls share that session and we never
+    close it.
     """
 
     def __init__(
@@ -131,17 +135,29 @@ class RxNormTools:
         self._timeout = timeout
         self._base_url = base_url.rstrip("/")
 
-    async def _get_session(self) -> aiohttp.ClientSession:
-        if self._external_session is not None:
-            return self._external_session
-        # Lazy create a per-call session if the caller didn't provide one.
-        return aiohttp.ClientSession(headers=_FETCH_HEADERS)
+    @asynccontextmanager
+    async def _session_scope(self) -> AsyncIterator[aiohttp.ClientSession]:
+        """Yield a session for use by HTTP helpers within one logical call.
 
-    async def _fetch_json(self, url: str) -> Optional[Dict[str, Any]]:
+        Reuses the externally-supplied session when one was provided, or
+        opens a fresh session and closes it on exit otherwise. All HTTP
+        helpers below take an explicit ``session`` argument so we don't
+        accidentally open one session per request.
+        """
+        if self._external_session is not None:
+            yield self._external_session
+            return
+        session = aiohttp.ClientSession(headers=_FETCH_HEADERS)
+        try:
+            yield session
+        finally:
+            await session.close()
+
+    async def _fetch_json(
+        self, url: str, session: aiohttp.ClientSession
+    ) -> Optional[Dict[str, Any]]:
         """GET ``url`` and parse the response as JSON, returning ``None`` on
         any error or non-200 response. Honors :py:attr:`_timeout`."""
-        session = await self._get_session()
-        owns_session = self._external_session is None
         try:
             async with async_timeout(self._timeout):
                 async with session.get(url) as resp:
@@ -156,9 +172,6 @@ class RxNormTools:
         except Exception as e:
             logger.opt(exception=True).debug(f"RxNav GET {url} failed: {e}")
             return None
-        finally:
-            if owns_session:
-                await session.close()
 
     # ---- cache helpers ---------------------------------------------------
 
@@ -177,25 +190,31 @@ class RxNormTools:
         score: Optional[int],
         related: Dict[str, List[Dict[str, str]]],
     ) -> RxNormConcept:
-        # Replace any stale entry for this query so we never accumulate
-        # multiple rows per input. This keeps the cache table small.
-        await RxNormConcept.objects.filter(query=query).adelete()
-        return await RxNormConcept.objects.acreate(
+        # Atomic upsert keyed on the (unique) ``query`` field. This avoids
+        # the delete+create race where two concurrent misses would both
+        # try to insert a row, leaving duplicates plus a constraint
+        # violation depending on order.
+        obj, _ = await RxNormConcept.objects.aupdate_or_create(
             query=query,
-            rxcui=rxcui,
-            canonical_name=canonical_name,
-            tty=tty,
-            score=score,
-            related_json=related,
+            defaults={
+                "rxcui": rxcui,
+                "canonical_name": canonical_name,
+                "tty": tty,
+                "score": score,
+                "related_json": related,
+            },
         )
+        return obj
 
     # ---- RxNav HTTP wrappers --------------------------------------------
 
-    async def _exact_rxcui(self, name: str) -> Optional[Dict[str, str]]:
+    async def _exact_rxcui(
+        self, name: str, session: aiohttp.ClientSession
+    ) -> Optional[Dict[str, str]]:
         """Try an exact name match. Returns ``{"rxcui": ..., "name": ...}``
         if RxNorm has a record with this exact name, else ``None``."""
         url = f"{self._base_url}/rxcui.json?name={quote(name, safe='')}&search=2"
-        data = await self._fetch_json(url)
+        data = await self._fetch_json(url, session)
         if not data:
             return None
         ids = (data.get("idGroup") or {}).get("rxnormId") or []
@@ -203,7 +222,7 @@ class RxNormTools:
             return None
         rxcui = str(ids[0])
         # RxNav's rxcui.json doesn't return the canonical name; fetch it.
-        props = await self._properties(rxcui)
+        props = await self._properties(rxcui, session)
         if not props:
             return {"rxcui": rxcui, "name": name, "tty": ""}
         return {
@@ -213,14 +232,17 @@ class RxNormTools:
         }
 
     async def _approximate(
-        self, name: str, max_entries: int = 4
+        self,
+        name: str,
+        session: aiohttp.ClientSession,
+        max_entries: int = 4,
     ) -> Optional[Dict[str, Any]]:
         """Approximate match — handles misspellings and partial names."""
         url = (
             f"{self._base_url}/approximateTerm.json"
             f"?term={quote(name, safe='')}&maxEntries={max_entries}"
         )
-        data = await self._fetch_json(url)
+        data = await self._fetch_json(url, session)
         if not data:
             return None
         candidates = (data.get("approximateGroup") or {}).get("candidate") or []
@@ -234,7 +256,7 @@ class RxNormTools:
             score: Optional[int] = int(best.get("score"))
         except (TypeError, ValueError):
             score = None
-        props = await self._properties(rxcui)
+        props = await self._properties(rxcui, session)
         return {
             "rxcui": rxcui,
             "name": (props or {}).get("name") or best.get("name") or name,
@@ -242,10 +264,12 @@ class RxNormTools:
             "score": score,
         }
 
-    async def _properties(self, rxcui: str) -> Optional[Dict[str, str]]:
+    async def _properties(
+        self, rxcui: str, session: aiohttp.ClientSession
+    ) -> Optional[Dict[str, str]]:
         """Fetch canonical name + tty for a known RxCUI."""
         url = f"{self._base_url}/rxcui/{quote(rxcui, safe='')}/properties.json"
-        data = await self._fetch_json(url)
+        data = await self._fetch_json(url, session)
         if not data:
             return None
         props = data.get("properties") or {}
@@ -258,7 +282,10 @@ class RxNormTools:
         }
 
     async def _related(
-        self, rxcui: str, ttys: List[str]
+        self,
+        rxcui: str,
+        ttys: List[str],
+        session: aiohttp.ClientSession,
     ) -> Dict[str, List[Dict[str, str]]]:
         """Fetch related concepts (brands, ingredients, etc.) for an RxCUI.
 
@@ -272,7 +299,7 @@ class RxNormTools:
             f"{self._base_url}/rxcui/{quote(rxcui, safe='')}/related.json"
             f"?tty={'+'.join(ttys)}"
         )
-        data = await self._fetch_json(url)
+        data = await self._fetch_json(url, session)
         if not data:
             return {}
         groups = (data.get("relatedGroup") or {}).get("conceptGroup") or []
@@ -320,28 +347,30 @@ class RxNormTools:
                 related=cached.related_json or {},
             )
 
-        # Not cached — query RxNav. Try exact match first, then approximate.
-        match = await self._exact_rxcui(query)
-        score: Optional[int] = 100 if match else None
-        if not match:
-            approx = await self._approximate(query)
-            if approx:
-                match = {
-                    "rxcui": approx["rxcui"],
-                    "name": approx["name"],
-                    "tty": approx.get("tty", ""),
-                }
-                score = approx.get("score")
+        # Not cached — query RxNav. Open one session for the 1-3 HTTP
+        # requests below so we don't pay TCP/TLS setup per request.
+        async with self._session_scope() as session:
+            match = await self._exact_rxcui(query, session)
+            score: Optional[int] = 100 if match else None
+            if not match:
+                approx = await self._approximate(query, session)
+                if approx:
+                    match = {
+                        "rxcui": approx["rxcui"],
+                        "name": approx["name"],
+                        "tty": approx.get("tty", ""),
+                    }
+                    score = approx.get("score")
 
-        if not match:
-            # Cache the miss so we don't keep retrying unknown junk strings.
-            await self._cache_put(query, "", "", "", None, {})
-            return NormalizedDrug(query=query, rxcui="", canonical_name="")
+            if not match:
+                # Cache the miss so we don't keep retrying unknown junk strings.
+                await self._cache_put(query, "", "", "", None, {})
+                return NormalizedDrug(query=query, rxcui="", canonical_name="")
 
-        rxcui = match["rxcui"]
-        canonical_name = match["name"]
-        tty = match.get("tty", "")
-        related = await self._related(rxcui, EXPAND_TTYS)
+            rxcui = match["rxcui"]
+            canonical_name = match["name"]
+            tty = match.get("tty", "")
+            related = await self._related(rxcui, EXPAND_TTYS, session)
 
         await self._cache_put(query, rxcui, canonical_name, tty, score, related)
 
@@ -403,7 +432,8 @@ class RxNormTools:
                 "matched": bool,
                 "rxcui": str,
                 "canonical_name": str,
-                "tty": str,             # "IN", "BN", ...
+                "tty": str,                 # "IN", "BN", ...
+                "score": Optional[int],     # 100 for exact, lower for fuzzy
                 "ingredients": [name, ...],
                 "brand_names": [name, ...],
             }
@@ -431,6 +461,7 @@ class RxNormTools:
             "rxcui": normalized.rxcui,
             "canonical_name": normalized.canonical_name,
             "tty": normalized.tty,
+            "score": normalized.score,
             "ingredients": ingredients,
             "brand_names": brand_names,
         }

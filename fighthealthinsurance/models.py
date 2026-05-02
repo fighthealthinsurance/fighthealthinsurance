@@ -938,8 +938,9 @@ class RxNormConcept(models.Model):
 
     id = models.AutoField(primary_key=True)
     # The user-supplied query string, lowercased + whitespace-collapsed.
-    # Indexed because we look up by it on every normalization call.
-    query = models.CharField(max_length=300, db_index=True)
+    # Unique so concurrent misses can't write duplicate rows; the unique
+    # constraint also gives us the equivalent of an index for free.
+    query = models.CharField(max_length=300, unique=True)
     # Canonical RxCUI from RxNorm. Empty string when no match was found —
     # we still cache the miss to avoid hammering the API for unknown terms.
     rxcui = models.CharField(max_length=32, blank=True, default="")
@@ -958,7 +959,6 @@ class RxNormConcept(models.Model):
 
     class Meta:
         indexes = [
-            models.Index(fields=["query"], name="rxnorm_query_idx"),
             models.Index(fields=["rxcui"], name="rxnorm_rxcui_idx"),
         ]
 

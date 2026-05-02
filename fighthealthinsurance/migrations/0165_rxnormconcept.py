@@ -14,7 +14,7 @@ class Migration(migrations.Migration):
             name="RxNormConcept",
             fields=[
                 ("id", models.AutoField(primary_key=True, serialize=False)),
-                ("query", models.CharField(db_index=True, max_length=300)),
+                ("query", models.CharField(max_length=300, unique=True)),
                 ("rxcui", models.CharField(blank=True, default="", max_length=32)),
                 (
                     "canonical_name",
@@ -31,7 +31,6 @@ class Migration(migrations.Migration):
             ],
             options={
                 "indexes": [
-                    models.Index(fields=["query"], name="rxnorm_query_idx"),
                     models.Index(fields=["rxcui"], name="rxnorm_rxcui_idx"),
                 ],
             },

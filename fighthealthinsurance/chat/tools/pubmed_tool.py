@@ -98,18 +98,33 @@ class PubMedTool(BaseTool):
 
         # If the query is a single drug-like phrase, normalize it through
         # RxNorm so we search for the canonical name rather than a brand
-        # variant or misspelling. The original query is preserved as a
-        # fallback inside _search_articles.
+        # variant or misspelling. When normalization rewrites the query we
+        # search for BOTH the canonical name AND the original term and
+        # merge the results, so brand-only searches don't lose evidence
+        # indexed under the brand name.
         normalized_query = await self._normalize_drug_terms(pubmed_query_terms)
         if normalized_query != pubmed_query_terms:
             await self.send_status_message(
                 f"Normalized {pubmed_query_terms!r} to {normalized_query!r} via RxNorm."
             )
-
-        await self.send_status_message(f"Searching PubMed for: {normalized_query}...")
-
-        # Search for both recent and all-time articles in parallel
-        article_ids = await self._search_articles(normalized_query)
+            await self.send_status_message(
+                f"Searching PubMed for: {normalized_query} and {pubmed_query_terms}..."
+            )
+            canonical_ids = await self._search_articles(normalized_query)
+            original_ids = await self._search_articles(pubmed_query_terms)
+            # Preserve canonical-name results first, then add brand-name
+            # ids that weren't already returned.
+            seen: set[str] = set()
+            article_ids: list[str] = []
+            for pmid in canonical_ids + original_ids:
+                if pmid not in seen:
+                    seen.add(pmid)
+                    article_ids.append(pmid)
+        else:
+            await self.send_status_message(
+                f"Searching PubMed for: {normalized_query}..."
+            )
+            article_ids = await self._search_articles(normalized_query)
 
         if not article_ids:
             await self.send_status_message(
@@ -150,14 +165,49 @@ class PubMedTool(BaseTool):
 
         return cleaned_response, updated_context
 
+    # Conjunctions/operators that signal a multi-concept query like
+    # "metformin AND kidney disease" — never rewrite the whole thing.
+    _MULTI_CONCEPT_TOKENS = (
+        " and ",
+        " or ",
+        " vs ",
+        " versus ",
+        ",",
+        ";",
+        " AND ",
+        " OR ",
+    )
+
+    @classmethod
+    def _looks_like_single_drug_query(cls, query: str) -> bool:
+        """Heuristic: is this short enough and unitary enough that it might
+        be a single drug name?
+
+        We cap at 2 tokens because anything longer is ambiguous between
+        "drug + dose" (e.g., ``"metformin 500mg"``) and "drug + condition"
+        (e.g., ``"metformin kidney"``). Rewriting the latter would silently
+        drop the condition, so we err on the side of leaving multi-token
+        queries alone — PubMed still finds drug results from the user's
+        original spelling, we just skip the canonical-name optimization.
+        """
+        q = (query or "").strip()
+        if not q:
+            return False
+        if any(tok in q for tok in cls._MULTI_CONCEPT_TOKENS):
+            return False
+        return len(q.split()) <= 2
+
     async def _normalize_drug_terms(self, query: str) -> str:
         """Best-effort drug-name normalization for a PubMed query.
 
-        We only rewrite the query when RxNorm returns a high-confidence
-        match — otherwise we leave it alone, since the LLM may be searching
-        for procedures, diagnoses, or general topics that have nothing to
-        do with medications.
+        Only runs for queries that look like a single drug name (see
+        :py:meth:`_looks_like_single_drug_query`) and only rewrites when
+        RxNorm returns a high-confidence match. Multi-concept queries like
+        "metformin kidney disease" fall through unchanged, since rewriting
+        them would drop the non-drug terms.
         """
+        if not self._looks_like_single_drug_query(query):
+            return query
         try:
             normalized = await self.rxnorm_tools.normalize(query)
         except Exception as e:

@@ -40,9 +40,17 @@ FETCH_DOC_REGEX = r"(?:\*\*)?fetch_doc\s*(\{[^}]*\})\s*(?:\*\*)?"
 # Matches: uspstf_lookup {JSON} or **uspstf_lookup {JSON}**
 USPSTF_LOOKUP_REGEX = r"(?:\*\*)?uspstf_lookup\s*(\{[^}]*\})\s*(?:\*\*)?"
 
-# RxNorm drug normalization tool - captures the drug name (free-text)
+# RxNorm drug normalization tool - captures the drug name (free-text).
 # Matches: [rxnorm_lookup: drug name], **rxnorm_lookup: drug name**, etc.
-RXNORM_LOOKUP_REGEX = r"[\[\*]{0,4}rxnorm[ _]?lookup:?\s*([^*\[\]\n]+)"
+# The colon is mandatory and we require either a leading `[`/`*` marker
+# or a word boundary, so prose like "RxNorm lookup for Lipitor" doesn't
+# trip it. The capture is non-greedy and terminates at the closing
+# `]`/`**` wrapper, end of line, or end of string, so cleanup doesn't
+# leave stray delimiters in the response.
+RXNORM_LOOKUP_REGEX = (
+    r"(?:[\[\*]{1,4}|\b)rxnorm[ _]?lookup\s*:\s*"
+    r"([^*\[\]\n]+?)\s*(?:[\]\*]{1,4}|$|(?=\n))"
+)
 
 # List of all tool patterns for scoring/detection
 ALL_TOOL_PATTERNS = [
