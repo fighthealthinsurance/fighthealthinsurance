@@ -489,20 +489,13 @@ _SEARCHABLE_FIELDS = (
 )
 
 
-def _haystack(record: Any) -> str:
-    """Concatenate the searchable fields of a row or dict, lowercased."""
-    if isinstance(record, dict):
-        values = [record.get(f, "") for f in _SEARCHABLE_FIELDS]
-    else:
-        values = [getattr(record, f, "") for f in _SEARCHABLE_FIELDS]
-    return " ".join(filter(None, values)).lower()
-
-
-def _matches_query(record: Any, terms: List[str]) -> bool:
-    """Case-insensitive AND substring match across the searchable fields."""
+def _matches_query(record: Dict[str, Any], terms: List[str]) -> bool:
+    """Case-insensitive AND substring match across the searchable fields of a dict."""
     if not terms:
         return True
-    haystack = _haystack(record)
+    haystack = " ".join(
+        str(record.get(f, "")) for f in _SEARCHABLE_FIELDS if record.get(f)
+    ).lower()
     return all(term in haystack for term in terms)
 
 
