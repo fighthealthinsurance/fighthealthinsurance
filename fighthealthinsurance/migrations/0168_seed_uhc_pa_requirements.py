@@ -14,6 +14,7 @@ rows) does not produce duplicates.
 """
 
 import datetime
+from typing import Any, Dict, List
 
 from django.db import migrations
 
@@ -24,7 +25,7 @@ from django.db import migrations
 # document (UHC Medical Policy or Coverage Determination Guideline), and the
 # submission channel. Categories chosen here are ones our denial corpus shows
 # most frequently for UHC PA appeals.
-UHC_PA_SEED_ENTRIES = [
+UHC_PA_SEED_ENTRIES: List[Dict[str, Any]] = [
     # --- Genetic and molecular testing (UHC requires PA for most BRCA panels) ---
     {
         "cpt_hcpcs_code": "81162",
