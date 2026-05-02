@@ -137,23 +137,32 @@ class UCRLookup(models.Model):
 
 ### 4.2 Extensions to `Denial`
 
-Six scalar fields, one timestamp, and one JSON context field. All nullable/blank
-so existing intake keeps working.
+Six billing fields (encrypted — see §10.3), one timestamp, one FK to the active
+audit snapshot, and one JSON context field. All nullable/blank so existing
+intake keeps working.
 
 ```python
 # Inside Denial (around models.py:1235+)
-# Billing/geographic intake fields (6 scalar):
+# Billing/geographic intake fields. Amounts are stored as EncryptedCharField
+# (string of decimal cents) per the §10.3 phase-1 encryption requirement;
+# helpers wrap parse/format so callers see ints.
 service_zip = models.CharField(max_length=5, blank=True, default="")
 procedure_code = models.CharField(max_length=10, blank=True, default="", db_index=True)
-procedure_modifier = models.CharField(max_length=4, blank=True, default="")
-billed_amount_cents = models.PositiveIntegerField(null=True, blank=True)
-allowed_amount_cents = models.PositiveIntegerField(null=True, blank=True)
-paid_amount_cents = models.PositiveIntegerField(null=True, blank=True)
+procedure_modifier = EncryptedCharField(max_length=4, blank=True, default="")
+billed_amount_cents = EncryptedCharField(max_length=16, blank=True, default="")
+allowed_amount_cents = EncryptedCharField(max_length=16, blank=True, default="")
+paid_amount_cents = EncryptedCharField(max_length=16, blank=True, default="")
 
-# Enrichment state (1 flat timestamp + 1 JSON):
-# A flat indexed DateTimeField is required so the refresh actor can find stale
-# rows without scanning JSON paths (see §10.4). NULL means "needs enrichment".
+# Enrichment state.
+# ucr_refreshed_at: flat indexed DateTimeField so the refresh actor can find
+#   stale rows without scanning JSON paths (see §10.4). NULL = needs enrichment.
+# latest_ucr_lookup: durable pointer to the active audit snapshot so retention
+#   pruning (see §10.5) keeps the right row instead of inferring from JSON.
 ucr_refreshed_at = models.DateTimeField(null=True, blank=True, db_index=True)
+latest_ucr_lookup = models.ForeignKey(
+    "UCRLookup", null=True, blank=True,
+    on_delete=models.SET_NULL, related_name="+",
+)
 ucr_context = models.JSONField(null=True, blank=True)
 ```
 
@@ -183,7 +192,7 @@ A denial is an under-reimbursement candidate when **any** of:
 
 ### 5.2 Pipeline (new helper: `fighthealthinsurance/ucr_helper.py`)
 
-```
+```text
 DenialCreatorHelper.create_or_update_denial()       # common_view_logic.py:940+
   └─ dispatches (does not await) UCRRefreshActor.refresh_denial.remote(denial.id)
        (§10.4). Request returns immediately with ucr_context = {"status":
@@ -230,7 +239,7 @@ Phase 1: ship #1 + #3 (regex + manual entry on intake form). #2 follows in phase
 the upstream ML prompt assembly need a new section. Pattern: when
 `denial.ucr_context` is non-null and the denial is OON, append a structured block:
 
-```
+```text
 [UCR PRICING CONTEXT]
 Procedure: 99213 (Office visit, established patient)
 Geographic area: ZIP3 941 (San Francisco)
@@ -259,7 +268,7 @@ from medical-necessity templates. Loaded via `fighthealthinsurance/fixtures/init
 
 Pattern matches existing ViewSet + `@action` style in `rest_views.py`.
 
-```
+```http
 POST /ziggy/rest/denial/{id}/set_billing_info/
   body: {service_zip, procedure_code, procedure_modifier,
          billed_amount_cents, allowed_amount_cents, paid_amount_cents}
@@ -349,10 +358,20 @@ or when `Denial.ucr_refreshed_at` is older than `UCR_DENIAL_STALE_TTL_DAYS` and
 the appeal is not yet finalized.
 
 ### 10.3 PII / HIPAA
-Billed/allowed/paid amounts on a `Denial` are sensitive in combination with the
-denial. They store on `Denial` as plain `PositiveIntegerField` for now — extend
-to `EncryptedCharField` (matching the existing `django-encrypted-model-fields`
-usage elsewhere in the codebase) if a security review requires it.
+Billed/allowed/paid amounts on a `Denial` are PHI-adjacent in combination with
+the denial, so phase 1 stores them as `EncryptedCharField` (the same
+`django-encrypted-model-fields` package referenced in CLAUDE.md). Cents are
+serialized as decimal strings; a thin helper on `Denial` (or the serializer)
+wraps parse/format so callers see ints. Migration plan:
+1. New columns are added empty in the schema migration; no backfill needed
+   (no existing data — these are new fields).
+2. `FIELD_ENCRYPTION_KEY` (or whatever the project's env name is) must be set
+   in `Dev`, `Test*`, and `Prod` configuration classes; `.env.example` is
+   updated to document it.
+3. Round-trip test in `tests/sync/test_ucr_models.py` verifies that an
+   integer-valued `set_billed_amount_cents(12345)` reads back as `12345` and
+   that the underlying column is not plaintext-readable.
+
 The unauthenticated `/ucr/lookup/` endpoint never sees patient data — just CPT
 and ZIP3.
 
@@ -419,12 +438,18 @@ class UCRRefreshActor:
                 # Pre-fetch rates for the (cpt, area) pairs in this batch so each
                 # maybe_enrich() call is a dict lookup, not a DB round-trip.
                 rate_cache = await UCREnrichmentHelper.bulk_load_rates(stale)
-                await asyncio.gather(*(
+                # return_exceptions=True so one bad denial doesn't cancel the
+                # batch and we get per-denial visibility into failures.
+                results = await asyncio.gather(*(
                     UCREnrichmentHelper.maybe_enrich(d, force=True, rates=rate_cache)
                     for d in stale
-                ))
+                ), return_exceptions=True)
+                for denial, result in zip(stale, results):
+                    if isinstance(result, Exception):
+                        logger.error("UCR enrich failed for denial_id=%s",
+                                     denial.id, exc_info=result)
             except Exception:
-                logger.exception("UCR denial refresh failed")
+                logger.exception("UCR denial refresh loop crashed")
             base = settings.UCR_DENIAL_REFRESH_INTERVAL_MINUTES * 60
             await asyncio.sleep(random.uniform(base * 0.75, base * 1.25))
 ```
@@ -456,7 +481,9 @@ Idempotency & safety:
 Tests: `tests/sync-actor/test_ucr_refresh_actor.py` under the existing
 `py313-django52-sync-actor` tox env. Cover stale-detection (TTL boundary +
 NULL `ucr_refreshed_at`), batch bounding via the setting, finalized-denial
-skip, source-advanced fan-out, and the hash-unchanged short-circuit.
+skip, source-advanced fan-out, the hash-unchanged short-circuit, and the
+per-denial error path: when one denial in a batch raises, the others still
+complete and the failure is logged with the offending `denial_id`.
 
 ### 10.5 Retention
 
@@ -470,8 +497,10 @@ Both `UCRRate` and `UCRLookup` grow without bound otherwise.
   intact; that's why audit data is decoupled from live rates.
 - `UCRLookup`: append-only by design (§10.4) but capped per denial — keep at
   most `UCR_LOOKUP_RETENTION_PER_DENIAL` rows (default 10), trimming oldest
-  on insert. When a denial is finalized, prune all but the snapshot referenced
-  by `Denial.ucr_context`.
+  on insert. The row pointed to by `Denial.latest_ucr_lookup` (§4.2) is always
+  preserved regardless of age, so pruning is driven by a durable FK rather than
+  inferred from `ucr_context` JSON. When a denial is finalized, prune all
+  rows except `Denial.latest_ucr_lookup`.
 
 ## 11. Testing strategy
 
@@ -480,6 +509,9 @@ Following the project's `tox -e ...` conventions.
 `tests/sync/test_ucr_models.py`
 - UCRRate uniqueness, area resolution fallback chain (ZIP3 → state → national).
 - UCRLookup snapshot persistence.
+- Encrypted billing-amount round-trip (§10.3): integer in → integer out, raw
+  column is not plaintext-readable.
+- `latest_ucr_lookup` FK is preserved by retention pruning (§10.5).
 
 `tests/sync/test_ucr_helper.py`
 - Comparison math: gap calculations, percentile selection, source priority.
@@ -526,7 +558,8 @@ ProfessionalUser disable display per UserDomain if desired.
 
 Phase 1 — MVP (1–2 sprints)
 - Models (§4), migrations, `Denial` field extensions including
-  `ucr_refreshed_at` and `ucr_context`, `ucr_constants.py` enums.
+  `ucr_refreshed_at`, `latest_ucr_lookup` FK, and `ucr_context`;
+  `ucr_constants.py` enums; `EncryptedCharField` for billing amounts (§10.3).
 - Medicare PFS loader; retention pruning (§10.5).
 - Regex code extraction + manual entry on intake.
 - `UCREnrichmentHelper` with multiplier-based benchmarks. Per §12.2, letters
