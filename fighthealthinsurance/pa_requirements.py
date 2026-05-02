@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import re
 from datetime import date
-from typing import Iterable, List, Optional, Sequence, Set
+from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from django.db.models import Q
 from loguru import logger
@@ -35,12 +35,23 @@ from fighthealthinsurance.models import (
     PayerPriorAuthRequirement,
 )
 
-# CPT (5 digits, e.g. 95810) or HCPCS Level II (A-V + 4 digits, e.g. J0490).
-# Excludes ICD-10 codes (which start with W, X, Y, or Z) by construction.
-# An optional trailing modifier (e.g. "-26") is tolerated but not captured.
+# CPT (5 digits, e.g. 95810) or HCPCS Level II.
+#
+# HCPCS Level II is restricted to the prefix subset that's actually in active
+# use (A,B,C,D,E,G,H,J,K,L,P,Q,R,S,T,V). F/I/M/N/O/U are intentionally
+# excluded — they're either retired, never assigned, or overlap heavily with
+# ICD-10 musculoskeletal/respiratory diagnosis codes (e.g. ICD-10 ``M54.50``
+# becomes ``M5450`` when OCR drops the period, which would otherwise look
+# like a HCPCS code). Adding F/I/M/N/O back would re-introduce that
+# false-positive risk.
 _CPT_HCPCS_PATTERN = re.compile(
-    r"\b(?:(?P<cpt>\d{5})|(?P<hcpcs>[A-V]\d{4}))(?:[-\s]?[A-Z0-9]{2})?\b"
+    r"\b(?:(?P<cpt>\d{5})|(?P<hcpcs>[ABCDEGHJKLPQRSTV]\d{4}))(?:[-\s]?[A-Z0-9]{2})?\b"
 )
+
+# Used to detect ICD-10 codes with their canonical period so we can strip
+# them from text before HCPCS extraction (defends against e.g. ``J45.20``
+# being mis-extracted as HCPCS J4520 if the period survives the regex).
+_ICD10_DOTTED_PATTERN = re.compile(r"\b[A-TV-Z][0-9][0-9AB]\.[0-9A-TV-Z]{1,4}\b")
 
 _LOB_PATTERN_MAP = (
     (
@@ -78,18 +89,79 @@ def extract_cpt_hcpcs_codes(text: Optional[str]) -> List[str]:
 
     Returns a de-duplicated list preserving first-occurrence order so the
     caller can prioritize the codes most prominent in the denial.
+
+    ICD-10 diagnosis codes that share the HCPCS shape are filtered out two
+    ways: dotted ICD-10 codes (e.g. ``J45.20``) are removed from the input
+    before scanning, and any HCPCS-shaped match whose compact form also
+    appears as an ICD-10 code in the original text is dropped. This prevents
+    OCR'd diagnoses like ``M54.50`` → ``M5450`` from being misread as
+    procedure codes.
     """
     if not text:
         return []
+
+    icd10_compact: Set[str] = {
+        m.group(0).replace(".", "").upper()
+        for m in _ICD10_DOTTED_PATTERN.finditer(text)
+    }
+    cleaned_text = _ICD10_DOTTED_PATTERN.sub(" ", text)
+
     seen: Set[str] = set()
     out: List[str] = []
-    for match in _CPT_HCPCS_PATTERN.finditer(text):
-        code = (match.group("cpt") or match.group("hcpcs") or "").upper()
+    for match in _CPT_HCPCS_PATTERN.finditer(cleaned_text):
+        hcpcs = match.group("hcpcs")
+        code = (match.group("cpt") or hcpcs or "").upper()
         if not code or code in seen:
+            continue
+        if hcpcs and code in icd10_compact:
             continue
         seen.add(code)
         out.append(code)
     return out
+
+
+def resolve_insurance_company_by_name(
+    payer: Optional[str],
+) -> Optional[InsuranceCompany]:
+    """
+    Resolve a free-form payer name to an ``InsuranceCompany`` row by
+    iexact match on ``name``, then by alt-name match, then by the
+    company's stored ``regex`` pattern. Returns None when the name is
+    empty or no row matches.
+
+    Matching deliberately skips substring matches on ``name`` to avoid
+    false positives across closely-named carriers (for example, "United
+    Health Group" vs "UnitedHealthcare Community Plan").
+    """
+    if not payer:
+        return None
+
+    payer_clean = payer.strip()
+    if not payer_clean:
+        return None
+
+    company = InsuranceCompany.objects.filter(name__iexact=payer_clean).first()
+    if company is not None:
+        return company
+
+    payer_lower = payer_clean.lower()
+    candidates = InsuranceCompany.objects.exclude(alt_names="")
+    for candidate in candidates.iterator():
+        if not candidate.alt_names:
+            continue
+        for alt in candidate.alt_names.splitlines():
+            alt = alt.strip().lower()
+            if alt and (alt == payer_lower or alt in payer_lower):
+                return candidate
+
+    # Last resort: try compiled `regex` field on each company.
+    for candidate in InsuranceCompany.objects.exclude(regex="").iterator():
+        try:
+            if candidate.regex and re.search(candidate.regex, payer_clean):
+                return candidate
+        except re.error:
+            continue
+    return None
 
 
 def infer_line_of_business(denial: Denial) -> Optional[str]:
@@ -231,7 +303,9 @@ def format_pa_context(
             scope_parts.append(f"state={req.state}")
         if req.plan_id:
             try:
-                scope_parts.append(f"plan={req.plan.plan_name}")
+                plan = req.plan
+                if plan is not None:
+                    scope_parts.append(f"plan={plan.plan_name}")
             except Exception as e:
                 logger.opt(exception=True).debug(
                     f"Could not load plan {req.plan_id} for PA requirement {req.id}: {e}"
@@ -270,14 +344,16 @@ def format_pa_context(
     return "\n".join(lines)
 
 
-def get_pa_context_for_denial(denial: Denial) -> str:
+def _denial_lookup(
+    denial: Denial,
+) -> Tuple[List[PayerPriorAuthRequirement], List[str]]:
     """
-    Compute a PA-requirement context string for a denial.
+    Run a PA lookup against a Denial and return ``(requirements, codes)``.
 
-    Extracts CPT/HCPCS codes from the denial text and procedure fields,
-    looks them up against the payer's indexed PA rules, and returns a
-    formatted context block. Returns an empty string when no codes are
-    found or no rules match.
+    Returns ``([], [])`` when the denial has no procedure codes, no
+    identifiable payer, or the lookup fails. The payer guard is critical:
+    without it we would search across all carriers and surface rules from
+    the wrong insurer in payer-attributed appeal context.
     """
     sources: List[str] = []
     for value in (
@@ -289,13 +365,24 @@ def get_pa_context_for_denial(denial: Denial) -> str:
         if value:
             sources.append(str(value))
     if not sources:
-        return ""
+        return [], []
 
     codes = extract_cpt_hcpcs_codes("\n".join(sources))
     if not codes:
-        return ""
+        return [], []
 
     insurance_company = getattr(denial, "insurance_company_obj", None)
+    if insurance_company is None:
+        # Fall back to the free-text insurer field; if that doesn't resolve
+        # to a known carrier, refuse the lookup so we don't bleed rules
+        # across payers. Return empty codes too so the caller doesn't
+        # emit a misleading "no rule found in this payer's list" message.
+        insurance_company = resolve_insurance_company_by_name(
+            getattr(denial, "insurance_company", None)
+        )
+        if insurance_company is None:
+            return [], []
+
     line_of_business = infer_line_of_business(denial)
     state = (getattr(denial, "state", "") or "").upper().strip() or None
 
@@ -308,6 +395,213 @@ def get_pa_context_for_denial(denial: Denial) -> str:
         )
     except Exception as e:
         logger.opt(exception=True).debug(f"PA requirement lookup failed: {e}")
-        return ""
+        return [], codes
 
+    return requirements, codes
+
+
+def get_pa_context_for_denial(denial: Denial) -> str:
+    """
+    Compute a PA-requirement context string for a denial.
+
+    Extracts CPT/HCPCS codes from the denial text and procedure fields,
+    looks them up against the payer's indexed PA rules, and returns a
+    formatted context block. Returns an empty string when no codes are
+    found or no rules match.
+    """
+    requirements, codes = _denial_lookup(denial)
+    if not codes:
+        return ""
     return format_pa_context(requirements, requested_codes=codes)
+
+
+# Category-keyed clarifying questions. Each entry is a list of
+# ``(question, default_answer)`` tuples in the same shape used by
+# ``MLAppealQuestionsHelper`` so they can be merged into the denial's
+# ``generated_questions`` directly. Keys match ``pa_category`` values used
+# in the seed data — adding a new category here is the only step needed
+# to surface PA-aware questions for it.
+_PA_CATEGORY_QUESTIONS: Dict[str, List[Tuple[str, str]]] = {
+    "Genetic and Molecular Testing": [
+        (
+            "Did the patient receive genetic counseling from a qualified provider before testing?",
+            "",
+        ),
+        (
+            "What personal or family history of cancer triggered the test order?",
+            "",
+        ),
+        (
+            "Will the result change clinical management (treatment, surveillance, or screening)?",
+            "",
+        ),
+    ],
+    "Sleep Medicine": [
+        (
+            "Has the patient completed a validated sleep questionnaire (Epworth, STOP-BANG)?",
+            "",
+        ),
+        (
+            "Does the patient have witnessed apneas, loud snoring, or daytime sleepiness?",
+            "",
+        ),
+        (
+            "Has a home sleep study been attempted, or is one contraindicated?",
+            "",
+        ),
+    ],
+    "Durable Medical Equipment - CGM": [
+        (
+            "Is the patient on intensive insulin therapy (3+ injections/day or insulin pump)?",
+            "",
+        ),
+        (
+            "Has the patient documented frequent self-monitoring (4+ fingersticks/day)?",
+            "",
+        ),
+        (
+            "Is there a history of hypoglycemia unawareness or recurrent severe hypoglycemia?",
+            "",
+        ),
+    ],
+    "Outpatient Injectable Medication": [
+        (
+            "Which formulary alternatives have been tried, and what was the response or adverse reaction?",
+            "",
+        ),
+        (
+            "Is there an FDA-approved indication or established off-label use that supports this drug?",
+            "",
+        ),
+        (
+            "Will the drug be administered in a site of care covered by the plan (office vs. infusion center vs. hospital outpatient)?",
+            "",
+        ),
+    ],
+    "Advanced Outpatient Imaging": [
+        (
+            "What lower-cost imaging (e.g., x-ray, ultrasound) has already been performed and what did it show?",
+            "",
+        ),
+        (
+            "Are there red-flag symptoms (neurologic deficit, suspected malignancy, trauma) that justify advanced imaging?",
+            "",
+        ),
+        (
+            "How will the imaging result change management?",
+            "",
+        ),
+    ],
+    "Spine Surgery": [
+        (
+            "What conservative therapies (physical therapy, NSAIDs, injections) have been trialed and for how long?",
+            "",
+        ),
+        (
+            "Are there imaging findings (compression fracture, instability) that match the patient's symptoms?",
+            "",
+        ),
+        (
+            "Is there evidence of progressive neurologic deficit or intractable pain?",
+            "",
+        ),
+    ],
+    "Evaluation and Management": [
+        (
+            "Was the office visit billed as a routine E&M code that does not require PA under this plan?",
+            "",
+        ),
+    ],
+}
+
+# Generic question templates used when a matched rule has no recognised
+# category — keyed by sub-shape of the rule (criteria reference present,
+# negative rule, notification-only, etc.).
+_GENERIC_PA_QUESTION_TEMPLATES = {
+    "criteria": (
+        "Does the patient meet the medical-necessity criteria in {criteria}?",
+        "",
+    ),
+    "negative_rule": (
+        "Was this code billed under the same plan and line of business listed in the payer's PA list (where PA is not required)?",
+        "",
+    ),
+    "notification": (
+        "Was the payer notified per its advance-notification requirement (typically before the date of service)?",
+        "",
+    ),
+    "submission_channel": (
+        "Was the PA request submitted through the payer's published channel ({channel})?",
+        "",
+    ),
+}
+
+
+def generate_pa_questions(
+    requirements: Iterable[PayerPriorAuthRequirement],
+    max_questions: int = 4,
+) -> List[Tuple[str, str]]:
+    """
+    Derive clarifying questions from matched PA requirements.
+
+    Picks category-specific questions when the rule's ``pa_category`` matches
+    a known template, otherwise falls back to generic templates keyed off
+    the rule's coverage criteria, submission channel, and PA-required flag.
+    De-duplicates questions and caps the list at ``max_questions``.
+    """
+    requirements_list = list(requirements)
+    if not requirements_list:
+        return []
+
+    seen: Set[str] = set()
+    out: List[Tuple[str, str]] = []
+
+    def add(question: str, default: str = "") -> None:
+        key = question.strip().lower()
+        if key in seen or len(out) >= max_questions:
+            return
+        seen.add(key)
+        out.append((question, default))
+
+    # Prefer category-specific questions first.
+    for req in requirements_list:
+        if len(out) >= max_questions:
+            break
+        for question, default in _PA_CATEGORY_QUESTIONS.get(req.pa_category, []):
+            add(question, default)
+
+    # Fill any remaining slots with generic, rule-shape-driven questions.
+    for req in requirements_list:
+        if len(out) >= max_questions:
+            break
+        if not req.requires_pa:
+            q, d = _GENERIC_PA_QUESTION_TEMPLATES["negative_rule"]
+            add(q, d)
+            continue
+        if req.notification_only:
+            q, d = _GENERIC_PA_QUESTION_TEMPLATES["notification"]
+            add(q, d)
+        if req.criteria_reference:
+            q, d = _GENERIC_PA_QUESTION_TEMPLATES["criteria"]
+            add(q.format(criteria=req.criteria_reference), d)
+        if req.submission_channel and len(out) < max_questions:
+            q, d = _GENERIC_PA_QUESTION_TEMPLATES["submission_channel"]
+            # Trim very long channel strings so the question stays readable.
+            channel = req.submission_channel.split(";")[0].strip()
+            add(q.format(channel=channel), d)
+
+    return out
+
+
+def get_pa_questions_for_denial(
+    denial: Denial, max_questions: int = 4
+) -> List[Tuple[str, str]]:
+    """
+    Convenience entry point: run a PA lookup against the denial and return
+    a list of clarifying questions. Returns an empty list when no rules
+    match.
+    """
+    requirements, codes = _denial_lookup(denial)
+    if not requirements:
+        return []
+    return generate_pa_questions(requirements, max_questions=max_questions)

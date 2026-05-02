@@ -12,7 +12,9 @@ from fighthealthinsurance.models import (
 from fighthealthinsurance.pa_requirements import (
     extract_cpt_hcpcs_codes,
     format_pa_context,
+    generate_pa_questions,
     get_pa_context_for_denial,
+    get_pa_questions_for_denial,
     infer_line_of_business,
     lookup_pa_requirements,
 )
@@ -34,9 +36,26 @@ class CodeExtractionTests(TestCase):
         self.assertEqual(extract_cpt_hcpcs_codes(text), ["95810", "J0490"])
 
     def test_ignores_diagnosis_codes(self):
-        # ICD-10 codes always start with W/X/Y/Z or have a letter+digit+digit
-        # form; the regex restricts HCPCS to A-V so these should not match.
+        # Z51.11 and W50.0XXA both fall outside the HCPCS prefix subset.
         text = "Diagnosis Z51.11 and W50.0XXA — no procedures listed."
+        self.assertEqual(extract_cpt_hcpcs_codes(text), [])
+
+    def test_excludes_dotted_icd10_in_overlap_letters(self):
+        # J45.20 (asthma) is in the J range that HCPCS uses for drug codes;
+        # the dotted form must be stripped before HCPCS scanning.
+        text = "Patient with asthma J45.20 received bevacizumab J9035."
+        self.assertEqual(extract_cpt_hcpcs_codes(text), ["J9035"])
+
+    def test_excludes_compact_icd10_when_dotted_form_appears(self):
+        # If the same diagnosis is written both with and without a period
+        # (e.g. OCR variants), the compact form should also be excluded.
+        text = "Diagnosis M54.50 (recurrent: M5450). No procedures billed."
+        self.assertEqual(extract_cpt_hcpcs_codes(text), [])
+
+    def test_excludes_retired_or_unused_hcpcs_letters(self):
+        # M-prefix HCPCS codes are mostly retired; we exclude them to avoid
+        # false positives on OCR'd ICD-10 musculoskeletal codes.
+        text = "Codes M0064 and N1234 should not be treated as HCPCS here."
         self.assertEqual(extract_cpt_hcpcs_codes(text), [])
 
     def test_handles_modifiers(self):
@@ -286,11 +305,20 @@ class GetPaContextForDenialTests(TestCase):
         self.assertEqual(get_pa_context_for_denial(denial), "")
 
     def test_returns_empty_string_when_payer_unknown(self):
-        # When insurance_company_obj is None but a code is present, lookup
-        # still runs across all payers — verify it finds the seed row.
+        # When neither insurance_company_obj nor a resolvable text payer is
+        # set, refuse the lookup. Surfacing rules from another carrier in
+        # payer-attributed appeal context would be misleading.
         denial = Denial.objects.create(
             hashed_email="x" * 64,
             denial_text="The insurer denied 95810 polysomnography.",
+        )
+        self.assertEqual(get_pa_context_for_denial(denial), "")
+
+    def test_resolves_payer_from_text_field_when_fk_missing(self):
+        denial = Denial.objects.create(
+            hashed_email="x" * 64,
+            denial_text="UnitedHealthcare denied 95810 polysomnography.",
+            insurance_company="UnitedHealthcare",
         )
         context = get_pa_context_for_denial(denial)
         self.assertIn("95810", context)
@@ -331,3 +359,133 @@ class MakeOpenPromptIncludesPaContextTests(TestCase):
         self.assertIsNotNone(prompt)
         assert prompt is not None
         self.assertNotIn("PAYER PRIOR-AUTH RULES", prompt)
+
+
+class GeneratePaQuestionsTests(TestCase):
+    """Verify PA-rule-derived clarifying questions."""
+
+    def setUp(self):
+        self.uhc = InsuranceCompany.objects.create(
+            name="UnitedHealthcare",
+            regex=r"united\s*health|uhc",
+            negative_regex=r"$^",
+        )
+
+    def _make_req(self, **kwargs):
+        defaults = {
+            "insurance_company": self.uhc,
+            "cpt_hcpcs_code": "00000",
+            "pa_category": "",
+            "criteria_reference": "",
+            "submission_channel": "",
+            "requires_pa": True,
+            "notification_only": False,
+        }
+        defaults.update(kwargs)
+        return PayerPriorAuthRequirement.objects.create(**defaults)
+
+    def test_returns_empty_for_no_requirements(self):
+        self.assertEqual(generate_pa_questions([]), [])
+
+    def test_category_questions_for_sleep_medicine(self):
+        req = self._make_req(cpt_hcpcs_code="95810", pa_category="Sleep Medicine")
+        questions = generate_pa_questions([req])
+        self.assertTrue(any("Epworth" in q or "STOP-BANG" in q for q, _ in questions))
+        self.assertLessEqual(len(questions), 4)
+
+    def test_category_questions_for_genetic_testing(self):
+        req = self._make_req(
+            cpt_hcpcs_code="81162",
+            pa_category="Genetic and Molecular Testing",
+        )
+        questions = generate_pa_questions([req])
+        self.assertTrue(
+            any("genetic counseling" in q.lower() for q, _ in questions),
+            f"Expected genetic-counseling question, got: {questions}",
+        )
+
+    def test_falls_back_to_criteria_question_for_unknown_category(self):
+        req = self._make_req(
+            cpt_hcpcs_code="11111",
+            pa_category="Unknown Category",
+            criteria_reference="UHC Policy: Some Procedure",
+        )
+        questions = generate_pa_questions([req])
+        joined = " ".join(q for q, _ in questions)
+        self.assertIn("UHC Policy: Some Procedure", joined)
+
+    def test_negative_rule_generates_billing_question(self):
+        req = self._make_req(cpt_hcpcs_code="99213", requires_pa=False)
+        questions = generate_pa_questions([req])
+        joined = " ".join(q for q, _ in questions).lower()
+        self.assertIn("not required", joined)
+
+    def test_notification_only_generates_notification_question(self):
+        req = self._make_req(
+            cpt_hcpcs_code="22222",
+            notification_only=True,
+            criteria_reference="UHC Notification: Some Procedure",
+        )
+        questions = generate_pa_questions([req])
+        joined = " ".join(q for q, _ in questions).lower()
+        self.assertIn("notif", joined)
+
+    def test_caps_questions_at_max(self):
+        # Three category-question categories should still be capped at 2.
+        reqs = [
+            self._make_req(cpt_hcpcs_code="11111", pa_category="Sleep Medicine"),
+            self._make_req(
+                cpt_hcpcs_code="22222",
+                pa_category="Genetic and Molecular Testing",
+            ),
+            self._make_req(
+                cpt_hcpcs_code="33333",
+                pa_category="Advanced Outpatient Imaging",
+            ),
+        ]
+        questions = generate_pa_questions(reqs, max_questions=2)
+        self.assertEqual(len(questions), 2)
+
+    def test_dedupes_identical_questions(self):
+        req_a = self._make_req(cpt_hcpcs_code="11111", pa_category="Sleep Medicine")
+        req_b = self._make_req(cpt_hcpcs_code="22222", pa_category="Sleep Medicine")
+        questions = generate_pa_questions([req_a, req_b])
+        unique = {q for q, _ in questions}
+        self.assertEqual(len(unique), len(questions))
+
+
+class GetPaQuestionsForDenialTests(TestCase):
+    """Verify the denial → PA-question entry point."""
+
+    def setUp(self):
+        self.uhc = InsuranceCompany.objects.create(
+            name="UnitedHealthcare",
+            regex=r"united\s*health|uhc",
+            negative_regex=r"$^",
+        )
+        PayerPriorAuthRequirement.objects.create(
+            insurance_company=self.uhc,
+            cpt_hcpcs_code="95810",
+            pa_category="Sleep Medicine",
+            criteria_reference="UHC Sleep Medicine policy",
+        )
+
+    def test_returns_questions_when_denial_text_has_code(self):
+        denial = Denial.objects.create(
+            hashed_email="x" * 64,
+            denial_text="UHC denied authorization for polysomnography (95810).",
+            insurance_company_obj=self.uhc,
+        )
+        questions = get_pa_questions_for_denial(denial)
+        self.assertGreater(len(questions), 0)
+        self.assertTrue(
+            all(isinstance(q, str) and q.endswith("?") for q, _ in questions)
+        )
+
+    def test_returns_empty_when_no_codes_in_denial(self):
+        denial = Denial.objects.create(
+            hashed_email="x" * 64,
+            denial_text="Coverage was denied without a procedure code.",
+            insurance_company_obj=self.uhc,
+        )
+        self.assertEqual(get_pa_questions_for_denial(denial), [])
