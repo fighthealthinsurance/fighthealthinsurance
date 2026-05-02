@@ -110,6 +110,10 @@ class Base(Configuration):
     ALLOWED_HOSTS: list[str] = ["*"]
     USE_X_FORWARDED_HOST = True
 
+    # Map of alternate hosts to canonical hosts; matching requests are
+    # permanent-redirected by DomainRedirectMiddleware.
+    DOMAIN_REDIRECTS: dict[str, str] = {}
+
     SENTRY_ENDPOINT = os.getenv("SENTRY_ENDPOINT")
     # Application definition
 
@@ -180,6 +184,7 @@ class Base(Configuration):
     )
 
     MIDDLEWARE = [
+        "fighthealthinsurance.middleware.DomainRedirectMiddleware",
         "fighthealthinsurance.middleware.CsrfCookieToHeaderMiddleware",
         "corsheaders.middleware.CorsMiddleware",
         "django_prometheus.middleware.PrometheusBeforeMiddleware",
@@ -613,7 +618,14 @@ class Prod(Base):
         "www.fightpaperwork.com",
         "api.fightpaperwork.com",
         "staging.fighthealthinsurance.com",
+        "fuckhealthinsurance.com",
+        "www.fuckhealthinsurance.com",
     ]
+
+    DOMAIN_REDIRECTS = {
+        "fuckhealthinsurance.com": "www.fighthealthinsurance.com",
+        "www.fuckhealthinsurance.com": "www.fighthealthinsurance.com",
+    }
 
     # HSTS - tell browsers to always use HTTPS
     SECURE_HSTS_SECONDS = 31536000  # 1 year
