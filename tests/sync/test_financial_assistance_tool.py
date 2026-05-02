@@ -16,7 +16,7 @@ from fighthealthinsurance.chat.tools import (
 
 def _run(coro):
     """Run an async coroutine in a sync test."""
-    return asyncio.get_event_loop().run_until_complete(coro)
+    return asyncio.run(coro)
 
 
 def _make_tool(call_llm_callback=None):

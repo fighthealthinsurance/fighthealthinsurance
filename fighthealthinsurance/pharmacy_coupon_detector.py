@@ -338,7 +338,7 @@ def suggest_for_denial(
     """
     # Explicit drug field wins if provided.
     if drug:
-        detected = detect_drug(drug) or drug.strip().lower()
+        detected: Optional[str] = detect_drug(drug) or drug.strip().lower()
         if detected:
             return build_suggestion(detected)
 
