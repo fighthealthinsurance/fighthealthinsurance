@@ -232,8 +232,13 @@ class StripeWebhookHelper:
                 metadata=metadata,
             )
             if finish_link is None:
-                finish_link_base = reverse("complete_payment")
-                finish_link = f"{finish_link_base}?session_id={lost_session.id}"
+                # Use the unguessable secure_token rather than the row id so the
+                # recovery URL can't be brute-forced by enumerating ids.
+                params = urlencode({"token": lost_session.secure_token})
+                finish_link = (
+                    f"https://www.fightpaperwork.com"
+                    f"{reverse('complete_payment')}?{params}"
+                )
             if finish_link:
                 fhi_emails.send_checkout_session_expired(
                     request,

@@ -119,3 +119,29 @@ class StripeWebhookTests(TestCase):
 
         # Verify no additional session record was created
         self.assertEqual(LostStripeSession.objects.count(), 1)
+
+    @patch(
+        "fighthealthinsurance.helpers.stripe_helpers.fhi_emails.send_checkout_session_expired"
+    )
+    def test_checkout_session_expired_email_uses_absolute_link_and_token(
+        self, mock_send_email
+    ):
+        mock_session = MagicMock()
+        mock_session.id = "cs_unique_for_token_test"
+        mock_session.metadata = {
+            "payment_type": "non_professional_item",
+            "line_items": "[]",
+        }
+        mock_session.customer_email = "buyer@example.com"
+
+        StripeWebhookHelper.handle_checkout_session_expired(self.client, mock_session)
+
+        mock_send_email.assert_called_once()
+        link = mock_send_email.call_args.kwargs["link"]
+
+        lost_session = LostStripeSession.objects.get(session_id=mock_session.id)
+        # Link must be absolute and carry the unguessable token, never the row id.
+        self.assertTrue(link.startswith("https://www.fightpaperwork.com/"))
+        self.assertIn(f"token={lost_session.secure_token}", link)
+        self.assertNotIn(f"session_id={lost_session.id}", link)
+        self.assertNotIn(f"session_id={lost_session.pk}", link)

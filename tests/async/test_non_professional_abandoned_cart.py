@@ -23,17 +23,17 @@ def test_non_professional_abandoned_cart():
         email=email,
         metadata=metadata,
     )
+    token = lost_session.secure_token
 
-    # Test POST method
+    # Test POST method (token-based)
     with patch("stripe.checkout.Session.create") as mock_create:
         mock_create.return_value.url = "https://checkout.stripe.com/test"
 
-        # Call the CompletePaymentView
         response = client.post(
             reverse("complete_payment"),
             data=json.dumps(
                 {
-                    "session_id": session_id,
+                    "token": token,
                     "continue_url": "https://example.com/success",
                     "cancel_url": "https://example.com/cancel",
                 }
@@ -45,23 +45,24 @@ def test_non_professional_abandoned_cart():
         assert "next_url" in response.json()
         assert response.json()["next_url"] == "https://checkout.stripe.com/test"
 
-    # Test GET method
+    # Test GET method (token-based)
     with patch("stripe.checkout.Session.create") as mock_create:
         mock_create.return_value.url = "https://checkout.stripe.com/test"
 
-        # Call the CompletePaymentView with GET parameters
-        query_params = urlencode(
-            {
-                "session_id": session_id,
-                "continue_url": "https://example.com/success",
-                "cancel_url": "https://example.com/cancel",
-            }
-        )
+        query_params = urlencode({"token": token})
         response = client.get(f"{reverse('complete_payment')}?{query_params}")
 
         assert response.status_code == 200
         assert "next_url" in response.json()
         assert response.json()["next_url"] == "https://checkout.stripe.com/test"
+
+    # Brute-forcing the row id must not work — only the secure_token grants access.
+    response = client.get(f"{reverse('complete_payment')}?session_id={lost_session.id}")
+    assert response.status_code == 400
+
+    # An unknown / forged token must be rejected.
+    response = client.get(f"{reverse('complete_payment')}?token=not-a-real-token")
+    assert response.status_code == 400
 
     # Simulate Stripe webhook call to trigger the email
     stripe_event = {

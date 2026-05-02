@@ -1689,9 +1689,9 @@ class CompletePaymentView(View):
 
     def get(self, request):
         try:
-            session_id = request.GET.get("session_id")
             data = {
-                "session_id": session_id,
+                "token": request.GET.get("token"),
+                "session_id": request.GET.get("session_id"),
             }
 
             return self.process_payment(data)
@@ -1713,17 +1713,22 @@ class CompletePaymentView(View):
         return self.process_payment(data)
 
     def process_payment(self, data):
+        token = data.get("token")
         session_id = data.get("session_id")
 
-        if not session_id:
-            return HttpResponse(
-                json.dumps({"error": "Missing session_id"}),
-                status=400,
-                content_type="application/json",
-            )
-
         try:
-            lost_session = models.LostStripeSession.objects.get(session_id=session_id)
+            if token:
+                lost_session = models.LostStripeSession.objects.get(secure_token=token)
+            elif session_id:
+                lost_session = models.LostStripeSession.objects.get(
+                    session_id=session_id
+                )
+            else:
+                return HttpResponse(
+                    json.dumps({"error": "Missing token"}),
+                    status=400,
+                    content_type="application/json",
+                )
             continue_url = lost_session.success_url
             cancel_url = lost_session.cancel_url
             payment_type = lost_session.payment_type
