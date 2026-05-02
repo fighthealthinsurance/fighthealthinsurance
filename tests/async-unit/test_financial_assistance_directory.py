@@ -157,11 +157,18 @@ class TestSearchByDrug:
         results = search(drug="metformin")
         assert results.manufacturer == []
 
-    def test_unknown_drug_resolves_to_lowercase(self):
-        # Unknown drug shouldn't crash; canonical_drug is the lowercased input
+    def test_unknown_drug_resolves_to_none(self):
+        # Inputs the detector doesn't recognize must NOT echo back as
+        # canonical_drug - that would create misleading payloads when, e.g.,
+        # a non-drug procedure ("MRI of knee") is passed to search().
         results = search(drug="NewExperimentalDrug")
-        assert results.canonical_drug == "newexperimentaldrug"
+        assert results.canonical_drug is None
         assert results.manufacturer == []
+
+    def test_non_drug_procedure_does_not_pollute_canonical_drug(self):
+        results = search(drug="MRI of knee")
+        assert results.canonical_drug is None
+        assert results.has_specific_matches() is False
 
     def test_drug_detected_from_denial_text(self):
         results = search(denial_text="Your prescription for Wegovy 2.4mg is denied.")
@@ -240,6 +247,65 @@ class TestFinancialAssistanceResults:
     def test_is_empty_false_when_state_medicaid_present(self):
         results = FinancialAssistanceResults(state_medicaid_name="Medi-Cal")
         assert not results.is_empty()
+
+    def test_has_specific_matches_false_when_only_general(self):
+        # General programs alone are not "specific" enough to gate UI on -
+        # they're returned for every search.
+        results = FinancialAssistanceResults(general=list(GENERAL_PROGRAMS))
+        assert results.has_specific_matches() is False
+
+    def test_has_specific_matches_false_when_only_safety_net(self):
+        # The untagged safety-net base entries are likewise always returned.
+        results = FinancialAssistanceResults(
+            general=list(GENERAL_PROGRAMS),
+            safety_net=[
+                AssistanceProgram(
+                    name="HRSA",
+                    url="https://x",
+                    description="d",
+                    category="safety_net",
+                )
+            ],
+        )
+        assert results.has_specific_matches() is False
+
+    def test_has_specific_matches_true_for_diagnosis_match(self):
+        results = FinancialAssistanceResults(
+            diagnosis_specific=[
+                AssistanceProgram(
+                    name="X",
+                    url="https://x",
+                    description="d",
+                    category="copay_foundation",
+                )
+            ]
+        )
+        assert results.has_specific_matches() is True
+
+    def test_has_specific_matches_true_for_manufacturer_match(self):
+        results = FinancialAssistanceResults(
+            manufacturer=[
+                AssistanceProgram(
+                    name="X", url="https://x", description="d", category="manufacturer"
+                )
+            ]
+        )
+        assert results.has_specific_matches() is True
+
+    def test_has_specific_matches_true_for_state_medicaid(self):
+        results = FinancialAssistanceResults(state_medicaid_name="Medi-Cal")
+        assert results.has_specific_matches() is True
+
+    def test_search_with_drug_only_has_specific_matches(self):
+        # Wegovy → manufacturer copay card, so has_specific_matches True.
+        results = search(drug="Wegovy")
+        assert results.has_specific_matches() is True
+
+    def test_search_with_no_specific_input_has_no_specific_matches(self):
+        # Empty search returns general + safety-net, but nothing specific.
+        results = search()
+        assert results.is_empty() is False
+        assert results.has_specific_matches() is False
 
     def test_all_programs_concatenates_in_order(self):
         diag = [

@@ -152,15 +152,19 @@ class Microsite:
 
     def financial_assistance(self, state_abbreviation: Optional[str] = None):
         """
-        Return a FinancialAssistanceResults aggregate for this microsite.
+        Return a FinancialAssistanceResults aggregate for this microsite,
+        but only when the search produced at least one result tied to the
+        microsite's specific drug, condition, or state.
 
         Combines diagnosis-matched copay foundations, drug-matched
         manufacturer programs, the always-applicable general directory, and
         safety-net resources. When `state_abbreviation` is supplied, also
         attaches the state's Medicaid pathway.
 
-        Returns None when neither the procedure nor the condition produce
-        any matches (avoids rendering an empty section).
+        Returns None when nothing specific matches - the general directory
+        and base safety-net entries are always returned by `search()` and
+        on their own are not microsite-specific enough to warrant rendering
+        a dedicated section.
         """
         from fighthealthinsurance.financial_assistance_directory import search
 
@@ -169,7 +173,7 @@ class Microsite:
             diagnosis=self.default_condition,
             state_abbreviation=state_abbreviation,
         )
-        if results.is_empty():
+        if not results.has_specific_matches():
             return None
         return results
 

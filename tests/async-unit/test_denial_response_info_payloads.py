@@ -60,7 +60,7 @@ def _build_financial_payload(denial):
         denial_text=denial.denial_text,
         state_abbreviation=denial.your_state,
     )
-    if results.is_empty():
+    if not results.has_specific_matches():
         return None
 
     def _serialize(program):
@@ -166,3 +166,25 @@ class TestFinancialAssistancePayload:
                     "eligibility_note",
                     "phone",
                 }
+
+    def test_returns_none_for_non_drug_non_specific_denial(self):
+        # A denial with no drug, no diagnosis match, no state should produce
+        # None - the general copay directory alone is not specific enough
+        # to gate the section on.
+        denial = _fake_denial(
+            procedure="MRI of knee",
+            diagnosis="knee pain",
+            denial_text="MRI denied as not medically necessary",
+        )
+        assert _build_financial_payload(denial) is None
+
+    def test_canonical_drug_is_none_for_non_drug_procedure(self):
+        # Even when something else (a diagnosis match) makes the payload
+        # fire, canonical_drug must not echo back a non-drug procedure.
+        denial = _fake_denial(
+            procedure="MRI of knee",
+            diagnosis="multiple sclerosis",
+        )
+        payload = _build_financial_payload(denial)
+        assert payload is not None
+        assert payload["canonical_drug"] is None

@@ -32,6 +32,16 @@ class TestDetectDrug:
     def test_detects_expensive_drug(self):
         assert detect_drug("Wegovy denied for non-formulary") == "wegovy"
 
+    def test_advair_detected_as_expensive_not_aliased_to_fluticasone(self):
+        # Advair is a fluticasone+salmeterol combo; aliasing it to plain
+        # fluticasone (a cheap generic) would falsely advertise a cash-pay
+        # bridge that doesn't exist for the combo product.
+        assert detect_drug("Advair denied for non-formulary") == "advair"
+
+    def test_symbicort_detected_as_expensive(self):
+        # Symbicort is a budesonide+formoterol combo - same reasoning.
+        assert detect_drug("Symbicort denied") == "symbicort"
+
     def test_returns_none_when_no_drug_present(self):
         assert detect_drug("Knee MRI denied as not medically necessary") is None
 
@@ -47,14 +57,12 @@ class TestDetectDrug:
         assert detect_drug("METFORMIN") == "metformin"
         assert detect_drug("MetFormin") == "metformin"
 
-    def test_brand_match_takes_priority_over_generic(self):
-        # If both a brand and an unrelated generic appear, the first scanned
-        # text wins; brands are checked before generics within a single text.
-        assert detect_drug("Patient on Lipitor and gabapentin") in {
-            "atorvastatin",
-            "gabapentin",
-        }
-        # Brand-only text should produce the generic, not the brand
+    def test_earliest_in_text_match_wins(self):
+        # Detection is deterministic: the drug whose match starts earliest
+        # in the text wins, regardless of dict/set iteration order.
+        assert detect_drug("Patient on Lipitor and gabapentin") == "atorvastatin"
+        assert detect_drug("Patient on gabapentin and Lipitor") == "gabapentin"
+        # Brand-only text should produce the generic, not the brand.
         assert detect_drug("Lipitor") == "atorvastatin"
 
     def test_scans_multiple_texts_in_order(self):

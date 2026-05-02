@@ -489,12 +489,34 @@ class FinancialAssistanceResults:
     state_medicaid_phone: Optional[str] = None
 
     def is_empty(self) -> bool:
+        """
+        True only when no programs at all and no state Medicaid pathway are
+        attached. Note: `search()` always populates `general` and the
+        untagged `safety_net` entries, so in practice this is rarely true -
+        callers that want to gate on actual relevance to the patient should
+        use `has_specific_matches()` instead.
+        """
         return not (
             self.diagnosis_specific
             or self.manufacturer
             or self.general
             or self.safety_net
             or self.state_medicaid_name
+        )
+
+    def has_specific_matches(self) -> bool:
+        """
+        True when the search produced a program tied to the patient's
+        specific drug, diagnosis, or state - i.e. the directory is more
+        useful than just showing the always-included general copay
+        foundation directories.
+
+        Use this (not `is_empty()`) to decide whether to surface the
+        directory section in a UI: it returns True only when there is
+        something genuinely targeted to render.
+        """
+        return bool(
+            self.diagnosis_specific or self.manufacturer or self.state_medicaid_name
         )
 
     def all_programs(self) -> list[AssistanceProgram]:
@@ -509,16 +531,18 @@ class FinancialAssistanceResults:
 
 def _resolve_canonical_drug(drug: Optional[str]) -> Optional[str]:
     """
-    Resolve any drug input (brand or generic) to the canonical lower-case
-    name used by the detector and the manufacturer-program filters.
+    Resolve a drug-name input to a canonical lower-case name when - and only
+    when - the detector recognizes it.
+
+    Returns None for unrecognized inputs (e.g. non-drug procedures like
+    "MRI of knee") so callers can treat `canonical_drug` as a reliable
+    "we identified a known drug" signal rather than echoing back arbitrary
+    procedure text.
     """
     if not drug:
         return None
-    detected = detect_drug(drug)
-    if detected:
-        return detected
-    raw = drug.strip().lower()
-    return BRAND_TO_GENERIC.get(raw, raw)
+    detected: Optional[str] = detect_drug(drug)
+    return detected
 
 
 def search(
