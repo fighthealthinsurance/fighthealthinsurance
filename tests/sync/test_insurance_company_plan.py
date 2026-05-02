@@ -668,3 +668,84 @@ class ExtractInsuranceCompanyPropagationTests(TestCase):
         self.assertEqual(denial.insurance_company_obj, self.aetna)
         # Existing fax must NOT be overwritten
         self.assertEqual(denial.appeal_fax_number, "555-000-0000")
+
+
+class ExtractSetFaxNumberTests(TestCase):
+    """Regression tests for extract_set_fax_number's fax-preservation rules."""
+
+    def setUp(self):
+        self.aetna = InsuranceCompany.objects.create(
+            name="Aetna",
+            regex=r"aetna",
+            appeal_fax_number="859-425-3379",
+        )
+
+    def test_does_not_overwrite_user_set_fax_when_digits_not_in_text(self):
+        """A pre-existing fax (e.g. user-edited) must not be nulled by
+        hallucination validation and then replaced with the carrier default.
+
+        Regresses: codex-connector P1 review on PR #757."""
+        from fighthealthinsurance.common_view_logic import DenialCreatorHelper
+
+        denial = Denial.objects.create(
+            denial_text="Aetna denied your claim. Call us if you have questions.",
+            hashed_email="a@b.com",
+            insurance_company_obj=self.aetna,
+            appeal_fax_number="555-867-5309",  # Not present in denial text
+        )
+        with patch(
+            "fighthealthinsurance.common_view_logic.appealGenerator.get_fax_number",
+            new_callable=AsyncMock,
+            return_value=None,
+        ):
+            result = async_to_sync(DenialCreatorHelper.extract_set_fax_number)(
+                denial.denial_id
+            )
+        denial.refresh_from_db()
+        self.assertEqual(denial.appeal_fax_number, "555-867-5309")
+        self.assertEqual(result, "555-867-5309")
+
+    def test_uses_carrier_fallback_when_denial_has_no_fax(self):
+        """When the denial truly has no fax and extraction yields nothing,
+        the carrier-published fax should be used as a last resort."""
+        from fighthealthinsurance.common_view_logic import DenialCreatorHelper
+
+        denial = Denial.objects.create(
+            denial_text="Aetna denied your claim.",
+            hashed_email="a@b.com",
+            insurance_company_obj=self.aetna,
+        )
+        with patch(
+            "fighthealthinsurance.common_view_logic.appealGenerator.get_fax_number",
+            new_callable=AsyncMock,
+            return_value=None,
+        ):
+            result = async_to_sync(DenialCreatorHelper.extract_set_fax_number)(
+                denial.denial_id
+            )
+        denial.refresh_from_db()
+        self.assertEqual(denial.appeal_fax_number, "859-425-3379")
+        self.assertEqual(result, "859-425-3379")
+
+    def test_extracted_fax_validated_against_source_text(self):
+        """A newly-extracted fax that doesn't appear in the source text is
+        rejected (hallucination guard) and falls back to the carrier default."""
+        from fighthealthinsurance.common_view_logic import DenialCreatorHelper
+
+        denial = Denial.objects.create(
+            denial_text="Aetna denied your claim with no fax mentioned.",
+            hashed_email="a@b.com",
+            insurance_company_obj=self.aetna,
+        )
+        with patch(
+            "fighthealthinsurance.common_view_logic.appealGenerator.get_fax_number",
+            new_callable=AsyncMock,
+            return_value="999-888-7777",  # Not in denial_text
+        ):
+            result = async_to_sync(DenialCreatorHelper.extract_set_fax_number)(
+                denial.denial_id
+            )
+        denial.refresh_from_db()
+        # Hallucinated value rejected; carrier fallback used
+        self.assertEqual(denial.appeal_fax_number, "859-425-3379")
+        self.assertEqual(result, "859-425-3379")

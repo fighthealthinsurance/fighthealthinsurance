@@ -1796,25 +1796,38 @@ class DenialCreatorHelper:
         First tries the denial letter text, then searches plan documents if
         no fax number was found. Validates extracted fax numbers against
         source text to avoid hallucinations.
+
+        If the denial already has an ``appeal_fax_number`` (e.g. user-entered
+        or propagated from a matched carrier), it is left untouched - we only
+        run hallucination-validation and the carrier fallback against
+        newly-extracted values, never against a value already saved on the
+        denial.
         """
+        from fighthealthinsurance.models import InsuranceCompany, InsurancePlan
+
         denial = await Denial.objects.filter(denial_id=denial_id).aget()
-        appeal_fax_number = denial.appeal_fax_number
+
+        # If the denial already has a fax we trust it (user input,
+        # propagation from a matched carrier, or a previously validated
+        # extraction) and exit early.
+        if denial.appeal_fax_number:
+            return denial.appeal_fax_number
 
         # Text sources for validation
         denial_text = denial.denial_text or ""
         plan_docs_text = ""
         all_source_text = denial_text
+        appeal_fax_number: Optional[str] = None
 
         # First try to extract from denial text
-        if not appeal_fax_number:
-            try:
-                appeal_fax_number = await appealGenerator.get_fax_number(
-                    denial_text=denial_text
-                )
-            except Exception as e:
-                logger.opt(exception=True).warning(
-                    f"Failed to extract fax number from denial text for {denial_id}: {e}"
-                )
+        try:
+            appeal_fax_number = await appealGenerator.get_fax_number(
+                denial_text=denial_text
+            )
+        except Exception as e:
+            logger.opt(exception=True).warning(
+                f"Failed to extract fax number from denial text for {denial_id}: {e}"
+            )
 
         # If still not found, try plan documents
         if not appeal_fax_number:
@@ -1861,31 +1874,50 @@ class DenialCreatorHelper:
         # carrier (insurance_company_obj or insurance_plan_obj), use that
         # carrier's published appeal fax. This is a last resort and isn't
         # validated against source text - it's the carrier's own data.
+        # Re-read the denial under a fresh query in case a concurrent task
+        # (extract_set_insurance_company) has just propagated a fax onto it -
+        # we never want to overwrite an already-stored value here. We avoid
+        # ``select_related`` because the joined regex columns trigger
+        # RegexField.from_db_value on NULL values and raise ValidationError.
         if appeal_fax_number is None:
-            denial_with_carrier = (
+            current = (
                 await Denial.objects.filter(denial_id=denial_id)
-                .select_related("insurance_company_obj", "insurance_plan_obj")
+                .values(
+                    "appeal_fax_number",
+                    "insurance_company_obj_id",
+                    "insurance_plan_obj_id",
+                )
                 .afirst()
             )
-            if denial_with_carrier is not None:
-                if (
-                    denial_with_carrier.insurance_plan_obj
-                    and denial_with_carrier.insurance_plan_obj.appeal_fax_number
-                ):
-                    appeal_fax_number = (
-                        denial_with_carrier.insurance_plan_obj.appeal_fax_number
+            if current is not None:
+                if current["appeal_fax_number"]:
+                    return current["appeal_fax_number"]
+                if current["insurance_plan_obj_id"]:
+                    plan_fax = (
+                        await InsurancePlan.objects.filter(
+                            id=current["insurance_plan_obj_id"]
+                        )
+                        .values_list("appeal_fax_number", flat=True)
+                        .afirst()
                     )
-                    logger.debug(f"Using plan-published appeal fax {appeal_fax_number}")
-                elif (
-                    denial_with_carrier.insurance_company_obj
-                    and denial_with_carrier.insurance_company_obj.appeal_fax_number
-                ):
-                    appeal_fax_number = (
-                        denial_with_carrier.insurance_company_obj.appeal_fax_number
+                    if plan_fax:
+                        appeal_fax_number = plan_fax
+                        logger.debug(
+                            f"Using plan-published appeal fax {appeal_fax_number}"
+                        )
+                if appeal_fax_number is None and current["insurance_company_obj_id"]:
+                    company_fax = (
+                        await InsuranceCompany.objects.filter(
+                            id=current["insurance_company_obj_id"]
+                        )
+                        .values_list("appeal_fax_number", flat=True)
+                        .afirst()
                     )
-                    logger.debug(
-                        f"Using carrier-published appeal fax {appeal_fax_number}"
-                    )
+                    if company_fax:
+                        appeal_fax_number = company_fax
+                        logger.debug(
+                            f"Using carrier-published appeal fax {appeal_fax_number}"
+                        )
 
         if appeal_fax_number is not None:
             await Denial.objects.filter(denial_id=denial_id).aupdate(
