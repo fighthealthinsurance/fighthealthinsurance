@@ -44,7 +44,10 @@ async def test_end_to_end_generic_cache_workflow():
         "fighthealthinsurance.ml.ml_appeal_questions_helper.ml_router.full_find_citation_backends"
     ) as mock_citation_backends, patch(
         "fighthealthinsurance.ml.ml_appeal_questions_helper.ml_router.partial_find_citation_backends"
-    ) as mock_partial_citation_backends:
+    ) as mock_partial_citation_backends, patch(
+        "fighthealthinsurance.ml.ml_citations_helper.get_cms_coverage_citations",
+        new=AsyncMock(return_value=[]),
+    ):
 
         # Configure question mock
         mock_question_model = AsyncMock()
