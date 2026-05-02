@@ -650,7 +650,9 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
   );
 
   const sendChatMessage = (content: string, source?: "typed" | "voice_transcript") => {
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+      return false;
+    }
 
     const userInfo = getUserInfo();
     const scrubbedContent = userInfo ? scrubPersonalInfo(content, userInfo) : content;
@@ -666,11 +668,21 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
     };
 
     wsRef.current.send(JSON.stringify(messageToSend));
+    return true;
   };
 
   // Handle sending a new message
   const handleSendMessage = () => {
     if (!state.input.trim() || state.isLoading) return;
+
+    const didSend = sendChatMessage(state.input, "typed");
+    if (!didSend) {
+      setState((prev) => ({
+        ...prev,
+        error: "Connection is still starting. Please try again in a moment.",
+      }));
+      return;
+    }
 
     // Add the user message to the UI immediately - show the original (unscrubbed) message to the user
     const userMessage: ChatMessage = {
@@ -689,7 +701,6 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
       statusMessage: null,
     }));
 
-    sendChatMessage(state.input, "typed");
   };
 
   // Handle retrying the last message
@@ -705,6 +716,16 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
 
     if (!lastUserMessage) return;
 
+    const didSend = sendChatMessage(lastUserMessage.content, "typed");
+    if (!didSend) {
+      setState((prev) => ({
+        ...prev,
+        isLoading: false,
+        error: "Connection is still starting. Please try retry again in a moment.",
+      }));
+      return;
+    }
+
     setState((prev) => ({
       ...prev,
       isLoading: true,
@@ -712,13 +733,20 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
       statusMessage: null,
       error: null,
     }));
-
-    sendChatMessage(lastUserMessage.content, "typed");
   };
 
   
   const submitVoiceTranscript = (transcript: string) => {
     if (!transcript.trim() || state.isLoading) return;
+    const didSend = sendChatMessage(transcript, "voice_transcript");
+    if (!didSend) {
+      setState((prev) => ({
+        ...prev,
+        error: "Connection is still starting. Please submit your transcript again in a moment.",
+      }));
+      return;
+    }
+
     const userMessage: ChatMessage = {
       role: "user",
       content: transcript,
@@ -733,7 +761,6 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
       requestStartTime: Date.now(),
       statusMessage: null,
     }));
-    sendChatMessage(transcript, "voice_transcript");
   };
 // Handle toggling external models
   const handleToggleExternalModels = (checked: boolean) => {

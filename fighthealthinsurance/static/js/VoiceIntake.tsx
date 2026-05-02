@@ -23,7 +23,13 @@ const VoiceIntake: React.FC<VoiceIntakeProps> = ({ enabledLocalSTT, onSubmitTran
     streamRef.current = null;
   };
 
-  useEffect(() => () => stopActiveStreamTracks(), []);
+  useEffect(() => () => {
+    if (recorderRef.current && recorderRef.current.state !== "inactive") {
+      recorderRef.current.stop();
+    }
+    recorderRef.current = null;
+    stopActiveStreamTracks();
+  }, []);
 
   const startRecording = async () => {
     setError(null);
@@ -49,11 +55,17 @@ const VoiceIntake: React.FC<VoiceIntakeProps> = ({ enabledLocalSTT, onSubmitTran
   const stopRecording = async () => {
     if (!recorderRef.current) return;
     setIsRecording(false);
-    recorderRef.current.stop();
+    const recorder = recorderRef.current;
+    const recorderMimeType = recorder.mimeType || "audio/webm";
+    const stopPromise = new Promise<void>((resolve) => {
+      recorder.onstop = () => resolve();
+    });
+    recorder.stop();
     stopActiveStreamTracks();
 
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    const audioBlob = new Blob(chunksRef.current, { type: "audio/webm" });
+    await stopPromise;
+    const blobChunks = chunksRef.current.filter((chunk) => chunk.size > 0);
+    const audioBlob = new Blob(blobChunks, { type: recorderMimeType });
     setIsInitializing(true);
     try {
       const client = await createMoonshineClient();
