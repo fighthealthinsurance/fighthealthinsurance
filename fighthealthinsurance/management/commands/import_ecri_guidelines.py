@@ -43,7 +43,10 @@ _LIST_KEYS = ("procedure_keywords", "diagnosis_keywords", "topics")
 
 
 def _parse_date(value: Any) -> Optional[date]:
-    """Parse YYYY-MM-DD or YYYY date strings; return None for falsy values."""
+    """Parse YYYY-MM-DD, YYYY/MM/DD, or YYYY date strings.
+
+    Returns None for falsy values or unparseable strings.
+    """
     if value in (None, ""):
         return None
     if isinstance(value, date):
@@ -175,7 +178,9 @@ class Command(BaseCommand):
                     updated += 1
 
             deactivated = 0
-            if deactivate_missing and not dry_run and seen_ids:
+            if deactivate_missing and not dry_run:
+                # Empty input is a legitimate "deactivate everything" request;
+                # don't short-circuit when seen_ids is empty.
                 deactivated = ECRIGuideline.objects.exclude(
                     guideline_id__in=seen_ids
                 ).update(is_active=False)

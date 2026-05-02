@@ -21,12 +21,41 @@ def _normalize(value: Optional[str]) -> str:
     return value.strip().lower() if value else ""
 
 
+# Tokens shorter than this are dropped from the match query. 2 keeps common
+# clinical abbreviations (RA, MI, CT, PE, MS, CF, ...) but excludes 1-character
+# noise like trailing punctuation or stray letters.
+_MIN_TOKEN_LEN = 2
+
+# Generic English/medical filler that produces noisy matches when used as a
+# substring against the JSON-serialized keyword arrays. Kept short to avoid
+# discarding legitimate clinical terms.
+_STOP_WORDS = frozenset(
+    {
+        "of",
+        "to",
+        "in",
+        "on",
+        "is",
+        "at",
+        "by",
+        "or",
+        "an",
+        "as",
+        "be",
+        "no",
+        "do",
+    }
+)
+
+
 def _tokens(value: str) -> List[str]:
-    """Split ``value`` into deduped lowercase tokens of length >= 3."""
+    """Split ``value`` into deduped lowercase tokens for keyword matching."""
     seen: List[str] = []
     for raw in value.replace("/", " ").replace(",", " ").split():
         token = raw.strip().lower()
-        if len(token) >= 3 and token not in seen:
+        if len(token) < _MIN_TOKEN_LEN or token in _STOP_WORDS:
+            continue
+        if token not in seen:
             seen.append(token)
     return seen
 

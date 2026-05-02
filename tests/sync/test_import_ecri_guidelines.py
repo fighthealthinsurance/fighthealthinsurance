@@ -94,6 +94,22 @@ class ImportECRIGuidelinesCommandTest(TestCase):
         self.assertTrue(keep.is_active)
         self.assertFalse(drop.is_active)
 
+    def test_deactivate_missing_with_empty_input_deactivates_all(self):
+        """Empty input + --deactivate-missing must still mark everything inactive."""
+        ECRIGuideline.objects.create(guideline_id="gid-stale-1", title="Stale 1")
+        ECRIGuideline.objects.create(guideline_id="gid-stale-2", title="Stale 2")
+        path = self._write_records([])
+        call_command(
+            "import_ecri_guidelines",
+            source=path,
+            deactivate_missing=True,
+            stdout=io.StringIO(),
+        )
+        self.assertEqual(
+            ECRIGuideline.objects.filter(is_active=True).count(),
+            0,
+        )
+
     def test_dry_run_does_not_write(self):
         path = self._write_records([{"guideline_id": "gid-dry", "title": "Dry Run"}])
         call_command(

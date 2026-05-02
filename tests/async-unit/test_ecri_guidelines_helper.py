@@ -9,7 +9,6 @@ import pytest
 from fighthealthinsurance.ecri_guidelines_helper import ECRIGuidelinesHelper
 from fighthealthinsurance.models import ECRIGuideline
 
-
 # Each test uses a unique guideline_id so parallel test workers don't collide
 # on the unique constraint when the django_db transaction rollback races with
 # the async write.
@@ -133,6 +132,22 @@ async def test_find_relevant_guidelines_no_match_returns_empty():
         diagnosis="zzz_unmatched_diagnosis_zzz",
     )
     assert results == []
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_find_relevant_guidelines_matches_two_letter_acronym():
+    """Common clinical acronyms (RA, MI, CT) must still match keywords."""
+    ra_guideline = await ECRIGuideline.objects.acreate(
+        guideline_id="test-ra-acronym",
+        title="Rheumatoid Arthritis Guideline",
+        diagnosis_keywords=["ra", "rheumatoid arthritis"],
+    )
+    results = await ECRIGuidelinesHelper.find_relevant_guidelines(
+        procedure="",
+        diagnosis="RA",
+    )
+    assert any(g.guideline_id == ra_guideline.guideline_id for g in results)
 
 
 @pytest.mark.django_db(transaction=True)
