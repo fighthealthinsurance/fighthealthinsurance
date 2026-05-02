@@ -620,11 +620,15 @@ class Prod(Base):
         "staging.fighthealthinsurance.com",
         "fuckhealthinsurance.com",
         "www.fuckhealthinsurance.com",
+        "fightinsurance.ai",
+        "www.fightinsurance.ai",
     ]
 
     DOMAIN_REDIRECTS = {
         "fuckhealthinsurance.com": "www.fighthealthinsurance.com",
         "www.fuckhealthinsurance.com": "www.fighthealthinsurance.com",
+        "fightinsurance.ai": "www.fighthealthinsurance.com",
+        "www.fightinsurance.ai": "www.fighthealthinsurance.com",
     }
 
     # HSTS - tell browsers to always use HTTPS
