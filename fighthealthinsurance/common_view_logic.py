@@ -2605,3 +2605,162 @@ class AppealsBackendHelper:
                 "total_appeals": new + old,
             }
         ) + "\n"
+
+
+class EscalationPacketHelper:
+    """Streaming generator for the regulator/executive escalation packet.
+
+    Produces one cover letter per recipient (state DOI, plan medical
+    director, DOL EBSA for ERISA plans) and persists each draft as a
+    `RegulatorEscalation` row keyed to the originating denial.
+    """
+
+    @classmethod
+    async def generate_escalation_letters(cls, parameters: dict) -> AsyncIterator[str]:
+        """Async generator yielding JSON payloads, mirroring AppealsBackendHelper."""
+        from fighthealthinsurance.escalation_addresses import get_recipients_for_denial
+        from fighthealthinsurance.generate_regulator_letter import (
+            generate_regulator_letter,
+        )
+
+        denial_id = parameters.get("denial_id")
+        email = parameters.get("email")
+        semi_sekret = parameters.get("semi_sekret")
+
+        if denial_id is None or email is None or semi_sekret is None:
+            yield json.dumps(
+                {"type": "error", "message": "Missing denial id, email, or semi_sekret"}
+            ) + "\n"
+            return
+
+        hashed_email = Denial.get_hashed_email(email)
+
+        yield json.dumps(
+            {
+                "type": "status",
+                "phase": "init",
+                "message": "Starting escalation letter generation...",
+            }
+        ) + "\n"
+
+        try:
+            denial = await Denial.objects.select_related(
+                "regulator", "insurance_company_obj"
+            ).aget(
+                denial_id=denial_id,
+                semi_sekret=semi_sekret,
+                hashed_email=hashed_email,
+            )
+        except Denial.DoesNotExist:
+            yield json.dumps({"type": "error", "message": "Denial not found"}) + "\n"
+            return
+
+        recipients = await sync_to_async(get_recipients_for_denial)(denial)
+        if not recipients:
+            yield json.dumps(
+                {"type": "error", "message": "No regulator recipients available"}
+            ) + "\n"
+            return
+
+        yield json.dumps(
+            {
+                "type": "status",
+                "phase": "generating",
+                "message": f"Generating {len(recipients)} regulator letter(s)...",
+                "total": len(recipients),
+            }
+        ) + "\n"
+
+        use_external = bool(getattr(denial, "use_external", False))
+        for recipient in recipients:
+            yield json.dumps(
+                {
+                    "type": "status",
+                    "phase": "generating",
+                    "substep": recipient.recipient_type,
+                    "message": f"Drafting letter to {recipient.name}...",
+                }
+            ) + "\n"
+
+            letter_text: Optional[str] = await generate_regulator_letter(
+                denial, recipient, use_external=use_external
+            )
+            if not letter_text:
+                yield json.dumps(
+                    {
+                        "type": "status",
+                        "phase": "generating",
+                        "substep": recipient.recipient_type,
+                        "state": "error",
+                        "message": (
+                            f"Could not generate a letter for {recipient.name}; "
+                            "skipping."
+                        ),
+                    }
+                ) + "\n"
+                continue
+
+            escalation = await RegulatorEscalation.objects.acreate(
+                for_denial=denial,
+                hashed_email=hashed_email,
+                recipient_type=recipient.recipient_type,
+                recipient_name=recipient.name,
+                recipient_address=recipient.address,
+                recipient_phone=recipient.phone,
+                recipient_url=recipient.url,
+                letter_text=letter_text,
+            )
+
+            yield json.dumps(
+                {
+                    "type": "letter",
+                    "escalation_id": str(escalation.uuid),
+                    "recipient_type": recipient.recipient_type,
+                    "recipient_name": recipient.name,
+                    "recipient_address": recipient.address,
+                    "recipient_phone": recipient.phone,
+                    "recipient_url": recipient.url,
+                    "rationale": recipient.rationale,
+                    "content": letter_text,
+                }
+            ) + "\n"
+
+        yield json.dumps(
+            {
+                "type": "status",
+                "phase": "done",
+                "message": "All regulator letters generated.",
+            }
+        ) + "\n"
+
+    @classmethod
+    def save_chosen_letter(
+        cls,
+        escalation_uuid: str,
+        denial_id: int,
+        email: str,
+        semi_sekret: str,
+        letter_text: str,
+    ) -> Optional["RegulatorEscalation"]:
+        """Persist the user's edited regulator letter as the chosen draft."""
+        hashed_email = Denial.get_hashed_email(email)
+        try:
+            denial = Denial.objects.get(
+                denial_id=denial_id,
+                semi_sekret=semi_sekret,
+                hashed_email=hashed_email,
+            )
+        except Denial.DoesNotExist:
+            return None
+        try:
+            escalation = RegulatorEscalation.objects.get(
+                uuid=escalation_uuid, for_denial=denial
+            )
+        except RegulatorEscalation.DoesNotExist:
+            return None
+        was_edited = letter_text.strip() != (escalation.letter_text or "").strip()
+        escalation.letter_text = letter_text
+        escalation.chosen = True
+        escalation.editted = escalation.editted or was_edited
+        escalation.save()
+        return escalation

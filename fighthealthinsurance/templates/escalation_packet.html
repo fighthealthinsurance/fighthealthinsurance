@@ -1,0 +1,167 @@
+{% extends 'base.html' %}
+{% load static %}
+{% block title %}
+Fight Your Health Insurance Denial: Regulator Escalation Letters
+{% endblock title %}
+
+{% block content %}
+<div class="container" style="padding-top:1rem;">
+  <div class="alert-box alert-info">
+    <h3>📨 Regulator Escalation Packet</h3>
+    <p style="font-size:1.05rem;">
+      We're drafting parallel cover letters you can send alongside your
+      appeal — to the people who hold your plan accountable. Each letter
+      is tailored to its recipient's role.
+    </p>
+  </div>
+
+  {% if recipients_count == 0 %}
+  <div class="alert-box alert-warning">
+    <p>
+      We weren't able to identify any regulator recipients for this denial.
+      Make sure you've filled in your state on the earlier steps.
+    </p>
+    <p>
+      <a href="{{ back_url }}" class="btn btn-secondary">← {{ back_label }}</a>
+    </p>
+  </div>
+  {% else %}
+  <div class="alert-box" style="background:#f8f9fa; border:1px solid #dee2e6; padding:1rem;">
+    <h4 style="margin-top:0;">We'll generate {{ recipients_count }} letter{{ recipients_count|pluralize }} for:</h4>
+    <ul style="margin:0.5rem 0 0 1.5rem; line-height:1.6;">
+      {% for r in recipients %}
+        <li>
+          <strong>{{ r.name }}</strong>
+          {% if r.rationale %}<br><span style="color:#555; font-size:0.9rem;">{{ r.rationale }}</span>{% endif %}
+        </li>
+      {% endfor %}
+    </ul>
+  </div>
+
+  <div id="loading-text" style="text-align:center; padding:1rem; margin-top:1rem;">
+    <h4>Drafting your regulator letters…</h4>
+    <p style="color:#666;">This usually takes 1–2 minutes per recipient.</p>
+  </div>
+
+  <div id="escalation-letters"></div>
+
+  <div id="base-letter-form" style="display:none;">
+    <form action="{% url 'choose_escalation_letter' %}" method="post" class="col-md-12 d-flex flex-column align-items-center" style="margin:1rem 0;">
+      {% csrf_token %}
+      <input type="hidden" name="email" value="{{ user_email }}">
+      <input type="hidden" name="denial_id" value="{{ denial_id }}">
+      <input type="hidden" name="semi_sekret" value="{{ semi_sekret }}">
+      <input type="hidden" name="escalation_uuid" value="">
+      <textarea style="width:100%" rows="20" name="letter_text" class="appeal_text"></textarea>
+      <button type="submit" class="btn btn-green" style="margin-top:0.5rem;">Save and review this letter</button>
+    </form>
+  </div>
+
+  <div class="form-nav-centered" style="margin-top:1.5rem;">
+    <a href="{{ back_url }}" class="btn btn-secondary-custom">← {{ back_label }}</a>
+  </div>
+  {% endif %}
+</div>
+
+{% if recipients_count > 0 %}
+<script>
+  document.addEventListener('DOMContentLoaded', () => {
+    const backendUrl = `wss://${window.location.host}/ws/streaming-escalation-backend/`;
+    const data = {
+      {% autoescape off %}
+      ...{{ form_context }},
+      {% endautoescape %}
+      csrfmiddlewaretoken: '{{ csrf_token }}',
+    };
+
+    const lettersContainer = document.getElementById('escalation-letters');
+    const loadingText = document.getElementById('loading-text');
+    const baseForm = document.getElementById('base-letter-form');
+
+    function renderLetter(payload) {
+      const wrapper = document.createElement('div');
+      wrapper.className = 'alert-box';
+      wrapper.style.cssText = 'background:#fff; border:1px solid #ADD100; padding:1rem; margin:1.5rem 0;';
+
+      const heading = document.createElement('h4');
+      heading.textContent = '📬 Letter to ' + payload.recipient_name;
+      wrapper.appendChild(heading);
+
+      if (payload.recipient_address) {
+        const addr = document.createElement('pre');
+        addr.style.cssText = 'background:#f5f5f5; padding:0.5rem; border-radius:4px; font-size:0.9rem; white-space:pre-wrap;';
+        addr.textContent = payload.recipient_address;
+        wrapper.appendChild(addr);
+      }
+      if (payload.rationale) {
+        const r = document.createElement('p');
+        r.style.cssText = 'color:#555; font-size:0.95rem;';
+        r.textContent = payload.rationale;
+        wrapper.appendChild(r);
+      }
+
+      const cloned = baseForm.cloneNode(true);
+      cloned.removeAttribute('style');
+      const form = cloned.querySelector('form');
+      const uuidInput = form.querySelector('input[name="escalation_uuid"]');
+      uuidInput.value = payload.escalation_id;
+      const textarea = form.querySelector('textarea');
+      textarea.value = payload.content;
+      wrapper.appendChild(cloned);
+
+      lettersContainer.appendChild(wrapper);
+    }
+
+    function processLine(line) {
+      line = line.trim();
+      if (!line) return;
+      let parsed;
+      try {
+        parsed = JSON.parse(line);
+      } catch (e) {
+        console.error('Failed to parse line:', line, e);
+        return;
+      }
+      if (parsed.type === 'letter') {
+        renderLetter(parsed);
+        return;
+      }
+      if (parsed.type === 'status' && parsed.phase === 'done') {
+        if (loadingText) loadingText.style.display = 'none';
+        return;
+      }
+      if (parsed.type === 'error') {
+        if (loadingText) loadingText.textContent = parsed.message || 'An error occurred.';
+        return;
+      }
+      // Status updates we surface in the loading text
+      if (parsed.type === 'status' && parsed.message) {
+        const inner = loadingText && loadingText.querySelector('p');
+        if (inner) inner.textContent = parsed.message;
+      }
+    }
+
+    let buffer = '';
+    const ws = new WebSocket(backendUrl);
+    ws.onopen = () => ws.send(JSON.stringify(data));
+    ws.onmessage = (event) => {
+      buffer += event.data;
+      while (buffer.includes('\n')) {
+        const idx = buffer.indexOf('\n');
+        const line = buffer.slice(0, idx);
+        buffer = buffer.slice(idx + 1);
+        processLine(line);
+      }
+    };
+    ws.onclose = () => {
+      if (buffer.trim()) processLine(buffer);
+      if (loadingText) loadingText.style.display = 'none';
+    };
+    ws.onerror = (e) => {
+      console.error('WebSocket error', e);
+      if (loadingText) loadingText.textContent = 'Connection error — please try again.';
+    };
+  });
+</script>
+{% endif %}
+{% endblock content %}

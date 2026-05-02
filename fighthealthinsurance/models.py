@@ -1517,6 +1517,60 @@ class ProposedAppeal(ExportModelOperationsMixin("ProposedAppeal"), models.Model)
             return f"{self.appeal_text}"
 
 
+class RegulatorEscalation(ExportModelOperationsMixin("RegulatorEscalation"), models.Model):  # type: ignore
+    """
+    Tracks an escalation packet generated alongside an appeal.
+
+    A packet is a set of cover letters addressed in parallel to the regulator(s)
+    that oversee the plan: the state Department of Insurance / insurance
+    commissioner, the plan's medical director, and (for ERISA self-funded plans)
+    the U.S. Department of Labor's Employee Benefits Security Administration
+    (EBSA). Each entry stores the recipient metadata, the AI-generated draft,
+    and the user-chosen / edited final text.
+    """
+
+    RECIPIENT_DOI = "doi"
+    RECIPIENT_MEDICAL_DIRECTOR = "medical_director"
+    RECIPIENT_DOL_EBSA = "dol_ebsa"
+    RECIPIENT_CHOICES = [
+        (RECIPIENT_DOI, "State DOI / Insurance Commissioner"),
+        (RECIPIENT_MEDICAL_DIRECTOR, "Plan Medical Director"),
+        (RECIPIENT_DOL_EBSA, "DOL EBSA (ERISA)"),
+    ]
+
+    id = models.AutoField(primary_key=True)
+    uuid = models.CharField(
+        default=uuid.uuid4,
+        editable=False,
+        unique=True,
+        max_length=100,
+    )
+    for_denial = models.ForeignKey(
+        Denial, on_delete=models.CASCADE, related_name="regulator_escalations"
+    )
+    hashed_email = models.CharField(max_length=300)
+    recipient_type = models.CharField(max_length=32, choices=RECIPIENT_CHOICES)
+    recipient_name = models.CharField(max_length=300, blank=True, default="")
+    recipient_address = models.TextField(blank=True, default="")
+    recipient_phone = models.CharField(max_length=80, blank=True, default="")
+    recipient_url = models.CharField(max_length=400, blank=True, default="")
+    letter_text = models.TextField(blank=True, default="")
+    chosen = models.BooleanField(default=False)
+    editted = models.BooleanField(default=False)
+    sent = models.BooleanField(default=False)
+    created = models.DateTimeField(auto_now_add=True)
+    mod_date = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["for_denial"], name="reg_escal_denial_idx"),
+            models.Index(fields=["hashed_email"], name="reg_escal_email_idx"),
+        ]
+
+    def __str__(self):
+        return f"RegulatorEscalation({self.recipient_type}) for denial {self.for_denial_id}"
+
+
 class Appeal(ExportModelOperationsMixin("Appeal"), models.Model):  # type: ignore
     """
     Represents a finalized appeal letter that has been or will be submitted.

@@ -1010,6 +1010,7 @@ class ChooseAppeal(View):
                 "appeal": form.cleaned_data["appeal_text"],
                 "user_email": form.cleaned_data["email"],
                 "denial_id": form.cleaned_data["denial_id"],
+                "semi_sekret": form.cleaned_data["semi_sekret"],
                 "appeal_info_extract": appeal_info_extracted,
                 "fax_form": fax_form,
                 "current_step": 8,
@@ -1127,6 +1128,126 @@ class GenerateAppeal(View):
                     form.cleaned_data["semi_sekret"],
                 ),
                 "back_label": "Back to questions",
+            },
+        )
+
+
+class GenerateEscalationPacket(View):
+    """Render the regulator-letter generation page (a.k.a. escalation packet).
+
+    This is the entry point for the "Want to let the regulator know what's
+    going on?" flow. It validates the denial, computes the recipient list,
+    and hands the page over to a streaming WebSocket-driven UI that fills
+    in one editable letter per recipient.
+    """
+
+    def _build(self, request, denial_id, email, semi_sekret):
+        from fighthealthinsurance.escalation_addresses import (
+            get_recipients_for_denial,
+        )
+
+        if not (denial_id and email and semi_sekret):
+            return redirect("scan")
+        try:
+            denial = models.Denial.objects.filter(
+                denial_id=denial_id,
+                hashed_email=models.Denial.get_hashed_email(email),
+                semi_sekret=semi_sekret,
+            ).get()
+        except models.Denial.DoesNotExist:
+            return redirect("scan")
+
+        recipients = get_recipients_for_denial(denial)
+        recipients_for_template = [
+            {
+                "recipient_type": r.recipient_type,
+                "name": r.name,
+                "address": r.address,
+                "phone": r.phone,
+                "url": r.url,
+                "rationale": r.rationale,
+            }
+            for r in recipients
+        ]
+        elems = {
+            "denial_id": str(denial_id),
+            "email": email,
+            "semi_sekret": semi_sekret,
+        }
+        return render(
+            request,
+            "escalation_packet.html",
+            context={
+                "form_context": json.dumps(elems),
+                "user_email": email,
+                "denial_id": denial_id,
+                "semi_sekret": semi_sekret,
+                "recipients": recipients_for_template,
+                "recipients_count": len(recipients_for_template),
+                "back_url": reverse("share_appeal"),
+                "back_label": "Back to your appeal",
+            },
+        )
+
+    def get(self, request):
+        return self._build(
+            request,
+            request.GET.get("denial_id"),
+            request.GET.get("email"),
+            request.GET.get("semi_sekret"),
+        )
+
+    def post(self, request):
+        return self._build(
+            request,
+            request.POST.get("denial_id"),
+            request.POST.get("email"),
+            request.POST.get("semi_sekret"),
+        )
+
+
+class ChooseEscalationLetter(View):
+    """Persist the user's edited regulator letter and render the review page."""
+
+    def post(self, request):
+        denial_id = request.POST.get("denial_id")
+        email = request.POST.get("email")
+        semi_sekret = request.POST.get("semi_sekret")
+        escalation_uuid = request.POST.get("escalation_uuid")
+        letter_text = request.POST.get("letter_text", "")
+
+        if not (denial_id and email and semi_sekret and escalation_uuid):
+            return HttpResponseRedirect(reverse("scan"))
+
+        try:
+            denial_id_int = int(denial_id)
+        except (TypeError, ValueError):
+            return HttpResponseRedirect(reverse("scan"))
+
+        escalation = common_view_logic.EscalationPacketHelper.save_chosen_letter(
+            escalation_uuid=escalation_uuid,
+            denial_id=denial_id_int,
+            email=email,
+            semi_sekret=semi_sekret,
+            letter_text=letter_text,
+        )
+        if escalation is None:
+            return HttpResponseRedirect(reverse("scan"))
+
+        return render(
+            request,
+            "escalation_packet_review.html",
+            context={
+                "letter_text": escalation.letter_text,
+                "recipient_name": escalation.recipient_name,
+                "recipient_address": escalation.recipient_address,
+                "recipient_phone": escalation.recipient_phone,
+                "recipient_url": escalation.recipient_url,
+                "recipient_type": escalation.recipient_type,
+                "user_email": email,
+                "denial_id": denial_id,
+                "semi_sekret": semi_sekret,
+                "escalation_uuid": escalation_uuid,
             },
         )
 
