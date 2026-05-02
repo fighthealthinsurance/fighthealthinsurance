@@ -20,10 +20,15 @@ address book that combines per-state DOI data and national resources.
 from dataclasses import dataclass, field
 from typing import Any, List, Optional
 
+from fighthealthinsurance.models import RegulatorEscalation
 from fighthealthinsurance.state_help import (
     StateHelp,
     get_state_help_by_abbreviation,
 )
+
+RECIPIENT_DOI = RegulatorEscalation.RECIPIENT_DOI
+RECIPIENT_MEDICAL_DIRECTOR = RegulatorEscalation.RECIPIENT_MEDICAL_DIRECTOR
+RECIPIENT_DOL_EBSA = RegulatorEscalation.RECIPIENT_DOL_EBSA
 
 # National address for the DOL EBSA — the federal agency that enforces
 # ERISA for self-funded employer health plans. Patients can request
@@ -67,7 +72,7 @@ def _doi_recipient(state: StateHelp) -> Optional[EscalationRecipient]:
         f"external review process in {state.name}."
     )
     return EscalationRecipient(
-        recipient_type="doi",
+        recipient_type=RECIPIENT_DOI,
         name=dept.name,
         address=dept.complaint_url or dept.url or "",
         phone=dept.consumer_line or dept.phone or "",
@@ -96,11 +101,11 @@ def _medical_director_recipient(
         else "Your Health Plan"
     )
     return EscalationRecipient(
-        recipient_type="medical_director",
+        recipient_type=RECIPIENT_MEDICAL_DIRECTOR,
         name=f"Medical Director, {company}",
-        # We don't know the plan's mailing address; the user fills that in
-        # from the denial letter. We leave a placeholder block so the cover
-        # letter renders with an obvious blank to fill.
+        # The plan's address isn't known; the letter renders with an
+        # obvious bracketed placeholder for the user to fill from the
+        # denial letter.
         address="[Insurance company mailing address from your denial letter]",
         phone="",
         url="",
@@ -116,7 +121,7 @@ def _medical_director_recipient(
 def _dol_ebsa_recipient() -> EscalationRecipient:
     """Build the DOL EBSA recipient for ERISA-covered plans."""
     return EscalationRecipient(
-        recipient_type="dol_ebsa",
+        recipient_type=RECIPIENT_DOL_EBSA,
         name=DOL_EBSA_NAME,
         address=DOL_EBSA_ADDRESS,
         phone=DOL_EBSA_PHONE,
@@ -130,32 +135,31 @@ def _dol_ebsa_recipient() -> EscalationRecipient:
     )
 
 
+_ERISA_PLAN_SOURCE_KEYWORDS = ("erisa", "self-funded", "self funded")
+
+
 def _is_erisa_likely(denial: Any) -> bool:
     """Heuristic: is this denial likely to be from an ERISA plan?
 
-    We use any of:
-    - The denial is linked to the ERISA Regulator row.
-    - The structured insurance company is flagged as a TPA.
-    - The plan source ManyToMany contains an ERISA-tagged source.
+    True if any of: the denial is linked to the ERISA Regulator row, the
+    structured insurance company is flagged as a TPA, or the plan source
+    M2M contains an ERISA-tagged source.
     """
-    try:
-        if denial.regulator and (denial.regulator.alt_name or "").upper() == "ERISA":
+    regulator = getattr(denial, "regulator", None)
+    if regulator is not None and (regulator.alt_name or "").upper() == "ERISA":
+        return True
+
+    ic = getattr(denial, "insurance_company_obj", None)
+    if ic is not None and getattr(ic, "is_tpa", False):
+        return True
+
+    plan_source_manager = getattr(denial, "plan_source", None)
+    if plan_source_manager is None or not hasattr(plan_source_manager, "all"):
+        return False
+    for source in plan_source_manager.all():
+        label = (getattr(source, "name", "") or "").lower()
+        if any(k in label for k in _ERISA_PLAN_SOURCE_KEYWORDS):
             return True
-    except Exception:
-        pass
-    try:
-        ic = getattr(denial, "insurance_company_obj", None)
-        if ic is not None and getattr(ic, "is_tpa", False):
-            return True
-    except Exception:
-        pass
-    try:
-        for source in denial.plan_source.all():
-            label = (getattr(source, "name", "") or "").lower()
-            if "erisa" in label or "self-funded" in label or "self funded" in label:
-                return True
-    except Exception:
-        pass
     return False
 
 

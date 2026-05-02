@@ -1135,10 +1135,10 @@ class GenerateAppeal(View):
 class GenerateEscalationPacket(View):
     """Render the regulator-letter generation page (a.k.a. escalation packet).
 
-    This is the entry point for the "Want to let the regulator know what's
-    going on?" flow. It validates the denial, computes the recipient list,
-    and hands the page over to a streaming WebSocket-driven UI that fills
-    in one editable letter per recipient.
+    Entry point for the "Want to let the regulator know what's going on?"
+    flow. Validates the denial, computes the recipient list, and hands the
+    page over to a streaming WebSocket-driven UI that fills in one
+    editable letter per recipient.
     """
 
     def _build(self, request, denial_id, email, semi_sekret):
@@ -1146,15 +1146,8 @@ class GenerateEscalationPacket(View):
             get_recipients_for_denial,
         )
 
-        if not (denial_id and email and semi_sekret):
-            return redirect("scan")
-        try:
-            denial = models.Denial.objects.filter(
-                denial_id=denial_id,
-                hashed_email=models.Denial.get_hashed_email(email),
-                semi_sekret=semi_sekret,
-            ).get()
-        except models.Denial.DoesNotExist:
+        denial = common_view_logic.get_denial_for_action(denial_id, email, semi_sekret)
+        if denial is None:
             return redirect("scan")
 
         recipients = get_recipients_for_denial(denial)
@@ -1210,26 +1203,17 @@ class ChooseEscalationLetter(View):
     """Persist the user's edited regulator letter and render the review page."""
 
     def post(self, request):
-        denial_id = request.POST.get("denial_id")
-        email = request.POST.get("email")
-        semi_sekret = request.POST.get("semi_sekret")
-        escalation_uuid = request.POST.get("escalation_uuid")
-        letter_text = request.POST.get("letter_text", "")
-
-        if not (denial_id and email and semi_sekret and escalation_uuid):
+        form = core_forms.ChooseEscalationLetterForm(request.POST)
+        if not form.is_valid():
             return HttpResponseRedirect(reverse("scan"))
 
-        try:
-            denial_id_int = int(denial_id)
-        except (TypeError, ValueError):
-            return HttpResponseRedirect(reverse("scan"))
-
+        cleaned = form.cleaned_data
         escalation = common_view_logic.EscalationPacketHelper.save_chosen_letter(
-            escalation_uuid=escalation_uuid,
-            denial_id=denial_id_int,
-            email=email,
-            semi_sekret=semi_sekret,
-            letter_text=letter_text,
+            escalation_uuid=cleaned["escalation_uuid"],
+            denial_id=cleaned["denial_id"],
+            email=cleaned["email"],
+            semi_sekret=cleaned["semi_sekret"],
+            letter_text=cleaned["letter_text"],
         )
         if escalation is None:
             return HttpResponseRedirect(reverse("scan"))
@@ -1244,10 +1228,10 @@ class ChooseEscalationLetter(View):
                 "recipient_phone": escalation.recipient_phone,
                 "recipient_url": escalation.recipient_url,
                 "recipient_type": escalation.recipient_type,
-                "user_email": email,
-                "denial_id": denial_id,
-                "semi_sekret": semi_sekret,
-                "escalation_uuid": escalation_uuid,
+                "user_email": cleaned["email"],
+                "denial_id": cleaned["denial_id"],
+                "semi_sekret": cleaned["semi_sekret"],
+                "escalation_uuid": cleaned["escalation_uuid"],
             },
         )
 

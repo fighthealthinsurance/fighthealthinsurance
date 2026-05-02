@@ -2607,6 +2607,29 @@ class AppealsBackendHelper:
         ) + "\n"
 
 
+def get_denial_for_action(
+    denial_id: Any, email: str, semi_sekret: str
+) -> Optional[Denial]:
+    """Look up the denial keyed by id + hashed email + semi_sekret.
+
+    Returns None if any field is missing/invalid or the denial doesn't
+    exist. The (denial_id, hashed_email, semi_sekret) triple is the
+    canonical "is this the right user touching this denial" check used
+    throughout the appeal flow.
+    """
+    if denial_id is None or not email or not semi_sekret:
+        return None
+    try:
+        denial_id_int = int(denial_id)
+    except (TypeError, ValueError):
+        return None
+    return Denial.objects.filter(
+        denial_id=denial_id_int,
+        hashed_email=Denial.get_hashed_email(email),
+        semi_sekret=semi_sekret,
+    ).first()
+
+
 class EscalationPacketHelper:
     """Streaming generator for the regulator/executive escalation packet.
 
@@ -2644,12 +2667,14 @@ class EscalationPacketHelper:
         ) + "\n"
 
         try:
-            denial = await Denial.objects.select_related(
-                "regulator", "insurance_company_obj"
-            ).aget(
-                denial_id=denial_id,
-                semi_sekret=semi_sekret,
-                hashed_email=hashed_email,
+            denial = await (
+                Denial.objects.select_related("regulator", "insurance_company_obj")
+                .prefetch_related("plan_source")
+                .aget(
+                    denial_id=denial_id,
+                    semi_sekret=semi_sekret,
+                    hashed_email=hashed_email,
+                )
             )
         except Denial.DoesNotExist:
             yield json.dumps({"type": "error", "message": "Denial not found"}) + "\n"
@@ -2672,58 +2697,63 @@ class EscalationPacketHelper:
         ) + "\n"
 
         use_external = bool(getattr(denial, "use_external", False))
-        for recipient in recipients:
-            yield json.dumps(
-                {
-                    "type": "status",
-                    "phase": "generating",
-                    "substep": recipient.recipient_type,
-                    "message": f"Drafting letter to {recipient.name}...",
-                }
-            ) + "\n"
 
-            letter_text: Optional[str] = await generate_regulator_letter(
+        async def _draft(recipient):
+            text = await generate_regulator_letter(
                 denial, recipient, use_external=use_external
             )
-            if not letter_text:
+            return recipient, text
+
+        tasks = [asyncio.create_task(_draft(r)) for r in recipients]
+        try:
+            for fut in asyncio.as_completed(tasks):
+                recipient, letter_text = await fut
+                if not letter_text:
+                    yield json.dumps(
+                        {
+                            "type": "status",
+                            "phase": "generating",
+                            "substep": recipient.recipient_type,
+                            "state": "error",
+                            "message": (
+                                f"Could not generate a letter for "
+                                f"{recipient.name}; skipping."
+                            ),
+                        }
+                    ) + "\n"
+                    continue
+
+                escalation = await RegulatorEscalation.objects.acreate(
+                    for_denial=denial,
+                    hashed_email=hashed_email,
+                    recipient_type=recipient.recipient_type,
+                    recipient_name=recipient.name,
+                    recipient_address=recipient.address,
+                    recipient_phone=recipient.phone,
+                    recipient_url=recipient.url,
+                    letter_text=letter_text,
+                )
+
                 yield json.dumps(
                     {
-                        "type": "status",
-                        "phase": "generating",
-                        "substep": recipient.recipient_type,
-                        "state": "error",
-                        "message": (
-                            f"Could not generate a letter for {recipient.name}; "
-                            "skipping."
-                        ),
+                        "type": "letter",
+                        "escalation_id": str(escalation.uuid),
+                        "recipient_type": recipient.recipient_type,
+                        "recipient_name": recipient.name,
+                        "recipient_address": recipient.address,
+                        "recipient_phone": recipient.phone,
+                        "recipient_url": recipient.url,
+                        "rationale": recipient.rationale,
+                        "content": letter_text,
                     }
                 ) + "\n"
-                continue
-
-            escalation = await RegulatorEscalation.objects.acreate(
-                for_denial=denial,
-                hashed_email=hashed_email,
-                recipient_type=recipient.recipient_type,
-                recipient_name=recipient.name,
-                recipient_address=recipient.address,
-                recipient_phone=recipient.phone,
-                recipient_url=recipient.url,
-                letter_text=letter_text,
-            )
-
-            yield json.dumps(
-                {
-                    "type": "letter",
-                    "escalation_id": str(escalation.uuid),
-                    "recipient_type": recipient.recipient_type,
-                    "recipient_name": recipient.name,
-                    "recipient_address": recipient.address,
-                    "recipient_phone": recipient.phone,
-                    "recipient_url": recipient.url,
-                    "rationale": recipient.rationale,
-                    "content": letter_text,
-                }
-            ) + "\n"
+        finally:
+            # If the consumer disconnected mid-stream, cancel any unfinished
+            # drafting tasks so we don't keep paying for ML calls nobody is
+            # listening to.
+            for t in tasks:
+                if not t.done():
+                    t.cancel()
 
         yield json.dumps(
             {
@@ -2743,14 +2773,8 @@ class EscalationPacketHelper:
         letter_text: str,
     ) -> Optional["RegulatorEscalation"]:
         """Persist the user's edited regulator letter as the chosen draft."""
-        hashed_email = Denial.get_hashed_email(email)
-        try:
-            denial = Denial.objects.get(
-                denial_id=denial_id,
-                semi_sekret=semi_sekret,
-                hashed_email=hashed_email,
-            )
-        except Denial.DoesNotExist:
+        denial = get_denial_for_action(denial_id, email, semi_sekret)
+        if denial is None:
             return None
         try:
             escalation = RegulatorEscalation.objects.get(

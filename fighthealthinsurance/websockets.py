@@ -137,7 +137,17 @@ class StreamingEscalationBackend(AsyncWebsocketConsumer):
             logger.opt(exception=True).error(
                 f"Error sending back escalation letters: {e}"
             )
-            raise
+            try:
+                await self.send(
+                    json.dumps(
+                        {
+                            "type": "error",
+                            "message": "Server error while drafting letters.",
+                        }
+                    )
+                )
+            except Exception:
+                pass
         finally:
             await asyncio.sleep(0.1)
             try:

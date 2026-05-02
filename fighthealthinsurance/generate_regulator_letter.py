@@ -19,7 +19,12 @@ from typing import Any, Optional
 
 from loguru import logger
 
-from fighthealthinsurance.escalation_addresses import EscalationRecipient
+from fighthealthinsurance.escalation_addresses import (
+    RECIPIENT_DOI,
+    RECIPIENT_DOL_EBSA,
+    RECIPIENT_MEDICAL_DIRECTOR,
+    EscalationRecipient,
+)
 from fighthealthinsurance.ml.ml_router import ml_router
 
 _DOI_FRAMING = (
@@ -56,9 +61,9 @@ _DOL_EBSA_FRAMING = (
 )
 
 _FRAMING_BY_RECIPIENT_TYPE = {
-    "doi": _DOI_FRAMING,
-    "medical_director": _MEDICAL_DIRECTOR_FRAMING,
-    "dol_ebsa": _DOL_EBSA_FRAMING,
+    RECIPIENT_DOI: _DOI_FRAMING,
+    RECIPIENT_MEDICAL_DIRECTOR: _MEDICAL_DIRECTOR_FRAMING,
+    RECIPIENT_DOL_EBSA: _DOL_EBSA_FRAMING,
 }
 
 
@@ -89,7 +94,7 @@ def make_regulator_letter_prompt(
     extras = []
     if state_name:
         extras.append(f"State: {state_name}")
-    if recipient.recipient_type == "doi" and external_review_available:
+    if recipient.recipient_type == RECIPIENT_DOI and external_review_available:
         extras.append(
             "Note: external (independent) medical review IS available in this state — "
             "ask the regulator to point the patient to the right form/process."

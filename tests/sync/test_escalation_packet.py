@@ -5,8 +5,12 @@ from unittest.mock import patch
 from django.test import TestCase, Client
 from django.urls import reverse
 
+from fighthealthinsurance.common_view_logic import get_denial_for_action
 from fighthealthinsurance.escalation_addresses import (
     DOL_EBSA_NAME,
+    RECIPIENT_DOI,
+    RECIPIENT_DOL_EBSA,
+    RECIPIENT_MEDICAL_DIRECTOR,
     EscalationRecipient,
     get_recipients_for_denial,
 )
@@ -160,6 +164,50 @@ class RegulatorLetterPromptTest(TestCase):
         self.assertIn("peer-to-peer", prompt.lower())
 
 
+class RecipientConstantsTest(TestCase):
+    """The escalation_addresses module re-exports model constants."""
+
+    def test_constants_match_model(self):
+        self.assertEqual(RECIPIENT_DOI, RegulatorEscalation.RECIPIENT_DOI)
+        self.assertEqual(
+            RECIPIENT_MEDICAL_DIRECTOR,
+            RegulatorEscalation.RECIPIENT_MEDICAL_DIRECTOR,
+        )
+        self.assertEqual(RECIPIENT_DOL_EBSA, RegulatorEscalation.RECIPIENT_DOL_EBSA)
+
+
+class GetDenialForActionTest(TestCase):
+    """The shared denial lookup used by views and the escalation helper."""
+
+    def setUp(self):
+        self.email = "lookup@example.com"
+        self.denial = Denial.objects.create(
+            denial_text="x",
+            hashed_email=Denial.get_hashed_email(self.email),
+            insurance_company="Aetna",
+        )
+
+    def test_returns_denial_when_all_match(self):
+        result = get_denial_for_action(
+            self.denial.denial_id, self.email, self.denial.semi_sekret
+        )
+        self.assertEqual(result.pk, self.denial.pk)
+
+    def test_returns_none_for_wrong_sekret(self):
+        result = get_denial_for_action(self.denial.denial_id, self.email, "wrong")
+        self.assertIsNone(result)
+
+    def test_returns_none_for_missing_args(self):
+        self.assertIsNone(get_denial_for_action(None, self.email, "x"))
+        self.assertIsNone(get_denial_for_action(1, "", "x"))
+        self.assertIsNone(get_denial_for_action(1, self.email, ""))
+
+    def test_returns_none_for_non_integer_denial_id(self):
+        self.assertIsNone(
+            get_denial_for_action("not-a-number", self.email, self.denial.semi_sekret)
+        )
+
+
 class RegulatorEscalationModelTest(TestCase):
     """Smoke tests for the new model."""
 
@@ -222,6 +270,11 @@ class EscalationPacketViewTest(TestCase):
         self.assertTemplateUsed(response, "escalation_packet.html")
         # Medical director recipient is always present.
         self.assertContains(response, "Medical Director")
+
+    def test_choose_escalation_letter_rejects_invalid_form(self):
+        url = reverse("choose_escalation_letter")
+        response = self.client.post(url, {"letter_text": "x"})
+        self.assertEqual(response.status_code, 302)
 
     def test_choose_escalation_letter_persists_chosen_text(self):
         escalation = RegulatorEscalation.objects.create(

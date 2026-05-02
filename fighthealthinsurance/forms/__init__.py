@@ -175,6 +175,13 @@ class ChooseAppealForm(DenialRefForm):
     )
 
 
+class ChooseEscalationLetterForm(DenialRefForm):
+    escalation_uuid = forms.CharField(required=True, widget=forms.HiddenInput())
+    letter_text = forms.CharField(
+        widget=forms.Textarea(attrs={"class": "appeal_text"}), required=True
+    )
+
+
 class FaxForm(DenialRefForm):
     name = forms.CharField(
         required=True,
