@@ -75,6 +75,13 @@ def test_non_professional_abandoned_cart():
     response = client.get(f"{reverse('complete_payment')}?token=not-a-real-token")
     assert response.status_code == 400
 
+    # Passing the raw Stripe session_id string is no longer a valid lookup —
+    # post-cutoff sessions must use the token.
+    response = client.get(
+        f"{reverse('complete_payment')}?session_id={high_id_session.session_id}"
+    )
+    assert response.status_code == 400
+
     # Legacy support: rows created before the token rollout were emailed with
     # ?session_id=<row_id>; honor that for ids below the cutoff so old emails
     # still work.

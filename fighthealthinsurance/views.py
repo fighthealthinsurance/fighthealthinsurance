@@ -1727,21 +1727,24 @@ class CompletePaymentView(View):
             elif session_id:
                 # Legacy emails sent before the token rollout used the row id
                 # as ?session_id=<int>. Honor those for ids below the cutoff
-                # only; newer ids must use the unguessable token.
+                # only; anything else must come through the secure token, so
+                # that post-cutoff sessions can't be brute-forced or accessed
+                # by passing a Stripe session_id string.
                 legacy_id: typing.Optional[int] = None
                 try:
                     legacy_id = int(session_id)
                 except (TypeError, ValueError):
                     pass
                 if (
-                    legacy_id is not None
-                    and 0 < legacy_id < self.LEGACY_SESSION_ID_CUTOFF
+                    legacy_id is None
+                    or not 0 < legacy_id < self.LEGACY_SESSION_ID_CUTOFF
                 ):
-                    lost_session = models.LostStripeSession.objects.get(id=legacy_id)
-                else:
-                    lost_session = models.LostStripeSession.objects.get(
-                        session_id=session_id
+                    return HttpResponse(
+                        json.dumps({"error": "Invalid or expired link"}),
+                        status=400,
+                        content_type="application/json",
                     )
+                lost_session = models.LostStripeSession.objects.get(id=legacy_id)
             else:
                 return HttpResponse(
                     json.dumps({"error": "Missing token"}),
