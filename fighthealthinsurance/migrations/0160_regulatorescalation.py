@@ -18,12 +18,7 @@ class Migration(migrations.Migration):
                 ("id", models.AutoField(primary_key=True, serialize=False)),
                 (
                     "uuid",
-                    models.CharField(
-                        default=uuid.uuid4,
-                        editable=False,
-                        max_length=100,
-                        unique=True,
-                    ),
+                    models.UUIDField(default=uuid.uuid4, editable=False, unique=True),
                 ),
                 ("hashed_email", models.CharField(max_length=300)),
                 (
@@ -52,7 +47,7 @@ class Migration(migrations.Migration):
                 ),
                 ("letter_text", models.TextField(blank=True, default="")),
                 ("chosen", models.BooleanField(default=False)),
-                ("editted", models.BooleanField(default=False)),
+                ("edited", models.BooleanField(default=False)),
                 ("sent", models.BooleanField(default=False)),
                 ("created", models.DateTimeField(auto_now_add=True)),
                 ("mod_date", models.DateTimeField(auto_now=True)),

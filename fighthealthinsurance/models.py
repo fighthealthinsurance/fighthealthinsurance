@@ -1539,12 +1539,7 @@ class RegulatorEscalation(ExportModelOperationsMixin("RegulatorEscalation"), mod
     ]
 
     id = models.AutoField(primary_key=True)
-    uuid = models.CharField(
-        default=uuid.uuid4,
-        editable=False,
-        unique=True,
-        max_length=100,
-    )
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     for_denial = models.ForeignKey(
         Denial, on_delete=models.CASCADE, related_name="regulator_escalations"
     )
@@ -1556,7 +1551,7 @@ class RegulatorEscalation(ExportModelOperationsMixin("RegulatorEscalation"), mod
     recipient_url = models.CharField(max_length=400, blank=True, default="")
     letter_text = models.TextField(blank=True, default="")
     chosen = models.BooleanField(default=False)
-    editted = models.BooleanField(default=False)
+    edited = models.BooleanField(default=False)
     sent = models.BooleanField(default=False)
     created = models.DateTimeField(auto_now_add=True)
     mod_date = models.DateTimeField(auto_now=True)

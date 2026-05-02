@@ -1177,7 +1177,9 @@ class GenerateEscalationPacket(View):
                 "semi_sekret": semi_sekret,
                 "recipients": recipients_for_template,
                 "recipients_count": len(recipients_for_template),
-                "back_url": reverse("share_appeal"),
+                "back_url": build_back_url(
+                    "generate_appeal", denial_id, email, semi_sekret
+                ),
                 "back_label": "Back to your appeal",
             },
         )

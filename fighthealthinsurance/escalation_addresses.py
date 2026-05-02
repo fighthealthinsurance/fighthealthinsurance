@@ -67,9 +67,10 @@ def _doi_recipient(state: StateHelp) -> Optional[EscalationRecipient]:
     if not dept or not dept.name:
         return None
     rationale = (
-        f"State insurance regulators investigate complaints against insurers "
-        f"and can require {dept.name} to respond. They also oversee the "
-        f"external review process in {state.name}."
+        f"State insurance regulators investigate complaints against "
+        f"insurers and can require the insurer to respond. "
+        f"{dept.name} also oversees the external review process in "
+        f"{state.name}."
     )
     return EscalationRecipient(
         recipient_type=RECIPIENT_DOI,

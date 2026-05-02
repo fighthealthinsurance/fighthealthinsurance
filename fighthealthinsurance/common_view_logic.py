@@ -2783,13 +2783,13 @@ class EscalationPacketHelper:
             return None
         try:
             escalation = RegulatorEscalation.objects.get(
-                uuid=str(escalation_uuid), for_denial=denial
+                uuid=escalation_uuid, for_denial=denial
             )
         except RegulatorEscalation.DoesNotExist:
             return None
         was_edited = letter_text.strip() != (escalation.letter_text or "").strip()
         escalation.letter_text = letter_text
         escalation.chosen = True
-        escalation.editted = escalation.editted or was_edited
+        escalation.edited = escalation.edited or was_edited
         escalation.save()
         return escalation

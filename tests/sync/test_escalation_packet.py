@@ -230,7 +230,7 @@ class RegulatorEscalationModelTest(TestCase):
         )
         self.assertEqual(escalation.recipient_type, "doi")
         self.assertFalse(escalation.chosen)
-        self.assertFalse(escalation.editted)
+        self.assertFalse(escalation.edited)
         self.assertEqual(
             list(denial.regulator_escalations.values_list("id", flat=True)),
             [escalation.id],
@@ -299,7 +299,7 @@ class EscalationPacketViewTest(TestCase):
         self.assertTemplateUsed(response, "escalation_packet_review.html")
         escalation.refresh_from_db()
         self.assertTrue(escalation.chosen)
-        self.assertTrue(escalation.editted)
+        self.assertTrue(escalation.edited)
         self.assertEqual(escalation.letter_text, "User-edited text.")
 
     def test_choose_escalation_letter_rejects_malformed_uuid(self):

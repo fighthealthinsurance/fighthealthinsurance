@@ -67,7 +67,8 @@ Fight Your Health Insurance Denial: Regulator Escalation Letters
 {{ form_context|json_script:"escalation-form-context" }}
 <script>
   document.addEventListener('DOMContentLoaded', () => {
-    const backendUrl = `wss://${window.location.host}/ws/streaming-escalation-backend/`;
+    const wsScheme = window.location.protocol === 'https:' ? 'wss' : 'ws';
+    const backendUrl = `${wsScheme}://${window.location.host}/ws/streaming-escalation-backend/`;
     const formContextEl = document.getElementById('escalation-form-context');
     const formContext = formContextEl ? JSON.parse(formContextEl.textContent) : {};
     const data = {
@@ -102,6 +103,7 @@ Fight Your Health Insurance Denial: Regulator Escalation Letters
       }
 
       const cloned = baseForm.cloneNode(true);
+      cloned.removeAttribute('id');
       cloned.removeAttribute('style');
       const form = cloned.querySelector('form');
       const uuidInput = form.querySelector('input[name="escalation_uuid"]');
