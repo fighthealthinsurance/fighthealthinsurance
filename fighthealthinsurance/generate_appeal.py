@@ -41,6 +41,452 @@ class AppealTemplateGenerator(object):
             return None
 
 
+class SpecializedDenialTemplate(object):
+    """Base class for specialized denial-type appeal templates.
+
+    Subclasses encode the specific laws/regulations to cite, a detection
+    rule, a fully-formed static letter (suitable for ``non_ai_appeals``),
+    and a prompt hint to nudge the largest model toward the right citations.
+
+    Placeholders ``{insurance_company}``, ``{claim_id}``, ``{procedure}``,
+    and ``{diagnosis}`` are filled in downstream by ``sub_in_appeals``.
+    """
+
+    name: str = ""
+    text_patterns: tuple[str, ...] = ()
+    procedure_patterns: tuple[str, ...] = ()
+    diagnosis_patterns: tuple[str, ...] = ()
+    negative_patterns: tuple[str, ...] = ()
+    citations: tuple[str, ...] = ()
+
+    @classmethod
+    def matches(
+        cls,
+        denial_text: Optional[str],
+        procedure: Optional[str] = None,
+        diagnosis: Optional[str] = None,
+    ) -> bool:
+        text = denial_text or ""
+        proc = procedure or ""
+        diag = diagnosis or ""
+
+        if cls.negative_patterns:
+            for p in cls.negative_patterns:
+                if re.search(p, text, re.IGNORECASE):
+                    return False
+
+        if cls.text_patterns and any(
+            re.search(p, text, re.IGNORECASE) for p in cls.text_patterns
+        ):
+            return True
+        if (
+            cls.procedure_patterns
+            and proc
+            and any(re.search(p, proc, re.IGNORECASE) for p in cls.procedure_patterns)
+        ):
+            return True
+        if (
+            cls.diagnosis_patterns
+            and diag
+            and any(re.search(p, diag, re.IGNORECASE) for p in cls.diagnosis_patterns)
+        ):
+            return True
+        return False
+
+    @classmethod
+    def static_appeal(cls) -> str:
+        raise NotImplementedError
+
+    @classmethod
+    def model_prompt_hint(cls) -> str:
+        bullets = "\n".join(f"- {c}" for c in cls.citations)
+        return (
+            f"This denial appears to involve {cls.name}. "
+            "When writing the appeal, ground the argument in the following "
+            "authorities and cite them by name where they support the patient's "
+            f"position:\n{bullets}\n"
+            "Do not fabricate case numbers, regulatory paragraphs, or quote text "
+            "you cannot verify; cite the laws/rules by name and section only."
+        )
+
+
+class MentalHealthParityAppeal(SpecializedDenialTemplate):
+    name = "Mental Health Parity / behavioral-health denial"
+    text_patterns = (
+        r"\bmental\s+health\b",
+        r"\bbehavioral\s+health\b",
+        r"\bsubstance\s+(use|abuse)\b",
+        r"\bpsychiatric\b",
+        r"\bpsychotherap",
+        r"\b(addiction|opioid use disorder|alcohol use disorder)\b",
+        r"\beating\s+disorder\b",
+        r"\bresidential\s+treatment\b",
+        r"\bpartial\s+hospitalization\b",
+        r"\bintensive\s+outpatient\b",
+        r"\bapplied\s+behavior\s+analysis\b|\bABA\s+therapy\b",
+    )
+    diagnosis_patterns = (
+        r"\b(depression|major\s+depressive|anxiety|bipolar|schizophreni|"
+        r"ptsd|adhd|autism|substance\s+use\s+disorder|alcohol\s+use\s+disorder|"
+        r"eating\s+disorder|anorexia|bulimia)\b",
+    )
+    citations = (
+        "Mental Health Parity and Addiction Equity Act of 2008 (MHPAEA), "
+        "29 U.S.C. § 1185a",
+        "CMS 2024 Final Rule on the use of algorithms and artificial intelligence "
+        "in coverage determinations",
+        "Affordable Care Act Essential Health Benefits, "
+        "42 U.S.C. § 18022(b)(1)(E) (mental health and substance use disorder services)",
+        "Department of Labor 2024 MHPAEA Final Rules on Nonquantitative Treatment "
+        "Limitations (NQTLs)",
+    )
+
+    @classmethod
+    def static_appeal(cls) -> str:
+        return (
+            "Re: Appeal of denied behavioral-health claim {claim_id}\n\n"
+            "Dear {insurance_company},\n\n"
+            "I am formally appealing the denial of coverage for {procedure} "
+            "(diagnosis: {diagnosis}). Because this denial concerns mental "
+            "health or substance use disorder services, it is governed by "
+            "behavioral-health parity protections that the carrier must satisfy "
+            "before any adverse determination can stand.\n\n"
+            "1. Mental Health Parity and Addiction Equity Act (MHPAEA, "
+            "29 U.S.C. § 1185a). Any nonquantitative treatment limitation "
+            "(NQTL) applied here — including medical-necessity criteria, "
+            "prior-authorization rules, fail-first/step-therapy protocols, "
+            "concurrent review, network composition, or reimbursement "
+            "methodology — must be no more restrictive in writing or in "
+            "operation than the comparable NQTLs applied to medical/surgical "
+            "benefits in the same classification. Please produce the "
+            "comparative analysis required by ERISA § 712(a)(8) and the "
+            "2024 DOL Final Rules for the NQTL relied upon in this denial.\n\n"
+            "2. CMS 2024 Final Rule on algorithmic coverage determinations. "
+            "If an algorithm, predictive model, or AI tool contributed to "
+            "this denial, the determination must still rest on an "
+            "individualized clinical assessment by a qualified human reviewer "
+            "applying the patient's full clinical picture; the algorithm may "
+            "not be the sole basis for the adverse decision. Please disclose "
+            "whether such a tool was used, identify it, and provide the "
+            "human reviewer's clinical reasoning.\n\n"
+            "3. Affordable Care Act Essential Health Benefits "
+            "(42 U.S.C. § 18022(b)(1)(E)). Mental health and substance use "
+            "disorder services, including behavioral-health treatment, are "
+            "designated essential health benefits and may not be effectively "
+            "excluded by NQTLs that are more restrictive than those used on "
+            "the medical/surgical side.\n\n"
+            "{medical_reason}\n\n"
+            "I respectfully request that you (a) overturn this denial, "
+            "(b) provide the MHPAEA NQTL comparative analysis for the "
+            "criterion applied, and (c) confirm in writing what role, if any, "
+            "an algorithm or AI tool played in the determination.\n\n"
+            "Sincerely,\n[Name]\n"
+        )
+
+
+class AdvancedImagingAppeal(SpecializedDenialTemplate):
+    name = "Advanced imaging denial (MRI/CT/PET)"
+    text_patterns = (
+        r"\bMRI\b",
+        r"\bmagnetic\s+resonance\b",
+        r"\bMRA\b",
+        r"\bMRCP\b",
+        r"\bCT\s+scan\b",
+        r"\bcomputed\s+tomograph",
+        r"\bPET\s+(scan|/CT)\b",
+        r"\bpositron\s+emission\b",
+        r"\bnuclear\s+medicine\b",
+        r"\badvanced\s+imaging\b",
+    )
+    procedure_patterns = (
+        r"\b(MRI|MRA|MRCP|CT|CTA|PET|SPECT)\b",
+        r"\bimaging\b",
+    )
+    citations = (
+        "American College of Radiology (ACR) Appropriateness Criteria",
+        "CMS National Coverage Determinations for diagnostic imaging "
+        "(NCD Manual chapter 220)",
+        "CMS 2024 Final Rule on the use of algorithms and artificial intelligence "
+        "in coverage determinations",
+    )
+
+    @classmethod
+    def static_appeal(cls) -> str:
+        return (
+            "Re: Appeal of denied advanced imaging claim {claim_id}\n\n"
+            "Dear {insurance_company},\n\n"
+            "I am appealing the denial of {procedure} ordered for {diagnosis}. "
+            "Advanced imaging decisions should be made under nationally "
+            "recognized appropriateness criteria, not blanket utilization-"
+            "management rules.\n\n"
+            "1. ACR Appropriateness Criteria. The American College of "
+            "Radiology publishes evidence-based criteria identifying the "
+            "appropriate imaging modality for specific clinical scenarios. "
+            "The presentation in this case meets ACR-published indications "
+            "for the requested study; lower-cost alternatives such as plain "
+            "radiographs or ultrasound are inadequate to answer the clinical "
+            "question and would predictably lead to repeat imaging.\n\n"
+            "2. CMS National Coverage Determinations (NCD chapter 220). "
+            "CMS NCDs set the community standard for advanced imaging "
+            "coverage and the requested study satisfies the relevant NCD's "
+            "indications.\n\n"
+            "3. CMS 2024 Final Rule on algorithmic coverage determinations. "
+            "If an automated utilization-management tool drove this denial, "
+            "the carrier must still produce an individualized clinical "
+            "review by a qualified human reviewer; the algorithm cannot be "
+            "the sole basis for the adverse decision. Please disclose "
+            "whether such a tool was used and provide the reviewer's "
+            "clinical rationale.\n\n"
+            "{medical_reason}\n\n"
+            "Delaying or denying this imaging risks missed diagnoses and "
+            "downstream cost from lower-yield workups. I respectfully "
+            "request that the denial be overturned.\n\n"
+            "Sincerely,\n[Name]\n"
+        )
+
+
+class SpecialtyMedicationAppeal(SpecializedDenialTemplate):
+    name = "Specialty medication denial"
+    text_patterns = (
+        r"\bspecialty\s+(drug|medication|pharmac)",
+        r"\bbiologic\b",
+        r"\binfliximab|adalimumab|etanercept|ustekinumab|secukinumab|"
+        r"vedolizumab|rituximab|tocilizumab|dupilumab|omalizumab\b",
+        r"\bhumira|enbrel|stelara|remicade|cosentyx|entyvio|dupixent\b",
+        r"\bGLP-?1\b|\bsemaglutide|tirzepatide|liraglutide\b",
+        r"\bozempic|wegovy|mounjaro|zepbound\b",
+        r"\bgene\s+therapy\b",
+        r"\bcar[\s\-]t\b",
+        r"\boncology\s+(infusion|drug|therapy)\b",
+        r"\bstep\s+therapy\b",
+        r"\bfail[\s\-]first\b",
+        r"\bnon[\s\-]formulary\b",
+    )
+    procedure_patterns = (
+        r"\bspecialty\b",
+        r"\binfusion\b",
+        r"\bbiologic\b",
+    )
+    citations = (
+        "Affordable Care Act non-discrimination provisions, "
+        "42 U.S.C. § 18116 (Section 1557)",
+        "ERISA § 503 / 29 C.F.R. § 2560.503-1 (full and fair review, "
+        "including the carrier's clinical criteria and reviewer credentials)",
+        "State step-therapy override statutes (where applicable; the "
+        "exception is required when stepping has been tried, is "
+        "contraindicated, or is expected to be ineffective)",
+        "CMS 2024 Final Rule on the use of algorithms and artificial intelligence "
+        "in coverage determinations",
+    )
+
+    @classmethod
+    def static_appeal(cls) -> str:
+        return (
+            "Re: Appeal of denied specialty-medication claim {claim_id}\n\n"
+            "Dear {insurance_company},\n\n"
+            "I am appealing the denial of {procedure} for {diagnosis}. "
+            "Specialty medications are typically prescribed because lower-"
+            "tier alternatives are unsuitable for the patient's clinical "
+            "circumstances; the denial as issued does not engage with that "
+            "individualized analysis.\n\n"
+            "1. Step-therapy / fail-first override. Where the carrier's "
+            "denial relies on step therapy, the patient qualifies for an "
+            "override under applicable state law and plan terms because "
+            "preferred agents are contraindicated, have been tried and "
+            "failed, or are expected to be ineffective for this indication. "
+            "Please apply the override and process the claim.\n\n"
+            "2. ERISA full-and-fair-review obligations "
+            "(29 C.F.R. § 2560.503-1). Please produce, with the appeal "
+            "decision, (a) the specific clinical criteria relied on, "
+            "(b) the credentials of the reviewing clinician, and (c) any "
+            "internal rule, guideline, protocol, or similar criterion that "
+            "was used. Generic 'not medically necessary' language without "
+            "this disclosure does not satisfy the regulation.\n\n"
+            "3. CMS 2024 Final Rule on algorithmic coverage determinations. "
+            "If an automated tool flagged this prescription, the final "
+            "denial must still rest on an individualized clinical review by "
+            "a qualified human reviewer applying this patient's full "
+            "clinical picture, not solely on an algorithmic output.\n\n"
+            "{medical_reason}\n\n"
+            "I respectfully request that the denial be overturned and the "
+            "medication authorized without further delay.\n\n"
+            "Sincerely,\n[Name]\n"
+        )
+
+
+class PhysicalTherapyContinuationAppeal(SpecializedDenialTemplate):
+    name = "Physical therapy continuation (visits beyond initial sessions)"
+    text_patterns = (
+        r"\bphysical\s+therapy\b",
+        r"\b\bPT\s+(visits|sessions|services)\b",
+        r"\boccupational\s+therapy\b",
+        r"\b\bOT\s+(visits|sessions|services)\b",
+        r"\bspeech\s+therapy\b",
+        r"\bvisit\s+limit\b",
+        r"\bmaximum\s+(number\s+of\s+)?visits\b",
+        r"\badditional\s+(visits|sessions)\b",
+        r"\bcontinued\s+(therapy|treatment)\b",
+        r"\bplateau\b",
+        r"\bmaintenance\s+(therapy|care)\b",
+    )
+    procedure_patterns = (
+        r"\bphysical\s+therapy\b|\bPT\b",
+        r"\boccupational\s+therapy\b|\bOT\b",
+    )
+    negative_patterns = (r"\bphysician\s+assistant\b",)
+    citations = (
+        "Jimmo v. Sebelius (1:11-cv-00017, D. Vt. 2013) — coverage may not "
+        "be denied solely because a patient has reached a 'plateau' or is "
+        "not improving; skilled therapy to maintain function or slow "
+        "decline is covered when otherwise medically necessary",
+        "CMS Medicare Benefit Policy Manual, chapter 15 (skilled therapy "
+        "and the maintenance-coverage standard)",
+        "Affordable Care Act Essential Health Benefits, "
+        "42 U.S.C. § 18022(b)(1)(G) (rehabilitative and habilitative "
+        "services and devices)",
+        "CMS 2024 Final Rule on the use of algorithms and artificial intelligence "
+        "in coverage determinations",
+    )
+
+    @classmethod
+    def static_appeal(cls) -> str:
+        return (
+            "Re: Appeal of denied therapy continuation, claim {claim_id}\n\n"
+            "Dear {insurance_company},\n\n"
+            "I am appealing the denial of additional {procedure} sessions "
+            "for {diagnosis}. The denial appears to rest on a visit cap or "
+            "a finding that the patient has stopped improving; both grounds "
+            "are inconsistent with controlling authority.\n\n"
+            "1. Jimmo v. Sebelius — improvement is NOT the standard. "
+            "Skilled therapy is covered when it is reasonable and necessary "
+            "to maintain the patient's current condition or to slow further "
+            "decline, even if the patient is not actively improving. "
+            "Plateau- or maintenance-based denials cannot stand under "
+            "Jimmo and the resulting CMS clarifications in chapter 15 of "
+            "the Medicare Benefit Policy Manual.\n\n"
+            "2. ACA Essential Health Benefits "
+            "(42 U.S.C. § 18022(b)(1)(G)). Rehabilitative and habilitative "
+            "services and devices are designated essential health benefits. "
+            "A blanket session cap that prevents continued medically "
+            "necessary therapy effectively excludes a covered EHB and is "
+            "not enforceable as written.\n\n"
+            "3. CMS 2024 Final Rule on algorithmic coverage determinations. "
+            "If a utilization-management algorithm flagged this case as "
+            "having reached its visit limit, the final denial must still "
+            "rest on an individualized clinical review by a qualified human "
+            "reviewer; the algorithm may not be the sole basis for the "
+            "adverse decision.\n\n"
+            "{medical_reason}\n\n"
+            "I respectfully request the denial be overturned and the "
+            "additional sessions authorized.\n\n"
+            "Sincerely,\n[Name]\n"
+        )
+
+
+class PostSurgicalRehabAppeal(SpecializedDenialTemplate):
+    name = "Post-surgical rehabilitation denial"
+    text_patterns = (
+        r"\bpost[\s\-]?(surgical|operative|op)\b.*\b(rehab|therapy|care)\b",
+        r"\b(rehab|therapy|care)\b.*\bpost[\s\-]?(surgical|operative|op)\b",
+        r"\bafter\s+surgery\b.*\b(rehab|therapy)\b",
+        r"\binpatient\s+rehab(ilitation)?\b",
+        r"\bskilled\s+nursing\b",
+        r"\bSNF\b",
+        r"\bacute\s+rehab\b",
+        r"\bjoint\s+replacement\b.*\b(rehab|therapy)\b",
+        r"\bACL\s+(repair|reconstruction)\b",
+        r"\brotator\s+cuff\b",
+        r"\bspinal\s+(fusion|surgery)\b.*\b(rehab|therapy)\b",
+    )
+    procedure_patterns = (
+        r"\b(post[\s\-]?op|post[\s\-]?surgical)\b",
+        r"\binpatient\s+rehab",
+        r"\bskilled\s+nursing\b|\bSNF\b",
+    )
+    citations = (
+        "Jimmo v. Sebelius (1:11-cv-00017, D. Vt. 2013) — maintenance and "
+        "slow-decline therapy is covered; improvement is not the standard",
+        "CMS Medicare Benefit Policy Manual, chapter 1 (inpatient "
+        "rehabilitation facility coverage) and chapter 8 (skilled nursing "
+        "facility coverage)",
+        "Affordable Care Act Essential Health Benefits, "
+        "42 U.S.C. § 18022(b)(1)(G) (rehabilitative and habilitative "
+        "services and devices)",
+        "CMS 2024 Final Rule on the use of algorithms and artificial intelligence "
+        "in coverage determinations",
+    )
+
+    @classmethod
+    def static_appeal(cls) -> str:
+        return (
+            "Re: Appeal of denied post-surgical rehabilitation, "
+            "claim {claim_id}\n\n"
+            "Dear {insurance_company},\n\n"
+            "I am appealing the denial of post-surgical rehabilitation "
+            "({procedure}) following surgery for {diagnosis}. Recovery from "
+            "surgery is precisely the scenario in which skilled "
+            "rehabilitation is most clearly medically necessary, and the "
+            "denial as issued is inconsistent with controlling authority.\n\n"
+            "1. CMS coverage standards for inpatient rehabilitation and "
+            "skilled nursing care (Medicare Benefit Policy Manual, "
+            "chapters 1 and 8). Coverage turns on whether the patient "
+            "requires skilled, multidisciplinary rehabilitation services on "
+            "an intensive basis (IRF) or daily skilled care (SNF). The "
+            "denial does not engage with the chapter 1/8 criteria as "
+            "applied to this patient's actual post-operative status.\n\n"
+            "2. Jimmo v. Sebelius. To the extent the denial relies on a "
+            "lack of measurable improvement or a 'plateau,' the "
+            "improvement standard was rejected in Jimmo and clarified in "
+            "subsequent CMS guidance. Skilled rehabilitation that maintains "
+            "function or prevents deterioration during post-surgical "
+            "recovery is covered.\n\n"
+            "3. ACA Essential Health Benefits "
+            "(42 U.S.C. § 18022(b)(1)(G)). Rehabilitative and habilitative "
+            "services and devices are essential health benefits and cannot "
+            "be effectively excluded through restrictive utilization "
+            "management.\n\n"
+            "4. CMS 2024 Final Rule on algorithmic coverage determinations. "
+            "If a length-of-stay algorithm or similar tool drove the "
+            "denial, the carrier must produce an individualized human "
+            "clinical review; the algorithm cannot be the sole basis for "
+            "the adverse decision.\n\n"
+            "{medical_reason}\n\n"
+            "I respectfully request that the denial be overturned and the "
+            "post-surgical rehabilitation authorized.\n\n"
+            "Sincerely,\n[Name]\n"
+        )
+
+
+SPECIALIZED_DENIAL_TEMPLATES: tuple[type[SpecializedDenialTemplate], ...] = (
+    MentalHealthParityAppeal,
+    AdvancedImagingAppeal,
+    SpecialtyMedicationAppeal,
+    PhysicalTherapyContinuationAppeal,
+    PostSurgicalRehabAppeal,
+)
+
+
+def detect_specialized_templates(
+    denial_text: Optional[str],
+    procedure: Optional[str] = None,
+    diagnosis: Optional[str] = None,
+) -> list[type[SpecializedDenialTemplate]]:
+    """Return the specialized templates that match a denial.
+
+    A denial can match more than one template (e.g., a mental-health
+    residential admission could trigger both MentalHealthParityAppeal
+    and PostSurgicalRehabAppeal-adjacent rules); we return all matches
+    and let the caller decide what to surface.
+    """
+    if not denial_text and not procedure and not diagnosis:
+        return []
+    return [
+        t
+        for t in SPECIALIZED_DENIAL_TEMPLATES
+        if t.matches(denial_text, procedure, diagnosis)
+    ]
+
+
 try:
     from english_words import get_english_words_set
 
@@ -223,6 +669,41 @@ class AppealGenerator(object):
 
     def __init__(self):
         self.regex_denial_processor = ProcessDenialRegex()
+
+    @staticmethod
+    def _best_internal_model_name() -> Optional[str]:
+        """Return the friendly name (used by ml_router.models_by_name) of the
+        highest-quality internal model, or None if none are available.
+
+        We deliberately route specialized-template hints through this single
+        model rather than every backend: the hints add prompt length and
+        instructions that benefit most from the strongest available model,
+        and broadcasting them across every backend would multiply cost
+        without proportional quality gain.
+        """
+        best = ml_router.best_internal_model()
+        if best is None:
+            return None
+        for name, instances in ml_router.models_by_name.items():
+            if best in instances:
+                return name
+        return None
+
+    @staticmethod
+    def _build_specialized_hint_block(
+        templates: List[type[SpecializedDenialTemplate]],
+    ) -> str:
+        """Combine the prompt hints from one or more specialized templates."""
+        seen: set[str] = set()
+        ordered: list[type[SpecializedDenialTemplate]] = []
+        for t in templates:
+            if t.name in seen:
+                continue
+            seen.add(t.name)
+            ordered.append(t)
+        if not ordered:
+            return ""
+        return "\n\n".join(t.model_prompt_hint() for t in ordered)
 
     async def _extract_entity_with_regexes_and_model(
         self,
@@ -904,6 +1385,7 @@ class AppealGenerator(object):
         plan_context=None,
         rag_context=None,
         nice_context=None,
+        specialized_templates: Optional[List[type[SpecializedDenialTemplate]]] = None,
     ) -> Iterator[str]:
         """
         Generates an iterator of appeal texts for a given insurance denial using templates, non-AI sources, and AI models.
@@ -918,6 +1400,9 @@ class AppealGenerator(object):
             pubmed_context: Optional PubMed context to provide to AI models.
             ml_citations_context: Optional list of citation contexts for AI models.
             plan_context: Optional plan context to provide to AI models
+            specialized_templates: Optional list of specialized denial-type
+                templates whose citation hints should be passed to the
+                highest-quality internal model only (one extra call).
 
         Returns:
             An iterator yielding generated appeal texts as strings.
@@ -1119,6 +1604,34 @@ class AppealGenerator(object):
             }
             for model_name in backup_model_names
         ]
+
+        # Specialized: when one or more specialized denial-type templates
+        # match, append a single extra call to the highest-quality internal
+        # model with the specialized citation hints embedded in the prompt.
+        # Hints are NOT broadcast to every model — only the best internal
+        # one — to keep cost down and let the strongest model use the
+        # additional structure.
+        if specialized_templates and open_prompt is not None:
+            best_model_name = self._best_internal_model_name()
+            if best_model_name is not None:
+                hint_block = self._build_specialized_hint_block(specialized_templates)
+                if hint_block:
+                    specialized_prompt = (
+                        f"{open_prompt}\n\n"
+                        f"--- Denial-type guidance ---\n{hint_block}"
+                    )
+                    calls.append(
+                        {
+                            "model_name": best_model_name,
+                            "prompt": specialized_prompt,
+                            "patient_context": medical_context,
+                            "plan_context": plan_context,
+                            "infer_type": "full",
+                            "pubmed_context": pubmed_context,
+                            "ml_citations_context": ml_citations_context,
+                            "prof_pov": prof_pov,
+                        }
+                    )
 
         # If we need to know the medical reason ask our friendly LLMs
         static_appeal = template_generator.generate_static()
