@@ -136,6 +136,20 @@ class Microsite:
     def __repr__(self) -> str:
         return f"<Microsite: {self.slug}>"
 
+    def pharmacy_coupon_suggestion(self):
+        """
+        Return a PharmacyCouponSuggestion for this microsite, if its
+        default procedure or condition matches a known prescription drug.
+
+        Returns None when the microsite is not drug-related.
+        """
+        from fighthealthinsurance.pharmacy_coupon_detector import suggest_for_denial
+
+        return suggest_for_denial(
+            procedure=self.default_procedure,
+            diagnosis=self.default_condition,
+        )
+
     async def get_extralink_context(
         self,
         max_docs: int = 5,
