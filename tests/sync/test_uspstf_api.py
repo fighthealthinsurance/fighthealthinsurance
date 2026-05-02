@@ -152,6 +152,25 @@ class FindRecommendationsForCodesTests(TestCase):
         self.assertGreater(len(recs), 0)
         self.assertTrue(any("colorectal" in (r["title"] or "").lower() for r in recs))
 
+    def test_dotless_icd10_code_matches(self):
+        """ICD-10 codes can appear without dots (e.g. 'Z1211'); they must match
+        the same recommendations as the dotted form."""
+        with_dot = find_recommendations_for_codes(["Z12.11"], limit=2)
+        without_dot = find_recommendations_for_codes(["Z1211"], limit=2)
+        self.assertEqual(
+            [r["id"] for r in with_dot],
+            [r["id"] for r in without_dot],
+        )
+        self.assertGreater(len(without_dot), 0)
+
+    def test_z12_2_maps_to_lung_not_colorectal(self):
+        """ICD-10 Z12.2 is screening for respiratory organs (lung)."""
+        recs = find_recommendations_for_codes(["Z12.2"], limit=3)
+        self.assertGreater(len(recs), 0)
+        titles = " ".join((r["title"] or "").lower() for r in recs)
+        self.assertIn("lung", titles)
+        self.assertNotIn("colorectal", titles)
+
     def test_breast_cancer_code(self):
         recs = find_recommendations_for_codes(["77067"], limit=2)
         self.assertGreater(len(recs), 0)

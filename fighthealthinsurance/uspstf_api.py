@@ -574,24 +574,31 @@ def search_recommendations(
 
 # Conservative mapping from preventive ICD-10 / CPT codes (matched as prefixes)
 # to USPSTF topic keywords. Keys are uppercased so lookups don't have to be.
+# ICD-10 prefixes are stored without the dot so we can match denial text that
+# uses either format ("Z12.11" or "Z1211"); they are compared after dot stripping.
 _CODE_TOPIC_KEYWORDS: List[Tuple[str, List[str]]] = [
-    ("Z12.11", ["colorectal"]),
-    ("Z12.31", ["breast"]),
+    ("Z12.11", ["colorectal"]),  # Colon screening
+    ("Z12.31", ["breast"]),  # Routine mammogram
     ("Z11.4", ["hiv"]),
     ("Z12.4", ["cervical"]),
     ("Z13.1", ["diabetes"]),
     ("Z13.6", ["cardiovascular"]),
-    ("Z12.2", ["colorectal"]),
+    ("Z12.2", ["lung"]),  # Respiratory-organ screening (lung), not colorectal
     ("Z11.3", ["hiv"]),
     ("Z32.2", ["pregnancy", "perinatal"]),
     ("99401", ["counseling"]),
     ("99403", ["counseling"]),
-    ("G0297", ["lung"]),
-    ("77067", ["breast"]),
-    ("45378", ["colorectal"]),
+    ("G0297", ["lung"]),  # Lung CT screening
+    ("77067", ["breast"]),  # Screening mammography
+    ("45378", ["colorectal"]),  # Diagnostic colonoscopy
     ("45380", ["colorectal"]),
-    ("82270", ["colorectal"]),
+    ("82270", ["colorectal"]),  # FOBT
 ]
+
+
+def _strip_code_punct(code: str) -> str:
+    """Normalize a CPT/ICD-10 code for prefix matching: uppercase, no dots/spaces."""
+    return re.sub(r"[.\s]", "", (code or "").strip().upper())
 
 
 def find_recommendations_for_codes(
@@ -603,15 +610,21 @@ def find_recommendations_for_codes(
     The mapping is deliberately conservative: it keys off well-known topic
     keywords associated with the most common preventive codes. Returns up to
     ``limit`` matched recommendations; an empty list when nothing matches.
+
+    Codes are normalized (uppercased, dots stripped) before comparison so the
+    same mapping covers both "Z12.11" and "Z1211"-style inputs.
     """
     keywords: List[str] = []
     seen_keywords: set = set()
+    normalized_prefixes = [
+        (_strip_code_punct(prefix), kws) for prefix, kws in _CODE_TOPIC_KEYWORDS
+    ]
     for code in codes:
-        normalized = (code or "").strip().upper()
+        normalized = _strip_code_punct(code)
         if not normalized:
             continue
-        for prefix, kws in _CODE_TOPIC_KEYWORDS:
-            if normalized.startswith(prefix.upper()):
+        for prefix, kws in normalized_prefixes:
+            if normalized.startswith(prefix):
                 for kw in kws:
                     if kw not in seen_keywords:
                         seen_keywords.add(kw)
