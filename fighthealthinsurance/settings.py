@@ -50,6 +50,8 @@ class Base(Configuration):
 
     # Audit logging - disabled by default, enable via environment variable
     ENABLE_AUDIT_LOGGING = os.getenv("ENABLE_AUDIT_LOGGING", "false").lower() == "true"
+    ENABLE_VOICE_INTAKE = os.getenv("ENABLE_VOICE_INTAKE", "false").lower() == "true"
+    ENABLE_LOCAL_STT = os.getenv("ENABLE_LOCAL_STT", "true").lower() == "true"
     LOGIN_URL = "login"
     LOGIN_REDIRECT_URL = "/"
     THUMBNAIL_DEBUG = True

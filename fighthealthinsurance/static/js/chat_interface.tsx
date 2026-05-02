@@ -24,6 +24,7 @@ import { IconPaperclip, IconSend, IconUser, IconRefresh } from "./icons";
 import { recognize } from "./scrub_ocr";
 import { THEME } from "./theme";
 import ErrorBoundary from "./ErrorBoundary";
+import VoiceIntake from "./VoiceIntake";
 import {
   getUserInfo,
   saveUserInfo,
@@ -125,6 +126,7 @@ interface ChatState {
   statusMessage: string | null;
   requestStartTime: number | null;
   useExternalModels: boolean;
+  showVoiceIntake: boolean;
 }
 
 // Typing animation component for loading state with elapsed time
@@ -205,6 +207,8 @@ const getSessionKey = (): string => {
 };
 
 interface ChatInterfaceProps {
+  enableVoiceIntake?: boolean;
+  enableLocalSTT?: boolean;
   defaultProcedure?: string;
   defaultCondition?: string;
   medicare?: string;
@@ -212,7 +216,7 @@ interface ChatInterfaceProps {
   initialMessage?: string;
 }
 
-const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, defaultCondition, medicare, micrositeSlug, initialMessage }) => {
+const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, defaultCondition, medicare, micrositeSlug, initialMessage, enableVoiceIntake, enableLocalSTT }) => {
   // State for our chat interface
   const [state, setState] = useState<ChatState>({
     messages: [],
@@ -226,6 +230,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
     statusMessage: null,
     requestStartTime: null,
     useExternalModels: localStorage.getItem("fhi_use_external_models") === "true",
+    showVoiceIntake: Boolean(enableVoiceIntake),
   });
 
   // Track when to show retry button (separate state to avoid re-render issues)
@@ -644,12 +649,28 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
     [state.chatId],
   );
 
+  const sendChatMessage = (content: string, source?: "typed" | "voice_transcript") => {
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+
+    const userInfo = getUserInfo();
+    const scrubbedContent = userInfo ? scrubPersonalInfo(content, userInfo) : content;
+
+    const messageToSend = {
+      chat_id: state.chatId,
+      email: userInfo?.email,
+      content: scrubbedContent,
+      is_patient: true,
+      session_key: getSessionKey(),
+      use_external_models: state.useExternalModels,
+      metadata: source ? { intake_source: source } : undefined,
+    };
+
+    wsRef.current.send(JSON.stringify(messageToSend));
+  };
+
   // Handle sending a new message
   const handleSendMessage = () => {
-    if (!state.input.trim() || !wsRef.current || state.isLoading) return;
-
-    // Get user info for scrubbing
-    const userInfo = getUserInfo();
+    if (!state.input.trim() || state.isLoading) return;
 
     // Add the user message to the UI immediately - show the original (unscrubbed) message to the user
     const userMessage: ChatMessage = {
@@ -668,22 +689,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
       statusMessage: null,
     }));
 
-    // Scrub personal information before sending
-    const scrubbedContent = userInfo
-      ? scrubPersonalInfo(state.input, userInfo)
-      : state.input;
-
-    // Send the message to the server
-    const messageToSend = {
-      chat_id: state.chatId, // Can be null if starting a new chat
-      email: userInfo?.email, // Include email for server-side processing
-      content: scrubbedContent,
-      is_patient: true, // This is for the patient-facing version
-      session_key: getSessionKey(),
-      use_external_models: state.useExternalModels,
-    };
-
-    wsRef.current.send(JSON.stringify(messageToSend));
+    sendChatMessage(state.input, "typed");
   };
 
   // Handle retrying the last message
@@ -699,9 +705,6 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
 
     if (!lastUserMessage) return;
 
-    // Get user info for scrubbing
-    const userInfo = getUserInfo();
-
     setState((prev) => ({
       ...prev,
       isLoading: true,
@@ -710,25 +713,29 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
       error: null,
     }));
 
-    // Scrub personal information before sending
-    const scrubbedContent = userInfo
-      ? scrubPersonalInfo(lastUserMessage.content, userInfo)
-      : lastUserMessage.content;
-
-    // Send the message to the server
-    const messageToSend = {
-      chat_id: state.chatId,
-      email: userInfo?.email,
-      content: scrubbedContent,
-      is_patient: true,
-      session_key: getSessionKey(),
-      use_external_models: state.useExternalModels,
-    };
-
-    wsRef.current.send(JSON.stringify(messageToSend));
+    sendChatMessage(lastUserMessage.content, "typed");
   };
 
-  // Handle toggling external models
+  
+  const submitVoiceTranscript = (transcript: string) => {
+    if (!transcript.trim() || state.isLoading) return;
+    const userMessage: ChatMessage = {
+      role: "user",
+      content: transcript,
+      timestamp: new Date().toISOString(),
+      status: "done",
+    };
+    setState((prev) => ({
+      ...prev,
+      messages: [...prev.messages, userMessage],
+      input: "",
+      isLoading: true,
+      requestStartTime: Date.now(),
+      statusMessage: null,
+    }));
+    sendChatMessage(transcript, "voice_transcript");
+  };
+// Handle toggling external models
   const handleToggleExternalModels = (checked: boolean) => {
     localStorage.setItem("fhi_use_external_models", checked.toString());
     setState((prev) => ({ ...prev, useExternalModels: checked }));
@@ -762,6 +769,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
       statusMessage: null,
       requestStartTime: null,
       useExternalModels: useExternalModels,
+      showVoiceIntake: Boolean(enableVoiceIntake),
     });
 
     // Handle WebSocket for a new chat
@@ -1035,6 +1043,14 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
           </Box>
         </ScrollArea>
 
+        {state.showVoiceIntake && (
+          <VoiceIntake
+            enabledLocalSTT={Boolean(enableLocalSTT)}
+            onSubmitTranscript={submitVoiceTranscript}
+            onSwitchToTyping={() => setState((prev) => ({ ...prev, showVoiceIntake: false }))}
+          />
+        )}
+
         <Box p="xs" style={{ width: "100%", marginTop: "10px" }}>
           <Paper
             radius="lg"
@@ -1170,6 +1186,8 @@ document.addEventListener("DOMContentLoaded", () => {
     const medicare = chatRoot.dataset.medicare || undefined;
     const micrositeSlug = chatRoot.dataset.micrositeSlug || undefined;
     const initialMessage = chatRoot.dataset.initialMessage || undefined;
+    const enableVoiceIntake = chatRoot.dataset.enableVoiceIntake === "true";
+    const enableLocalSTT = chatRoot.dataset.enableLocalStt === "true";
     console.log("Using microsite settings", chatRoot.dataset)  
     if (defaultProcedure) {
       console.log("Default procedure from microsite:", defaultProcedure);
@@ -1197,6 +1215,8 @@ document.addEventListener("DOMContentLoaded", () => {
             medicare={medicare}
             micrositeSlug={micrositeSlug}
             initialMessage={initialMessage}
+            enableVoiceIntake={enableVoiceIntake}
+            enableLocalSTT={enableLocalSTT}
           />
         </ErrorBoundary>
       </MantineProvider>,
