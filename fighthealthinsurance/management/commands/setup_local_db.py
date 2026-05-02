@@ -21,6 +21,9 @@ class Command(BaseCommand):
         call_command("loaddata", "initial")
         call_command("loaddata", "followup")
         call_command("loaddata", "plan_source")
+        # insurance_companies must come after plan_source because the
+        # InsurancePlan rows reference PlanSource pks (100/300/700/1100/...).
+        call_command("loaddata", "insurance_companies")
 
         self.stdout.write("Ensuring admin user...")
         call_command("ensure_adminuser", username="admin", password="admin")
