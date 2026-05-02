@@ -3,6 +3,7 @@ import re
 import time
 from typing import Any, Callable, Coroutine, Dict, List, Optional, Tuple, cast
 
+from asgiref.sync import sync_to_async
 from loguru import logger
 
 from fighthealthinsurance.ml.ml_router import ml_router
@@ -280,6 +281,29 @@ class MLAppealQuestionsHelper:
             # Ensure we have a valid list of questions
             if result is not None:
                 questions = result
+
+        # Merge PA-aware questions derived from the indexed payer rules.
+        # These come from a deterministic lookup (no model call) and target
+        # the criteria the carrier itself published for the procedure code,
+        # so they're a free quality boost over generic LLM questions.
+        try:
+            from fighthealthinsurance.pa_requirements import (
+                get_pa_questions_for_denial,
+            )
+
+            pa_questions = await sync_to_async(get_pa_questions_for_denial)(denial)
+        except Exception as e:
+            logger.opt(exception=True).debug(
+                f"PA-aware question lookup failed for denial {denial.denial_id}: {e}"
+            )
+            pa_questions = []
+
+        if pa_questions:
+            existing = {q.strip().lower() for q, _ in questions}
+            for question, default in pa_questions:
+                if question.strip().lower() not in existing:
+                    questions.append((question, default))
+                    existing.add(question.strip().lower())
 
         # Update the denial with the result
         if questions and len(questions) > 0:

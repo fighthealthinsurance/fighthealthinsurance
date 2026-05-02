@@ -139,42 +139,12 @@ class PaRequirementLookupTool(BaseTool):
 
 
 def _resolve_insurance_company(payer: Optional[str]):
-    """
-    Resolve a payer name (free text) to an InsuranceCompany row using
-    name / alt_names / regex. Returns None when payer is empty or unknown.
-    """
-    if not payer:
-        return None
-
-    from django.db.models import Q
-
-    from fighthealthinsurance.models import InsuranceCompany
-
-    payer_clean = payer.strip()
-    if not payer_clean:
-        return None
-
-    company = (
-        InsuranceCompany.objects.filter(
-            Q(name__iexact=payer_clean) | Q(alt_names__icontains=payer_clean)
-        )
-        .order_by("id")
-        .first()
+    """Thin wrapper around the shared resolver in pa_requirements."""
+    from fighthealthinsurance.pa_requirements import (
+        resolve_insurance_company_by_name,
     )
-    if company is not None:
-        return company
 
-    # Last-ditch: try regex match against company.regex by scanning rows.
-    # Keep it bounded — there are only a few hundred rows.
-    for candidate in InsuranceCompany.objects.exclude(regex__isnull=True).exclude(
-        regex=""
-    )[:500]:
-        try:
-            if candidate.regex and re.search(candidate.regex, payer_clean):
-                return candidate
-        except re.error:
-            continue
-    return None
+    return resolve_insurance_company_by_name(payer)
 
 
 def _run_lookup(params: dict) -> Tuple[str, str]:
