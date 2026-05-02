@@ -60,6 +60,19 @@ def _parse_date(value: Any) -> Optional[date]:
     return None
 
 
+# Strings that should coerce to False. Anything else non-empty coerces to True.
+# Plain ``bool(text)`` is wrong here because "false"/"0"/"no" are all truthy.
+_FALSY_STRINGS = frozenset({"false", "0", "no", "n", "off", ""})
+
+
+def _parse_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return str(value).strip().lower() not in _FALSY_STRINGS
+
+
 def _normalize_record(raw: Dict[str, Any]) -> Dict[str, Any]:
     """Coerce a raw input record into kwargs for ECRIGuideline upsert."""
     fields: Dict[str, Any] = {}
@@ -85,7 +98,7 @@ def _normalize_record(raw: Dict[str, Any]) -> Dict[str, Any]:
                 seen.append(token)
         fields[key] = seen
     if "is_active" in raw:
-        fields["is_active"] = bool(raw["is_active"])
+        fields["is_active"] = _parse_bool(raw["is_active"])
     return fields
 
 
@@ -120,14 +133,20 @@ class Command(BaseCommand):
         )
 
     def _load_records(self, source: str) -> List[Dict[str, Any]]:
-        if source == "-":
-            data = json.load(sys.stdin)
-        else:
-            path = Path(source)
-            if not path.exists():
-                raise CommandError(f"Source file does not exist: {source}")
-            with path.open("r", encoding="utf-8") as fh:
-                data = json.load(fh)
+        try:
+            if source == "-":
+                data = json.load(sys.stdin)
+            else:
+                path = Path(source)
+                if not path.exists():
+                    raise CommandError(f"Source file does not exist: {source}")
+                with path.open("r", encoding="utf-8") as fh:
+                    data = json.load(fh)
+        except json.JSONDecodeError as exc:
+            raise CommandError(
+                f"Could not parse JSON from {source!r}: {exc.msg} "
+                f"(line {exc.lineno}, column {exc.colno})"
+            ) from exc
         if not isinstance(data, list):
             raise CommandError(
                 "Input must be a JSON array of guideline objects "

@@ -152,6 +152,42 @@ async def test_find_relevant_guidelines_matches_two_letter_acronym():
 
 @pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
+async def test_short_token_does_not_match_substring_inside_word():
+    """`ra` (a substring of `trastuzumab`) must NOT match unrelated keywords."""
+    breast_cancer = await ECRIGuideline.objects.acreate(
+        guideline_id="test-breast-cancer-substring",
+        title="HER2 Breast Cancer Guideline",
+        procedure_keywords=["trastuzumab", "pertuzumab"],
+        diagnosis_keywords=["her2 positive breast cancer"],
+    )
+    results = await ECRIGuidelinesHelper.find_relevant_guidelines(
+        procedure="",
+        diagnosis="ra",
+    )
+    assert all(
+        g.guideline_id != breast_cancer.guideline_id for g in results
+    ), "ra should not match trastuzumab via substring scan"
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
+async def test_topics_alone_do_not_drive_matches():
+    """Topic labels are too broad and should not produce matches by themselves."""
+    cardio = await ECRIGuideline.objects.acreate(
+        guideline_id="test-topic-only",
+        title="Cardio Guideline",
+        topics=["cardiology"],
+        # No procedure/diagnosis keywords; only topic.
+    )
+    results = await ECRIGuidelinesHelper.find_relevant_guidelines(
+        procedure="cardiology",
+        diagnosis="",
+    )
+    assert all(g.guideline_id != cardio.guideline_id for g in results)
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
 async def test_get_citations_formats_each_match():
     await _create_cardiac_guideline("citations-format")
     citations = await ECRIGuidelinesHelper.get_citations(

@@ -155,6 +155,32 @@ class ImportECRIGuidelinesCommandTest(TestCase):
                 stdout=io.StringIO(),
             )
 
+    def test_string_is_active_falsy_values_are_false(self):
+        """Strings like "false", "0", "no" must coerce to False, not True."""
+        path = self._write_records(
+            [
+                {"guideline_id": "gid-false", "title": "F", "is_active": "false"},
+                {"guideline_id": "gid-zero", "title": "Z", "is_active": "0"},
+                {"guideline_id": "gid-no", "title": "N", "is_active": "no"},
+                {"guideline_id": "gid-true", "title": "T", "is_active": "true"},
+            ]
+        )
+        call_command("import_ecri_guidelines", source=path, stdout=io.StringIO())
+        self.assertFalse(ECRIGuideline.objects.get(guideline_id="gid-false").is_active)
+        self.assertFalse(ECRIGuideline.objects.get(guideline_id="gid-zero").is_active)
+        self.assertFalse(ECRIGuideline.objects.get(guideline_id="gid-no").is_active)
+        self.assertTrue(ECRIGuideline.objects.get(guideline_id="gid-true").is_active)
+
+    def test_malformed_json_raises_command_error(self):
+        fd, path = tempfile.mkstemp(suffix=".json")
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write("{ this is not valid json")
+        self.addCleanup(os.remove, path)
+        with self.assertRaises(CommandError) as ctx:
+            call_command("import_ecri_guidelines", source=path, stdout=io.StringIO())
+        # Error message should reference the source path, not just the raw decoder error.
+        self.assertIn(path, str(ctx.exception))
+
     def test_seed_fixture_imports_cleanly(self):
         """Smoke-test the bundled seed fixture so it stays valid."""
         seed_path = os.path.join(

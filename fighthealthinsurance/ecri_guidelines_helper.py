@@ -4,11 +4,12 @@ ECRI Guidelines Trust (https://guidelines.ecri.org/) — a publicly available
 repository of guideline content — when crafting health insurance appeals.
 
 The helper matches stored ``ECRIGuideline`` records to a denial's procedure
-and diagnosis using simple substring keyword matching, then returns either
-short citation strings (for the appeal letter's references section) or a
-formatted context block (for inclusion in ML prompts).
+and diagnosis using whole-word keyword matching, then returns either short
+citation strings (for the appeal letter's references section) or a formatted
+context block (for inclusion in ML prompts).
 """
 
+import re
 from typing import Iterable, List, Optional
 
 from django.db.models import Q
@@ -47,6 +48,12 @@ _STOP_WORDS = frozenset(
     }
 )
 
+# Hard cap on guidelines pulled into Python for whole-word post-filtering.
+# The DB pre-filter is a coarse substring match on JSON blobs (no usable
+# index), so we rely on the small expected table size and clamp the candidate
+# set so a runaway query can't dominate appeal generation latency.
+_CANDIDATE_FETCH_LIMIT = 200
+
 
 def _tokens(value: str) -> List[str]:
     """Split ``value`` into deduped lowercase tokens for keyword matching."""
@@ -60,6 +67,14 @@ def _tokens(value: str) -> List[str]:
     return seen
 
 
+def _token_matches_keyword(token: str, keyword: str) -> bool:
+    """True iff ``token`` appears as a whole word inside ``keyword``."""
+    if not keyword:
+        return False
+    pattern = rf"\b{re.escape(token)}\b"
+    return re.search(pattern, keyword.lower()) is not None
+
+
 class ECRIGuidelinesHelper:
     """Match ``ECRIGuideline`` records against denial inputs."""
 
@@ -69,13 +84,28 @@ class ECRIGuidelinesHelper:
 
         ``ECRIGuideline.procedure_keywords`` / ``diagnosis_keywords`` are stored
         as JSON lists. ``__icontains`` against the JSON-serialized text gives a
-        dialect-agnostic match without needing JSON path operators.
+        cheap, dialect-agnostic candidate fetch; correctness is enforced by a
+        whole-word check in Python before results are returned.
         """
         q: Optional[Q] = None
         for token in tokens:
             clause = Q(**{f"{field_name}__icontains": token})
             q = clause if q is None else q | clause
         return q
+
+    @staticmethod
+    def _guideline_matches_tokens(
+        tokens: Iterable[str], guideline: ECRIGuideline
+    ) -> bool:
+        """True iff any token whole-word-matches a procedure/diagnosis keyword."""
+        keywords: List[str] = []
+        keywords.extend(guideline.procedure_keywords or [])
+        keywords.extend(guideline.diagnosis_keywords or [])
+        for token in tokens:
+            for keyword in keywords:
+                if _token_matches_keyword(token, keyword):
+                    return True
+        return False
 
     @classmethod
     async def find_relevant_guidelines(
@@ -86,10 +116,10 @@ class ECRIGuidelinesHelper:
     ) -> List[ECRIGuideline]:
         """Return up to ``max_results`` active guidelines matching the inputs.
 
-        A guideline matches when any of its procedure/diagnosis/topic keywords
-        appears as a substring of the (lower-cased) procedure or diagnosis,
-        OR when one of the procedure/diagnosis tokens appears in the
-        guideline's keyword lists.
+        A guideline matches when any procedure/diagnosis token appears as a
+        whole word in one of the guideline's ``procedure_keywords`` or
+        ``diagnosis_keywords`` entries. Topic labels (``topics``) are too
+        broad to drive matching and are not consulted here.
         """
         procedure_norm = _normalize(procedure)
         diagnosis_norm = _normalize(diagnosis)
@@ -105,7 +135,7 @@ class ECRIGuidelinesHelper:
             return []
 
         filters: Optional[Q] = None
-        for field in ("procedure_keywords", "diagnosis_keywords", "topics"):
+        for field in ("procedure_keywords", "diagnosis_keywords"):
             clause = cls._build_keyword_filter(field, tokens)
             if clause is not None:
                 filters = clause if filters is None else filters | clause
@@ -117,9 +147,12 @@ class ECRIGuidelinesHelper:
             async for guideline in (
                 ECRIGuideline.objects.filter(is_active=True)
                 .filter(filters)
-                .order_by("-publication_date", "title")[:max_results]
+                .order_by("-publication_date", "title")[:_CANDIDATE_FETCH_LIMIT]
             ):
-                results.append(guideline)
+                if cls._guideline_matches_tokens(tokens, guideline):
+                    results.append(guideline)
+                    if len(results) >= max_results:
+                        break
             return results
         except Exception as e:
             logger.opt(exception=True).warning(
