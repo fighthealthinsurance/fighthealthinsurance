@@ -117,6 +117,80 @@ class CMSCoverageCache(ExportModelOperationsMixin("CMSCoverageCache"), models.Mo
         return f"CMS Coverage: {self.procedure} / {self.diagnosis}"
 
 
+class IMRDecision(ExportModelOperationsMixin("IMRDecision"), models.Model):  # type: ignore
+    """
+    Public independent medical review / external appeal decisions used as a
+    "similar prior decisions" retrieval corpus when generating appeals.
+
+    Sources include the California DMHC IMR dataset (CHHS open data) and the
+    New York DFS External Appeals database. These are jurisdiction- and
+    fact-specific and are surfaced to the model as illustrative prior decisions,
+    not legal precedent.
+    """
+
+    SOURCE_CA_DMHC = "ca_dmhc"
+    SOURCE_NY_DFS = "ny_dfs"
+    SOURCE_CHOICES = [
+        (SOURCE_CA_DMHC, "California DMHC"),
+        (SOURCE_NY_DFS, "New York DFS"),
+    ]
+
+    DETERMINATION_OVERTURNED = "overturned"
+    DETERMINATION_UPHELD = "upheld"
+    DETERMINATION_OVERTURNED_IN_PART = "overturned_in_part"
+    DETERMINATION_OTHER = "other"
+    DETERMINATION_CHOICES = [
+        (DETERMINATION_OVERTURNED, "Overturned"),
+        (DETERMINATION_UPHELD, "Upheld"),
+        (DETERMINATION_OVERTURNED_IN_PART, "Overturned in part"),
+        (DETERMINATION_OTHER, "Other"),
+    ]
+
+    id = models.AutoField(primary_key=True)
+    source = models.CharField(max_length=20, choices=SOURCE_CHOICES)
+    # Original case identifier from the source (combined with source for uniqueness)
+    case_id = models.CharField(max_length=100)
+    state = models.CharField(max_length=2)
+    decision_year = models.IntegerField(null=True, blank=True)
+    decision_date = models.DateField(null=True, blank=True)
+    # Normalized lowercase searchable fields
+    diagnosis = models.CharField(max_length=500, default="", blank=True)
+    diagnosis_category = models.CharField(max_length=300, default="", blank=True)
+    treatment = models.CharField(max_length=500, default="", blank=True)
+    treatment_category = models.CharField(max_length=300, default="", blank=True)
+    treatment_subcategory = models.CharField(max_length=300, default="", blank=True)
+    determination = models.CharField(
+        max_length=30, choices=DETERMINATION_CHOICES, default=DETERMINATION_OTHER
+    )
+    decision_type = models.CharField(max_length=100, default="", blank=True)
+    insurance_type = models.CharField(max_length=200, default="", blank=True)
+    age_range = models.CharField(max_length=50, default="", blank=True)
+    gender = models.CharField(max_length=30, default="", blank=True)
+    findings = models.TextField(default="", blank=True)
+    summary = models.TextField(default="", blank=True)
+    source_url = models.URLField(max_length=500, default="", blank=True)
+    raw_data = models.JSONField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["diagnosis", "treatment"]),
+            models.Index(fields=["treatment_category", "determination"]),
+            models.Index(fields=["state", "determination"]),
+            models.Index(fields=["source", "determination"]),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["source", "case_id"],
+                name="imrdecision_unique_source_case",
+            ),
+        ]
+
+    def __str__(self):
+        return f"IMR {self.source}/{self.case_id}: {self.determination} {self.treatment} for {self.diagnosis}"
+
+
 # Money related :p
 class InterestedProfessional(ExportModelOperationsMixin("InterestedProfessional"), models.Model):  # type: ignore
     """
