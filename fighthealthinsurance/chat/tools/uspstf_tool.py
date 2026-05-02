@@ -65,12 +65,16 @@ class USPSTFLookupTool(BaseTool):
             )
 
         json_data = match.group(1).strip()
-        logger.debug(f"USPSTF tool call payload: {json_data}")
+        # Log only metadata about the payload — the JSON values may include
+        # user-typed clinical text that should not appear in plaintext logs.
+        logger.debug(f"USPSTF tool call payload (length={len(json_data)})")
 
         try:
             params = json.loads(json_data)
         except json.JSONDecodeError as e:
-            logger.warning(f"Invalid JSON in uspstf_lookup token: {json_data} - {e}")
+            logger.warning(
+                f"Invalid JSON in uspstf_lookup token (length={len(json_data)}): {e}"
+            )
             await self.send_status_message(
                 "Error processing USPSTF lookup: invalid JSON format."
             )
@@ -142,16 +146,16 @@ class USPSTFLookupTool(BaseTool):
             )
 
             if cleaned_response and additional_response:
-                cleaned_response += additional_response
+                cleaned_response = f"{cleaned_response}\n\n{additional_response}"
             elif additional_response:
                 cleaned_response = additional_response
 
             if context and additional_context:
-                context = context + additional_context
+                context = f"{context}\n\n{additional_context}"
             elif additional_context:
                 context = additional_context
 
         # Always append the raw lookup to the running context so downstream
         # tools (e.g. appeal generation) can reuse it.
-        context = (context + "\n\n" + info) if context else info
+        context = f"{context}\n\n{info}" if context else info
         return cleaned_response, context

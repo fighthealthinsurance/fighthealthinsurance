@@ -547,6 +547,8 @@ def search_recommendations(
     Returns:
         A list of recommendation dicts ordered by grade (A first) then title.
     """
+    from django.db.models import Case, IntegerField, Q, Value, When
+
     from fighthealthinsurance.models import USPSTFRecommendation
 
     _ensure_cache_loaded()
@@ -558,24 +560,40 @@ def search_recommendations(
     if topic:
         qs = qs.filter(topic__icontains=topic)
 
-    terms = [t.strip().lower() for t in (query or "").split() if t.strip()]
-    rows = [r for r in qs if _matches_query(r, terms)]
+    # Push free-text term filtering down to the database: each term must appear
+    # in at least one searchable field (AND across terms, OR across fields).
+    for term in (t.strip() for t in (query or "").split() if t.strip()):
+        field_match = Q()
+        for field in _SEARCHABLE_FIELDS:
+            field_match |= Q(**{f"{field}__icontains": term})
+        qs = qs.filter(field_match)
 
-    # Sort by grade priority (A,B,C,D,I,unknown) then by title for stability.
-    grade_order = {g: i for i, g in enumerate(["A", "B", "C", "D", "I", ""])}
-    rows.sort(key=lambda r: (grade_order.get(r.grade, 99), r.title or ""))
+    # Order by grade priority (A,B,C,D,I,unknown) then by title.
+    grade_priority = Case(
+        When(grade="A", then=Value(0)),
+        When(grade="B", then=Value(1)),
+        When(grade="C", then=Value(2)),
+        When(grade="D", then=Value(3)),
+        When(grade="I", then=Value(4)),
+        default=Value(5),
+        output_field=IntegerField(),
+    )
+    qs = qs.annotate(_grade_priority=grade_priority).order_by(
+        "_grade_priority", "title"
+    )
 
     try:
         limit_int = max(1, min(int(limit), 25))
     except (TypeError, ValueError):
         limit_int = 5
-    return [_row_to_dict(r) for r in rows[:limit_int]]
+    return [_row_to_dict(r) for r in qs[:limit_int]]
 
 
 # Conservative mapping from preventive ICD-10 / CPT codes (matched as prefixes)
-# to USPSTF topic keywords. Keys are uppercased so lookups don't have to be.
-# ICD-10 prefixes are stored without the dot so we can match denial text that
-# uses either format ("Z12.11" or "Z1211"); they are compared after dot stripping.
+# to USPSTF topic keywords. Prefixes are written in their canonical dotted form
+# for readability; both the prefix and the incoming code are normalized
+# (uppercased, dots/whitespace stripped) by ``_strip_code_punct`` before
+# comparison, so denials that reference either "Z12.11" or "Z1211" both match.
 _CODE_TOPIC_KEYWORDS: List[Tuple[str, List[str]]] = [
     ("Z12.11", ["colorectal"]),  # Colon screening
     ("Z12.31", ["breast"]),  # Routine mammogram
