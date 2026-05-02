@@ -83,28 +83,26 @@ class NICETools:
         self,
         session: aiohttp.ClientSession,
         url: str,
-        timeout_secs: float,
         label: str = "",
     ) -> Optional[Dict[str, Any]]:
-        """Fetch JSON from url with timeout. Returns None on any failure."""
+        """Fetch JSON from url. Caller is responsible for the timeout boundary."""
         try:
-            async with async_timeout(timeout_secs):
-                async with session.get(url) as resp:
-                    if resp.status != 200:
-                        logger.debug(
-                            f"[NICE:{label}] non-200 status {resp.status} for {url}"
-                        )
-                        return None
-                    # Search returns JSON, but other syndication endpoints return XML;
-                    # guard against accidentally feeding XML to json().
-                    content_type = resp.headers.get("Content-Type", "")
-                    if "json" not in content_type:
-                        logger.debug(
-                            f"[NICE:{label}] unexpected content-type {content_type}"
-                        )
-                        return None
-                    data: Dict[str, Any] = await resp.json()
-                    return data
+            async with session.get(url) as resp:
+                if resp.status != 200:
+                    logger.debug(
+                        f"[NICE:{label}] non-200 status {resp.status} for {url}"
+                    )
+                    return None
+                # Search returns JSON, but other syndication endpoints return XML;
+                # guard against accidentally feeding XML to json().
+                content_type = resp.headers.get("Content-Type", "")
+                if "json" not in content_type:
+                    logger.debug(
+                        f"[NICE:{label}] unexpected content-type {content_type}"
+                    )
+                    return None
+                data: Dict[str, Any] = await resp.json()
+                return data
         except Exception as e:
             logger.debug(f"[NICE:{label}] JSON fetch failed: {e}")
         return None
@@ -206,7 +204,7 @@ class NICETools:
                 async with aiohttp.ClientSession(
                     headers=self._auth_headers()
                 ) as session:
-                    data = await self._fetch_json(session, url, timeout, label=query)
+                    data = await self._fetch_json(session, url, label=query)
                     if data:
                         # API should honor pageSize but we cap defensively in case it
                         # returns more items than we requested.

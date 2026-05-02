@@ -845,12 +845,10 @@ class AppealGenerator(object):
             if pubmed_context is not None and pubmed_context != "":
                 base = f"{base}\n\nPubMed references (use these): {pubmed_context}"
             if nice_context is not None and nice_context != "":
-                base = (
-                    f"{base}\n\nInternational clinical guidance from NICE (UK). "
-                    "Cite as supporting international clinical guidance, not as U.S. "
-                    "coverage authority:\n"
-                    f"{nice_context}"
-                )
+                # nice_context already carries the international-guidance caveat
+                # (see INTERNATIONAL_GUIDANCE_CAVEAT in nice_tools); the header
+                # here is just a section label.
+                base = f"{base}\n\nNICE (UK) guidance:\n{nice_context}"
         else:
             # No citations provided - explicitly tell the model not to make any up
             base = f"{base}\n\nIMPORTANT: No specific medical citations have been provided. Do NOT invent or hallucinate any citations, PMIDs, journal names, or study references. You may state general medical knowledge without citations, but do not fabricate specific study references."
