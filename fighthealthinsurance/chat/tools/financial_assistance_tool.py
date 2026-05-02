@@ -1,12 +1,16 @@
 """
 Financial assistance directory tool handler for the chat interface.
 
-Handles `financial_assistance` tool calls from the LLM to look up pharmacy
-discount programs (GoodRx, Cost Plus, Amazon Pharmacy), diagnosis-specific
-copay foundations (CancerCare, LLS, MS Society, etc.), manufacturer copay
-cards (Wegovy, Humira, etc.), 340B safety-net clinics, and state Medicaid
-pathways - all from the curated catalog in
-fighthealthinsurance.financial_assistance_directory.
+Handles `financial_assistance` tool calls from the LLM and assembles a
+combined, LLM-readable context from two sources:
+
+  * `pharmacy_coupon_detector.suggest_for_denial` - pharmacy discount
+    programs (GoodRx, Mark Cuban Cost Plus Drugs, Amazon Pharmacy) and
+    the OOP-max caveat. Only fires when a known drug is detected.
+  * `financial_assistance_directory.search` - diagnosis-specific copay
+    foundations (CancerCare, LLS, MS Society, etc.), manufacturer copay
+    cards (Wegovy, Humira, etc.), the general copay-foundation
+    directory, 340B safety-net clinics, and the state Medicaid pathway.
 """
 
 import json
@@ -104,6 +108,7 @@ class FinancialAssistanceTool(BaseTool):
         await self.send_status_message("Looking up financial assistance options...")
 
         from fighthealthinsurance.financial_assistance_directory import search
+        from fighthealthinsurance.pharmacy_coupon_detector import suggest_for_denial
 
         try:
             results = search(
@@ -122,13 +127,29 @@ class FinancialAssistanceTool(BaseTool):
             )
             return cleaned_response, context
 
+        # Pharmacy discount options (GoodRx / Cost Plus / Amazon Pharmacy)
+        # are sourced from the pharmacy_coupon_detector, not the directory -
+        # combine both into a single LLM-facing context block so the model
+        # can recommend whichever path is most relevant.
+        try:
+            pharmacy_suggestion = suggest_for_denial(
+                drug=params.get("drug"),
+                denial_text=params.get("denial_text"),
+                diagnosis=params.get("diagnosis"),
+            )
+        except Exception:
+            logger.opt(exception=True).debug(
+                "Pharmacy coupon suggestion failed; continuing without it"
+            )
+            pharmacy_suggestion = None
+
         # Note: we deliberately do NOT gate on results.is_empty() /
         # has_specific_matches() here. The LLM explicitly invoked this
         # tool, so the user is asking for cost help; surfacing the general
         # copay-foundation directory + the FQHC/340B safety-net entries is
         # useful even when no drug- or diagnosis-specific match fires.
 
-        info_text = self._format_results_for_llm(results)
+        info_text = self._format_results_for_llm(results, pharmacy_suggestion)
         action_text = (
             " Use the resources above to answer the user's question. Mention "
             "the most relevant 1-3 programs by name and link, and remind the "
@@ -172,8 +193,11 @@ class FinancialAssistanceTool(BaseTool):
         return cleaned_response, context
 
     @staticmethod
-    def _format_results_for_llm(results) -> str:
-        """Format a FinancialAssistanceResults into LLM-readable context."""
+    def _format_results_for_llm(results, pharmacy_suggestion=None) -> str:
+        """
+        Format the directory `FinancialAssistanceResults` (and an optional
+        `PharmacyCouponSuggestion`) into a single LLM-readable block.
+        """
         sections: list[str] = []
         sections.append(
             "We looked up financial-assistance resources from a curated directory."
@@ -192,6 +216,14 @@ class FinancialAssistanceTool(BaseTool):
             if program.phone:
                 line += f" Phone: {program.phone}"
             return line
+
+        if pharmacy_suggestion is not None:
+            sections.append("\nPharmacy discount programs (cash-pay bridge):")
+            for opt in pharmacy_suggestion.pharmacy_options:
+                sections.append(f"- {opt.name} ({opt.url}): {opt.description}")
+            if pharmacy_suggestion.bridge_message:
+                sections.append(pharmacy_suggestion.bridge_message)
+            sections.append(pharmacy_suggestion.oop_max_warning)
 
         if results.diagnosis_specific:
             sections.append("\nCondition-specific copay foundations:")

@@ -199,6 +199,23 @@ class TestStateMedicaid:
             results = search(state_abbreviation="ca")
         assert results.state_abbreviation == "CA"
 
+    def test_lowercase_state_abbreviation_passed_uppercased_to_lookup(self):
+        # Regression: previously the payload field was uppercased but the
+        # state_help lookup got the raw lowercase value, missing case-
+        # sensitive matches in the catalog.
+        mock_state_help = MagicMock()
+        mock_state_help.medicaid.agency_name = "Medi-Cal"
+        mock_state_help.medicaid.agency_url = "https://www.medi-cal.ca.gov/"
+        mock_state_help.medicaid.agency_phone = "1-800-541-5555"
+
+        with fake_state_help_module(mock_state_help) as fake:
+            results = search(state_abbreviation="ca")
+
+        # The lookup must have received the uppercase form.
+        fake.get_state_help_by_abbreviation.assert_called_once_with("CA")
+        assert results.state_abbreviation == "CA"
+        assert results.state_medicaid_name == "Medi-Cal"
+
     def test_no_state_data_when_state_help_unavailable(self):
         with fake_state_help_module(None):
             results = search(state_abbreviation="ZZ")

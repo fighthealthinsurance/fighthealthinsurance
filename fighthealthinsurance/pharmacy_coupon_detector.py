@@ -58,10 +58,11 @@ CHEAP_GENERIC_DRUGS_ORDERED: tuple[str, ...] = (
     "trazodone",
     "venlafaxine",
     # GI
+    # (ranitidine intentionally omitted - withdrawn from US market in 2020
+    # over NDMA contamination; famotidine is the standard replacement.)
     "famotidine",
     "omeprazole",
     "pantoprazole",
-    "ranitidine",
     # Respiratory / allergy
     "albuterol",
     "cetirizine",
@@ -218,12 +219,6 @@ class PharmacyCouponSuggestion:
 
 def _normalize(text: str) -> str:
     return text.lower()
-
-
-def _contains_word(text: str, word: str) -> bool:
-    """Return True if `word` appears as a whole word in `text` (case-insensitive)."""
-    pattern = r"\b" + re.escape(word) + r"\b"
-    return re.search(pattern, text, re.IGNORECASE) is not None
 
 
 def _build_goodrx_option(drug_name: str) -> PharmacyOption:
