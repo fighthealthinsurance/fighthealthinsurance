@@ -191,9 +191,9 @@ class NICETools:
             )
             if cached and cached.results:
                 try:
-                    items = json.loads(cached.results.replace("\x00", ""))
-                    if isinstance(items, list):
-                        return items
+                    cached_items = json.loads(cached.results.replace("\x00", ""))
+                    if isinstance(cached_items, list):
+                        return cached_items
                 except json.JSONDecodeError:
                     logger.error(f"Error parsing cached NICE results JSON for {query}")
         except Exception as e:

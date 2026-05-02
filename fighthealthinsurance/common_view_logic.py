@@ -2390,7 +2390,10 @@ class AppealsBackendHelper:
                 if len(results) > 3 and isinstance(results[3], str):
                     nice_context = results[3]
                 else:
-                    nice_context = None
+                    # No fresh NICE result (skipped task or non-string error). Fall
+                    # back to whatever is already persisted on the denial so cached
+                    # NICE guidance survives a regen even when the API key is unset.
+                    nice_context = denial.nice_context
                 logger.debug("Success")
             except Exception as e:
                 logger.opt(exception=True).error(f"Error gathering contexts: {e}")
