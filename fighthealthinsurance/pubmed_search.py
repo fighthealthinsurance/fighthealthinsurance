@@ -211,7 +211,6 @@ def build_structured_query(
     elif treatment_clean:
         parts.append(treatment_clean)
 
-    # MeSH terms are joined with AND so each one constrains results.
     mesh_clean: List[str] = []
     if mesh_terms:
         for term in mesh_terms:
@@ -220,14 +219,12 @@ def build_structured_query(
                 mesh_clean.append(sanitized)
                 parts.append(f'"{sanitized}"[mh]')
 
-    # Free-text "extra" terms (microsite keywords, etc.).
     if extra_terms:
         for term in extra_terms:
             quoted = _quote_phrase(term)
             if quoted:
                 parts.append(quoted)
 
-    # Combine pub-type preset + explicit filters into a single OR group.
     resolved_filters: List[str] = []
     if pub_type_preset:
         for key in PUB_TYPE_PRESETS.get(pub_type_preset, ()):
@@ -242,19 +239,14 @@ def build_structured_query(
         filter_tokens = [PUB_TYPE_FILTERS[k] for k in resolved_filters]
         parts.append("(" + " OR ".join(filter_tokens) + ")")
 
-    # Date-range filter. PubMed wants both ends, so synthesize an upper bound
-    # from the current year if only `since_year` is supplied.
-    since_clean: Optional[str] = None
-    until_clean: Optional[str] = None
-    if since_year:
-        since_clean = _sanitize_term(str(since_year))
-    if until_year:
-        until_clean = _sanitize_term(str(until_year))
-    if since_clean:
+    # PubMed's [dp] range needs both ends, so synthesize whichever bound the
+    # caller didn't supply (1900 as a no-op lower bound, current year as upper).
+    since_clean = _sanitize_term(str(since_year)) if since_year else None
+    until_clean = _sanitize_term(str(until_year)) if until_year else None
+    if since_clean or until_clean:
+        lower = since_clean or "1900"
         upper = until_clean or str(datetime.now().year)
-        parts.append(f'("{since_clean}"[dp] : "{upper}"[dp])')
-    elif until_clean:
-        parts.append(f'("1900"[dp] : "{until_clean}"[dp])')
+        parts.append(f'("{lower}"[dp] : "{upper}"[dp])')
 
     query_str = " AND ".join(parts)
 
@@ -357,8 +349,6 @@ def categorize_articles_by_strength(
     return buckets
 
 
-# How many sentences of the abstract to include in an appeal-friendly snippet.
-# Short enough to be quotable in a letter; long enough to convey the finding.
 SNIPPET_SENTENCE_COUNT = 3
 SNIPPET_MAX_CHARS = 600
 
@@ -369,6 +359,14 @@ def _split_sentences(text: str) -> List[str]:
         return []
     parts = re.split(r"(?<=[.!?])\s+", text.strip())
     return [p for p in parts if p]
+
+
+def _str_attr(obj: Any, name: str) -> str:
+    """Read an attribute and coerce ``None`` / non-strings to a stripped string."""
+    value = getattr(obj, name, "")
+    if value is None:
+        return ""
+    return str(value).strip()
 
 
 def format_appeal_snippet(
@@ -386,28 +384,17 @@ def format_appeal_snippet(
     Prefers ``basic_summary`` (already condensed) over the raw abstract.
     Truncates to ``max_chars`` so a snippet stays quotable in a letter.
     """
-    title = (getattr(article, "title", "") or "").strip()
-    journal = (getattr(article, "journal", "") or "").strip()
-    year = getattr(article, "year", "") or ""
-    if year is None:
-        year = ""
-    year = str(year).strip()
-    pmid = (getattr(article, "pmid", "") or "").strip()
-    url = (getattr(article, "article_url", "") or "").strip()
-    summary = (
-        getattr(article, "basic_summary", None)
-        or getattr(article, "abstract", None)
-        or ""
-    ).strip()
+    title = _str_attr(article, "title")
+    journal = _str_attr(article, "journal")
+    year = _str_attr(article, "year")
+    pmid = _str_attr(article, "pmid")
+    url = _str_attr(article, "article_url")
+    summary = _str_attr(article, "basic_summary") or _str_attr(article, "abstract")
 
     citation_parts: List[str] = []
     if title:
         citation_parts.append(title)
-    venue: List[str] = []
-    if journal:
-        venue.append(journal)
-    if year:
-        venue.append(year)
+    venue = [v for v in (journal, year) if v]
     if venue:
         citation_parts.append("(" + ", ".join(venue) + ")")
     if pmid:
@@ -419,10 +406,7 @@ def format_appeal_snippet(
     excerpt = ""
     if summary:
         sentences = _split_sentences(summary)
-        if sentences:
-            excerpt = " ".join(sentences[:sentence_count]).strip()
-        if not excerpt:
-            excerpt = summary
+        excerpt = " ".join(sentences[:sentence_count]).strip() if sentences else summary
         if len(excerpt) > max_chars:
             excerpt = excerpt[: max_chars - 1].rstrip() + "…"
 

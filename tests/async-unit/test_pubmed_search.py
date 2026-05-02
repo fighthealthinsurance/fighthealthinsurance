@@ -693,23 +693,3 @@ class StructuredSearchE2ETest(TransactionTestCase):
             # Both the seed and the related PMID should appear.
             assert "11111111" in all_pmids
             assert "22222222" in all_pmids
-
-
-# ---------------------------------------------------------------------------
-# PubMedTools.format_structured_search_for_appeal
-# ---------------------------------------------------------------------------
-
-
-def test_format_structured_search_for_appeal_delegates():
-    """Sanity: the static helper should produce the same output as
-    format_categorized_snippets."""
-    a = _make_article("1", title="X", basic_summary="finding")
-    buckets = {
-        EvidenceStrength.STRONG: [a],
-        EvidenceStrength.MODERATE: [],
-        EvidenceStrength.WEAK: [],
-        EvidenceStrength.UNKNOWN: [],
-    }
-    via_helper = format_categorized_snippets(buckets)
-    via_method = PubMedTools.format_structured_search_for_appeal(buckets)
-    assert via_helper == via_method

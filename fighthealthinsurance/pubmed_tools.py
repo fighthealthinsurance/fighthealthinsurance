@@ -4,14 +4,15 @@ import json
 import re
 import sys
 import tempfile
+import xml.etree.ElementTree as ET
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, AsyncIterator, Dict, List, Optional, Set, Tuple
 from urllib.parse import quote, urljoin
 
 import aiohttp
 import eutils
 import PyPDF2
-import xml.etree.ElementTree as ET
 from asgiref.sync import async_to_sync, sync_to_async
 from loguru import logger
 from metapub import FindIt
@@ -27,7 +28,6 @@ from fighthealthinsurance.pubmed_search import (
     EvidenceStrength,
     build_structured_query,
     categorize_articles_by_strength,
-    format_categorized_snippets,
 )
 from fighthealthinsurance.utils import pubmed_fetcher
 
@@ -57,6 +57,22 @@ _EUTILS_PARAMS = {
     "tool": "fighthealthinsurance",
     "email": "support@fighthealthinsurance.com",
 }
+
+
+@asynccontextmanager
+async def _ensure_session(
+    session: Optional[aiohttp.ClientSession],
+) -> AsyncIterator[aiohttp.ClientSession]:
+    """Yield ``session`` if provided, else open and close one for the caller.
+
+    Lets methods accept an optional shared session for batching while still
+    working standalone.
+    """
+    if session is not None:
+        yield session
+        return
+    async with aiohttp.ClientSession(headers=_FETCH_HEADERS) as new_session:
+        yield new_session
 
 
 class PubMedTools(object):
@@ -398,33 +414,31 @@ class PubMedTools(object):
         are simply absent from the result rather than raising. A network error
         or parse failure yields ``{}`` so callers can degrade gracefully.
 
-        We hit ``efetch?rettype=xml`` once for the whole batch (PubMed accepts
-        a comma-separated PMID list) to keep the request count low.
+        Hits ``efetch?rettype=xml`` once for the whole batch (PubMed accepts a
+        comma-separated PMID list) to keep the request count low.
         """
         if not pmids:
             return {}
 
-        owns_session = session is None
-        if owns_session:
-            session = aiohttp.ClientSession(headers=_FETCH_HEADERS)
-        assert session is not None
-
         result: Dict[str, Dict[str, List[str]]] = {}
+        params = {
+            **_EUTILS_PARAMS,
+            "db": "pubmed",
+            "id": ",".join(pmids),
+            "rettype": "xml",
+            "retmode": "xml",
+        }
+        url = f"{_EUTILS_BASE}/efetch.fcgi"
         try:
-            params = {
-                **_EUTILS_PARAMS,
-                "db": "pubmed",
-                "id": ",".join(pmids),
-                "rettype": "xml",
-                "retmode": "xml",
-            }
-            url = f"{_EUTILS_BASE}/efetch.fcgi"
-            async with async_timeout(timeout):
-                async with session.get(url, params=params) as resp:
-                    if resp.status != 200:
-                        logger.debug(f"efetch returned {resp.status} for pmids {pmids}")
-                        return result
-                    body = await resp.text()
+            async with _ensure_session(session) as s:
+                async with async_timeout(timeout):
+                    async with s.get(url, params=params) as resp:
+                        if resp.status != 200:
+                            logger.debug(
+                                f"efetch returned {resp.status} for pmids {pmids}"
+                            )
+                            return result
+                        body = await resp.text()
             try:
                 root = ET.fromstring(body)
             except ET.ParseError as e:
@@ -451,9 +465,6 @@ class PubMedTools(object):
             logger.debug(f"Timeout/cancel in fetch_mesh_and_pub_types: {e}")
         except Exception as e:
             logger.opt(exception=True).debug(f"Error in fetch_mesh_and_pub_types: {e}")
-        finally:
-            if owns_session and session:
-                await session.close()
         return result
 
     async def find_related_pmids(
@@ -472,27 +483,23 @@ class PubMedTools(object):
         if not pmid:
             return []
 
-        owns_session = session is None
-        if owns_session:
-            session = aiohttp.ClientSession(headers=_FETCH_HEADERS)
-        assert session is not None
-
         related: List[str] = []
+        params = {
+            **_EUTILS_PARAMS,
+            "dbfrom": "pubmed",
+            "db": "pubmed",
+            "id": pmid,
+            "linkname": "pubmed_pubmed",
+            "retmode": "json",
+        }
+        url = f"{_EUTILS_BASE}/elink.fcgi"
         try:
-            params = {
-                **_EUTILS_PARAMS,
-                "dbfrom": "pubmed",
-                "db": "pubmed",
-                "id": pmid,
-                "linkname": "pubmed_pubmed",
-                "retmode": "json",
-            }
-            url = f"{_EUTILS_BASE}/elink.fcgi"
-            async with async_timeout(timeout):
-                async with session.get(url, params=params) as resp:
-                    if resp.status != 200:
-                        return []
-                    data = await resp.json()
+            async with _ensure_session(session) as s:
+                async with async_timeout(timeout):
+                    async with s.get(url, params=params) as resp:
+                        if resp.status != 200:
+                            return []
+                        data = await resp.json()
             for linkset in data.get("linksets", []):
                 for linksetdb in linkset.get("linksetdbs", []):
                     if linksetdb.get("linkname") != "pubmed_pubmed":
@@ -509,9 +516,6 @@ class PubMedTools(object):
             logger.opt(exception=True).debug(
                 f"Error in find_related_pmids({pmid}): {e}"
             )
-        finally:
-            if owns_session and session:
-                await session.close()
         return related
 
     async def structured_search(
@@ -611,13 +615,9 @@ class PubMedTools(object):
                     pmid: data.get("pub_types", [])
                     for pmid, data in pub_types_by_pmid.items()
                 }
-                buckets = categorize_articles_by_strength(
+                return categorize_articles_by_strength(
                     articles, pub_types_lookup=pub_types_lookup
                 )
-                # Ensure all tiers are present in the return value.
-                for tier in EvidenceStrength:
-                    buckets.setdefault(tier, [])
-                return buckets
         except asyncio.TimeoutError:
             logger.debug(f"Timeout in structured_search: {structured.query}")
         except asyncio.CancelledError:
@@ -673,19 +673,6 @@ class PubMedTools(object):
                 except Exception as e:
                     logger.debug(f"Failed to materialize {pmid}: {e}")
         return articles
-
-    @staticmethod
-    def format_structured_search_for_appeal(
-        buckets: Dict[EvidenceStrength, List[Any]],
-        include_empty: bool = False,
-    ) -> str:
-        """Render structured-search buckets as appeal-letter markdown.
-
-        Thin wrapper around ``pubmed_search.format_categorized_snippets`` so
-        callers can stay within ``PubMedTools`` without importing the helper
-        module directly.
-        """
-        return format_categorized_snippets(buckets, include_empty=include_empty)
 
     async def find_pubmed_articles_for_denial(
         self, denial: Denial, timeout=70.0
