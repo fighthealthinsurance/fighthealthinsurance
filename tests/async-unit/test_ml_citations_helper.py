@@ -2,7 +2,7 @@ from unittest.mock import patch, AsyncMock, MagicMock
 import pytest
 
 from fighthealthinsurance.ml.ml_citations_helper import MLCitationsHelper
-from fighthealthinsurance.models import Denial
+from fighthealthinsurance.models import Denial, ECRIGuideline
 
 
 class TestMLCitationsHelper:
@@ -180,3 +180,38 @@ class TestMLCitationsHelper:
             candidate_ml_citation_context=["Citation X", "Citation Y"]
         )
         assert result == ["Citation X", "Citation Y"]
+
+    @pytest.mark.django_db
+    @pytest.mark.asyncio
+    async def test_supplemental_citations_includes_ecri(self):
+        """ECRI guideline citations are appended to supplemental evidence."""
+        await ECRIGuideline.objects.acreate(
+            guideline_id="test-supp-ecri",
+            title="Cardiac Guideline",
+            developer_organization="ACC",
+            procedure_keywords=["pci"],
+            diagnosis_keywords=["coronary artery disease"],
+        )
+
+        denial = MagicMock(spec=Denial)
+        denial.microsite_slug = None
+
+        result = await MLCitationsHelper._get_supplemental_citations(
+            denial=denial,
+            procedure="pci",
+            diagnosis="coronary artery disease",
+        )
+        assert any("Cardiac Guideline" in c for c in result)
+
+    @pytest.mark.django_db
+    @pytest.mark.asyncio
+    async def test_supplemental_citations_empty_when_no_match(self):
+        denial = MagicMock(spec=Denial)
+        denial.microsite_slug = None
+
+        result = await MLCitationsHelper._get_supplemental_citations(
+            denial=denial,
+            procedure="totally unmatched procedure",
+            diagnosis="totally unmatched diagnosis",
+        )
+        assert result == []

@@ -776,6 +776,78 @@ class MicrositeExtraLink(models.Model):
         return f"{self.microsite_slug}: {self.title or self.document.url[:50]}"
 
 
+class ECRIGuideline(
+    ExportModelOperationsMixin("ECRIGuideline"), models.Model  # type: ignore
+):
+    """
+    Stores summaries of evidence-based clinical practice guidelines from the
+    ECRI Guidelines Trust (https://guidelines.ecri.org/), a publicly available
+    repository of guideline content.
+
+    Records are matched to denials by procedure and diagnosis keywords during
+    citation generation so that appeals can reference authoritative clinical
+    recommendations.
+    """
+
+    id = models.AutoField(primary_key=True)
+
+    # Stable identifier for the guideline brief (e.g., the ECRI brief id or a
+    # SHA256 of the URL when no native id is available). Used for upserts.
+    guideline_id = models.CharField(max_length=128, unique=True, db_index=True)
+
+    # Source repository — defaults to ECRI but kept generic so future feeds
+    # (e.g., USPSTF, AAFP) can share this table without another model.
+    source = models.CharField(max_length=64, default="ECRI Guidelines Trust")
+
+    title = models.CharField(max_length=500)
+    developer_organization = models.CharField(max_length=300, blank=True)
+    publication_date = models.DateField(null=True, blank=True)
+    last_updated = models.DateField(null=True, blank=True)
+
+    # Free text fields surfaced in citations / context blocks
+    recommendations_summary = models.TextField(blank=True)
+    intended_population = models.TextField(blank=True)
+    intended_users = models.CharField(max_length=300, blank=True)
+    evidence_quality = models.CharField(max_length=100, blank=True)
+
+    # Lower-cased keyword lists used for matching against denial procedure /
+    # diagnosis. Stored as JSONField so we don't have to introduce a join table.
+    procedure_keywords = models.JSONField(default=list, blank=True)
+    diagnosis_keywords = models.JSONField(default=list, blank=True)
+    topics = models.JSONField(default=list, blank=True)
+
+    url = models.URLField(max_length=2000, blank=True)
+    is_active = models.BooleanField(default=True, db_index=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["source", "is_active"]),
+        ]
+        ordering = ["-publication_date", "title"]
+        verbose_name = "ECRI Clinical Guideline"
+        verbose_name_plural = "ECRI Clinical Guidelines"
+
+    def __str__(self):
+        return f"{self.title} ({self.source})"
+
+    def citation_string(self) -> str:
+        """Return a single-line citation suitable for an appeal letter."""
+        parts = [self.title]
+        if self.developer_organization:
+            parts.append(self.developer_organization)
+        if self.publication_date:
+            parts.append(str(self.publication_date.year))
+        citation = ". ".join(p for p in parts if p)
+        if self.url:
+            citation = f"{citation}. Available at: {self.url}"
+        if self.source:
+            citation = f"{citation} (via {self.source})"
+        return citation
+
+
 class ExtraLinkFetchLog(models.Model):
     """
     Audit log for extralink fetch attempts.

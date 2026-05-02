@@ -1,0 +1,187 @@
+[
+  {
+    "guideline_id": "ecri-acc-aha-stable-ischemic-heart-disease-2023",
+    "source": "ECRI Guidelines Trust",
+    "title": "AHA/ACC/ACCP/ASPC/NLA/PCNA Guideline for the Management of Patients With Chronic Coronary Disease",
+    "developer_organization": "American Heart Association / American College of Cardiology",
+    "publication_date": "2023-07-20",
+    "intended_population": "Adults with chronic coronary disease, including stable ischemic heart disease, post-MI, post-revascularization, and ischemic cardiomyopathy.",
+    "intended_users": "Cardiologists, primary care physicians, nurse practitioners, physician assistants",
+    "evidence_quality": "Strength of recommendation graded by Class (I-III) and Level of Evidence (A-C)",
+    "recommendations_summary": "Recommends guideline-directed medical therapy with aspirin, high-intensity statin, ACE inhibitor or ARB (in selected patients), and beta-blocker (post-MI). Endorses revascularization for patients with refractory angina despite optimal medical therapy or specific anatomic indications. Emphasizes lifestyle modification, cardiac rehabilitation, and shared decision-making for invasive testing.",
+    "procedure_keywords": [
+      "coronary angiography",
+      "percutaneous coronary intervention",
+      "pci",
+      "cabg",
+      "coronary artery bypass",
+      "cardiac catheterization",
+      "cardiac rehabilitation",
+      "stress test",
+      "stent",
+      "revascularization"
+    ],
+    "diagnosis_keywords": [
+      "coronary artery disease",
+      "ischemic heart disease",
+      "stable angina",
+      "chronic coronary syndrome",
+      "post myocardial infarction",
+      "ischemic cardiomyopathy"
+    ],
+    "topics": ["cardiology", "cardiovascular"],
+    "url": "https://guidelines.ecri.org/"
+  },
+  {
+    "guideline_id": "ecri-uspstf-colorectal-cancer-screening-2021",
+    "source": "ECRI Guidelines Trust",
+    "title": "U.S. Preventive Services Task Force Recommendation Statement: Screening for Colorectal Cancer",
+    "developer_organization": "U.S. Preventive Services Task Force",
+    "publication_date": "2021-05-18",
+    "intended_population": "Asymptomatic adults aged 45 to 75 years at average risk for colorectal cancer.",
+    "intended_users": "Primary care clinicians",
+    "evidence_quality": "Grade A (ages 50-75) and Grade B (ages 45-49) recommendation",
+    "recommendations_summary": "Recommends screening for colorectal cancer in adults aged 45 to 75 years. Acceptable strategies include high-sensitivity gFOBT or FIT annually, sDNA-FIT every 1-3 years, CT colonography every 5 years, flexible sigmoidoscopy every 5 years (or every 10 years with annual FIT), and colonoscopy every 10 years.",
+    "procedure_keywords": [
+      "colonoscopy",
+      "sigmoidoscopy",
+      "ct colonography",
+      "fit test",
+      "fecal occult blood test",
+      "fobt",
+      "stool dna test",
+      "cologuard"
+    ],
+    "diagnosis_keywords": [
+      "colorectal cancer screening",
+      "colon cancer",
+      "average risk screening",
+      "polyp surveillance"
+    ],
+    "topics": ["preventive services", "oncology", "gastroenterology"],
+    "url": "https://guidelines.ecri.org/"
+  },
+  {
+    "guideline_id": "ecri-ada-eular-rheumatoid-arthritis-2022",
+    "source": "ECRI Guidelines Trust",
+    "title": "American College of Rheumatology Guideline for the Treatment of Rheumatoid Arthritis",
+    "developer_organization": "American College of Rheumatology",
+    "publication_date": "2021-06-08",
+    "intended_population": "Adults with a diagnosis of rheumatoid arthritis, including those with early disease, established disease, or with comorbid conditions.",
+    "intended_users": "Rheumatologists, internists, primary care physicians",
+    "evidence_quality": "GRADE methodology with strong and conditional recommendations",
+    "recommendations_summary": "Strongly recommends methotrexate as initial DMARD monotherapy for patients with moderate-to-high disease activity. Conditional recommendation to add or switch to a biologic DMARD (TNF inhibitor, IL-6 inhibitor, JAK inhibitor) when methotrexate is inadequate. Treat-to-target approach using validated disease activity measures is strongly recommended.",
+    "procedure_keywords": [
+      "biologic dmard",
+      "tnf inhibitor",
+      "infliximab",
+      "adalimumab",
+      "etanercept",
+      "tocilizumab",
+      "tofacitinib",
+      "methotrexate",
+      "joint injection"
+    ],
+    "diagnosis_keywords": [
+      "rheumatoid arthritis",
+      "inflammatory arthritis",
+      "ra",
+      "polyarthritis"
+    ],
+    "topics": ["rheumatology", "immunology"],
+    "url": "https://guidelines.ecri.org/"
+  },
+  {
+    "guideline_id": "ecri-asco-breast-cancer-her2-2023",
+    "source": "ECRI Guidelines Trust",
+    "title": "ASCO Guideline Update: Adjuvant Therapy for HER2-Positive Breast Cancer",
+    "developer_organization": "American Society of Clinical Oncology",
+    "publication_date": "2023-09-01",
+    "intended_population": "Adults with HER2-positive early-stage breast cancer being considered for adjuvant systemic therapy.",
+    "intended_users": "Medical oncologists, surgical oncologists, radiation oncologists",
+    "evidence_quality": "Recommendations rated by evidence strength and quality (high/moderate/low)",
+    "recommendations_summary": "Recommends adjuvant trastuzumab combined with chemotherapy for patients with HER2-positive tumors >1 cm or with positive lymph nodes. Addition of pertuzumab to trastuzumab and chemotherapy is recommended for high-risk node-positive disease. Neratinib may be offered after trastuzumab-based therapy in hormone-receptor-positive disease at higher risk of recurrence.",
+    "procedure_keywords": [
+      "trastuzumab",
+      "herceptin",
+      "pertuzumab",
+      "neratinib",
+      "ado-trastuzumab",
+      "adjuvant chemotherapy",
+      "her2 testing"
+    ],
+    "diagnosis_keywords": [
+      "her2 positive breast cancer",
+      "her2-positive breast cancer",
+      "early stage breast cancer",
+      "invasive breast cancer"
+    ],
+    "topics": ["oncology", "breast cancer"],
+    "url": "https://guidelines.ecri.org/"
+  },
+  {
+    "guideline_id": "ecri-aap-adhd-children-adolescents-2019",
+    "source": "ECRI Guidelines Trust",
+    "title": "AAP Clinical Practice Guideline for the Diagnosis, Evaluation, and Treatment of ADHD in Children and Adolescents",
+    "developer_organization": "American Academy of Pediatrics",
+    "publication_date": "2019-10-01",
+    "intended_population": "Children and adolescents aged 4 to 18 years with concerns for ADHD.",
+    "intended_users": "Pediatricians, family physicians, psychiatrists, psychologists",
+    "evidence_quality": "Recommendations graded as Strong, Moderate, or Weak based on quality of evidence",
+    "recommendations_summary": "Behavior therapy is the first-line treatment for preschool-aged children (4-5 years). For children aged 6-11, FDA-approved medications (stimulants preferred) plus behavioral therapy are recommended. For adolescents (12-18), FDA-approved medications and evidence-based behavior or training therapy are recommended, with patient assent.",
+    "procedure_keywords": [
+      "behavior therapy",
+      "behavioral therapy",
+      "stimulant medication",
+      "methylphenidate",
+      "amphetamine",
+      "atomoxetine",
+      "guanfacine",
+      "psychotherapy"
+    ],
+    "diagnosis_keywords": [
+      "adhd",
+      "attention deficit hyperactivity disorder",
+      "attention-deficit/hyperactivity disorder",
+      "pediatric adhd"
+    ],
+    "topics": ["pediatrics", "behavioral health", "mental health"],
+    "url": "https://guidelines.ecri.org/"
+  },
+  {
+    "guideline_id": "ecri-ada-diabetes-standards-of-care-2024",
+    "source": "ECRI Guidelines Trust",
+    "title": "ADA Standards of Care in Diabetes",
+    "developer_organization": "American Diabetes Association",
+    "publication_date": "2024-01-01",
+    "intended_population": "Adults and children with type 1 diabetes, type 2 diabetes, gestational diabetes, or prediabetes.",
+    "intended_users": "Endocrinologists, primary care physicians, diabetes educators, dietitians",
+    "evidence_quality": "Levels A, B, C and Expert Consensus (E)",
+    "recommendations_summary": "Recommends individualized glycemic targets (typically A1C <7% for most non-pregnant adults). GLP-1 receptor agonists or SGLT2 inhibitors are preferred when established cardiovascular disease, heart failure, or chronic kidney disease is present. Annual screening for diabetic retinopathy, nephropathy (urinary albumin and eGFR), and neuropathy is recommended.",
+    "procedure_keywords": [
+      "continuous glucose monitor",
+      "cgm",
+      "insulin pump",
+      "glp-1 agonist",
+      "semaglutide",
+      "liraglutide",
+      "dulaglutide",
+      "tirzepatide",
+      "sglt2 inhibitor",
+      "empagliflozin",
+      "dapagliflozin",
+      "diabetic retinopathy screening"
+    ],
+    "diagnosis_keywords": [
+      "type 1 diabetes",
+      "type 2 diabetes",
+      "diabetes mellitus",
+      "gestational diabetes",
+      "prediabetes",
+      "diabetic nephropathy",
+      "diabetic retinopathy"
+    ],
+    "topics": ["endocrinology", "diabetes"],
+    "url": "https://guidelines.ecri.org/"
+  }
+]
