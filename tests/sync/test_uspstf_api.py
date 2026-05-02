@@ -49,7 +49,7 @@ class CoerceRecordTests(TestCase):
         self.assertEqual(record["id"], "x1")
         self.assertEqual(record["title"], "Some Screening")
         self.assertEqual(record["grade"], "A")
-        self.assertEqual(record["shortDescription"], "Short text.")
+        self.assertEqual(record["short_description"], "Short text.")
 
     def test_derives_id_from_title_when_missing(self):
         raw = {"title": "Lung Cancer: Screening", "grade": "B"}

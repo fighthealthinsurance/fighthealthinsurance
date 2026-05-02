@@ -19,15 +19,16 @@ recommendations so appeal generation can still cite preventive guidance.
 """
 
 import asyncio
-import os
 import re
-from datetime import timedelta
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import aiohttp
 from asgiref.sync import sync_to_async
+from django.db import transaction
 from django.utils import timezone
 from loguru import logger
+
+from fighthealthinsurance.env_utils import get_env_variable
 
 DEFAULT_API_URL = "https://data.uspreventiveservicestaskforce.org/api/json"
 USER_AGENT = (
@@ -35,7 +36,6 @@ USER_AGENT = (
     "mailto:support@fighthealthinsurance.com)"
 )
 FETCH_TIMEOUT = 30.0
-CACHE_REFRESH_INTERVAL = timedelta(days=7)
 VALID_GRADES = {"A", "B", "C", "D", "I"}
 
 
@@ -281,32 +281,26 @@ FALLBACK_RECOMMENDATIONS: List[Dict[str, Any]] = [
 
 def _get_api_url() -> str:
     """Resolve the API URL, allowing override via the USPSTF_API_URL env var."""
-    return os.environ.get("USPSTF_API_URL") or DEFAULT_API_URL
+    return get_env_variable("USPSTF_API_URL", DEFAULT_API_URL)
 
 
 def _normalize_grade(grade: Optional[str]) -> str:
-    """Coerce a raw grade value to a single uppercase letter, or empty string."""
+    """Coerce a raw grade value (e.g. "A", "Grade A", "I (Insufficient)") to a
+    single uppercase letter, or empty string when nothing recognizable is found.
+    """
     if not grade:
         return ""
     g = str(grade).strip().upper()
-    if not g:
-        return ""
-    # The API has historically returned values like "A", "Grade A", "I (Insufficient)".
     match = re.search(r"\b([A-DI])\b", g)
-    if match:
-        candidate = match.group(1)
-        if candidate in VALID_GRADES:
-            return candidate
-    if g[0] in VALID_GRADES:
-        return g[0]
-    return ""
+    return match.group(1) if match else ""
 
 
 def _coerce_record(raw: Dict[str, Any]) -> Dict[str, Any]:
-    """Normalize a raw API record into the shape this module exposes.
+    """Normalize a raw API record into a stable snake_case dict.
 
-    The USPSTF API has used several field name conventions over time. We accept
-    common variants so callers see a stable schema.
+    The USPSTF API has used several field-name conventions over time; we accept
+    common variants on input and always emit the canonical snake_case schema
+    that matches the database columns.
     """
 
     def pick(*keys: str) -> str:
@@ -318,7 +312,6 @@ def _coerce_record(raw: Dict[str, Any]) -> Dict[str, Any]:
 
     record_id = pick("id", "uspstfId", "topicId", "recommendationId")
     if not record_id:
-        # Derive a stable id from the title when the source omits one.
         title = pick("title", "topic")
         record_id = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-") or "uspstf"
 
@@ -329,7 +322,7 @@ def _coerce_record(raw: Dict[str, Any]) -> Dict[str, Any]:
         "status": pick("status", "recommendationStatus") or "current",
         "topic": pick("topic", "category", "specialty"),
         "population": pick("population", "populationDescription", "subgroup"),
-        "shortDescription": pick(
+        "short_description": pick(
             "shortDescription",
             "summary",
             "recommendationSummary",
@@ -337,44 +330,62 @@ def _coerce_record(raw: Dict[str, Any]) -> Dict[str, Any]:
             "shortDesc",
         ),
         "rationale": pick("rationale", "rationaleStatement", "evidence"),
-        "clinicalConsiderations": pick(
+        "clinical_considerations": pick(
             "clinicalConsiderations", "clinicalConsiderationsHtml", "considerations"
         ),
         "url": pick("url", "permalink", "topicUrl", "link"),
-        "dateIssued": pick(
+        "date_issued": pick(
             "dateIssued", "datePublished", "publicationDate", "currentDate"
         ),
         "raw": raw,
     }
 
 
-def _extract_records(payload: Any) -> List[Dict[str, Any]]:
-    """Pull a list of recommendation dicts out of an API payload.
+def _record_to_defaults(record: Dict[str, Any]) -> Dict[str, Any]:
+    """Build the ``defaults`` dict for a USPSTFRecommendation upsert."""
+    return {
+        "title": record.get("title", "") or "",
+        "grade": record.get("grade", "") or "",
+        "status": record.get("status", "current") or "current",
+        "topic": record.get("topic", "") or "",
+        "population": record.get("population", "") or "",
+        "short_description": record.get("short_description", "") or "",
+        "rationale": record.get("rationale", "") or "",
+        "clinical_considerations": record.get("clinical_considerations", "") or "",
+        "url": record.get("url", "") or "",
+        "date_issued": record.get("date_issued", "") or "",
+        "raw_data": record.get("raw"),
+        "last_synced": timezone.now(),
+    }
 
-    The API returns either a top-level list, or a dict with a key like
-    ``specifications`` / ``recommendations`` / ``data``. We try the common
-    shapes in order.
-    """
+
+_KNOWN_LIST_KEYS = ("specifications", "recommendations", "data", "results", "items")
+
+
+def _find_record_list(payload: Any) -> List[Any]:
+    """Locate the list of recommendations inside an arbitrary API payload."""
     if isinstance(payload, list):
-        candidates = payload
-    elif isinstance(payload, dict):
-        for key in ("specifications", "recommendations", "data", "results", "items"):
-            value = payload.get(key)
-            if isinstance(value, list):
-                candidates = value
-                break
-        else:
-            # Some shapes nest the list one level deeper.
-            for value in payload.values():
-                if isinstance(value, list) and value and isinstance(value[0], dict):
-                    candidates = value
-                    break
-            else:
-                candidates = []
-    else:
-        candidates = []
+        return payload
+    if not isinstance(payload, dict):
+        return []
+    for key in _KNOWN_LIST_KEYS:
+        value = payload.get(key)
+        if isinstance(value, list):
+            return value
+    # Fallback: any value that looks like a list of dicts.
+    for value in payload.values():
+        if isinstance(value, list) and value and isinstance(value[0], dict):
+            return value
+    return []
 
-    return [_coerce_record(item) for item in candidates if isinstance(item, dict)]
+
+def _extract_records(payload: Any) -> List[Dict[str, Any]]:
+    """Pull a list of normalized recommendation dicts out of an API payload."""
+    return [
+        _coerce_record(item)
+        for item in _find_record_list(payload)
+        if isinstance(item, dict)
+    ]
 
 
 class USPSTFClient:
@@ -406,6 +417,8 @@ class USPSTFClient:
                             f"USPSTF API returned status {resp.status} for {self.api_url}"
                         )
                         return []
+                    # content_type=None: tolerate misconfigured servers that
+                    # return JSON with a non-application/json header.
                     payload = await resp.json(content_type=None)
         except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as e:
             logger.warning(f"USPSTF API fetch failed: {e}")
@@ -442,22 +455,8 @@ def _store_records(records: Iterable[Dict[str, Any]]) -> int:
     for record in records:
         if not record.get("id"):
             continue
-        defaults = {
-            "title": record.get("title", "") or "",
-            "grade": record.get("grade", "") or "",
-            "status": record.get("status", "current") or "current",
-            "topic": record.get("topic", "") or "",
-            "population": record.get("population", "") or "",
-            "short_description": record.get("shortDescription", "") or "",
-            "rationale": record.get("rationale", "") or "",
-            "clinical_considerations": record.get("clinicalConsiderations", "") or "",
-            "url": record.get("url", "") or "",
-            "date_issued": record.get("dateIssued", "") or "",
-            "raw_data": record.get("raw"),
-            "last_synced": timezone.now(),
-        }
         USPSTFRecommendation.objects.update_or_create(
-            uspstf_id=record["id"], defaults=defaults
+            uspstf_id=record["id"], defaults=_record_to_defaults(record)
         )
         count += 1
     return count
@@ -480,23 +479,30 @@ def _row_to_dict(row: Any) -> Dict[str, Any]:
     }
 
 
-def _matches_query(row: Any, terms: List[str]) -> bool:
-    """Case-insensitive substring match across the searchable fields."""
+_SEARCHABLE_FIELDS = (
+    "title",
+    "topic",
+    "population",
+    "short_description",
+    "rationale",
+    "clinical_considerations",
+)
+
+
+def _haystack(record: Any) -> str:
+    """Concatenate the searchable fields of a row or dict, lowercased."""
+    if isinstance(record, dict):
+        values = [record.get(f, "") for f in _SEARCHABLE_FIELDS]
+    else:
+        values = [getattr(record, f, "") for f in _SEARCHABLE_FIELDS]
+    return " ".join(filter(None, values)).lower()
+
+
+def _matches_query(record: Any, terms: List[str]) -> bool:
+    """Case-insensitive AND substring match across the searchable fields."""
     if not terms:
         return True
-    haystack = " ".join(
-        filter(
-            None,
-            [
-                row.title,
-                row.topic,
-                row.population,
-                row.short_description,
-                row.rationale,
-                row.clinical_considerations,
-            ],
-        )
-    ).lower()
+    haystack = _haystack(record)
     return all(term in haystack for term in terms)
 
 
@@ -505,33 +511,23 @@ def _ensure_cache_loaded() -> None:
 
     A full API sync is async; doing it synchronously here would block the
     request thread. The fallback gives us a usable result immediately while
-    the periodic sync (or an explicit management command) refreshes the
-    real data in the background.
+    the periodic sync (or an explicit management command) refreshes the real
+    data in the background. The seed is wrapped in a transaction so two
+    concurrent callers can't both insert duplicates.
     """
     from fighthealthinsurance.models import USPSTFRecommendation
 
     if USPSTFRecommendation.objects.exists():
         return
     logger.info("Seeding USPSTFRecommendation cache from bundled fallback dataset")
-    for item in FALLBACK_RECOMMENDATIONS:
-        record = _coerce_record(item)
-        USPSTFRecommendation.objects.update_or_create(
-            uspstf_id=record["id"],
-            defaults={
-                "title": record.get("title", ""),
-                "grade": record.get("grade", ""),
-                "status": record.get("status", "current"),
-                "topic": record.get("topic", ""),
-                "population": record.get("population", ""),
-                "short_description": record.get("shortDescription", ""),
-                "rationale": record.get("rationale", ""),
-                "clinical_considerations": record.get("clinicalConsiderations", ""),
-                "url": record.get("url", ""),
-                "date_issued": record.get("dateIssued", ""),
-                "raw_data": record.get("raw"),
-                "last_synced": timezone.now(),
-            },
-        )
+    with transaction.atomic():
+        if USPSTFRecommendation.objects.exists():
+            return
+        for item in FALLBACK_RECOMMENDATIONS:
+            record = _coerce_record(item)
+            USPSTFRecommendation.objects.update_or_create(
+                uspstf_id=record["id"], defaults=_record_to_defaults(record)
+            )
 
 
 def search_recommendations(
@@ -576,6 +572,28 @@ def search_recommendations(
     return [_row_to_dict(r) for r in rows[:limit_int]]
 
 
+# Conservative mapping from preventive ICD-10 / CPT codes (matched as prefixes)
+# to USPSTF topic keywords. Keys are uppercased so lookups don't have to be.
+_CODE_TOPIC_KEYWORDS: List[Tuple[str, List[str]]] = [
+    ("Z12.11", ["colorectal"]),
+    ("Z12.31", ["breast"]),
+    ("Z11.4", ["hiv"]),
+    ("Z12.4", ["cervical"]),
+    ("Z13.1", ["diabetes"]),
+    ("Z13.6", ["cardiovascular"]),
+    ("Z12.2", ["colorectal"]),
+    ("Z11.3", ["hiv"]),
+    ("Z32.2", ["pregnancy", "perinatal"]),
+    ("99401", ["counseling"]),
+    ("99403", ["counseling"]),
+    ("G0297", ["lung"]),
+    ("77067", ["breast"]),
+    ("45378", ["colorectal"]),
+    ("45380", ["colorectal"]),
+    ("82270", ["colorectal"]),
+]
+
+
 def find_recommendations_for_codes(
     codes: Iterable[str],
     limit: int = 5,
@@ -586,43 +604,37 @@ def find_recommendations_for_codes(
     keywords associated with the most common preventive codes. Returns up to
     ``limit`` matched recommendations; an empty list when nothing matches.
     """
-
-    code_topic_keywords: List[Tuple[str, List[str]]] = [
-        ("Z12.11", ["colorectal"]),  # Colon screening encounter
-        ("Z12.31", ["breast"]),  # Mammogram screening encounter
-        ("Z11.4", ["hiv"]),  # HIV screening
-        ("Z12.4", ["cervical"]),  # Cervical screening
-        ("Z13.1", ["diabetes"]),  # Diabetes screening
-        ("Z13.6", ["cardiovascular"]),  # CV screening
-        ("Z12.2", ["colorectal"]),
-        ("Z11.3", ["hiv"]),
-        ("Z32.2", ["pregnancy", "perinatal"]),
-        ("99401", ["counseling"]),
-        ("99403", ["counseling"]),
-        ("G0297", ["lung"]),  # Lung CT screening
-        ("77067", ["breast"]),  # Screening mammography
-        ("45378", ["colorectal"]),  # Diagnostic colonoscopy
-        ("45380", ["colorectal"]),
-        ("82270", ["colorectal"]),  # FOBT
-    ]
-
-    seen: set = set()
-    matches: List[Dict[str, Any]] = []
+    keywords: List[str] = []
+    seen_keywords: set = set()
     for code in codes:
         normalized = (code or "").strip().upper()
         if not normalized:
             continue
-        for prefix, keywords in code_topic_keywords:
+        for prefix, kws in _CODE_TOPIC_KEYWORDS:
             if normalized.startswith(prefix.upper()):
-                for keyword in keywords:
-                    for rec in search_recommendations(query=keyword, limit=limit):
-                        if rec["id"] in seen:
-                            continue
-                        seen.add(rec["id"])
-                        matches.append(rec)
-                        if len(matches) >= limit:
-                            return matches
+                for kw in kws:
+                    if kw not in seen_keywords:
+                        seen_keywords.add(kw)
+                        keywords.append(kw)
                 break
+
+    if not keywords:
+        return []
+
+    # Load all recommendations once instead of running a search per keyword.
+    all_recs = search_recommendations(limit=25)
+    seen_ids: set = set()
+    matches: List[Dict[str, Any]] = []
+    for keyword in keywords:
+        for rec in all_recs:
+            if rec["id"] in seen_ids:
+                continue
+            if not _matches_query(rec, [keyword.lower()]):
+                continue
+            seen_ids.add(rec["id"])
+            matches.append(rec)
+            if len(matches) >= limit:
+                return matches
     return matches
 
 
@@ -637,19 +649,14 @@ def format_recommendation(rec: Dict[str, Any]) -> str:
         parts.append(str(title))
     if rec.get("population"):
         parts.append(f"Population: {rec['population']}")
-    if rec.get("short_description") or rec.get("shortDescription"):
-        parts.append(
-            f"Recommendation: {rec.get('short_description') or rec['shortDescription']}"
-        )
+    if rec.get("short_description"):
+        parts.append(f"Recommendation: {rec['short_description']}")
     if rec.get("rationale"):
         parts.append(f"Rationale: {rec['rationale']}")
-    if rec.get("clinical_considerations") or rec.get("clinicalConsiderations"):
-        parts.append(
-            "Clinical considerations: "
-            f"{rec.get('clinical_considerations') or rec['clinicalConsiderations']}"
-        )
-    if rec.get("date_issued") or rec.get("dateIssued"):
-        parts.append(f"Date issued: {rec.get('date_issued') or rec['dateIssued']}")
+    if rec.get("clinical_considerations"):
+        parts.append(f"Clinical considerations: {rec['clinical_considerations']}")
+    if rec.get("date_issued"):
+        parts.append(f"Date issued: {rec['date_issued']}")
     if rec.get("url"):
         parts.append(f"URL: {rec['url']}")
     return "\n".join(parts)
@@ -659,11 +666,13 @@ def get_uspstf_info(query: Dict[str, Any]) -> str:
     """Return a human/LLM-friendly summary of matching USPSTF recommendations.
 
     query example: ``{"query": "colon cancer", "grade": "A", "limit": 3}``.
+    ``query`` is the free-text search; ``topic`` is a separate substring
+    filter on the topic field; ``grade`` filters to a single letter.
 
     The output mirrors the style of :func:`get_medicaid_info` so the chat
     surface stays consistent.
     """
-    text_query = (query.get("query") or query.get("topic") or "").strip()
+    text_query = (query.get("query") or "").strip()
     grade = (query.get("grade") or "").strip()
     topic = (query.get("topic") or "").strip()
     limit = query.get("limit") or 5

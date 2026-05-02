@@ -43,16 +43,6 @@ class USPSTFLookupTool(BaseTool):
         super().__init__(send_status_message)
         self.call_llm_callback = call_llm_callback
 
-    def detect_all(self, text: str) -> List[re.Match[str]]:
-        """Find every uspstf_lookup tool call in the text."""
-        return list(re.finditer(self.pattern, text, flags=re.DOTALL | re.IGNORECASE))
-
-    def clean_all_matches(self, text: str, matches: List[re.Match[str]]) -> str:
-        cleaned = text
-        for match in matches:
-            cleaned = cleaned.replace(match.group(0), "")
-        return cleaned.strip()
-
     async def execute(
         self,
         match: re.Match[str],
