@@ -12,11 +12,12 @@ import asyncio
 import json
 import os
 import sys
-from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional, Set
+from datetime import timedelta
+from typing import Any, Dict, List, Optional
 from urllib.parse import quote
 
 import aiohttp
+from django.utils import timezone
 from loguru import logger
 
 from fighthealthinsurance.models import (
@@ -31,21 +32,13 @@ else:
     from async_timeout import timeout as async_timeout
 
 
-# Default base URL for the NICE syndication API. Overridable via env var for testing or
-# for pointing at a future endpoint without a code change.
 NICE_API_BASE_URL = os.getenv("NICE_API_BASE_URL", "https://api.nice.org.uk")
 
-# How many guidance items we keep per query.
 PER_QUERY_LIMIT = 3
-
-# Cap how many guidance items end up formatted into the appeal context.
 MAX_GUIDANCE_FOR_CONTEXT = 5
-
-# How long cached query results stay fresh before we re-query.
 QUERY_CACHE_DAYS = 30
+SUMMARY_TRUNCATE_CHARS = 400
 
-# Standard caveat appended to all NICE-derived context to avoid mis-citing it as a
-# U.S. coverage authority.
 INTERNATIONAL_GUIDANCE_CAVEAT = (
     "Note: NICE (UK) is referenced here as international clinical guidance, not as "
     "U.S. coverage authority. It is offered as supporting evidence-based clinical "
@@ -67,16 +60,15 @@ class NICETools:
     """
 
     def __init__(self, api_key: Optional[str] = None) -> None:
-        # Treat None as "fall back to env"; treat "" as "explicitly no key" so tests
-        # can disable the API path without the env leaking in.
+        # None = fall back to env; "" = explicitly no key (so tests aren't leaked into).
         self.api_key = api_key if api_key is not None else os.getenv("NICE_API_KEY", "")
         self.base_url = NICE_API_BASE_URL.rstrip("/")
 
     def _auth_headers(self) -> Dict[str, str]:
         headers = dict(_FETCH_HEADERS)
         if self.api_key:
-            # The syndication API accepts the key under either header. We send the
-            # Azure-style header since NICE's gateway uses APIM in front of it.
+            # NICE's gateway sits behind Azure APIM; sending both header names covers
+            # direct access and APIM-routed access without a config split.
             headers["Api-Key"] = self.api_key
             headers["Ocp-Apim-Subscription-Key"] = self.api_key
         return headers
@@ -103,7 +95,8 @@ class NICETools:
                             f"[NICE:{label}] non-200 status {resp.status} for {url}"
                         )
                         return None
-                    # NICE may return XML for some endpoints, but search returns JSON.
+                    # Search returns JSON, but other syndication endpoints return XML;
+                    # guard against accidentally feeding XML to json().
                     content_type = resp.headers.get("Content-Type", "")
                     if "json" not in content_type:
                         logger.debug(
@@ -181,33 +174,30 @@ class NICETools:
             return []
         query = query.strip()
 
-        # Serve from cache when possible.
-        try:
-            recent_cutoff = datetime.now() - timedelta(days=QUERY_CACHE_DAYS)
-            cached = NICEQueryData.objects.filter(
-                query=query,
-                created__gte=recent_cutoff,
-                denial_id__isnull=True,
-            ).order_by("-created")
-            if await cached.aexists():
-                first = await cached.afirst()
-                if first and first.results:
-                    try:
-                        items = json.loads(first.results.replace("\x00", ""))
-                        if isinstance(items, list):
-                            return items
-                    except json.JSONDecodeError:
-                        logger.error(
-                            f"Error parsing cached NICE results JSON for {query}"
-                        )
-        except Exception as e:
-            logger.opt(exception=True).debug(f"NICE cache lookup failed: {e}")
-
         if not self.api_key:
-            # Without an API key we can't talk to syndication. Return empty rather
-            # than failing the whole appeal generation.
             logger.debug("NICE_API_KEY not set; skipping NICE search")
             return []
+
+        try:
+            recent_cutoff = timezone.now() - timedelta(days=QUERY_CACHE_DAYS)
+            cached = (
+                await NICEQueryData.objects.filter(
+                    query=query,
+                    created__gte=recent_cutoff,
+                    denial_id__isnull=True,
+                )
+                .order_by("-created")
+                .afirst()
+            )
+            if cached and cached.results:
+                try:
+                    items = json.loads(cached.results.replace("\x00", ""))
+                    if isinstance(items, list):
+                        return items
+                except json.JSONDecodeError:
+                    logger.error(f"Error parsing cached NICE results JSON for {query}")
+        except Exception as e:
+            logger.opt(exception=True).debug(f"NICE cache lookup failed: {e}")
 
         url = f"{self.base_url}/services/search?q={quote(query)}&pageSize={PER_QUERY_LIMIT}"
         items: List[Dict[str, Any]] = []
@@ -218,6 +208,8 @@ class NICETools:
                 ) as session:
                     data = await self._fetch_json(session, url, timeout, label=query)
                     if data:
+                        # API should honor pageSize but we cap defensively in case it
+                        # returns more items than we requested.
                         for raw in self._extract_items(data)[:PER_QUERY_LIMIT]:
                             normalized = self._normalize_item(raw)
                             if normalized:
@@ -245,43 +237,31 @@ class NICETools:
         timeout: float = 30.0,
     ) -> List[NICEGuidance]:
         """Look up NICE guidance for a denial, persisting results as NICEGuidance rows."""
-        # Re-fetch to pick up fields written elsewhere in the appeal pipeline.
-        denial = await Denial.objects.aget(pk=denial.denial_id)
-
-        procedure_opt = denial.procedure or ""
-        diagnosis_opt = denial.diagnosis or ""
-        query = self._build_query(procedure_opt, diagnosis_opt)
+        query = self._build_query(denial.procedure or "", denial.diagnosis or "")
         if not query:
             return []
 
         guidance_models: List[NICEGuidance] = []
-        seen_ids: Set[str] = set()
         try:
             async with async_timeout(timeout):
                 items = await self.search_guidance(query, timeout=timeout)
                 for item in items:
-                    gid = item["guidance_id"]
-                    if gid in seen_ids:
-                        continue
-                    seen_ids.add(gid)
-                    existing = await NICEGuidance.objects.filter(
-                        guidance_id=gid
-                    ).afirst()
-                    if existing:
-                        guidance_models.append(existing)
-                        continue
                     try:
-                        created = await NICEGuidance.objects.acreate(
-                            guidance_id=gid,
-                            title=item["title"],
-                            url=item["url"],
-                            guidance_type=item["guidance_type"],
-                            summary=item["summary"],
+                        # aget_or_create is atomic and safe under concurrent writes
+                        # for the same guidance_id.
+                        model, _ = await NICEGuidance.objects.aget_or_create(
+                            guidance_id=item["guidance_id"],
+                            defaults={
+                                "title": item["title"],
+                                "url": item["url"],
+                                "guidance_type": item["guidance_type"],
+                                "summary": item["summary"],
+                            },
                         )
-                        guidance_models.append(created)
+                        guidance_models.append(model)
                     except Exception as e:
                         logger.opt(exception=True).debug(
-                            f"Failed to persist NICE guidance {gid}: {e}"
+                            f"Failed to persist NICE guidance {item['guidance_id']}: {e}"
                         )
         except asyncio.TimeoutError:
             logger.debug(f"Timeout finding NICE guidance for denial {denial.denial_id}")
@@ -312,7 +292,8 @@ class NICETools:
     ) -> str:
         """Return formatted NICE context for a denial, caching the result on the denial."""
         result = await self._find_context_for_denial(denial, timeout)
-        if result:
+        # Only write when the value actually changed to avoid no-op UPDATEs on regen.
+        if result and result != denial.nice_context:
             await Denial.objects.filter(denial_id=denial.denial_id).aupdate(
                 nice_context=result
             )
@@ -327,9 +308,6 @@ class NICETools:
         if denial.nice_context and len(denial.nice_context) > 1:
             return denial.nice_context
 
-        # No API key configured: skip everything, including the DB lookup. This
-        # keeps unit tests that don't mock the NICE backend from hitting the ORM
-        # and matches production behavior in environments without a NICE key.
         if not self.api_key:
             return ""
 
@@ -367,7 +345,7 @@ class NICETools:
             parts.append(f"URL: {guidance.url}")
         if guidance.summary:
             summary = guidance.summary
-            if len(summary) > 400:
-                summary = summary[:400].rstrip() + "..."
+            if len(summary) > SUMMARY_TRUNCATE_CHARS:
+                summary = summary[:SUMMARY_TRUNCATE_CHARS].rstrip() + "..."
             parts.append(f"Summary: {summary}")
         return "; ".join(parts)

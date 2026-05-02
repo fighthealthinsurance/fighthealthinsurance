@@ -42,8 +42,8 @@ class NICEContextPromptTests(TestCase):
         assert prompt is not None
         self.assertNotIn("International clinical guidance from NICE", prompt)
 
-    def test_nice_context_does_not_trigger_when_no_other_citations(self) -> None:
-        """If only nice_context is provided, the citation block should still appear."""
+    def test_nice_context_alone_satisfies_citation_requirement(self) -> None:
+        """When only nice_context is provided, the no-citation warning should not appear."""
         prompt = self.generator.make_open_prompt(
             denial_text="Your claim was denied.",
             procedure="follow-up imaging",
@@ -51,6 +51,5 @@ class NICEContextPromptTests(TestCase):
             nice_context="NICE NG54; Title: Test",
         )
         assert prompt is not None
-        # NICE alone counts as evidence — the no-citation warning should NOT be there.
         self.assertNotIn("No specific medical citations have been provided", prompt)
         self.assertIn("International clinical guidance from NICE", prompt)

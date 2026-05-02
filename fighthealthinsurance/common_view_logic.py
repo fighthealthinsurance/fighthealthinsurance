@@ -2333,27 +2333,33 @@ class AppealsBackendHelper:
                 done_msg="Guidelines lookup complete",
             )
 
-            # NICE syndication context (UK clinical guidance, treated as international)
-            nice_context_awaitable = tracked_awaitable(
-                asyncio.wait_for(
-                    cls.nice.find_context_for_denial(denial),
-                    timeout=30,
-                ),
-                substep="nice",
-                done_msg="NICE guidance lookup complete",
-            )
+            # Skip the NICE task entirely when no key is configured: avoids a
+            # misleading "NICE guidance lookup complete" status and the wait_for
+            # overhead in environments without syndication access.
+            gather_awaitables = [
+                pubmed_context_awaitable,
+                ml_citation_context_awaitable,
+                rag_context_awaitable,
+            ]
+            if cls.nice.api_key:
+                gather_awaitables.append(
+                    tracked_awaitable(
+                        asyncio.wait_for(
+                            cls.nice.find_context_for_denial(denial),
+                            timeout=30,
+                        ),
+                        substep="nice",
+                        done_msg="NICE guidance lookup complete",
+                    )
+                )
 
-            # Await all contexts so we can use co-operative multitasking
             # return_exceptions=True is belt-and-suspenders: tracked_awaitable
             # already catches exceptions, but this prevents gather from raising
             # if any edge case slips through.
             try:
                 logger.debug("Gathering contexts")
                 results = await asyncio.gather(
-                    pubmed_context_awaitable,
-                    ml_citation_context_awaitable,
-                    rag_context_awaitable,
-                    nice_context_awaitable,
+                    *gather_awaitables,
                     return_exceptions=True,
                 )
 
@@ -2381,7 +2387,7 @@ class AppealsBackendHelper:
                     rag_context = None
                     if results[2] is not None:
                         logger.debug(f"RAG context not available: {results[2]}")
-                if isinstance(results[3], str):
+                if len(results) > 3 and isinstance(results[3], str):
                     nice_context = results[3]
                 else:
                     nice_context = None

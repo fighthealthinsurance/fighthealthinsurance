@@ -7,6 +7,7 @@ Most tests in this file are unit tests that mock the network. The
 
 import json
 import os
+from contextlib import contextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -39,6 +40,27 @@ def _make_mock_session(response):
     session.__aenter__ = AsyncMock(return_value=session)
     session.__aexit__ = AsyncMock(return_value=False)
     return session
+
+
+@contextmanager
+def _mock_nice_query_cache(cached_results=None):
+    """Patch NICEQueryData.objects so callers can simulate cache miss or hit.
+
+    Yields the patched objects manager; pass ``cached_results`` (a list) to
+    simulate a cache hit, or omit it for a miss. ``acreate`` is always patched
+    so callers can assert against it.
+    """
+    with patch("fighthealthinsurance.nice_tools.NICEQueryData.objects") as mock_objects:
+        qs = MagicMock()
+        cached_row = None
+        if cached_results is not None:
+            cached_row = MagicMock()
+            cached_row.results = json.dumps(cached_results)
+        qs.afirst = AsyncMock(return_value=cached_row)
+        qs.order_by = MagicMock(return_value=qs)
+        mock_objects.filter = MagicMock(return_value=qs)
+        mock_objects.acreate = AsyncMock()
+        yield mock_objects
 
 
 class TestNICEToolsHelpers:
@@ -157,22 +179,15 @@ class TestNICESearchGuidance:
 
     async def test_skips_api_call_without_key(self):
         tools = NICETools(api_key="")
-        # Cache is empty in tests (no DB) — patch the lookup so we don't touch the ORM.
-        with patch(
-            "fighthealthinsurance.nice_tools.NICEQueryData.objects"
-        ) as mock_objects:
-            qs = MagicMock()
-            qs.aexists = AsyncMock(return_value=False)
-            qs.order_by = MagicMock(return_value=qs)
-            mock_objects.filter = MagicMock(return_value=qs)
-            with patch("aiohttp.ClientSession") as mock_session_cls:
-                result = await tools.search_guidance("knee replacement")
-                assert result == []
-                mock_session_cls.assert_not_called()
+        with _mock_nice_query_cache(), patch(
+            "aiohttp.ClientSession"
+        ) as mock_session_cls:
+            result = await tools.search_guidance("knee replacement")
+            assert result == []
+            mock_session_cls.assert_not_called()
 
     async def test_returns_normalized_items_from_api(self):
         tools = NICETools(api_key="key")
-
         api_response = {
             "documents": [
                 {
@@ -191,31 +206,20 @@ class TestNICESearchGuidance:
                 },
             ]
         }
+        response = _make_mock_response(json_data=api_response)
+        session = _make_mock_session(response)
+        with _mock_nice_query_cache() as mock_objects, patch(
+            "aiohttp.ClientSession", return_value=session
+        ):
+            items = await tools.search_guidance("knee replacement")
 
-        # Patch caching: nothing in cache, capture writes.
-        with patch(
-            "fighthealthinsurance.nice_tools.NICEQueryData.objects"
-        ) as mock_objects:
-            qs = MagicMock()
-            qs.aexists = AsyncMock(return_value=False)
-            qs.order_by = MagicMock(return_value=qs)
-            mock_objects.filter = MagicMock(return_value=qs)
-            mock_objects.acreate = AsyncMock()
-
-            response = _make_mock_response(json_data=api_response)
-            session = _make_mock_session(response)
-            with patch("aiohttp.ClientSession", return_value=session):
-                items = await tools.search_guidance("knee replacement")
-
-            assert len(items) == 2
-            assert items[0]["guidance_id"] == "NG54"
-            assert items[1]["guidance_id"] == "TA608"
-            # Cached the result.
-            mock_objects.acreate.assert_awaited_once()
-            kwargs = mock_objects.acreate.call_args.kwargs
-            assert kwargs["query"] == "knee replacement"
-            cached_items = json.loads(kwargs["results"])
-            assert len(cached_items) == 2
+        assert len(items) == 2
+        assert items[0]["guidance_id"] == "NG54"
+        assert items[1]["guidance_id"] == "TA608"
+        mock_objects.acreate.assert_awaited_once()
+        kwargs = mock_objects.acreate.call_args.kwargs
+        assert kwargs["query"] == "knee replacement"
+        assert len(json.loads(kwargs["results"])) == 2
 
     async def test_returns_cached_results_when_available(self):
         tools = NICETools(api_key="key")
@@ -228,22 +232,11 @@ class TestNICESearchGuidance:
                 "summary": "Cached summary.",
             }
         ]
-        cached_row = MagicMock()
-        cached_row.results = json.dumps(cached_items)
-
-        with patch(
-            "fighthealthinsurance.nice_tools.NICEQueryData.objects"
-        ) as mock_objects:
-            qs = MagicMock()
-            qs.aexists = AsyncMock(return_value=True)
-            qs.afirst = AsyncMock(return_value=cached_row)
-            qs.order_by = MagicMock(return_value=qs)
-            mock_objects.filter = MagicMock(return_value=qs)
-            with patch("aiohttp.ClientSession") as mock_session_cls:
-                items = await tools.search_guidance("knee replacement")
-                # Cache hit: we shouldn't open an HTTP session.
-                mock_session_cls.assert_not_called()
-
+        with _mock_nice_query_cache(cached_results=cached_items), patch(
+            "aiohttp.ClientSession"
+        ) as mock_session_cls:
+            items = await tools.search_guidance("knee replacement")
+            mock_session_cls.assert_not_called()
         assert items == cached_items
 
     async def test_truncates_to_per_query_limit(self):
@@ -254,20 +247,13 @@ class TestNICESearchGuidance:
                 for i in range(PER_QUERY_LIMIT + 5)
             ]
         }
-        with patch(
-            "fighthealthinsurance.nice_tools.NICEQueryData.objects"
-        ) as mock_objects:
-            qs = MagicMock()
-            qs.aexists = AsyncMock(return_value=False)
-            qs.order_by = MagicMock(return_value=qs)
-            mock_objects.filter = MagicMock(return_value=qs)
-            mock_objects.acreate = AsyncMock()
-
-            response = _make_mock_response(json_data=big_response)
-            session = _make_mock_session(response)
-            with patch("aiohttp.ClientSession", return_value=session):
-                items = await tools.search_guidance("query")
-            assert len(items) == PER_QUERY_LIMIT
+        response = _make_mock_response(json_data=big_response)
+        session = _make_mock_session(response)
+        with _mock_nice_query_cache(), patch(
+            "aiohttp.ClientSession", return_value=session
+        ):
+            items = await tools.search_guidance("query")
+        assert len(items) == PER_QUERY_LIMIT
 
 
 @pytest.mark.asyncio
@@ -344,6 +330,27 @@ class TestNICEContextFormatting:
             mock_find.assert_not_called()
         assert result == ""
 
+    async def test_find_context_skips_aupdate_when_value_unchanged(self):
+        """Re-running with an already-correct nice_context should not write."""
+        tools = NICETools(api_key="key")
+        cached_value = (
+            f"{INTERNATIONAL_GUIDANCE_CAVEAT}\nNICE NG54; Title: Cancer follow-up"
+        )
+        denial = MagicMock()
+        denial.denial_id = 1
+        denial.nice_context = cached_value
+
+        with patch(
+            "fighthealthinsurance.nice_tools.Denial.objects"
+        ) as mock_denial_objs:
+            qs = MagicMock()
+            qs.aupdate = AsyncMock()
+            mock_denial_objs.filter = MagicMock(return_value=qs)
+            result = await tools.find_context_for_denial(denial)
+
+        assert result == cached_value
+        qs.aupdate.assert_not_awaited()
+
 
 @skip_if_no_nice_api_key
 @pytest.mark.asyncio
@@ -359,56 +366,31 @@ class TestNICESyndicationLive:
 
     async def test_search_returns_guidance_for_common_query(self):
         tools = NICETools(api_key=os.environ["NICE_API_KEY"])
+        with _mock_nice_query_cache() as mock_objects:
+            items = await tools.search_guidance("diabetes type 2", timeout=30.0)
 
-        # Skip the cache layer so we always exercise the live API path.
-        with patch(
-            "fighthealthinsurance.nice_tools.NICEQueryData.objects"
-        ) as mock_objects:
-            qs = MagicMock()
-            qs.aexists = AsyncMock(return_value=False)
-            qs.order_by = MagicMock(return_value=qs)
-            mock_objects.filter = MagicMock(return_value=qs)
-            mock_objects.acreate = AsyncMock()
-
-            items = await tools.search_guidance(
-                "diabetes type 2",
-                timeout=30.0,
-            )
-
-        # NICE has substantial diabetes guidance, so we expect at least one hit.
         assert isinstance(items, list)
         assert len(items) >= 1, (
             "Expected at least one NICE guidance item for 'diabetes type 2'. "
             "Check that NICE_API_KEY is valid and that the syndication API is reachable."
         )
         first = items[0]
-        # Required normalized fields must be present and non-empty.
         assert first["guidance_id"], f"Missing guidance_id in item: {first}"
         assert first["title"], f"Missing title in item: {first}"
-        # url, guidance_type, and summary may legitimately be empty for some types,
-        # but they must at least be string keys we set.
+        # url/guidance_type/summary may be empty strings for some guidance types,
+        # but the keys must exist and hold strings.
         for key in ("url", "guidance_type", "summary"):
             assert key in first, f"Missing key {key} in normalized item: {first}"
             assert isinstance(first[key], str)
-        # Cached result was written.
         mock_objects.acreate.assert_awaited_once()
 
     async def test_search_returns_empty_for_nonsense_query(self):
         """A clearly nonsensical query should return an empty list, not raise."""
         tools = NICETools(api_key=os.environ["NICE_API_KEY"])
-        with patch(
-            "fighthealthinsurance.nice_tools.NICEQueryData.objects"
-        ) as mock_objects:
-            qs = MagicMock()
-            qs.aexists = AsyncMock(return_value=False)
-            qs.order_by = MagicMock(return_value=qs)
-            mock_objects.filter = MagicMock(return_value=qs)
-            mock_objects.acreate = AsyncMock()
-
+        with _mock_nice_query_cache() as mock_objects:
             items = await tools.search_guidance(
                 "zzznotarealmedicalconditionxyz123",
                 timeout=30.0,
             )
         assert items == []
-        # No items → we should not have cached anything.
         mock_objects.acreate.assert_not_awaited()
