@@ -1,14 +1,30 @@
 #!/bin/bash
 
-set -ex
+set -e
 
+# Retry helper: runs a command up to max_attempts times with exponential backoff.
+retry() {
+  local max_attempts=3
+  local attempt=1
+  until "$@"; do
+    if [ "${attempt}" -ge "${max_attempts}" ]; then
+      echo "Command failed after ${max_attempts} attempts: $*" >&2
+      return 1
+    fi
+    echo "Attempt ${attempt} failed. Waiting before retry..." >&2
+    sleep $((attempt * 5))
+    attempt=$((attempt + 1))
+  done
+}
+
+set -x
 python min_version.py
 
 # shellcheck disable=SC1091
 python -m venv .venv &&
   . .venv/bin/activate &&
-  pip install -r requirements.txt &&
-  pip install -r requirements-dev.txt
+  retry pip install -r requirements.txt &&
+  retry pip install -r requirements-dev.txt
 
 package_command=''
 if command -v apt-get; then

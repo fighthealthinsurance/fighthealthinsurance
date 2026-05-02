@@ -75,8 +75,7 @@ jobs:
         uses: actions/setup-node@v6
 
       - name: Check npm build
-        run:
-          cd fighthealthinsurance/static/js && npm i && npm run build && npm cache clean --force
+        run: ./scripts/ci_npm_build.sh
 
 
   tests-sync:
@@ -114,7 +113,7 @@ jobs:
           restore-keys: npm-
 
       - name: Install system level packages
-        run: sudo apt-get update && sudo apt-get install -y tesseract-ocr texlive  libgirepository1.0-dev pkg-config python3-dev && sudo apt-get clean
+        run: (sudo apt-get update || echo "apt-get update failed, retrying...") && sudo apt-get install -y tesseract-ocr texlive libgirepository1.0-dev pkg-config python3-dev && sudo apt-get clean
 
       - uses: actions/setup-python@v5
         with:
@@ -143,7 +142,7 @@ jobs:
 
       - name: Build npm js (needed for the e2e tests in django)
         run:
-          cd fighthealthinsurance/static/js && npm i && npm run build && npm cache clean --force
+          ./scripts/ci_npm_build.sh
 
       - name: Run tests
         run: tox -e py${{ matrix.toxpy }}-django${{ matrix.django }}-sync
@@ -190,7 +189,7 @@ jobs:
           restore-keys: npm-
 
       - name: Install system level packages
-        run: sudo apt-get update && sudo apt-get install -y tesseract-ocr texlive  libgirepository1.0-dev pkg-config python3-dev && sudo apt-get clean
+        run: (sudo apt-get update || echo "apt-get update failed, retrying...") && sudo apt-get install -y tesseract-ocr texlive libgirepository1.0-dev pkg-config python3-dev && sudo apt-get clean
 
       - uses: actions/setup-python@v5
         with:
@@ -261,7 +260,7 @@ jobs:
           restore-keys: npm-
 
       - name: Install system level packages
-        run: sudo apt-get update && sudo apt-get install -y tesseract-ocr texlive  libgirepository1.0-dev pkg-config python3-dev && sudo apt-get clean
+        run: (sudo apt-get update || echo "apt-get update failed, retrying...") && sudo apt-get install -y tesseract-ocr texlive libgirepository1.0-dev pkg-config python3-dev && sudo apt-get clean
 
       - uses: actions/setup-python@v5
         with:
@@ -290,7 +289,7 @@ jobs:
 
       - name: Build npm js (needed for the e2e tests in django)
         run:
-          cd fighthealthinsurance/static/js && npm i && npm run build && npm cache clean --force
+          ./scripts/ci_npm_build.sh
 
       - name: Run tests
         run: tox -e py${{ matrix.toxpy }}-django${{ matrix.django }}-sync-actor
@@ -411,7 +410,7 @@ jobs:
           restore-keys: npm-
 
       - name: Install system level packages
-        run: sudo apt-get update && sudo apt-get install -y tesseract-ocr texlive  libgirepository1.0-dev pkg-config python3-dev && sudo apt-get clean
+        run: (sudo apt-get update || echo "apt-get update failed, retrying...") && sudo apt-get install -y tesseract-ocr texlive libgirepository1.0-dev pkg-config python3-dev && sudo apt-get clean
 
       - uses: actions/setup-python@v5
         with:
@@ -440,10 +439,10 @@ jobs:
 
       - name: Build npm js (needed for the e2e tests in django)
         run:
-          cd fighthealthinsurance/static/js && npm i && npm run build && npm cache clean --force
+          ./scripts/ci_npm_build.sh
 
       - name: Setup DB (long story)
-        run: uv venv && source .venv/bin/activate && uv pip install -r requirements.txt && python manage.py makemigrations && python manage.py migrate && ENVIRONMENT=Test ./manage.py migrate
+        run: ./scripts/ci_setup_db.sh
 
       - name: Run tests
         run: ENVIRONMENT=Test tox -e py${{ matrix.toxpy }}-django${{ matrix.django }}-async
@@ -492,7 +491,7 @@ jobs:
           restore-keys: npm-
 
       - name: Install system level packages
-        run: sudo apt-get update && sudo apt-get install -y tesseract-ocr texlive  libgirepository1.0-dev pkg-config python3-dev && sudo apt-get clean
+        run: (sudo apt-get update || echo "apt-get update failed, retrying...") && sudo apt-get install -y tesseract-ocr texlive libgirepository1.0-dev pkg-config python3-dev && sudo apt-get clean
 
       - uses: actions/setup-python@v5
         with:
@@ -521,10 +520,10 @@ jobs:
 
       - name: Build npm js (needed for the e2e tests in django)
         run:
-          cd fighthealthinsurance/static/js && npm i && npm run build && npm cache clean --force
+          ./scripts/ci_npm_build.sh
 
       - name: Setup DB (long story)
-        run: uv venv && source .venv/bin/activate && uv pip install -r requirements.txt && python manage.py makemigrations && python manage.py migrate && ENVIRONMENT=Test ./manage.py migrate
+        run: ./scripts/ci_setup_db.sh
 
       - name: Run tests
         run: ENVIRONMENT=Test tox -e py${{ matrix.toxpy }}-django${{ matrix.django }}-async-unit
