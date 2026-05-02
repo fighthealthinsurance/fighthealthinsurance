@@ -1,6 +1,12 @@
-"""Unit tests for the NICE (UK) syndication API client."""
+"""Unit and integration tests for the NICE (UK) syndication API client.
+
+Most tests in this file are unit tests that mock the network. The
+``TestNICESyndicationLive`` class hits the real NICE API and is gated on a
+``NICE_API_KEY`` being present in the environment (set in CI as a secret).
+"""
 
 import json
+import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -10,6 +16,7 @@ from fighthealthinsurance.nice_tools import (
     NICETools,
     PER_QUERY_LIMIT,
 )
+from tests.conftest import skip_if_no_nice_api_key
 
 
 def _make_mock_response(
@@ -336,3 +343,72 @@ class TestNICEContextFormatting:
             result = await tools._find_context_for_denial(denial)
             mock_find.assert_not_called()
         assert result == ""
+
+
+@skip_if_no_nice_api_key
+@pytest.mark.asyncio
+class TestNICESyndicationLive:
+    """End-to-end tests against the real NICE syndication API.
+
+    These run only when ``NICE_API_KEY`` is set (e.g., from a CI secret).
+    They validate that auth, response parsing, and caching match what the
+    real syndication endpoint returns. We bypass the DB cache (mocked) and
+    short-circuit the persistence layer so the test does not require migrations
+    to be applied.
+    """
+
+    async def test_search_returns_guidance_for_common_query(self):
+        tools = NICETools(api_key=os.environ["NICE_API_KEY"])
+
+        # Skip the cache layer so we always exercise the live API path.
+        with patch(
+            "fighthealthinsurance.nice_tools.NICEQueryData.objects"
+        ) as mock_objects:
+            qs = MagicMock()
+            qs.aexists = AsyncMock(return_value=False)
+            qs.order_by = MagicMock(return_value=qs)
+            mock_objects.filter = MagicMock(return_value=qs)
+            mock_objects.acreate = AsyncMock()
+
+            items = await tools.search_guidance(
+                "diabetes type 2",
+                timeout=30.0,
+            )
+
+        # NICE has substantial diabetes guidance, so we expect at least one hit.
+        assert isinstance(items, list)
+        assert len(items) >= 1, (
+            "Expected at least one NICE guidance item for 'diabetes type 2'. "
+            "Check that NICE_API_KEY is valid and that the syndication API is reachable."
+        )
+        first = items[0]
+        # Required normalized fields must be present and non-empty.
+        assert first["guidance_id"], f"Missing guidance_id in item: {first}"
+        assert first["title"], f"Missing title in item: {first}"
+        # url, guidance_type, and summary may legitimately be empty for some types,
+        # but they must at least be string keys we set.
+        for key in ("url", "guidance_type", "summary"):
+            assert key in first, f"Missing key {key} in normalized item: {first}"
+            assert isinstance(first[key], str)
+        # Cached result was written.
+        mock_objects.acreate.assert_awaited_once()
+
+    async def test_search_returns_empty_for_nonsense_query(self):
+        """A clearly nonsensical query should return an empty list, not raise."""
+        tools = NICETools(api_key=os.environ["NICE_API_KEY"])
+        with patch(
+            "fighthealthinsurance.nice_tools.NICEQueryData.objects"
+        ) as mock_objects:
+            qs = MagicMock()
+            qs.aexists = AsyncMock(return_value=False)
+            qs.order_by = MagicMock(return_value=qs)
+            mock_objects.filter = MagicMock(return_value=qs)
+            mock_objects.acreate = AsyncMock()
+
+            items = await tools.search_guidance(
+                "zzznotarealmedicalconditionxyz123",
+                timeout=30.0,
+            )
+        assert items == []
+        # No items → we should not have cached anything.
+        mock_objects.acreate.assert_not_awaited()

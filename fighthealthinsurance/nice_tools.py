@@ -67,7 +67,9 @@ class NICETools:
     """
 
     def __init__(self, api_key: Optional[str] = None) -> None:
-        self.api_key = api_key or os.getenv("NICE_API_KEY", "")
+        # Treat None as "fall back to env"; treat "" as "explicitly no key" so tests
+        # can disable the API path without the env leaking in.
+        self.api_key = api_key if api_key is not None else os.getenv("NICE_API_KEY", "")
         self.base_url = NICE_API_BASE_URL.rstrip("/")
 
     def _auth_headers(self) -> Dict[str, str]:
