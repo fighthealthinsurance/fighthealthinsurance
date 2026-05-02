@@ -157,6 +157,8 @@ DenialCreatorHelper.create_or_update_denial()       # common_view_logic.py:940+
 ```
 
 Runs async (same Ray actor pattern as existing `extract_procedure_diagnosis_finished`).
+The same helper is invoked by the periodic refresh actor (§10.4) for stale denials
+and after upstream source refreshes.
 
 ### 5.3 Procedure-code extraction
 
@@ -218,7 +220,8 @@ GET  /ziggy/rest/denial/{id}/ucr_context/
   returns the resolved UCRLookup snapshot + comparison
 
 POST /ziggy/rest/denial/{id}/refresh_ucr/
-  re-runs enrichment (after user edits billing info)
+  re-runs enrichment immediately by calling upar.refresh_denial.remote(id)
+  on the UCRRefreshActor (§10.4); also called after a user edits billing info
 
 GET  /ziggy/rest/ucr/lookup/?cpt=99213&zip=94110&percentiles=50,80,90
   unauthenticated cached lookup endpoint, rate-limited; useful for marketing
@@ -279,14 +282,100 @@ New management command: `fighthealthinsurance/management/commands/load_medicare_
 - Idempotent on `(procedure_code, modifier, geographic_area, percentile, source, effective_date)`.
 
 ### 10.2 Refresh cadence
-Yearly for Medicare (Q1 each year when CMS publishes). On-demand via management
-command, not cron, until volume justifies automation.
+- Reference data (Medicare PFS, FAIR Health snapshot): yearly for CMS, weekly or
+  monthly for FAIR Health depending on subscription. Driven by the polling actor
+  in §10.4, not cron.
+- Per-denial enrichment: refreshed when (a) the denial's billing info changes,
+  (b) a newer-priority source becomes available for that (CPT, area), or
+  (c) the snapshot is older than a configurable TTL (default 90 days) and the
+  appeal has not yet been finalized.
 
 ### 10.3 PII / HIPAA
 Billed/allowed/paid amounts are not PHI by themselves but in combination with the
 denial they are. Store on `Denial` (already encrypted-field-aware) and treat them
 as sensitive. The unauthenticated `/ucr/lookup/` endpoint never sees patient data —
 just CPT + ZIP3.
+
+### 10.4 UCR refresh polling actor
+
+Follows the existing polling-actor pattern (`email_polling_actor.py`,
+`fax_polling_actor.py`, `chooser_refill_actor.py`). One Ray actor with two
+responsibilities, scheduled on independent intervals so a slow upstream source
+doesn't stall per-denial refreshes.
+
+New file: `fighthealthinsurance/ucr_refresh_actor.py`
+
+```python
+@ray.remote
+class UCRRefreshActor:
+    """Periodically refreshes UCR reference data and re-enriches stale denials.
+
+    Two independent loops run concurrently inside one actor:
+      - source_refresh_loop: pulls new rate data from configured upstream sources.
+      - denial_refresh_loop: re-runs UCREnrichmentHelper on stale denials.
+    """
+
+    async def source_refresh_loop(self):
+        while True:
+            try:
+                await self._refresh_medicare_pfs_if_due()   # checks year vs latest effective_date
+                await self._refresh_fair_health_if_due()    # phase 2; no-op until enabled
+                await self._refresh_fhi_aggregate_if_due()  # phase 3; recomputes aggregate
+            except Exception:
+                logger.exception("UCR source refresh failed")
+            # Daily cadence is plenty — sources are at best weekly upstream.
+            await asyncio.sleep(random.uniform(20 * 3600, 28 * 3600))
+
+    async def denial_refresh_loop(self):
+        while True:
+            try:
+                # Bounded batch so a backlog doesn't pin the actor.
+                stale = await sync_to_async(list)(
+                    Denial.objects.filter(
+                        ucr_context__isnull=False,
+                        appeal_result__isnull=True,        # not yet finalized
+                    ).filter(
+                        Q(ucr_context__effective_date__lt=latest_source_date()) |
+                        Q(ucr_context__refreshed_at__lt=now() - timedelta(days=90))
+                    )[:50]
+                )
+                for denial in stale:
+                    await UCREnrichmentHelper.maybe_enrich(denial, force=True)
+            except Exception:
+                logger.exception("UCR denial refresh failed")
+            await asyncio.sleep(random.uniform(45 * 60, 75 * 60))  # ~hourly with jitter
+```
+
+Wiring (mirrors how `epar`/`fpar`/`cpar` are wired today):
+- Register a singleton in `polling_actor_setup.py` (e.g. `upar`).
+- `launch_polling_actors.py` will pick it up automatically once `polling_actor_setup`
+  imports it.
+- `actor_health_status.relaunch_actors` already iterates the registered actors;
+  the new actor inherits health monitoring and the `--force` relaunch path.
+- Trigger an out-of-cycle run from REST (§7) by calling
+  `upar.refresh_denial.remote(denial_id)` when a user edits billing info or hits
+  `refresh_ucr`. The polling loop is the safety net, not the primary path.
+
+Configuration:
+- New settings: `UCR_SOURCE_REFRESH_INTERVAL_HOURS` (default 24),
+  `UCR_DENIAL_REFRESH_INTERVAL_MINUTES` (default 60),
+  `UCR_DENIAL_STALE_TTL_DAYS` (default 90), `UCR_DENIAL_REFRESH_BATCH_SIZE`
+  (default 50). All overridable per `Dev`/`Prod` configuration class.
+
+Idempotency & safety:
+- The actor never overwrites a `UCRLookup` row — it inserts a new one and
+  updates `Denial.ucr_context` to point at the new snapshot, preserving the
+  audit trail.
+- If a denial is already finalized (`appeal_result` set or `appeal_text`
+  delivered), it is skipped. This prevents post-hoc edits to letters that have
+  already been faxed/mailed.
+- Lock contention is avoided by selecting a bounded batch with `id` ordering
+  rather than locking the whole queryset.
+
+Tests:
+- `tests/sync-actor/test_ucr_refresh_actor.py` — actor under the existing
+  `py313-django52-sync-actor` tox env. Cover stale-detection, batch bounding,
+  finalized-denial skip, and source-newer-than-snapshot trigger.
 
 ## 11. Testing strategy
 
@@ -341,8 +430,10 @@ Phase 1 — MVP (1–2 sprints)
 - `ucr_context` injection into appeal prompts.
 - New AppealTemplate for under-reimbursement appeals.
 - REST: `set_billing_info`, `ucr_context`, `refresh_ucr`.
+- `UCRRefreshActor` registered in `polling_actor_setup.py`; on-demand refresh
+  wired through the actor; periodic source/denial loops on default intervals.
 - Frontend: intake billing section + `UCRComparisonPanel`.
-- Tests across sync/async/REST.
+- Tests across sync/async/REST/sync-actor.
 
 Phase 2 — Quality
 - ML-based code extraction.
@@ -357,6 +448,7 @@ Phase 3 — Provider workflows
 
 New
 - `fighthealthinsurance/ucr_helper.py`
+- `fighthealthinsurance/ucr_refresh_actor.py`
 - `fighthealthinsurance/management/commands/load_medicare_pfs.py`
 - `fighthealthinsurance/migrations/000X_add_ucr_models.py`
 - `fighthealthinsurance/migrations/000X_denial_financial_fields.py`
@@ -367,6 +459,7 @@ New
 - `tests/sync/test_ucr_rest.py`
 - `tests/sync/test_load_medicare_pfs.py`
 - `tests/async/test_ucr_enrichment.py`
+- `tests/sync-actor/test_ucr_refresh_actor.py`
 
 Modified
 - `fighthealthinsurance/models.py` (new models + Denial field additions, ~1235+)
@@ -375,4 +468,6 @@ Modified
 - `fighthealthinsurance/rest_serializers.py` (DenialResponseInfoSerializer + new serializers)
 - `fighthealthinsurance/forms/questions.py` (optional billing-details questions)
 - `fighthealthinsurance/static/js/chat_interface.tsx` (mount the comparison panel)
+- `fighthealthinsurance/polling_actor_setup.py` (register `upar` UCRRefreshActor singleton)
+- `fighthealthinsurance/actor_health_status.py` (include UCRRefreshActor in relaunch set)
 - `fighthealthinsurance/fixtures/initial.yaml` (UCRGeographicArea seed rows + new AppealTemplate)
