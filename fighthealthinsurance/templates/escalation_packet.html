@@ -64,14 +64,15 @@ Fight Your Health Insurance Denial: Regulator Escalation Letters
 </div>
 
 {% if recipients_count > 0 %}
+{{ form_context|json_script:"escalation-form-context" }}
 <script>
   document.addEventListener('DOMContentLoaded', () => {
     const backendUrl = `wss://${window.location.host}/ws/streaming-escalation-backend/`;
+    const formContextEl = document.getElementById('escalation-form-context');
+    const formContext = formContextEl ? JSON.parse(formContextEl.textContent) : {};
     const data = {
-      {% autoescape off %}
-      ...{{ form_context }},
-      {% endautoescape %}
-      csrfmiddlewaretoken: '{{ csrf_token }}',
+      ...formContext,
+      csrfmiddlewaretoken: '{{ csrf_token|escapejs }}',
     };
 
     const lettersContainer = document.getElementById('escalation-letters');

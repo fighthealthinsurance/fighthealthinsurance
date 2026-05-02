@@ -301,3 +301,17 @@ class EscalationPacketViewTest(TestCase):
         self.assertTrue(escalation.chosen)
         self.assertTrue(escalation.editted)
         self.assertEqual(escalation.letter_text, "User-edited text.")
+
+    def test_choose_escalation_letter_rejects_malformed_uuid(self):
+        url = reverse("choose_escalation_letter")
+        response = self.client.post(
+            url,
+            {
+                "denial_id": str(self.denial.denial_id),
+                "email": self.email,
+                "semi_sekret": self.denial.semi_sekret,
+                "escalation_uuid": "not-a-uuid",
+                "letter_text": "x",
+            },
+        )
+        self.assertEqual(response.status_code, 302)

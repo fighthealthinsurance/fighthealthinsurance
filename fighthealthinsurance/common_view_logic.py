@@ -2646,14 +2646,19 @@ class EscalationPacketHelper:
             generate_regulator_letter,
         )
 
-        denial_id = parameters.get("denial_id")
-        email = parameters.get("email")
-        semi_sekret = parameters.get("semi_sekret")
+        denial_id_raw = parameters.get("denial_id")
+        email = parameters.get("email") or ""
+        semi_sekret = parameters.get("semi_sekret") or ""
 
-        if denial_id is None or email is None or semi_sekret is None:
+        if not denial_id_raw or not email or not semi_sekret:
             yield json.dumps(
                 {"type": "error", "message": "Missing denial id, email, or semi_sekret"}
             ) + "\n"
+            return
+        try:
+            denial_id = int(denial_id_raw)
+        except (TypeError, ValueError):
+            yield json.dumps({"type": "error", "message": "Invalid denial id"}) + "\n"
             return
 
         hashed_email = Denial.get_hashed_email(email)
@@ -2778,7 +2783,7 @@ class EscalationPacketHelper:
             return None
         try:
             escalation = RegulatorEscalation.objects.get(
-                uuid=escalation_uuid, for_denial=denial
+                uuid=str(escalation_uuid), for_denial=denial
             )
         except RegulatorEscalation.DoesNotExist:
             return None

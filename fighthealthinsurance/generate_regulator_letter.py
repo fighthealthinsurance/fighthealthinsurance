@@ -172,7 +172,7 @@ async def generate_regulator_letter(
     last_error: Optional[Exception] = None
     for model in models[:3]:
         try:
-            text = await model.generate_prior_auth_response(prompt)
+            text: Optional[str] = await model.generate_prior_auth_response(prompt)
             if text and len(text.strip()) > 50:
                 return text
         except Exception as e:

@@ -1171,7 +1171,7 @@ class GenerateEscalationPacket(View):
             request,
             "escalation_packet.html",
             context={
-                "form_context": json.dumps(elems),
+                "form_context": elems,
                 "user_email": email,
                 "denial_id": denial_id,
                 "semi_sekret": semi_sekret,

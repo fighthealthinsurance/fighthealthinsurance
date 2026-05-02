@@ -118,7 +118,9 @@ class StreamingEscalationBackend(AsyncWebsocketConsumer):
             data = json.loads(text_data)
         except json.JSONDecodeError as e:
             logger.warning(f"Invalid JSON received in escalation websocket: {e}")
-            await self.send(json.dumps({"error": "Invalid JSON format"}))
+            await self.send(
+                json.dumps({"type": "error", "message": "Invalid JSON format"})
+            )
             await self.close()
             return
         aitr: AsyncIterator[str] = (

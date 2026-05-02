@@ -42,9 +42,13 @@ Fight Your Health Insurance Denial: Send your regulator letter
   </div>
 
   <div class="form-nav-centered">
-    <a href="{% url 'escalation_packet' %}?denial_id={{ denial_id }}&email={{ user_email }}&semi_sekret={{ semi_sekret }}" class="btn btn-secondary-custom">
-      ← Back to all regulator letters
-    </a>
+    <form action="{% url 'escalation_packet' %}" method="post" style="display:inline;">
+      {% csrf_token %}
+      <input type="hidden" name="denial_id" value="{{ denial_id }}">
+      <input type="hidden" name="email" value="{{ user_email }}">
+      <input type="hidden" name="semi_sekret" value="{{ semi_sekret }}">
+      <button type="submit" class="btn btn-secondary-custom">← Back to all regulator letters</button>
+    </form>
   </div>
 </div>
 
