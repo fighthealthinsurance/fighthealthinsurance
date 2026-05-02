@@ -201,6 +201,9 @@ spec:
       - fighthealthinsurance.com
       - api.fighthealthinsurance.com
       - www.fuckhealthinsurance.com
+      - fuckhealthinsurance.com
+      - fightinsurance.ai
+      - www.fightinsurance.ai
       - www.appealhealthinsurance.com
       - api.fightpaperwork.com
     secretName: combined-tls-secret
@@ -216,6 +219,26 @@ spec:
                 port:
                   number: 80
     - host: fuckhealthinsurance.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name:  web-svc
+                port:
+                  number: 80
+    - host: fightinsurance.ai
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name:  web-svc
+                port:
+                  number: 80
+    - host: www.fightinsurance.ai
       http:
         paths:
           - path: /

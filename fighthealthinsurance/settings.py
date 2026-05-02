@@ -180,6 +180,7 @@ class Base(Configuration):
     )
 
     MIDDLEWARE = [
+        "fighthealthinsurance.middleware.DomainRedirectMiddleware",
         "fighthealthinsurance.middleware.CsrfCookieToHeaderMiddleware",
         "corsheaders.middleware.CorsMiddleware",
         "django_prometheus.middleware.PrometheusBeforeMiddleware",
@@ -622,6 +623,11 @@ class Prod(Base):
         "www.fightpaperwork.com",
         "api.fightpaperwork.com",
         "staging.fighthealthinsurance.com",
+        # Alternate marketing domains that 301-redirect to fighthealthinsurance.com
+        "fuckhealthinsurance.com",
+        "www.fuckhealthinsurance.com",
+        "fightinsurance.ai",
+        "www.fightinsurance.ai",
     ]
 
     # HSTS - tell browsers to always use HTTPS
