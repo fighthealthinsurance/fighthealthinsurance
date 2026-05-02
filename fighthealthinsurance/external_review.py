@@ -2,6 +2,7 @@ import datetime
 from dataclasses import asdict, dataclass
 from typing import Any, Optional
 
+from fighthealthinsurance.email_utils import is_sendable_email
 from fighthealthinsurance.models import Denial, FollowUpSched
 
 CONFIDENCE_LIKELY = "likely_eligible"
@@ -236,6 +237,18 @@ def _parse_date(value: Any) -> Optional[datetime.date]:
         return None
 
 
+def _parse_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+    return False
+
+
 def detect_external_review_eligibility(
     *,
     state: Optional[str],
@@ -345,7 +358,7 @@ def generate_external_review_packet(
         denial_type=payload.get("denial_type") or denial.denial_type_text,
         denial_date=denial.denial_date,
         appeal_denial_date=appeal_denial_date,
-        urgent=bool(payload.get("urgent", False)),
+        urgent=_parse_bool(payload.get("urgent", False)),
     )
 
     checklist = [
@@ -374,6 +387,9 @@ def schedule_external_review_followups(
     deadline_date: datetime.date,
     today: Optional[datetime.date] = None,
 ) -> None:
+    if not is_sendable_email(email):
+        return
+
     base_date = today or datetime.date.today()
     reminders = [
         deadline_date - datetime.timedelta(days=7),
@@ -382,6 +398,8 @@ def schedule_external_review_followups(
     ]
 
     for reminder_date in reminders:
+        if reminder_date < base_date:
+            continue
         FollowUpSched.objects.update_or_create(
             denial_id=denial,
             follow_up_type=None,

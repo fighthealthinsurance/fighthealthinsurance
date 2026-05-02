@@ -1,4 +1,5 @@
 import asyncio
+import datetime
 import json
 import typing
 from typing import Optional
@@ -525,14 +526,24 @@ class ReportClientError(APIView):
 
 class ExternalReviewWizardView(APIView):
     permission_classes = [AllowAny]
+    authentication_classes = []
 
     def post(self, request: Request) -> Response:
         denial_id = request.data.get("denial_id")
         email = request.data.get("email")
-        if not denial_id or not email:
-            return Response({"error": "denial_id and email required"}, status=400)
+        semi_sekret = request.data.get("semi_sekret")
+        if not denial_id or not email or not semi_sekret:
+            return Response(
+                {"error": "denial_id, email, and semi_sekret required"}, status=400
+            )
 
-        denial = get_object_or_404(Denial, denial_id=denial_id)
+        hashed_email = Denial.get_hashed_email(email)
+        denial = get_object_or_404(
+            Denial,
+            denial_id=denial_id,
+            semi_sekret=semi_sekret,
+            hashed_email=hashed_email,
+        )
         payload = {
             "state": request.data.get("state"),
             "plan_type": request.data.get("plan_type"),
@@ -542,7 +553,7 @@ class ExternalReviewWizardView(APIView):
         }
         packet = generate_external_review_packet(denial, payload)
 
-        deadline_date = timezone.now().date() + timezone.timedelta(days=120)
+        deadline_date = timezone.now().date() + datetime.timedelta(days=120)
         schedule_external_review_followups(denial, email, deadline_date)
 
         return Response(
