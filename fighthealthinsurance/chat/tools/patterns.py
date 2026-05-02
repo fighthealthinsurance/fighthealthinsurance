@@ -40,6 +40,10 @@ FETCH_DOC_REGEX = r"(?:\*\*)?fetch_doc\s*(\{[^}]*\})\s*(?:\*\*)?"
 # Matches: uspstf_lookup {JSON} or **uspstf_lookup {JSON}**
 USPSTF_LOOKUP_REGEX = r"(?:\*\*)?uspstf_lookup\s*(\{[^}]*\})\s*(?:\*\*)?"
 
+# RxNorm drug normalization tool - captures the drug name (free-text)
+# Matches: [rxnorm_lookup: drug name], **rxnorm_lookup: drug name**, etc.
+RXNORM_LOOKUP_REGEX = r"[\[\*]{0,4}rxnorm[ _]?lookup:?\s*([^*\[\]\n]+)"
+
 # List of all tool patterns for scoring/detection
 ALL_TOOL_PATTERNS = [
     PUBMED_QUERY_REGEX,
@@ -49,4 +53,5 @@ ALL_TOOL_PATTERNS = [
     CREATE_OR_UPDATE_PRIOR_AUTH_REGEX,
     FETCH_DOC_REGEX,
     USPSTF_LOOKUP_REGEX,
+    RXNORM_LOOKUP_REGEX,
 ]

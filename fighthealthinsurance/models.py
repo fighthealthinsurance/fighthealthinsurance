@@ -926,6 +926,48 @@ class USPSTFRecommendation(models.Model):
         return f"USPSTF {self.grade} - {self.title}"
 
 
+class RxNormConcept(models.Model):
+    """
+    Caches RxNorm/RxNav lookups for medication name normalization.
+
+    A "concept" is the canonical record returned for a given input drug name:
+    a canonical RxCUI plus the canonical name and term type (e.g., "IN" for
+    ingredient, "BN" for brand). Related synonyms, brand names, ingredients,
+    and dose forms are cached as JSON to avoid repeated round trips.
+    """
+
+    id = models.AutoField(primary_key=True)
+    # The user-supplied query string, lowercased + whitespace-collapsed.
+    # Indexed because we look up by it on every normalization call.
+    query = models.CharField(max_length=300, db_index=True)
+    # Canonical RxCUI from RxNorm. Empty string when no match was found —
+    # we still cache the miss to avoid hammering the API for unknown terms.
+    rxcui = models.CharField(max_length=32, blank=True, default="")
+    # Canonical preferred name from RxNorm (e.g., "atorvastatin").
+    canonical_name = models.CharField(max_length=300, blank=True, default="")
+    # Term type abbreviation: IN (ingredient), BN (brand), SCD, SBD, etc.
+    tty = models.CharField(max_length=16, blank=True, default="")
+    # Match score from RxNorm approximateTerm (100 = exact). Null when not
+    # produced by an approximate match (e.g., exact rxcui lookup).
+    score = models.IntegerField(null=True, blank=True)
+    # JSON of related concepts grouped by tty:
+    # {"IN": [{"rxcui": "...", "name": "..."}, ...], "BN": [...], ...}
+    related_json = models.JSONField(blank=True, default=dict)
+    created = models.DateTimeField(db_default=Now(), null=True)
+    last_used = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["query"], name="rxnorm_query_idx"),
+            models.Index(fields=["rxcui"], name="rxnorm_rxcui_idx"),
+        ]
+
+    def __str__(self) -> str:
+        return (
+            f"RxNormConcept({self.query!r} -> {self.canonical_name!r} [{self.rxcui}])"
+        )
+
+
 class ExtraLinkDocument(
     ExportModelOperationsMixin("ExtraLinkDocument"), models.Model  # type: ignore
 ):

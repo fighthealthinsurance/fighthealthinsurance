@@ -34,6 +34,7 @@ from fighthealthinsurance.chat.tools import (
     MedicaidInfoTool,
     PriorAuthTool,
     PubMedTool,
+    RxNormLookupTool,
     USPSTFLookupTool,
 )
 from fighthealthinsurance.extralink_context_helper import ExtraLinkContextHelper
@@ -366,6 +367,16 @@ class ChatInterface:
             self.send_status_message, self._call_llm_with_actions
         )
         response_text, context, _ = await medicaid_info_tool.handle(
+            response_text, context, **tool_kwargs
+        )
+
+        # Run drug name normalization before PubMed so the LLM can
+        # plug a canonical drug name into a follow-up pubmed_query.
+        rxnorm_tool = RxNormLookupTool(
+            self.send_status_message,
+            call_llm_callback=self._call_llm_with_actions,
+        )
+        response_text, context, _ = await rxnorm_tool.handle(
             response_text, context, **tool_kwargs
         )
 
