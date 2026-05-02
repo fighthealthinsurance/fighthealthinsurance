@@ -35,6 +35,7 @@ from fighthealthinsurance.models import (
     InsuranceCompany,
     InsurancePlan,
     InterestedProfessional,
+    PayerPriorAuthRequirement,
     MailingListSubscriber,
     OngoingChat,
     PlanDocuments,
@@ -368,6 +369,90 @@ class InsurancePlanAdmin(admin.ModelAdmin):
             {
                 "fields": ("regex", "negative_regex"),
                 "classes": ("collapse",),
+            },
+        ),
+    )
+
+
+@admin.register(PayerPriorAuthRequirement)
+class PayerPriorAuthRequirementAdmin(admin.ModelAdmin):
+    """Admin configuration for indexed payer prior-auth requirement rules."""
+
+    list_display = (
+        "id",
+        "insurance_company",
+        "cpt_hcpcs_code",
+        "code_range_start",
+        "code_range_end",
+        "line_of_business",
+        "state",
+        "requires_pa",
+        "notification_only",
+        "pa_category",
+    )
+    list_filter = (
+        "insurance_company",
+        "line_of_business",
+        "state",
+        "requires_pa",
+        "notification_only",
+        "pa_category",
+    )
+    search_fields = (
+        "cpt_hcpcs_code",
+        "code_description",
+        "pa_category",
+        "criteria_reference",
+        "insurance_company__name",
+        "notes",
+    )
+    autocomplete_fields = ["insurance_company"]
+    fieldsets = (
+        (
+            None,
+            {
+                "fields": (
+                    "insurance_company",
+                    "plan",
+                    "line_of_business",
+                    "state",
+                ),
+            },
+        ),
+        (
+            "Code(s)",
+            {
+                "fields": (
+                    "cpt_hcpcs_code",
+                    "code_range_start",
+                    "code_range_end",
+                    "code_description",
+                    "pa_category",
+                ),
+            },
+        ),
+        (
+            "Rule",
+            {
+                "fields": (
+                    "requires_pa",
+                    "notification_only",
+                    "submission_channel",
+                    "criteria_reference",
+                    "criteria_url",
+                ),
+            },
+        ),
+        (
+            "Source / Validity",
+            {
+                "fields": (
+                    "source_document",
+                    "source_document_date",
+                    "effective_date",
+                    "end_date",
+                    "notes",
+                ),
             },
         ),
     )

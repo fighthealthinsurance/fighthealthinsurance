@@ -401,6 +401,143 @@ class InsurancePlan(models.Model):
         return f"{self.insurance_company.name} - {self.plan_name}"
 
 
+class LineOfBusiness(models.TextChoices):
+    COMMERCIAL = "commercial", "Commercial"
+    MEDICARE_ADVANTAGE = "medicare_advantage", "Medicare Advantage"
+    MEDICAID = "medicaid", "Medicaid"
+    EXCHANGE = "exchange", "Exchange / Marketplace"
+    DSNP = "dsnp", "Dual Special Needs Plan"
+    OTHER = "other", "Other"
+    ALL = "all", "All Lines of Business"
+
+
+class PayerPriorAuthRequirement(models.Model):
+    """
+    Indexes a payer's published prior-authorization rules from carrier PA
+    requirement / advance-notification PDFs (e.g., UnitedHealthcare's
+    plan-specific PA requirement lists).
+
+    Used to answer "was PA required for this CPT/HCPCS?" and "what coverage
+    criteria / submission channel applies?" workflows. Rows can target a
+    single code, a CPT/HCPCS range, or a category. Filtering supports
+    line-of-business, state, plan, and effective-date windows so we can
+    reason about the right rule at the time the service was rendered.
+    """
+
+    id = models.AutoField(primary_key=True)
+    insurance_company = models.ForeignKey(
+        InsuranceCompany,
+        on_delete=models.CASCADE,
+        related_name="pa_requirements",
+        help_text="Payer that publishes this PA requirement",
+    )
+    plan = models.ForeignKey(
+        InsurancePlan,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="pa_requirements",
+        help_text="Specific plan this requirement applies to (optional)",
+    )
+    line_of_business = models.CharField(
+        max_length=30,
+        choices=LineOfBusiness.choices,
+        default=LineOfBusiness.ALL,
+        db_index=True,
+    )
+    state = models.CharField(
+        max_length=2,
+        blank=True,
+        db_index=True,
+        help_text="Two-letter state code if requirement is state-specific",
+    )
+    cpt_hcpcs_code = models.CharField(
+        max_length=10,
+        blank=True,
+        db_index=True,
+        help_text="Specific CPT or HCPCS code requiring PA (leave blank for ranges)",
+    )
+    code_range_start = models.CharField(
+        max_length=10,
+        blank=True,
+        help_text="Inclusive start of a CPT/HCPCS range (alphanumeric compare)",
+    )
+    code_range_end = models.CharField(
+        max_length=10,
+        blank=True,
+        help_text="Inclusive end of a CPT/HCPCS range",
+    )
+    code_description = models.TextField(blank=True)
+    pa_category = models.CharField(
+        max_length=200,
+        blank=True,
+        help_text="Category like 'Genetic Testing', 'Outpatient Surgery'",
+    )
+    requires_pa = models.BooleanField(
+        default=True,
+        help_text="True if PA is required. Set False for entries that explicitly do NOT require PA.",
+    )
+    notification_only = models.BooleanField(
+        default=False,
+        help_text="True for codes that only require notification (not full PA review)",
+    )
+    submission_channel = models.TextField(
+        blank=True,
+        help_text="How to submit (e.g., 'UHCprovider.com / 866-889-8054')",
+    )
+    criteria_reference = models.TextField(
+        blank=True,
+        help_text="Pointer to coverage criteria (e.g., a UHC Medical Policy or Coverage Determination Guideline name)",
+    )
+    criteria_url = models.URLField(blank=True)
+    source_document = models.CharField(
+        max_length=300,
+        blank=True,
+        help_text="Filename or title of the source PA requirement list",
+    )
+    source_document_date = models.DateField(null=True, blank=True)
+    effective_date = models.DateField(null=True, blank=True)
+    end_date = models.DateField(null=True, blank=True)
+    notes = models.TextField(blank=True)
+
+    class Meta:
+        verbose_name = "Payer Prior Auth Requirement"
+        verbose_name_plural = "Payer Prior Auth Requirements"
+        indexes = [
+            models.Index(
+                fields=["insurance_company", "cpt_hcpcs_code"],
+                name="pa_req_company_code_idx",
+            ),
+            models.Index(
+                fields=["insurance_company", "line_of_business", "cpt_hcpcs_code"],
+                name="pa_req_co_lob_code_idx",
+            ),
+        ]
+
+    def covers_code(self, code: str) -> bool:
+        """Return True if this requirement applies to the given CPT/HCPCS code."""
+        if not code:
+            return False
+        normalized = code.upper().strip()
+        if self.cpt_hcpcs_code and self.cpt_hcpcs_code.upper() == normalized:
+            return True
+        if self.code_range_start and self.code_range_end:
+            return (
+                self.code_range_start.upper()
+                <= normalized
+                <= self.code_range_end.upper()
+            )
+        return False
+
+    def __str__(self):
+        label = self.cpt_hcpcs_code or (
+            f"{self.code_range_start}-{self.code_range_end}"
+            if self.code_range_start and self.code_range_end
+            else self.pa_category or "(unspecified)"
+        )
+        return f"{self.insurance_company.name} PA: {label}"
+
+
 class Diagnosis(models.Model):
     """
     These represent rules for extracting a diagnosis from text.

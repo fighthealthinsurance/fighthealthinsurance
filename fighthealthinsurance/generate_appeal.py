@@ -765,6 +765,7 @@ class AppealGenerator(object):
         pubmed_context=None,
         plan_context=None,
         rag_context=None,
+        pa_context=None,
     ) -> Optional[str]:
         """
         Constructs a prompt for generating a health insurance appeal based on denial details and optional contextual information.
@@ -828,6 +829,17 @@ class AppealGenerator(object):
             base = f"{base}. Please include and fill in the professionals info {professional}."
         if plan_id is not None and plan_id != "" and plan_id != "UNKNOWN":
             base = f"{base}. Please include and fill in any references to the plan id as {plan_id}."
+        if pa_context is not None and pa_context.strip():
+            base = (
+                f"{base}\n\nPAYER PRIOR-AUTH RULES: The following entries come from "
+                "the payer's own published prior-authorization requirement list. "
+                "Use them when the denial relies on PA grounds — point out exactly "
+                "which rule (or absence of one) supports approval, cite the "
+                "criteria document by name, and reference the published "
+                "submission channel where relevant. Do not invent rules that "
+                "are not listed below.\n"
+                f"{pa_context}"
+            )
         # Add citation instructions - be explicit about not hallucinating
         has_citations = (
             (ml_context is not None and ml_context != "")
@@ -896,6 +908,7 @@ class AppealGenerator(object):
         ml_citations_context=None,
         plan_context=None,
         rag_context=None,
+        pa_context=None,
     ) -> Iterator[str]:
         """
         Generates an iterator of appeal texts for a given insurance denial using templates, non-AI sources, and AI models.
@@ -927,6 +940,21 @@ class AppealGenerator(object):
             insurance_company_name = denial.insurance_company_obj.name
             is_tpa = denial.insurance_company_obj.is_tpa
 
+        # Fallback so callers that bypass common_view_logic still get PA
+        # context. Guarded so a lookup failure never blocks appeal generation.
+        if pa_context is None:
+            try:
+                from fighthealthinsurance.pa_requirements import (
+                    get_pa_context_for_denial,
+                )
+
+                pa_context = get_pa_context_for_denial(denial) or None
+            except Exception as e:
+                logger.opt(exception=True).debug(
+                    f"PA requirement lookup failed for denial {getattr(denial, 'denial_id', None)}: {e}"
+                )
+                pa_context = None
+
         open_prompt = self.make_open_prompt(
             denial_text=denial.denial_text,
             procedure=denial.procedure,
@@ -947,6 +975,7 @@ class AppealGenerator(object):
             pubmed_context=pubmed_context,
             plan_context=plan_context,
             rag_context=rag_context,
+            pa_context=pa_context,
         )
         open_medically_necessary_prompt = self.make_open_med_prompt(
             procedure=denial.procedure,
