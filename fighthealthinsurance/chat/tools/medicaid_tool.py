@@ -26,6 +26,7 @@ class MedicaidInfoTool(BaseTool):
     """
 
     pattern = MEDICAID_INFO_REGEX
+    detect_flags = re.DOTALL | re.IGNORECASE
     name = "Medicaid Info"
 
     def __init__(
@@ -44,34 +45,6 @@ class MedicaidInfoTool(BaseTool):
         """
         super().__init__(send_status_message)
         self.call_llm_callback = call_llm_callback
-
-    def detect_all(self, text: str) -> List[re.Match[str]]:
-        """
-        Find all medicaid_info tool calls in the text.
-
-        Args:
-            text: The LLM response text to check
-
-        Returns:
-            List of all match objects
-        """
-        return list(re.finditer(self.pattern, text, flags=re.DOTALL | re.IGNORECASE))
-
-    def clean_all_matches(self, text: str, matches: List[re.Match[str]]) -> str:
-        """
-        Remove all tool calls from the response text.
-
-        Args:
-            text: Original response text
-            matches: List of regex match objects for tool calls
-
-        Returns:
-            Response text with all tool calls removed
-        """
-        cleaned = text
-        for match in matches:
-            cleaned = cleaned.replace(match.group(0), "")
-        return cleaned.strip()
 
     async def execute(
         self,
@@ -221,6 +194,7 @@ class MedicaidEligibilityTool(BaseTool):
     """
 
     pattern = MEDICAID_ELIGIBILITY_REGEX
+    detect_flags = re.DOTALL | re.IGNORECASE
     name = "Medicaid Eligibility"
 
     def __init__(
@@ -239,34 +213,6 @@ class MedicaidEligibilityTool(BaseTool):
         """
         super().__init__(send_status_message)
         self.call_llm_callback = call_llm_callback
-
-    def detect_all(self, text: str) -> List[re.Match[str]]:
-        """
-        Find all medicaid_eligibility tool calls in the text.
-
-        Args:
-            text: The LLM response text to check
-
-        Returns:
-            List of all match objects
-        """
-        return list(re.finditer(self.pattern, text, flags=re.DOTALL | re.IGNORECASE))
-
-    def clean_all_matches(self, text: str, matches: List[re.Match[str]]) -> str:
-        """
-        Remove all tool calls from the response text.
-
-        Args:
-            text: Original response text
-            matches: List of regex match objects for tool calls
-
-        Returns:
-            Response text with all tool calls removed
-        """
-        cleaned = text
-        for match in matches:
-            cleaned = cleaned.replace(match.group(0), "")
-        return cleaned.strip()
 
     async def execute(
         self,

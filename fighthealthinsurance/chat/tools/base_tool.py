@@ -7,7 +7,7 @@ Each tool can detect its pattern in text, execute the tool action, and format re
 
 import re
 from abc import ABC, abstractmethod
-from typing import Awaitable, Callable, Optional, Tuple
+from typing import Awaitable, Callable, List, Optional, Tuple
 
 from loguru import logger
 
@@ -54,6 +54,12 @@ class BaseTool(ABC):
             return None
         return re.search(self.pattern, text, flags=self.detect_flags)
 
+    def detect_all(self, text: str) -> List[re.Match[str]]:
+        """Find every occurrence of this tool's pattern in the text."""
+        if not self.pattern:
+            return []
+        return list(re.finditer(self.pattern, text, flags=self.detect_flags))
+
     def clean_response(self, text: str, match: re.Match[str]) -> str:
         """
         Remove the tool call from the response text.
@@ -66,6 +72,13 @@ class BaseTool(ABC):
             Response text with the tool call removed
         """
         return text.replace(match.group(0), "").strip()
+
+    def clean_all_matches(self, text: str, matches: List[re.Match[str]]) -> str:
+        """Remove every matched tool call from the response text."""
+        cleaned = text
+        for match in matches:
+            cleaned = cleaned.replace(match.group(0), "")
+        return cleaned.strip()
 
     @abstractmethod
     async def execute(

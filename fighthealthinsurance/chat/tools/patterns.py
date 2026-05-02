@@ -36,6 +36,12 @@ CREATE_OR_UPDATE_PRIOR_AUTH_REGEX = (
 # Matches: fetch_doc {JSON} or **fetch_doc {JSON}**
 FETCH_DOC_REGEX = r"(?:\*\*)?fetch_doc\s*(\{[^}]*\})\s*(?:\*\*)?"
 
+# PA requirement lookup tool - captures JSON with codes/payer/state/LOB
+# Matches: lookup_pa_requirement {JSON} or **lookup_pa_requirement {JSON}**
+LOOKUP_PA_REQUIREMENT_REGEX = (
+    r"(?:\*\*)?lookup_pa_requirement\s*(\{[^}]*\})\s*(?:\*\*)?"
+)
+
 # List of all tool patterns for scoring/detection
 ALL_TOOL_PATTERNS = [
     PUBMED_QUERY_REGEX,
@@ -44,4 +50,5 @@ ALL_TOOL_PATTERNS = [
     CREATE_OR_UPDATE_APPEAL_REGEX,
     CREATE_OR_UPDATE_PRIOR_AUTH_REGEX,
     FETCH_DOC_REGEX,
+    LOOKUP_PA_REQUIREMENT_REGEX,
 ]

@@ -751,6 +751,20 @@ RULE: Do NOT add any conversational text, questions, or additional explanations 
         doc_fetcher_tool = """**Document Fetcher Tool**: If a user shares a URL to a document (insurance plan, medical guidelines, denial letter, etc.), you can fetch and read it using: **fetch_doc {"url": "https://example.com/document.pdf"}**
 This tool can read PDF, DOCX, HTML, and plain text documents. Use it when a user shares a link and you need to reference the document's contents. Only use it for URLs the user has explicitly shared or referenced."""
 
+        pa_requirement_tool = """**PA Requirement Lookup Tool**: When a user mentions a CPT or HCPCS code (e.g., 95810, J0490, K0553) and a payer (especially UnitedHealthcare / UHC), use this to check the carrier's published prior-authorization requirement list: **lookup_pa_requirement {"codes": ["95810"], "payer": "UHC", "state": "CA", "line_of_business": "commercial"}**
+
+Use this tool when:
+- The user is appealing a prior-authorization (PA) denial and you need to confirm whether PA was even required for that code, or what the published criteria document is.
+- The user is asking "do I need a prior auth for X with UHC?" or "what's the PA process for code Y?".
+- You need to point the user at the right submission channel (portal, phone, fax) for that payer.
+
+Parameter notes:
+- ``codes`` is required and may be a single string or a list of strings.
+- ``payer`` is the carrier name as the user described it (e.g., "UHC", "UnitedHealthcare", "United"); the tool resolves common aliases.
+- ``state`` and ``line_of_business`` are optional but improve match precision. Valid line_of_business values are: ``commercial``, ``medicare_advantage``, ``medicaid``, ``exchange``, ``dsnp``, ``other``, ``all``.
+
+When the tool result lists a rule, quote the criteria document name and submission channel back to the user — they are persuasive in appeals."""
+
         medicaid_eligibility_tool = """**Medicaid Eligibility Check**: To help check if someone is eligible Medicaid or medicare, you MUST ONLY use this tool format: **medicaid_eligibility {"state": "StateName", "married": false, ...}**
 
 ONLY USE THIS TOOL WHEN ASKED IF SOMEONE IS ELIGIBLE FOR MEDICARE/MEDICAID
@@ -816,6 +830,7 @@ We have a selection of tools to help you. You should try and use these tools whe
 {medicaid_resources_tool}
 {pubmed_tool}
 {doc_fetcher_tool}
+{pa_requirement_tool}
 
 For eligibility determinations if you have a tool you must use the tool rather than guessing on your own.
 This means if someone asks if their eligible for medical, medicaid, medicare, or similar you must use the tool.
@@ -832,6 +847,7 @@ We have a selection of tools to help you. You should try and use these tools whe
 
 {pubmed_tool}
 {doc_fetcher_tool}
+{pa_requirement_tool}
 
 If the user asks about Medicaid or Medicare eligibility, let them know you can help with that and ask them to tell you more about their situation. You have specialized tools for Medicaid/Medicare questions that will activate when needed.
 """
