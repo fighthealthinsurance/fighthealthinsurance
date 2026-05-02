@@ -895,6 +895,11 @@ class DenialResponseInfo:
     date_of_service: Optional[str]
     insurance_company: Optional[str]
     plan_id: Optional[str]
+    # Pharmacy discount programs and financial-assistance directory results.
+    # Populated when the denial concerns a prescription drug. Both are dicts
+    # so the REST serializer can render them without bespoke serializers.
+    pharmacy_coupon_suggestion: Optional[dict] = None
+    financial_assistance: Optional[dict] = None
 
 
 class PatientNotificationHelper:
@@ -2058,6 +2063,94 @@ class DenialCreatorHelper:
         # Return the current the state
         return cls.format_denial_response_info(denial)
 
+    @staticmethod
+    def _build_pharmacy_coupon_payload(denial) -> Optional[dict]:
+        """
+        Build a JSON-serializable pharmacy coupon suggestion for a denial.
+
+        Returns None when the denial doesn't appear to concern a prescription
+        drug, so the frontend can omit the section cleanly.
+        """
+        from fighthealthinsurance.pharmacy_coupon_detector import suggest_for_denial
+
+        try:
+            suggestion = suggest_for_denial(
+                denial_text=denial.denial_text,
+                procedure=denial.procedure,
+                diagnosis=denial.diagnosis,
+            )
+        except Exception:
+            logger.opt(exception=True).debug(
+                "Pharmacy coupon suggestion failed; returning None"
+            )
+            return None
+        if suggestion is None:
+            return None
+        return {
+            "drug_name": suggestion.drug_name,
+            "is_likely_cheap": suggestion.is_likely_cheap,
+            "bridge_message": suggestion.bridge_message,
+            "oop_max_warning": suggestion.oop_max_warning,
+            "pharmacy_options": [
+                {
+                    "name": option.name,
+                    "url": option.url,
+                    "description": option.description,
+                    "counts_toward_oop_max": option.counts_toward_oop_max,
+                }
+                for option in suggestion.pharmacy_options
+            ],
+        }
+
+    @staticmethod
+    def _build_financial_assistance_payload(denial) -> Optional[dict]:
+        """
+        Build a JSON-serializable financial-assistance payload for a denial.
+
+        Always returns the general directory + safety-net entries so a patient
+        with any denial sees Medicaid/FQHC pathways. Diagnosis- and
+        drug-specific entries fire only when matched.
+        """
+        from fighthealthinsurance.financial_assistance_directory import search
+
+        try:
+            results = search(
+                drug=denial.procedure,
+                diagnosis=denial.diagnosis,
+                denial_text=denial.denial_text,
+                state_abbreviation=denial.your_state,
+            )
+        except Exception:
+            logger.opt(exception=True).debug(
+                "Financial assistance search failed; returning None"
+            )
+            return None
+        if results.is_empty():
+            return None
+
+        def _serialize(program):
+            return {
+                "name": program.name,
+                "url": program.url,
+                "description": program.description,
+                "category": program.category,
+                "eligibility_note": program.eligibility_note,
+                "phone": program.phone,
+            }
+
+        return {
+            "canonical_drug": results.canonical_drug,
+            "diagnosis_text": results.diagnosis_text,
+            "state_abbreviation": results.state_abbreviation,
+            "diagnosis_specific": [_serialize(p) for p in results.diagnosis_specific],
+            "manufacturer": [_serialize(p) for p in results.manufacturer],
+            "general": [_serialize(p) for p in results.general],
+            "safety_net": [_serialize(p) for p in results.safety_net],
+            "state_medicaid_name": results.state_medicaid_name,
+            "state_medicaid_url": results.state_medicaid_url,
+            "state_medicaid_phone": results.state_medicaid_phone,
+        }
+
     @classmethod
     def format_denial_response_info(cls, denial):
         appeal_id = None
@@ -2087,6 +2180,8 @@ class DenialCreatorHelper:
             date_of_service=denial.date_of_service,
             insurance_company=denial.insurance_company,
             plan_id=denial.plan_id,
+            pharmacy_coupon_suggestion=cls._build_pharmacy_coupon_payload(denial),
+            financial_assistance=cls._build_financial_assistance_payload(denial),
         )
         return r
 

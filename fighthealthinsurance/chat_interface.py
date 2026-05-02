@@ -30,6 +30,7 @@ from fighthealthinsurance.chat.safety_filters import (
 from fighthealthinsurance.chat.tools import (
     AppealTool,
     DocFetcherTool,
+    FinancialAssistanceTool,
     MedicaidEligibilityTool,
     MedicaidInfoTool,
     PriorAuthTool,
@@ -392,6 +393,14 @@ class ChatInterface:
             chat=self.chat,
         )
         response_text, context, _ = await doc_fetcher_tool.handle(
+            response_text, context, **tool_kwargs
+        )
+
+        financial_assistance_tool = FinancialAssistanceTool(
+            self.send_status_message,
+            call_llm_callback=self._call_llm_with_actions,
+        )
+        response_text, context, _ = await financial_assistance_tool.handle(
             response_text, context, **tool_kwargs
         )
 
