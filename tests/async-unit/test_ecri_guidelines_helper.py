@@ -10,9 +10,14 @@ from fighthealthinsurance.ecri_guidelines_helper import ECRIGuidelinesHelper
 from fighthealthinsurance.models import ECRIGuideline
 
 
-async def _create_cardiac_guideline() -> ECRIGuideline:
+# Each test uses a unique guideline_id so parallel test workers don't collide
+# on the unique constraint when the django_db transaction rollback races with
+# the async write.
+
+
+async def _create_cardiac_guideline(suffix: str) -> ECRIGuideline:
     return await ECRIGuideline.objects.acreate(
-        guideline_id="test-acc-aha-cad",
+        guideline_id=f"test-acc-aha-cad-{suffix}",
         title="Chronic Coronary Disease Management",
         developer_organization="ACC/AHA",
         publication_date=date(2023, 7, 20),
@@ -24,9 +29,9 @@ async def _create_cardiac_guideline() -> ECRIGuideline:
     )
 
 
-async def _create_diabetes_guideline() -> ECRIGuideline:
+async def _create_diabetes_guideline(suffix: str) -> ECRIGuideline:
     return await ECRIGuideline.objects.acreate(
-        guideline_id="test-ada-diabetes",
+        guideline_id=f"test-ada-diabetes-{suffix}",
         title="Standards of Care in Diabetes",
         developer_organization="American Diabetes Association",
         publication_date=date(2024, 1, 1),
@@ -38,9 +43,9 @@ async def _create_diabetes_guideline() -> ECRIGuideline:
     )
 
 
-async def _create_inactive_guideline() -> ECRIGuideline:
+async def _create_inactive_guideline(suffix: str) -> ECRIGuideline:
     return await ECRIGuideline.objects.acreate(
-        guideline_id="test-inactive",
+        guideline_id=f"test-inactive-{suffix}",
         title="Old Cardiac Guideline",
         procedure_keywords=["pci"],
         diagnosis_keywords=["coronary artery disease"],
@@ -48,10 +53,10 @@ async def _create_inactive_guideline() -> ECRIGuideline:
     )
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_citation_string_includes_org_year_and_url():
-    guideline = await _create_cardiac_guideline()
+    guideline = await _create_cardiac_guideline("citation-string")
     citation = guideline.citation_string()
     assert "Chronic Coronary Disease Management" in citation
     assert "ACC/AHA" in citation
@@ -60,7 +65,7 @@ async def test_citation_string_includes_org_year_and_url():
     assert "ECRI Guidelines Trust" in citation
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_find_relevant_guidelines_returns_empty_with_no_inputs():
     results = await ECRIGuidelinesHelper.find_relevant_guidelines(
@@ -69,48 +74,48 @@ async def test_find_relevant_guidelines_returns_empty_with_no_inputs():
     assert results == []
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_find_relevant_guidelines_matches_on_procedure_keyword():
-    await _create_cardiac_guideline()
+    cardiac = await _create_cardiac_guideline("match-procedure")
     results = await ECRIGuidelinesHelper.find_relevant_guidelines(
         procedure="Coronary Angiography",
         diagnosis="",
     )
-    assert len(results) == 1
-    assert results[0].guideline_id == "test-acc-aha-cad"
+    assert any(g.guideline_id == cardiac.guideline_id for g in results)
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_find_relevant_guidelines_matches_on_diagnosis_keyword():
-    await _create_cardiac_guideline()
+    cardiac = await _create_cardiac_guideline("match-diagnosis")
     results = await ECRIGuidelinesHelper.find_relevant_guidelines(
         procedure="",
         diagnosis="stable angina",
     )
-    assert len(results) == 1
+    assert any(g.guideline_id == cardiac.guideline_id for g in results)
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_find_relevant_guidelines_excludes_inactive():
-    await _create_cardiac_guideline()
-    await _create_inactive_guideline()
+    cardiac = await _create_cardiac_guideline("excludes-inactive")
+    inactive = await _create_inactive_guideline("excludes-inactive")
     results = await ECRIGuidelinesHelper.find_relevant_guidelines(
         procedure="pci",
         diagnosis="coronary artery disease",
+        max_results=10,
     )
     ids = {g.guideline_id for g in results}
-    assert "test-acc-aha-cad" in ids
-    assert "test-inactive" not in ids
+    assert cardiac.guideline_id in ids
+    assert inactive.guideline_id not in ids
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_find_relevant_guidelines_max_results_respected():
-    await _create_cardiac_guideline()
-    await _create_diabetes_guideline()
+    await _create_cardiac_guideline("max-results")
+    await _create_diabetes_guideline("max-results")
     results = await ECRIGuidelinesHelper.find_relevant_guidelines(
         procedure="pci cgm",
         diagnosis="",
@@ -119,37 +124,36 @@ async def test_find_relevant_guidelines_max_results_respected():
     assert len(results) == 1
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_find_relevant_guidelines_no_match_returns_empty():
-    await _create_cardiac_guideline()
+    await _create_cardiac_guideline("no-match")
     results = await ECRIGuidelinesHelper.find_relevant_guidelines(
-        procedure="hip replacement",
-        diagnosis="hip osteoarthritis",
+        procedure="zzz_unmatched_procedure_zzz",
+        diagnosis="zzz_unmatched_diagnosis_zzz",
     )
     assert results == []
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_get_citations_formats_each_match():
-    await _create_cardiac_guideline()
+    await _create_cardiac_guideline("citations-format")
     citations = await ECRIGuidelinesHelper.get_citations(
-        procedure="pci",
-        diagnosis="coronary artery disease",
+        procedure="coronary angiography",
+        diagnosis="stable angina",
     )
-    assert len(citations) == 1
-    assert "Chronic Coronary Disease Management" in citations[0]
-    assert "ECRI Guidelines Trust" in citations[0]
+    assert any("Chronic Coronary Disease Management" in c for c in citations)
+    assert any("ECRI Guidelines Trust" in c for c in citations)
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_get_context_includes_summary_and_url():
-    await _create_cardiac_guideline()
+    await _create_cardiac_guideline("context-summary")
     context = await ECRIGuidelinesHelper.get_context(
-        procedure="pci",
-        diagnosis="coronary artery disease",
+        procedure="coronary angiography",
+        diagnosis="stable angina",
     )
     assert "Evidence-Based Clinical Practice Guidelines" in context
     assert "Chronic Coronary Disease Management" in context
@@ -157,30 +161,30 @@ async def test_get_context_includes_summary_and_url():
     assert "https://guidelines.ecri.org/example-cad" in context
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_get_context_truncates_long_summary():
     await ECRIGuideline.objects.acreate(
-        guideline_id="test-long",
+        guideline_id="test-long-truncate",
         title="Big Guideline",
         recommendations_summary="X" * 5000,
-        procedure_keywords=["bigproc"],
-        diagnosis_keywords=["bigdx"],
+        procedure_keywords=["bigprocxyz"],
+        diagnosis_keywords=["bigdxxyz"],
     )
     context = await ECRIGuidelinesHelper.get_context(
-        procedure="bigproc",
-        diagnosis="bigdx",
+        procedure="bigprocxyz",
+        diagnosis="bigdxxyz",
         max_chars_per_guideline=200,
     )
     assert "..." in context
     assert "X" * 250 not in context
 
 
-@pytest.mark.django_db
+@pytest.mark.django_db(transaction=True)
 @pytest.mark.asyncio
 async def test_get_context_empty_when_no_match():
     context = await ECRIGuidelinesHelper.get_context(
-        procedure="nonexistent procedure",
-        diagnosis="nonexistent diagnosis",
+        procedure="zzz_truly_unmatched_procedure_zzz",
+        diagnosis="zzz_truly_unmatched_diagnosis_zzz",
     )
     assert context == ""
