@@ -636,6 +636,41 @@ class PubMedQueryData(models.Model):
     created = models.DateTimeField(db_default=Now(), null=True)
 
 
+class NICEGuidance(models.Model):
+    """
+    Caches a single guidance item retrieved from the NICE syndication API.
+    NICE is UK-based clinical guidance; treat as international evidence, not a U.S.
+    coverage authority.
+    """
+
+    internal_id = models.AutoField(primary_key=True)
+    # NICE uses references like "NG54", "TA608", "CG181"
+    guidance_id = models.CharField(max_length=50, unique=True, db_index=True)
+    title = models.TextField(blank=True)
+    url = models.TextField(blank=True)
+    # Guidance type, e.g. "NICE guideline", "Technology appraisal", "Quality standard"
+    guidance_type = models.CharField(max_length=200, blank=True)
+    summary = models.TextField(blank=True)
+    created = models.DateTimeField(db_default=Now(), null=True)
+
+    def __str__(self) -> str:
+        return f"NICE {self.guidance_id} -- {self.title[:80]}"
+
+
+class NICEQueryData(models.Model):
+    """
+    Caches NICE syndication search results to avoid redundant API calls.
+    """
+
+    internal_id = models.AutoField(primary_key=True)
+    query = models.CharField(null=False, max_length=300)
+    results = models.TextField(
+        null=True
+    )  # json: list of normalized items or guidance ids
+    denial_id = models.ForeignKey("Denial", on_delete=models.SET_NULL, null=True)
+    created = models.DateTimeField(db_default=Now(), null=True)
+
+
 class ExtraLinkDocument(
     ExportModelOperationsMixin("ExtraLinkDocument"), models.Model  # type: ignore
 ):
@@ -1371,6 +1406,8 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     # pubmed articles to be used to create the input context to the appeal
     pubmed_ids_json = models.JSONField(null=True, blank=True)
     pubmed_context = models.TextField(null=True, blank=True)
+    # NICE (UK) syndication guidance context, treated as international clinical guidance
+    nice_context = models.TextField(null=True, blank=True)
     generated_questions = models.JSONField(null=True, blank=True)
     # ML-generated citations for the appeal
     ml_citation_context = models.JSONField(null=True, blank=True)

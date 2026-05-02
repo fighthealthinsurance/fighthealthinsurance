@@ -57,6 +57,7 @@ from fighthealthinsurance.utils import (
     sync_iterator_to_async,
 )
 from .pubmed_tools import PubMedTools
+from .nice_tools import NICETools
 from .email_utils import is_sendable_email
 from .utils import (
     _try_pandoc_engines,
@@ -1867,6 +1868,7 @@ class DenialCreatorHelper:
 class AppealsBackendHelper:
     regex_denial_processor = ProcessDenialRegex()
     pmt = PubMedTools()
+    nice = NICETools()
 
     @classmethod
     async def generate_appeals(cls, parameters) -> AsyncIterator[str]:
@@ -2223,6 +2225,7 @@ class AppealsBackendHelper:
         pubmed_context: Optional[str] = None
         ml_citation_context: Optional[Any] = None
         rag_context: Optional[str] = None
+        nice_context: Optional[str] = None
 
         # Get PubMed context
         logger.debug("Looking up the pubmed context")
@@ -2330,6 +2333,16 @@ class AppealsBackendHelper:
                 done_msg="Guidelines lookup complete",
             )
 
+            # NICE syndication context (UK clinical guidance, treated as international)
+            nice_context_awaitable = tracked_awaitable(
+                asyncio.wait_for(
+                    cls.nice.find_context_for_denial(denial),
+                    timeout=30,
+                ),
+                substep="nice",
+                done_msg="NICE guidance lookup complete",
+            )
+
             # Await all contexts so we can use co-operative multitasking
             # return_exceptions=True is belt-and-suspenders: tracked_awaitable
             # already catches exceptions, but this prevents gather from raising
@@ -2340,6 +2353,7 @@ class AppealsBackendHelper:
                     pubmed_context_awaitable,
                     ml_citation_context_awaitable,
                     rag_context_awaitable,
+                    nice_context_awaitable,
                     return_exceptions=True,
                 )
 
@@ -2367,6 +2381,10 @@ class AppealsBackendHelper:
                     rag_context = None
                     if results[2] is not None:
                         logger.debug(f"RAG context not available: {results[2]}")
+                if isinstance(results[3], str):
+                    nice_context = results[3]
+                else:
+                    nice_context = None
                 logger.debug("Success")
             except Exception as e:
                 logger.opt(exception=True).error(f"Error gathering contexts: {e}")
@@ -2385,6 +2403,7 @@ class AppealsBackendHelper:
                     denial = await denial_query.aget()
                 pubmed_context = denial.pubmed_context
                 ml_citation_context = denial.ml_citation_context
+                nice_context = denial.nice_context
                 # RAG context is not persisted, so we don't try to retrieve it
                 logger.debug("Used saved contexts")
         else:
@@ -2474,6 +2493,7 @@ class AppealsBackendHelper:
             ml_citations_context=ml_citation_context,
             plan_context=model_plan_context,
             rag_context=rag_context,
+            nice_context=nice_context,
         )
         # Only filters out None
         filtered_appeals: Iterator[str] = filter(lambda x: x != None, appeals)
