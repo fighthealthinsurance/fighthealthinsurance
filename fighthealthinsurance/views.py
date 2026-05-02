@@ -78,7 +78,9 @@ def _handle_mailing_list_subscribe(form: forms.Form, source_page: str) -> None:
         else:
             models.MailingListSubscriber.objects.create(email=email, **defaults)
     except Exception as e:
-        logger.warning(f"Failed to create mailing list subscriber: {e}")
+        logger.opt(exception=True).warning(
+            f"Failed to create mailing list subscriber from {source_page}"
+        )
 
 
 class BlogPostMetadata(TypedDict, total=False):
@@ -2230,6 +2232,7 @@ class UnderstandPolicyView(FormView):
         sanitized = re.sub(r"[^\w .\-]", "_", uploaded_file.name)
         stem, ext = os.path.splitext(sanitized)
         safe_filename = f"{stem[:max(1, 200 - len(ext))]}{ext.lower()}"
+        uploaded_file.name = safe_filename
 
         mark_session_consent(self.request.session, email or "")
 
