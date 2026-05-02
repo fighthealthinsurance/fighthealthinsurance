@@ -97,10 +97,12 @@ class ProcessDenialCodes(DenialBase):
             code = i.group(1)
             if code in self.preventive_codes:
                 return [self.preventive_denial]
-        # Fall back to USPSTF coverage list — if the denial references a code
-        # tied to a USPSTF A/B grade we flag it as preventive too. The lookup
+        # Fall back to USPSTF coverage list — only A/B-graded recommendations
+        # carry the ACA cost-sharing mandate, so we only reclassify the denial
+        # as preventive when at least one match is grade A or B. The lookup
         # touches Django's sync ORM, so it must run off the event loop.
-        if await sync_to_async(self.find_uspstf_evidence)(denial_text):
+        evidence = await sync_to_async(self.find_uspstf_evidence)(denial_text)
+        if any((rec.get("grade") or "").upper() in {"A", "B"} for rec in evidence):
             return [self.preventive_denial]
         return []
 

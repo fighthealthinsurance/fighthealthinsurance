@@ -489,16 +489,6 @@ _SEARCHABLE_FIELDS = (
 )
 
 
-def _matches_query(record: Dict[str, Any], terms: List[str]) -> bool:
-    """Case-insensitive AND substring match across the searchable fields of a dict."""
-    if not terms:
-        return True
-    haystack = " ".join(
-        str(record.get(f, "")) for f in _SEARCHABLE_FIELDS if record.get(f)
-    ).lower()
-    return all(term in haystack for term in terms)
-
-
 def _ensure_cache_loaded() -> None:
     """If the cache is empty, seed it from the bundled fallback dataset.
 
@@ -523,6 +513,21 @@ def _ensure_cache_loaded() -> None:
             )
 
 
+def _grade_priority_case() -> Any:
+    """Annotation that orders results A < B < C < D < I < unknown."""
+    from django.db.models import Case, IntegerField, Value, When
+
+    return Case(
+        When(grade="A", then=Value(0)),
+        When(grade="B", then=Value(1)),
+        When(grade="C", then=Value(2)),
+        When(grade="D", then=Value(3)),
+        When(grade="I", then=Value(4)),
+        default=Value(5),
+        output_field=IntegerField(),
+    )
+
+
 def search_recommendations(
     query: str = "",
     grade: str = "",
@@ -540,7 +545,7 @@ def search_recommendations(
     Returns:
         A list of recommendation dicts ordered by grade (A first) then title.
     """
-    from django.db.models import Case, IntegerField, Q, Value, When
+    from django.db.models import Q
 
     from fighthealthinsurance.models import USPSTFRecommendation
 
@@ -561,17 +566,7 @@ def search_recommendations(
             field_match |= Q(**{f"{field}__icontains": term})
         qs = qs.filter(field_match)
 
-    # Order by grade priority (A,B,C,D,I,unknown) then by title.
-    grade_priority = Case(
-        When(grade="A", then=Value(0)),
-        When(grade="B", then=Value(1)),
-        When(grade="C", then=Value(2)),
-        When(grade="D", then=Value(3)),
-        When(grade="I", then=Value(4)),
-        default=Value(5),
-        output_field=IntegerField(),
-    )
-    qs = qs.annotate(_grade_priority=grade_priority).order_by(
+    qs = qs.annotate(_grade_priority=_grade_priority_case()).order_by(
         "_grade_priority", "title"
     )
 
@@ -615,16 +610,25 @@ def _strip_code_punct(code: str) -> str:
 def find_recommendations_for_codes(
     codes: Iterable[str],
     limit: int = 5,
+    grades: Iterable[str] = ("A", "B"),
 ) -> List[Dict[str, Any]]:
     """Match preventive ICD-10 / CPT codes to USPSTF recommendations.
 
     The mapping is deliberately conservative: it keys off well-known topic
-    keywords associated with the most common preventive codes. Returns up to
-    ``limit`` matched recommendations; an empty list when nothing matches.
+    keywords associated with the most common preventive codes. By default we
+    only return A/B-graded recommendations because those are the ones backed
+    by an ACA cost-sharing mandate, which is the whole point of using this
+    helper from the denial classifier. Pass ``grades=()`` to disable the grade
+    filter entirely.
 
     Codes are normalized (uppercased, dots stripped) before comparison so the
-    same mapping covers both "Z12.11" and "Z1211"-style inputs.
+    same mapping covers both "Z12.11" and "Z1211"-style inputs. Returns up to
+    ``limit`` matched recommendations; an empty list when nothing matches.
     """
+    from django.db.models import Q
+
+    from fighthealthinsurance.models import USPSTFRecommendation
+
     keywords: List[str] = []
     seen_keywords: set = set()
     normalized_prefixes = [
@@ -645,21 +649,29 @@ def find_recommendations_for_codes(
     if not keywords:
         return []
 
-    # Load all recommendations once instead of running a search per keyword.
-    all_recs = search_recommendations(limit=25)
-    seen_ids: set = set()
-    matches: List[Dict[str, Any]] = []
+    _ensure_cache_loaded()
+
+    # Single DB query: any searchable field contains any of the keywords. This
+    # avoids both the N+1 of per-keyword searches and the row-count cap that
+    # ``search_recommendations`` would impose on the candidate pool.
+    keyword_match = Q()
     for keyword in keywords:
-        for rec in all_recs:
-            if rec["id"] in seen_ids:
-                continue
-            if not _matches_query(rec, [keyword.lower()]):
-                continue
-            seen_ids.add(rec["id"])
-            matches.append(rec)
-            if len(matches) >= limit:
-                return matches
-    return matches
+        for field in _SEARCHABLE_FIELDS:
+            keyword_match |= Q(**{f"{field}__icontains": keyword})
+
+    qs = USPSTFRecommendation.objects.filter(keyword_match)
+    grade_set = {g.upper() for g in grades if g}
+    if grade_set:
+        qs = qs.filter(grade__in=grade_set)
+    qs = qs.annotate(_grade_priority=_grade_priority_case()).order_by(
+        "_grade_priority", "title"
+    )
+
+    try:
+        limit_int = max(1, int(limit))
+    except (TypeError, ValueError):
+        limit_int = 5
+    return [_row_to_dict(r) for r in qs[:limit_int]]
 
 
 def format_recommendation(rec: Dict[str, Any]) -> str:

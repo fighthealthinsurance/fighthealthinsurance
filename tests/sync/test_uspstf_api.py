@@ -183,6 +183,73 @@ class FindRecommendationsForCodesTests(TestCase):
     def test_empty_input_returns_empty(self):
         self.assertEqual(find_recommendations_for_codes([], limit=2), [])
 
+    def test_default_filters_to_a_b_grades(self):
+        """A/B-only is the default — C-graded matches should be excluded."""
+        from fighthealthinsurance.models import USPSTFRecommendation
+
+        # Inject a C-graded record whose topic would match a colorectal lookup.
+        USPSTFRecommendation.objects.update_or_create(
+            uspstf_id="test-c-grade-colorectal",
+            defaults={
+                "title": "Test C Colorectal Topic",
+                "grade": "C",
+                "status": "current",
+                "topic": "Colorectal",
+                "short_description": "Test record for colorectal screening (C grade).",
+            },
+        )
+        recs = find_recommendations_for_codes(["Z12.11"], limit=10)
+        self.assertNotIn("test-c-grade-colorectal", [r["id"] for r in recs])
+        for rec in recs:
+            self.assertIn(rec["grade"], ("A", "B"))
+
+    def test_grades_override_returns_other_grades(self):
+        """Passing grades=() disables the A/B filter."""
+        from fighthealthinsurance.models import USPSTFRecommendation
+
+        USPSTFRecommendation.objects.update_or_create(
+            uspstf_id="test-c-grade-colorectal",
+            defaults={
+                "title": "Test C Colorectal Topic",
+                "grade": "C",
+                "status": "current",
+                "topic": "Colorectal",
+                "short_description": "Test record for colorectal screening (C grade).",
+            },
+        )
+        ids = [
+            r["id"]
+            for r in find_recommendations_for_codes(["Z12.11"], limit=10, grades=())
+        ]
+        self.assertIn("test-c-grade-colorectal", ids)
+
+    def test_returns_matches_beyond_25_row_pool(self):
+        """The lookup must not be capped at 25 recommendations from the cache."""
+        from fighthealthinsurance.models import USPSTFRecommendation
+
+        # Seed the bundled fallback first, then pad the cache with > 25
+        # unrelated records. Without seeding first, _ensure_cache_loaded()
+        # would no-op (cache already has the pads) and the colorectal
+        # fallback record would never be loaded.
+        search_recommendations(limit=1)
+        for i in range(30):
+            USPSTFRecommendation.objects.update_or_create(
+                uspstf_id=f"pad-{i:02d}",
+                defaults={
+                    "title": f"Padding {i:02d}",
+                    "grade": "A",
+                    "status": "current",
+                    "topic": "PaddingTopic",
+                    "short_description": "Padding record (no relation to any code).",
+                },
+            )
+        self.assertGreater(USPSTFRecommendation.objects.count(), 25)
+        recs = find_recommendations_for_codes(["Z12.11"], limit=3)
+        self.assertTrue(
+            any("colorectal" in (r["title"] or "").lower() for r in recs),
+            f"Colorectal recommendation missing from result: {[r['id'] for r in recs]}",
+        )
+
 
 class CacheSeedingTests(TestCase):
     def test_seed_populates_cache_from_fallback(self):
