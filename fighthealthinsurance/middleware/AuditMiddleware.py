@@ -28,7 +28,12 @@ class AuditMiddleware:
         start_time = time.time()
 
         # Process request
-        response = self.get_response(request)
+        try:
+            response = self.get_response(request)
+        except Exception as e:
+            if request.path.startswith("/api/"):
+                self._log_exception(request, e)
+            raise
 
         # Log API requests only
         if request.path.startswith("/api/"):
@@ -60,4 +65,23 @@ class AuditMiddleware:
             # Never let audit logging break the request
             logger.warning(
                 f"Audit logging failed for {request.path}: {e}", exc_info=True
+            )
+
+    def _log_exception(self, request: HttpRequest, error: Exception) -> None:
+        """Log unhandled API exceptions with request metadata."""
+        try:
+            from fhi_users.audit import is_audit_enabled, log_exception_error
+
+            if not is_audit_enabled():
+                return
+
+            log_exception_error(
+                request=request,
+                error_type=error.__class__.__name__,
+                error_message=str(error),
+            )
+        except Exception as logging_error:
+            logger.warning(
+                f"Audit exception logging failed for {request.path}: {logging_error}",
+                exc_info=True,
             )
