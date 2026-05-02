@@ -150,6 +150,29 @@ class Microsite:
             diagnosis=self.default_condition,
         )
 
+    def financial_assistance(self, state_abbreviation: Optional[str] = None):
+        """
+        Return a FinancialAssistanceResults aggregate for this microsite.
+
+        Combines diagnosis-matched copay foundations, drug-matched
+        manufacturer programs, the always-applicable general directory, and
+        safety-net resources. When `state_abbreviation` is supplied, also
+        attaches the state's Medicaid pathway.
+
+        Returns None when neither the procedure nor the condition produce
+        any matches (avoids rendering an empty section).
+        """
+        from fighthealthinsurance.financial_assistance_directory import search
+
+        results = search(
+            drug=self.default_procedure,
+            diagnosis=self.default_condition,
+            state_abbreviation=state_abbreviation,
+        )
+        if results.is_empty():
+            return None
+        return results
+
     async def get_extralink_context(
         self,
         max_docs: int = 5,
