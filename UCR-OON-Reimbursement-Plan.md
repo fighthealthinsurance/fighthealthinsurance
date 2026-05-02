@@ -261,7 +261,10 @@ Pattern matches existing ViewSet + `@action` style in `rest_views.py`.
 
 ```
 POST /ziggy/rest/denial/{id}/set_billing_info/
-  body: {service_zip, procedure_code, modifier, billed_cents, allowed_cents, paid_cents}
+  body: {service_zip, procedure_code, procedure_modifier,
+         billed_amount_cents, allowed_amount_cents, paid_amount_cents}
+  (keys match Denial field names from §4.2 — the serializer is a direct
+   ModelSerializer with no implicit renaming)
   dispatches upar.refresh_denial.remote(id); returns 202 immediately
 
 GET  /ziggy/rest/denial/{id}/ucr_context/
@@ -399,7 +402,8 @@ class UCRRefreshActor:
                     await self._mark_denials_using_source_stale(src)
             except Exception:
                 logger.exception("UCR source refresh failed")
-            await asyncio.sleep(random.uniform(20 * 3600, 28 * 3600))  # ~daily
+            base = settings.UCR_SOURCE_REFRESH_INTERVAL_HOURS * 3600
+            await asyncio.sleep(random.uniform(base * 0.85, base * 1.15))
 
     async def denial_refresh_loop(self):
         while True:
@@ -421,7 +425,8 @@ class UCRRefreshActor:
                 ))
             except Exception:
                 logger.exception("UCR denial refresh failed")
-            await asyncio.sleep(random.uniform(45 * 60, 75 * 60))   # ~hourly
+            base = settings.UCR_DENIAL_REFRESH_INTERVAL_MINUTES * 60
+            await asyncio.sleep(random.uniform(base * 0.75, base * 1.25))
 ```
 
 Wiring (mirrors how `epar`/`fpar`/`cpar` are wired today): register a singleton
