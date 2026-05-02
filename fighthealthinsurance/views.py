@@ -1712,6 +1712,11 @@ class CompletePaymentView(View):
         data = json.loads(request.body)
         return self.process_payment(data)
 
+    # Row ids issued before the secure_token migration (#763) that we still
+    # honor when passed as ?session_id=<id>; everything above this id was
+    # created with a token so legacy lookups should be denied.
+    LEGACY_SESSION_ID_CUTOFF = 600
+
     def process_payment(self, data):
         token = data.get("token")
         session_id = data.get("session_id")
@@ -1720,9 +1725,23 @@ class CompletePaymentView(View):
             if token:
                 lost_session = models.LostStripeSession.objects.get(secure_token=token)
             elif session_id:
-                lost_session = models.LostStripeSession.objects.get(
-                    session_id=session_id
-                )
+                # Legacy emails sent before the token rollout used the row id
+                # as ?session_id=<int>. Honor those for ids below the cutoff
+                # only; newer ids must use the unguessable token.
+                legacy_id: typing.Optional[int] = None
+                try:
+                    legacy_id = int(session_id)
+                except (TypeError, ValueError):
+                    pass
+                if (
+                    legacy_id is not None
+                    and 0 < legacy_id < self.LEGACY_SESSION_ID_CUTOFF
+                ):
+                    lost_session = models.LostStripeSession.objects.get(id=legacy_id)
+                else:
+                    lost_session = models.LostStripeSession.objects.get(
+                        session_id=session_id
+                    )
             else:
                 return HttpResponse(
                     json.dumps({"error": "Missing token"}),

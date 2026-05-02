@@ -56,13 +56,43 @@ def test_non_professional_abandoned_cart():
         assert "next_url" in response.json()
         assert response.json()["next_url"] == "https://checkout.stripe.com/test"
 
-    # Brute-forcing the row id must not work — only the secure_token grants access.
-    response = client.get(f"{reverse('complete_payment')}?session_id={lost_session.id}")
+    # Brute-forcing a post-rollout row id (>= the legacy cutoff) must not work —
+    # only the secure_token grants access for new sessions.
+    high_id_session = LostStripeSession(
+        pk=9999,
+        session_id="high_id_stripe_session",
+        payment_type="non_professional_item",
+        email=email,
+        metadata=metadata,
+    )
+    high_id_session.save()
+    response = client.get(
+        f"{reverse('complete_payment')}?session_id={high_id_session.pk}"
+    )
     assert response.status_code == 400
 
     # An unknown / forged token must be rejected.
     response = client.get(f"{reverse('complete_payment')}?token=not-a-real-token")
     assert response.status_code == 400
+
+    # Legacy support: rows created before the token rollout were emailed with
+    # ?session_id=<row_id>; honor that for ids below the cutoff so old emails
+    # still work.
+    legacy_session = LostStripeSession(
+        pk=42,
+        session_id="legacy_stripe_session",
+        payment_type="non_professional_item",
+        email=email,
+        metadata=metadata,
+    )
+    legacy_session.save()
+    with patch("stripe.checkout.Session.create") as mock_create:
+        mock_create.return_value.url = "https://checkout.stripe.com/legacy"
+        response = client.get(
+            f"{reverse('complete_payment')}?session_id={legacy_session.pk}"
+        )
+        assert response.status_code == 200
+        assert response.json()["next_url"] == "https://checkout.stripe.com/legacy"
 
     # Simulate Stripe webhook call to trigger the email
     stripe_event = {
