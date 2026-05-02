@@ -59,6 +59,12 @@ class SpecializedDenialTemplate(object):
     negative_patterns: tuple[str, ...] = ()
     citations: tuple[str, ...] = ()
 
+    # IGNORECASE for forgiving matching across denial-letter prose;
+    # DOTALL so `.*` between key phrases (used in multi-keyword patterns
+    # like "post-surgical … rehab") still matches when the phrases are
+    # split across newlines, which is common in real denial letters.
+    _MATCH_FLAGS = re.IGNORECASE | re.DOTALL
+
     @classmethod
     def matches(
         cls,
@@ -70,25 +76,35 @@ class SpecializedDenialTemplate(object):
         proc = procedure or ""
         diag = diagnosis or ""
 
+        # Negative patterns are checked against every field we match on,
+        # not just denial_text — otherwise an exclusion phrase that lives
+        # in the procedure or diagnosis (e.g., a "physician assistant"
+        # specialty noted in the procedure field) would not block a
+        # spurious match.
         if cls.negative_patterns:
             for p in cls.negative_patterns:
-                if re.search(p, text, re.IGNORECASE):
-                    return False
+                for field in (text, proc, diag):
+                    if field and re.search(p, field, cls._MATCH_FLAGS):
+                        return False
 
         if cls.text_patterns and any(
-            re.search(p, text, re.IGNORECASE) for p in cls.text_patterns
+            re.search(p, text, cls._MATCH_FLAGS) for p in cls.text_patterns
         ):
             return True
         if (
             cls.procedure_patterns
             and proc
-            and any(re.search(p, proc, re.IGNORECASE) for p in cls.procedure_patterns)
+            and any(
+                re.search(p, proc, cls._MATCH_FLAGS) for p in cls.procedure_patterns
+            )
         ):
             return True
         if (
             cls.diagnosis_patterns
             and diag
-            and any(re.search(p, diag, re.IGNORECASE) for p in cls.diagnosis_patterns)
+            and any(
+                re.search(p, diag, cls._MATCH_FLAGS) for p in cls.diagnosis_patterns
+            )
         ):
             return True
         return False
@@ -115,18 +131,18 @@ class MentalHealthParityAppeal(SpecializedDenialTemplate):
     text_patterns = (
         r"\bmental\s+health\b",
         r"\bbehavioral\s+health\b",
-        r"\bsubstance\s+(use|abuse)\b",
+        r"\bsubstance\s+(?:use|abuse)\b",
         r"\bpsychiatric\b",
         r"\bpsychotherap",
-        r"\b(addiction|opioid use disorder|alcohol use disorder)\b",
+        r"\b(?:addiction|opioid\s+use\s+disorder|alcohol\s+use\s+disorder)\b",
         r"\beating\s+disorder\b",
         r"\bresidential\s+treatment\b",
         r"\bpartial\s+hospitalization\b",
         r"\bintensive\s+outpatient\b",
-        r"\bapplied\s+behavior\s+analysis\b|\bABA\s+therapy\b",
+        r"\b(?:applied\s+behavior\s+analysis|ABA\s+therapy)\b",
     )
     diagnosis_patterns = (
-        r"\b(depression|major\s+depressive|anxiety|bipolar|schizophreni|"
+        r"\b(?:depression|major\s+depressive|anxiety|bipolar|schizophreni|"
         r"ptsd|adhd|autism|substance\s+use\s+disorder|alcohol\s+use\s+disorder|"
         r"eating\s+disorder|anorexia|bulimia)\b",
     )
@@ -246,16 +262,16 @@ class AdvancedImagingAppeal(SpecializedDenialTemplate):
 class SpecialtyMedicationAppeal(SpecializedDenialTemplate):
     name = "Specialty medication denial"
     text_patterns = (
-        r"\bspecialty\s+(drug|medication|pharmac)",
+        r"\bspecialty\s+(?:drug|medication|pharmac)",
         r"\bbiologic\b",
-        r"\binfliximab|adalimumab|etanercept|ustekinumab|secukinumab|"
-        r"vedolizumab|rituximab|tocilizumab|dupilumab|omalizumab\b",
-        r"\bhumira|enbrel|stelara|remicade|cosentyx|entyvio|dupixent\b",
-        r"\bGLP-?1\b|\bsemaglutide|tirzepatide|liraglutide\b",
-        r"\bozempic|wegovy|mounjaro|zepbound\b",
+        r"\b(?:infliximab|adalimumab|etanercept|ustekinumab|secukinumab|"
+        r"vedolizumab|rituximab|tocilizumab|dupilumab|omalizumab)\b",
+        r"\b(?:humira|enbrel|stelara|remicade|cosentyx|entyvio|dupixent)\b",
+        r"\b(?:GLP-?1|semaglutide|tirzepatide|liraglutide)\b",
+        r"\b(?:ozempic|wegovy|mounjaro|zepbound)\b",
         r"\bgene\s+therapy\b",
         r"\bcar[\s\-]t\b",
-        r"\boncology\s+(infusion|drug|therapy)\b",
+        r"\boncology\s+(?:infusion|drug|therapy)\b",
         r"\bstep\s+therapy\b",
         r"\bfail[\s\-]first\b",
         r"\bnon[\s\-]formulary\b",
@@ -315,9 +331,9 @@ class PhysicalTherapyContinuationAppeal(SpecializedDenialTemplate):
     name = "Physical therapy continuation (visits beyond initial sessions)"
     text_patterns = (
         r"\bphysical\s+therapy\b",
-        r"\b\bPT\s+(visits|sessions|services)\b",
+        r"\bPT\s+(?:visits|sessions|services)\b",
         r"\boccupational\s+therapy\b",
-        r"\b\bOT\s+(visits|sessions|services)\b",
+        r"\bOT\s+(?:visits|sessions|services)\b",
         r"\bspeech\s+therapy\b",
         r"\bvisit\s+limit\b",
         r"\bmaximum\s+(number\s+of\s+)?visits\b",
@@ -327,8 +343,8 @@ class PhysicalTherapyContinuationAppeal(SpecializedDenialTemplate):
         r"\bmaintenance\s+(therapy|care)\b",
     )
     procedure_patterns = (
-        r"\bphysical\s+therapy\b|\bPT\b",
-        r"\boccupational\s+therapy\b|\bOT\b",
+        r"\b(?:physical\s+therapy|PT)\b",
+        r"\b(?:occupational\s+therapy|OT)\b",
     )
     negative_patterns = (r"\bphysician\s+assistant\b",)
     citations = (
@@ -473,10 +489,12 @@ def detect_specialized_templates(
 ) -> list[type[SpecializedDenialTemplate]]:
     """Return the specialized templates that match a denial.
 
-    A denial can match more than one template (e.g., a mental-health
-    residential admission could trigger both MentalHealthParityAppeal
-    and PostSurgicalRehabAppeal-adjacent rules); we return all matches
-    and let the caller decide what to surface.
+    A denial can match more than one template — for example, a denial
+    that says "outpatient substance use disorder therapy has reached the
+    maximum number of visits" matches both MentalHealthParityAppeal (via
+    the substance-use-disorder cue) and PhysicalTherapyContinuationAppeal
+    (via the visit-cap cue). We return every match and let the caller
+    decide what to surface.
     """
     if not denial_text and not procedure and not diagnosis:
         return []

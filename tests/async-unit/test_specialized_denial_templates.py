@@ -221,6 +221,38 @@ class TestPostSurgicalRehabAppealMatches(unittest.TestCase):
         self.assertIn("CMS 2024 Final Rule", text)
 
 
+class TestMatchingFlags(unittest.TestCase):
+    """`matches()` uses IGNORECASE and DOTALL so that real-world denial
+    letters (which routinely break key phrases across newlines) still
+    fire the appropriate template, and so that exclusion patterns can
+    block matches that would otherwise be triggered by procedure or
+    diagnosis fields.
+    """
+
+    def test_dotall_lets_post_surgical_rehab_span_newlines(self):
+        # Without DOTALL, `\bpost[\s\-]?(surgical|operative|op)\b.*\b(rehab|...)`
+        # would not match this letter because the keywords are on
+        # separate lines.
+        self.assertTrue(
+            PostSurgicalRehabAppeal.matches(
+                "We have reviewed your request for post-surgical care.\n"
+                "After review, the requested rehab is not approved.",
+            )
+        )
+
+    def test_negative_pattern_blocks_match_via_procedure_field(self):
+        # The PT continuation template excludes "physician assistant" so
+        # that an unrelated denial about a PA-led visit doesn't get
+        # misclassified. The exclusion must apply to the procedure
+        # field, not just the denial text.
+        self.assertFalse(
+            PhysicalTherapyContinuationAppeal.matches(
+                "Maximum number of visits reached.",
+                procedure="Physician assistant follow-up",
+            )
+        )
+
+
 class TestNoUnresolvedMedicalReasonInStaticAppeals(unittest.TestCase):
     """Specialized templates feed `non_ai_appeals` directly; sub_in_appeals
     only handles {insurance_company}, {claim_id}, {procedure}, and
