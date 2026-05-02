@@ -1134,6 +1134,13 @@ class RemoteModel(RemoteModelLike):
 class RemoteOpenLike(RemoteModel):
     _expensive = False
 
+    # If True, aiohttp.ClientResponseError is re-raised from _infer so that
+    # subclasses can react to specific status codes (e.g. 429 backoff in
+    # RemoteGroq / RemoteAnthropic). Default is False to preserve the
+    # historical contract that _infer returns None on transport errors and
+    # callers that don't catch exceptions keep working.
+    _propagate_http_errors: ClassVar[bool] = False
+
     def __init__(
         self,
         api_base,
@@ -1853,9 +1860,13 @@ class RemoteOpenLike(RemoteModel):
                     return backup_response
 
         except aiohttp.ClientResponseError:
-            # Let subclasses handle status-specific HTTP errors (e.g., 429
-            # rate limiting in RemoteGroq / RemoteAnthropic).
-            raise
+            # Subclasses that opt in (via _propagate_http_errors) handle
+            # status-specific HTTP errors themselves (e.g. 429 backoff in
+            # RemoteGroq / RemoteAnthropic). Otherwise preserve the original
+            # contract of returning None on transport errors.
+            if self._propagate_http_errors:
+                raise
+            logger.opt(exception=True).error(f"HTTP error calling {self.api_base}")
         except Exception as e:
             logger.opt(exception=True).error(f"Error {e} calling {self.api_base}")
 
@@ -2743,6 +2754,9 @@ class RemoteGroq(RemoteFullOpenLike):
     _rate_limiters: ClassVar[dict[str, RateLimiter]] = {}
     _rate_limiter_lock: ClassVar[threading.Lock] = threading.Lock()
 
+    # Re-raise ClientResponseError from the parent _infer so we can detect 429.
+    _propagate_http_errors: ClassVar[bool] = True
+
     def __init__(self, model: str, dual_mode: bool = False):
         """
         Initialize a Groq model backend.
@@ -3014,6 +3028,9 @@ class RemoteAnthropic(RemoteFullOpenLike):
     # Shared rate limiters per model (class-level, initialized lazily)
     _rate_limiters: ClassVar[dict[str, RateLimiter]] = {}
     _rate_limiter_lock: ClassVar[threading.Lock] = threading.Lock()
+
+    # Re-raise ClientResponseError from the parent _infer so we can detect 429.
+    _propagate_http_errors: ClassVar[bool] = True
 
     def __init__(self, model: str, dual_mode: bool = False):
         """
