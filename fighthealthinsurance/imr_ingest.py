@@ -77,6 +77,7 @@ _DETERMINATION_MAP = {
     "overturnedmodified": IMRDecision.DETERMINATION_OVERTURNED_IN_PART,
     "overturnedpartial": IMRDecision.DETERMINATION_OVERTURNED_IN_PART,
     "upheld": IMRDecision.DETERMINATION_UPHELD,
+    "uphelddecision": IMRDecision.DETERMINATION_UPHELD,
     "upholddecision": IMRDecision.DETERMINATION_UPHELD,
     "upheldfinaldetermination": IMRDecision.DETERMINATION_UPHELD,
 }

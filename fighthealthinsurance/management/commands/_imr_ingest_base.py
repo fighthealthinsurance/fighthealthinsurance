@@ -1,6 +1,6 @@
 """Shared base command for IMR / external-appeal CSV ingestion."""
 
-from typing import Any
+from typing import Any, Optional
 
 from django.core.management.base import BaseCommand, CommandError
 
@@ -32,8 +32,8 @@ class IMRIngestCommand(BaseCommand):
     def handle(self, *args: str, **options: Any) -> None:
         if not self.source:
             raise CommandError("Subclass must set `source`")
-        url = options.get("url")
-        path = options.get("file")
+        url: Optional[str] = options.get("url")
+        path: Optional[str] = options.get("file")
         if not url and not path:
             raise CommandError("Provide --url or --file")
         if url and path:
@@ -44,6 +44,7 @@ class IMRIngestCommand(BaseCommand):
             csv_text = fetch_csv(url)
             source_url = url
         else:
+            assert path is not None  # narrowed by the checks above
             self.stdout.write(f"Loading {self.label} CSV from {path}")
             with open(path, "r", encoding="utf-8-sig") as fh:
                 csv_text = fh.read()

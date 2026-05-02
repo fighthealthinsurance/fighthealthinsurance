@@ -42,6 +42,12 @@ class TestNormalizationHelpers:
             _normalize_determination("Uphold Decision")
             == IMRDecision.DETERMINATION_UPHELD
         )
+        # The CHHS dataset emits "Upheld Decision" (past tense). Make sure we
+        # map it to upheld rather than silently downgrading to other.
+        assert (
+            _normalize_determination("Upheld Decision")
+            == IMRDecision.DETERMINATION_UPHELD
+        )
 
     def test_normalize_determination_unknown_falls_back_to_other(self):
         assert _normalize_determination("") == IMRDecision.DETERMINATION_OTHER

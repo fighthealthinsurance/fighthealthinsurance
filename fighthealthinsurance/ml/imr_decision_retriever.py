@@ -10,6 +10,7 @@ import re
 from typing import List, Optional
 
 from django.db.models import Case, IntegerField, Q, QuerySet, Value, When
+from django.db.models.expressions import Combinable
 from loguru import logger
 
 from fighthealthinsurance.models import Denial, IMRDecision
@@ -103,7 +104,7 @@ class IMRDecisionRetriever:
             output_field=IntegerField(),
         )
         if state:
-            state_score = Case(
+            state_score: Combinable = Case(
                 When(state=state.upper(), then=Value(2)),
                 default=Value(0),
                 output_field=IntegerField(),
@@ -121,9 +122,9 @@ class IMRDecisionRetriever:
     ) -> List[IMRDecision]:
         """Return up to ``limit`` IMRDecision rows similar to the denial."""
         try:
-            procedure = (denial.procedure or "").strip()
-            diagnosis = (denial.diagnosis or "").strip()
-            state = (getattr(denial, "state", None) or "").strip() or None
+            procedure = str(denial.procedure or "").strip()
+            diagnosis = str(denial.diagnosis or "").strip()
+            state = str(getattr(denial, "state", None) or "").strip() or None
             if not procedure and not diagnosis:
                 return []
             qs = cls._build_queryset(procedure, diagnosis, state)
@@ -152,15 +153,16 @@ class IMRDecisionRetriever:
             "decisions (illustrative, not legal precedent):",
         ]
         for d in decisions:
+            source = str(d.source)
             label = {
                 IMRDecision.SOURCE_CA_DMHC: "CA DMHC IMR",
                 IMRDecision.SOURCE_NY_DFS: "NY DFS External Appeal",
-            }.get(d.source, d.source)
+            }.get(source, source)
             year = f" {d.decision_year}" if d.decision_year else ""
             determination = d.get_determination_display()
             treatment = d.treatment or d.treatment_category or "(unspecified)"
             diagnosis = d.diagnosis or d.diagnosis_category or "(unspecified)"
-            findings = (d.findings or "").strip().replace("\n", " ")
+            findings = str(d.findings or "").strip().replace("\n", " ")
             if len(findings) > cls.PER_DECISION_FINDINGS_CHARS:
                 findings = findings[: cls.PER_DECISION_FINDINGS_CHARS].rstrip() + "..."
             line = (

@@ -96,11 +96,13 @@ class IMRRefreshActor:
             if elapsed < datetime.timedelta(hours=interval_hours):
                 return
 
+        any_success = False
         for source, url in sources:
             try:
                 created, updated, skipped = await sync_to_async(
                     self._refresh_source, thread_sensitive=False
                 )(source, url)
+                any_success = True
                 self._logger.info(
                     f"IMR refresh ({source}): {created} created, "
                     f"{updated} updated, {skipped} skipped"
@@ -110,7 +112,11 @@ class IMRRefreshActor:
                     f"IMR refresh failed for source {source}: {e}"
                 )
 
-        self.last_refresh = datetime.datetime.utcnow()
+        # Only mark the cycle as complete if at least one source actually
+        # refreshed; otherwise the next loop iteration will retry instead of
+        # waiting another full IMR_REFRESH_INTERVAL_HOURS window.
+        if any_success:
+            self.last_refresh = datetime.datetime.utcnow()
 
     @staticmethod
     def _refresh_source(source: str, url: str) -> Tuple[int, int, int]:
