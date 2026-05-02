@@ -34,27 +34,62 @@ Out of scope (initial release)
 
 Phased approach so we can ship something useful without waiting on commercial licensing.
 
+### 3.1 Canonical references (defined once, used throughout)
+
+- **Percentiles tracked**: 50, 80, 90. (Schema permits any integer; the loader and
+  helper only emit these three by default.)
+- **Source identifiers** (used in `UCRRate.source` and lookup priority):
+  `medicare_pfs`, `fair_health`, `fhi_aggregate`. Defined as a `TextChoices` enum
+  in §4.1.
+- **Source priority** when more than one source matches a query:
+  `fhi_aggregate > fair_health > medicare_pfs`. The priority is data; later
+  sections cite this list rather than redefining it.
+- **Default Medicare → percentile multipliers** (proxy values used until commercial
+  data lands): p50 = 1.5×, p80 = 2.0×, p90 = 2.5×. Configurable via
+  `UCR_MEDICARE_PERCENTILE_MULTIPLIERS` (§10.4 settings).
+
+### 3.2 Sources
+
 | Phase | Source | Cost | Granularity | Why |
 |-------|--------|------|-------------|-----|
-| 1 | CMS Medicare Physician Fee Schedule (PFS) | Free | National + locality (MAC) | Public, downloadable, defensible baseline. Insurers commonly pay 100–300% of Medicare; 250% is a defensible benchmark for many specialties. |
-| 1 | Static percentile multipliers (50/70/80/90) on Medicare | — | — | Lets us emit "estimated 80th percentile" language even before commercial data lands. Cite multiplier as derived, not measured. |
+| 1 | CMS Medicare Physician Fee Schedule (PFS) | Free | National + locality (MAC) | Public, downloadable, defensible baseline. Insurers commonly pay 100–300% of Medicare. |
+| 1 | Static percentile multipliers on Medicare (see §3.1) | — | — | Lets us emit a benchmark even before commercial data lands. Cite as "Medicare × N", not as a measured percentile, until §12.2 review. |
 | 2 | FAIR Health (FH Benchmarks API or licensed flatfiles) | $$ | ZIP3 + percentile | Industry-standard post-Ingenix benchmark; the "name brand" dataset most appeals cite. |
-| 2 | Self-reported EOB amounts from FHI users (consented) | Free | Builds over time | Long-term: aggregate de-identified billed/allowed pairs into our own dataset to corroborate or replace commercial data. |
+| 2 | Self-reported EOB amounts from FHI users (consented) | Free | Builds over time | Long-term: aggregate de-identified billed/allowed pairs into our own dataset. |
 | 3 | Context4 / MultiPlan-comparable datasets | $$ | Variable | Only if we need to rebut insurer-cited data point-for-point. |
 
 The schema below is source-agnostic — every rate row carries a `source` and
-`effective_date`, so multiple datasets can coexist and be selected by priority.
+`effective_date`, so multiple datasets coexist and are selected by §3.1's priority.
 
 ## 4. Data model changes
 
 ### 4.1 New models (in `fighthealthinsurance/models.py`)
 
+String-typed values (source identifiers, area kinds) are declared once as
+`TextChoices` enums in a new `fighthealthinsurance/ucr_constants.py` so callers
+import constants instead of repeating string literals. See §3.1 for the
+canonical set of values.
+
 ```python
+# ucr_constants.py
+class UCRSource(models.TextChoices):
+    MEDICARE_PFS = "medicare_pfs", "CMS Medicare PFS"
+    FAIR_HEALTH = "fair_health", "FAIR Health"
+    FHI_AGGREGATE = "fhi_aggregate", "FHI Aggregate"
+
+
+class UCRAreaKind(models.TextChoices):
+    ZIP3 = "zip3", "ZIP3"
+    MSA = "msa", "MSA"
+    STATE = "state", "State"
+    NATIONAL = "national", "National"
+    MEDICARE_LOCALITY = "medicare_locality", "Medicare Locality"
+
+
+# models.py
 class UCRGeographicArea(models.Model):
     """A geographic billing area. Independent of source so multiple datasets share it."""
-    kind = models.CharField(max_length=16, choices=[("zip3", "ZIP3"), ("msa", "MSA"),
-                                                    ("state", "State"), ("national", "National"),
-                                                    ("medicare_locality", "Medicare Locality")])
+    kind = models.CharField(max_length=24, choices=UCRAreaKind.choices)
     code = models.CharField(max_length=32, db_index=True)  # e.g. "941", "31080", "CA"
     description = models.CharField(max_length=200, blank=True)
 
@@ -63,20 +98,22 @@ class UCRGeographicArea(models.Model):
 
 
 class UCRRate(models.Model):
-    """A single UCR rate observation. Source-agnostic."""
+    """A single UCR rate observation. Source-agnostic; see §3.1 for value sets."""
     procedure_code = models.CharField(max_length=10, db_index=True)  # CPT or HCPCS
-    modifier = models.CharField(max_length=4, blank=True, default="")  # 22, 26, TC, etc.
+    modifier = models.CharField(max_length=4, blank=True, default="")
     geographic_area = models.ForeignKey(UCRGeographicArea, on_delete=models.PROTECT)
-    percentile = models.PositiveSmallIntegerField()  # 50, 70, 80, 90, 95; 0 = mean
-    amount_cents = models.PositiveIntegerField()      # store as cents to avoid float
-    source = models.CharField(max_length=32)          # "medicare_pfs", "fair_health", "fhi_aggregate"
+    percentile = models.PositiveSmallIntegerField()   # see §3.1
+    amount_cents = models.PositiveIntegerField()      # cents to avoid float
+    source = models.CharField(max_length=32, choices=UCRSource.choices)
     effective_date = models.DateField()
     expires_date = models.DateField(null=True, blank=True)
     metadata = models.JSONField(default=dict, blank=True)  # MAC locality, conversion factor, etc.
 
     class Meta:
         indexes = [
-            models.Index(fields=["procedure_code", "geographic_area", "effective_date"]),
+            # Range scans during lookup ("rates for CPT in area on date D"):
+            models.Index(fields=["procedure_code", "geographic_area",
+                                 "effective_date", "expires_date"]),
             models.Index(fields=["source", "effective_date"]),
         ]
         unique_together = [("procedure_code", "modifier", "geographic_area",
@@ -98,26 +135,31 @@ class UCRLookup(models.Model):
     created = models.DateTimeField(db_default=Now())
 ```
 
-### 4.2 Extensions to `Denial` (`models.py:1235+`)
+### 4.2 Extensions to `Denial`
 
-Add the missing financial + geographic fields. All optional so they don't break
-existing intake.
+Six scalar fields, one timestamp, and one JSON context field. All nullable/blank
+so existing intake keeps working.
 
 ```python
-# Inside Denial
+# Inside Denial (around models.py:1235+)
+# Billing/geographic intake fields (6 scalar):
 service_zip = models.CharField(max_length=5, blank=True, default="")
 procedure_code = models.CharField(max_length=10, blank=True, default="", db_index=True)
 procedure_modifier = models.CharField(max_length=4, blank=True, default="")
 billed_amount_cents = models.PositiveIntegerField(null=True, blank=True)
 allowed_amount_cents = models.PositiveIntegerField(null=True, blank=True)
 paid_amount_cents = models.PositiveIntegerField(null=True, blank=True)
-ucr_context = models.JSONField(null=True, blank=True)  # parallel to ml_citation_context
+
+# Enrichment state (1 flat timestamp + 1 JSON):
+# A flat indexed DateTimeField is required so the refresh actor can find stale
+# rows without scanning JSON paths (see §10.4). NULL means "needs enrichment".
+ucr_refreshed_at = models.DateTimeField(null=True, blank=True, db_index=True)
+ucr_context = models.JSONField(null=True, blank=True)
 ```
 
-Why a separate `ucr_context` JSONField rather than reusing `ml_citation_context`:
-the citation context is for medical-necessity citations; UCR context is structured
-pricing data with a different shape and audit lifecycle. Parallel field, parallel
-helper, parallel UI panel.
+`ucr_context` is a sibling of `ml_citation_context` (`models.py:1339`), not a
+replacement — citation context is medical-necessity evidence; UCR context is
+structured pricing data with a different shape and audit lifecycle.
 
 ### 4.3 Migrations
 
@@ -143,21 +185,26 @@ A denial is an under-reimbursement candidate when **any** of:
 
 ```
 DenialCreatorHelper.create_or_update_denial()       # common_view_logic.py:940+
-  └─> UCREnrichmentHelper.maybe_enrich(denial)
-        ├─ resolve_procedure_code(denial.procedure | denial.verified_procedure)
-        │     uses ML — see §5.3
-        ├─ resolve_geographic_area(denial.service_zip | denial.your_state)
-        │     ZIP3 → ZIP3 area, fall back to state, fall back to national
-        ├─ query_rates(code, area, [50, 80, 90])
-        │     prefer source priority: fhi_aggregate > fair_health > medicare_pfs
-        ├─ build_comparison(billed, allowed, paid, rates)
-        │     returns dict: {gap_vs_p80, gap_vs_p90, narrative, citations}
-        ├─ persist UCRLookup row (snapshot for audit)
-        └─ write to denial.ucr_context and save
+  └─ dispatches (does not await) UCRRefreshActor.refresh_denial.remote(denial.id)
+       (§10.4). Request returns immediately with ucr_context = {"status":
+       "pending"}.
+
+UCREnrichmentHelper.maybe_enrich(denial)            # called by the actor
+  ├─ resolve_procedure_code(denial.procedure | denial.verified_procedure)
+  │     §5.3
+  ├─ resolve_geographic_area(denial.service_zip[:3] | denial.your_state)
+  │     ZIP5 truncated to ZIP3; fall back to state, then national
+  ├─ query_rates(code, area)
+  │     one query: percentile__in=§3.1 percentiles, ordered by source priority
+  ├─ build_comparison(billed, allowed, paid, rates)
+  │     returns dict with gaps + narrative + a hash of the comparison
+  ├─ skip-if-unchanged: if hash matches denial.ucr_context["hash"],
+  │     bump ucr_refreshed_at only — no UCRLookup insert, no context rewrite
+  ├─ otherwise: insert UCRLookup, write denial.ucr_context, set ucr_refreshed_at
+  └─ save
 ```
 
-Runs async (same Ray actor pattern as existing `extract_procedure_diagnosis_finished`).
-The same helper is invoked by the periodic refresh actor (§10.4) for stale denials
+Same helper is invoked by the periodic refresh actor (§10.4) for stale denials
 and after upstream source refreshes.
 
 ### 5.3 Procedure-code extraction
@@ -192,9 +239,10 @@ Insurer allowed: $80.00
 Insurer paid: $64.00 (after 20% coinsurance)
 Independent benchmark (CMS Medicare PFS, 2026, locality 5):
   - Medicare allowed amount: $98.42
-  - 250% of Medicare (commercial proxy 80th pct): $246.05
-Gap vs. 80th-pct benchmark: $166.05 (67%) under-reimbursed
-Source: medicare_pfs effective 2026-01-01
+  - 200% of Medicare (proxy p80 per §3.1): $196.84
+  - 250% of Medicare (proxy p90 per §3.1): $246.05
+Gap vs. proxy-p80 benchmark: $116.84 (59%) under-reimbursed
+Source: medicare_pfs effective 2026-01-01 (multipliers are derived, not measured)
 [/UCR PRICING CONTEXT]
 ```
 
@@ -204,8 +252,8 @@ under the plan's "out-of-network allowable" methodology.
 
 ### 6.2 New appeal template
 
-Add a new `AppealTemplates` row (`models.py:490`) keyed for under-reimbursement
-appeals, separate from medical-necessity templates. Loaded via fixture.
+Add a new `AppealTemplates` row keyed for under-reimbursement appeals, separate
+from medical-necessity templates. Loaded via `fighthealthinsurance/fixtures/initial.yaml`.
 
 ## 7. REST API surface
 
@@ -214,22 +262,25 @@ Pattern matches existing ViewSet + `@action` style in `rest_views.py`.
 ```
 POST /ziggy/rest/denial/{id}/set_billing_info/
   body: {service_zip, procedure_code, modifier, billed_cents, allowed_cents, paid_cents}
-  triggers UCR enrichment async
+  dispatches upar.refresh_denial.remote(id); returns 202 immediately
 
 GET  /ziggy/rest/denial/{id}/ucr_context/
   returns the resolved UCRLookup snapshot + comparison
+  (or {"status": "pending"} when ucr_refreshed_at is NULL)
 
 POST /ziggy/rest/denial/{id}/refresh_ucr/
-  re-runs enrichment immediately by calling upar.refresh_denial.remote(id)
-  on the UCRRefreshActor (§10.4); also called after a user edits billing info
+  same dispatch as set_billing_info but without a body change; for "try again"
 
-GET  /ziggy/rest/ucr/lookup/?cpt=99213&zip=94110&percentiles=50,80,90
-  unauthenticated cached lookup endpoint, rate-limited; useful for marketing
-  pages and pre-intake "is this worth appealing?" widgets
+GET  /ziggy/rest/ucr/lookup/?cpt=99213&zip=94110
+  unauthenticated, rate-limited. Backed by Django cache keyed on
+  (cpt, zip3, latest_effective_date) with a 24h TTL — invalidated by the
+  source-refresh loop in §10.4 when a new effective_date lands. Never queries
+  per-denial data.
 ```
 
 Serializer additions in `rest_serializers.py`:
-- Extend `DenialResponseInfoSerializer` with the six new financial/geographic fields.
+- Extend `DenialResponseInfoSerializer` with the six new billing/geographic fields
+  plus `ucr_refreshed_at`.
 - New `UCRContextSerializer` for the `ucr_context` and `UCRLookup` payload.
 - New `UCRRateLookupSerializer` for the unauthenticated lookup endpoint.
 
@@ -252,9 +303,8 @@ New `UCRComparisonPanel.tsx` component, surfaced in `chat_interface.tsx` when
 - Edit button → opens billing-info modal that POSTs to `set_billing_info`.
 
 ### 8.3 Appeal letter preview
-The generated appeal letter already renders via existing components; no UI
-change needed since UCR language is part of the letter body. Optionally add a
-"UCR section" anchor link.
+No UI change — UCR language is part of the letter body and renders via existing
+components.
 
 ## 9. Provider-side workflows (deferred / phase 3)
 
@@ -274,34 +324,41 @@ These should not block phase 1.
 ### 10.1 Medicare PFS loader
 
 New management command: `fighthealthinsurance/management/commands/load_medicare_pfs.py`.
-- Downloads the annual CMS PFS RVU and locality files (well-known URLs at cms.gov).
-- Materializes one `UCRRate` row per (HCPCS, locality, effective year).
-- Computes percentile rows by applying static multipliers (configurable; defaults
-  Medicare × 1.5 / 2.0 / 2.5 for p50/p80/p90). Multipliers are flagged as
-  derived in `metadata`.
-- Idempotent on `(procedure_code, modifier, geographic_area, percentile, source, effective_date)`.
+- Downloads the annual CMS PFS RVU and locality files in parallel
+  (`asyncio.gather` over the two independent HTTP fetches).
+- Materializes one `UCRRate` row per (HCPCS, locality, effective year) for the
+  Medicare-allowed amount, plus one row per percentile in §3.1 by applying the
+  multipliers from `UCR_MEDICARE_PERCENTILE_MULTIPLIERS`. Multipliers are flagged
+  as derived in `metadata.derived_from = "medicare_pfs"`.
+- Idempotent — uses the `unique_together` from §4.1 as upsert key.
 
 ### 10.2 Refresh cadence
-- Reference data (Medicare PFS, FAIR Health snapshot): yearly for CMS, weekly or
-  monthly for FAIR Health depending on subscription. Driven by the polling actor
-  in §10.4, not cron.
-- Per-denial enrichment: refreshed when (a) the denial's billing info changes,
-  (b) a newer-priority source becomes available for that (CPT, area), or
-  (c) the snapshot is older than a configurable TTL (default 90 days) and the
-  appeal has not yet been finalized.
+The polling actor (§10.4) runs a daily outer loop; per-source `_if_due`
+predicates do the actual gating:
+- Medicare PFS: yearly (predicate compares stored `effective_date.year` to
+  current year).
+- FAIR Health: weekly or monthly per subscription terms.
+- FHI aggregate: weekly recompute over the most recent rolling window.
+
+Per-denial enrichment is triggered when the user edits billing info, when a
+source publishes data newer than what the denial's `UCRLookup` snapshot used,
+or when `Denial.ucr_refreshed_at` is older than `UCR_DENIAL_STALE_TTL_DAYS` and
+the appeal is not yet finalized.
 
 ### 10.3 PII / HIPAA
-Billed/allowed/paid amounts are not PHI by themselves but in combination with the
-denial they are. Store on `Denial` (already encrypted-field-aware) and treat them
-as sensitive. The unauthenticated `/ucr/lookup/` endpoint never sees patient data —
-just CPT + ZIP3.
+Billed/allowed/paid amounts on a `Denial` are sensitive in combination with the
+denial. They store on `Denial` as plain `PositiveIntegerField` for now — extend
+to `EncryptedCharField` (matching the existing `django-encrypted-model-fields`
+usage elsewhere in the codebase) if a security review requires it.
+The unauthenticated `/ucr/lookup/` endpoint never sees patient data — just CPT
+and ZIP3.
 
 ### 10.4 UCR refresh polling actor
 
 Follows the existing polling-actor pattern (`email_polling_actor.py`,
-`fax_polling_actor.py`, `chooser_refill_actor.py`). One Ray actor with two
-responsibilities, scheduled on independent intervals so a slow upstream source
-doesn't stall per-denial refreshes.
+`fax_polling_actor.py`, `chooser_refill_actor.py`) — a long-lived Ray actor that
+sleeps and loops, registered from `polling_actor_setup.py` and supervised by
+`actor_health_status.relaunch_actors`.
 
 New file: `fighthealthinsurance/ucr_refresh_actor.py`
 
@@ -310,72 +367,106 @@ New file: `fighthealthinsurance/ucr_refresh_actor.py`
 class UCRRefreshActor:
     """Periodically refreshes UCR reference data and re-enriches stale denials.
 
-    Two independent loops run concurrently inside one actor:
-      - source_refresh_loop: pulls new rate data from configured upstream sources.
-      - denial_refresh_loop: re-runs UCREnrichmentHelper on stale denials.
+    Two independent loops run concurrently inside one actor; a slow upstream
+    source does not stall per-denial refreshes.
     """
+
+    async def run(self):
+        # Both loops run forever; if either crashes the actor exits and
+        # relaunch_actors restarts it (matches existing actor pattern).
+        await asyncio.gather(self.source_refresh_loop(),
+                             self.denial_refresh_loop())
+
+    async def refresh_denial(self, denial_id: int):
+        """Out-of-cycle trigger called from REST (§7)."""
+        denial = await sync_to_async(Denial.objects.get)(id=denial_id)
+        await UCREnrichmentHelper.maybe_enrich(denial, force=True)
 
     async def source_refresh_loop(self):
         while True:
             try:
-                await self._refresh_medicare_pfs_if_due()   # checks year vs latest effective_date
-                await self._refresh_fair_health_if_due()    # phase 2; no-op until enabled
-                await self._refresh_fhi_aggregate_if_due()  # phase 3; recomputes aggregate
+                # Each predicate decides whether enough time has elapsed for
+                # its own source (§10.2). The outer cadence is just the poll.
+                advanced_sources = []
+                if await self._refresh_medicare_pfs_if_due():
+                    advanced_sources.append(UCRSource.MEDICARE_PFS)
+                if await self._refresh_fair_health_if_due():     # phase 2 stub
+                    advanced_sources.append(UCRSource.FAIR_HEALTH)
+                if await self._refresh_fhi_aggregate_if_due():   # phase 3 stub
+                    advanced_sources.append(UCRSource.FHI_AGGREGATE)
+                # Only fan out denial refreshes for sources that actually changed.
+                for src in advanced_sources:
+                    await self._mark_denials_using_source_stale(src)
             except Exception:
                 logger.exception("UCR source refresh failed")
-            # Daily cadence is plenty — sources are at best weekly upstream.
-            await asyncio.sleep(random.uniform(20 * 3600, 28 * 3600))
+            await asyncio.sleep(random.uniform(20 * 3600, 28 * 3600))  # ~daily
 
     async def denial_refresh_loop(self):
         while True:
             try:
-                # Bounded batch so a backlog doesn't pin the actor.
-                stale = await sync_to_async(list)(
-                    Denial.objects.filter(
-                        ucr_context__isnull=False,
-                        appeal_result__isnull=True,        # not yet finalized
-                    ).filter(
-                        Q(ucr_context__effective_date__lt=latest_source_date()) |
-                        Q(ucr_context__refreshed_at__lt=now() - timedelta(days=90))
-                    )[:50]
-                )
-                for denial in stale:
-                    await UCREnrichmentHelper.maybe_enrich(denial, force=True)
+                ttl = settings.UCR_DENIAL_STALE_TTL_DAYS
+                batch_size = settings.UCR_DENIAL_REFRESH_BATCH_SIZE
+                stale_qs = (Denial.objects
+                    .filter(appeal_result__isnull=True)            # not finalized
+                    .filter(Q(ucr_refreshed_at__isnull=True) |     # never enriched
+                            Q(ucr_refreshed_at__lt=now() - timedelta(days=ttl)))
+                    .order_by("id")[:batch_size])
+                stale = await sync_to_async(list)(stale_qs)
+                # Pre-fetch rates for the (cpt, area) pairs in this batch so each
+                # maybe_enrich() call is a dict lookup, not a DB round-trip.
+                rate_cache = await UCREnrichmentHelper.bulk_load_rates(stale)
+                await asyncio.gather(*(
+                    UCREnrichmentHelper.maybe_enrich(d, force=True, rates=rate_cache)
+                    for d in stale
+                ))
             except Exception:
                 logger.exception("UCR denial refresh failed")
-            await asyncio.sleep(random.uniform(45 * 60, 75 * 60))  # ~hourly with jitter
+            await asyncio.sleep(random.uniform(45 * 60, 75 * 60))   # ~hourly
 ```
 
-Wiring (mirrors how `epar`/`fpar`/`cpar` are wired today):
-- Register a singleton in `polling_actor_setup.py` (e.g. `upar`).
-- `launch_polling_actors.py` will pick it up automatically once `polling_actor_setup`
-  imports it.
-- `actor_health_status.relaunch_actors` already iterates the registered actors;
-  the new actor inherits health monitoring and the `--force` relaunch path.
-- Trigger an out-of-cycle run from REST (§7) by calling
-  `upar.refresh_denial.remote(denial_id)` when a user edits billing info or hits
-  `refresh_ucr`. The polling loop is the safety net, not the primary path.
+Wiring (mirrors how `epar`/`fpar`/`cpar` are wired today): register a singleton
+named `upar` (UCR polling actor reference) in `polling_actor_setup.py`;
+`launch_polling_actors.py` picks it up automatically; `actor_health_status`
+inherits health monitoring and the `--force` relaunch path. REST handlers in §7
+call `upar.refresh_denial.remote(denial_id)` for on-demand work; the polling
+loop is the safety net, not the primary path.
 
-Configuration:
-- New settings: `UCR_SOURCE_REFRESH_INTERVAL_HOURS` (default 24),
-  `UCR_DENIAL_REFRESH_INTERVAL_MINUTES` (default 60),
-  `UCR_DENIAL_STALE_TTL_DAYS` (default 90), `UCR_DENIAL_REFRESH_BATCH_SIZE`
-  (default 50). All overridable per `Dev`/`Prod` configuration class.
+Configuration (new settings on `Dev`/`Prod` configuration classes):
+- `UCR_SOURCE_REFRESH_INTERVAL_HOURS` (default 24)
+- `UCR_DENIAL_REFRESH_INTERVAL_MINUTES` (default 60)
+- `UCR_DENIAL_STALE_TTL_DAYS` (default 90)
+- `UCR_DENIAL_REFRESH_BATCH_SIZE` (default 50)
+- `UCR_MEDICARE_PERCENTILE_MULTIPLIERS` (default `{50: 1.5, 80: 2.0, 90: 2.5}`)
 
 Idempotency & safety:
-- The actor never overwrites a `UCRLookup` row — it inserts a new one and
-  updates `Denial.ucr_context` to point at the new snapshot, preserving the
-  audit trail.
-- If a denial is already finalized (`appeal_result` set or `appeal_text`
-  delivered), it is skipped. This prevents post-hoc edits to letters that have
-  already been faxed/mailed.
-- Lock contention is avoided by selecting a bounded batch with `id` ordering
-  rather than locking the whole queryset.
+- `UCRLookup` rows are append-only; `Denial.ucr_context` is repointed to the
+  new snapshot. Finalized denials (`appeal_result` set) are skipped so we never
+  edit a letter that's already been faxed/mailed.
+- Lock contention is avoided by selecting a bounded, `id`-ordered batch.
+- Change detection: `maybe_enrich` hashes the computed comparison and short-
+  circuits when the hash matches `denial.ucr_context["hash"]` (bumps
+  `ucr_refreshed_at` only). Prevents the ~90-day TTL cycle from generating a
+  no-op `UCRLookup` insert and `Denial` save when nothing actually changed.
 
-Tests:
-- `tests/sync-actor/test_ucr_refresh_actor.py` — actor under the existing
-  `py313-django52-sync-actor` tox env. Cover stale-detection, batch bounding,
-  finalized-denial skip, and source-newer-than-snapshot trigger.
+Tests: `tests/sync-actor/test_ucr_refresh_actor.py` under the existing
+`py313-django52-sync-actor` tox env. Cover stale-detection (TTL boundary +
+NULL `ucr_refreshed_at`), batch bounding via the setting, finalized-denial
+skip, source-advanced fan-out, and the hash-unchanged short-circuit.
+
+### 10.5 Retention
+
+Both `UCRRate` and `UCRLookup` grow without bound otherwise.
+
+- `UCRRate`: rough upper bound is ~10k HCPCS × ~110 Medicare localities × 3
+  percentiles × N years × M sources. Add a yearly pruning step inside the
+  source-refresh loop: delete rates where `expires_date < now() - 2 years`
+  AND a more recent row exists for the same `(procedure_code, modifier,
+  geographic_area, percentile, source)` key. `UCRLookup` snapshots remain
+  intact; that's why audit data is decoupled from live rates.
+- `UCRLookup`: append-only by design (§10.4) but capped per denial — keep at
+  most `UCR_LOOKUP_RETENTION_PER_DENIAL` rows (default 10), trimming oldest
+  on insert. When a denial is finalized, prune all but the snapshot referenced
+  by `Denial.ucr_context`.
 
 ## 11. Testing strategy
 
@@ -398,48 +489,59 @@ Following the project's `tox -e ...` conventions.
 - The four endpoints in §7. Auth / rate-limit / serializer round-trip.
 
 `tests/sync/test_load_medicare_pfs.py`
-- Loader idempotency on a small fixture CSV.
+- Loader idempotency on a small fixture CSV; parallel fetch of RVU + locality.
+- `UCRRate` retention pruning (§10.5).
 
 Selenium: optional smoke test for the new intake billing section.
 
 ## 12. Open questions / decisions needed before phase 2
 
-1. **FAIR Health licensing.** What are the terms for a 501(c)(3)? Per-call API or
-   licensed flatfile? Decision affects whether we keep the static-multiplier model
-   long term or replace it.
-2. **Multiplier defaults.** The 1.5/2.0/2.5× Medicare multipliers used as a stand-in
-   for percentile data should be reviewed by someone with payer-pricing expertise
-   before they ship in user-facing letters. Conservative default: cite as "Medicare
-   benchmark × 2.0" rather than as "80th percentile".
-3. **De-identification policy for FHI aggregate.** Need explicit user consent and a
-   minimum sample size per (CPT, ZIP3) bucket before we publish any aggregate.
-4. **Anesthesia / time-unit codes.** Defer entirely or partial coverage with
-   conversion factors? Recommend defer.
-5. **Display to patients vs. professionals.** Should the UCR comparison appear to
-   patient users without a professional's review, or only to professional users?
-   Default proposal: show to patients with a clear "estimate" disclaimer; let
-   ProfessionalUser disable display per UserDomain if desired.
+12.1 **FAIR Health licensing.** What are the terms for a 501(c)(3)? Per-call
+API or licensed flatfile? Decision affects whether we keep the static-multiplier
+model long term or replace it.
+
+12.2 **Multiplier defaults.** The 1.5/2.0/2.5× Medicare multipliers used as a
+stand-in for percentile data should be reviewed by someone with payer-pricing
+expertise before they ship in user-facing letters. Phase 1 is gated on this —
+until §12.2 closes, the appeal letters cite "Medicare benchmark × N", **not**
+"Nth percentile" (see §13).
+
+12.3 **De-identification policy for FHI aggregate.** Need explicit user consent
+and a minimum sample size per (CPT, ZIP3) bucket before we publish any aggregate.
+
+12.4 **Anesthesia / time-unit codes.** Defer entirely or partial coverage with
+conversion factors? Recommend defer.
+
+12.5 **Display to patients vs. professionals.** Should the UCR comparison appear
+to patient users without a professional's review, or only to professional users?
+Default proposal: show to patients with a clear "estimate" disclaimer; let
+ProfessionalUser disable display per UserDomain if desired.
 
 ## 13. Phasing & rough sequencing
 
 Phase 1 — MVP (1–2 sprints)
-- Models, migrations, `Denial` field extensions.
-- Medicare PFS loader.
+- Models (§4), migrations, `Denial` field extensions including
+  `ucr_refreshed_at` and `ucr_context`, `ucr_constants.py` enums.
+- Medicare PFS loader; retention pruning (§10.5).
 - Regex code extraction + manual entry on intake.
-- `UCREnrichmentHelper` with multiplier-based percentiles.
+- `UCREnrichmentHelper` with multiplier-based benchmarks. Per §12.2, letters
+  cite "Medicare × N" wording, **not** "Nth percentile" — the percentile
+  framing is unlocked by phase 2 once expert review closes §12.2.
 - `ucr_context` injection into appeal prompts.
 - New AppealTemplate for under-reimbursement appeals.
-- REST: `set_billing_info`, `ucr_context`, `refresh_ucr`.
-- `UCRRefreshActor` registered in `polling_actor_setup.py`; on-demand refresh
-  wired through the actor; periodic source/denial loops on default intervals.
+- REST: `set_billing_info`, `ucr_context`, `refresh_ucr` (the `/ucr/lookup/`
+  public endpoint is phase 2).
+- `UCRRefreshActor` scaffold + Medicare branch only — FAIR Health and
+  FHI-aggregate branches are stubbed `_if_due` predicates that no-op.
 - Frontend: intake billing section + `UCRComparisonPanel`.
 - Tests across sync/async/REST/sync-actor.
 
 Phase 2 — Quality
 - ML-based code extraction.
 - FAIR Health integration (pending §12.1).
-- Source-priority logic actually exercised once we have >1 source.
-- Public `/ucr/lookup/` endpoint.
+- Source-priority logic exercised once we have >1 source.
+- Public `/ucr/lookup/` endpoint with caching (§7).
+- Per §12.2 closure, switch letter wording to percentile framing.
 
 Phase 3 — Provider workflows
 - Bulk audit, per-payer reports, FHI aggregate dataset opt-in.
@@ -447,6 +549,7 @@ Phase 3 — Provider workflows
 ## 14. Files this plan will touch
 
 New
+- `fighthealthinsurance/ucr_constants.py` (UCRSource, UCRAreaKind enums + percentile list)
 - `fighthealthinsurance/ucr_helper.py`
 - `fighthealthinsurance/ucr_refresh_actor.py`
 - `fighthealthinsurance/management/commands/load_medicare_pfs.py`
