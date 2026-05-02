@@ -235,8 +235,43 @@ class TestDenialTypes(TestCase):
             "fighthealthinsurance.process_denial.icd10.find",
             return_value=fake_tag,
         ):
-            result = await processor.get_denialtype(
-                "Diagnosis J45.909 noted on the claim", None, None
-            )
+            with patch.object(processor, "find_uspstf_evidence", return_value=[]):
+                result = await processor.get_denialtype(
+                    "Diagnosis J45.909 noted on the claim", None, None
+                )
 
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_process_denial_codes_uspstf_fallback_flags_preventive(self):
+        """When CSV lookups miss but USPSTF matches the code, classify as preventive."""
+        processor = await sync_to_async(ProcessDenialCodes)()
+        processor.preventive_diagnosis = {}
+        processor.preventive_codes = {}
+        fake_tag = SimpleNamespace(block_description="Some unrelated description")
+
+        fake_recs = [{"id": "x", "title": "Colorectal", "grade": "A"}]
+        with patch(
+            "fighthealthinsurance.process_denial.icd10.find",
+            return_value=fake_tag,
+        ):
+            with patch.object(
+                processor, "find_uspstf_evidence", return_value=fake_recs
+            ):
+                result = await processor.get_denialtype(
+                    "Diagnosis Z12.11 noted on the claim", None, None
+                )
+
+        assert len(result) == 1
+        assert result[0].name == "Preventive Care"
+
+    @pytest.mark.asyncio
+    async def test_find_uspstf_evidence_returns_empty_on_error(self):
+        """find_uspstf_evidence swallows exceptions so classification never breaks."""
+        processor = await sync_to_async(ProcessDenialCodes)()
+        with patch(
+            "fighthealthinsurance.uspstf_api.find_recommendations_for_codes",
+            side_effect=RuntimeError("boom"),
+        ):
+            result = processor.find_uspstf_evidence("Diagnosis Z12.11 noted")
         assert result == []

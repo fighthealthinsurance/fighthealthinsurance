@@ -599,6 +599,39 @@ class PubMedQueryData(models.Model):
     created = models.DateTimeField(db_default=Now(), null=True)
 
 
+class USPSTFRecommendation(models.Model):
+    """
+    Cached US Preventive Services Task Force recommendation.
+
+    USPSTF A/B graded services generally must be covered without cost-sharing
+    under the ACA, so these records double as evidence for preventive care
+    appeals.
+    """
+
+    uspstf_id = models.CharField(max_length=128, unique=True)
+    title = models.TextField()
+    grade = models.CharField(max_length=4, blank=True, default="")
+    status = models.CharField(max_length=32, blank=True, default="current")
+    topic = models.TextField(blank=True, default="")
+    population = models.TextField(blank=True, default="")
+    short_description = models.TextField(blank=True, default="")
+    rationale = models.TextField(blank=True, default="")
+    clinical_considerations = models.TextField(blank=True, default="")
+    url = models.TextField(blank=True, default="")
+    date_issued = models.CharField(max_length=64, blank=True, default="")
+    raw_data = models.JSONField(blank=True, null=True)
+    last_synced = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["grade"]),
+            models.Index(fields=["topic"]),
+        ]
+
+    def __str__(self):
+        return f"USPSTF {self.grade} - {self.title}"
+
+
 class ExtraLinkDocument(
     ExportModelOperationsMixin("ExtraLinkDocument"), models.Model  # type: ignore
 ):

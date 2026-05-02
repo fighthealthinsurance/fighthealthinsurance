@@ -751,6 +751,12 @@ RULE: Do NOT add any conversational text, questions, or additional explanations 
         doc_fetcher_tool = """**Document Fetcher Tool**: If a user shares a URL to a document (insurance plan, medical guidelines, denial letter, etc.), you can fetch and read it using: **fetch_doc {"url": "https://example.com/document.pdf"}**
 This tool can read PDF, DOCX, HTML, and plain text documents. Use it when a user shares a link and you need to reference the document's contents. Only use it for URLs the user has explicitly shared or referenced."""
 
+        uspstf_tool = """**USPSTF Preventive Services Tool**: For preventive-care denials (screenings, counseling, preventive medications, perinatal prevention, cancer screening, etc.) you can look up the relevant US Preventive Services Task Force recommendation using: **uspstf_lookup {"query": "search terms", "grade": "A", "limit": 3}**
+
+All JSON keys are optional. Use ``query`` for free-text terms (e.g. "colon cancer screening"), ``grade`` to restrict to a letter grade ("A", "B", "C", "D", or "I"), ``topic`` to filter by topic, and ``limit`` to cap the number of results.
+
+When the recommendation has a Grade A or B you should remind the user that under the ACA, non-grandfathered private plans, the marketplace, and Medicaid expansion populations generally must cover the service without cost-sharing — this is one of the strongest evidence-based arguments available for preventive denial appeals. Always cite the recommendation title, grade, and source URL the tool returns. Do not invent USPSTF grades or text — only quote what the tool returns."""
+
         medicaid_eligibility_tool = """**Medicaid Eligibility Check**: To help check if someone is eligible Medicaid or medicare, you MUST ONLY use this tool format: **medicaid_eligibility {"state": "StateName", "married": false, ...}**
 
 ONLY USE THIS TOOL WHEN ASKED IF SOMEONE IS ELIGIBLE FOR MEDICARE/MEDICAID
@@ -815,6 +821,7 @@ We have a selection of tools to help you. You should try and use these tools whe
 {medicaid_eligibility_tool}
 {medicaid_resources_tool}
 {pubmed_tool}
+{uspstf_tool}
 {doc_fetcher_tool}
 
 For eligibility determinations if you have a tool you must use the tool rather than guessing on your own.
@@ -831,6 +838,7 @@ Remember that medicaid can go by many names, including but not limited to: Denal
 We have a selection of tools to help you. You should try and use these tools whenever they are relevant.
 
 {pubmed_tool}
+{uspstf_tool}
 {doc_fetcher_tool}
 
 If the user asks about Medicaid or Medicare eligibility, let them know you can help with that and ask them to tell you more about their situation. You have specialized tools for Medicaid/Medicare questions that will activate when needed.

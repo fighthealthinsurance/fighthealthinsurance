@@ -52,6 +52,34 @@ class ProcessDenialCodes(DenialBase):
     async def get_procedure_and_diagnosis(self, denial_text):
         return (None, None)
 
+    def _extract_codes(self, denial_text: str) -> list[str]:
+        """Return ICD-10 and CPT codes pulled from the denial text."""
+        codes: list[str] = []
+        for match in self.icd10_re.finditer(denial_text):
+            codes.append(match.group(1))
+        for match in self.cpt_code_re.finditer(denial_text):
+            codes.append(match.group(1))
+        return codes
+
+    def find_uspstf_evidence(self, denial_text: str, limit: int = 3) -> list[dict]:
+        """Find USPSTF recommendations relevant to codes referenced in a denial.
+
+        Returns an empty list when no codes match. Used by the appeal generator
+        to surface ACA-friendly preventive-care evidence; it is intentionally
+        independent of ``get_denialtype`` so callers can enrich appeals even
+        when the existing CSV-based classifier already flagged the denial.
+        """
+        try:
+            from fighthealthinsurance.uspstf_api import find_recommendations_for_codes
+
+            codes = self._extract_codes(denial_text)
+            if not codes:
+                return []
+            return find_recommendations_for_codes(codes, limit=limit)
+        except Exception as e:  # noqa: BLE001 - never fail classification on cache miss
+            logger.debug(f"USPSTF lookup failed during denial classification: {e}")
+            return []
+
     async def get_denialtype(self, denial_text, procedure, diagnosis):
         """Get the denial type. For now short circuit logic."""
         icd_codes = self.icd10_re.finditer(denial_text)
@@ -68,6 +96,10 @@ class ProcessDenialCodes(DenialBase):
             code = i.group(1)
             if code in self.preventive_codes:
                 return [self.preventive_denial]
+        # Fall back to USPSTF coverage list — if the denial references a code
+        # tied to a USPSTF A/B grade we flag it as preventive too.
+        if self.find_uspstf_evidence(denial_text):
+            return [self.preventive_denial]
         return []
 
     async def get_regulator(self, text):
