@@ -21,10 +21,13 @@ def test_navihealth_or_nh_predict_triggers_vendor_block():
 
 
 def test_footer_algorithm_does_not_overtrigger_high_confidence():
-    text = "Claim denial for missing referral. Footer: algorithm v2 checksum id"
+    text = (
+        "Claim denial for missing referral. "
+        "Footer: algorithm v2 checksum id clinical guideline medical necessity criteria"
+    )
     result = detect_algorithmic_review_terms(text)
     assert result.matched is True
-    assert result.confidence != "high"
+    assert result.confidence == "low"
 
 
 def test_medicare_advantage_with_automation_includes_ma_block():
@@ -38,3 +41,9 @@ def test_ordinary_denial_language_no_false_positive():
     result = detect_algorithmic_review_terms(text)
     assert result.matched is False
     assert result.suggested_template_blocks == []
+
+
+def test_mcg_dosage_not_vendor_match():
+    result = detect_algorithmic_review_terms("Dose adjusted to 25 mcg daily.")
+    assert "MCG" not in result.vendor_matches
+

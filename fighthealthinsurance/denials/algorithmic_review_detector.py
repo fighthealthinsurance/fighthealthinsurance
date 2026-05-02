@@ -28,7 +28,7 @@ TERM_PATTERNS: dict[str, str] = {
 
 VENDOR_PATTERNS: dict[str, str] = {
     "InterQual": r"\binterqual\b",
-    "MCG": r"\bmcg\b",
+    "MCG": r"\bmcg\b(?:(?:\s*\(\s*care\s+guidelines?\s*\))|\s+(?:care\s+guidelines?|guideline(?:s)?|criteria|health))",
     "Milliman": r"\bmilliman\b",
     "NaviHealth": r"\bnavihealth\b|\bnh\s*predict\b",
     "EviCore": r"\bevicore\b",
@@ -40,24 +40,59 @@ def _footer_only_algorithm_match(text: str, matched_terms: list[str]) -> bool:
     if "algorithm" not in matched_terms:
         return False
     lower = text.lower()
-    if any(t in matched_terms for t in ["automated review", "algorithmic determination", "AI", "artificial intelligence", "machine learning"]):
+    if any(
+        t in matched_terms
+        for t in [
+            "automated review",
+            "algorithmic determination",
+            "AI",
+            "artificial intelligence",
+            "machine learning",
+        ]
+    ):
         return False
     return bool(re.search(r"footer|template|document\s+id|checksum", lower))
+
+
+TERM_WEIGHTS: dict[str, float] = {
+    "automated review": 2.0,
+    "algorithmic determination": 2.0,
+    "algorithm": 0.5,
+    "AI": 1.0,
+    "artificial intelligence": 1.0,
+    "machine learning": 1.5,
+    "clinical guideline": 0.75,
+    "proprietary criteria": 1.0,
+    "medical necessity criteria": 1.0,
+    "utilization management": 0.75,
+}
+
+
+def _dedupe_overlapping_terms(matched_terms: list[str]) -> list[str]:
+    deduped = set(matched_terms)
+    if "algorithmic determination" in deduped:
+        deduped.discard("algorithm")
+    if "artificial intelligence" in deduped:
+        deduped.discard("AI")
+    return sorted(deduped)
 
 
 def detect_algorithmic_review_terms(text: str) -> AlgorithmicReviewDetectionResult:
     lower = (text or "").lower()
     matched_terms = [name for name, pat in TERM_PATTERNS.items() if re.search(pat, lower)]
+    matched_terms = _dedupe_overlapping_terms(matched_terms)
     vendor_matches = [name for name, pat in VENDOR_PATTERNS.items() if re.search(pat, lower)]
 
     matched = bool(matched_terms or vendor_matches)
-    score = len(matched_terms) + (2 * len(vendor_matches))
+    score = sum(TERM_WEIGHTS.get(term, 1.0) for term in matched_terms) + (
+        2.0 * len(vendor_matches)
+    )
     if _footer_only_algorithm_match(lower, matched_terms):
         score = min(score, 1)
 
     if score >= 5:
         confidence: Literal["low", "medium", "high"] = "high"
-    elif score >= 2:
+    elif score >= 1.5:
         confidence = "medium"
     elif matched:
         confidence = "low"
@@ -126,4 +161,8 @@ TEMPLATE_BLOCKS: dict[str, str] = {
 
 
 def render_template_blocks(block_ids: list[str]) -> list[str]:
-    return [TEMPLATE_BLOCKS[block_id] for block_id in block_ids if block_id in TEMPLATE_BLOCKS]
+    return [
+        TEMPLATE_BLOCKS[block_id]
+        for block_id in block_ids
+        if block_id in TEMPLATE_BLOCKS
+    ]
