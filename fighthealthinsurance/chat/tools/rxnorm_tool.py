@@ -24,6 +24,12 @@ class RxNormLookupTool(BaseTool):
     pattern = RXNORM_LOOKUP_REGEX
     name = "RxNorm"
 
+    # Minimum approximate-match score we'll surface to the LLM. Anything
+    # below this is treated as "no confident match" so we don't put a
+    # plausibly-wrong canonical name in front of the model. Aligned with
+    # the threshold PubMedTool uses for query rewriting.
+    MIN_MATCH_SCORE = 75
+
     def __init__(
         self,
         send_status_message: Callable[[str], Awaitable[None]],
@@ -72,31 +78,46 @@ class RxNormLookupTool(BaseTool):
                 is_professional=is_professional,
             )
 
-            if cleaned_response and additional_response:
-                cleaned_response += additional_response
-            elif additional_response:
-                cleaned_response = additional_response
+            cleaned_response = self._merge(cleaned_response, additional_response)
+            context = self._merge(context, additional_context)
 
-            if context and additional_context:
-                context = context + additional_context
-            elif additional_context:
-                context = additional_context
-
-        updated_context = (context + rx_context) if context else rx_context
+        updated_context = self._merge(context, rx_context)
         return cleaned_response, updated_context
 
     @staticmethod
-    def _format_context(query: str, info: dict[str, Any]) -> str:
-        if not info.get("matched"):
+    def _merge(existing: Optional[str], addition: Optional[str]) -> str:
+        """Concatenate two strings with a blank-line separator.
+
+        Returns ``""`` if both are empty/None. Avoids running text
+        together when the recursive callback returns plain prose.
+        """
+        if not existing:
+            return (addition or "").lstrip()
+        if not addition:
+            return existing
+        return f"{existing.rstrip()}\n\n{addition.lstrip()}"
+
+    @classmethod
+    def _format_context(cls, query: str, info: dict[str, Any]) -> str:
+        # Treat low-score fuzzy matches the same as a miss — we'd rather
+        # tell the LLM to fall back on the user's spelling than hand it a
+        # plausibly-wrong canonical name from approximate matching.
+        score = info.get("score")
+        below_threshold = (
+            info.get("matched") and score is not None and score < cls.MIN_MATCH_SCORE
+        )
+        # NB: deliberately avoid emitting the literal phrase "rxnorm lookup:"
+        # so an LLM that echoes the context can't re-trigger this tool.
+        if not info.get("matched") or below_threshold:
             return (
-                f"\n\nRxNorm lookup for {query!r}: no canonical RxNorm record "
+                f"\n\nRxNorm result for {query!r}: no canonical RxNorm record "
                 f"found. Use the user's spelling as-is and consider asking the "
                 f"user to confirm.\n"
             )
         ingredients = ", ".join(info.get("ingredients") or []) or "(unknown)"
         brand_names = ", ".join(info.get("brand_names") or []) or "(none listed)"
         return (
-            f"\n\nRxNorm lookup for {query!r}:\n"
+            f"\n\nRxNorm result for {query!r}\n"
             f"  canonical name: {info['canonical_name']}\n"
             f"  RxCUI: {info['rxcui']}\n"
             f"  term type: {info.get('tty') or '(unknown)'}\n"

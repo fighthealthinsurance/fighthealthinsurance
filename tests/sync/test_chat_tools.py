@@ -90,6 +90,26 @@ class TestToolPatterns(TestCase):
             self.assertIsNotNone(match, f"Failed to match: {text}")
             self.assertEqual(match.group(1).strip(), expected)
 
+    def test_rxnorm_lookup_pattern_rejects_prose(self):
+        """Pattern should not match natural-language mentions without an
+        explicit ``rxnorm_lookup:`` directive."""
+        # No colon — should not match.
+        self.assertIsNone(
+            re.search(
+                RXNORM_LOOKUP_REGEX,
+                "RxNorm lookup for Lipitor",
+                re.IGNORECASE,
+            )
+        )
+        # Random sentence containing the words but not in tool form.
+        self.assertIsNone(
+            re.search(
+                RXNORM_LOOKUP_REGEX,
+                "I will check rxnorm lookup later",
+                re.IGNORECASE,
+            )
+        )
+
 
 class TestBaseTool(TestCase):
     """Test BaseTool abstract class functionality."""
