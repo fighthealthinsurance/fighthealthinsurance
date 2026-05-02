@@ -896,8 +896,13 @@ class DenialResponseInfo:
     insurance_company: Optional[str]
     plan_id: Optional[str]
     # Pharmacy discount programs and financial-assistance directory results.
-    # Populated when the denial concerns a prescription drug. Both are dicts
-    # so the REST serializer can render them without bespoke serializers.
+    # Both are dicts so the REST serializer can render them without bespoke
+    # serializers, and both are None when there is nothing specific to show:
+    #   * pharmacy_coupon_suggestion: populated when the denial concerns a
+    #     known prescription drug or matches a generic prescription cue.
+    #   * financial_assistance: populated when the search finds at least
+    #     one program tied to the patient's drug / diagnosis / state - the
+    #     general copay directories alone do not gate this on.
     pharmacy_coupon_suggestion: Optional[dict] = None
     financial_assistance: Optional[dict] = None
 
@@ -2107,9 +2112,16 @@ class DenialCreatorHelper:
         """
         Build a JSON-serializable financial-assistance payload for a denial.
 
-        Always returns the general directory + safety-net entries so a patient
-        with any denial sees Medicaid/FQHC pathways. Diagnosis- and
-        drug-specific entries fire only when matched.
+        Returns None unless `search()` produced at least one entry tied to
+        the patient's specific drug, diagnosis, or state - i.e. there's
+        something targeted enough to render a dedicated section. The
+        general copay directories and base safety-net entries are always
+        returned by `search()` but on their own are not specific enough to
+        gate the section on (otherwise it would render for every denial).
+
+        When the section is rendered, the payload still includes those
+        general/safety-net programs so the frontend can show them as
+        background context alongside the targeted matches.
         """
         from fighthealthinsurance.financial_assistance_directory import search
 
@@ -2125,7 +2137,7 @@ class DenialCreatorHelper:
                 "Financial assistance search failed; returning None"
             )
             return None
-        if results.is_empty():
+        if not results.has_specific_matches():
             return None
 
         def _serialize(program):

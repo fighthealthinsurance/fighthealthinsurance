@@ -20,83 +20,91 @@ from typing import Optional
 # at retail pharmacies via discount cards). Suitable as a "bridge" while
 # appealing. Names are matched case-insensitively as whole words.
 #
+# Stored as a tuple so iteration order is stable across runs (and so we can
+# still build a frozenset for fast membership checks below).
+#
 # Sources for inclusion: GoodRx low-cost lists, Mark Cuban Cost Plus Drugs
 # catalog, common $4 generic lists at major retailers.
-CHEAP_GENERIC_DRUGS: frozenset[str] = frozenset(
-    {
-        # Cardiovascular
-        "amlodipine",
-        "atorvastatin",
-        "carvedilol",
-        "clopidogrel",
-        "furosemide",
-        "hydrochlorothiazide",
-        "lisinopril",
-        "losartan",
-        "metoprolol",
-        "pravastatin",
-        "rosuvastatin",
-        "simvastatin",
-        # Diabetes (oral generics only - GLP-1s like Ozempic are NOT cheap)
-        "glipizide",
-        "metformin",
-        # Mental health / neuro
-        "alprazolam",
-        "bupropion",
-        "buspirone",
-        "citalopram",
-        "duloxetine",
-        "escitalopram",
-        "fluoxetine",
-        "gabapentin",
-        "lamotrigine",
-        "mirtazapine",
-        "paroxetine",
-        "sertraline",
-        "trazodone",
-        "venlafaxine",
-        # GI
-        "famotidine",
-        "omeprazole",
-        "pantoprazole",
-        "ranitidine",
-        # Respiratory / allergy
-        "albuterol",
-        "cetirizine",
-        "fluticasone",
-        "loratadine",
-        "montelukast",
-        # Antibiotics
-        "amoxicillin",
-        "azithromycin",
-        "cephalexin",
-        "ciprofloxacin",
-        "doxycycline",
-        # Hormones / HRT
-        "estradiol",
-        "levothyroxine",
-        "progesterone",
-        "spironolactone",
-        "testosterone",
-        # Pain
-        "diclofenac",
-        "ibuprofen",
-        "meloxicam",
-        "naproxen",
-        # Other common
-        "allopurinol",
-        "finasteride",
-        "prednisone",
-        "tamsulosin",
-        "warfarin",
-    }
+CHEAP_GENERIC_DRUGS_ORDERED: tuple[str, ...] = (
+    # Cardiovascular
+    "amlodipine",
+    "atorvastatin",
+    "carvedilol",
+    "clopidogrel",
+    "furosemide",
+    "hydrochlorothiazide",
+    "lisinopril",
+    "losartan",
+    "metoprolol",
+    "pravastatin",
+    "rosuvastatin",
+    "simvastatin",
+    # Diabetes (oral generics only - GLP-1s like Ozempic are NOT cheap)
+    "glipizide",
+    "metformin",
+    # Mental health / neuro
+    "alprazolam",
+    "bupropion",
+    "buspirone",
+    "citalopram",
+    "duloxetine",
+    "escitalopram",
+    "fluoxetine",
+    "gabapentin",
+    "lamotrigine",
+    "mirtazapine",
+    "paroxetine",
+    "sertraline",
+    "trazodone",
+    "venlafaxine",
+    # GI
+    "famotidine",
+    "omeprazole",
+    "pantoprazole",
+    "ranitidine",
+    # Respiratory / allergy
+    "albuterol",
+    "cetirizine",
+    "fluticasone",
+    "loratadine",
+    "montelukast",
+    # Antibiotics
+    "amoxicillin",
+    "azithromycin",
+    "cephalexin",
+    "ciprofloxacin",
+    "doxycycline",
+    # Hormones / HRT
+    "estradiol",
+    "levothyroxine",
+    "progesterone",
+    "spironolactone",
+    "testosterone",
+    # Pain
+    "diclofenac",
+    "ibuprofen",
+    "meloxicam",
+    "naproxen",
+    # Other common
+    "allopurinol",
+    "finasteride",
+    "prednisone",
+    "tamsulosin",
+    "warfarin",
 )
+CHEAP_GENERIC_DRUGS: frozenset[str] = frozenset(CHEAP_GENERIC_DRUGS_ORDERED)
 
 
 # Drug brand-name to generic-name aliases. Many patients/denials reference
 # the brand name even when a cheap generic exists.
+#
+# IMPORTANT: only include brand names whose primary active ingredient IS the
+# mapped generic. Combination products (e.g., Advair = fluticasone+salmeterol,
+# Symbicort = budesonide+formoterol) MUST NOT be aliased to one component
+# generic - the combination is typically expensive and not interchangeable
+# with the single-ingredient generic. Combo brands belong in EXPENSIVE_DRUGS
+# instead so they're detected but messaged correctly.
 BRAND_TO_GENERIC: dict[str, str] = {
-    "advair": "fluticasone",
     "celexa": "citalopram",
     "cipro": "ciprofloxacin",
     "cymbalta": "duloxetine",
@@ -128,22 +136,27 @@ BRAND_TO_GENERIC: dict[str, str] = {
 # Drugs that are well-known to be expensive even with discount programs.
 # These get a different message: discount programs may help marginally but
 # the appeal is the patient's primary path.
-EXPENSIVE_DRUGS: frozenset[str] = frozenset(
-    {
-        "dupixent",
-        "enbrel",
-        "humira",
-        "mounjaro",
-        "ozempic",
-        "rinvoq",
-        "saxenda",
-        "skyrizi",
-        "stelara",
-        "trulicity",
-        "wegovy",
-        "zepbound",
-    }
+#
+# Includes combination inhalers/products like Advair (fluticasone+salmeterol)
+# - they're commonly denied for non-formulary reasons and we want to detect
+# them, but the cash-pay "bridge" guidance for cheap generics doesn't apply.
+EXPENSIVE_DRUGS_ORDERED: tuple[str, ...] = (
+    "advair",
+    "dupixent",
+    "enbrel",
+    "humira",
+    "mounjaro",
+    "ozempic",
+    "rinvoq",
+    "saxenda",
+    "skyrizi",
+    "stelara",
+    "symbicort",
+    "trulicity",
+    "wegovy",
+    "zepbound",
 )
+EXPENSIVE_DRUGS: frozenset[str] = frozenset(EXPENSIVE_DRUGS_ORDERED)
 
 
 # Generic/keyword cues that suggest the denial is for a prescription drug
@@ -253,24 +266,41 @@ def detect_drug(*texts: Optional[str]) -> Optional[str]:
     """
     Look for a known drug name across one or more text fields.
 
+    Within a single text field we collect every brand/generic match (using
+    ordered tuples so iteration is deterministic) and return the one whose
+    match starts earliest in the text - that is usually the drug the writer
+    is talking about, and removes any dependence on dict/set ordering.
     Brand names are normalized to their generic equivalent when known so
-    callers receive a consistent canonical name. Returns the lower-cased
-    drug name on the first match, or None.
+    callers receive a consistent canonical name. Texts are scanned in the
+    order supplied; the first text containing any match wins.
     """
     for text in texts:
         if not text:
             continue
         normalized = _normalize(text)
-        # Brand-name match takes priority so we can normalize to generic.
+        candidates: list[tuple[int, str]] = []
+
+        # Brand names map to a generic; iterate dict in insertion order.
         for brand, generic in BRAND_TO_GENERIC.items():
-            if _contains_word(normalized, brand):
-                return generic
-        for drug in CHEAP_GENERIC_DRUGS:
-            if _contains_word(normalized, drug):
-                return drug
-        for drug in EXPENSIVE_DRUGS:
-            if _contains_word(normalized, drug):
-                return drug
+            m = re.search(r"\b" + re.escape(brand) + r"\b", normalized, re.IGNORECASE)
+            if m is not None:
+                candidates.append((m.start(), generic))
+
+        for drug in CHEAP_GENERIC_DRUGS_ORDERED:
+            m = re.search(r"\b" + re.escape(drug) + r"\b", normalized, re.IGNORECASE)
+            if m is not None:
+                candidates.append((m.start(), drug))
+
+        for drug in EXPENSIVE_DRUGS_ORDERED:
+            m = re.search(r"\b" + re.escape(drug) + r"\b", normalized, re.IGNORECASE)
+            if m is not None:
+                candidates.append((m.start(), drug))
+
+        if candidates:
+            # Earliest position wins. Stable sort keeps brand-priority for
+            # ties at the same position.
+            candidates.sort(key=lambda c: c[0])
+            return candidates[0][1]
     return None
 
 

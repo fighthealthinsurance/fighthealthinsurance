@@ -122,9 +122,11 @@ class FinancialAssistanceTool(BaseTool):
             )
             return cleaned_response, context
 
-        if results.is_empty():
-            await self.send_status_message("No financial assistance matches found.")
-            return cleaned_response, context
+        # Note: we deliberately do NOT gate on results.is_empty() /
+        # has_specific_matches() here. The LLM explicitly invoked this
+        # tool, so the user is asking for cost help; surfacing the general
+        # copay-foundation directory + the FQHC/340B safety-net entries is
+        # useful even when no drug- or diagnosis-specific match fires.
 
         info_text = self._format_results_for_llm(results)
         action_text = (
