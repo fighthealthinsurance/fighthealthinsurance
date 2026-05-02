@@ -240,3 +240,42 @@ class TestDenialTypes(TestCase):
             )
 
         assert result == []
+
+    @pytest.mark.asyncio
+    async def test_process_denial_codes_preventive_hcpcs_override(self):
+        """Returns the preventive denial when an HCPCS code is in the
+        preventive_codes CSV override - the previous CPT-only branch
+        silently dropped HCPCS-coded preventive items (e.g. supply
+        codes for screening test strips)."""
+        processor = await sync_to_async(ProcessDenialCodes)()
+        # Inject a known HCPCS code into the CSV override.
+        processor.preventive_codes = {"A4253": "blood glucose test strips"}
+        processor.preventive_diagnosis = {}
+
+        result = await processor.get_denialtype(
+            "Supply code A4253 was denied", None, None
+        )
+
+        assert len(result) == 1
+        assert result[0].name == "Preventive Care"
+
+    @pytest.mark.asyncio
+    async def test_process_denial_codes_get_dme_codes(self):
+        """get_dme_codes returns only HCPCS codes whose letter prefix
+        identifies durable medical equipment (E/K) or orthotic /
+        prosthetic items (L). Drug (J) and supply (A) codes are
+        excluded."""
+        processor = await sync_to_async(ProcessDenialCodes)()
+        result = await processor.get_dme_codes(
+            "Patient prescribed E0260 hospital bed, K0001 wheelchair, "
+            "L0631 brace, J3490 drug, A4253 strips."
+        )
+        assert result == {"E0260", "K0001", "L0631"}
+
+    @pytest.mark.asyncio
+    async def test_process_denial_codes_get_dme_codes_empty(self):
+        processor = await sync_to_async(ProcessDenialCodes)()
+        result = await processor.get_dme_codes(
+            "Generic denial with CPT 99213 only - no HCPCS items."
+        )
+        assert result == set()

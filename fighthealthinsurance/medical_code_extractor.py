@@ -81,12 +81,30 @@ HCPCS_CATEGORY: dict[str, str] = {
 DME_HCPCS_PREFIXES: frozenset[str] = frozenset({"E", "K", "L"})
 
 
-# Map device-type keys (matching the choices in
-# ``fighthealthinsurance.forms.questions.AssistiveDeviceAppealForm``) to
-# lowercased keyword phrases that, when found in denial text, strongly
-# suggest a particular kind of DME or assistive device. Phrases are kept
-# lowercase; matching is case-insensitive and uses substring tests so
-# multi-word phrases match across variable whitespace.
+# Subset of DME categories whose keys correspond directly to choices in
+# ``fighthealthinsurance.forms.questions.AssistiveDeviceAppealForm``.
+# Categories outside this set (respiratory, diabetic, hospital_bed,
+# infusion_pump) describe broader DME classes that the assistive-device
+# form does not enumerate; callers that pre-fill the form must map
+# those to ``"other"``. ``extract_dme_devices`` does this mapping
+# automatically and exposes the form-aligned subset as ``device_types``.
+FORM_DEVICE_TYPES: frozenset[str] = frozenset(
+    {
+        "aac_high_tech",
+        "aac_low_tech",
+        "mobility",
+        "prosthetic",
+        "orthotic",
+        "hearing",
+    }
+)
+
+
+# Map DME-category keys to lowercased keyword phrases that, when found
+# in denial text, strongly suggest a particular kind of DME or
+# assistive device. Phrases are kept lowercase; matching is
+# case-insensitive and operates on whitespace-normalized text so
+# multi-word phrases also match across line breaks or repeated spaces.
 DME_DEVICE_KEYWORDS: dict[str, tuple[str, ...]] = {
     "aac_high_tech": (
         "speech-generating device",
@@ -234,60 +252,103 @@ def is_aac_code(code: str) -> bool:
     return num == 1902 or 2500 <= num <= 2599
 
 
+_WHITESPACE_RE = re.compile(r"\s+")
+
+
+def _normalize_whitespace(text: str) -> str:
+    """Collapse runs of whitespace (spaces, tabs, newlines) into single
+    spaces so that multi-word keyword phrases match across line wraps
+    and repeated spaces commonly produced by OCR or PDF text extraction.
+    """
+    return _WHITESPACE_RE.sub(" ", text)
+
+
 def extract_dme_devices(text: str) -> dict[str, object]:
     """Identify DME and assistive devices mentioned in *text*.
 
     Returns a dict with:
         - ``codes``: set of HCPCS codes that look like DME (E/K/L)
         - ``all_hcpcs``: full set of HCPCS codes found
-        - ``device_types``: set of device-type keys that matched on
-          either keyword or HCPCS code prefix
-        - ``matched_keywords``: dict of device_type -> list of matched
-          keyword phrases (lowercase, deduplicated, in document order)
+        - ``device_types``: set of form-aligned device-type keys
+          (a subset of the ``AssistiveDeviceAppealForm.device_type``
+          choices). When a broader DME category matches but is not a
+          valid form choice, ``"other"`` is added so callers can safely
+          pre-fill the form.
+        - ``dme_categories``: full set of matched DME category keys,
+          including non-form-aligned categories like ``respiratory``,
+          ``diabetic``, ``hospital_bed``, and ``infusion_pump``. Useful
+          for appeal routing and RAG context filtering.
+        - ``matched_keywords``: dict of dme_category -> list of matched
+          keyword phrases (lowercase, deduplicated, in the order each
+          phrase first appears in the source text).
 
-    Device-type keys align with
-    ``fighthealthinsurance.forms.questions.AssistiveDeviceAppealForm``
-    so callers can pre-fill the assistive-device form when a denial is
-    classified as DME.
+    Keyword matching operates on whitespace-normalized lowercased text
+    so multi-word phrases ("speech-generating device") also match when
+    the text contains line breaks or repeated spaces from OCR or PDF
+    extraction.
     """
     if not text:
         return {
             "codes": set(),
             "all_hcpcs": set(),
             "device_types": set(),
+            "dme_categories": set(),
             "matched_keywords": {},
         }
 
     all_hcpcs = extract_hcpcs_codes(text)
     dme_codes = {c for c in all_hcpcs if is_dme_code(c)}
 
-    lowered = text.lower()
-    matched_keywords: dict[str, list[str]] = {}
-    device_types: set[str] = set()
-    for device_type, keywords in DME_DEVICE_KEYWORDS.items():
-        for keyword in keywords:
-            if keyword in lowered:
-                bucket = matched_keywords.setdefault(device_type, [])
-                if keyword not in bucket:
-                    bucket.append(keyword)
-                device_types.add(device_type)
+    normalized = _normalize_whitespace(text.lower())
 
-    # AAC HCPCS codes promote the device type even without keyword hits.
+    # Find each (category, keyword) pair that matches and remember the
+    # position of its first occurrence so we can record matched keywords
+    # in document order rather than DME_DEVICE_KEYWORDS-iteration order.
+    keyword_hits: list[tuple[int, str, str]] = []
+    for category, keywords in DME_DEVICE_KEYWORDS.items():
+        for keyword in keywords:
+            position = normalized.find(keyword)
+            if position != -1:
+                keyword_hits.append((position, category, keyword))
+    keyword_hits.sort()
+
+    matched_keywords: dict[str, list[str]] = {}
+    dme_categories: set[str] = set()
+    for _position, category, keyword in keyword_hits:
+        bucket = matched_keywords.setdefault(category, [])
+        if keyword not in bucket:
+            bucket.append(keyword)
+        dme_categories.add(category)
+
+    # AAC and L-code HCPCS codes promote the category even without
+    # keyword hits. Inspect codes in their first-occurrence order so
+    # the L-code orthotic-default decision sees keyword-derived
+    # categories first.
     for code in all_hcpcs:
         upper = code.upper()
         if is_aac_code(upper):
-            device_types.add("aac_high_tech")
+            dme_categories.add("aac_high_tech")
         elif upper.startswith("L") and not (
-            "prosthetic" in device_types or "orthotic" in device_types
+            "prosthetic" in dme_categories or "orthotic" in dme_categories
         ):
             # L-codes cover both orthotics and prosthetics; default to
             # "orthotic" when we have no keyword evidence either way.
-            device_types.add("orthotic")
+            dme_categories.add("orthotic")
+
+    # Project to the form-valid subset; anything outside FORM_DEVICE_TYPES
+    # collapses to "other" so callers can pre-fill the form safely.
+    device_types: set[str] = set()
+    for category in dme_categories:
+        if category in FORM_DEVICE_TYPES:
+            device_types.add(category)
+        else:
+            device_types.add("other")
 
     return {
         "codes": dme_codes,
         "all_hcpcs": all_hcpcs,
         "device_types": device_types,
+        "dme_categories": dme_categories,
         "matched_keywords": matched_keywords,
     }
 

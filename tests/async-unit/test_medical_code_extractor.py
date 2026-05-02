@@ -9,6 +9,7 @@ import pytest
 from fighthealthinsurance.medical_code_extractor import (
     DME_DEVICE_KEYWORDS,
     DME_HCPCS_PREFIXES,
+    FORM_DEVICE_TYPES,
     HCPCS_CATEGORY,
     extract_cpt_codes,
     extract_dme_devices,
@@ -213,6 +214,7 @@ class TestExtractDmeDevices:
         assert result["codes"] == set()
         assert result["all_hcpcs"] == set()
         assert result["device_types"] == set()
+        assert result["dme_categories"] == set()
         assert result["matched_keywords"] == {}
 
     def test_identifies_dme_codes(self):
@@ -220,17 +222,28 @@ class TestExtractDmeDevices:
         result = extract_dme_devices(text)
         assert result["codes"] == {"E0260"}
         assert result["all_hcpcs"] == {"E0260", "J3490"}
-        # Hospital bed keyword should also fire.
-        assert "hospital_bed" in result["device_types"]
+        # hospital_bed is a broader DME category, not a form choice, so
+        # it appears in dme_categories and collapses to "other" in the
+        # form-aligned device_types.
+        assert "hospital_bed" in result["dme_categories"]
+        assert "other" in result["device_types"]
 
     def test_identifies_mobility_keyword(self):
         result = extract_dme_devices("Patient needs a power wheelchair.")
         assert "mobility" in result["device_types"]
+        assert "mobility" in result["dme_categories"]
         assert "wheelchair" in result["matched_keywords"]["mobility"]
 
     def test_identifies_aac_high_tech_keyword(self):
         result = extract_dme_devices(
             "Patient requires a speech-generating device for ALS."
+        )
+        assert "aac_high_tech" in result["device_types"]
+
+    def test_aac_keyword_matches_across_line_break(self):
+        # OCR / PDF wrapping commonly inserts a newline mid-phrase.
+        result = extract_dme_devices(
+            "Patient requires a speech-generating\n   device for ALS."
         )
         assert "aac_high_tech" in result["device_types"]
 
@@ -257,16 +270,20 @@ class TestExtractDmeDevices:
         # present.
         assert "orthotic" not in result["device_types"]
 
-    def test_respiratory_keywords(self):
+    def test_respiratory_keyword_emits_other_for_form(self):
         result = extract_dme_devices("CPAP therapy denied for OSA.")
-        assert "respiratory" in result["device_types"]
+        # respiratory is a broader DME category and the form does not
+        # have a matching choice, so device_types contains only "other".
+        assert "respiratory" in result["dme_categories"]
+        assert result["device_types"] == {"other"}
         assert "cpap" in result["matched_keywords"]["respiratory"]
 
-    def test_diabetic_keywords(self):
+    def test_diabetic_keyword_emits_other_for_form(self):
         result = extract_dme_devices(
             "Continuous glucose monitor denied as experimental."
         )
-        assert "diabetic" in result["device_types"]
+        assert "diabetic" in result["dme_categories"]
+        assert result["device_types"] == {"other"}
 
     def test_keyword_deduplication(self):
         # The same keyword appearing multiple times should be recorded
@@ -275,6 +292,34 @@ class TestExtractDmeDevices:
             "Wheelchair denied. Wheelchair appeal. WHEELCHAIR claim."
         )
         assert result["matched_keywords"]["mobility"] == ["wheelchair"]
+
+    def test_matched_keywords_are_in_document_order(self):
+        # walker appears before wheelchair in the text; the result must
+        # reflect document order, not the order keywords appear in
+        # DME_DEVICE_KEYWORDS.
+        result = extract_dme_devices(
+            "Patient uses a walker today; a wheelchair was denied."
+        )
+        assert result["matched_keywords"]["mobility"] == ["walker", "wheelchair"]
+
+    def test_matched_keywords_across_categories_track_order(self):
+        result = extract_dme_devices(
+            "Hearing aid was denied; later wheelchair was also denied."
+        )
+        # mobility category should appear in matched_keywords because
+        # wheelchair matched, and wheelchair should be recorded once.
+        assert result["matched_keywords"]["hearing"] == ["hearing aid"]
+        assert result["matched_keywords"]["mobility"] == ["wheelchair"]
+
+    def test_form_only_returns_form_valid_keys(self):
+        # Combination of mobility (form-valid) and infusion_pump
+        # (broader) should yield {"mobility", "other"} in device_types.
+        result = extract_dme_devices(
+            "Wheelchair denied; external infusion pump also denied."
+        )
+        assert result["device_types"] == {"mobility", "other"}
+        assert "infusion_pump" in result["dme_categories"]
+        assert "mobility" in result["dme_categories"]
 
 
 class TestUniqueInOrder:
@@ -297,3 +342,11 @@ class TestModuleConstants:
             # All keywords must be lowercase to support case-insensitive
             # substring matching done by extract_dme_devices.
             assert all(v == v.lower() for v in values)
+
+    def test_form_device_types_are_subset_of_keyword_keys(self):
+        # Every form-valid device type must have at least one keyword
+        # entry so callers can rely on the key being matchable.
+        for key in FORM_DEVICE_TYPES:
+            assert key in DME_DEVICE_KEYWORDS, (
+                f"FORM_DEVICE_TYPES key {key!r} missing from " "DME_DEVICE_KEYWORDS"
+            )

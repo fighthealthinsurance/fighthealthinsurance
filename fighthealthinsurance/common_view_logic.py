@@ -43,7 +43,6 @@ from fhi_users.models import ProfessionalUser, UserDomain
 from fighthealthinsurance import stripe_utils
 from fighthealthinsurance.fax_actor_ref import fax_actor_ref
 from fighthealthinsurance.medical_code_extractor import (
-    extract_dme_devices,
     extract_icd10_codes,
     extract_procedure_codes,
 )
