@@ -367,21 +367,38 @@ let usingRestFallback = false;
 
 let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
 
+function parseValidDenialId(value: unknown): number | null {
+  const asString = String(value ?? '').trim();
+  if (!/^\d+$/.test(asString)) {
+    return null;
+  }
+  const parsed = Number(asString);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
 function reportClientError(error: string): void {
-  const denialId = (my_data as any).denial_id || (my_data as any).get?.('denial_id') || 'unknown';
+  const denialIdRaw = (my_data as any).denial_id || (my_data as any).get?.('denial_id') || '';
+  const denialId = parseValidDenialId(denialIdRaw);
   const csrfToken = (my_data as any).csrfmiddlewaretoken || '';
-  const browserInfo = `${navigator.userAgent} | ${window.location.pathname}`;
+  const browserInfo = `${navigator.userAgent} | ${window.location.pathname} | ref=${document.referrer || 'none'}`;
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (csrfToken) {
     headers['X-CSRFToken'] = csrfToken;
+  }
+  if (denialId === null) {
+    console.warn('Invalid denial ID format on client before error report', {
+      denialIdRaw,
+      sessionStorageKeys: Object.keys(window.sessionStorage || {}).slice(0, 10),
+    });
   }
   fetch('/ziggy/rest/report_client_error', {
     method: 'POST',
     headers,
     body: JSON.stringify({
-      denial_id: denialId,
+      denial_id: denialId ?? 'invalid',
       error,
       browser_info: browserInfo,
+      denial_id_raw: String(denialIdRaw),
     }),
   }).catch(() => {}); // fire-and-forget
 }

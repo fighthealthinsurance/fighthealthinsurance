@@ -46,6 +46,7 @@ from fighthealthinsurance.serializers.fields import (
     DictionaryStringField,
     StringListField,
 )
+from fighthealthinsurance.utils import is_valid_denial_id
 
 # Legacy alias for backwards compatibility (typo in original name)
 NextStepInfoSerizableSerializer = NextStepInfoSerializableSerializer
@@ -57,6 +58,11 @@ class ChooseAppealRequestSerializer(serializers.Serializer):
     generated_appeal_text = serializers.CharField()
     editted_appeal_text = serializers.CharField()
     denial_id = serializers.CharField()
+
+    def validate_denial_id(self, value: str) -> str:
+        if not is_valid_denial_id(value):
+            raise serializers.ValidationError("Invalid denial_id format")
+        return value
 
 
 class DenialResponseInfoSerializer(serializers.Serializer):
@@ -72,6 +78,11 @@ class DenialResponseInfoSerializer(serializers.Serializer):
     semi_sekret = serializers.CharField()
     fax_number = serializers.CharField(required=False)
     date_of_service = serializers.CharField(required=False)
+
+    def validate_denial_id(self, value: str) -> str:
+        if not is_valid_denial_id(value):
+            raise serializers.ValidationError("Invalid denial_id format in response")
+        return value
     plan_id = serializers.CharField(required=False)
     claim_id = serializers.CharField(required=False)
     insurance_company = serializers.CharField(required=False)
@@ -134,6 +145,11 @@ class QAResponsesSerializer(serializers.Serializer):
 
     denial_id = serializers.CharField()
     qa = serializers.DictField(child=serializers.CharField())
+
+    def validate_denial_id(self, value: str) -> str:
+        if not is_valid_denial_id(value):
+            raise serializers.ValidationError("Invalid denial_id format")
+        return value
 
 
 # Model serializers
@@ -403,6 +419,17 @@ class AssembleAppealRequestSerializer(serializers.Serializer):
     include_provided_health_history = serializers.BooleanField(
         required=False, allow_null=True
     )
+
+    def validate(self, attrs):
+        denial_id = attrs.get("denial_id")
+        denial_uuid = attrs.get("denial_uuid")
+        if denial_id and not is_valid_denial_id(denial_id):
+            raise serializers.ValidationError({"denial_id": "Invalid denial_id format"})
+        if not denial_id and not denial_uuid:
+            raise serializers.ValidationError(
+                "One of denial_id or denial_uuid must be provided"
+            )
+        return attrs
 
 
 class AssembleAppealResponseSerializer(serializers.Serializer):
