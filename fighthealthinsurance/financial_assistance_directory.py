@@ -26,10 +26,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Optional
 
-from fighthealthinsurance.pharmacy_coupon_detector import (
-    BRAND_TO_GENERIC,
-    detect_drug,
-)
+from fighthealthinsurance.pharmacy_coupon_detector import detect_drug
 
 
 @dataclass(frozen=True)
@@ -570,10 +567,17 @@ def search(
     diagnosis_haystack_parts = [s for s in (diagnosis, denial_text) if s]
     diagnosis_haystack = " ".join(diagnosis_haystack_parts)
 
+    # Normalize the state once. We use the upper-cased form for both the
+    # payload field and the state_help lookup so callers can pass "ca",
+    # "Ca", or "CA" and get a consistent result.
+    normalized_state: Optional[str] = (
+        state_abbreviation.upper() if state_abbreviation else None
+    )
+
     results = FinancialAssistanceResults(
         canonical_drug=canonical_drug,
         diagnosis_text=diagnosis or None,
-        state_abbreviation=(state_abbreviation.upper() if state_abbreviation else None),
+        state_abbreviation=normalized_state,
     )
 
     if diagnosis_haystack:
@@ -603,13 +607,13 @@ def search(
 
     # State Medicaid pathway - look up via the existing state_help module so
     # we don't duplicate the per-state catalog.
-    if state_abbreviation:
+    if normalized_state:
         try:
             from fighthealthinsurance.state_help import (
                 get_state_help_by_abbreviation,
             )
 
-            state_help = get_state_help_by_abbreviation(state_abbreviation)
+            state_help = get_state_help_by_abbreviation(normalized_state)
             if state_help and state_help.medicaid:
                 results.state_medicaid_name = state_help.medicaid.agency_name
                 results.state_medicaid_url = state_help.medicaid.agency_url

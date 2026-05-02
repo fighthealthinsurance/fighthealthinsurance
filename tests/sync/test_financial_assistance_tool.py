@@ -200,3 +200,56 @@ class TestFormatResultsForLLM(TestCase):
         # Should not crash; produces a minimal lead-in line.
         formatted = FinancialAssistanceTool._format_results_for_llm(results)
         self.assertIn("curated directory", formatted)
+
+    def test_includes_pharmacy_discount_block_when_suggestion_present(self):
+        # The chat tool combines directory results with the pharmacy_coupon_
+        # detector's suggestion so the LLM can also recommend GoodRx, Cost
+        # Plus, and Amazon Pharmacy as a cash-pay bridge.
+        from fighthealthinsurance.financial_assistance_directory import search
+        from fighthealthinsurance.pharmacy_coupon_detector import (
+            suggest_for_denial,
+        )
+
+        results = search(drug="Wegovy")
+        suggestion = suggest_for_denial(drug="Wegovy")
+        formatted = FinancialAssistanceTool._format_results_for_llm(results, suggestion)
+        # GoodRx / Cost Plus / Amazon Pharmacy must all be in the LLM context
+        self.assertIn("GoodRx", formatted)
+        self.assertIn("Mark Cuban Cost Plus Drugs", formatted)
+        self.assertIn("Amazon Pharmacy", formatted)
+        # OOP-max caveat surfaces too
+        self.assertIn("out-of-pocket maximum", formatted.lower())
+
+    def test_pharmacy_block_omitted_when_suggestion_is_none(self):
+        from fighthealthinsurance.financial_assistance_directory import search
+
+        results = search(diagnosis="cancer")
+        formatted = FinancialAssistanceTool._format_results_for_llm(results, None)
+        # No pharmacy discount header / GoodRx link when no suggestion
+        self.assertNotIn("Pharmacy discount", formatted)
+        self.assertNotIn("GoodRx", formatted)
+
+
+class TestPharmacyDiscountInclusion(TestCase):
+    """End-to-end: invoking the tool with a drug surfaces pharmacy options."""
+
+    def test_handle_includes_pharmacy_options_in_llm_context(self):
+        callback = AsyncMock(return_value=("ok", None))
+        tool = _make_tool(call_llm_callback=callback)
+        text = '**financial_assistance {"drug": "Wegovy"}**'
+        _run(
+            tool.handle(
+                text,
+                "",
+                model_backends=MagicMock(),
+                current_message_for_llm="how can I afford Wegovy?",
+                history_for_llm=[],
+            )
+        )
+        callback.assert_awaited_once()
+        info_text = callback.call_args[0][1]
+        # GoodRx + Cost Plus + Amazon must show up alongside the directory
+        # programs, since the prompt promises pharmacy discount options.
+        self.assertIn("GoodRx", info_text)
+        self.assertIn("Mark Cuban Cost Plus Drugs", info_text)
+        self.assertIn("Amazon Pharmacy", info_text)
