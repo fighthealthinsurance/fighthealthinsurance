@@ -350,6 +350,20 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         name="choose_appeal",
     ),
     path(
+        "escalation_packet",
+        sensitive_post_parameters("email", "semi_sekret")(
+            views.GenerateEscalationPacket.as_view()
+        ),
+        name="escalation_packet",
+    ),
+    path(
+        "choose_escalation_letter",
+        sensitive_post_parameters("email", "semi_sekret", "letter_text")(
+            views.ChooseEscalationLetter.as_view()
+        ),
+        name="choose_escalation_letter",
+    ),
+    path(
         "contact",
         cache_control(public=True)(
             cache_page(60 * 60 * 2)(views.ContactView.as_view())

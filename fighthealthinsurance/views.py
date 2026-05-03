@@ -1043,6 +1043,7 @@ class ChooseAppeal(View):
                 "appeal": form.cleaned_data["appeal_text"],
                 "user_email": form.cleaned_data["email"],
                 "denial_id": form.cleaned_data["denial_id"],
+                "semi_sekret": form.cleaned_data["semi_sekret"],
                 "appeal_info_extract": appeal_info_extracted,
                 "fax_form": fax_form,
                 "current_step": 8,
@@ -1160,6 +1161,112 @@ class GenerateAppeal(View):
                     form.cleaned_data["semi_sekret"],
                 ),
                 "back_label": "Back to questions",
+            },
+        )
+
+
+class GenerateEscalationPacket(View):
+    """Render the regulator-letter generation page (a.k.a. escalation packet).
+
+    Entry point for the "Want to let the regulator know what's going on?"
+    flow. Validates the denial, computes the recipient list, and hands the
+    page over to a streaming WebSocket-driven UI that fills in one
+    editable letter per recipient.
+    """
+
+    def _build(self, request, denial_id, email, semi_sekret):
+        from fighthealthinsurance.escalation_addresses import (
+            get_recipients_for_denial,
+        )
+
+        denial = common_view_logic.get_denial_for_action(denial_id, email, semi_sekret)
+        if denial is None:
+            return redirect("scan")
+
+        recipients = get_recipients_for_denial(denial)
+        recipients_for_template = [
+            {
+                "recipient_type": r.recipient_type,
+                "name": r.name,
+                "address": r.address,
+                "phone": r.phone,
+                "url": r.url,
+                "rationale": r.rationale,
+            }
+            for r in recipients
+        ]
+        elems = {
+            "denial_id": str(denial_id),
+            "email": email,
+            "semi_sekret": semi_sekret,
+        }
+        return render(
+            request,
+            "escalation_packet.html",
+            context={
+                "form_context": elems,
+                "user_email": email,
+                "denial_id": denial_id,
+                "semi_sekret": semi_sekret,
+                "recipients": recipients_for_template,
+                "recipients_count": len(recipients_for_template),
+                "back_url": build_back_url(
+                    "generate_appeal", denial_id, email, semi_sekret
+                ),
+                "back_label": "Back to your appeal",
+            },
+        )
+
+    def get(self, request):
+        return self._build(
+            request,
+            request.GET.get("denial_id"),
+            request.GET.get("email"),
+            request.GET.get("semi_sekret"),
+        )
+
+    def post(self, request):
+        return self._build(
+            request,
+            request.POST.get("denial_id"),
+            request.POST.get("email"),
+            request.POST.get("semi_sekret"),
+        )
+
+
+class ChooseEscalationLetter(View):
+    """Persist the user's edited regulator letter and render the review page."""
+
+    def post(self, request):
+        form = core_forms.ChooseEscalationLetterForm(request.POST)
+        if not form.is_valid():
+            return HttpResponseRedirect(reverse("scan"))
+
+        cleaned = form.cleaned_data
+        escalation = common_view_logic.EscalationPacketHelper.save_chosen_letter(
+            escalation_uuid=cleaned["escalation_uuid"],
+            denial_id=cleaned["denial_id"],
+            email=cleaned["email"],
+            semi_sekret=cleaned["semi_sekret"],
+            letter_text=cleaned["letter_text"],
+        )
+        if escalation is None:
+            return HttpResponseRedirect(reverse("scan"))
+
+        return render(
+            request,
+            "escalation_packet_review.html",
+            context={
+                "letter_text": escalation.letter_text,
+                "recipient_name": escalation.recipient_name,
+                "recipient_address": escalation.recipient_address,
+                "recipient_phone": escalation.recipient_phone,
+                "recipient_url": escalation.recipient_url,
+                "recipient_type": escalation.recipient_type,
+                "user_email": cleaned["email"],
+                "denial_id": cleaned["denial_id"],
+                "semi_sekret": cleaned["semi_sekret"],
+                "escalation_uuid": cleaned["escalation_uuid"],
             },
         )
 

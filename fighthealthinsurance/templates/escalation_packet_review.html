@@ -1,0 +1,72 @@
+{% extends 'base.html' %}
+{% load static %}
+{% block title %}
+Fight Your Health Insurance Denial: Send your regulator letter
+{% endblock title %}
+
+{% block content %}
+<div class="container" style="padding-top:1rem;">
+
+  <div class="alert-box alert-success">
+    <h3>📨 Your regulator letter is ready to send</h3>
+    <p>
+      Below is your final letter to <strong>{{ recipient_name }}</strong>.
+      Review it, fill in any remaining personal details, then send it.
+    </p>
+  </div>
+
+  <div class="alert-box" style="background:#f8f9fa; border:1px solid #dee2e6; padding:1rem;">
+    <h4 style="margin-top:0;">Recipient</h4>
+    <p style="margin:0.25rem 0;"><strong>{{ recipient_name }}</strong></p>
+    {% if recipient_address %}
+    <pre style="background:#fff; padding:0.5rem; border:1px solid #eee; border-radius:4px; white-space:pre-wrap; font-size:0.9rem;">{{ recipient_address }}</pre>
+    {% endif %}
+    {% if recipient_phone %}<p style="margin:0.25rem 0;">📞 {{ recipient_phone }}</p>{% endif %}
+    {% if recipient_url %}<p style="margin:0.25rem 0;">🔗 <a href="{{ recipient_url }}" target="_blank" rel="noopener noreferrer">{{ recipient_url }}</a></p>{% endif %}
+  </div>
+
+  <h3 class="section-header" style="margin-top:1.5rem;">Your letter</h3>
+  <textarea class="appeal_text" id="id_completed_appeal_text" rows="22">{{ letter_text }}</textarea>
+
+  <div style="margin:1.5rem 0;">
+    <h4>📤 How to send it</h4>
+    <ul style="margin-left:1.5rem; line-height:1.8;">
+      <li><strong>Print and mail:</strong> certified mail with return receipt is recommended.</li>
+      <li><strong>Email or web form:</strong> many state insurance commissioners accept complaints via their website (link above).</li>
+      {% if recipient_type == 'dol_ebsa' %}
+      <li><strong>DOL EBSA:</strong> you can also call 1-866-444-3272 or file online at
+        <a href="https://www.askebsa.dol.gov/" target="_blank" rel="noopener noreferrer">askebsa.dol.gov</a>.</li>
+      {% endif %}
+    </ul>
+    <button id="print_appeal" class="btn" style="font-size:1.05rem; padding:10px 20px;">🖨️ Print this letter</button>
+  </div>
+
+  <div class="form-nav-centered">
+    <form action="{% url 'escalation_packet' %}" method="post" style="display:inline;">
+      {% csrf_token %}
+      <input type="hidden" name="denial_id" value="{{ denial_id }}">
+      <input type="hidden" name="email" value="{{ user_email }}">
+      <input type="hidden" name="semi_sekret" value="{{ semi_sekret }}">
+      <button type="submit" class="btn btn-secondary-custom">← Back to all regulator letters</button>
+    </form>
+  </div>
+</div>
+
+<script>
+  document.addEventListener('DOMContentLoaded', () => {
+    const printButton = document.getElementById('print_appeal');
+    const textarea = document.getElementById('id_completed_appeal_text');
+    if (printButton && textarea) {
+      printButton.addEventListener('click', () => {
+        const w = window.open('', '_blank');
+        if (!w) return;
+        w.document.write('<html><head><title>Regulator letter</title></head><body><pre style="white-space:pre-wrap; font-family: Georgia, serif;">' +
+          textarea.value.replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c])) +
+          '</pre></body></html>');
+        w.document.close();
+        setTimeout(() => w.print(), 500);
+      });
+    }
+  });
+</script>
+{% endblock content %}

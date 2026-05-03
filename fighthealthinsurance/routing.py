@@ -5,6 +5,7 @@ from fighthealthinsurance.websockets import (
     PriorAuthConsumer,
     StreamingAppealsBackend,
     StreamingEntityBackend,
+    StreamingEscalationBackend,
 )
 
 websocket_urlpatterns = [
@@ -17,6 +18,11 @@ websocket_urlpatterns = [
         "ws/streaming-appeals-backend/",
         StreamingAppealsBackend.as_asgi(),
         name="streamingappeals_json_backend",
+    ),
+    path(
+        "ws/streaming-escalation-backend/",
+        StreamingEscalationBackend.as_asgi(),
+        name="streamingescalation_json_backend",
     ),
     path(
         "ws/prior-auth/",
