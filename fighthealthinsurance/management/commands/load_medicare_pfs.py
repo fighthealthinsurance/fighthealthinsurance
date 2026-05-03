@@ -106,9 +106,7 @@ class Command(BaseCommand):
         multipliers = settings.UCR_MEDICARE_PERCENTILE_MULTIPLIERS
 
         if dry_run:
-            active_percentiles = sum(
-                1 for p in UCR_PERCENTILES if p in multipliers
-            )
+            active_percentiles = sum(1 for p in UCR_PERCENTILES if p in multipliers)
             self.stdout.write(
                 self.style.WARNING(
                     "Dry run: would write %d derived percentile rows."

@@ -1855,9 +1855,7 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
         setattr(self, "paid_amount_cents", amount_to_str(value))
 
     @staticmethod
-    def _reject_negative_cents(
-        value: typing.Optional[int], field_name: str
-    ) -> None:
+    def _reject_negative_cents(value: typing.Optional[int], field_name: str) -> None:
         # EncryptedAmountField stores cents as a string blob, so the DB has no
         # CHECK constraint to lean on; validate here instead. Negative values
         # would silently poison UCR comparisons (e.g., "billed = -$50").
