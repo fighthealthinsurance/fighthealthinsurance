@@ -1818,7 +1818,7 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
         ]
 
     # --- UCR helpers (see UCR-OON-Reimbursement-Plan.md §10.3) ---
-    # The billing-amount fields are EncryptedCharField storing decimal-cents
+    # The billing-amount fields are EncryptedAmountField storing decimal-cents
     # strings. These helpers keep callers working in ints while preserving the
     # encrypted-at-rest invariant.
 
