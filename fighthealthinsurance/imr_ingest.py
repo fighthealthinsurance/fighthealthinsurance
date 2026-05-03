@@ -205,10 +205,15 @@ def iter_csv_rows(text: str) -> Iterator[Dict[str, str]]:
         yield {(k or ""): (v or "") for k, v in row.items()}
 
 
-def load_parsed_rows(rows: Iterable[ParsedIMRRow]) -> Tuple[int, int]:
-    """Upsert parsed rows. Returns ``(created, updated)`` counts."""
+def load_parsed_rows(rows: Iterable[ParsedIMRRow]) -> Tuple[int, int, int]:
+    """Upsert parsed rows. Returns ``(created, updated, failed)`` counts.
+
+    ``failed`` counts rows that raised during upsert; callers should surface
+    a non-zero value rather than reporting a clean ingest.
+    """
     created = 0
     updated = 0
+    failed = 0
     for row in rows:
         defaults = {
             "state": row.state,
@@ -240,10 +245,11 @@ def load_parsed_rows(rows: Iterable[ParsedIMRRow]) -> Tuple[int, int]:
             else:
                 updated += 1
         except Exception as e:
+            failed += 1
             logger.opt(exception=True).warning(
                 f"Failed to upsert IMR decision {row.source}/{row.case_id}: {e}"
             )
-    return created, updated
+    return created, updated, failed
 
 
 def fetch_csv(source_url: str, timeout: int = 120) -> str:
@@ -259,8 +265,8 @@ def load_csv_text(
     csv_text: str,
     source: str,
     source_url: str = "",
-) -> Tuple[int, int, int]:
-    """Parse and load a CSV body. Returns ``(created, updated, skipped)``."""
+) -> Tuple[int, int, int, int]:
+    """Parse and load a CSV body. Returns ``(created, updated, skipped, failed)``."""
     if source == IMRDecision.SOURCE_CA_DMHC:
         parser = parse_ca_dmhc_row
     elif source == IMRDecision.SOURCE_NY_DFS:
@@ -278,5 +284,5 @@ def load_csv_text(
         if source_url:
             result.source_url = source_url
         parsed.append(result)
-    created, updated = load_parsed_rows(parsed)
-    return created, updated, skipped
+    created, updated, failed = load_parsed_rows(parsed)
+    return created, updated, skipped, failed

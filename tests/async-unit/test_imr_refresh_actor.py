@@ -39,13 +39,13 @@ class TestRefreshSource:
     @patch("fighthealthinsurance.imr_ingest.fetch_csv")
     def test_refresh_source_fetches_and_loads(self, mock_fetch, mock_load):
         mock_fetch.return_value = "csv,body"
-        mock_load.return_value = (3, 1, 0)
+        mock_load.return_value = (3, 1, 0, 0)
 
         result = _Underlying._refresh_source(
             IMRDecision.SOURCE_CA_DMHC, "https://example.gov/dmhc.csv"
         )
 
-        assert result == (3, 1, 0)
+        assert result == (3, 1, 0, 0)
         mock_fetch.assert_called_once_with("https://example.gov/dmhc.csv")
         mock_load.assert_called_once_with(
             "csv,body",

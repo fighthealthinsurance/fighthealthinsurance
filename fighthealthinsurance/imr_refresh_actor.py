@@ -99,13 +99,14 @@ class IMRRefreshActor:
         any_success = False
         for source, url in sources:
             try:
-                created, updated, skipped = await sync_to_async(
+                created, updated, skipped, failed = await sync_to_async(
                     self._refresh_source, thread_sensitive=False
                 )(source, url)
                 any_success = True
-                self._logger.info(
+                log = self._logger.warning if failed else self._logger.info
+                log(
                     f"IMR refresh ({source}): {created} created, "
-                    f"{updated} updated, {skipped} skipped"
+                    f"{updated} updated, {skipped} skipped, {failed} failed"
                 )
             except Exception as e:
                 self._logger.opt(exception=True).warning(
@@ -119,7 +120,7 @@ class IMRRefreshActor:
             self.last_refresh = datetime.datetime.utcnow()
 
     @staticmethod
-    def _refresh_source(source: str, url: str) -> Tuple[int, int, int]:
+    def _refresh_source(source: str, url: str) -> Tuple[int, int, int, int]:
         from fighthealthinsurance.imr_ingest import fetch_csv, load_csv_text
 
         csv_text = fetch_csv(url)

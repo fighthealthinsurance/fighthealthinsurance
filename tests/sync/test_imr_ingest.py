@@ -236,19 +236,29 @@ class TestLoadParsedRows:
     def test_load_creates_new_row(self):
         parsed = self._sample_row()
         assert parsed is not None
-        created, updated = load_parsed_rows([parsed])
-        assert (created, updated) == (1, 0)
+        assert load_parsed_rows([parsed]) == (1, 0, 0)
 
     def test_load_is_idempotent_on_repeat(self):
         parsed = self._sample_row()
         load_parsed_rows([parsed])
         parsed.findings = "Updated findings."
-        created, updated = load_parsed_rows([parsed])
-        assert (created, updated) == (0, 1)
+        assert load_parsed_rows([parsed]) == (0, 1, 0)
         stored = IMRDecision.objects.get(
             source=IMRDecision.SOURCE_CA_DMHC, case_id="EI-1"
         )
         assert stored.findings == "Updated findings."
+
+    def test_load_counts_failures(self):
+        # Force update_or_create to raise so we can verify the failed counter.
+        from unittest.mock import patch
+
+        parsed = self._sample_row()
+        with patch.object(
+            IMRDecision.objects,
+            "update_or_create",
+            side_effect=RuntimeError("boom"),
+        ):
+            assert load_parsed_rows([parsed]) == (0, 0, 1)
 
 
 @pytest.mark.django_db
@@ -260,10 +270,8 @@ class TestLoadCsvText:
             "EI-102,2021,Cancer,Radiation,Upheld\n"
             ",2021,Cancer,X,Upheld\n"  # missing Reference ID — skipped
         )
-        created, updated, skipped = load_csv_text(
-            csv_text, source=IMRDecision.SOURCE_CA_DMHC
-        )
-        assert (created, updated, skipped) == (2, 0, 1)
+        result = load_csv_text(csv_text, source=IMRDecision.SOURCE_CA_DMHC)
+        assert result == (2, 0, 1, 0)
         assert (
             IMRDecision.objects.filter(source=IMRDecision.SOURCE_CA_DMHC).count() == 2
         )
@@ -273,12 +281,12 @@ class TestLoadCsvText:
             "Appeal Number,Year,Diagnosis,Treatment,Determination\n"
             "NY-1,2022,Crohn's Disease,Infliximab,Overturned\n"
         )
-        created, updated, skipped = load_csv_text(
+        result = load_csv_text(
             csv_text,
             source=IMRDecision.SOURCE_NY_DFS,
             source_url="https://example.gov/ny.csv",
         )
-        assert (created, updated, skipped) == (1, 0, 0)
+        assert result == (1, 0, 0, 0)
         d = IMRDecision.objects.get(case_id="NY-1")
         assert d.source_url == "https://example.gov/ny.csv"
         assert d.state == "NY"

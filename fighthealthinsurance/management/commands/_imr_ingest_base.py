@@ -50,12 +50,14 @@ class IMRIngestCommand(BaseCommand):
                 csv_text = fh.read()
             source_url = ""
 
-        created, updated, skipped = load_csv_text(
+        created, updated, skipped, failed = load_csv_text(
             csv_text, source=self.source, source_url=source_url
         )
+        style = self.style.WARNING if failed else self.style.SUCCESS
         self.stdout.write(
-            self.style.SUCCESS(
+            style(
                 f"{self.label} ingest complete: "
-                f"{created} created, {updated} updated, {skipped} skipped"
+                f"{created} created, {updated} updated, "
+                f"{skipped} skipped, {failed} failed"
             )
         )

@@ -179,10 +179,19 @@ class IMRDecision(ExportModelOperationsMixin("IMRDecision"), models.Model):  # t
 
     class Meta:
         indexes = [
-            models.Index(fields=["diagnosis", "treatment"]),
-            models.Index(fields=["treatment_category", "determination"]),
-            models.Index(fields=["state", "determination"]),
-            models.Index(fields=["source", "determination"]),
+            models.Index(
+                fields=["diagnosis", "treatment"], name="imrdec_diag_treat_idx"
+            ),
+            models.Index(
+                fields=["treatment_category", "determination"],
+                name="imrdec_tcat_det_idx",
+            ),
+            models.Index(
+                fields=["state", "determination"], name="imrdec_state_det_idx"
+            ),
+            models.Index(
+                fields=["source", "determination"], name="imrdec_source_det_idx"
+            ),
         ]
         constraints = [
             models.UniqueConstraint(

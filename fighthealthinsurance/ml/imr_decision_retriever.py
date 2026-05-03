@@ -9,7 +9,7 @@ and intentionally framed as illustrative rather than legally binding.
 import re
 from typing import List, Optional
 
-from django.db.models import Case, IntegerField, Q, QuerySet, Value, When
+from django.db.models import Case, F, IntegerField, Q, QuerySet, Value, When
 from django.db.models.expressions import Combinable
 from loguru import logger
 
@@ -81,7 +81,7 @@ class IMRDecisionRetriever:
         state: Optional[str],
     ) -> QuerySet:
         # Query against the denormalized `search_text` column populated at
-        # save() time. Postgres has a GIN trigram index on it (migration 0162);
+        # save() time. Postgres has a GIN trigram index on it (migration 0163);
         # SQLite falls back to a sequential icontains scan.
         all_tokens = _tokens(procedure) + _tokens(diagnosis)
         if not all_tokens:
@@ -112,9 +112,16 @@ class IMRDecisionRetriever:
         else:
             state_score = Value(0, output_field=IntegerField())
 
+        # nulls_last keeps undated/parse-failed rows from outranking dated
+        # decisions on Postgres (where NULL sorts first by default on DESC).
         return qs.annotate(
             _det_score=determination_score, _state_score=state_score
-        ).order_by("-_det_score", "-_state_score", "-decision_year", "-id")
+        ).order_by(
+            "-_det_score",
+            "-_state_score",
+            F("decision_year").desc(nulls_last=True),
+            "-id",
+        )
 
     @classmethod
     async def retrieve_for_denial(
