@@ -1864,7 +1864,6 @@ class StripeWebhookView(View):
 class CompletePaymentView(View):
     """View for completing payment after Stripe checkout redirect."""
 
-
     def get(self, request):
         try:
             data = {
