@@ -245,14 +245,31 @@ def _build_costplus_option(drug_name: str) -> PharmacyOption:
     )
 
 
+# Amazon affiliate URL template used when a specific drug has been
+# detected. Substitutes the (URL-encoded) drug name for `{slug}`. The
+# remaining query parameters carry our Amazon Associates tag and the
+# tracking IDs Amazon emitted when the link was generated; they are
+# stable per-session metadata and not specific to any one drug.
+_AMAZON_AFFILIATE_URL_TEMPLATE = (
+    "https://www.amazon.com/s?k={slug}"
+    "&crid=1J6F94S3OCOFT"
+    "&sprefix=estradiol%2Caps%2C238"
+    "&linkCode=ll2"
+    "&tag=totallylegitco-20"
+    "&linkId=46a113ee5e72dc2ee64c699b22cf364d"
+    "&language=en_US"
+    "&ref_=as_li_ss_tl"
+)
+
+
 def _build_amazon_option(drug_name: str) -> PharmacyOption:
     slug = urllib.parse.quote(drug_name.lower())
     return PharmacyOption(
         name="Amazon Pharmacy",
-        url=f"https://pharmacy.amazon.com/search?query={slug}",
+        url=_AMAZON_AFFILIATE_URL_TEMPLATE.format(slug=slug),
         description=(
-            "Mail-order pharmacy. Prime members can see discounted prices "
-            "without insurance via the Prime Rx benefit."
+            "Search Amazon for over-the-counter or mail-order formulations "
+            "of this medication. Prime members may see discounted prices."
         ),
     )
 
