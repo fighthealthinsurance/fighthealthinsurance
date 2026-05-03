@@ -61,6 +61,7 @@ from fighthealthinsurance.utils import (
     sync_iterator_to_async,
 )
 from .pubmed_tools import PubMedTools
+from .nice_tools import NICETools
 from .email_utils import is_sendable_email
 from .utils import (
     _try_pandoc_engines,
@@ -2092,6 +2093,7 @@ class DenialCreatorHelper:
 class AppealsBackendHelper:
     regex_denial_processor = ProcessDenialRegex()
     pmt = PubMedTools()
+    nice = NICETools()
 
     @classmethod
     async def generate_appeals(cls, parameters) -> AsyncIterator[str]:
@@ -2463,6 +2465,7 @@ class AppealsBackendHelper:
         pubmed_context: Optional[str] = None
         ml_citation_context: Optional[Any] = None
         rag_context: Optional[str] = None
+        nice_context: Optional[str] = None
 
         # Get PubMed context
         logger.debug("Looking up the pubmed context")
@@ -2570,16 +2573,33 @@ class AppealsBackendHelper:
                 done_msg="Guidelines lookup complete",
             )
 
-            # Await all contexts so we can use co-operative multitasking
+            # Skip the NICE task entirely when no key is configured: avoids a
+            # misleading "NICE guidance lookup complete" status and the wait_for
+            # overhead in environments without syndication access.
+            gather_awaitables = [
+                pubmed_context_awaitable,
+                ml_citation_context_awaitable,
+                rag_context_awaitable,
+            ]
+            if cls.nice.api_key:
+                gather_awaitables.append(
+                    tracked_awaitable(
+                        asyncio.wait_for(
+                            cls.nice.find_context_for_denial(denial),
+                            timeout=30,
+                        ),
+                        substep="nice",
+                        done_msg="NICE guidance lookup complete",
+                    )
+                )
+
             # return_exceptions=True is belt-and-suspenders: tracked_awaitable
             # already catches exceptions, but this prevents gather from raising
             # if any edge case slips through.
             try:
                 logger.debug("Gathering contexts")
                 results = await asyncio.gather(
-                    pubmed_context_awaitable,
-                    ml_citation_context_awaitable,
-                    rag_context_awaitable,
+                    *gather_awaitables,
                     return_exceptions=True,
                 )
 
@@ -2607,6 +2627,13 @@ class AppealsBackendHelper:
                     rag_context = None
                     if results[2] is not None:
                         logger.debug(f"RAG context not available: {results[2]}")
+                if len(results) > 3 and isinstance(results[3], str):
+                    nice_context = results[3]
+                else:
+                    # No fresh NICE result (skipped task or non-string error). Fall
+                    # back to whatever is already persisted on the denial so cached
+                    # NICE guidance survives a regen even when the API key is unset.
+                    nice_context = denial.nice_context
                 logger.debug("Success")
             except Exception as e:
                 logger.opt(exception=True).error(f"Error gathering contexts: {e}")
@@ -2625,10 +2652,14 @@ class AppealsBackendHelper:
                     denial = await denial_query.aget()
                 pubmed_context = denial.pubmed_context
                 ml_citation_context = denial.ml_citation_context
+                nice_context = denial.nice_context
                 # RAG context is not persisted, so we don't try to retrieve it
                 logger.debug("Used saved contexts")
         else:
             logger.debug("Too many retries, skipping ML/pubmed/RAG ctx")
+            # Reuse the persisted NICE context; otherwise it'd be dropped on
+            # the very retry path that's supposed to use previous results.
+            nice_context = denial.nice_context
             yield json.dumps(
                 {
                     "type": "status",
@@ -2714,6 +2745,7 @@ class AppealsBackendHelper:
             ml_citations_context=ml_citation_context,
             plan_context=model_plan_context,
             rag_context=rag_context,
+            nice_context=nice_context,
         )
         # Only filters out None
         filtered_appeals: Iterator[str] = filter(lambda x: x != None, appeals)

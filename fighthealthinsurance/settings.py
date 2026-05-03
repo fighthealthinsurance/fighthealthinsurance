@@ -527,6 +527,11 @@ class Test(Dev):
     # incidental call (e.g., through the appeal-generation flow) from
     # reaching the real public CMS endpoint.
     os.environ["CMS_COVERAGE_API_URL"] = "http://127.0.0.1:1"
+    # Same defense for NICE: a NICE_API_KEY may be present in CI (e.g., for
+    # the live integration test), so tests that incidentally trigger appeal
+    # generation could reach the real syndication endpoint. Live tests
+    # restore the real URL on the NICETools instance.
+    os.environ["NICE_API_BASE_URL"] = "http://127.0.0.1:1"
     DEFF_SALT = os.getenv("DEFF_SALT", "test-salt")
     DEFF_PASSWORD = os.getenv("DEFF_PASSWORD", "test-password")
     # For async tests we do in memory for increased isolation
@@ -553,6 +558,7 @@ class TestSync(Dev):
     os.environ["TESTING"] = "True"
     # Point CMS Coverage API at an unroutable address (see Test class).
     os.environ["CMS_COVERAGE_API_URL"] = "http://127.0.0.1:1"
+    os.environ["NICE_API_BASE_URL"] = "http://127.0.0.1:1"
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.sqlite3",
@@ -574,6 +580,7 @@ class TestActor(Dev):
     os.environ["TESTING"] = "True"
     # Point CMS Coverage API at an unroutable address (see Test class).
     os.environ["CMS_COVERAGE_API_URL"] = "http://127.0.0.1:1"
+    os.environ["NICE_API_BASE_URL"] = "http://127.0.0.1:1"
     # We _may_ use "real" files for actor tests since we have seperate processes for actors.
     dt = str(int(time.time()))
     dbname = os.getenv("DBNAME", f"{BASE_DIR}/test2{dt}.db.sqlite3")
