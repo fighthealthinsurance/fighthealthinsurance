@@ -248,20 +248,11 @@ def _upsert_rates(
             logger.warning("Skipping row for unknown locality {}", row["locality"])
             continue
 
-        # Medicare-allowed amount (percentile=0 sentinel; not surfaced to users).
-        if _upsert_one(
-            procedure_code=row["hcpcs"],
-            area=area,
-            percentile=0,
-            amount_cents=row["allowed_cents"],
-            source=UCRSource.MEDICARE_PFS,
-            effective_date=effective_date,
-            metadata={"role": "medicare_allowed"},
-        ):
-            written += 1
-        else:
-            skipped += 1
-
+        # We only persist percentile rows the helper actually queries
+        # (UCR_PERCENTILES). The raw Medicare-allowed amount is preserved as
+        # `metadata.medicare_allowed_cents` on each derived row so it remains
+        # auditable without using a 0-percentile sentinel rejected by the
+        # 1..100 CheckConstraint on UCRRate.
         for percentile in percentiles:
             multiplier = multipliers.get(percentile)
             if multiplier is None:
@@ -277,6 +268,7 @@ def _upsert_rates(
                 metadata={
                     "derived_from": "medicare_pfs",
                     "multiplier": multiplier,
+                    "medicare_allowed_cents": row["allowed_cents"],
                 },
             ):
                 written += 1

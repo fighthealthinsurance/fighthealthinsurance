@@ -8,6 +8,7 @@ import typing
 import uuid
 
 from django.conf import settings
+from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models, transaction
 from django.db.models.signals import post_delete
 from django.dispatch import receiver
@@ -2934,7 +2935,11 @@ class UCRRate(models.Model):
     geographic_area = models.ForeignKey(
         UCRGeographicArea, on_delete=models.PROTECT, related_name="rates"
     )
-    percentile = models.PositiveSmallIntegerField()
+    # Constrained 1-100 in Meta below; loader rows outside that range are
+    # rejected at the DB layer instead of silently poisoning lookups.
+    percentile = models.PositiveSmallIntegerField(
+        validators=[MinValueValidator(1), MaxValueValidator(100)]
+    )
     amount_cents = models.PositiveIntegerField()
     source = models.CharField(max_length=32, choices=UCRSource.choices)
     effective_date = models.DateField()
@@ -2954,6 +2959,12 @@ class UCRRate(models.Model):
             ),
             models.Index(
                 fields=["source", "effective_date"], name="ucr_rate_source_idx"
+            ),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(percentile__gte=1) & Q(percentile__lte=100),
+                name="ucr_rate_percentile_range",
             ),
         ]
         unique_together = [
@@ -3005,6 +3016,19 @@ class UCRLookup(models.Model):
             models.Index(fields=["denial", "created"], name="ucr_lookup_denial_idx"),
         ]
         ordering = ["-created"]
+
+    def save(self, *args: typing.Any, **kwargs: typing.Any) -> None:
+        # UCRLookup is the audit log: every refresh inserts a fresh snapshot
+        # rather than mutating an old one (see UCR plan §10.4 / §10.5). The
+        # _state.adding check only blocks application-level instance.save()
+        # calls — Django's on_delete=SET_NULL cascades for matched_area emit
+        # raw SQL that bypasses save(), so the FK semantics still work.
+        if not self._state.adding:
+            raise ValueError(
+                "UCRLookup is append-only; create a new snapshot instead of "
+                "updating pk={!r}".format(self.pk)
+            )
+        super().save(*args, **kwargs)
 
     def __str__(self) -> str:
         return f"UCRLookup<denial={self.denial_id} created={self.created}>"

@@ -65,8 +65,9 @@ class LoadMedicarePFSTests(TestCase):
             ).count(),
             1,
         )
-        # Per HCPCS row: 1 medicare-allowed (percentile=0) + 3 derived percentiles.
-        self.assertEqual(UCRRate.objects.count(), 2 * (1 + 3))
+        # Per HCPCS row: 3 derived percentile rows (50/80/90); the raw
+        # Medicare-allowed amount lives in metadata, not its own row.
+        self.assertEqual(UCRRate.objects.count(), 2 * 3)
 
     def test_derived_percentiles_use_settings_multipliers(self):
         self._write_inputs(
@@ -109,12 +110,14 @@ class LoadMedicarePFSTests(TestCase):
         )
         self._call()
 
+        # Verify via the p80 derived row: 10000 * 2.0 = 20000.
         self.assertEqual(
-            UCRRate.objects.filter(percentile=0, procedure_code="99213").count(),
+            UCRRate.objects.filter(percentile=80, procedure_code="99213").count(),
             1,
         )
-        updated = UCRRate.objects.get(percentile=0, procedure_code="99213")
-        self.assertEqual(updated.amount_cents, 10000)
+        updated = UCRRate.objects.get(percentile=80, procedure_code="99213")
+        self.assertEqual(updated.amount_cents, 20000)
+        self.assertEqual(updated.metadata["medicare_allowed_cents"], 10000)
 
     def test_skips_malformed_allowed_cents(self):
         self._write_inputs(
@@ -124,8 +127,8 @@ class LoadMedicarePFSTests(TestCase):
 
         self._call()
 
-        # 99213 wrote (1+3) rows; 99214 was skipped entirely.
-        self.assertEqual(UCRRate.objects.count(), 4)
+        # 99213 wrote 3 derived percentile rows; 99214 was skipped entirely.
+        self.assertEqual(UCRRate.objects.count(), 3)
         self.assertFalse(UCRRate.objects.filter(procedure_code="99214").exists())
 
     def test_dry_run_writes_nothing(self):

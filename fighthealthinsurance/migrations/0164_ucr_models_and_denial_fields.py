@@ -105,6 +105,13 @@ class Migration(migrations.Migration):
                         name="ucr_rate_source_idx",
                     ),
                 ],
+                "constraints": [
+                    models.CheckConstraint(
+                        condition=models.Q(percentile__gte=1)
+                        & models.Q(percentile__lte=100),
+                        name="ucr_rate_percentile_range",
+                    ),
+                ],
                 "unique_together": {
                     (
                         "procedure_code",
