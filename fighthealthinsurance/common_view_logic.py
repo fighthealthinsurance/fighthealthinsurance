@@ -46,6 +46,10 @@ from fighthealthinsurance.denials.algorithmic_review_detector import (
     render_template_blocks,
 )
 from fighthealthinsurance.fax_actor_ref import fax_actor_ref
+from fighthealthinsurance.medical_code_extractor import (
+    extract_icd10_codes,
+    extract_procedure_codes,
+)
 from fighthealthinsurance.ml.bad_output_utils import strip_boilerplate_service
 from fighthealthinsurance.form_utils import *
 from fighthealthinsurance.generate_appeal import *
@@ -2559,26 +2563,18 @@ class AppealsBackendHelper:
                 done_msg="Citations generated",
             )
 
-            # Extract CPT/ICD codes from denial text for RAG search
+            # Extract procedure (CPT + HCPCS) and ICD-10 codes from the
+            # denial text for RAG search. HCPCS Level II codes (DME,
+            # drugs, prosthetics) are now included alongside CPT codes
+            # so DME-coded denials get properly enriched context.
             rag_procedure_codes = None
             rag_diagnosis_codes = None
             denial_text_for_rag = denial.denial_text or ""
             if denial_text_for_rag:
-                cpt_re = re.compile(
-                    r"[\(\s:,]+(\d{4}[A-Z0-9])[\s:\.\),]", re.M | re.UNICODE
-                )
-                icd_re = re.compile(
-                    r"[\(\s:\.,]+([A-TV-Z][0-9][0-9AB]\.?[0-9A-TV-Z]{0,4})[\s:\.\),]",
-                    re.M | re.UNICODE,
-                )
-                cpt_matches = list(
-                    set(m.group(1) for m in cpt_re.finditer(denial_text_for_rag))
-                )
-                icd_matches = list(
-                    set(m.group(1) for m in icd_re.finditer(denial_text_for_rag))
-                )
-                if cpt_matches:
-                    rag_procedure_codes = cpt_matches
+                procedure_matches = sorted(extract_procedure_codes(denial_text_for_rag))
+                icd_matches = sorted(extract_icd10_codes(denial_text_for_rag))
+                if procedure_matches:
+                    rag_procedure_codes = procedure_matches
                 if icd_matches:
                     rag_diagnosis_codes = icd_matches
 
