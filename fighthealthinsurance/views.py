@@ -2040,6 +2040,8 @@ def chat_interface_view(request):
         "medicare": medicare,
         "microsite_slug": microsite_slug,
         "initial_message": initial_message,
+        "enable_voice_intake": getattr(settings, "ENABLE_VOICE_INTAKE", False),
+        "enable_local_stt": getattr(settings, "ENABLE_LOCAL_STT", True),
     }
     logger.debug(
         f"Rendering chat interface: microsite_slug={microsite_slug}, has_default_procedure={bool(default_procedure)}, has_default_condition={bool(default_condition)}, medicare={medicare}, has_initial_message={bool(initial_message)}"
