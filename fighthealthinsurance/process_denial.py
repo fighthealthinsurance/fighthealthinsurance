@@ -51,13 +51,12 @@ class ProcessDenialCodes(DenialBase):
         return (None, None)
 
     def _extract_codes(self, denial_text: str) -> list[str]:
-        """Return ICD-10 and CPT codes pulled from the denial text."""
-        codes: list[str] = []
-        for match in self.icd10_re.finditer(denial_text):
-            codes.append(match.group(1))
-        for match in self.cpt_code_re.finditer(denial_text):
-            codes.append(match.group(1))
-        return codes
+        """Return ICD-10/CPT/HCPCS codes pulled from the denial text."""
+        return list(
+            extract_icd10_codes(denial_text)
+            | extract_cpt_codes(denial_text)
+            | extract_hcpcs_codes(denial_text)
+        )
 
     def find_uspstf_evidence(self, denial_text: str, limit: int = 3) -> list[dict]:
         """Find USPSTF recommendations relevant to codes referenced in a denial.
