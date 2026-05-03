@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Pro Signups Dashboard</title>
+    <link rel="stylesheet"
+          href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/css/bootstrap.min.css">
+    <style>
+      body { padding: 20px; }
+      .summary { margin-bottom: 30px; }
+      .summary dt { display: inline-block; min-width: 280px; }
+      .summary dd { display: inline; margin-left: 0; }
+      .chart-list li { margin-bottom: 6px; }
+    </style>
+  </head>
+  <body>
+    <h1>Pro Signups Dashboard</h1>
+    <p>Analytics for users who signed up as interested in the pro version.</p>
+
+    <div class="summary">
+      <h2>Summary</h2>
+      <dl>
+        <dt>Total signups (rows):</dt><dd>{{ total }}</dd><br>
+        <dt>Unique emails:</dt><dd>{{ unique_emails }}</dd><br>
+        <dt>Clicked for paid:</dt><dd>{{ clicked_for_paid_count }}</dd><br>
+        <dt>Paid:</dt><dd>{{ paid_count }}</dd>
+      </dl>
+    </div>
+
+    <h2>Charts</h2>
+    <ul class="chart-list">
+      <li><a href="{% url 'charts:signups_by_day' %}">Signups by day (paid vs unpaid)</a></li>
+      <li><a href="{% url 'charts:pro_signups_cumulative' %}">Cumulative signups over time</a></li>
+      <li><a href="{% url 'charts:pro_signups_by_provider_type' %}">Signups by provider type</a></li>
+      <li><a href="{% url 'charts:pro_signups_by_denial_type' %}">Signups by most-common denial</a></li>
+    </ul>
+
+    <h2>Tables</h2>
+    <ul class="chart-list">
+      <li><a href="{% url 'charts:sf_signups' %}">San Francisco Bay Area signups</a></li>
+    </ul>
+
+    <h2>Exports</h2>
+    <ul class="chart-list">
+      <li><a href="{% url 'charts:pro_signups_csv' %}">All pro signups (CSV)</a></li>
+      <li><a href="{% url 'charts:pro_signups_csv_single_lines' %}">All pro signups, deduped by email (CSV)</a></li>
+    </ul>
+  </body>
+</html>

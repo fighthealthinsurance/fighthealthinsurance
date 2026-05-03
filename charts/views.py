@@ -78,6 +78,13 @@ def _get_verified_or_raw(denial, field):
     return getattr(denial, f"verified_{field}") or getattr(denial, field)
 
 
+def _interested_professionals_excluding_test_emails():
+    """Return base InterestedProfessional queryset with test emails excluded."""
+    return InterestedProfessional.objects.exclude(
+        Q(email="farts@farts.com") | Q(email="holden@pigscanfly.ca")
+    )
+
+
 def _make_jsonl_export_view(generator_func, filename):
     """Create a staff-only, export-gated streaming JSONL view."""
 
@@ -230,6 +237,204 @@ class MailingListSubscriberCSV(View):
             )
 
         return response
+
+
+@staff_member_required
+def signup_abandonment_chart(request):
+    """
+    Chart showing professional signups that were abandoned: people who started
+    the registration flow but where neither the professional nor the domain was
+    ever activated. Includes location breakdown (state/city) and a daily trend.
+    """
+    inactive_relations = (
+        ProfessionalDomainRelation.objects.filter(
+            professional__active=False, domain__active=False
+        )
+        .select_related("professional__user", "domain")
+        .order_by("professional__user__date_joined")
+    )
+
+    rows = []
+    for relation in inactive_relations:
+        prof = relation.professional
+        domain = relation.domain
+        email = prof.user.email if prof.user else ""
+        # Skip test/seed accounts.
+        if email in ("farts@farts.com", "holden@pigscanfly.ca"):
+            continue
+
+        date_joined = prof.user.date_joined if prof.user else None
+        rows.append(
+            {
+                "email": email,
+                "state": (domain.state or "Unknown").strip() or "Unknown",
+                "city": (domain.city or "Unknown").strip() or "Unknown",
+                "zipcode": (domain.zipcode or "").strip(),
+                "country": (domain.country or "").strip(),
+                "date_joined": date_joined,
+            }
+        )
+
+    if not rows:
+        return HttpResponse(
+            "No abandoned signup data available.", content_type="text/plain"
+        )
+
+    df = pd.DataFrame(rows)
+
+    # Chart 1: by state (bar chart of where abandoned signups are from).
+    state_counts = (
+        df.groupby("state")
+        .size()
+        .reset_index(name="count")
+        .sort_values("count", ascending=False)
+    )
+    state_source = ColumnDataSource(state_counts)
+    p_state = figure(
+        title="Abandoned Signups by State",
+        x_range=state_counts["state"].tolist(),
+        height=420,
+        width=820,
+        toolbar_location="right",
+        tools="hover,pan,box_zoom,reset,save",
+        tooltips=[("State", "@state"), ("Count", "@count")],
+    )
+    p_state.vbar(
+        x="state",
+        top="count",
+        width=0.8,
+        source=state_source,
+        color="steelblue",
+        line_color="white",
+    )
+    p_state.xaxis.major_label_orientation = 3.14 / 4
+    p_state.xgrid.grid_line_color = None
+    p_state.y_range.start = 0
+    p_state.xaxis.axis_label = "State"
+    p_state.yaxis.axis_label = "Number of Abandoned Signups"
+
+    # Chart 2: top cities (limited to 15, rest grouped as "Other").
+    city_counts_full = (
+        df.groupby(["state", "city"])
+        .size()
+        .reset_index(name="count")
+        .sort_values("count", ascending=False)
+    )
+    city_counts_full["label"] = (
+        city_counts_full["city"] + ", " + city_counts_full["state"]
+    )
+    top_n = 15
+    if len(city_counts_full) > top_n:
+        top_cities = city_counts_full.iloc[:top_n].copy()
+        other_count = int(city_counts_full.iloc[top_n:]["count"].sum())
+        top_cities = pd.concat(
+            [
+                top_cities[["label", "count"]],
+                pd.DataFrame({"label": ["Other"], "count": [other_count]}),
+            ],
+            ignore_index=True,
+        )
+    else:
+        top_cities = city_counts_full[["label", "count"]].copy()
+
+    city_source = ColumnDataSource(top_cities)
+    p_city = figure(
+        title="Abandoned Signups by City (Top 15)",
+        x_range=top_cities["label"].tolist(),
+        height=420,
+        width=820,
+        toolbar_location="right",
+        tools="hover,pan,box_zoom,reset,save",
+        tooltips=[("Location", "@label"), ("Count", "@count")],
+    )
+    p_city.vbar(
+        x="label",
+        top="count",
+        width=0.8,
+        source=city_source,
+        color="darkorange",
+        line_color="white",
+    )
+    p_city.xaxis.major_label_orientation = 3.14 / 4
+    p_city.xgrid.grid_line_color = None
+    p_city.y_range.start = 0
+    p_city.xaxis.axis_label = "City, State"
+    p_city.yaxis.axis_label = "Number of Abandoned Signups"
+
+    # Chart 3: by day (when did they abandon).
+    df_dated = df.dropna(subset=["date_joined"]).copy()
+    if not df_dated.empty:
+        df_dated["day"] = pd.to_datetime(df_dated["date_joined"]).dt.normalize()
+        by_day = (
+            df_dated.groupby("day").size().reset_index(name="count").sort_values("day")
+        )
+        day_source = ColumnDataSource(by_day)
+        p_day = figure(
+            title="Abandoned Signups by Day",
+            x_axis_type="datetime",
+            height=420,
+            width=820,
+            toolbar_location="right",
+            tools="hover,pan,box_zoom,reset,save",
+            tooltips=[("Day", "@day{%F}"), ("Count", "@count")],
+        )
+        # The hover tool needs a datetime formatter for the @day field.
+        from bokeh.models import HoverTool
+
+        for tool in p_day.tools:
+            if isinstance(tool, HoverTool):
+                tool.formatters = {"@day": "datetime"}
+        p_day.varea(
+            x="day",
+            y1=0,
+            y2="count",
+            source=day_source,
+            color="firebrick",
+        )
+        p_day.line(x="day", y="count", source=day_source, color="firebrick")
+        p_day.xaxis.axis_label = "Date"
+        p_day.yaxis.axis_label = "Number of Abandoned Signups"
+    else:
+        p_day = None
+
+    # Combine the figures vertically.
+    from bokeh.layouts import column
+
+    plots = [p_state, p_city]
+    if p_day is not None:
+        plots.append(p_day)
+    layout = column(*plots)
+    script, div = components(layout)
+
+    # Build display DataFrames.
+    state_html = state_counts.to_html(
+        classes=["table", "table-striped", "table-hover"], index=False
+    )
+    city_html = city_counts_full[["state", "city", "count"]].to_html(
+        classes=["table", "table-striped", "table-hover"], index=False
+    )
+    df_html = f"<h3>By State</h3>{state_html}<h3>By City</h3>{city_html}"
+
+    total = len(df)
+    unique_states = df["state"].nunique()
+    unique_cities = df.groupby(["state", "city"]).ngroups
+    totals_html = (
+        f"<p>Total abandoned signups: {total}</p>"
+        f"<p>Unique states: {unique_states}</p>"
+        f"<p>Unique cities: {unique_cities}</p>"
+    )
+
+    return render(
+        request,
+        "bokeh.html",
+        {
+            "script": script,
+            "div": div,
+            "df_html": df_html,
+            "totals_html": totals_html,
+            "title": "Signup Abandonment Analysis",
+        },
+    )
 
 
 @staff_member_required
@@ -469,9 +674,7 @@ def generate_chat_lines():
 @staff_member_required
 def pro_signups_csv(request):
     interested_professionals_qs = (
-        InterestedProfessional.objects.exclude(
-            Q(email="farts@farts.com") | Q(email="holden@pigscanfly.ca")
-        )
+        _interested_professionals_excluding_test_emails()
         .values(
             "email",
             "name",
@@ -508,9 +711,7 @@ def pro_signups_csv(request):
 @staff_member_required
 def pro_signups_csv_single_lines(request):
     interested_professionals_qs = (
-        InterestedProfessional.objects.exclude(
-            Q(email="farts@farts.com") | Q(email="holden@pigscanfly.ca")
-        )
+        _interested_professionals_excluding_test_emails()
         .values(
             "email",
             "name",
@@ -565,9 +766,7 @@ def signups_by_day(request):
     # Query to count unique email signups per day, separated by paid status
     try:
         signups_per_day = (
-            InterestedProfessional.objects.exclude(
-                Q(email="farts@farts.com") | Q(email="holden@pigscanfly.ca")
-            )
+            _interested_professionals_excluding_test_emails()
             .distinct("email")
             .order_by("signup_date")
             .values("signup_date", "clicked_for_paid")
@@ -577,9 +776,7 @@ def signups_by_day(request):
         df = pd.DataFrame(list(signups_per_day))
     except NotSupportedError:
         signups_per_day = (
-            InterestedProfessional.objects.exclude(
-                Q(email="farts@farts.com") | Q(email="holden@pigscanfly.ca")
-            )
+            _interested_professionals_excluding_test_emails()
             .order_by("signup_date")
             .values("signup_date", "clicked_for_paid")
             .annotate(count=Count("email", distinct=True))
@@ -658,9 +855,7 @@ def signups_by_day(request):
 @staff_member_required
 def sf_signups(request):
     pro_signups = (
-        InterestedProfessional.objects.exclude(
-            Q(email="farts@farts.com") | Q(email="holden@pigscanfly.ca")
-        )
+        _interested_professionals_excluding_test_emails()
         .filter(
             Q(address__icontains="San Francisco")
             | Q(address__icontains="Daly City")
@@ -943,5 +1138,247 @@ def procedures_denied_chart(request):
             "df_html": df_html,
             "totals_html": totals_html,
             "title": "Denied Procedures Analysis",
+        },
+    )
+
+
+def _render_pro_category_chart(request, *, field, title, axis_label, color, top_n=15):
+    """Render a bar chart of InterestedProfessional counts grouped by `field`.
+
+    Normalizes the value (lowercase + collapsed whitespace) and aggregates the
+    long tail beyond `top_n` into an "Other" bucket.
+    """
+    base_qs = _interested_professionals_excluding_test_emails().order_by(
+        "email", "signup_date"
+    )
+    try:
+        raw_pairs = list(base_qs.distinct("email").values_list("email", field))
+    except NotSupportedError:
+        # Fall back for SQLite (e.g. in tests): dedupe by email in Python,
+        # keeping the earliest row per email per the order_by above.
+        seen: set[str] = set()
+        raw_pairs = []
+        for email, value in base_qs.values_list("email", field):
+            if email in seen:
+                continue
+            seen.add(email)
+            raw_pairs.append((email, value))
+
+    counts: dict[str, int] = {}
+    for _, value in raw_pairs:
+        if not value:
+            normalized = "(not specified)"
+        else:
+            normalized = " ".join(value.lower().split())
+        counts[normalized] = counts.get(normalized, 0) + 1
+
+    df = pd.DataFrame(
+        {field: list(counts.keys()), "count": list(counts.values())}
+    ).sort_values("count", ascending=False)
+
+    if df.empty:
+        return HttpResponse("No pro signup data available.", content_type="text/plain")
+
+    if len(df) > top_n:
+        top_df = df.iloc[:top_n].copy()
+        other_count = df.iloc[top_n:]["count"].sum()
+        chart_df = pd.concat(
+            [top_df, pd.DataFrame({field: ["Other"], "count": [other_count]})]
+        )
+    else:
+        chart_df = df
+
+    p = figure(
+        title=title,
+        x_range=chart_df[field].tolist(),
+        height=500,
+        width=900,
+        toolbar_location="right",
+        tools="hover,pan,box_zoom,reset,save",
+        tooltips=[(axis_label, f"@{field}"), ("Count", "@count")],
+    )
+    source = ColumnDataSource(chart_df)
+    p.vbar(
+        x=field,
+        top="count",
+        width=0.8,
+        source=source,
+        color=color,
+        line_color="white",
+    )
+    p.xaxis.major_label_orientation = 3.14 / 4
+    p.xgrid.grid_line_color = None
+    p.y_range.start = 0
+    p.xaxis.axis_label = axis_label
+    p.yaxis.axis_label = "Number of Signups"
+
+    script, div = components(p)
+    df_html = df.to_html(classes=["table", "table-striped", "table-hover"], index=False)
+    total_signups = int(df["count"].sum())
+    total_unique = len(df)
+    totals_html = (
+        f"<p>Total unique pro signups: {total_signups}</p>"
+        f"<p>Distinct {axis_label.lower()} values: {total_unique}</p>"
+    )
+
+    return render(
+        request,
+        "bokeh.html",
+        {
+            "script": script,
+            "div": div,
+            "df_html": df_html,
+            "totals_html": totals_html,
+            "title": title,
+        },
+    )
+
+
+@staff_member_required
+def pro_signups_cumulative(request):
+    """Cumulative growth of unique InterestedProfessional signups over time."""
+    try:
+        signups_per_day = (
+            _interested_professionals_excluding_test_emails()
+            .distinct("email")
+            .order_by("signup_date")
+            .values("signup_date", "clicked_for_paid")
+            .annotate(count=Count("email"))
+        )
+        df = pd.DataFrame(list(signups_per_day))
+    except NotSupportedError:
+        signups_per_day = (
+            _interested_professionals_excluding_test_emails()
+            .order_by("signup_date")
+            .values("signup_date", "clicked_for_paid")
+            .annotate(count=Count("email", distinct=True))
+        )
+        df = pd.DataFrame(list(signups_per_day))
+
+    if df.empty or "signup_date" not in df.columns:
+        return HttpResponse("No signup data available.", content_type="text/plain")
+
+    df["signup_date"] = pd.to_datetime(df["signup_date"])
+    df_pivot = (
+        df.pivot_table(
+            index="signup_date",
+            columns="clicked_for_paid",
+            values="count",
+            aggfunc="sum",
+        )
+        .fillna(0)
+        .rename(columns={True: "Paid", False: "Unpaid"})
+    )
+    for col in ["Paid", "Unpaid"]:
+        if col not in df_pivot.columns:
+            df_pivot[col] = 0
+
+    df_pivot = df_pivot.sort_index()
+    df_pivot["Total"] = df_pivot["Paid"] + df_pivot["Unpaid"]
+    df_pivot["Cumulative Paid"] = df_pivot["Paid"].cumsum()
+    df_pivot["Cumulative Unpaid"] = df_pivot["Unpaid"].cumsum()
+    df_pivot["Cumulative Total"] = df_pivot["Total"].cumsum()
+
+    source = ColumnDataSource(df_pivot)
+    p = figure(
+        title="Cumulative Pro Signups",
+        x_axis_type="datetime",
+        height=500,
+        width=900,
+        tools="hover,pan,box_zoom,reset,save",
+        tooltips=[
+            ("Date", "@signup_date{%F}"),
+            ("Cumulative Total", "@{Cumulative Total}"),
+            ("Cumulative Paid", "@{Cumulative Paid}"),
+            ("Cumulative Unpaid", "@{Cumulative Unpaid}"),
+        ],
+    )
+    p.hover.formatters = {"@signup_date": "datetime"}
+    p.line(
+        x="signup_date",
+        y="Cumulative Total",
+        source=source,
+        color="navy",
+        line_width=2,
+        legend_label="Total",
+    )
+    p.line(
+        x="signup_date",
+        y="Cumulative Paid",
+        source=source,
+        color="green",
+        line_width=2,
+        legend_label="Paid",
+    )
+    p.line(
+        x="signup_date",
+        y="Cumulative Unpaid",
+        source=source,
+        color="red",
+        line_width=2,
+        legend_label="Unpaid",
+    )
+    p.legend.location = "top_left"
+    p.xaxis.axis_label = "Date"
+    p.yaxis.axis_label = "Cumulative Number of Signups"
+
+    script, div = components(p)
+    df_html = df_pivot.to_html()
+    totals_html = df_pivot[["Paid", "Unpaid", "Total"]].sum().to_frame().to_html()
+
+    return render(
+        request,
+        "bokeh.html",
+        {
+            "script": script,
+            "div": div,
+            "df_html": df_html,
+            "totals_html": totals_html,
+            "title": "Cumulative Pro Signups",
+        },
+    )
+
+
+@staff_member_required
+def pro_signups_by_provider_type(request):
+    """Bar chart of pro signups grouped by job title / provider type."""
+    return _render_pro_category_chart(
+        request,
+        field="job_title_or_provider_type",
+        title="Pro Signups by Provider Type",
+        axis_label="Provider Type",
+        color="steelblue",
+    )
+
+
+@staff_member_required
+def pro_signups_by_denial_type(request):
+    """Bar chart of pro signups grouped by their reported most-common denial."""
+    return _render_pro_category_chart(
+        request,
+        field="most_common_denial",
+        title="Pro Signups by Most-Common Denial",
+        axis_label="Most Common Denial",
+        color="darkorange",
+    )
+
+
+@staff_member_required
+def pro_signups_dashboard(request):
+    """Index page linking the pro-signup chart, table, and CSV views."""
+    qs = _interested_professionals_excluding_test_emails()
+    total = qs.count()
+    unique_emails = qs.values("email").distinct().count()
+    paid_count = qs.filter(paid=True).count()
+    clicked_for_paid_count = qs.filter(clicked_for_paid=True).count()
+
+    return render(
+        request,
+        "pro_signups_dashboard.html",
+        {
+            "total": total,
+            "unique_emails": unique_emails,
+            "paid_count": paid_count,
+            "clicked_for_paid_count": clicked_for_paid_count,
         },
     )

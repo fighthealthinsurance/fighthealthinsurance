@@ -1,5 +1,8 @@
 """Test the InsuranceCompany and InsurancePlan models and extraction logic"""
 
+from unittest.mock import AsyncMock, patch
+
+from asgiref.sync import async_to_sync
 from django.test import TestCase
 from fighthealthinsurance.models import (
     Denial,
@@ -422,3 +425,386 @@ class AppealGeneratorInsuranceCompanyTests(TestCase):
 
         self.assertEqual(insurance_company_name, "Meritain Health")
         self.assertTrue(is_tpa)
+
+
+class InsuranceCompanyAppealRoutingTests(TestCase):
+    """Test the appeal-routing fields on InsuranceCompany / InsurancePlan."""
+
+    def setUp(self):
+        self.cigna = InsuranceCompany.objects.create(
+            name="Cigna",
+            regex=r"cigna",
+            appeal_address="Cigna NAO\nP.O. Box 188011\nChattanooga, TN 37422",
+            appeal_fax_number="877-815-4827",
+            appeal_phone_number="800-244-6224",
+            appeals_portal_url="https://my.cigna.com/web/secure/my/claims/appeals",
+        )
+        self.aetna = InsuranceCompany.objects.create(
+            name="Aetna",
+            regex=r"aetna",
+        )
+        self.medicaid_source = PlanSource.objects.create(
+            name="Medicaid", regex=r"medicaid"
+        )
+
+    def test_appeal_destinations_returns_populated_channels(self):
+        destinations = self.cigna.appeal_destinations()
+        self.assertEqual(destinations["fax"], "877-815-4827")
+        self.assertEqual(destinations["phone"], "800-244-6224")
+        self.assertIn("Chattanooga", destinations["address"])
+        self.assertEqual(
+            destinations["portal"],
+            "https://my.cigna.com/web/secure/my/claims/appeals",
+        )
+
+    def test_appeal_destinations_omits_empty_channels(self):
+        destinations = self.aetna.appeal_destinations()
+        self.assertEqual(destinations, {})
+
+    def test_plan_falls_back_to_company_appeal_info(self):
+        plan = InsurancePlan.objects.create(
+            insurance_company=self.cigna,
+            plan_name="Marketplace",
+            state="",
+        )
+        destinations = plan.appeal_destinations()
+        # Plan inherits company-level destinations when no plan override exists
+        self.assertEqual(destinations["fax"], "877-815-4827")
+
+    def test_plan_overrides_company_appeal_fax(self):
+        plan = InsurancePlan.objects.create(
+            insurance_company=self.cigna,
+            plan_name="Medicaid",
+            state="CA",
+            plan_source=self.medicaid_source,
+            appeal_fax_number="555-111-2222",
+        )
+        destinations = plan.appeal_destinations()
+        # Plan-specific fax wins, but address still falls back to company
+        self.assertEqual(destinations["fax"], "555-111-2222")
+        self.assertIn("Chattanooga", destinations["address"])
+
+    def test_parent_company_relationship(self):
+        """Subsidiaries should reference their parent company."""
+        elevance = InsuranceCompany.objects.create(name="Elevance Health")
+        anthem_ca = InsuranceCompany.objects.create(
+            name="Anthem Blue Cross California",
+            parent_company=elevance,
+        )
+        self.assertEqual(anthem_ca.parent_company, elevance)
+        self.assertIn(anthem_ca, elevance.subsidiaries.all())
+
+    def test_parent_company_set_null_on_delete(self):
+        """Deleting a parent company should null out subsidiaries' references."""
+        parent = InsuranceCompany.objects.create(name="Test Parent")
+        child = InsuranceCompany.objects.create(
+            name="Test Child", parent_company=parent
+        )
+        parent.delete()
+        child.refresh_from_db()
+        self.assertIsNone(child.parent_company)
+
+
+class ExtractInsuranceCompanyMatchingTests(TestCase):
+    """Test the matching helpers used by extract_set_insurance_company."""
+
+    def setUp(self):
+        self.anthem = InsuranceCompany.objects.create(
+            name="Anthem Blue Cross Blue Shield",
+            alt_names="Anthem\nBCBS\nElevance Health",
+            regex=r"(anthem|elevance\s*health)(?!.*empire)",
+            negative_regex=r"empire",
+            appeal_fax_number="800-555-0001",
+        )
+        self.empire = InsuranceCompany.objects.create(
+            name="Empire BlueCross BlueShield",
+            alt_names="Empire BCBS",
+            regex=r"empire.*(?:blue\s*cross|bcbs)",
+            appeal_fax_number="866-495-8716",
+        )
+        self.medicaid_source = PlanSource.objects.create(
+            name="Medicaid", regex=r"medicaid"
+        )
+        self.anthem_ca_medicaid = InsurancePlan.objects.create(
+            insurance_company=self.anthem,
+            plan_name="Medicaid",
+            state="CA",
+            plan_source=self.medicaid_source,
+            regex=r"anthem.*medicaid.*california|anthem.*medi-cal",
+            appeal_fax_number="888-111-2222",
+        )
+
+    def test_match_company_by_extracted_name(self):
+        from fighthealthinsurance.common_view_logic import DenialCreatorHelper
+
+        match = async_to_sync(DenialCreatorHelper._match_insurance_company)(
+            extracted_name="Anthem", denial_text=""
+        )
+        self.assertEqual(match, self.anthem)
+
+    def test_match_company_by_regex_against_denial_text(self):
+        """Even when LLM extraction returns nothing, company.regex on the
+        full denial text should still find a match."""
+        from fighthealthinsurance.common_view_logic import DenialCreatorHelper
+
+        match = async_to_sync(DenialCreatorHelper._match_insurance_company)(
+            extracted_name=None,
+            denial_text="Your claim was denied. Sincerely, Empire BCBS Health Plus.",
+        )
+        self.assertEqual(match, self.empire)
+
+    def test_negative_regex_excludes_match(self):
+        """A company whose positive regex matches but whose negative_regex
+        also fires should be excluded from the regex-fallback matches."""
+        from fighthealthinsurance.common_view_logic import DenialCreatorHelper
+
+        # Carrier whose positive regex matches "kaiser" but whose
+        # negative_regex excludes "foundation health" (a different entity).
+        # When BOTH match, the company must be excluded.
+        excluded = InsuranceCompany.objects.create(
+            name="Kaiser Permanente Test",
+            regex=r"kaiser",
+            negative_regex=r"foundation",
+        )
+        # A second carrier that does match cleanly so we can confirm the
+        # excluded one was actually skipped (vs. just no match).
+        winner = InsuranceCompany.objects.create(
+            name="Other Carrier Test",
+            regex=r"foundation\s*health",
+        )
+
+        # Text where both positive regexes hit, but excluded's negative_regex
+        # also fires. Without negative_regex handling, ``excluded`` would tie
+        # or beat ``winner`` since both regex matches score 60.0.
+        text = "kaiser foundation health denied the claim"
+        match = async_to_sync(DenialCreatorHelper._match_insurance_company)(
+            extracted_name=None,
+            denial_text=text,
+        )
+        self.assertEqual(match, winner)
+        self.assertNotEqual(match, excluded)
+
+        # And confirm the excluded company is matched on a text where
+        # negative_regex does NOT fire.
+        match2 = async_to_sync(DenialCreatorHelper._match_insurance_company)(
+            extracted_name=None,
+            denial_text="kaiser denied my claim",
+        )
+        self.assertEqual(match2, excluded)
+
+    def test_match_plan_by_regex_takes_precedence_over_state(self):
+        from fighthealthinsurance.common_view_logic import DenialCreatorHelper
+
+        # Plan with regex match should be preferred even when state is missing
+        plan = async_to_sync(DenialCreatorHelper._match_insurance_plan)(
+            company=self.anthem,
+            denial_text="This is an Anthem Medi-Cal denial",
+            state=None,
+        )
+        self.assertEqual(plan, self.anthem_ca_medicaid)
+
+    def test_match_plan_falls_back_to_state(self):
+        from fighthealthinsurance.common_view_logic import DenialCreatorHelper
+
+        plan = async_to_sync(DenialCreatorHelper._match_insurance_plan)(
+            company=self.anthem,
+            denial_text="No regex hits here at all",
+            state="CA",
+        )
+        self.assertEqual(plan, self.anthem_ca_medicaid)
+
+
+class ExtractInsuranceCompanyPropagationTests(TestCase):
+    """Test that matching a carrier propagates appeal_fax_number onto the denial."""
+
+    def setUp(self):
+        self.aetna = InsuranceCompany.objects.create(
+            name="Aetna",
+            regex=r"aetna(?!\s*better)",
+            negative_regex=r"aetna\s*better\s*health",
+            appeal_fax_number="859-425-3379",
+        )
+        self.medicaid_source = PlanSource.objects.create(
+            name="Medicaid", regex=r"medicaid"
+        )
+        self.aetna_ca_medicaid = InsurancePlan.objects.create(
+            insurance_company=self.aetna,
+            plan_name="Medicaid",
+            state="CA",
+            plan_source=self.medicaid_source,
+            regex=r"aetna.*medi-?cal",
+            appeal_fax_number="844-886-8349",
+        )
+
+    def test_propagates_company_fax_when_denial_has_none(self):
+        from fighthealthinsurance.common_view_logic import DenialCreatorHelper
+
+        denial = Denial.objects.create(
+            denial_text="Aetna denied your claim. Please appeal.",
+            hashed_email="a@b.com",
+        )
+        with patch(
+            "fighthealthinsurance.common_view_logic.appealGenerator.get_insurance_company",
+            new_callable=AsyncMock,
+            return_value="Aetna",
+        ):
+            async_to_sync(DenialCreatorHelper.extract_set_insurance_company)(
+                denial.denial_id
+            )
+        denial.refresh_from_db()
+        self.assertEqual(denial.insurance_company_obj, self.aetna)
+        self.assertEqual(denial.appeal_fax_number, "859-425-3379")
+
+    def test_propagates_plan_fax_over_company_fax(self):
+        from fighthealthinsurance.common_view_logic import DenialCreatorHelper
+
+        denial = Denial.objects.create(
+            denial_text="Aetna Medi-Cal denial in California",
+            hashed_email="a@b.com",
+            state="CA",
+        )
+        with patch(
+            "fighthealthinsurance.common_view_logic.appealGenerator.get_insurance_company",
+            new_callable=AsyncMock,
+            return_value="Aetna",
+        ):
+            async_to_sync(DenialCreatorHelper.extract_set_insurance_company)(
+                denial.denial_id
+            )
+        denial.refresh_from_db()
+        self.assertEqual(denial.insurance_plan_obj, self.aetna_ca_medicaid)
+        # Plan-level fax should win over company-level fax
+        self.assertEqual(denial.appeal_fax_number, "844-886-8349")
+
+    def test_does_not_overwrite_existing_appeal_fax(self):
+        from fighthealthinsurance.common_view_logic import DenialCreatorHelper
+
+        denial = Denial.objects.create(
+            denial_text="Aetna denied your claim",
+            hashed_email="a@b.com",
+            appeal_fax_number="555-000-0000",  # Already set
+        )
+        with patch(
+            "fighthealthinsurance.common_view_logic.appealGenerator.get_insurance_company",
+            new_callable=AsyncMock,
+            return_value="Aetna",
+        ):
+            async_to_sync(DenialCreatorHelper.extract_set_insurance_company)(
+                denial.denial_id
+            )
+        denial.refresh_from_db()
+        self.assertEqual(denial.insurance_company_obj, self.aetna)
+        # Existing fax must NOT be overwritten
+        self.assertEqual(denial.appeal_fax_number, "555-000-0000")
+
+    def test_resolved_name_set_when_only_regex_matches(self):
+        """When LLM extraction returns nothing but a company is matched via
+        regex fallback, the denial's text ``insurance_company`` field and the
+        method return value should both be the matched company's canonical
+        name - not None."""
+        from fighthealthinsurance.common_view_logic import DenialCreatorHelper
+
+        # Create an insurance company with a regex that will match the denial text
+        # but no name overlap with anything in the text
+        bcbs_carrier = InsuranceCompany.objects.create(
+            name="Acme Carrier Long Name",
+            regex=r"acme.*denial",
+            appeal_fax_number="800-111-2222",
+        )
+        denial = Denial.objects.create(
+            denial_text="This is an acme denial letter from a third party.",
+            hashed_email="a@b.com",
+        )
+        with patch(
+            "fighthealthinsurance.common_view_logic.appealGenerator.get_insurance_company",
+            new_callable=AsyncMock,
+            return_value=None,  # LLM extraction failed
+        ):
+            result = async_to_sync(DenialCreatorHelper.extract_set_insurance_company)(
+                denial.denial_id
+            )
+        denial.refresh_from_db()
+        self.assertEqual(denial.insurance_company_obj, bcbs_carrier)
+        self.assertEqual(denial.insurance_company, "Acme Carrier Long Name")
+        self.assertEqual(result, "Acme Carrier Long Name")
+
+
+class ExtractSetFaxNumberTests(TestCase):
+    """Regression tests for extract_set_fax_number's fax-preservation rules."""
+
+    def setUp(self):
+        self.aetna = InsuranceCompany.objects.create(
+            name="Aetna",
+            regex=r"aetna",
+            appeal_fax_number="859-425-3379",
+        )
+
+    def test_does_not_overwrite_user_set_fax_when_digits_not_in_text(self):
+        """A pre-existing fax (e.g. user-edited) must not be nulled by
+        hallucination validation and then replaced with the carrier default.
+
+        Regresses: codex-connector P1 review on PR #757."""
+        from fighthealthinsurance.common_view_logic import DenialCreatorHelper
+
+        denial = Denial.objects.create(
+            denial_text="Aetna denied your claim. Call us if you have questions.",
+            hashed_email="a@b.com",
+            insurance_company_obj=self.aetna,
+            appeal_fax_number="555-867-5309",  # Not present in denial text
+        )
+        with patch(
+            "fighthealthinsurance.common_view_logic.appealGenerator.get_fax_number",
+            new_callable=AsyncMock,
+            return_value=None,
+        ):
+            result = async_to_sync(DenialCreatorHelper.extract_set_fax_number)(
+                denial.denial_id
+            )
+        denial.refresh_from_db()
+        self.assertEqual(denial.appeal_fax_number, "555-867-5309")
+        self.assertEqual(result, "555-867-5309")
+
+    def test_uses_carrier_fallback_when_denial_has_no_fax(self):
+        """When the denial truly has no fax and extraction yields nothing,
+        the carrier-published fax should be used as a last resort."""
+        from fighthealthinsurance.common_view_logic import DenialCreatorHelper
+
+        denial = Denial.objects.create(
+            denial_text="Aetna denied your claim.",
+            hashed_email="a@b.com",
+            insurance_company_obj=self.aetna,
+        )
+        with patch(
+            "fighthealthinsurance.common_view_logic.appealGenerator.get_fax_number",
+            new_callable=AsyncMock,
+            return_value=None,
+        ):
+            result = async_to_sync(DenialCreatorHelper.extract_set_fax_number)(
+                denial.denial_id
+            )
+        denial.refresh_from_db()
+        self.assertEqual(denial.appeal_fax_number, "859-425-3379")
+        self.assertEqual(result, "859-425-3379")
+
+    def test_extracted_fax_validated_against_source_text(self):
+        """A newly-extracted fax that doesn't appear in the source text is
+        rejected (hallucination guard) and falls back to the carrier default."""
+        from fighthealthinsurance.common_view_logic import DenialCreatorHelper
+
+        denial = Denial.objects.create(
+            denial_text="Aetna denied your claim with no fax mentioned.",
+            hashed_email="a@b.com",
+            insurance_company_obj=self.aetna,
+        )
+        with patch(
+            "fighthealthinsurance.common_view_logic.appealGenerator.get_fax_number",
+            new_callable=AsyncMock,
+            return_value="999-888-7777",  # Not in denial_text
+        ):
+            result = async_to_sync(DenialCreatorHelper.extract_set_fax_number)(
+                denial.denial_id
+            )
+        denial.refresh_from_db()
+        # Hallucinated value rejected; carrier fallback used
+        self.assertEqual(denial.appeal_fax_number, "859-425-3379")
+        self.assertEqual(result, "859-425-3379")

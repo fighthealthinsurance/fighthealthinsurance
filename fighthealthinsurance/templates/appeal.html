@@ -173,6 +173,30 @@ Fight Your Health Insurance Denial: Edit and send in your appeal
   </p>
 </div>
 
+<div class="alert-box alert-info" style="margin:2rem 0; border-left:4px solid #ADD100;">
+  <h4 style="margin-bottom:0.75rem;">📣 Want to let the regulator know what's going on?</h4>
+  <p style="margin:0.5rem 0;">
+    Sometimes the most effective thing you can do alongside an internal appeal is
+    cc the people who hold the plan accountable: your <strong>state Department of
+    Insurance</strong>, the plan's <strong>medical director</strong>, and (for
+    ERISA self-funded plans) the <strong>U.S. Department of Labor's EBSA</strong>.
+    We'll draft regulator-friendly letters you can edit and send.
+  </p>
+  <form action="{% url 'escalation_packet' %}" method="post" target="_blank" style="margin:0.75rem 0;">
+    {% csrf_token %}
+    <input type="hidden" name="email" value="{{ user_email }}">
+    <input type="hidden" name="denial_id" value="{{ denial_id }}">
+    {% if semi_sekret %}<input type="hidden" name="semi_sekret" value="{{ semi_sekret }}">{% endif %}
+    <button type="submit" id="generate_escalation_packet" class="btn btn-default" style="font-size:1.05rem; padding:10px 20px;">
+      📨 Click here to draft regulator letters (opens in a new window)
+    </button>
+  </form>
+  <p style="margin:0.5rem 0; font-size:0.9rem; color:#555;">
+    This is especially useful for <em>secondary</em> appeals — once an internal
+    appeal has been denied, regulator escalation often unsticks things.
+  </p>
+</div>
+
 <div class="alert-box alert-warning" style="margin:2rem 0;">
   <h4>💡 Important Reminders:</h4>
   <ul style="margin:0.5rem 0 0 1.5rem; line-height:1.8;">

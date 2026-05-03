@@ -50,6 +50,18 @@ class Base(Configuration):
 
     # Audit logging - disabled by default, enable via environment variable
     ENABLE_AUDIT_LOGGING = os.getenv("ENABLE_AUDIT_LOGGING", "false").lower() == "true"
+
+    # IMR / external-appeal corpus refresh. URLs are optional; the actor skips
+    # any source whose URL is unset. Interval defaults to weekly (168 hours).
+    IMR_DMHC_CSV_URL = os.getenv("IMR_DMHC_CSV_URL", "")
+    IMR_DFS_CSV_URL = os.getenv("IMR_DFS_CSV_URL", "")
+    try:
+        IMR_REFRESH_INTERVAL_HOURS = int(os.getenv("IMR_REFRESH_INTERVAL_HOURS") or 168)
+    except ValueError:
+        # Misconfigured env var should not block app startup.
+        IMR_REFRESH_INTERVAL_HOURS = 168
+    ENABLE_VOICE_INTAKE = os.getenv("ENABLE_VOICE_INTAKE", "false").lower() == "true"
+    ENABLE_LOCAL_STT = os.getenv("ENABLE_LOCAL_STT", "true").lower() == "true"
     LOGIN_URL = "login"
     LOGIN_REDIRECT_URL = "/"
     THUMBNAIL_DEBUG = True
@@ -109,6 +121,10 @@ class Base(Configuration):
 
     ALLOWED_HOSTS: list[str] = ["*"]
     USE_X_FORWARDED_HOST = True
+
+    # Map of alternate hosts to canonical hosts; matching requests are
+    # permanent-redirected by DomainRedirectMiddleware.
+    DOMAIN_REDIRECTS: dict[str, str] = {}
 
     SENTRY_ENDPOINT = os.getenv("SENTRY_ENDPOINT")
     # Application definition
@@ -180,6 +196,7 @@ class Base(Configuration):
     )
 
     MIDDLEWARE = [
+        "fighthealthinsurance.middleware.DomainRedirectMiddleware",
         "fighthealthinsurance.middleware.CsrfCookieToHeaderMiddleware",
         "corsheaders.middleware.CorsMiddleware",
         "django_prometheus.middleware.PrometheusBeforeMiddleware",
@@ -522,6 +539,11 @@ class Test(Dev):
     # incidental call (e.g., through the appeal-generation flow) from
     # reaching the real public CMS endpoint.
     os.environ["CMS_COVERAGE_API_URL"] = "http://127.0.0.1:1"
+    # Same defense for NICE: a NICE_API_KEY may be present in CI (e.g., for
+    # the live integration test), so tests that incidentally trigger appeal
+    # generation could reach the real syndication endpoint. Live tests
+    # restore the real URL on the NICETools instance.
+    os.environ["NICE_API_BASE_URL"] = "http://127.0.0.1:1"
     DEFF_SALT = os.getenv("DEFF_SALT", "test-salt")
     DEFF_PASSWORD = os.getenv("DEFF_PASSWORD", "test-password")
     # For async tests we do in memory for increased isolation
@@ -548,6 +570,7 @@ class TestSync(Dev):
     os.environ["TESTING"] = "True"
     # Point CMS Coverage API at an unroutable address (see Test class).
     os.environ["CMS_COVERAGE_API_URL"] = "http://127.0.0.1:1"
+    os.environ["NICE_API_BASE_URL"] = "http://127.0.0.1:1"
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.sqlite3",
@@ -569,6 +592,7 @@ class TestActor(Dev):
     os.environ["TESTING"] = "True"
     # Point CMS Coverage API at an unroutable address (see Test class).
     os.environ["CMS_COVERAGE_API_URL"] = "http://127.0.0.1:1"
+    os.environ["NICE_API_BASE_URL"] = "http://127.0.0.1:1"
     # We _may_ use "real" files for actor tests since we have seperate processes for actors.
     dt = str(int(time.time()))
     dbname = os.getenv("DBNAME", f"{BASE_DIR}/test2{dt}.db.sqlite3")
@@ -622,7 +646,18 @@ class Prod(Base):
         "www.fightpaperwork.com",
         "api.fightpaperwork.com",
         "staging.fighthealthinsurance.com",
+        "fuckhealthinsurance.com",
+        "www.fuckhealthinsurance.com",
+        "fightinsurance.ai",
+        "www.fightinsurance.ai",
     ]
+
+    DOMAIN_REDIRECTS = {
+        "fuckhealthinsurance.com": "www.fighthealthinsurance.com",
+        "www.fuckhealthinsurance.com": "www.fighthealthinsurance.com",
+        "fightinsurance.ai": "www.fighthealthinsurance.com",
+        "www.fightinsurance.ai": "www.fighthealthinsurance.com",
+    }
 
     # HSTS - tell browsers to always use HTTPS
     SECURE_HSTS_SECONDS = 31536000  # 1 year

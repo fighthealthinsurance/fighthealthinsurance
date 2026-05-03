@@ -53,6 +53,8 @@ from fighthealthinsurance.models import (
     SecondaryDenialProfessionalRelation,
     StripePrice,
     StripeProduct,
+    PolicyDocument,
+    PolicyDocumentAnalysis,
 )
 
 
@@ -304,15 +306,47 @@ class PlanSourceAdmin(admin.ModelAdmin):
 class InsuranceCompanyAdmin(admin.ModelAdmin):
     """Admin configuration for InsuranceCompany model."""
 
-    list_display = ("id", "name", "website", "is_tpa", "is_marketplace_focused")
+    list_display = (
+        "id",
+        "name",
+        "website",
+        "appeal_fax_number",
+        "is_tpa",
+        "is_marketplace_focused",
+    )
     list_filter = ("is_tpa", "is_marketplace_focused")
     search_fields = ("name", "alt_names")
     ordering = ("name",)
+    autocomplete_fields = ["parent_company"]
     fieldsets = (
         (
             None,
             {
-                "fields": ("name", "alt_names", "website", "notes"),
+                "fields": (
+                    "name",
+                    "alt_names",
+                    "website",
+                    "member_services_url",
+                    "parent_company",
+                    "notes",
+                ),
+            },
+        ),
+        (
+            "Appeal Routing",
+            {
+                "fields": (
+                    "appeal_address",
+                    "appeal_fax_number",
+                    "appeal_phone_number",
+                    "appeal_email",
+                    "appeals_portal_url",
+                    "appeals_info_url",
+                ),
+                "description": (
+                    "Where appeals get sent. Used to populate "
+                    "Denial.appeal_fax_number and to suggest portals/addresses."
+                ),
             },
         ),
         (
@@ -343,6 +377,7 @@ class InsurancePlanAdmin(admin.ModelAdmin):
         "state",
         "plan_type",
         "plan_source",
+        "appeal_fax_number",
     )
     list_filter = ("insurance_company", "state", "plan_type", "plan_source")
     search_fields = ("plan_name", "insurance_company__name", "notes")
@@ -360,6 +395,23 @@ class InsurancePlanAdmin(admin.ModelAdmin):
                     "plan_source",
                     "plan_id_prefix",
                     "notes",
+                ),
+            },
+        ),
+        (
+            "Appeal Routing (overrides company-level)",
+            {
+                "fields": (
+                    "appeal_address",
+                    "appeal_fax_number",
+                    "appeal_phone_number",
+                    "appeal_email",
+                    "appeals_portal_url",
+                    "appeals_info_url",
+                ),
+                "description": (
+                    "Plan-specific appeal routing. Blank fields fall back "
+                    "to the parent InsuranceCompany's defaults."
                 ),
             },
         ),
@@ -820,3 +872,19 @@ class AuditLogAdmin(admin.ModelAdmin):
 
     def has_delete_permission(self, request, obj=None):
         return False
+
+
+@admin.register(PolicyDocument)
+class PolicyDocumentAdmin(admin.ModelAdmin):
+    list_display = ("id", "filename", "document_type", "plan_category", "created_at")
+    list_filter = ("document_type", "plan_category", "created_at")
+    search_fields = ("filename", "hashed_email")
+    readonly_fields = ("id", "created_at")
+
+
+@admin.register(PolicyDocumentAnalysis)
+class PolicyDocumentAnalysisAdmin(admin.ModelAdmin):
+    list_display = ("id", "policy_document", "user_question", "created_at")
+    list_filter = ("created_at",)
+    search_fields = ("user_question", "summary")
+    readonly_fields = ("id", "created_at")

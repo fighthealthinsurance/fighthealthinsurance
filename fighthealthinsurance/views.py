@@ -37,12 +37,50 @@ from loguru import logger
 from PIL import Image
 
 from fighthealthinsurance import common_view_logic, forms as core_forms, models
-from fighthealthinsurance.chat_forms import UserConsentForm
+from fighthealthinsurance.chat_forms import UnderstandPolicyForm, UserConsentForm
 from fighthealthinsurance.helpers.data_helpers import RemoveDataHelper
 from fighthealthinsurance.helpers.stripe_helpers import StripeWebhookHelper
-from fighthealthinsurance.models import DeleteToken, UsedDeleteToken, StripeRecoveryInfo
+from fighthealthinsurance.models import (
+    DeleteToken,
+    PolicyDocument,
+    UsedDeleteToken,
+    StripeRecoveryInfo,
+)
 from fighthealthinsurance.type_utils import User
-from fighthealthinsurance.utils import send_fallback_email
+from fighthealthinsurance.utils import is_valid_denial_id, send_fallback_email
+
+
+def _handle_mailing_list_subscribe(form: forms.Form, source_page: str) -> None:
+    """Subscribe user to mailing list if opted in. Swallows errors."""
+    if not form.cleaned_data.get("subscribe"):
+        return
+    name = f"{form.cleaned_data.get('first_name')} {form.cleaned_data.get('last_name')}"
+    try:
+        email = str(form.cleaned_data.get("email", ""))
+        defaults = {
+            "name": name,
+            "phone": form.cleaned_data.get("phone", ""),
+            "comments": f"From {source_page}",
+            "referral_source": form.cleaned_data.get("referral_source", ""),
+            "referral_source_details": form.cleaned_data.get(
+                "referral_source_details", ""
+            ),
+        }
+        existing = (
+            models.MailingListSubscriber.objects.filter(email=email)
+            .order_by("-pk")
+            .first()
+        )
+        if existing is not None:
+            for field, value in defaults.items():
+                setattr(existing, field, value)
+            existing.save(update_fields=list(defaults.keys()))
+        else:
+            models.MailingListSubscriber.objects.create(email=email, **defaults)
+    except Exception as e:
+        logger.opt(exception=True).warning(
+            f"Failed to create mailing list subscriber from {source_page}"
+        )
 
 
 class BlogPostMetadata(TypedDict, total=False):
@@ -1043,6 +1081,7 @@ class ChooseAppeal(View):
                 "appeal": form.cleaned_data["appeal_text"],
                 "user_email": form.cleaned_data["email"],
                 "denial_id": form.cleaned_data["denial_id"],
+                "semi_sekret": form.cleaned_data["semi_sekret"],
                 "appeal_info_extract": appeal_info_extracted,
                 "fax_form": fax_form,
                 "current_step": 8,
@@ -1160,6 +1199,112 @@ class GenerateAppeal(View):
                     form.cleaned_data["semi_sekret"],
                 ),
                 "back_label": "Back to questions",
+            },
+        )
+
+
+class GenerateEscalationPacket(View):
+    """Render the regulator-letter generation page (a.k.a. escalation packet).
+
+    Entry point for the "Want to let the regulator know what's going on?"
+    flow. Validates the denial, computes the recipient list, and hands the
+    page over to a streaming WebSocket-driven UI that fills in one
+    editable letter per recipient.
+    """
+
+    def _build(self, request, denial_id, email, semi_sekret):
+        from fighthealthinsurance.escalation_addresses import (
+            get_recipients_for_denial,
+        )
+
+        denial = common_view_logic.get_denial_for_action(denial_id, email, semi_sekret)
+        if denial is None:
+            return redirect("scan")
+
+        recipients = get_recipients_for_denial(denial)
+        recipients_for_template = [
+            {
+                "recipient_type": r.recipient_type,
+                "name": r.name,
+                "address": r.address,
+                "phone": r.phone,
+                "url": r.url,
+                "rationale": r.rationale,
+            }
+            for r in recipients
+        ]
+        elems = {
+            "denial_id": str(denial_id),
+            "email": email,
+            "semi_sekret": semi_sekret,
+        }
+        return render(
+            request,
+            "escalation_packet.html",
+            context={
+                "form_context": elems,
+                "user_email": email,
+                "denial_id": denial_id,
+                "semi_sekret": semi_sekret,
+                "recipients": recipients_for_template,
+                "recipients_count": len(recipients_for_template),
+                "back_url": build_back_url(
+                    "generate_appeal", denial_id, email, semi_sekret
+                ),
+                "back_label": "Back to your appeal",
+            },
+        )
+
+    def get(self, request):
+        return self._build(
+            request,
+            request.GET.get("denial_id"),
+            request.GET.get("email"),
+            request.GET.get("semi_sekret"),
+        )
+
+    def post(self, request):
+        return self._build(
+            request,
+            request.POST.get("denial_id"),
+            request.POST.get("email"),
+            request.POST.get("semi_sekret"),
+        )
+
+
+class ChooseEscalationLetter(View):
+    """Persist the user's edited regulator letter and render the review page."""
+
+    def post(self, request):
+        form = core_forms.ChooseEscalationLetterForm(request.POST)
+        if not form.is_valid():
+            return HttpResponseRedirect(reverse("scan"))
+
+        cleaned = form.cleaned_data
+        escalation = common_view_logic.EscalationPacketHelper.save_chosen_letter(
+            escalation_uuid=cleaned["escalation_uuid"],
+            denial_id=cleaned["denial_id"],
+            email=cleaned["email"],
+            semi_sekret=cleaned["semi_sekret"],
+            letter_text=cleaned["letter_text"],
+        )
+        if escalation is None:
+            return HttpResponseRedirect(reverse("scan"))
+
+        return render(
+            request,
+            "escalation_packet_review.html",
+            context={
+                "letter_text": escalation.letter_text,
+                "recipient_name": escalation.recipient_name,
+                "recipient_address": escalation.recipient_address,
+                "recipient_phone": escalation.recipient_phone,
+                "recipient_url": escalation.recipient_url,
+                "recipient_type": escalation.recipient_type,
+                "user_email": cleaned["email"],
+                "denial_id": cleaned["denial_id"],
+                "semi_sekret": cleaned["semi_sekret"],
+                "escalation_uuid": cleaned["escalation_uuid"],
             },
         )
 
@@ -1346,8 +1491,17 @@ class InitialProcessView(generic.FormView):
 
         # Store the denial ID in the session to maintain state across the multi-step form process
         # This allows the SessionRequiredMixin to verify the user is working with a valid denial
+        if not is_valid_denial_id(denial_response.denial_id):
+            logger.error(
+                "Invalid denial_id generated in form workflow. "
+                f"session_key={self.request.session.session_key or 'no_session_key'} "
+                f"remote_ip={self.request.META.get('REMOTE_ADDR', 'unknown')} "
+                f"denial_uuid={denial_response.uuid} denial_id={denial_response.denial_id}"
+            )
+            raise ValueError("Invalid denial ID generated")
+
         self.request.session["denial_uuid"] = str(denial_response.uuid)
-        self.request.session["denial_id"] = denial_response.denial_id
+        self.request.session["denial_id"] = int(denial_response.denial_id)
 
         # Store microsite data in session for prefilling later in the flow
         default_procedure = self.request.POST.get(
@@ -1443,6 +1597,14 @@ class SessionRequiredMixin(View):
             semi_sekret = self.request.POST.get("semi_sekret")
 
         if denial_id and email and semi_sekret:
+            if not is_valid_denial_id(denial_id):
+                logger.warning(
+                    "Invalid denial_id format in request context resolution. "
+                    f"session_key={self.request.session.session_key or 'no_session_key'} "
+                    f"remote_ip={self.request.META.get('REMOTE_ADDR', 'unknown')} "
+                    f"denial_id={denial_id}"
+                )
+                return {}
             # Validate the denial exists and semi_sekret matches
             try:
                 denial = models.Denial.objects.get(
@@ -1463,7 +1625,12 @@ class SessionRequiredMixin(View):
                     "semi_sekret": semi_sekret,
                 }
             except models.Denial.DoesNotExist:
-                logger.warning(f"Invalid denial lookup: {denial_id}")
+                logger.warning(
+                    "Invalid denial lookup for provided denial reference. "
+                    f"session_key={self.request.session.session_key or 'no_session_key'} "
+                    f"remote_ip={self.request.META.get('REMOTE_ADDR', 'unknown')} "
+                    f"denial_id={denial_id}"
+                )
 
         return {}
 
@@ -1875,9 +2042,12 @@ def chat_interface_view(request):
     if not denial_text:
         denial_text = request.session.pop("denial_text_for_explanation", "")
 
+    # Check for a pre-built initial message (e.g. from policy analysis redirect)
     initial_message = ""
-    if denial_text:
-        # Format the initial message for the chat
+    if request.method == "POST":
+        initial_message = request.POST.get("initial_message", "")
+
+    if not initial_message and denial_text:
         initial_message = (
             "I received this denial letter from my insurance and need help understanding it:\n\n"
             f"{denial_text}\n\n"
@@ -1892,6 +2062,8 @@ def chat_interface_view(request):
         "medicare": medicare,
         "microsite_slug": microsite_slug,
         "initial_message": initial_message,
+        "enable_voice_intake": getattr(settings, "ENABLE_VOICE_INTAKE", False),
+        "enable_local_stt": getattr(settings, "ENABLE_LOCAL_STT", True),
     }
     logger.debug(
         f"Rendering chat interface: microsite_slug={microsite_slug}, has_default_procedure={bool(default_procedure)}, has_default_condition={bool(default_condition)}, medicare={medicare}, has_initial_message={bool(initial_message)}"
@@ -1956,21 +2128,7 @@ class ChatUserConsentView(FormView):
 
     def form_valid(self, form):
         mark_session_consent(self.request.session, form.cleaned_data.get("email"))
-        if form.cleaned_data.get("subscribe"):
-            name = f"{form.cleaned_data.get('first_name')} {form.cleaned_data.get('last_name')}"
-            referral_source = form.cleaned_data.get("referral_source", "")
-            referral_source_details = form.cleaned_data.get(
-                "referral_source_details", ""
-            )
-            # Does the user want to subscribe to the newsletter?
-            models.MailingListSubscriber.objects.create(
-                email=form.cleaned_data.get("email"),
-                phone=form.cleaned_data.get("phone"),
-                name=name,
-                comments="From chat consent form",
-                referral_source=referral_source,
-                referral_source_details=referral_source_details,
-            )
+        _handle_mailing_list_subscribe(form, "chat consent form")
 
         # Check if there's denial text to pass through
         denial_text = self.request.POST.get("denial_text", "")
@@ -2231,30 +2389,114 @@ class ExplainDenialView(FormView):
 
         mark_session_consent(self.request.session, form.cleaned_data.get("email"))
 
-        # Handle mailing list subscription
-        if form.cleaned_data.get("subscribe"):
-            name = f"{form.cleaned_data.get('first_name')} {form.cleaned_data.get('last_name')}"
-            referral_source = form.cleaned_data.get("referral_source", "")
-            referral_source_details = form.cleaned_data.get(
-                "referral_source_details", ""
-            )
-
-            try:
-                models.MailingListSubscriber.objects.create(
-                    email=form.cleaned_data.get("email"),
-                    phone=form.cleaned_data.get("phone"),
-                    name=name,
-                    comments="From explain denial page",
-                    referral_source=referral_source,
-                    referral_source_details=referral_source_details,
-                )
-            except Exception as e:
-                # Log the error but don't fail the form submission
-                logger.warning(f"Failed to create mailing list subscriber: {e}")
+        _handle_mailing_list_subscribe(form, "explain denial page")
 
         # Render auto-submit form to POST to chat
         context = {
             "denial_text": denial_text,
+            "chat_url": reverse("chat"),
+        }
+        return render(self.request, "chat_redirect.html", context)
+
+
+class UnderstandPolicyView(FormView):
+    """
+    View for the Understand My Policy page - allows users to upload insurance policy
+    documents (Summary of Benefits, Medical Policy PDFs) for AI analysis.
+    The AI will extract exclusions, inclusions, and appeal-relevant clauses.
+    """
+
+    template_name = "understand_policy.html"
+    form_class = UnderstandPolicyForm
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context["title"] = "Understand My Policy"
+        return context
+
+    def form_valid(self, form) -> HttpResponse:
+        """Process the uploaded policy document and redirect to chat."""
+        email = form.cleaned_data.get("email")
+        document_type = form.cleaned_data.get("document_type")
+        plan_category = form.cleaned_data.get("plan_category", "unknown")
+        user_question = form.cleaned_data.get("user_question", "")
+        uploaded_file = form.cleaned_data.get("policy_document")
+
+        if not uploaded_file:
+            form.add_error("policy_document", "File upload failed.")
+            return self.form_invalid(form)
+
+        # Sanitize filename, preserving extension for downstream dispatch
+        sanitized = re.sub(r"[^\w .\-]", "_", uploaded_file.name)
+        stem, ext = os.path.splitext(sanitized)
+        safe_filename = f"{stem[:max(1, 200 - len(ext))]}{ext.lower()}"
+        uploaded_file.name = safe_filename
+
+        mark_session_consent(self.request.session, email or "")
+
+        # Create PolicyDocument record
+        try:
+            from fighthealthinsurance.models import Denial
+
+            hashed_email = Denial.get_hashed_email(email) if email else ""
+            if not self.request.session.session_key:
+                self.request.session.save()
+            session_key = self.request.session.session_key or ""
+
+            policy_doc = PolicyDocument.objects.create(
+                document_enc=uploaded_file,
+                document_type=document_type,
+                plan_category=plan_category,
+                filename=safe_filename,
+                hashed_email=hashed_email,
+                session_key=session_key,
+            )
+
+            logger.info(f"Created PolicyDocument {policy_doc.id}")
+
+            # Store the document ID in session for chat to pick up
+            self.request.session["policy_document_id"] = str(policy_doc.id)
+            self.request.session["policy_document_question"] = user_question
+
+        except Exception as e:
+            logger.opt(exception=True).error(f"Failed to save policy document: {e}")
+            form.add_error(None, "Failed to upload document. Please try again.")
+            return self.form_invalid(form)
+
+        _handle_mailing_list_subscribe(form, "understand policy page")
+
+        # Build initial message for chat — must match the regex in
+        # chat_interface._POLICY_ANALYSIS_REGEX so the chat handler picks it up.
+        doc_type_display = dict(PolicyDocument.DOCUMENT_TYPE_CHOICES).get(
+            document_type, "policy document"
+        )
+
+        plan_category_display = dict(UnderstandPolicyForm.PLAN_CATEGORY_CHOICES).get(
+            plan_category, ""
+        )
+
+        initial_message = f"I've uploaded my insurance {doc_type_display}.\n"
+
+        if plan_category and plan_category != "unknown":
+            initial_message += f"Plan type: {plan_category_display}\n"
+
+        initial_message += "\n"
+
+        normalized_question = re.sub(r"\s+", " ", user_question).strip()
+        if normalized_question:
+            initial_message += f"My question: {normalized_question}\n\n"
+
+        initial_message += (
+            "Please analyze this document and help me understand:\n"
+            "1. What is covered (inclusions)\n"
+            "2. What is NOT covered (exclusions)\n"
+            "3. Any clauses that would be useful if I need to appeal a denial\n"
+            "4. Key quotes I could use in an appeal letter\n"
+            "5. Which regulator oversees this plan and how to file a complaint"
+        )
+
+        context = {
+            "initial_message": initial_message,
             "chat_url": reverse("chat"),
         }
         return render(self.request, "chat_redirect.html", context)

@@ -18,7 +18,8 @@
     regex: (anthem|elevance\s*health)(?!.*empire)
     negative_regex: empire
     website: https://www.anthem.com
-    notes: Major national health insurance company (parent company now branded as Elevance Health). Has state-specific brands.
+    member_services_url: https://www.anthem.com/contact-us
+    notes: Major national health insurance company (parent company now branded as Elevance Health). Routing is state-specific - the regional InsuranceCompany / InsurancePlan records hold per-state appeal addresses (e.g. Anthem Blue Cross California pk 9, Empire BlueCross BlueShield pk 10). Members should check the address printed on their EOB / member ID card.
 
 - model: fighthealthinsurance.insurancecompany
   pk: 2
@@ -32,7 +33,9 @@
       UnitedHealth Group
     regex: united\s*health(?:\s*care|\s*group)?|uhc(?!\w)
     website: https://www.uhc.com
-    notes: One of the largest health insurance providers in the U.S. Part of UnitedHealth Group.
+    member_services_url: https://www.uhc.com/contact-us
+    appeals_portal_url: https://memberforms.uhc.com/Memberappealsandgrievances.html
+    notes: One of the largest health insurance providers in the U.S. Part of UnitedHealth Group. UHC routes appeals per-plan rather than to a single national address - members should use the address/fax printed on their EOB or member ID card. Use the online appeals portal (appeals_portal_url) when in doubt.
 
 - model: fighthealthinsurance.insurancecompany
   pk: 3
@@ -45,7 +48,14 @@
     regex: aetna(?!\s*better)
     negative_regex: aetna\s*better\s*health
     website: https://www.aetna.com
-    notes: Major health insurance company, now part of CVS Health
+    member_services_url: https://www.aetna.com/individuals-families/member-rights-resources.html
+    appeals_info_url: https://www.aetna.com/health-care-professionals/disputes-appeals/disputes-appeals-overview.html
+    appeal_address: |
+      Aetna
+      P.O. Box 14463
+      Lexington, KY 40512
+    appeal_fax_number: 859-425-3379
+    notes: Major health insurance company, now part of CVS Health. Address shown is the National Appeals address for member commercial appeals.
 
 - model: fighthealthinsurance.insurancecompany
   pk: 4
@@ -58,7 +68,15 @@
       The Cigna Group
     regex: cigna
     website: https://www.cigna.com
-    notes: Global health insurance and services company
+    member_services_url: https://www.cigna.com/individuals-families/member-guide/appeals-grievances
+    appeals_info_url: https://www.cigna.com/individuals-families/member-guide/appeals-grievances
+    appeal_address: |
+      Cigna Healthcare
+      National Appeals Unit (NAO)
+      P.O. Box 188011
+      Chattanooga, TN 37422
+    appeal_fax_number: 877-815-4827
+    notes: Global health insurance and services company. GWH-Cigna ("G" ID cards) use a different P.O. Box and fax (877-804-1679 / P.O. Box 188062).
 
 - model: fighthealthinsurance.insurancecompany
   pk: 5
@@ -68,7 +86,15 @@
       Humana Inc
     regex: humana
     website: https://www.humana.com
-    notes: Focuses on Medicare Advantage plans
+    member_services_url: https://www.humana.com/member/exceptions-and-appeals
+    appeals_info_url: https://www.humana.com/member/exceptions-and-appeals
+    appeal_address: |
+      Humana Grievance and Appeals Department
+      P.O. Box 14165
+      Lexington, KY 40512-4165
+    appeal_fax_number: 888-556-2128
+    appeals_portal_url: https://resolutions.humana.com/
+    notes: Focuses on Medicare Advantage plans. Online appeal form available at resolutions.humana.com.
 
 - model: fighthealthinsurance.insurancecompany
   pk: 6
@@ -79,7 +105,9 @@
       KP
     regex: kaiser\s*permanente|kaiser(?!\s*foundation)
     website: https://www.kp.org
-    notes: Integrated managed care consortium operating in multiple states
+    member_services_url: https://healthy.kaiserpermanente.org/
+    appeal_phone_number: 800-788-0710
+    notes: Integrated managed care consortium operating in multiple regions. Appeal routing is region-specific (Southern California / Northern California / Mid-Atlantic / Northwest / Hawaii / Colorado / Washington / Georgia each have their own address and fax). Members should use the contact info on their EOB or member ID card.
 
 - model: fighthealthinsurance.insurancecompany
   pk: 7
@@ -89,7 +117,8 @@
       Molina
     regex: molina\s*health
     website: https://www.molinahealthcare.com
-    notes: Specializes in government-sponsored healthcare programs (Medicaid, Medicare)
+    member_services_url: https://www.molinahealthcare.com/members/common/en-US/contact-us.aspx
+    notes: Specializes in government-sponsored healthcare programs (Medicaid, Medicare). Routing is state-specific (Marketplace and Medicaid both use per-state addresses); see the per-state InsurancePlan entries or the address printed on the member's EOB / ID card.
 
 - model: fighthealthinsurance.insurancecompany
   pk: 8
@@ -101,7 +130,15 @@
     regex: centene|health\s*net(?!\s*federal)
     negative_regex: ambetter|wellcare
     website: https://www.centene.com
-    notes: Parent company of Ambetter, WellCare, and Health Net. Focuses on Medicaid and marketplace.
+    member_services_url: https://www.healthnet.com/content/healthnet/en_us/members/appeals-and-grievances.html
+    appeals_info_url: https://www.healthnet.com/content/healthnet/en_us/members/appeals-and-grievances.html
+    appeal_address: |
+      Health Net of California
+      Member Appeals and Grievance Department
+      P.O. Box 10348
+      Van Nuys, CA 91410-0348
+    appeal_fax_number: 877-831-6019
+    notes: Parent company of Ambetter, WellCare, and Health Net. Focuses on Medicaid and marketplace. Address shown is for Health Net California; subsidiary brands (Ambetter, WellCare) and state MCOs have their own routing.
 
 #######################################################################
 # REGIONAL ANTHEM / BCBS BRANDS
@@ -116,7 +153,16 @@
       Anthem CA
       Blue Cross of California
     regex: anthem.*(?:blue\s*cross|bcbs).*california|california.*anthem.*(?:blue\s*cross|bcbs)|blue\s*cross\s*(?:of\s*)?california
+    parent_company: 1
     website: https://www.anthem.com/ca
+    member_services_url: https://www.anthem.com/ca/individual-and-family/complaints-grievances
+    appeals_info_url: https://www.anthem.com/ca/individual-and-family/complaints-grievances
+    appeal_address: |
+      Anthem Blue Cross
+      Grievances and Appeals
+      P.O. Box 4310
+      Woodland Hills, CA 91365-4310
+    appeal_phone_number: 800-365-0609
     notes: Anthem's California regional brand
 
 - model: fighthealthinsurance.insurancecompany
@@ -128,8 +174,11 @@
       Empire Blue Cross
       Empire Health
     regex: empire.*(?:blue\s*cross|bcbs)|empire\s*health
+    parent_company: 1
     website: https://www.empireblue.com
-    notes: Anthem's New York regional brand (Empire)
+    member_services_url: https://www.empireblue.com/
+    appeal_phone_number: 800-300-8181
+    notes: Anthem's New York regional brand (Empire). Routing differs by product line (commercial vs HealthPlus / Medicaid); the HealthPlus Medicaid appeals address is P.O. Box 62429, Virginia Beach, VA 23466-2429 with fax 866-495-8716. Members should check the address printed on their EOB / member ID card.
 
 - model: fighthealthinsurance.insurancecompany
   pk: 11
@@ -139,8 +188,10 @@
       Anthem BCBS
       Anthem Regional
     regex: anthem.*(?:blue\s*cross\s*and\s*blue\s*shield)
+    parent_company: 1
     website: https://www.anthem.com
-    notes: Anthem regional brand used in multiple states (IN, KY, OH, VA, WI)
+    member_services_url: https://www.anthem.com/contact-us
+    notes: Anthem regional brand used in multiple states (IN, KY, OH, VA, WI). State-specific InsurancePlan rows hold per-state routing.
 
 #######################################################################
 # REGIONAL BCBS PLANS (NON-ANTHEM)
@@ -169,7 +220,15 @@
       Highmark Health
     regex: highmark
     website: https://www.highmark.com
-    notes: Regional BCBS for PA, WV, DE, and western NY. Parent of Allegheny Health Network.
+    member_services_url: https://www.highmark.com/contact
+    appeal_address: |
+      Highmark Health Options
+      Appeals and Grievances
+      P.O. Box 106004
+      Pittsburgh, PA 15230
+    appeal_fax_number: 833-841-8074
+    appeal_phone_number: 855-325-6251
+    notes: Regional BCBS for PA, WV, DE, and western NY. Parent of Allegheny Health Network. Default address shown is Health Options (Medicaid); commercial PA Highmark uses different routing - members should check the address printed on their EOB / member ID card.
 
 - model: fighthealthinsurance.insurancecompany
   pk: 14
@@ -181,7 +240,15 @@
       Blue Cross Texas
     regex: (?:blue\s*cross\s*blue\s*shield|bcbs).*texas|texas.*(?:blue\s*cross\s*blue\s*shield|bcbs)
     website: https://www.bcbstx.com
-    notes: Largest health insurer in Texas. Part of Health Care Service Corporation.
+    member_services_url: https://www.bcbstx.com/contact-us
+    appeals_info_url: https://www.bcbstx.com/chip/member-resources/complaints-and-appeals
+    appeal_address: |
+      Blue Cross and Blue Shield of Texas
+      ATTN: Complaints and Appeals Department
+      P.O. Box 660717
+      Dallas, TX 75266-0717
+    appeal_phone_number: 888-657-6061
+    notes: Largest health insurer in Texas. Part of Health Care Service Corporation (pk 17).
 
 - model: fighthealthinsurance.insurancecompany
   pk: 15
@@ -193,7 +260,15 @@
       BCBSFL
     regex: florida\s*blue|(?:blue\s*cross\s*blue\s*shield|bcbs).*florida|florida.*(?:blue\s*cross\s*blue\s*shield|bcbs)
     website: https://www.floridablue.com
-    notes: Independent BCBS licensee for Florida
+    member_services_url: https://www.floridablue.com/help/contact-us-quick-reference-guide
+    appeals_info_url: https://www.floridablue.com/help/contact-us-quick-reference-guide
+    appeal_address: |
+      BlueCross and BlueShield of Florida
+      Attention: Appeals and Disputes Department
+      P.O. Box 44197
+      Jacksonville, FL 32231-4197
+    appeal_fax_number: 904-565-6637
+    notes: Independent BCBS licensee for Florida. Expedited appeals fax 305-437-7490; this entry shows the standard external review address.
 
 - model: fighthealthinsurance.insurancecompany
   pk: 16
@@ -214,7 +289,8 @@
       HCSC
     regex: health\s*care\s*service\s*corporation|hcsc
     website: https://www.hcsc.com
-    notes: Parent company of BCBS plans in IL, MT, NM, OK, and TX. Largest customer-owned health insurer in the US.
+    member_services_url: https://www.hcsc.com/contact-us
+    notes: Parent company of BCBS plans in IL, MT, NM, OK, and TX. Largest customer-owned health insurer in the US. Use the state-specific BCBS subsidiary for appeal routing.
 
 - model: fighthealthinsurance.insurancecompany
   pk: 18
@@ -286,7 +362,14 @@
       Oscar Insurance
     regex: oscar\s*(?:health|insurance)?
     website: https://www.hioscar.com
-    notes: Technology-focused health insurance company, primarily individual and small group markets
+    member_services_url: https://www.hioscar.com/help
+    appeal_address: |
+      Oscar Insurance Company
+      P.O. Box 52146
+      Phoenix, AZ 85072-2146
+    appeal_fax_number: 888-977-2062
+    appeal_phone_number: 855-672-2755
+    notes: Technology-focused health insurance company, primarily individual and small group markets. The Phoenix, AZ PO Box and 888 fax are Oscar's central appeals routing per the member service page; per-state grievance forms are linked from hioscar.com/help.
     is_marketplace_focused: true
 
 - model: fighthealthinsurance.insurancecompany
@@ -296,8 +379,10 @@
     alt_names: |
       Ambetter Health
     regex: ambetter
+    parent_company: 8
     website: https://www.ambetterhealth.com
-    notes: Centene's ACA marketplace brand, available in many states
+    member_services_url: https://www.ambetterhealth.com/help/contact.html
+    notes: Centene's ACA marketplace brand, available in many states. Routing is per state subsidiary - Ambetter members should check the address printed on their EOB or member ID card; Centene's state MCO records (Sunshine Health, Superior HealthPlan, etc.) hold the per-state routing.
     is_marketplace_focused: true
 
 - model: fighthealthinsurance.insurancecompany
@@ -308,7 +393,9 @@
       Wellcare
       WellCare Health Plans
     regex: well\s*care
+    parent_company: 8
     website: https://www.wellcare.com
+    member_services_url: https://www.wellcare.com/contact-us
     notes: Centene subsidiary focusing on Medicare and Medicaid managed care
 
 - model: fighthealthinsurance.insurancecompany
@@ -351,7 +438,9 @@
     alt_names: |
       Amerigroup Corporation
     regex: amerigroup
+    parent_company: 1
     website: https://www.amerigroup.com
+    member_services_url: https://www.amerigroup.com/contact-us
     notes: Anthem subsidiary focusing on Medicaid and Medicare managed care
 
 - model: fighthealthinsurance.insurancecompany
@@ -403,8 +492,11 @@
       United Community Plan
       UnitedHealthcare Community & State
     regex: united\s*health\s*care\s*community|uhc\s*community
+    parent_company: 2
     website: https://www.uhccommunityplan.com
-    notes: UnitedHealthcare's Medicaid managed care brand
+    member_services_url: https://www.uhc.com/communityplan/contact-us
+    appeals_info_url: https://www.uhc.com/communityplan/learn-about-medicare/appeals-grievances-process
+    notes: UnitedHealthcare's Medicaid managed care brand. State-specific InsurancePlan rows have per-state routing.
 
 - model: fighthealthinsurance.insurancecompany
   pk: 34
@@ -413,8 +505,17 @@
     alt_names: |
       Aetna Medicaid
     regex: aetna\s*better\s*health
+    parent_company: 3
     website: https://www.aetnabetterhealth.com
-    notes: Aetna's Medicaid managed care brand
+    member_services_url: https://www.aetnabetterhealth.com/california/contact-us
+    appeals_info_url: https://www.aetnabetterhealth.com/california/providers/grievance-appeal.html
+    appeal_address: |
+      Aetna Better Health
+      Attn: Appeal and Grievance Department
+      P.O. Box 81040
+      5801 Postal Road
+      Cleveland, OH 44181
+    notes: Aetna's Medicaid managed care brand. State-specific InsurancePlan rows have per-state fax numbers.
 
 #######################################################################
 # THIRD-PARTY ADMINISTRATORS (TPAs) AND ASO
@@ -428,7 +529,16 @@
       UMR Inc
       United Medical Resources
     regex: umr(?!\w)|united\s*medical\s*resources
+    parent_company: 2
     website: https://www.umr.com
+    member_services_url: https://www.umr.com/form-center
+    appeals_info_url: https://www.umr.com/oss/cms/FHS.UMR.com/SharedFiles/UMR_Appeal_Request_Form_Member_0116.pdf
+    appeal_address: |
+      UMR - Claim Appeals
+      P.O. Box 30546
+      Salt Lake City, UT 84130-0546
+    appeal_fax_number: 877-291-3248
+    appeal_phone_number: 800-657-8205
     notes: Third-party administrator (TPA) for self-funded employer health plans. UnitedHealth Group subsidiary.
     is_tpa: true
 
@@ -440,7 +550,16 @@
       Meritain
       Aetna Meritain
     regex: meritain
+    parent_company: 3
     website: https://www.meritain.com
+    member_services_url: https://www.meritain.com/resources-for-members-meritain-health-insurance/
+    appeals_info_url: https://www.meritain.com/wp-content/uploads/2022/03/Meritain_Appeal-Form_interactive_0322.pdf
+    appeal_address: |
+      Meritain Health
+      Appeals Department
+      P.O. Box 41980
+      Plymouth, MN 55441
+    appeal_fax_number: 716-541-6374
     notes: Third-party administrator for self-funded employer plans. Aetna subsidiary.
     is_tpa: true
 
@@ -817,6 +936,7 @@
     state: PA
     plan_source: 300
     regex: aetna\s*better.*pennsylvania|pennsylvania.*aetna\s*better
+    appeals_info_url: https://www.aetnabetterhealth.com/pennsylvania/members/grievance-appeal.html
     notes: Aetna Better Health of Pennsylvania Medicaid
 
 - model: fighthealthinsurance.insuranceplan
@@ -827,6 +947,7 @@
     state: NJ
     plan_source: 300
     regex: aetna\s*better.*new\s*jersey|new\s*jersey.*aetna\s*better
+    appeals_info_url: https://www.aetnabetterhealth.com/new-jersey/members/grievance-appeal.html
     notes: Aetna Better Health of New Jersey Medicaid
 
 - model: fighthealthinsurance.insuranceplan
@@ -837,6 +958,7 @@
     state: IL
     plan_source: 300
     regex: aetna\s*better.*illinois|illinois.*aetna\s*better
+    appeals_info_url: https://www.aetnabetterhealth.com/illinois/members/grievance-appeal.html
     notes: Aetna Better Health of Illinois Medicaid
 
 - model: fighthealthinsurance.insuranceplan
@@ -847,6 +969,7 @@
     state: LA
     plan_source: 300
     regex: aetna\s*better.*louisiana|louisiana.*aetna\s*better
+    appeals_info_url: https://www.aetnabetterhealth.com/louisiana/members/grievance-appeal.html
     notes: Aetna Better Health of Louisiana Medicaid
 
 #######################################################################
@@ -965,6 +1088,13 @@
       Blue Cross Michigan
     regex: (?:blue\s*cross\s*blue\s*shield|bcbs).*michigan|michigan.*(?:blue\s*cross|bcbs)|bcbsm(?!\w)
     website: https://www.bcbsm.com
+    member_services_url: https://www.bcbsm.com/individuals/help/contact-us/
+    appeals_info_url: https://www.bcbsm.com/individuals/help/claims/claim-forms/appeal-form/
+    appeal_address: |
+      Blue Cross and Blue Shield of Michigan
+      600 E. Lafayette Blvd., M.C. 1620
+      Detroit, MI 48226-2998
+    appeal_fax_number: 877-522-4767
     notes: Largest health insurer in Michigan, nonprofit mutual insurance company
 
 - model: fighthealthinsurance.insurancecompany
@@ -977,6 +1107,16 @@
       Blue Cross MA
     regex: (?:blue\s*cross\s*blue\s*shield|bcbs).*massachusetts|massachusetts.*(?:blue\s*cross|bcbs)
     website: https://www.bluecrossma.org
+    member_services_url: https://www.bluecrossma.org/medical-policies/contact-us
+    appeals_info_url: https://www.bluecrossma.org/disclaimer/member-rights-and-responsibilities/appeals-and-grievances
+    appeal_address: |
+      Blue Cross Blue Shield of Massachusetts
+      Member Grievance Program
+      One Enterprise Drive
+      Quincy, MA 02171-2126
+    appeal_fax_number: 617-246-3616
+    appeal_email: grievances@bcbsma.com
+    appeal_phone_number: 800-462-5601
     notes: Largest private health insurer in Massachusetts
 
 - model: fighthealthinsurance.insurancecompany
@@ -989,6 +1129,15 @@
       Blue Cross Philadelphia
     regex: independence\s*(?:blue\s*cross|bc)|ibx(?!\w)
     website: https://www.ibx.com
+    member_services_url: https://www.ibx.com/contact-us
+    appeals_info_url: https://www.ibx.com/ResourceCenter/Appeal1.pdf
+    appeal_address: |
+      Independence Blue Cross
+      Member Appeals Department
+      P.O. Box 41820
+      Philadelphia, PA 19101-1820
+    appeal_fax_number: 888-671-5274
+    appeal_phone_number: 888-671-5276
     notes: BCBS licensee serving southeastern Pennsylvania including Philadelphia
 
 - model: fighthealthinsurance.insurancecompany
@@ -1001,6 +1150,14 @@
       BCBS New Jersey
     regex: horizon.*(?:blue\s*cross|bcbs)|(?:blue\s*cross|bcbs).*new\s*jersey
     website: https://www.horizonblue.com
+    member_services_url: https://www.horizonblue.com/contact-us/member-contacts
+    appeals_info_url: https://www.horizonblue.com/contact-us/member-appeals-and-inquiries
+    appeal_address: |
+      Horizon Blue Cross Blue Shield of New Jersey
+      Appeals Department
+      P.O. Box 317
+      Newark, NJ 07105-0317
+    appeal_phone_number: 800-355-2583
     notes: Largest health insurer in New Jersey
 
 - model: fighthealthinsurance.insurancecompany
@@ -1013,6 +1170,14 @@
       Blue Cross TN
     regex: (?:blue\s*cross\s*blue\s*shield|bcbs).*tennessee|tennessee.*(?:blue\s*cross|bcbs)
     website: https://www.bcbst.com
+    member_services_url: https://www.bcbst.com/contact-us
+    appeals_info_url: https://provider.bcbst.com/tools-resources/authorizations-appeals
+    appeal_address: |
+      BlueCross BlueShield of Tennessee
+      Appeals Department
+      1 Cameron Hill Circle, Ste 0042
+      Chattanooga, TN 37402-0042
+    appeal_fax_number: 423-535-1959
     notes: Largest health insurer in Tennessee, nonprofit
 
 - model: fighthealthinsurance.insurancecompany
@@ -1027,6 +1192,12 @@
     regex: carefirst|(?:blue\s*cross|bcbs).*(?:dc|maryland|virginia)|(?:dc|maryland).*(?:blue\s*cross|bcbs)
     negative_regex: anthem
     website: https://www.carefirst.com
+    member_services_url: https://member.carefirst.com/members/contact-us/contact-us.page
+    appeals_info_url: https://member.carefirst.com/members/contact-us/appeal-claim.page
+    appeal_address: |
+      CareFirst BlueCross BlueShield
+      P.O. Box 14114
+      Lexington, KY 40512-4116
     notes: BCBS licensee for DC, Maryland, and Northern Virginia
 
 - model: fighthealthinsurance.insurancecompany
@@ -1087,6 +1258,14 @@
       BCBSNC
     regex: (?:blue\s*cross\s*blue\s*shield|bcbs).*north\s*carolina|north\s*carolina.*(?:blue\s*cross|bcbs)|bcbsnc
     website: https://www.bluecrossnc.com
+    member_services_url: https://www.bluecrossnc.com/members/contact-us
+    appeals_info_url: https://www.bluecrossnc.com/members/knowledge-center/appeals
+    appeal_address: |
+      Blue Cross and Blue Shield of North Carolina
+      Member Rights and Appeals
+      P.O. Box 30055
+      Durham, NC 27702-3055
+    appeal_fax_number: 919-765-4409
     notes: Largest health insurer in North Carolina
 
 - model: fighthealthinsurance.insurancecompany
@@ -1191,7 +1370,8 @@
       Florida Blue Parent
     regex: guidewell
     website: https://www.guidewell.com
-    notes: Parent company of Florida Blue and related health companies
+    member_services_url: https://www.guidewell.com/about-us/contact-us
+    notes: Parent company of Florida Blue and related health companies. Use Florida Blue (pk 15) for member appeal routing.
 
 #######################################################################
 # CENTENE SUBSIDIARY BRANDS (STATE MCOs)
@@ -1205,7 +1385,9 @@
       Fidelis
       Fidelis Care New York
     regex: fidelis\s*care
+    parent_company: 8
     website: https://www.fideliscare.org
+    member_services_url: https://www.fideliscare.org/Contact-Us
     notes: Centene subsidiary serving New York Medicaid and Medicare markets
 
 - model: fighthealthinsurance.insurancecompany
@@ -1216,6 +1398,7 @@
       Superior Health Plan
       Superior Texas
     regex: superior\s*health\s*plan
+    parent_company: 8
     website: https://www.superiorhealthplan.com
     notes: Centene subsidiary serving Texas Medicaid market
 
@@ -1226,6 +1409,7 @@
     alt_names: |
       Buckeye Health
     regex: buckeye\s*health
+    parent_company: 8
     website: https://www.buckeyehealthplan.com
     notes: Centene subsidiary serving Ohio Medicaid market
 
@@ -1236,6 +1420,7 @@
     alt_names: |
       Peach State
     regex: peach\s*state\s*health
+    parent_company: 8
     website: https://www.pshpgeorgia.com
     notes: Centene subsidiary serving Georgia Medicaid market
 
@@ -1246,6 +1431,7 @@
     alt_names: |
       Sunshine Health Plan
     regex: sunshine\s*health
+    parent_company: 8
     website: https://www.sunshinehealth.com
     notes: Centene subsidiary serving Florida Medicaid market
 
@@ -1256,6 +1442,7 @@
     alt_names: |
       Iowa TotalCare
     regex: iowa\s*total\s*care
+    parent_company: 8
     website: https://www.iowatotalcare.com
     notes: Centene subsidiary serving Iowa Medicaid market
 
@@ -1267,6 +1454,7 @@
       Coordinated Care Washington
       Coordinated Care Corporation
     regex: coordinated\s*care(?!\s*organization)
+    parent_company: 8
     website: https://www.coordinatedcarehealth.com
     notes: Centene subsidiary serving Washington Medicaid market
 
@@ -1277,6 +1465,7 @@
     alt_names: |
       Home State Health Plan
     regex: home\s*state\s*health
+    parent_company: 8
     website: https://www.homestatehealth.com
     notes: Centene subsidiary serving Missouri Medicaid market
 
@@ -1435,6 +1624,26 @@
     plan_source: 100
     regex: bcbs.*michigan.*medicare|michigan.*bcbs.*medicare
     notes: Blue Cross Blue Shield of Michigan Medicare Advantage
+
+# Plan-specific routing for UnitedHealthcare's NYS Empire Plan (a New York
+# State employee benefits program administered by UHC). Was previously
+# attached to the company-level UHC record by mistake; moved here so it
+# only fires for actual Empire Plan denials.
+- model: fighthealthinsurance.insuranceplan
+  pk: 54
+  fields:
+    insurance_company: 2
+    plan_name: NYS Empire Plan
+    state: NY
+    regex: empire\s*plan|nys\s*empire
+    appeals_info_url: https://member.uhc.com/myuhc/content/campaigns/myuhc-2-0/medical-appeals-grievances/address-rights-information/empire-custom-address/jcr:content/par.html
+    appeal_address: |
+      UnitedHealthcare
+      Attn: Appeals
+      P.O. Box 1600
+      Kingston, NY 12402-1600
+    appeal_fax_number: 845-336-7989
+    notes: UnitedHealthcare-administered NYS Empire Plan (state employee benefits program). Routing is specific to this plan and should not be used for other UHC commercial members.
 
 #######################################################################
 # ADDITIONAL REGIONAL HEALTH PLANS (from web research)

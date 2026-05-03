@@ -8,7 +8,9 @@ import typing
 import uuid
 
 from django.conf import settings
-from django.db import models
+from django.db import models, transaction
+from django.db.models.signals import post_delete
+from django.dispatch import receiver
 from django.db.models import Q
 from django.db.models.functions import Now
 from django.utils import timezone
@@ -113,6 +115,107 @@ class CMSCoverageCache(ExportModelOperationsMixin("CMSCoverageCache"), models.Mo
 
     def __str__(self):
         return f"CMS Coverage: {self.procedure} / {self.diagnosis}"
+
+
+class IMRDecision(ExportModelOperationsMixin("IMRDecision"), models.Model):  # type: ignore
+    """
+    Public independent medical review / external appeal decisions used as a
+    "similar prior decisions" retrieval corpus when generating appeals.
+
+    Sources include the California DMHC IMR dataset (CHHS open data) and the
+    New York DFS External Appeals database. These are jurisdiction- and
+    fact-specific and are surfaced to the model as illustrative prior decisions,
+    not legal precedent.
+    """
+
+    SOURCE_CA_DMHC = "ca_dmhc"
+    SOURCE_NY_DFS = "ny_dfs"
+    SOURCE_CHOICES = [
+        (SOURCE_CA_DMHC, "California DMHC"),
+        (SOURCE_NY_DFS, "New York DFS"),
+    ]
+
+    DETERMINATION_OVERTURNED = "overturned"
+    DETERMINATION_UPHELD = "upheld"
+    DETERMINATION_OVERTURNED_IN_PART = "overturned_in_part"
+    DETERMINATION_OTHER = "other"
+    DETERMINATION_CHOICES = [
+        (DETERMINATION_OVERTURNED, "Overturned"),
+        (DETERMINATION_UPHELD, "Upheld"),
+        (DETERMINATION_OVERTURNED_IN_PART, "Overturned in part"),
+        (DETERMINATION_OTHER, "Other"),
+    ]
+
+    id = models.AutoField(primary_key=True)
+    source = models.CharField(max_length=20, choices=SOURCE_CHOICES)
+    # Original case identifier from the source (combined with source for uniqueness)
+    case_id = models.CharField(max_length=100)
+    state = models.CharField(max_length=2)
+    decision_year = models.IntegerField(null=True, blank=True)
+    decision_date = models.DateField(null=True, blank=True)
+    # Normalized lowercase searchable fields
+    diagnosis = models.CharField(max_length=500, default="", blank=True)
+    diagnosis_category = models.CharField(max_length=300, default="", blank=True)
+    treatment = models.CharField(max_length=500, default="", blank=True)
+    treatment_category = models.CharField(max_length=300, default="", blank=True)
+    treatment_subcategory = models.CharField(max_length=300, default="", blank=True)
+    determination = models.CharField(
+        max_length=30, choices=DETERMINATION_CHOICES, default=DETERMINATION_OTHER
+    )
+    decision_type = models.CharField(max_length=100, default="", blank=True)
+    insurance_type = models.CharField(max_length=200, default="", blank=True)
+    age_range = models.CharField(max_length=50, default="", blank=True)
+    gender = models.CharField(max_length=30, default="", blank=True)
+    findings = models.TextField(default="", blank=True)
+    summary = models.TextField(default="", blank=True)
+    source_url = models.URLField(max_length=500, default="", blank=True)
+    raw_data = models.JSONField(null=True, blank=True)
+    # Lowercased concatenation of treatment + diagnosis fields. Lets the
+    # retriever filter on a single column instead of OR-ing icontains across
+    # five, and is the column the Postgres trigram GIN index targets.
+    search_text = models.TextField(default="", blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(
+                fields=["diagnosis", "treatment"], name="imrdec_diag_treat_idx"
+            ),
+            models.Index(
+                fields=["treatment_category", "determination"],
+                name="imrdec_tcat_det_idx",
+            ),
+            models.Index(
+                fields=["state", "determination"], name="imrdec_state_det_idx"
+            ),
+            models.Index(
+                fields=["source", "determination"], name="imrdec_source_det_idx"
+            ),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["source", "case_id"],
+                name="imrdecision_unique_source_case",
+            ),
+        ]
+
+    def compute_search_text(self) -> str:
+        parts = [
+            self.treatment,
+            self.treatment_category,
+            self.treatment_subcategory,
+            self.diagnosis,
+            self.diagnosis_category,
+        ]
+        return " ".join(p.lower() for p in parts if p).strip()
+
+    def save(self, *args, **kwargs):
+        self.search_text = self.compute_search_text()
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"IMR {self.source}/{self.case_id}: {self.determination} {self.treatment} for {self.diagnosis}"
 
 
 # Money related :p
@@ -325,6 +428,10 @@ class InsuranceCompany(models.Model):
     """
     Represents an insurance company/carrier (e.g., Anthem, Blue Cross, Aetna).
     Uses regex patterns to automatically identify companies from denial text.
+
+    Stores known appeal-routing information (mailing address, fax, phone,
+    portal URL) so that once a denial is matched to a company we can
+    populate likely places to file the appeal.
     """
 
     id = models.AutoField(primary_key=True)
@@ -350,8 +457,47 @@ class InsuranceCompany(models.Model):
         help_text="Pattern to exclude false matches",
     )
     website = models.URLField(blank=True, help_text="Company's official website")
+    member_services_url = models.URLField(
+        blank=True,
+        help_text="Member services / contact-us page where appeal info is published",
+    )
+    appeals_info_url = models.URLField(
+        blank=True,
+        help_text="Specific URL on the carrier's site that documents the appeals process (source for the values below)",
+    )
     notes = models.TextField(
         blank=True, help_text="Additional notes about this insurance company"
+    )
+    # Default appeal routing (most common / generic). State or plan-specific
+    # overrides live on InsurancePlan.
+    appeal_address = models.TextField(
+        blank=True,
+        help_text="Default mailing address for written appeals (multi-line, free-form)",
+    )
+    appeal_fax_number = models.CharField(
+        max_length=40,
+        blank=True,
+        help_text="Default fax number for appeals (e.g., 877-815-4827)",
+    )
+    appeal_phone_number = models.CharField(
+        max_length=40,
+        blank=True,
+        help_text="Default member services / appeals phone number",
+    )
+    appeal_email = models.EmailField(
+        blank=True, help_text="Email address for submitting appeals, if accepted"
+    )
+    appeals_portal_url = models.URLField(
+        blank=True,
+        help_text="Online portal URL for submitting appeals electronically",
+    )
+    parent_company = models.ForeignKey(
+        "self",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="subsidiaries",
+        help_text="Parent / umbrella company (e.g., Elevance Health for Anthem brands)",
     )
     # Company type flags to help with suggestions
     is_tpa = models.BooleanField(
@@ -369,6 +515,25 @@ class InsuranceCompany(models.Model):
 
     def __str__(self):
         return self.name
+
+    def appeal_destinations(self) -> dict[str, str]:
+        """Return a dict of non-empty appeal destination channels for this company.
+
+        Order of keys matches the preferred order to suggest to the user:
+        portal, fax, address, email, phone. Empty values are omitted.
+        """
+        destinations: dict[str, str] = {}
+        if self.appeals_portal_url:
+            destinations["portal"] = self.appeals_portal_url
+        if self.appeal_fax_number:
+            destinations["fax"] = self.appeal_fax_number
+        if self.appeal_address:
+            destinations["address"] = self.appeal_address
+        if self.appeal_email:
+            destinations["email"] = self.appeal_email
+        if self.appeal_phone_number:
+            destinations["phone"] = self.appeal_phone_number
+        return destinations
 
 
 class InsurancePlan(models.Model):
@@ -426,6 +591,34 @@ class InsurancePlan(models.Model):
         help_text="Common prefix for plan IDs (helps with identification)",
     )
     notes = models.TextField(blank=True, help_text="Additional notes about this plan")
+    # Plan-specific appeal routing overrides. Falls back to the parent
+    # InsuranceCompany values when blank.
+    appeal_address = models.TextField(
+        blank=True,
+        help_text="Plan-specific mailing address for appeals (overrides company default)",
+    )
+    appeal_fax_number = models.CharField(
+        max_length=40,
+        blank=True,
+        help_text="Plan-specific appeals fax number (overrides company default)",
+    )
+    appeal_phone_number = models.CharField(
+        max_length=40,
+        blank=True,
+        help_text="Plan-specific appeals phone number (overrides company default)",
+    )
+    appeal_email = models.EmailField(
+        blank=True,
+        help_text="Plan-specific email for submitting appeals (overrides company default)",
+    )
+    appeals_portal_url = models.URLField(
+        blank=True,
+        help_text="Plan-specific online appeals portal URL",
+    )
+    appeals_info_url = models.URLField(
+        blank=True,
+        help_text="URL documenting the appeals process for this specific plan (source)",
+    )
 
     class Meta:
         verbose_name = "Insurance Plan"
@@ -436,6 +629,31 @@ class InsurancePlan(models.Model):
         if self.state:
             return f"{self.insurance_company.name} - {self.plan_name} ({self.state})"
         return f"{self.insurance_company.name} - {self.plan_name}"
+
+    def appeal_destinations(self) -> dict[str, str]:
+        """Plan-level appeal routing falling back to the parent company.
+
+        Returns the same shape as InsuranceCompany.appeal_destinations()
+        with the same preferred key order (portal, fax, address, email,
+        phone). Plan-specific values win; company values fill gaps.
+        """
+        company = self.insurance_company
+        # Build in the preferred order so callers iterating the dict get a
+        # consistent "best channel" sequence regardless of which fields are
+        # set on the plan vs the company.
+        candidates = [
+            ("portal", self.appeals_portal_url, company.appeals_portal_url),
+            ("fax", self.appeal_fax_number, company.appeal_fax_number),
+            ("address", self.appeal_address, company.appeal_address),
+            ("email", self.appeal_email, company.appeal_email),
+            ("phone", self.appeal_phone_number, company.appeal_phone_number),
+        ]
+        destinations: dict[str, str] = {}
+        for key, plan_value, company_value in candidates:
+            value = plan_value or company_value
+            if value:
+                destinations[key] = value
+        return destinations
 
 
 class Diagnosis(models.Model):
@@ -636,6 +854,76 @@ class PubMedQueryData(models.Model):
     created = models.DateTimeField(db_default=Now(), null=True)
 
 
+class NICEGuidance(models.Model):
+    """
+    Caches a single guidance item retrieved from the NICE syndication API.
+    NICE is UK-based clinical guidance; treat as international evidence, not a U.S.
+    coverage authority.
+    """
+
+    internal_id = models.AutoField(primary_key=True)
+    # NICE uses references like "NG54", "TA608", "CG181"
+    guidance_id = models.CharField(max_length=50, unique=True, db_index=True)
+    title = models.TextField(blank=True)
+    url = models.TextField(blank=True)
+    # Guidance type, e.g. "NICE guideline", "Technology appraisal", "Quality standard"
+    guidance_type = models.CharField(max_length=200, blank=True)
+    summary = models.TextField(blank=True)
+    created = models.DateTimeField(db_default=Now(), null=True)
+
+    def __str__(self) -> str:
+        return f"NICE {self.guidance_id} -- {self.title[:80]}"
+
+
+class NICEQueryData(models.Model):
+    """
+    Caches NICE syndication search results to avoid redundant API calls.
+    """
+
+    internal_id = models.AutoField(primary_key=True)
+    # TextField (not CharField) because procedure and diagnosis are each up to
+    # 300 chars on Denial, so the combined query can exceed 300.
+    query = models.TextField(null=False)
+    results = models.TextField(
+        null=True
+    )  # json: list of normalized items or guidance ids
+    denial_id = models.ForeignKey("Denial", on_delete=models.SET_NULL, null=True)
+    created = models.DateTimeField(db_default=Now(), null=True)
+
+
+class USPSTFRecommendation(models.Model):
+    """
+    Cached US Preventive Services Task Force recommendation.
+
+    USPSTF A/B graded services generally must be covered without cost-sharing
+    under the ACA, so these records double as evidence for preventive care
+    appeals.
+    """
+
+    uspstf_id = models.CharField(max_length=128, unique=True)
+    title = models.TextField()
+    grade = models.CharField(max_length=4, blank=True, default="")
+    status = models.CharField(max_length=32, blank=True, default="current")
+    topic = models.TextField(blank=True, default="")
+    population = models.TextField(blank=True, default="")
+    short_description = models.TextField(blank=True, default="")
+    rationale = models.TextField(blank=True, default="")
+    clinical_considerations = models.TextField(blank=True, default="")
+    url = models.TextField(blank=True, default="")
+    date_issued = models.CharField(max_length=64, blank=True, default="")
+    raw_data = models.JSONField(blank=True, null=True)
+    last_synced = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["grade"]),
+            models.Index(fields=["topic"]),
+        ]
+
+    def __str__(self):
+        return f"USPSTF {self.grade} - {self.title}"
+
+
 class ExtraLinkDocument(
     ExportModelOperationsMixin("ExtraLinkDocument"), models.Model  # type: ignore
 ):
@@ -774,6 +1062,78 @@ class MicrositeExtraLink(models.Model):
 
     def __str__(self):
         return f"{self.microsite_slug}: {self.title or self.document.url[:50]}"
+
+
+class ECRIGuideline(
+    ExportModelOperationsMixin("ECRIGuideline"), models.Model  # type: ignore
+):
+    """
+    Stores summaries of evidence-based clinical practice guidelines from the
+    ECRI Guidelines Trust (https://guidelines.ecri.org/), a publicly available
+    repository of guideline content.
+
+    Records are matched to denials by procedure and diagnosis keywords during
+    citation generation so that appeals can reference authoritative clinical
+    recommendations.
+    """
+
+    id = models.AutoField(primary_key=True)
+
+    # Stable identifier for the guideline brief (e.g., the ECRI brief id or a
+    # SHA256 of the URL when no native id is available). Used for upserts.
+    guideline_id = models.CharField(max_length=128, unique=True, db_index=True)
+
+    # Source repository — defaults to ECRI but kept generic so future feeds
+    # (e.g., USPSTF, AAFP) can share this table without another model.
+    source = models.CharField(max_length=64, default="ECRI Guidelines Trust")
+
+    title = models.CharField(max_length=500)
+    developer_organization = models.CharField(max_length=300, blank=True)
+    publication_date = models.DateField(null=True, blank=True)
+    last_updated = models.DateField(null=True, blank=True)
+
+    # Free text fields surfaced in citations / context blocks
+    recommendations_summary = models.TextField(blank=True)
+    intended_population = models.TextField(blank=True)
+    intended_users = models.CharField(max_length=300, blank=True)
+    evidence_quality = models.CharField(max_length=100, blank=True)
+
+    # Lower-cased keyword lists used for matching against denial procedure /
+    # diagnosis. Stored as JSONField so we don't have to introduce a join table.
+    procedure_keywords = models.JSONField(default=list, blank=True)
+    diagnosis_keywords = models.JSONField(default=list, blank=True)
+    topics = models.JSONField(default=list, blank=True)
+
+    url = models.URLField(max_length=2000, blank=True)
+    is_active = models.BooleanField(default=True, db_index=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["source", "is_active"]),
+        ]
+        ordering = ["-publication_date", "title"]
+        verbose_name = "ECRI Clinical Guideline"
+        verbose_name_plural = "ECRI Clinical Guidelines"
+
+    def __str__(self):
+        return f"{self.title} ({self.source})"
+
+    def citation_string(self) -> str:
+        """Return a single-line citation suitable for an appeal letter."""
+        parts = [self.title]
+        if self.developer_organization:
+            parts.append(self.developer_organization)
+        if self.publication_date:
+            parts.append(str(self.publication_date.year))
+        citation = ". ".join(p for p in parts if p)
+        if self.url:
+            citation = f"{citation}. Available at: {self.url}"
+        if self.source:
+            citation = f"{citation} (via {self.source})"
+        return citation
 
 
 class ExtraLinkFetchLog(models.Model):
@@ -1371,6 +1731,8 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     # pubmed articles to be used to create the input context to the appeal
     pubmed_ids_json = models.JSONField(null=True, blank=True)
     pubmed_context = models.TextField(null=True, blank=True)
+    # NICE (UK) syndication guidance context, treated as international clinical guidance
+    nice_context = models.TextField(null=True, blank=True)
     generated_questions = models.JSONField(null=True, blank=True)
     # ML-generated citations for the appeal
     ml_citation_context = models.JSONField(null=True, blank=True)
@@ -1515,6 +1877,55 @@ class ProposedAppeal(ExportModelOperationsMixin("ProposedAppeal"), models.Model)
             return f"{self.appeal_text[0:100]}"
         else:
             return f"{self.appeal_text}"
+
+
+class RegulatorEscalation(ExportModelOperationsMixin("RegulatorEscalation"), models.Model):  # type: ignore
+    """
+    Tracks an escalation packet generated alongside an appeal.
+
+    A packet is a set of cover letters addressed in parallel to the regulator(s)
+    that oversee the plan: the state Department of Insurance / insurance
+    commissioner, the plan's medical director, and (for ERISA self-funded plans)
+    the U.S. Department of Labor's Employee Benefits Security Administration
+    (EBSA). Each entry stores the recipient metadata, the AI-generated draft,
+    and the user-chosen / edited final text.
+    """
+
+    RECIPIENT_DOI = "doi"
+    RECIPIENT_MEDICAL_DIRECTOR = "medical_director"
+    RECIPIENT_DOL_EBSA = "dol_ebsa"
+    RECIPIENT_CHOICES = [
+        (RECIPIENT_DOI, "State DOI / Insurance Commissioner"),
+        (RECIPIENT_MEDICAL_DIRECTOR, "Plan Medical Director"),
+        (RECIPIENT_DOL_EBSA, "DOL EBSA (ERISA)"),
+    ]
+
+    id = models.AutoField(primary_key=True)
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    for_denial = models.ForeignKey(
+        Denial, on_delete=models.CASCADE, related_name="regulator_escalations"
+    )
+    hashed_email = models.CharField(max_length=300)
+    recipient_type = models.CharField(max_length=32, choices=RECIPIENT_CHOICES)
+    recipient_name = models.CharField(max_length=300, blank=True, default="")
+    recipient_address = models.TextField(blank=True, default="")
+    recipient_phone = models.CharField(max_length=80, blank=True, default="")
+    recipient_url = models.CharField(max_length=400, blank=True, default="")
+    letter_text = models.TextField(blank=True, default="")
+    chosen = models.BooleanField(default=False)
+    edited = models.BooleanField(default=False)
+    sent = models.BooleanField(default=False)
+    created = models.DateTimeField(auto_now_add=True)
+    mod_date = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["for_denial"], name="reg_escal_denial_idx"),
+            models.Index(fields=["hashed_email"], name="reg_escal_email_idx"),
+        ]
+
+    def __str__(self):
+        return f"RegulatorEscalation({self.recipient_type}) for denial {self.for_denial_id}"
 
 
 class Appeal(ExportModelOperationsMixin("Appeal"), models.Model):  # type: ignore
@@ -2295,6 +2706,116 @@ class ChooserSkip(ExportModelOperationsMixin("ChooserSkip"), models.Model):  # t
             str: A string in the form "Skip of Task {task_id} by {session_key}".
         """
         return f"Skip of Task {self.task_id} by {self.session_key}"
+
+
+class PolicyDocument(ExportModelOperationsMixin("PolicyDocument"), models.Model):  # type: ignore
+    """
+    Stores uploaded policy documents (Summary of Benefits, Medical Policy PDFs).
+    Used to help users understand their insurance coverage.
+    """
+
+    DOCUMENT_TYPE_CHOICES = [
+        ("summary_of_benefits", "Summary of Benefits"),
+        ("medical_policy", "Medical Policy"),
+        ("other", "Other Policy Document"),
+    ]
+
+    PLAN_CATEGORY_CHOICES = [
+        ("employer_erisa", "Employer Plan (ERISA)"),
+        ("employer_non_erisa", "Employer Plan (Non-ERISA, e.g. government/church)"),
+        ("aca_marketplace", "ACA Marketplace (Healthcare.gov / State Exchange)"),
+        ("medicare_traditional", "Medicare (Traditional/Original)"),
+        ("medicare_advantage", "Medicare Advantage (Part C)"),
+        ("medicaid_chip", "Medicaid / CHIP"),
+        ("tricare", "TRICARE (Military)"),
+        ("va", "VA Health Care"),
+        ("individual_off_exchange", "Individual Plan (Off-Exchange)"),
+        ("short_term", "Short-Term Health Plan"),
+        ("unknown", "I'm Not Sure"),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    document_enc = EncryptedFileField(null=True, storage=settings.COMBINED_STORAGE)
+    document_type = models.CharField(
+        max_length=50, choices=DOCUMENT_TYPE_CHOICES, default="other"
+    )
+    plan_category = models.CharField(
+        max_length=50, choices=PLAN_CATEGORY_CHOICES, default="unknown", blank=True
+    )
+    filename = models.CharField(max_length=255, blank=True)
+    hashed_email = models.CharField(max_length=200, null=True, blank=True)
+    session_key = models.CharField(max_length=100, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["hashed_email"]),
+            models.Index(fields=["session_key"]),
+            models.Index(fields=["created_at"]),
+        ]
+        verbose_name = "Policy Document"
+        verbose_name_plural = "Policy Documents"
+
+    def __str__(self):
+        return f"PolicyDocument: {self.filename or self.id} ({self.document_type})"
+
+
+@receiver(post_delete, sender=PolicyDocument)
+def _delete_policy_document_file(
+    sender: type, instance: "PolicyDocument", **kwargs: typing.Any
+) -> None:
+    """Remove the encrypted file blob after the row delete commits."""
+    if not instance.document_enc:
+        return
+
+    document_field = instance.document_enc
+    using = kwargs.get("using")
+
+    def _delete_file() -> None:
+        try:
+            document_field.delete(save=False)
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"Failed to delete PolicyDocument file for {instance.pk}"
+            )
+
+    transaction.on_commit(_delete_file, using=using)
+
+
+class PolicyDocumentAnalysis(ExportModelOperationsMixin("PolicyDocumentAnalysis"), models.Model):  # type: ignore
+    """
+    Stores AI analysis of policy documents.
+    Includes extracted exclusions, inclusions, and appeal-relevant clauses.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    policy_document = models.ForeignKey(
+        PolicyDocument, on_delete=models.CASCADE, related_name="analyses"
+    )
+    user_question = models.TextField(blank=True)
+    exclusions = models.JSONField(default=list)
+    inclusions = models.JSONField(default=list)
+    appeal_clauses = models.JSONField(default=list)
+    summary = models.TextField(blank=True)
+    quotable_sections = models.JSONField(default=list)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["policy_document"]),
+            models.Index(fields=["created_at"]),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["policy_document", "user_question"],
+                name="unique_policy_analysis",
+            ),
+        ]
+        verbose_name = "Policy Document Analysis"
+        verbose_name_plural = "Policy Document Analyses"
+
+    def __str__(self):
+        return f"Analysis of {self.policy_document.filename or self.policy_document_id}"
 
 
 class DeleteToken(models.Model):

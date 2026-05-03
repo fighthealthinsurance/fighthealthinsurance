@@ -11,10 +11,10 @@ import asyncio
 import re
 from typing import List, Optional, Set
 
-import pymupdf
 from loguru import logger
 
-from fighthealthinsurance.ml.ml_router import ml_router
+from fighthealthinsurance.ml.ml_document_extraction import extract_text_from_pdf_path
+from fighthealthinsurance.ml.ml_inference import infer_with_fallback
 from fighthealthinsurance.models import Denial, PlanDocuments
 
 
@@ -77,39 +77,26 @@ Generate 5-10 specific search terms that would help find:
 Return ONLY the search terms, one per line, no numbering or explanations.
 Focus on terms that would appear in an insurance plan document."""
 
-        models = ml_router.internal_models_by_cost[:3]
-
-        for model in models:
-            try:
-                result = await asyncio.wait_for(
-                    model._infer_no_context(
-                        system_prompts=[
-                            "You are an expert at analyzing health insurance documents. "
-                            "Generate concise, specific search terms."
-                        ],
-                        prompt=prompt,
-                        temperature=0.3,
-                    ),
-                    timeout=30,
-                )
-                if result:
-                    # Parse the response into individual terms
-                    terms = [
-                        line.strip()
-                        for line in result.split("\n")
-                        if line.strip() and len(line.strip()) > 2
-                    ]
-                    # Filter out any obviously bad terms
-                    terms = [t for t in terms if not t.startswith("-") and len(t) < 100]
-                    if terms:
-                        logger.debug(
-                            f"Generated {len(terms)} search terms: {terms[:5]}"
-                        )
-                        return terms[:10]  # Limit to 10 terms
-            except asyncio.TimeoutError:
-                logger.warning(f"Timeout generating search terms with {model}")
-            except Exception as e:
-                logger.debug(f"Error generating search terms with {model}: {e}")
+        result = await infer_with_fallback(
+            system_prompts=[
+                "You are an expert at analyzing health insurance documents. "
+                "Generate concise, specific search terms."
+            ],
+            prompt=prompt,
+            temperature=0.3,
+            timeout=30,
+            label="search terms",
+        )
+        if result:
+            terms = [
+                line.strip()
+                for line in result.split("\n")
+                if line.strip() and len(line.strip()) > 2
+            ]
+            terms = [t for t in terms if not t.startswith("-") and len(t) < 100]
+            if terms:
+                logger.debug(f"Generated {len(terms)} search terms: {terms[:5]}")
+                return terms[:10]
 
         # Fallback: extract key terms from denial text and procedure
         fallback_terms = cls._extract_fallback_terms(denial_text, procedure, diagnosis)
@@ -203,47 +190,19 @@ Focus on terms that would appear in an insurance plan document."""
 
     @classmethod
     def _extract_pages_with_terms(cls, path: str, search_terms: List[str]) -> List[str]:
-        """
-        Extract pages from a document that contain any of the search terms.
-
-        Args:
-            path: Path to the document
-            search_terms: Terms to search for
-
-        Returns:
-            List of page texts that contain matching terms
-        """
-        matching_pages: List[str] = []
-
+        """Extract pages from a document that contain any of the search terms."""
         if path.lower().endswith(".pdf"):
-            try:
-                with pymupdf.open(path) as doc:
-                    for page in doc:
-                        page_text = page.get_text()
-                        page_lower = page_text.lower()
-
-                        # Check if any search term appears in this page
-                        matches = sum(
-                            1 for term in search_terms if term.lower() in page_lower
-                        )
-                        if matches > 0:
-                            # Include page number for context
-                            page_num = page.number + 1
-                            matching_pages.append(f"[Page {page_num}]\n{page_text}")
-            except RuntimeError as e:
-                logger.warning(f"Error reading PDF {path}: {e}")
-        else:
-            # Try to read as text file
-            try:
-                with open(path, "r", encoding="utf-8", errors="ignore") as f:
-                    content = f.read()
-                    content_lower = content.lower()
-                    if any(term.lower() in content_lower for term in search_terms):
-                        matching_pages.append(content)
-            except Exception as e:
-                logger.debug(f"Could not read {path} as text: {e}")
-
-        return matching_pages
+            _full_text, page_dict = extract_text_from_pdf_path(path, search_terms)
+            return [f"[Page {num}]\n{text}" for num, text in sorted(page_dict.items())]
+        try:
+            with open(path, "r", encoding="utf-8", errors="ignore") as f:
+                content = f.read()
+                content_lower = content.lower()
+                if any(term.lower() in content_lower for term in search_terms):
+                    return [content]
+        except Exception as e:
+            logger.debug(f"Could not read {path} as text: {e}")
+        return []
 
     @classmethod
     async def summarize_relevant_sections(
@@ -286,33 +245,21 @@ Plan document excerpts:
 Provide a concise summary (max 500 words) that would help craft an effective appeal.
 Include specific page references where helpful."""
 
-        models = ml_router.internal_models_by_cost[:3]
-
-        for model in models:
-            try:
-                result = await asyncio.wait_for(
-                    model._infer_no_context(
-                        system_prompts=[
-                            "You are an expert at analyzing health insurance plan documents "
-                            "to help patients and providers craft effective appeals. "
-                            "Provide clear, actionable summaries focused on what supports the appeal."
-                        ],
-                        prompt=prompt,
-                        temperature=0.3,
-                    ),
-                    timeout=45,
-                )
-                if result and len(result) > 50:
-                    logger.debug(
-                        f"Generated plan document summary ({len(result)} chars)"
-                    )
-                    return str(result)
-            except asyncio.TimeoutError:
-                logger.warning(f"Timeout summarizing plan docs with {model}")
-            except Exception as e:
-                logger.debug(f"Error summarizing plan docs with {model}: {e}")
-
-        return None
+        result = await infer_with_fallback(
+            system_prompts=[
+                "You are an expert at analyzing health insurance plan documents "
+                "to help patients and providers craft effective appeals. "
+                "Provide clear, actionable summaries focused on what supports the appeal."
+            ],
+            prompt=prompt,
+            temperature=0.3,
+            timeout=45,
+            min_length=50,
+            label="plan doc summary",
+        )
+        if result:
+            logger.debug(f"Generated plan document summary ({len(result)} chars)")
+        return result
 
     @classmethod
     async def generate_plan_documents_summary(cls, denial_id: int) -> Optional[str]:

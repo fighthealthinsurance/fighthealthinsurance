@@ -7,7 +7,7 @@ Each tool can detect its pattern in text, execute the tool action, and format re
 
 import re
 from abc import ABC, abstractmethod
-from typing import Awaitable, Callable, Optional, Tuple
+from typing import Awaitable, Callable, List, Optional, Tuple
 
 from loguru import logger
 
@@ -24,6 +24,10 @@ class BaseTool(ABC):
 
     # Regex flags used for detection (subclasses can override)
     detect_flags: int = re.IGNORECASE
+
+    # Regex flags used by detect_all() — defaults match the JSON-payload tools
+    # (medicaid, doc fetcher, USPSTF) which need DOTALL for multi-line JSON.
+    detect_all_flags: int = re.DOTALL | re.IGNORECASE
 
     # Human-readable name for status messages
     name: str = "Tool"
@@ -66,6 +70,23 @@ class BaseTool(ABC):
             Response text with the tool call removed
         """
         return text.replace(match.group(0), "").strip()
+
+    def detect_all(self, text: str) -> List[re.Match[str]]:
+        """Find every tool-call match in the text.
+
+        Useful when an LLM emits multiple invocations of the same tool in a
+        single response and the handler needs to enumerate them.
+        """
+        if not self.pattern:
+            return []
+        return list(re.finditer(self.pattern, text, flags=self.detect_all_flags))
+
+    def clean_all_matches(self, text: str, matches: List[re.Match[str]]) -> str:
+        """Strip every tool-call match from the response text."""
+        cleaned = text
+        for match in matches:
+            cleaned = cleaned.replace(match.group(0), "")
+        return cleaned.strip()
 
     @abstractmethod
     async def execute(

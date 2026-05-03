@@ -8,6 +8,10 @@ from .views import (
     sf_signups,
     pro_signups_csv,
     pro_signups_csv_single_lines,
+    pro_signups_cumulative,
+    pro_signups_by_provider_type,
+    pro_signups_by_denial_type,
+    pro_signups_dashboard,
     OlderThanTwoWeeksEmailsCSV,
     LastTwoWeeksEmailsCSV,
     AllDenialEmailSansProCSV,
@@ -21,6 +25,7 @@ from .views import (
     pubmed_article_export,
     incomplete_signups_csv,
     procedures_denied_chart,
+    signup_abandonment_chart,
 )
 
 urlpatterns = [
@@ -91,5 +96,30 @@ urlpatterns = [
         "procedures_denied_chart",
         procedures_denied_chart,
         name="procedures_denied_chart",
+    ),
+    path(
+        "pro_signups_cumulative",
+        pro_signups_cumulative,
+        name="pro_signups_cumulative",
+    ),
+    path(
+        "pro_signups_by_provider_type",
+        pro_signups_by_provider_type,
+        name="pro_signups_by_provider_type",
+    ),
+    path(
+        "pro_signups_by_denial_type",
+        pro_signups_by_denial_type,
+        name="pro_signups_by_denial_type",
+    ),
+    path(
+        "pro_signups_dashboard",
+        pro_signups_dashboard,
+        name="pro_signups_dashboard",
+    ),
+    path(
+        "signup_abandonment_chart",
+        signup_abandonment_chart,
+        name="signup_abandonment_chart",
     ),
 ]
