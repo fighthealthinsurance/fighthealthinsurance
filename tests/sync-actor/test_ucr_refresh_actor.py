@@ -55,7 +55,10 @@ class TestUCRRefreshActorRayLifecycle(TestCase):
         actor.run.remote()
 
         time.sleep(0.5)
-        max_wait = 30
+        # Generous deadline because the actor bootstraps Django inside the
+        # Ray worker (load settings, urlconf, app registry) before its first
+        # sleep+iteration; cold-start in CI can take 20+s.
+        max_wait = 60
         start = time.time()
         running = False
         loop_executed = False
