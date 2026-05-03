@@ -36,7 +36,8 @@ class UCRRefreshController:
     # ------------------------------------------------------------- entrypoints
 
     async def refresh_denial(self, denial_id: int) -> bool:
-        """Out-of-cycle trigger for a single denial — called from REST (§7).
+        """Out-of-cycle trigger for a single denial — called by
+        dispatch_ucr_refresh from the entity-extraction stage.
 
         Returns True iff the helper produced a fresh comparison.
         """
@@ -195,7 +196,7 @@ class UCRRefreshController:
         rate_cache = await sync_to_async(UCREnrichmentHelper.bulk_load_rates)(stale)
 
         # return_exceptions=True so one bad denial doesn't cancel the batch
-        # and we get per-denial visibility into failures (§10.4).
+        # and we get per-denial visibility into failures.
         # No force=True: we want the helper's hash short-circuit so the actor
         # only writes when something actually changed. ucr_refreshed_at is
         # bumped by the helper either way, so the stale-batch query advances.

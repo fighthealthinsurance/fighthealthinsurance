@@ -4,8 +4,6 @@ Importing from this module is the only correct way for code to reference UCR
 sources, area kinds, and the percentile set.
 """
 
-from typing import Mapping
-
 from django.db import models
 
 
@@ -43,12 +41,5 @@ UCR_SOURCE_PRIORITY: tuple[str, ...] = (
 )
 
 
-# Default Medicare-multiplier proxies used until commercial percentile data lands.
-# Override per-environment via settings.UCR_MEDICARE_PERCENTILE_MULTIPLIERS.
-UCR_DEFAULT_MEDICARE_MULTIPLIERS: Mapping[int, float] = {50: 1.5, 80: 2.0, 90: 2.5}
-
-
-# Sentinel keys inside Denial.ucr_context so callers can avoid stringly-typed access.
+# Sentinel key inside Denial.ucr_context so callers can avoid stringly-typed access.
 UCR_CONTEXT_HASH_KEY = "hash"
-UCR_CONTEXT_STATUS_KEY = "status"
-UCR_CONTEXT_STATUS_READY = "ready"

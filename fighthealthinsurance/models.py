@@ -2968,7 +2968,7 @@ class UCRLookup(models.Model):
 
     Persists what we showed the user even if upstream rates change. The active
     snapshot for a denial is referenced by `Denial.latest_ucr_lookup`; older
-    snapshots are kept up to a per-denial retention cap (see §10.5).
+    snapshots are kept up to a per-denial retention cap (UCR_LOOKUP_RETENTION_PER_DENIAL).
     """
 
     denial = models.ForeignKey(
@@ -2990,10 +2990,10 @@ class UCRLookup(models.Model):
 
     def save(self, *args: typing.Any, **kwargs: typing.Any) -> None:
         # UCRLookup is the audit log: every refresh inserts a fresh snapshot
-        # rather than mutating an old one (see UCR plan §10.4 / §10.5). The
-        # _state.adding check only blocks application-level instance.save()
-        # calls — Django's on_delete=SET_NULL cascades for matched_area emit
-        # raw SQL that bypasses save(), so the FK semantics still work.
+        # rather than mutating an old one. The _state.adding check only blocks
+        # application-level instance.save() calls — Django's on_delete=SET_NULL
+        # cascade for matched_area emits raw SQL that bypasses save(), so the
+        # FK semantics still work.
         if not self._state.adding:
             raise ValueError(
                 "UCRLookup is append-only; create a new snapshot instead of "

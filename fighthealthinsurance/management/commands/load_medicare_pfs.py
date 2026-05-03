@@ -14,7 +14,7 @@ default so unit tests can run against fixture files. Specify --rvu-file and
   Locality file: locality, description
 
 Future work: pull these CSVs straight from cms.gov in parallel via
-asyncio.gather (§10.1). The file path interface lets that change without
+asyncio.gather. The file path interface lets that change without
 breaking callers.
 """
 

@@ -33,8 +33,6 @@ from fighthealthinsurance.models import (
 )
 from fighthealthinsurance.ucr_constants import (
     UCR_CONTEXT_HASH_KEY,
-    UCR_CONTEXT_STATUS_KEY,
-    UCR_CONTEXT_STATUS_READY,
     UCR_PERCENTILES,
     UCR_SOURCE_PRIORITY,
     UCRAreaKind,
@@ -136,7 +134,6 @@ class Comparison:
             "rates": [r.__dict__ for r in self.rates],
             "narrative": self.narrative,
             UCR_CONTEXT_HASH_KEY: self.hash,
-            UCR_CONTEXT_STATUS_KEY: UCR_CONTEXT_STATUS_READY,
         }
 
 
@@ -215,7 +212,7 @@ class UCREnrichmentHelper:
         """Pre-fetch rates for the (code, area) pairs across `denials`.
 
         Returns a dict the actor can hand to subsequent maybe_enrich() calls so
-        each one is a dict lookup instead of a DB round-trip (§10.4).
+        each one is a dict lookup instead of a DB round-trip.
         """
         pairs: set[tuple[str, int]] = set()
         for d in denials:
@@ -348,7 +345,7 @@ class UCREnrichmentHelper:
     def prune_lookups(cls, denial: Denial) -> int:
         """Trim oldest UCRLookup rows over UCR_LOOKUP_RETENTION_PER_DENIAL.
 
-        Always preserves Denial.latest_ucr_lookup_id (§10.5).
+        Always preserves Denial.latest_ucr_lookup_id.
         Returns the number of rows deleted.
         """
         cap = settings.UCR_LOOKUP_RETENTION_PER_DENIAL
@@ -424,7 +421,7 @@ class UCREnrichmentHelper:
 
         Tiebreakers (highest wins):
           1. Exact modifier match (vs blank fallback) when prefer_modifier is set.
-          2. Source priority per UCR_SOURCE_PRIORITY (§3.1).
+          2. Source priority per UCR_SOURCE_PRIORITY.
           3. Newer effective_date.
         """
         priority_index = {s: i for i, s in enumerate(UCR_SOURCE_PRIORITY)}

@@ -857,26 +857,3 @@ class ChooserSkipResponseSerializer(serializers.Serializer):
 
     success = serializers.BooleanField()
     message = serializers.CharField()
-
-
-# ----------------------------------------------------- UCR public lookup ---
-
-
-class UCRRateRowSerializer(serializers.Serializer):
-    percentile = serializers.IntegerField()
-    amount_cents = serializers.IntegerField()
-    source = serializers.CharField()
-    effective_date = serializers.CharField()
-    is_derived = serializers.BooleanField()
-
-
-class UCRPublicLookupQuerySerializer(serializers.Serializer):
-    cpt = serializers.CharField(max_length=10)
-    zip = serializers.CharField(max_length=5)
-
-
-class UCRPublicLookupResponseSerializer(serializers.Serializer):
-    cpt = serializers.CharField()
-    area_kind = serializers.CharField()
-    area_code = serializers.CharField()
-    rates = UCRRateRowSerializer(many=True)
