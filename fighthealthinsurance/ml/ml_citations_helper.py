@@ -6,6 +6,7 @@ from django.utils import timezone
 from loguru import logger
 
 from fighthealthinsurance.cms_coverage_api import get_cms_coverage_citations
+from fighthealthinsurance.ecri_guidelines_helper import ECRIGuidelinesHelper
 from fighthealthinsurance.extralink_context_helper import (
     ExtraLinkContextHelper,
 )
@@ -147,6 +148,53 @@ class MLCitationsHelper:
             return []
 
     @classmethod
+    async def _get_supplemental_citations(
+        cls,
+        denial: Optional[Denial],
+        procedure: str,
+        diagnosis: str,
+    ) -> List[str]:
+        """Collect citations from non-ML sources for a procedure/diagnosis.
+
+        Returns the concatenation of (in order):
+        - microsite ``evidence_snippets`` (when the denial has a microsite_slug)
+        - extralink citations for that microsite (top 3)
+        - ECRI Guidelines Trust citations matched on procedure/diagnosis (top 3)
+        """
+        extras: List[str] = []
+        if denial and denial.microsite_slug:
+            try:
+                microsite = get_microsite(denial.microsite_slug)
+                if microsite and microsite.evidence_snippets:
+                    extras.extend(microsite.evidence_snippets)
+                extralink_citations = (
+                    await ExtraLinkContextHelper.get_extralink_citations(
+                        denial.microsite_slug,
+                        max_citations=3,
+                    )
+                )
+                if extralink_citations:
+                    extras.extend(extralink_citations)
+            except Exception as e:
+                logger.opt(exception=True).warning(
+                    f"Failed to load microsite evidence snippets/extralinks: {e}"
+                )
+
+        try:
+            ecri_citations = await ECRIGuidelinesHelper.get_citations(
+                procedure=procedure,
+                diagnosis=diagnosis,
+                max_citations=3,
+            )
+            if ecri_citations:
+                extras.extend(ecri_citations)
+        except Exception as e:
+            logger.opt(exception=True).warning(
+                f"Failed to load ECRI guideline citations: {e}"
+            )
+        return extras
+
+    @classmethod
     async def generate_generic_citations(
         cls,
         denial: Optional[Denial] = None,
@@ -194,34 +242,14 @@ class MLCitationsHelper:
                 )
                 # Create a new list to avoid modifying cached data
                 result = list(cached.generated_context)
-
-                # Add microsite evidence snippets if available
-                if denial and denial.microsite_slug:
-                    try:
-                        microsite = get_microsite(denial.microsite_slug)
-                        if microsite and microsite.evidence_snippets:
-                            logger.debug(
-                                f"Adding {len(microsite.evidence_snippets)} microsite evidence snippets"
-                            )
-                            result.extend(microsite.evidence_snippets)
-
-                        # Add extralink citations
-                        extralink_citations = (
-                            await ExtraLinkContextHelper.get_extralink_citations(
-                                denial.microsite_slug,
-                                max_citations=3,
-                            )
-                        )
-                        if extralink_citations:
-                            logger.debug(
-                                f"Adding {len(extralink_citations)} extralink citations"
-                            )
-                            result.extend(extralink_citations)
-                    except Exception as e:
-                        logger.opt(exception=True).warning(
-                            f"Failed to load microsite evidence snippets: {e}"
-                        )
-
+                extras = await cls._get_supplemental_citations(
+                    denial=denial, procedure=procedure, diagnosis=diagnosis
+                )
+                if extras:
+                    logger.debug(
+                        f"Adding {len(extras)} supplemental citations to cached result"
+                    )
+                    result.extend(extras)
                 return result
             else:
                 logger.debug(
@@ -240,34 +268,10 @@ class MLCitationsHelper:
             # Only proceed if we have backends to use
             if not partial_citation_backends:
                 logger.debug("No citation backends available for generic citations")
-                # Even without backends, check for microsite evidence snippets and extralinks
-                result = []
-                if denial and denial.microsite_slug:
-                    try:
-                        microsite = get_microsite(denial.microsite_slug)
-                        if microsite and microsite.evidence_snippets:
-                            logger.debug(
-                                f"Adding {len(microsite.evidence_snippets)} microsite evidence snippets (no backends)"
-                            )
-                            result.extend(microsite.evidence_snippets)
-
-                        # Add extralink citations
-                        extralink_citations = (
-                            await ExtraLinkContextHelper.get_extralink_citations(
-                                denial.microsite_slug,
-                                max_citations=3,
-                            )
-                        )
-                        if extralink_citations:
-                            logger.debug(
-                                f"Adding {len(extralink_citations)} extralink citations (no backends)"
-                            )
-                            result.extend(extralink_citations)
-                    except Exception as e:
-                        logger.opt(exception=True).warning(
-                            f"Failed to load microsite evidence snippets/extralinks: {e}"
-                        )
-                return result
+                # Even without backends, fall back to supplemental evidence
+                return await cls._get_supplemental_citations(
+                    denial=denial, procedure=procedure, diagnosis=diagnosis
+                )
 
             # Create tasks for partial backends
             partial_awaitables = []
@@ -303,32 +307,14 @@ class MLCitationsHelper:
                     )
                     result = []
 
-                # Add microsite evidence snippets if available
-                if denial and denial.microsite_slug:
-                    try:
-                        microsite = get_microsite(denial.microsite_slug)
-                        if microsite and microsite.evidence_snippets:
-                            logger.debug(
-                                f"Adding {len(microsite.evidence_snippets)} microsite evidence snippets to generated citations"
-                            )
-                            result.extend(microsite.evidence_snippets)
-
-                        # Add extralink citations
-                        extralink_citations = (
-                            await ExtraLinkContextHelper.get_extralink_citations(
-                                denial.microsite_slug,
-                                max_citations=3,
-                            )
-                        )
-                        if extralink_citations:
-                            logger.debug(
-                                f"Adding {len(extralink_citations)} extralink citations to generated citations"
-                            )
-                            result.extend(extralink_citations)
-                    except Exception as e:
-                        logger.opt(exception=True).warning(
-                            f"Failed to load microsite evidence snippets/extralinks: {e}"
-                        )
+                extras = await cls._get_supplemental_citations(
+                    denial=denial, procedure=procedure, diagnosis=diagnosis
+                )
+                if extras:
+                    logger.debug(
+                        f"Adding {len(extras)} supplemental citations to generated result"
+                    )
+                    result.extend(extras)
 
                 # If we have citations, cache them for future use
                 if result:

@@ -33,6 +33,7 @@ from fighthealthinsurance.chat.tools import (
     MedicaidInfoTool,
     PriorAuthTool,
     PubMedTool,
+    USPSTFLookupTool,
 )
 from fighthealthinsurance.extralink_context_helper import ExtraLinkContextHelper
 from fighthealthinsurance.rag_client import get_rag_context_for_denial
@@ -358,6 +359,13 @@ class ChatInterface:
             call_llm_callback=self._call_llm_with_actions,
         )
         response_text, context, _ = await pubmed_tool.handle(
+            response_text, context, **tool_kwargs
+        )
+
+        uspstf_tool = USPSTFLookupTool(
+            self.send_status_message, self._call_llm_with_actions
+        )
+        response_text, context, _ = await uspstf_tool.handle(
             response_text, context, **tool_kwargs
         )
 
@@ -736,6 +744,7 @@ class ChatInterface:
         # The model can call the medicaid_info tool when needed using the format:
         # **medicaid_info {"state": "StateName", "topic": "", "limit": 5}**
         # (The double asterisks around the entire tool call are required)
+        # USPSTF preventive recommendations: **uspstf_lookup {"query": "...", "grade": "A"}**
 
         try:
             response_text, context_part = await self._call_llm_with_actions(

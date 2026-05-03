@@ -55,6 +55,7 @@ class EventType(str, Enum):
     # Security
     PERMISSION_DENIED = "permission_denied"
     SUSPICIOUS_ACTIVITY = "suspicious_activity"
+    EXCEPTION_ERROR = "exception_error"
 
 
 class AuditLog(models.Model):
@@ -256,6 +257,33 @@ def log_login_failure(
 def log_logout(request, user) -> Optional[AuditLog]:
     """Log user logout."""
     return log_event(EventType.LOGOUT, request=request, user=user)
+
+
+def log_exception_error(
+    request,
+    error_type: str = "",
+    error_message: str = "",
+) -> Optional[AuditLog]:
+    """Log an API exception event with request metadata for debugging."""
+    x_forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR", "") if request else ""
+    extra_data = {
+        "error_type": error_type[:200],
+        "error_message": error_message[:1000],
+        "query_string": (
+            request.META.get("QUERY_STRING", "") if request else ""
+        )[:1000],
+        "remote_addr": (request.META.get("REMOTE_ADDR", "") if request else "")[:100],
+        "x_forwarded_for": str(x_forwarded_for)[:500],
+        "x_real_ip": (request.META.get("HTTP_X_REAL_IP", "") if request else "")[:100],
+    }
+
+    return log_event(
+        EventType.EXCEPTION_ERROR,
+        request=request,
+        status_code=500,
+        description=f"Unhandled exception: {error_type}"[:1000],
+        extra_data=extra_data,
+    )
 
 
 def log_api_access(

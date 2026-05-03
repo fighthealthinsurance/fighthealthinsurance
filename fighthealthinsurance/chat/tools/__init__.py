@@ -20,9 +20,11 @@ from .patterns import (
     MEDICAID_ELIGIBILITY_REGEX,
     MEDICAID_INFO_REGEX,
     PUBMED_QUERY_REGEX,
+    USPSTF_LOOKUP_REGEX,
 )
 from .prior_auth_tool import PriorAuthTool
 from .pubmed_tool import PubMedTool
+from .uspstf_tool import USPSTFLookupTool
 
 __all__ = [
     # Patterns
@@ -32,6 +34,7 @@ __all__ = [
     "CREATE_OR_UPDATE_APPEAL_REGEX",
     "CREATE_OR_UPDATE_PRIOR_AUTH_REGEX",
     "FETCH_DOC_REGEX",
+    "USPSTF_LOOKUP_REGEX",
     "ALL_TOOL_PATTERNS",
     # Tool handlers
     "BaseTool",
@@ -41,4 +44,5 @@ __all__ = [
     "AppealTool",
     "PriorAuthTool",
     "DocFetcherTool",
+    "USPSTFLookupTool",
 ]

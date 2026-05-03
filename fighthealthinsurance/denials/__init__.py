@@ -1,0 +1,1 @@
+"""Denial analysis helpers."""

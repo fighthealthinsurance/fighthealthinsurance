@@ -325,6 +325,10 @@ class InsuranceCompany(models.Model):
     """
     Represents an insurance company/carrier (e.g., Anthem, Blue Cross, Aetna).
     Uses regex patterns to automatically identify companies from denial text.
+
+    Stores known appeal-routing information (mailing address, fax, phone,
+    portal URL) so that once a denial is matched to a company we can
+    populate likely places to file the appeal.
     """
 
     id = models.AutoField(primary_key=True)
@@ -350,8 +354,47 @@ class InsuranceCompany(models.Model):
         help_text="Pattern to exclude false matches",
     )
     website = models.URLField(blank=True, help_text="Company's official website")
+    member_services_url = models.URLField(
+        blank=True,
+        help_text="Member services / contact-us page where appeal info is published",
+    )
+    appeals_info_url = models.URLField(
+        blank=True,
+        help_text="Specific URL on the carrier's site that documents the appeals process (source for the values below)",
+    )
     notes = models.TextField(
         blank=True, help_text="Additional notes about this insurance company"
+    )
+    # Default appeal routing (most common / generic). State or plan-specific
+    # overrides live on InsurancePlan.
+    appeal_address = models.TextField(
+        blank=True,
+        help_text="Default mailing address for written appeals (multi-line, free-form)",
+    )
+    appeal_fax_number = models.CharField(
+        max_length=40,
+        blank=True,
+        help_text="Default fax number for appeals (e.g., 877-815-4827)",
+    )
+    appeal_phone_number = models.CharField(
+        max_length=40,
+        blank=True,
+        help_text="Default member services / appeals phone number",
+    )
+    appeal_email = models.EmailField(
+        blank=True, help_text="Email address for submitting appeals, if accepted"
+    )
+    appeals_portal_url = models.URLField(
+        blank=True,
+        help_text="Online portal URL for submitting appeals electronically",
+    )
+    parent_company = models.ForeignKey(
+        "self",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="subsidiaries",
+        help_text="Parent / umbrella company (e.g., Elevance Health for Anthem brands)",
     )
     # Company type flags to help with suggestions
     is_tpa = models.BooleanField(
@@ -369,6 +412,25 @@ class InsuranceCompany(models.Model):
 
     def __str__(self):
         return self.name
+
+    def appeal_destinations(self) -> dict[str, str]:
+        """Return a dict of non-empty appeal destination channels for this company.
+
+        Order of keys matches the preferred order to suggest to the user:
+        portal, fax, address, email, phone. Empty values are omitted.
+        """
+        destinations: dict[str, str] = {}
+        if self.appeals_portal_url:
+            destinations["portal"] = self.appeals_portal_url
+        if self.appeal_fax_number:
+            destinations["fax"] = self.appeal_fax_number
+        if self.appeal_address:
+            destinations["address"] = self.appeal_address
+        if self.appeal_email:
+            destinations["email"] = self.appeal_email
+        if self.appeal_phone_number:
+            destinations["phone"] = self.appeal_phone_number
+        return destinations
 
 
 class InsurancePlan(models.Model):
@@ -426,6 +488,34 @@ class InsurancePlan(models.Model):
         help_text="Common prefix for plan IDs (helps with identification)",
     )
     notes = models.TextField(blank=True, help_text="Additional notes about this plan")
+    # Plan-specific appeal routing overrides. Falls back to the parent
+    # InsuranceCompany values when blank.
+    appeal_address = models.TextField(
+        blank=True,
+        help_text="Plan-specific mailing address for appeals (overrides company default)",
+    )
+    appeal_fax_number = models.CharField(
+        max_length=40,
+        blank=True,
+        help_text="Plan-specific appeals fax number (overrides company default)",
+    )
+    appeal_phone_number = models.CharField(
+        max_length=40,
+        blank=True,
+        help_text="Plan-specific appeals phone number (overrides company default)",
+    )
+    appeal_email = models.EmailField(
+        blank=True,
+        help_text="Plan-specific email for submitting appeals (overrides company default)",
+    )
+    appeals_portal_url = models.URLField(
+        blank=True,
+        help_text="Plan-specific online appeals portal URL",
+    )
+    appeals_info_url = models.URLField(
+        blank=True,
+        help_text="URL documenting the appeals process for this specific plan (source)",
+    )
 
     class Meta:
         verbose_name = "Insurance Plan"
@@ -436,6 +526,31 @@ class InsurancePlan(models.Model):
         if self.state:
             return f"{self.insurance_company.name} - {self.plan_name} ({self.state})"
         return f"{self.insurance_company.name} - {self.plan_name}"
+
+    def appeal_destinations(self) -> dict[str, str]:
+        """Plan-level appeal routing falling back to the parent company.
+
+        Returns the same shape as InsuranceCompany.appeal_destinations()
+        with the same preferred key order (portal, fax, address, email,
+        phone). Plan-specific values win; company values fill gaps.
+        """
+        company = self.insurance_company
+        # Build in the preferred order so callers iterating the dict get a
+        # consistent "best channel" sequence regardless of which fields are
+        # set on the plan vs the company.
+        candidates = [
+            ("portal", self.appeals_portal_url, company.appeals_portal_url),
+            ("fax", self.appeal_fax_number, company.appeal_fax_number),
+            ("address", self.appeal_address, company.appeal_address),
+            ("email", self.appeal_email, company.appeal_email),
+            ("phone", self.appeal_phone_number, company.appeal_phone_number),
+        ]
+        destinations: dict[str, str] = {}
+        for key, plan_value, company_value in candidates:
+            value = plan_value or company_value
+            if value:
+                destinations[key] = value
+        return destinations
 
 
 class Diagnosis(models.Model):
@@ -673,6 +788,39 @@ class NICEQueryData(models.Model):
     created = models.DateTimeField(db_default=Now(), null=True)
 
 
+class USPSTFRecommendation(models.Model):
+    """
+    Cached US Preventive Services Task Force recommendation.
+
+    USPSTF A/B graded services generally must be covered without cost-sharing
+    under the ACA, so these records double as evidence for preventive care
+    appeals.
+    """
+
+    uspstf_id = models.CharField(max_length=128, unique=True)
+    title = models.TextField()
+    grade = models.CharField(max_length=4, blank=True, default="")
+    status = models.CharField(max_length=32, blank=True, default="current")
+    topic = models.TextField(blank=True, default="")
+    population = models.TextField(blank=True, default="")
+    short_description = models.TextField(blank=True, default="")
+    rationale = models.TextField(blank=True, default="")
+    clinical_considerations = models.TextField(blank=True, default="")
+    url = models.TextField(blank=True, default="")
+    date_issued = models.CharField(max_length=64, blank=True, default="")
+    raw_data = models.JSONField(blank=True, null=True)
+    last_synced = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["grade"]),
+            models.Index(fields=["topic"]),
+        ]
+
+    def __str__(self):
+        return f"USPSTF {self.grade} - {self.title}"
+
+
 class ExtraLinkDocument(
     ExportModelOperationsMixin("ExtraLinkDocument"), models.Model  # type: ignore
 ):
@@ -811,6 +959,78 @@ class MicrositeExtraLink(models.Model):
 
     def __str__(self):
         return f"{self.microsite_slug}: {self.title or self.document.url[:50]}"
+
+
+class ECRIGuideline(
+    ExportModelOperationsMixin("ECRIGuideline"), models.Model  # type: ignore
+):
+    """
+    Stores summaries of evidence-based clinical practice guidelines from the
+    ECRI Guidelines Trust (https://guidelines.ecri.org/), a publicly available
+    repository of guideline content.
+
+    Records are matched to denials by procedure and diagnosis keywords during
+    citation generation so that appeals can reference authoritative clinical
+    recommendations.
+    """
+
+    id = models.AutoField(primary_key=True)
+
+    # Stable identifier for the guideline brief (e.g., the ECRI brief id or a
+    # SHA256 of the URL when no native id is available). Used for upserts.
+    guideline_id = models.CharField(max_length=128, unique=True, db_index=True)
+
+    # Source repository — defaults to ECRI but kept generic so future feeds
+    # (e.g., USPSTF, AAFP) can share this table without another model.
+    source = models.CharField(max_length=64, default="ECRI Guidelines Trust")
+
+    title = models.CharField(max_length=500)
+    developer_organization = models.CharField(max_length=300, blank=True)
+    publication_date = models.DateField(null=True, blank=True)
+    last_updated = models.DateField(null=True, blank=True)
+
+    # Free text fields surfaced in citations / context blocks
+    recommendations_summary = models.TextField(blank=True)
+    intended_population = models.TextField(blank=True)
+    intended_users = models.CharField(max_length=300, blank=True)
+    evidence_quality = models.CharField(max_length=100, blank=True)
+
+    # Lower-cased keyword lists used for matching against denial procedure /
+    # diagnosis. Stored as JSONField so we don't have to introduce a join table.
+    procedure_keywords = models.JSONField(default=list, blank=True)
+    diagnosis_keywords = models.JSONField(default=list, blank=True)
+    topics = models.JSONField(default=list, blank=True)
+
+    url = models.URLField(max_length=2000, blank=True)
+    is_active = models.BooleanField(default=True, db_index=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["source", "is_active"]),
+        ]
+        ordering = ["-publication_date", "title"]
+        verbose_name = "ECRI Clinical Guideline"
+        verbose_name_plural = "ECRI Clinical Guidelines"
+
+    def __str__(self):
+        return f"{self.title} ({self.source})"
+
+    def citation_string(self) -> str:
+        """Return a single-line citation suitable for an appeal letter."""
+        parts = [self.title]
+        if self.developer_organization:
+            parts.append(self.developer_organization)
+        if self.publication_date:
+            parts.append(str(self.publication_date.year))
+        citation = ". ".join(p for p in parts if p)
+        if self.url:
+            citation = f"{citation}. Available at: {self.url}"
+        if self.source:
+            citation = f"{citation} (via {self.source})"
+        return citation
 
 
 class ExtraLinkFetchLog(models.Model):
@@ -1554,6 +1774,55 @@ class ProposedAppeal(ExportModelOperationsMixin("ProposedAppeal"), models.Model)
             return f"{self.appeal_text[0:100]}"
         else:
             return f"{self.appeal_text}"
+
+
+class RegulatorEscalation(ExportModelOperationsMixin("RegulatorEscalation"), models.Model):  # type: ignore
+    """
+    Tracks an escalation packet generated alongside an appeal.
+
+    A packet is a set of cover letters addressed in parallel to the regulator(s)
+    that oversee the plan: the state Department of Insurance / insurance
+    commissioner, the plan's medical director, and (for ERISA self-funded plans)
+    the U.S. Department of Labor's Employee Benefits Security Administration
+    (EBSA). Each entry stores the recipient metadata, the AI-generated draft,
+    and the user-chosen / edited final text.
+    """
+
+    RECIPIENT_DOI = "doi"
+    RECIPIENT_MEDICAL_DIRECTOR = "medical_director"
+    RECIPIENT_DOL_EBSA = "dol_ebsa"
+    RECIPIENT_CHOICES = [
+        (RECIPIENT_DOI, "State DOI / Insurance Commissioner"),
+        (RECIPIENT_MEDICAL_DIRECTOR, "Plan Medical Director"),
+        (RECIPIENT_DOL_EBSA, "DOL EBSA (ERISA)"),
+    ]
+
+    id = models.AutoField(primary_key=True)
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    for_denial = models.ForeignKey(
+        Denial, on_delete=models.CASCADE, related_name="regulator_escalations"
+    )
+    hashed_email = models.CharField(max_length=300)
+    recipient_type = models.CharField(max_length=32, choices=RECIPIENT_CHOICES)
+    recipient_name = models.CharField(max_length=300, blank=True, default="")
+    recipient_address = models.TextField(blank=True, default="")
+    recipient_phone = models.CharField(max_length=80, blank=True, default="")
+    recipient_url = models.CharField(max_length=400, blank=True, default="")
+    letter_text = models.TextField(blank=True, default="")
+    chosen = models.BooleanField(default=False)
+    edited = models.BooleanField(default=False)
+    sent = models.BooleanField(default=False)
+    created = models.DateTimeField(auto_now_add=True)
+    mod_date = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["for_denial"], name="reg_escal_denial_idx"),
+            models.Index(fields=["hashed_email"], name="reg_escal_email_idx"),
+        ]
+
+    def __str__(self):
+        return f"RegulatorEscalation({self.recipient_type}) for denial {self.for_denial_id}"
 
 
 class Appeal(ExportModelOperationsMixin("Appeal"), models.Model):  # type: ignore

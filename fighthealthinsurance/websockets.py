@@ -97,6 +97,67 @@ class StreamingAppealsBackend(AsyncWebsocketConsumer):
         logger.debug("All sent")
 
 
+class StreamingEscalationBackend(AsyncWebsocketConsumer):
+    """Streaming back regulator/executive escalation letters as JSON.
+
+    Same envelope as StreamingAppealsBackend: client sends a single JSON
+    blob with {denial_id, email, semi_sekret}; server streams status and
+    `letter` payloads, one per recipient.
+    """
+
+    async def connect(self):
+        logger.debug("Accepting connection for escalation packet")
+        await self.accept()
+
+    async def disconnect(self, close_code):
+        logger.debug("Disconnecting escalation packet")
+        pass
+
+    async def receive(self, text_data):
+        try:
+            data = json.loads(text_data)
+        except json.JSONDecodeError as e:
+            logger.warning(f"Invalid JSON received in escalation websocket: {e}")
+            await self.send(
+                json.dumps({"type": "error", "message": "Invalid JSON format"})
+            )
+            await self.close()
+            return
+        aitr: AsyncIterator[str] = (
+            common_view_logic.EscalationPacketHelper.generate_escalation_letters(data)
+        )
+        try:
+            await asyncio.sleep(0)
+            await self.send("\n")
+            async for record in aitr:
+                await asyncio.sleep(0)
+                await self.send("\n")
+                await self.send(record)
+                await asyncio.sleep(0)
+                await self.send("\n")
+        except Exception as e:
+            logger.opt(exception=True).error(
+                f"Error sending back escalation letters: {e}"
+            )
+            try:
+                await self.send(
+                    json.dumps(
+                        {
+                            "type": "error",
+                            "message": "Server error while drafting letters.",
+                        }
+                    )
+                )
+            except Exception:
+                pass
+        finally:
+            await asyncio.sleep(0.1)
+            try:
+                await self.close()
+            except Exception:
+                logger.debug("Error closing escalation connection")
+
+
 class StreamingEntityBackend(AsyncWebsocketConsumer):
     """Streaming Entity Extraction"""
 
