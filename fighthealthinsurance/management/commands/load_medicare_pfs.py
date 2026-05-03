@@ -7,20 +7,32 @@ Idempotent: re-running the command upserts on the
 (procedure_code, modifier, geographic_area, percentile, source, effective_date)
 unique key on UCRRate.
 
-CLI for ad-hoc loads from local files or URLs. The actor's source-refresh
-loop calls `refresh_medicare_pfs` directly so periodic auto-download is
-wired without invoking the management command.
+Two input formats are supported, auto-detected by the extracted filename:
 
-CSV headers expected (case-insensitive):
-  RVU file: hcpcs, locality, allowed_cents
-  Locality file: locality, description
+1. **CMS PFREV (the National Payment Amount File)** — what cms.gov ships at
+   https://www.cms.gov/medicare/payment/fee-schedules/physician/national-payment-amount-file.
+   Distributed as a ZIP that nests another ZIP that contains
+   `PFALL{year}AR.txt` (or similar `PFALL*` / `PFREV*` member). Headerless,
+   quoted-positional CSV with columns: year, carrier, locality, HCPCS, modifier,
+   non-facility price, facility price, plus admin flags. Locality codes are
+   derived from the data itself; no separate locality file is required.
+
+2. **Simple flat CSV** with `hcpcs, locality, allowed_cents` headers, paired
+   with a locality CSV (`locality, description`). Used by tests and any
+   pre-transformed data sets.
+
+CLI for ad-hoc loads from local files or URLs. The actor's source-refresh loop
+calls `refresh_medicare_pfs` directly so periodic auto-download works without
+invoking the management command.
 """
 
 import asyncio
 import csv
 import datetime
+import io
+import zipfile
 from pathlib import Path
-from typing import Any, Iterable, Optional
+from typing import Any, Iterable, NamedTuple, Optional
 
 import aiohttp
 from asgiref.sync import sync_to_async
@@ -44,24 +56,25 @@ class Command(BaseCommand):
         parser.add_argument(
             "--rvu-file",
             type=str,
-            help="Path to local RVU CSV (hcpcs, locality, allowed_cents). "
+            help="Path to local RVU input (PFREV ZIP or simple CSV). "
             "Required unless --rvu-url is given.",
         )
         parser.add_argument(
             "--locality-file",
             type=str,
-            help="Path to local locality CSV (locality, description). "
-            "Required unless --locality-url is given.",
+            help="Path to local locality CSV (locality, description). Required "
+            "for the simple-CSV format; ignored when the RVU input is PFREV "
+            "(CMS embeds carrier+locality directly in the data rows).",
         )
         parser.add_argument(
             "--rvu-url",
             type=str,
-            help="Optional URL to fetch RVU CSV from (e.g. cms.gov annual file).",
+            help="URL to fetch the RVU input from (PFREV ZIP or simple CSV).",
         )
         parser.add_argument(
             "--locality-url",
             type=str,
-            help="Optional URL to fetch locality CSV from.",
+            help="URL to fetch the locality CSV from. Optional for PFREV input.",
         )
         parser.add_argument(
             "--effective-year",
@@ -80,10 +93,8 @@ class Command(BaseCommand):
         locality_file = options.get("locality_file")
         rvu_url = options.get("rvu_url")
         locality_url = options.get("locality_url")
-        if not (rvu_file or rvu_url) or not (locality_file or locality_url):
-            raise CommandError(
-                "Provide --rvu-file or --rvu-url AND --locality-file or --locality-url"
-            )
+        if not (rvu_file or rvu_url):
+            raise CommandError("Provide --rvu-file or --rvu-url")
 
         result = asyncio.run(
             refresh_medicare_pfs(
@@ -95,19 +106,17 @@ class Command(BaseCommand):
                 dry_run=bool(options.get("dry_run")),
             )
         )
+        self.stdout.write(
+            f"Parsed {result.localities} localities, {result.rates} HCPCS rows "
+            f"(format: {result.input_format})."
+        )
         if result.dry_run:
-            self.stdout.write(
-                f"Parsed {result.localities} localities, {result.rates} HCPCS rows."
-            )
             self.stdout.write(
                 self.style.WARNING(
                     f"Dry run: would write {result.would_write} derived percentile rows."
                 )
             )
             return
-        self.stdout.write(
-            f"Parsed {result.localities} localities, {result.rates} HCPCS rows."
-        )
         self.stdout.write(
             self.style.SUCCESS(
                 f"Wrote {result.written} UCRRate rows ({result.skipped} skipped as already-current)."
@@ -118,10 +127,26 @@ class Command(BaseCommand):
 # --------------------------------------------------------------- public API
 
 
+class LoaderInput(NamedTuple):
+    """Result of fetching one input — text plus the filename hint we used to
+    decide which parser to apply."""
+
+    text: str
+    filename: str
+
+
 class RefreshResult:
     """Plain results bag for refresh_medicare_pfs callers."""
 
-    __slots__ = ("localities", "rates", "written", "skipped", "dry_run", "would_write")
+    __slots__ = (
+        "localities",
+        "rates",
+        "written",
+        "skipped",
+        "dry_run",
+        "would_write",
+        "input_format",
+    )
 
     def __init__(
         self,
@@ -132,6 +157,7 @@ class RefreshResult:
         skipped: int,
         dry_run: bool,
         would_write: int,
+        input_format: str,
     ):
         self.localities = localities
         self.rates = rates
@@ -139,6 +165,7 @@ class RefreshResult:
         self.skipped = skipped
         self.dry_run = dry_run
         self.would_write = would_write
+        self.input_format = input_format
 
 
 async def refresh_medicare_pfs(
@@ -152,37 +179,45 @@ async def refresh_medicare_pfs(
 ) -> RefreshResult:
     """Download (or read) and upsert the CMS PFS rate set.
 
-    URL inputs win over file paths if both are set. Both an RVU source and a
-    locality source must be supplied (URL or path). Returns a RefreshResult
-    with parse counts and write counts. Safe to invoke from the source-refresh
-    actor loop (idempotent upsert keyed on UCRRate's unique constraint).
+    URL inputs win over file paths if both are set. For PFREV input the
+    locality file is optional — localities are derived from the data rows.
+    For the simple-CSV format both inputs are required. Idempotent upsert
+    keyed on UCRRate's unique constraint, so safe to invoke from the
+    source-refresh actor loop on every cycle.
     """
-    if not (rvu_url or rvu_file) or not (locality_url or locality_file):
+    if not (rvu_url or rvu_file):
+        raise ValueError("refresh_medicare_pfs requires an RVU source")
+
+    rvu = await _fetch_input(url=rvu_url, path=rvu_file)
+    is_pfrev = _looks_like_pfrev(rvu.filename)
+    if not is_pfrev and not (locality_url or locality_file):
         raise ValueError(
-            "refresh_medicare_pfs requires both an RVU and a locality source"
+            "Simple-CSV format requires a locality source; pass "
+            "--locality-url/--locality-file or use a PFREV input."
         )
 
-    rvu_csv, locality_csv = await _fetch_inputs(
-        rvu_file=rvu_file,
-        rvu_url=rvu_url,
-        locality_file=locality_file,
-        locality_url=locality_url,
-    )
+    if is_pfrev:
+        rate_rows = list(_parse_pfrev_rows(rvu.text))
+        localities = {row["locality"]: "" for row in rate_rows}
+    else:
+        loc_input = await _fetch_input(url=locality_url, path=locality_file)
+        localities = _parse_localities(loc_input.text)
+        rate_rows = list(_parse_rvu_rows(rvu.text))
 
     effective_date = datetime.date(effective_year or datetime.date.today().year, 1, 1)
-    localities = _parse_localities(locality_csv)
-    rates = list(_parse_rvu_rows(rvu_csv))
     multipliers = settings.UCR_MEDICARE_PERCENTILE_MULTIPLIERS
+    fmt = "pfrev" if is_pfrev else "simple-csv"
 
     if dry_run:
         active_percentiles = sum(1 for p in UCR_PERCENTILES if p in multipliers)
         return RefreshResult(
             localities=len(localities),
-            rates=len(rates),
+            rates=len(rate_rows),
             written=0,
             skipped=0,
             dry_run=True,
-            would_write=len(rates) * active_percentiles,
+            would_write=len(rate_rows) * active_percentiles,
+            input_format=fmt,
         )
 
     # Bridge to sync ORM. thread_sensitive=True keeps the DB connection
@@ -193,7 +228,7 @@ async def refresh_medicare_pfs(
         with transaction.atomic():
             area_by_code = _ensure_localities(localities)
             return _upsert_rates(
-                rates=rates,
+                rates=rate_rows,
                 area_by_code=area_by_code,
                 effective_date=effective_date,
                 percentiles=UCR_PERCENTILES,
@@ -203,51 +238,81 @@ async def refresh_medicare_pfs(
     written, skipped = await sync_to_async(_persist, thread_sensitive=True)()
     return RefreshResult(
         localities=len(localities),
-        rates=len(rates),
+        rates=len(rate_rows),
         written=written,
         skipped=skipped,
         dry_run=False,
         would_write=0,
+        input_format=fmt,
     )
 
 
 # --------------------------------------------------------------- I/O helpers
 
 
-async def _fetch_inputs(
-    *,
-    rvu_file: Optional[str],
-    rvu_url: Optional[str],
-    locality_file: Optional[str],
-    locality_url: Optional[str],
-) -> tuple[str, str]:
-    """Read both inputs concurrently. URLs win over file paths if both are set."""
-    rvu_task = _fetch_url(rvu_url) if rvu_url else _fetch_path(rvu_file)
-    locality_task = (
-        _fetch_url(locality_url) if locality_url else _fetch_path(locality_file)
-    )
-    rvu_csv, locality_csv = await asyncio.gather(rvu_task, locality_task)
-    return rvu_csv, locality_csv
+async def _fetch_input(*, url: Optional[str], path: Optional[str]) -> LoaderInput:
+    """Read a URL or path and return its decoded text + the effective filename
+    after any ZIP unwrapping. URL wins over path if both are set."""
+    if url:
+        data = await _fetch_url(url)
+        filename = url.rsplit("/", 1)[-1]
+    elif path:
+        data = await asyncio.to_thread(Path(path).read_bytes)
+        filename = Path(path).name
+    else:
+        raise ValueError("CSV path or URL required")
+    return _unwrap_to_text(data, filename)
 
 
-async def _fetch_path(path: Optional[str]) -> str:
-    if not path:
-        raise ValueError("CSV path required")
-    return await asyncio.to_thread(Path(path).read_text)
-
-
-async def _fetch_url(url: str) -> str:
+async def _fetch_url(url: str) -> bytes:
     # 2-minute total cap so a slow or unresponsive cms.gov mirror can't hang
-    # the management command indefinitely.
+    # the management command indefinitely. CMS is gated to common UA strings.
     timeout = aiohttp.ClientTimeout(total=120)
-    async with aiohttp.ClientSession(timeout=timeout) as session:
+    headers = {"User-Agent": "Mozilla/5.0 (compatible; fhi-ucr-loader/1.0)"}
+    async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
         async with session.get(url) as response:
             response.raise_for_status()
-            text: str = await response.text()
-            return text
+            return await response.read()
+
+
+_ZIP_MAGIC = b"PK\x03\x04"
+
+
+def _unwrap_to_text(data: bytes, filename: str) -> LoaderInput:
+    """Recursively unwrap nested ZIPs (CMS ships pfrev26a.zip → PFREV*.zip →
+    PFALL*.txt) and return the deepest text payload + its filename."""
+    if data.startswith(_ZIP_MAGIC):
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            members = [
+                m
+                for m in zf.namelist()
+                if not m.endswith("/") and not m.lower().endswith(".pdf")
+            ]
+            if not members:
+                raise ValueError(f"ZIP {filename!r} has no usable members")
+            # Prefer PFALL/PFREV members, then any nested ZIP, then the
+            # largest leftover (covers single-file ZIPs of either CSV or TXT).
+            members.sort(
+                key=lambda m: (
+                    0 if "pfall" in m.lower() or "pfrev" in m.lower() else 1,
+                    -zf.getinfo(m).file_size,
+                )
+            )
+            member = members[0]
+            inner = zf.read(member)
+        return _unwrap_to_text(inner, Path(member).name)
+    # CMS files are latin-1; falling back to that beats blowing up on a
+    # stray non-UTF8 byte in a 100MB file.
+    text = data.decode("utf-8", errors="replace")
+    return LoaderInput(text=text, filename=filename)
 
 
 # ----------------------------------------------------------------- parsing
+
+
+def _looks_like_pfrev(filename: str) -> bool:
+    name = filename.lower()
+    return name.startswith("pfall") or name.startswith("pfrev")
 
 
 def _normalize_row(row: dict[str, Any]) -> dict[str, str]:
@@ -301,6 +366,54 @@ def _parse_rvu_rows(csv_text: str) -> Iterable[dict[str, Any]]:
         yield {
             "hcpcs": hcpcs,
             "locality": locality,
+            "allowed_cents": allowed_cents,
+        }
+
+
+# Column positions in the PFREV / PFALL files. Headerless, quoted, positional.
+# Verified against PFALL26AR.txt (CY 2026 release).
+_PFREV_COL_CARRIER = 1
+_PFREV_COL_LOCALITY = 2
+_PFREV_COL_HCPCS = 3
+_PFREV_COL_MODIFIER = 4
+_PFREV_COL_NONFAC_PRICE = 5  # dollars (decimal); we use this as "allowed".
+_PFREV_EXPECTED_COLS = 16
+
+
+def _parse_pfrev_rows(text: str) -> Iterable[dict[str, Any]]:
+    """Yield dicts shaped like _parse_rvu_rows from CMS PFREV/PFALL data.
+
+    Locality keys combine carrier + locality so identical locality numbers
+    across different carriers stay distinct (CMS reuses small-int locality
+    codes within each MAC). Modifier is intentionally dropped to match the
+    rest of the loader's modifier="" upsert path.
+    """
+    reader = csv.reader(text.splitlines())
+    for row in reader:
+        if len(row) < _PFREV_EXPECTED_COLS:
+            continue
+        hcpcs = row[_PFREV_COL_HCPCS].strip().upper()
+        carrier = row[_PFREV_COL_CARRIER].strip()
+        locality = row[_PFREV_COL_LOCALITY].strip()
+        modifier = row[_PFREV_COL_MODIFIER].strip()
+        price_raw = row[_PFREV_COL_NONFAC_PRICE].strip()
+        if not hcpcs or not carrier or not locality:
+            continue
+        # Skip modifier-specific rows so we only ingest the canonical
+        # (HCPCS, locality) row. Matches the rest of the loader's
+        # modifier="" assumption.
+        if modifier:
+            continue
+        try:
+            allowed_cents = int(round(float(price_raw) * 100))
+        except (ValueError, TypeError):
+            continue
+        if allowed_cents <= 0:
+            # Many "carrier-priced" rows are 0.00 placeholders; skip.
+            continue
+        yield {
+            "hcpcs": hcpcs,
+            "locality": f"{carrier}-{locality}",
             "allowed_cents": allowed_cents,
         }
 

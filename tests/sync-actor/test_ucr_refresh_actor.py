@@ -202,6 +202,7 @@ class TestUCRSourceRefreshAutoDownload(TransactionTestCase):
                 skipped=0,
                 dry_run=False,
                 would_write=0,
+                input_format="pfrev",
             ),
         ) as mock_refresh:
             asyncio.run(self.controller._refresh_medicare_pfs_if_due())

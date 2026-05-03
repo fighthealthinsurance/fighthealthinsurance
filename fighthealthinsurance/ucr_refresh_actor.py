@@ -134,21 +134,24 @@ class UCRRefreshController:
         from fighthealthinsurance.models import UCRRate
         from fighthealthinsurance.ucr_constants import UCRSource
 
-        # Auto-download CMS PFS data when both URLs are configured. The loader
-        # is idempotent so polling it on every cycle is safe — it'll no-op if
-        # the upstream effective_date hasn't changed. Skip silently when the
-        # operator hasn't set the URLs (dev / test envs run from local files
-        # via the management command).
+        # Auto-download CMS PFS data when the RVU URL is configured. The
+        # loader is idempotent so polling it on every cycle is safe — it'll
+        # no-op when the upstream effective_date hasn't changed. CMS PFREV
+        # ZIPs derive localities from the data itself, so locality_url is
+        # optional. Skip silently when the operator hasn't set the URL
+        # (dev / test envs use the management command directly).
         rvu_url = getattr(settings, "UCR_MEDICARE_PFS_RVU_URL", "") or ""
         locality_url = getattr(settings, "UCR_MEDICARE_PFS_LOCALITY_URL", "") or ""
-        if rvu_url and locality_url:
+        if rvu_url:
             try:
-                result = await refresh_medicare_pfs(
-                    rvu_url=rvu_url, locality_url=locality_url
-                )
+                kwargs = {"rvu_url": rvu_url}
+                if locality_url:
+                    kwargs["locality_url"] = locality_url
+                result = await refresh_medicare_pfs(**kwargs)
                 self._logger.info(
-                    "UCR Medicare PFS refresh: parsed {} localities, {} HCPCS rows; "
-                    "wrote {} ({} unchanged)",
+                    "UCR Medicare PFS refresh ({}): parsed {} localities, "
+                    "{} HCPCS rows; wrote {} ({} unchanged)",
+                    result.input_format,
                     result.localities,
                     result.rates,
                     result.written,
