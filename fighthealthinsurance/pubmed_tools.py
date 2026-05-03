@@ -8,7 +8,7 @@ import xml.etree.ElementTree as ET
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from typing import Any, AsyncIterator, Dict, List, Optional, Set, Tuple
-from urllib.parse import quote, urljoin
+from urllib.parse import quote, urlencode, urljoin
 
 import aiohttp
 import eutils
@@ -43,9 +43,16 @@ else:
 
 PER_QUERY = 2
 
+# Single source of truth for the contact identity NCBI / Unpaywall / etc.
+# expect alongside high-volume API requests. Used both in the fetch User-Agent
+# and the per-API `tool`/`email` query params so the value can't drift between
+# call sites.
+_TOOL_NAME = "fighthealthinsurance"
+_CONTACT_EMAIL = "support@fighthealthinsurance.com"
+
 # Common headers to avoid bot detection when fetching PDFs
 _FETCH_HEADERS = {
-    "User-Agent": "FightHealthInsurance/1.0 (mailto:support@fighthealthinsurance.com)",
+    "User-Agent": f"FightHealthInsurance/1.0 (mailto:{_CONTACT_EMAIL})",
     "Accept": "application/pdf,text/html,application/xhtml+xml,*/*",
 }
 
@@ -54,8 +61,8 @@ _FETCH_HEADERS = {
 # ``email`` be supplied per their usage guidelines.
 _EUTILS_BASE = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
 _EUTILS_PARAMS = {
-    "tool": "fighthealthinsurance",
-    "email": "support@fighthealthinsurance.com",
+    "tool": _TOOL_NAME,
+    "email": _CONTACT_EMAIL,
 }
 
 # NCBI documents 200 IDs as the practical limit for an efetch GET; chunk to
@@ -174,10 +181,8 @@ class PubMedTools(object):
         self, pmid: str, session: aiohttp.ClientSession, timeout_secs: float
     ) -> Optional[str]:
         """Check if article is in PubMed Central and get its PDF URL."""
-        url = (
-            f"https://www.ncbi.nlm.nih.gov/pmc/utils/idconv/v1.0/"
-            f"?ids={pmid}&format=json&tool=fighthealthinsurance&email=support@fighthealthinsurance.com"
-        )
+        params = urlencode({**_EUTILS_PARAMS, "ids": pmid, "format": "json"})
+        url = f"https://www.ncbi.nlm.nih.gov/pmc/utils/idconv/v1.0/?{params}"
         data = await self._fetch_json(session, url, timeout_secs, pmid)
         if data:
             records = data.get("records", [])
@@ -211,7 +216,9 @@ class PubMedTools(object):
         self, doi: str, session: aiohttp.ClientSession, timeout_secs: float
     ) -> Optional[str]:
         """Try Unpaywall API to find open access PDF."""
-        url = f"https://api.unpaywall.org/v2/{quote(doi, safe='')}?email=support@fighthealthinsurance.com"
+        url = (
+            f"https://api.unpaywall.org/v2/{quote(doi, safe='')}?email={_CONTACT_EMAIL}"
+        )
         data = await self._fetch_json(session, url, timeout_secs, f"DOI:{doi}")
         if not data:
             return None

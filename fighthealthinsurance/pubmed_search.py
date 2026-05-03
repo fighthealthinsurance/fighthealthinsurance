@@ -149,6 +149,24 @@ def _quote_phrase(term: str) -> str:
     return cleaned
 
 
+_YEAR_RE = re.compile(r"^\d{4}$")
+
+
+def _validated_year(value: Any) -> Optional[str]:
+    """Return ``value`` coerced to a 4-digit year string, or ``None``.
+
+    PubMed's ``[dp]`` filter silently low-recalls on garbage input ("recent",
+    "this year", "20-25"), so anything that isn't a literal four-digit year
+    is dropped. Accepts ``int`` (``2020``) as well as ``str``.
+    """
+    if value is None:
+        return None
+    s = str(value).strip()
+    if _YEAR_RE.match(s):
+        return s
+    return None
+
+
 @dataclass
 class StructuredQuery:
     """A composed PubMed query plus the components that produced it.
@@ -194,10 +212,12 @@ def build_structured_query(
         mesh_terms: MeSH terms to require (joined with ``AND``). Each is
             tagged ``[mh]`` so PubMed treats it as a controlled-vocabulary
             lookup rather than free-text.
-        since_year: Earliest publication year to include (inclusive). Renders
+        since_year: Earliest publication year to include (inclusive),
+            validated against ``^\\d{4}$``. Anything else (including blank
+            strings, words, or partial dates) is silently dropped. Renders
             as a PubMed date-range filter ``"YYYY"[dp] : "YYYY"[dp]``.
-        until_year: Latest publication year (defaults to current year when
-            ``since_year`` is set).
+        until_year: Latest publication year, same validation rule. Defaults
+            to the current year when only ``since_year`` is set.
         extra_terms: Free-text terms to append (e.g., microsite-specific
             keywords). Joined with ``AND``.
 
@@ -248,8 +268,10 @@ def build_structured_query(
 
     # PubMed's [dp] range needs both ends, so synthesize whichever bound the
     # caller didn't supply (1900 as a no-op lower bound, current year as upper).
-    since_clean = _sanitize_term(str(since_year)) if since_year else None
-    until_clean = _sanitize_term(str(until_year)) if until_year else None
+    # Non-year garbage is silently dropped so a typo doesn't quietly crater
+    # recall.
+    since_clean = _validated_year(since_year)
+    until_clean = _validated_year(until_year)
     if since_clean or until_clean:
         lower = since_clean or "1900"
         upper = until_clean or str(datetime.now().year)

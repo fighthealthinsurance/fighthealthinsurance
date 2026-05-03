@@ -130,6 +130,25 @@ class TestBuildStructuredQuery:
         assert '"1900"[dp]' in sq.query
         assert '"2010"[dp]' in sq.query
 
+    def test_year_accepts_int(self):
+        sq = build_structured_query(condition="asthma", since_year=2020)
+        assert '"2020"[dp]' in sq.query
+
+    @pytest.mark.parametrize(
+        "bad_value",
+        ["recent", "20-25", "2020-2024", "20", "20200", "two thousand", " ", ""],
+    )
+    def test_invalid_year_is_dropped(self, bad_value):
+        sq = build_structured_query(condition="asthma", since_year=bad_value)
+        # Garbage year input must not produce a [dp] filter at all.
+        assert "[dp]" not in sq.query
+        assert sq.since_year is None
+
+    def test_invalid_until_year_is_dropped(self):
+        sq = build_structured_query(condition="asthma", until_year="last year")
+        assert "[dp]" not in sq.query
+        assert sq.until_year is None
+
     def test_extra_terms_appended(self):
         sq = build_structured_query(
             condition="asthma", extra_terms=["pediatric", "severe asthma"]
@@ -187,11 +206,10 @@ class TestBuildStructuredQuery:
 
 class TestPubTypeExtraction:
     def test_extract_from_publication_types_attr(self):
-        article = MagicMock()
+        # spec= constrains the mock to just the primary attr so the fallback
+        # attrs raise AttributeError on access (which getattr catches).
+        article = MagicMock(spec=["publication_types"])
         article.publication_types = ["Journal Article", "Meta-Analysis"]
-        # Wipe other attrs so MagicMock auto-attrs don't shadow.
-        del article.pubtype
-        del article.pub_types
         types = extract_publication_types(article)
         assert "Meta-Analysis" in types
 
