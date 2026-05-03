@@ -582,6 +582,39 @@ class MedicaidFAQView(generic.TemplateView):
         return context
 
 
+class SMTPDomainFAQView(generic.TemplateView):
+    """FAQ page about SMTP domain impersonation claims."""
+
+    template_name = "faq_post.html"
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        slug = "smtp-domain-snowjob"
+
+        # Validate slug and load FAQ content from static file
+        if not re.match(r"^[a-zA-Z0-9_-]+$", slug):
+            logger.warning(f"Invalid slug format: {slug}")
+            context.update({"slug": slug, "faq_title": None, "faq_excerpt": None})
+            return context
+
+        try:
+            # Securely find the path to the FAQ markdown file.
+            staticfiles_storage.path(f"faq/{slug}.md")
+            context.update(
+                {
+                    "title": "SMTP Domain Snowjob FAQ",
+                    "slug": slug,
+                    "faq_title": "SMTP Domain Snowjob FAQ",
+                    "faq_excerpt": "What to do when someone makes false or misleading claims about your SMTP sending domain.",
+                }
+            )
+        except Exception:
+            logger.warning(f"FAQ markdown file not found for slug: {slug}")
+            context.update({"slug": slug, "faq_title": None, "faq_excerpt": None})
+
+        return context
+
+
 class ShareDenialView(View):
     """View for sharing denial information."""
 
