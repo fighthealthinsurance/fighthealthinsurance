@@ -144,10 +144,10 @@ class UCRRefreshController:
         locality_url = getattr(settings, "UCR_MEDICARE_PFS_LOCALITY_URL", "") or ""
         if rvu_url:
             try:
-                kwargs = {"rvu_url": rvu_url}
-                if locality_url:
-                    kwargs["locality_url"] = locality_url
-                result = await refresh_medicare_pfs(**kwargs)
+                result = await refresh_medicare_pfs(
+                    rvu_url=rvu_url,
+                    locality_url=locality_url or None,
+                )
                 self._logger.info(
                     "UCR Medicare PFS refresh ({}): parsed {} localities, "
                     "{} HCPCS rows; wrote {} ({} unchanged)",
