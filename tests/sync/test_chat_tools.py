@@ -12,11 +12,13 @@ from fighthealthinsurance.chat.tools import (
     CREATE_OR_UPDATE_APPEAL_REGEX,
     CREATE_OR_UPDATE_PRIOR_AUTH_REGEX,
     FETCH_DOC_REGEX,
+    USPSTF_LOOKUP_REGEX,
     BaseTool,
     PubMedTool,
     MedicaidInfoTool,
     MedicaidEligibilityTool,
     DocFetcherTool,
+    USPSTFLookupTool,
 )
 from fighthealthinsurance.chat.tools.doc_fetcher_tool import (
     MAX_FETCHES_PER_SESSION,
@@ -504,3 +506,105 @@ class TestDocFetcherExecute(TestCase):
         self.assertIn("https://www.example.com/doc.pdf", context)
         # Tool call should be stripped from response
         self.assertNotIn("fetch_doc", response)
+
+
+class TestUSPSTFLookupPattern(TestCase):
+    """Pattern matching for USPSTF_LOOKUP_REGEX."""
+
+    def test_matches_with_stars(self):
+        text = '**uspstf_lookup {"query": "colon cancer", "grade": "A"}**'
+        match = re.search(USPSTF_LOOKUP_REGEX, text, re.IGNORECASE | re.DOTALL)
+        self.assertIsNotNone(match)
+        self.assertIn("colon cancer", match.group(1))
+
+    def test_matches_without_stars(self):
+        text = 'uspstf_lookup {"query": "breast"}'
+        match = re.search(USPSTF_LOOKUP_REGEX, text, re.IGNORECASE)
+        self.assertIsNotNone(match)
+        self.assertIn("breast", match.group(1))
+
+    def test_does_not_match_unrelated(self):
+        text = "Please look up USPSTF guidance about screening."
+        match = re.search(USPSTF_LOOKUP_REGEX, text, re.IGNORECASE)
+        self.assertIsNone(match)
+
+
+class TestUSPSTFLookupTool(TestCase):
+    """USPSTFLookupTool detection and execute."""
+
+    def _run(self, coro):
+        return asyncio.run(coro)
+
+    def test_detect(self):
+        mock_status = AsyncMock()
+        tool = USPSTFLookupTool(mock_status)
+
+        text = '**uspstf_lookup {"query": "colon cancer"}**'
+        match = tool.detect(text)
+        self.assertIsNotNone(match)
+
+    def test_detect_all_finds_multiple(self):
+        mock_status = AsyncMock()
+        tool = USPSTFLookupTool(mock_status)
+
+        text = (
+            '**uspstf_lookup {"query": "colon"}** and '
+            '**uspstf_lookup {"query": "lung"}**'
+        )
+        matches = tool.detect_all(text)
+        self.assertEqual(len(matches), 2)
+
+    def test_execute_with_invalid_json_returns_friendly_error(self):
+        mock_status = AsyncMock()
+        tool = USPSTFLookupTool(mock_status)
+        text = "**uspstf_lookup {invalid json}**"
+        match = re.search(USPSTF_LOOKUP_REGEX, text, re.IGNORECASE | re.DOTALL)
+        self.assertIsNotNone(match)
+
+        response, context = self._run(tool.execute(match, text, ""))
+        self.assertIn("USPSTF lookup", response)
+        self.assertEqual(context, "")
+
+    def test_execute_appends_uspstf_info_to_context(self):
+        mock_status = AsyncMock()
+        tool = USPSTFLookupTool(mock_status)
+
+        text = '**uspstf_lookup {"query": "colorectal", "limit": 1}**'
+        match = re.search(USPSTF_LOOKUP_REGEX, text, re.IGNORECASE | re.DOTALL)
+
+        with patch(
+            "fighthealthinsurance.uspstf_api.get_uspstf_info",
+            return_value="USPSTF: Colorectal screening Grade A.",
+        ):
+            response, context = self._run(tool.execute(match, text, ""))
+
+        self.assertIn("Colorectal screening", context)
+        self.assertNotIn("uspstf_lookup", response)
+
+    def test_execute_with_callback_invokes_llm(self):
+        mock_status = AsyncMock()
+        callback = AsyncMock(return_value=("LLM expanded reply", "summary"))
+        tool = USPSTFLookupTool(mock_status, call_llm_callback=callback)
+
+        text = '**uspstf_lookup {"query": "diabetes"}**'
+        match = re.search(USPSTF_LOOKUP_REGEX, text, re.IGNORECASE | re.DOTALL)
+
+        with patch(
+            "fighthealthinsurance.uspstf_api.get_uspstf_info",
+            return_value="USPSTF: Diabetes Grade B.",
+        ):
+            response, context = self._run(
+                tool.execute(
+                    match,
+                    text,
+                    "",
+                    model_backends=[MagicMock()],
+                    history_for_llm=[],
+                )
+            )
+
+        self.assertEqual(callback.call_count, 1)
+        # The follow-up LLM reply should be appended to the cleaned response.
+        self.assertIn("LLM expanded reply", response)
+        # Raw lookup is also included in the context.
+        self.assertIn("Diabetes", context)

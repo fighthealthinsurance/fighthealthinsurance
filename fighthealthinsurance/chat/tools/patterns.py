@@ -36,6 +36,10 @@ CREATE_OR_UPDATE_PRIOR_AUTH_REGEX = (
 # Matches: fetch_doc {JSON} or **fetch_doc {JSON}**
 FETCH_DOC_REGEX = r"(?:\*\*)?fetch_doc\s*(\{[^}]*\})\s*(?:\*\*)?"
 
+# USPSTF preventive-services lookup tool - captures JSON parameters
+# Matches: uspstf_lookup {JSON} or **uspstf_lookup {JSON}**
+USPSTF_LOOKUP_REGEX = r"(?:\*\*)?uspstf_lookup\s*(\{[^}]*\})\s*(?:\*\*)?"
+
 # List of all tool patterns for scoring/detection
 ALL_TOOL_PATTERNS = [
     PUBMED_QUERY_REGEX,
@@ -44,4 +48,5 @@ ALL_TOOL_PATTERNS = [
     CREATE_OR_UPDATE_APPEAL_REGEX,
     CREATE_OR_UPDATE_PRIOR_AUTH_REGEX,
     FETCH_DOC_REGEX,
+    USPSTF_LOOKUP_REGEX,
 ]
