@@ -582,6 +582,39 @@ class MedicaidFAQView(generic.TemplateView):
         return context
 
 
+class SMTPDomainFAQView(generic.TemplateView):
+    """FAQ page about SMTP domain impersonation claims."""
+
+    template_name = "faq_post.html"
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        slug = "smtp-domain-snowjob"
+
+        # Validate slug and load FAQ content from static file
+        if not re.match(r"^[a-zA-Z0-9_-]+$", slug):
+            logger.warning(f"Invalid slug format: {slug}")
+            context.update({"slug": slug, "faq_title": None, "faq_excerpt": None})
+            return context
+
+        try:
+            # Securely find the path to the FAQ markdown file.
+            staticfiles_storage.path(f"faq/{slug}.md")
+            context.update(
+                {
+                    "title": "SMTP Domain Snowjob FAQ",
+                    "slug": slug,
+                    "faq_title": "SMTP Domain Snowjob FAQ",
+                    "faq_excerpt": "What to do when someone makes false or misleading claims about your SMTP sending domain.",
+                }
+            )
+        except Exception:
+            logger.warning(f"FAQ markdown file not found for slug: {slug}")
+            context.update({"slug": slug, "faq_title": None, "faq_excerpt": None})
+
+        return context
+
+
 class ShareDenialView(View):
     """View for sharing denial information."""
 
@@ -1687,11 +1720,16 @@ class StripeWebhookView(View):
 class CompletePaymentView(View):
     """View for completing payment after Stripe checkout redirect."""
 
+    # Row ids issued before the secure_token migration (#763) that we still
+    # honor when passed as ?session_id=<id>; everything above this id was
+    # created with a token so legacy lookups should be denied.
+    LEGACY_SESSION_ID_CUTOFF = 600
+
     def get(self, request):
         try:
-            session_id = request.GET.get("session_id")
             data = {
-                "session_id": session_id,
+                "token": request.GET.get("token"),
+                "session_id": request.GET.get("session_id"),
             }
 
             return self.process_payment(data)
@@ -1713,17 +1751,39 @@ class CompletePaymentView(View):
         return self.process_payment(data)
 
     def process_payment(self, data):
+        token = data.get("token")
         session_id = data.get("session_id")
 
-        if not session_id:
-            return HttpResponse(
-                json.dumps({"error": "Missing session_id"}),
-                status=400,
-                content_type="application/json",
-            )
-
         try:
-            lost_session = models.LostStripeSession.objects.get(session_id=session_id)
+            if token:
+                lost_session = models.LostStripeSession.objects.get(secure_token=token)
+            elif session_id:
+                # Legacy emails sent before the token rollout used the row id
+                # as ?session_id=<int>. Honor those for ids below the cutoff
+                # only; anything else must come through the secure token, so
+                # that post-cutoff sessions can't be brute-forced or accessed
+                # by passing a Stripe session_id string.
+                legacy_id: typing.Optional[int] = None
+                try:
+                    legacy_id = int(session_id)
+                except (TypeError, ValueError):
+                    pass
+                if (
+                    legacy_id is None
+                    or not 0 < legacy_id < self.LEGACY_SESSION_ID_CUTOFF
+                ):
+                    return HttpResponse(
+                        json.dumps({"error": "Invalid or expired link"}),
+                        status=400,
+                        content_type="application/json",
+                    )
+                lost_session = models.LostStripeSession.objects.get(id=legacy_id)
+            else:
+                return HttpResponse(
+                    json.dumps({"error": "Missing token"}),
+                    status=400,
+                    content_type="application/json",
+                )
             continue_url = lost_session.success_url
             cancel_url = lost_session.cancel_url
             payment_type = lost_session.payment_type

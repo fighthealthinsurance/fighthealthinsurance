@@ -265,6 +265,13 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         name="medicaid-faq",
     ),
     path(
+        "faq/smtp-domain/",
+        cache_control(public=True)(
+            cache_page(60 * 60 * 2)(views.SMTPDomainFAQView.as_view())
+        ),
+        name="smtp-domain-faq",
+    ),
+    path(
         "denial-language/",
         cache_control(public=True)(
             cache_page(60 * 60 * 2)(views.DenialLanguageLibraryView.as_view())

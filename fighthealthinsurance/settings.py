@@ -517,6 +517,11 @@ class Test(Dev):
     DEBUG = True
     # Set TESTING env var for SessionRequiredMixin and other test-aware code
     os.environ["TESTING"] = "True"
+    # Point the CMS Coverage API at an unroutable address. Tests that
+    # exercise CMS code mock the client directly; this prevents any
+    # incidental call (e.g., through the appeal-generation flow) from
+    # reaching the real public CMS endpoint.
+    os.environ["CMS_COVERAGE_API_URL"] = "http://127.0.0.1:1"
     DEFF_SALT = os.getenv("DEFF_SALT", "test-salt")
     DEFF_PASSWORD = os.getenv("DEFF_PASSWORD", "test-password")
     # For async tests we do in memory for increased isolation
@@ -541,6 +546,8 @@ class TestSync(Dev):
     DEBUG = True
     # Set TESTING env var for SessionRequiredMixin and other test-aware code
     os.environ["TESTING"] = "True"
+    # Point CMS Coverage API at an unroutable address (see Test class).
+    os.environ["CMS_COVERAGE_API_URL"] = "http://127.0.0.1:1"
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.sqlite3",
@@ -560,6 +567,8 @@ class TestActor(Dev):
     DEBUG = True
     # Set TESTING env var for SessionRequiredMixin and other test-aware code
     os.environ["TESTING"] = "True"
+    # Point CMS Coverage API at an unroutable address (see Test class).
+    os.environ["CMS_COVERAGE_API_URL"] = "http://127.0.0.1:1"
     # We _may_ use "real" files for actor tests since we have seperate processes for actors.
     dt = str(int(time.time()))
     dbname = os.getenv("DBNAME", f"{BASE_DIR}/test2{dt}.db.sqlite3")

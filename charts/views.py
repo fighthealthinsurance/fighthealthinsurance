@@ -240,6 +240,204 @@ class MailingListSubscriberCSV(View):
 
 
 @staff_member_required
+def signup_abandonment_chart(request):
+    """
+    Chart showing professional signups that were abandoned: people who started
+    the registration flow but where neither the professional nor the domain was
+    ever activated. Includes location breakdown (state/city) and a daily trend.
+    """
+    inactive_relations = (
+        ProfessionalDomainRelation.objects.filter(
+            professional__active=False, domain__active=False
+        )
+        .select_related("professional__user", "domain")
+        .order_by("professional__user__date_joined")
+    )
+
+    rows = []
+    for relation in inactive_relations:
+        prof = relation.professional
+        domain = relation.domain
+        email = prof.user.email if prof.user else ""
+        # Skip test/seed accounts.
+        if email in ("farts@farts.com", "holden@pigscanfly.ca"):
+            continue
+
+        date_joined = prof.user.date_joined if prof.user else None
+        rows.append(
+            {
+                "email": email,
+                "state": (domain.state or "Unknown").strip() or "Unknown",
+                "city": (domain.city or "Unknown").strip() or "Unknown",
+                "zipcode": (domain.zipcode or "").strip(),
+                "country": (domain.country or "").strip(),
+                "date_joined": date_joined,
+            }
+        )
+
+    if not rows:
+        return HttpResponse(
+            "No abandoned signup data available.", content_type="text/plain"
+        )
+
+    df = pd.DataFrame(rows)
+
+    # Chart 1: by state (bar chart of where abandoned signups are from).
+    state_counts = (
+        df.groupby("state")
+        .size()
+        .reset_index(name="count")
+        .sort_values("count", ascending=False)
+    )
+    state_source = ColumnDataSource(state_counts)
+    p_state = figure(
+        title="Abandoned Signups by State",
+        x_range=state_counts["state"].tolist(),
+        height=420,
+        width=820,
+        toolbar_location="right",
+        tools="hover,pan,box_zoom,reset,save",
+        tooltips=[("State", "@state"), ("Count", "@count")],
+    )
+    p_state.vbar(
+        x="state",
+        top="count",
+        width=0.8,
+        source=state_source,
+        color="steelblue",
+        line_color="white",
+    )
+    p_state.xaxis.major_label_orientation = 3.14 / 4
+    p_state.xgrid.grid_line_color = None
+    p_state.y_range.start = 0
+    p_state.xaxis.axis_label = "State"
+    p_state.yaxis.axis_label = "Number of Abandoned Signups"
+
+    # Chart 2: top cities (limited to 15, rest grouped as "Other").
+    city_counts_full = (
+        df.groupby(["state", "city"])
+        .size()
+        .reset_index(name="count")
+        .sort_values("count", ascending=False)
+    )
+    city_counts_full["label"] = (
+        city_counts_full["city"] + ", " + city_counts_full["state"]
+    )
+    top_n = 15
+    if len(city_counts_full) > top_n:
+        top_cities = city_counts_full.iloc[:top_n].copy()
+        other_count = int(city_counts_full.iloc[top_n:]["count"].sum())
+        top_cities = pd.concat(
+            [
+                top_cities[["label", "count"]],
+                pd.DataFrame({"label": ["Other"], "count": [other_count]}),
+            ],
+            ignore_index=True,
+        )
+    else:
+        top_cities = city_counts_full[["label", "count"]].copy()
+
+    city_source = ColumnDataSource(top_cities)
+    p_city = figure(
+        title="Abandoned Signups by City (Top 15)",
+        x_range=top_cities["label"].tolist(),
+        height=420,
+        width=820,
+        toolbar_location="right",
+        tools="hover,pan,box_zoom,reset,save",
+        tooltips=[("Location", "@label"), ("Count", "@count")],
+    )
+    p_city.vbar(
+        x="label",
+        top="count",
+        width=0.8,
+        source=city_source,
+        color="darkorange",
+        line_color="white",
+    )
+    p_city.xaxis.major_label_orientation = 3.14 / 4
+    p_city.xgrid.grid_line_color = None
+    p_city.y_range.start = 0
+    p_city.xaxis.axis_label = "City, State"
+    p_city.yaxis.axis_label = "Number of Abandoned Signups"
+
+    # Chart 3: by day (when did they abandon).
+    df_dated = df.dropna(subset=["date_joined"]).copy()
+    if not df_dated.empty:
+        df_dated["day"] = pd.to_datetime(df_dated["date_joined"]).dt.normalize()
+        by_day = (
+            df_dated.groupby("day").size().reset_index(name="count").sort_values("day")
+        )
+        day_source = ColumnDataSource(by_day)
+        p_day = figure(
+            title="Abandoned Signups by Day",
+            x_axis_type="datetime",
+            height=420,
+            width=820,
+            toolbar_location="right",
+            tools="hover,pan,box_zoom,reset,save",
+            tooltips=[("Day", "@day{%F}"), ("Count", "@count")],
+        )
+        # The hover tool needs a datetime formatter for the @day field.
+        from bokeh.models import HoverTool
+
+        for tool in p_day.tools:
+            if isinstance(tool, HoverTool):
+                tool.formatters = {"@day": "datetime"}
+        p_day.varea(
+            x="day",
+            y1=0,
+            y2="count",
+            source=day_source,
+            color="firebrick",
+        )
+        p_day.line(x="day", y="count", source=day_source, color="firebrick")
+        p_day.xaxis.axis_label = "Date"
+        p_day.yaxis.axis_label = "Number of Abandoned Signups"
+    else:
+        p_day = None
+
+    # Combine the figures vertically.
+    from bokeh.layouts import column
+
+    plots = [p_state, p_city]
+    if p_day is not None:
+        plots.append(p_day)
+    layout = column(*plots)
+    script, div = components(layout)
+
+    # Build display DataFrames.
+    state_html = state_counts.to_html(
+        classes=["table", "table-striped", "table-hover"], index=False
+    )
+    city_html = city_counts_full[["state", "city", "count"]].to_html(
+        classes=["table", "table-striped", "table-hover"], index=False
+    )
+    df_html = f"<h3>By State</h3>{state_html}<h3>By City</h3>{city_html}"
+
+    total = len(df)
+    unique_states = df["state"].nunique()
+    unique_cities = df.groupby(["state", "city"]).ngroups
+    totals_html = (
+        f"<p>Total abandoned signups: {total}</p>"
+        f"<p>Unique states: {unique_states}</p>"
+        f"<p>Unique cities: {unique_cities}</p>"
+    )
+
+    return render(
+        request,
+        "bokeh.html",
+        {
+            "script": script,
+            "div": div,
+            "df_html": df_html,
+            "totals_html": totals_html,
+            "title": "Signup Abandonment Analysis",
+        },
+    )
+
+
+@staff_member_required
 def incomplete_signups_csv(request):
     response = HttpResponse(content_type="text/csv")
     response["Content-Disposition"] = 'attachment; filename="incomplete_signups.csv"'

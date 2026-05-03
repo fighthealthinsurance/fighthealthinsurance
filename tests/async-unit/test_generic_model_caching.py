@@ -165,7 +165,10 @@ async def test_denial_uses_generic_cache_no_patient_data():
         "fighthealthinsurance.ml.ml_appeal_questions_helper.ml_router.partial_qa_backends"
     ) as mock_partial_qa_backends, mock.patch(
         "fighthealthinsurance.ml.ml_citations_helper.ml_router"
-    ) as mock_router:
+    ) as mock_router, mock.patch(
+        "fighthealthinsurance.ml.ml_citations_helper.get_cms_coverage_citations",
+        new=mock.AsyncMock(return_value=[]),
+    ):
 
         # Configure the mock backends to return an empty list to ensure no models are called
         mock_qa_backends.return_value = []

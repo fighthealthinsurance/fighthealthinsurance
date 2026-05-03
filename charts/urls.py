@@ -25,6 +25,7 @@ from .views import (
     pubmed_article_export,
     incomplete_signups_csv,
     procedures_denied_chart,
+    signup_abandonment_chart,
 )
 
 urlpatterns = [
@@ -115,5 +116,10 @@ urlpatterns = [
         "pro_signups_dashboard",
         pro_signups_dashboard,
         name="pro_signups_dashboard",
+    ),
+    path(
+        "signup_abandonment_chart",
+        signup_abandonment_chart,
+        name="signup_abandonment_chart",
     ),
 ]

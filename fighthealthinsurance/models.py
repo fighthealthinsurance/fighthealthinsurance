@@ -78,6 +78,43 @@ class GenericContextGeneration(ExportModelOperationsMixin("GenericContextGenerat
         return f"Generic Context: {self.procedure} / {self.diagnosis}"
 
 
+class CMSCoverageCache(ExportModelOperationsMixin("CMSCoverageCache"), models.Model):  # type: ignore
+    """Caches CMS Medicare Coverage Database lookups for a procedure/diagnosis.
+
+    Two cached citation lists are stored: a "generic" list (no Medicare-binding
+    framing, used for commercial plans) and a "medicare" list (used when the
+    denial's plan_source is Medicare or Medicare Advantage). Caching is keyed
+    by procedure+diagnosis; each variant has its own freshness timestamp so
+    refreshing one doesn't make the other look fresh.
+    """
+
+    id = models.AutoField(primary_key=True)
+    procedure = models.CharField(max_length=300)
+    diagnosis = models.CharField(max_length=300)
+    generic_citations = models.JSONField(default=list)
+    medicare_citations = models.JSONField(default=list)
+    # Per-variant freshness timestamps. Tracked separately because the two
+    # variants are refreshed independently — a write to one shouldn't make
+    # the other look fresh.
+    generic_updated_at = models.DateTimeField(null=True, blank=True)
+    medicare_updated_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["procedure", "diagnosis"],
+                name="cms_cov_proc_diag_uniq",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["procedure", "diagnosis"]),
+        ]
+
+    def __str__(self):
+        return f"CMS Coverage: {self.procedure} / {self.diagnosis}"
+
+
 # Money related :p
 class InterestedProfessional(ExportModelOperationsMixin("InterestedProfessional"), models.Model):  # type: ignore
     """
@@ -1721,6 +1758,11 @@ class LostStripeSession(models.Model):
 
     id = models.AutoField(primary_key=True)
     session_id = models.CharField(max_length=255, null=True, blank=True)
+    # Unguessable token used to authorize recovery via the abandoned-cart email
+    # link. Must be kept secret; only sent to the verified customer email.
+    secure_token = models.CharField(
+        max_length=64, unique=True, default=sekret_gen, db_index=True
+    )
     payment_type = models.CharField(max_length=255, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True, blank=True)
     cancel_url = models.CharField(max_length=255, null=True, blank=True)
