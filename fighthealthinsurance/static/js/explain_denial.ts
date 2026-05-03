@@ -7,6 +7,8 @@
 
 import { recognize } from "./scrub_ocr";
 
+const MAX_UPLOAD_SIZE_BYTES = 20 * 1024 * 1024;
+
 /**
  * Add recognized text to the denial_text textarea.
  * Appends text with a newline separator if textarea already has content.
@@ -36,6 +38,18 @@ async function recognizeEvent(event: Event): Promise<void> {
   const files = input.files;
 
   if (!files || files.length === 0) {
+    return;
+  }
+
+  const oversizedFiles = Array.from(files).filter(
+    (file) => file.size > MAX_UPLOAD_SIZE_BYTES
+  );
+  if (oversizedFiles.length > 0) {
+    const tooLargeNames = oversizedFiles.map((file) => file.name).join(", ");
+    alert(
+      `These files exceed the 20MB upload limit and were not processed: ${tooLargeNames}`
+    );
+    input.value = "";
     return;
   }
 
