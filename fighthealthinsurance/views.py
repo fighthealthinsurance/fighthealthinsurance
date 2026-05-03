@@ -1,4 +1,3 @@
-import datetime
 import html
 import json
 import os
@@ -338,7 +337,6 @@ class OtherResourcesView(generic.TemplateView):
         # Fetch RSS feeds synchronously to avoid async issues
         try:
             from datetime import datetime
-
             import feedparser
             import requests
 
@@ -1866,10 +1864,6 @@ class StripeWebhookView(View):
 class CompletePaymentView(View):
     """View for completing payment after Stripe checkout redirect."""
 
-    # Secure token support for LostStripeSession shipped in migration 0160.
-    # Legacy ?session_id=<int> links are only accepted for sessions created
-    # before that rollout date (or rows with missing secure_token data).
-    SECURE_TOKEN_ROLLOUT_AT = datetime.datetime(2026, 5, 3, tzinfo=datetime.UTC)
 
     def get(self, request):
         try:
@@ -1906,8 +1900,8 @@ class CompletePaymentView(View):
             elif session_id:
                 # Legacy emails sent before the token rollout used the row id
                 # as ?session_id=<int>. Accept those links only for rows that
-                # pre-date the secure-token migration (or have missing token
-                # data); otherwise require secure_token-based access.
+                # still have missing/blank secure_token data; otherwise require
+                # secure_token-based access.
                 legacy_id: typing.Optional[int] = None
                 try:
                     legacy_id = int(session_id)
@@ -1921,11 +1915,7 @@ class CompletePaymentView(View):
                     )
                 lost_session = models.LostStripeSession.objects.get(id=legacy_id)
                 has_missing_token = not bool(lost_session.secure_token)
-                created_before_rollout = bool(
-                    lost_session.created_at
-                    and lost_session.created_at < self.SECURE_TOKEN_ROLLOUT_AT
-                )
-                if not (has_missing_token or created_before_rollout):
+                if not has_missing_token:
                     return HttpResponse(
                         json.dumps({"error": "Invalid or expired link"}),
                         status=400,
