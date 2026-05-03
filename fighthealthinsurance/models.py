@@ -325,6 +325,10 @@ class InsuranceCompany(models.Model):
     """
     Represents an insurance company/carrier (e.g., Anthem, Blue Cross, Aetna).
     Uses regex patterns to automatically identify companies from denial text.
+
+    Stores known appeal-routing information (mailing address, fax, phone,
+    portal URL) so that once a denial is matched to a company we can
+    populate likely places to file the appeal.
     """
 
     id = models.AutoField(primary_key=True)
@@ -350,8 +354,47 @@ class InsuranceCompany(models.Model):
         help_text="Pattern to exclude false matches",
     )
     website = models.URLField(blank=True, help_text="Company's official website")
+    member_services_url = models.URLField(
+        blank=True,
+        help_text="Member services / contact-us page where appeal info is published",
+    )
+    appeals_info_url = models.URLField(
+        blank=True,
+        help_text="Specific URL on the carrier's site that documents the appeals process (source for the values below)",
+    )
     notes = models.TextField(
         blank=True, help_text="Additional notes about this insurance company"
+    )
+    # Default appeal routing (most common / generic). State or plan-specific
+    # overrides live on InsurancePlan.
+    appeal_address = models.TextField(
+        blank=True,
+        help_text="Default mailing address for written appeals (multi-line, free-form)",
+    )
+    appeal_fax_number = models.CharField(
+        max_length=40,
+        blank=True,
+        help_text="Default fax number for appeals (e.g., 877-815-4827)",
+    )
+    appeal_phone_number = models.CharField(
+        max_length=40,
+        blank=True,
+        help_text="Default member services / appeals phone number",
+    )
+    appeal_email = models.EmailField(
+        blank=True, help_text="Email address for submitting appeals, if accepted"
+    )
+    appeals_portal_url = models.URLField(
+        blank=True,
+        help_text="Online portal URL for submitting appeals electronically",
+    )
+    parent_company = models.ForeignKey(
+        "self",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="subsidiaries",
+        help_text="Parent / umbrella company (e.g., Elevance Health for Anthem brands)",
     )
     # Company type flags to help with suggestions
     is_tpa = models.BooleanField(
@@ -369,6 +412,25 @@ class InsuranceCompany(models.Model):
 
     def __str__(self):
         return self.name
+
+    def appeal_destinations(self) -> dict[str, str]:
+        """Return a dict of non-empty appeal destination channels for this company.
+
+        Order of keys matches the preferred order to suggest to the user:
+        portal, fax, address, email, phone. Empty values are omitted.
+        """
+        destinations: dict[str, str] = {}
+        if self.appeals_portal_url:
+            destinations["portal"] = self.appeals_portal_url
+        if self.appeal_fax_number:
+            destinations["fax"] = self.appeal_fax_number
+        if self.appeal_address:
+            destinations["address"] = self.appeal_address
+        if self.appeal_email:
+            destinations["email"] = self.appeal_email
+        if self.appeal_phone_number:
+            destinations["phone"] = self.appeal_phone_number
+        return destinations
 
 
 class InsurancePlan(models.Model):
@@ -426,6 +488,34 @@ class InsurancePlan(models.Model):
         help_text="Common prefix for plan IDs (helps with identification)",
     )
     notes = models.TextField(blank=True, help_text="Additional notes about this plan")
+    # Plan-specific appeal routing overrides. Falls back to the parent
+    # InsuranceCompany values when blank.
+    appeal_address = models.TextField(
+        blank=True,
+        help_text="Plan-specific mailing address for appeals (overrides company default)",
+    )
+    appeal_fax_number = models.CharField(
+        max_length=40,
+        blank=True,
+        help_text="Plan-specific appeals fax number (overrides company default)",
+    )
+    appeal_phone_number = models.CharField(
+        max_length=40,
+        blank=True,
+        help_text="Plan-specific appeals phone number (overrides company default)",
+    )
+    appeal_email = models.EmailField(
+        blank=True,
+        help_text="Plan-specific email for submitting appeals (overrides company default)",
+    )
+    appeals_portal_url = models.URLField(
+        blank=True,
+        help_text="Plan-specific online appeals portal URL",
+    )
+    appeals_info_url = models.URLField(
+        blank=True,
+        help_text="URL documenting the appeals process for this specific plan (source)",
+    )
 
     class Meta:
         verbose_name = "Insurance Plan"
@@ -436,6 +526,31 @@ class InsurancePlan(models.Model):
         if self.state:
             return f"{self.insurance_company.name} - {self.plan_name} ({self.state})"
         return f"{self.insurance_company.name} - {self.plan_name}"
+
+    def appeal_destinations(self) -> dict[str, str]:
+        """Plan-level appeal routing falling back to the parent company.
+
+        Returns the same shape as InsuranceCompany.appeal_destinations()
+        with the same preferred key order (portal, fax, address, email,
+        phone). Plan-specific values win; company values fill gaps.
+        """
+        company = self.insurance_company
+        # Build in the preferred order so callers iterating the dict get a
+        # consistent "best channel" sequence regardless of which fields are
+        # set on the plan vs the company.
+        candidates = [
+            ("portal", self.appeals_portal_url, company.appeals_portal_url),
+            ("fax", self.appeal_fax_number, company.appeal_fax_number),
+            ("address", self.appeal_address, company.appeal_address),
+            ("email", self.appeal_email, company.appeal_email),
+            ("phone", self.appeal_phone_number, company.appeal_phone_number),
+        ]
+        destinations: dict[str, str] = {}
+        for key, plan_value, company_value in candidates:
+            value = plan_value or company_value
+            if value:
+                destinations[key] = value
+        return destinations
 
 
 class Diagnosis(models.Model):

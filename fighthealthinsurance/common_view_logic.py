@@ -24,7 +24,7 @@ from urllib.parse import urlencode
 
 from django.core.files import File
 from django.core.validators import validate_email
-from django.db.models import QuerySet
+from django.db.models import Q, QuerySet
 from django.forms import Form
 from django.template.loader import render_to_string
 from django.urls import reverse
@@ -1397,8 +1397,165 @@ class DenialCreatorHelper:
             )
 
     @classmethod
+    async def _match_insurance_company(
+        cls, extracted_name: Optional[str], denial_text: str
+    ) -> Optional["InsuranceCompany"]:
+        """Find the best InsuranceCompany match for a denial.
+
+        Tries in order:
+        1. Exact (case-insensitive) match on the LLM-extracted name.
+        2. Specificity-scored substring/alt_name match against the extracted name.
+        3. Regex match against the full denial text using each company's
+           ``regex`` pattern (with ``negative_regex`` exclusion).
+
+        Step 3 is a fallback for when steps 1-2 don't produce a name match
+        (LLM extraction missing, or none of the carriers' names/alt_names
+        appeared in the extracted text). Running it lazily avoids paying the
+        regex-search cost on every extraction.
+        """
+        from fighthealthinsurance.models import InsuranceCompany
+
+        # No useful input: nothing to match against.
+        if not extracted_name and not denial_text:
+            return None
+
+        # 1. Exact match on the LLM-extracted name
+        if extracted_name:
+            matched = await InsuranceCompany.objects.filter(
+                name__iexact=extracted_name
+            ).afirst()
+            if matched:
+                return matched
+
+        # 2. Specificity-scored substring/alt_name match against extracted name.
+        # Cache companies during the iteration so step 3 doesn't have to re-query.
+        # Only fetch the columns we actually use to keep the working set small
+        # even as the routing TextFields grow.
+        matches: list[tuple[InsuranceCompany, float]] = []
+        all_companies: list[InsuranceCompany] = []
+        text_lower = extracted_name.lower() if extracted_name else ""
+
+        # Restrict to the matching-relevant + propagation-relevant columns to
+        # keep working-set size bounded as the routing TextFields grow. The
+        # caller (extract_set_insurance_company) reads ``appeal_fax_number``
+        # off the returned record for propagation; everything else (e.g.
+        # appeal_address) is fetched separately on demand.
+        company_qs = InsuranceCompany.objects.only(
+            "id",
+            "name",
+            "alt_names",
+            "regex",
+            "negative_regex",
+            "appeal_fax_number",
+        )
+        async for company in company_qs:
+            all_companies.append(company)
+            if not text_lower:
+                continue
+            company_lower = company.name.lower()
+
+            if company_lower == text_lower:
+                matches.append((company, 100.0))
+            elif company_lower in text_lower:
+                score = len(company_lower) / len(text_lower) * 90
+                matches.append((company, score))
+            elif text_lower in company_lower:
+                score = len(text_lower) / len(company_lower) * 80
+                matches.append((company, score))
+
+            if company.alt_names:
+                for alt in company.alt_names.split("\n"):
+                    alt = alt.strip().lower()
+                    if not alt:
+                        continue
+                    if alt == text_lower:
+                        matches.append((company, 95.0))
+                    elif alt in text_lower:
+                        score = len(alt) / len(text_lower) * 85
+                        matches.append((company, score))
+                    elif text_lower in alt:
+                        score = len(text_lower) / len(alt) * 75
+                        matches.append((company, score))
+
+        # 3. Regex fallback - only run when name/alt_name matching produced
+        # no candidates. Score 60.0 keeps these below any name-based match.
+        if not matches and denial_text:
+            for company in all_companies:
+                if not company.regex or not company.regex.pattern:
+                    continue
+                try:
+                    if company.regex.search(denial_text):
+                        if (
+                            company.negative_regex
+                            and company.negative_regex.pattern
+                            and company.negative_regex.search(denial_text)
+                        ):
+                            continue
+                        matches.append((company, 60.0))
+                except Exception as e:
+                    logger.opt(exception=True).debug(
+                        f"Error applying regex for company {company.id}: {e}"
+                    )
+
+        if not matches:
+            return None
+        matches.sort(key=lambda x: x[1], reverse=True)
+        best_company, best_score = matches[0]
+        logger.debug(
+            f"Matched '{extracted_name}' to '{best_company.name}' with score {best_score}"
+        )
+        return best_company
+
+    @classmethod
+    async def _match_insurance_plan(
+        cls,
+        company: "InsuranceCompany",
+        denial_text: str,
+        state: Optional[str],
+    ) -> Optional["InsurancePlan"]:
+        """Find the best InsurancePlan for a matched company.
+
+        Prefers plans whose ``regex`` matches the denial text (most specific),
+        then falls back to a state-only match if the denial has a state.
+        """
+        from fighthealthinsurance.models import InsurancePlan
+
+        # select_related so callers can format ``str(plan)`` without
+        # triggering an async-context sync DB hit through the related descriptor.
+        plans = InsurancePlan.objects.filter(insurance_company=company).select_related(
+            "insurance_company"
+        )
+        if denial_text:
+            async for plan in plans:
+                if not plan.regex or not plan.regex.pattern:
+                    continue
+                try:
+                    if plan.regex.search(denial_text):
+                        if (
+                            plan.negative_regex
+                            and plan.negative_regex.pattern
+                            and plan.negative_regex.search(denial_text)
+                        ):
+                            continue
+                        return plan
+                except Exception as e:
+                    logger.opt(exception=True).debug(
+                        f"Error applying regex for plan {plan.id}: {e}"
+                    )
+        if state:
+            return await plans.filter(state__iexact=state).afirst()
+        return None
+
+    @classmethod
     async def extract_set_insurance_company(cls, denial_id):
-        """Extract insurance company name from denial text and match to structured models"""
+        """Extract insurance company name from denial text and match to structured models.
+
+        Once a company is matched, propagates the company's known appeal-routing
+        info (fax number) onto the denial when the denial doesn't already have
+        one - this means downstream code (PDF cover sheet, fax send) can use
+        Anthem/UHC/etc.'s published appeals fax even if the denial letter
+        itself didn't include it.
+        """
         from fighthealthinsurance.models import InsuranceCompany, InsurancePlan
 
         denial = await Denial.objects.filter(denial_id=denial_id).aget()
@@ -1408,104 +1565,93 @@ class DenialCreatorHelper:
                 denial_text=denial.denial_text
             )
 
-            # Validate insurance company name - simple validation to avoid hallucinations
+            # Reject obviously hallucinated names early - but still allow the
+            # regex-based fallback below to run, since a missing/invalid LLM
+            # extraction shouldn't block a known-carrier match.
+            extracted_name: Optional[str] = None
             if insurance_company is not None:
-                # Check if the name appears in the text or is reasonable length
-                if (insurance_company in denial.denial_text) or len(
+                if (insurance_company in (denial.denial_text or "")) or len(
                     insurance_company
                 ) < 50:
-                    # Try to match against structured InsuranceCompany models
-                    matched_company = None
-                    matched_plan = None
-
-                    try:
-                        # Try exact match first (case-insensitive)
-                        matched_company = await InsuranceCompany.objects.filter(
-                            name__iexact=insurance_company
-                        ).afirst()
-
-                        # If no exact match, try matching in order of specificity
-                        if not matched_company:
-                            # Collect all possible matches with their specificity score
-                            matches: list[tuple[InsuranceCompany, float]] = []
-                            async for company in InsuranceCompany.objects.all():
-                                company_lower = company.name.lower()
-                                text_lower = insurance_company.lower()
-
-                                # Check exact substring match first (more specific)
-                                if company_lower == text_lower:
-                                    matches.append((company, 100.0))  # Exact match
-                                elif company_lower in text_lower:
-                                    # Score based on how much of the extracted text matches
-                                    score = len(company_lower) / len(text_lower) * 90
-                                    matches.append((company, score))
-                                elif text_lower in company_lower:
-                                    # Lower score if extracted text is partial
-                                    score = len(text_lower) / len(company_lower) * 80
-                                    matches.append((company, score))
-
-                                # Check alt_names with specificity scoring
-                                if company.alt_names:
-                                    for alt in company.alt_names.split("\n"):
-                                        alt = alt.strip().lower()
-                                        if alt:
-                                            if alt == text_lower:
-                                                matches.append(
-                                                    (company, 95.0)
-                                                )  # Alt name exact match
-                                            elif alt in text_lower:
-                                                score = len(alt) / len(text_lower) * 85
-                                                matches.append((company, score))
-                                            elif text_lower in alt:
-                                                score = len(text_lower) / len(alt) * 75
-                                                matches.append((company, score))
-
-                            # Select the match with highest specificity score
-                            if matches:
-                                matches.sort(key=lambda x: x[1], reverse=True)
-                                matched_company = matches[0][0]
-                                logger.debug(
-                                    f"Matched '{insurance_company}' to '{matched_company.name}' with score {matches[0][1]}"
-                                )
-
-                        # Try to match a specific plan if we found a company
-                        if matched_company:
-                            # Look for state-specific plans
-                            if denial.state:
-                                matched_plan = await InsurancePlan.objects.filter(
-                                    insurance_company=matched_company,
-                                    state__iexact=denial.state,
-                                ).afirst()
-
-                    except Exception as e:
-                        logger.opt(exception=True).debug(
-                            f"Error matching structured insurance models: {e}"
-                        )
-
-                    # Update denial with both text and structured references
-                    update_fields: dict[str, Any] = {
-                        "insurance_company": insurance_company
-                    }
-                    if matched_company:
-                        update_fields["insurance_company_obj"] = matched_company
-                        logger.debug(
-                            f"Matched to structured company: {matched_company.name}"
-                        )
-                    if matched_plan:
-                        update_fields["insurance_plan_obj"] = matched_plan
-                        logger.debug(f"Matched to structured plan: {matched_plan}")
-
-                    await Denial.objects.filter(denial_id=denial_id).aupdate(
-                        **update_fields
-                    )
-                    logger.debug(
-                        f"Successfully extracted insurance company: {insurance_company}"
-                    )
-                    return insurance_company
+                    extracted_name = insurance_company
                 else:
                     logger.debug(
                         f"Rejected insurance company extraction: {insurance_company}"
                     )
+
+            matched_company: Optional[InsuranceCompany] = None
+            matched_plan: Optional[InsurancePlan] = None
+
+            try:
+                matched_company = await cls._match_insurance_company(
+                    extracted_name=extracted_name,
+                    denial_text=denial.denial_text or "",
+                )
+                if matched_company:
+                    matched_plan = await cls._match_insurance_plan(
+                        company=matched_company,
+                        denial_text=denial.denial_text or "",
+                        state=denial.state,
+                    )
+            except Exception as e:
+                logger.opt(exception=True).debug(
+                    f"Error matching structured insurance models: {e}"
+                )
+
+            # When we have a structured match, use its canonical name so
+            # Denial.insurance_company stays in sync with insurance_company_obj.
+            # Downstream prompt/cover-sheet code reads the text field, so any
+            # divergence (e.g. LLM extracted "Anthem" but matched a regional
+            # brand "Empire BlueCross BlueShield") would address the appeal
+            # to the wrong carrier name. Fall back to the LLM extraction only
+            # when no structured match was found.
+            resolved_name: Optional[str] = extracted_name
+            if matched_company:
+                resolved_name = matched_company.name
+
+            update_fields: dict[str, Any] = {}
+            if resolved_name:
+                update_fields["insurance_company"] = resolved_name
+            if matched_company:
+                update_fields["insurance_company_obj"] = matched_company
+                logger.debug(f"Matched to structured company: {matched_company.name}")
+            if matched_plan:
+                update_fields["insurance_plan_obj"] = matched_plan
+                logger.debug(f"Matched to structured plan: {matched_plan}")
+
+            # Propagate the known appeal fax number from the matched plan/company
+            # onto the denial only if the denial doesn't already have one. We
+            # do NOT overwrite a fax number that came directly from the denial
+            # letter or plan documents. Use a single conditional ``aupdate``
+            # so the read+write is atomic - extract_set_fax_number runs
+            # concurrently and could otherwise write between our read and
+            # write.
+            propagated_fax = None
+            if matched_plan and matched_plan.appeal_fax_number:
+                propagated_fax = matched_plan.appeal_fax_number
+            elif matched_company and matched_company.appeal_fax_number:
+                propagated_fax = matched_company.appeal_fax_number
+
+            if update_fields:
+                await Denial.objects.filter(denial_id=denial_id).aupdate(
+                    **update_fields
+                )
+                logger.debug(
+                    f"Successfully extracted insurance company: {resolved_name}"
+                )
+
+            if propagated_fax:
+                rows_updated = (
+                    await Denial.objects.filter(denial_id=denial_id)
+                    .filter(Q(appeal_fax_number__isnull=True) | Q(appeal_fax_number=""))
+                    .aupdate(appeal_fax_number=propagated_fax)
+                )
+                if rows_updated:
+                    logger.debug(
+                        f"Propagated appeal_fax_number {propagated_fax} from carrier"
+                    )
+
+            return resolved_name
         except Exception as e:
             logger.opt(exception=True).warning(
                 f"Failed to extract insurance company for denial {denial_id}: {e}"
@@ -1694,25 +1840,38 @@ class DenialCreatorHelper:
         First tries the denial letter text, then searches plan documents if
         no fax number was found. Validates extracted fax numbers against
         source text to avoid hallucinations.
+
+        If the denial already has an ``appeal_fax_number`` (e.g. user-entered
+        or propagated from a matched carrier), it is left untouched - we only
+        run hallucination-validation and the carrier fallback against
+        newly-extracted values, never against a value already saved on the
+        denial.
         """
+        from fighthealthinsurance.models import InsuranceCompany, InsurancePlan
+
         denial = await Denial.objects.filter(denial_id=denial_id).aget()
-        appeal_fax_number = denial.appeal_fax_number
+
+        # If the denial already has a fax we trust it (user input,
+        # propagation from a matched carrier, or a previously validated
+        # extraction) and exit early.
+        if denial.appeal_fax_number:
+            return denial.appeal_fax_number
 
         # Text sources for validation
         denial_text = denial.denial_text or ""
         plan_docs_text = ""
         all_source_text = denial_text
+        appeal_fax_number: Optional[str] = None
 
         # First try to extract from denial text
-        if not appeal_fax_number:
-            try:
-                appeal_fax_number = await appealGenerator.get_fax_number(
-                    denial_text=denial_text
-                )
-            except Exception as e:
-                logger.opt(exception=True).warning(
-                    f"Failed to extract fax number from denial text for {denial_id}: {e}"
-                )
+        try:
+            appeal_fax_number = await appealGenerator.get_fax_number(
+                denial_text=denial_text
+            )
+        except Exception as e:
+            logger.opt(exception=True).warning(
+                f"Failed to extract fax number from denial text for {denial_id}: {e}"
+            )
 
         # If still not found, try plan documents
         if not appeal_fax_number:
@@ -1755,12 +1914,74 @@ class DenialCreatorHelper:
                 else:
                     logger.debug(f"Validated fax number {appeal_fax_number}")
 
-        if appeal_fax_number is not None:
-            await Denial.objects.filter(denial_id=denial_id).aupdate(
-                appeal_fax_number=appeal_fax_number
+        # Final fallback: if we still don't have a fax number but we matched a
+        # carrier (insurance_company_obj or insurance_plan_obj), use that
+        # carrier's published appeal fax. This is a last resort and isn't
+        # validated against source text - it's the carrier's own data.
+        # Re-read the denial under a fresh query in case a concurrent task
+        # (extract_set_insurance_company) has just propagated a fax onto it -
+        # we never want to overwrite an already-stored value here. We avoid
+        # ``select_related`` because the joined regex columns trigger
+        # RegexField.from_db_value on NULL values and raise ValidationError.
+        if appeal_fax_number is None:
+            current = (
+                await Denial.objects.filter(denial_id=denial_id)
+                .values(
+                    "appeal_fax_number",
+                    "insurance_company_obj_id",
+                    "insurance_plan_obj_id",
+                )
+                .afirst()
             )
-            logger.debug(f"Successfully extracted fax number: {appeal_fax_number}")
-            return appeal_fax_number
+            if current is not None:
+                if current["appeal_fax_number"]:
+                    return current["appeal_fax_number"]
+                if current["insurance_plan_obj_id"]:
+                    plan_fax = (
+                        await InsurancePlan.objects.filter(
+                            id=current["insurance_plan_obj_id"]
+                        )
+                        .values_list("appeal_fax_number", flat=True)
+                        .afirst()
+                    )
+                    if plan_fax:
+                        appeal_fax_number = plan_fax
+                        logger.debug(
+                            f"Using plan-published appeal fax {appeal_fax_number}"
+                        )
+                if appeal_fax_number is None and current["insurance_company_obj_id"]:
+                    company_fax = (
+                        await InsuranceCompany.objects.filter(
+                            id=current["insurance_company_obj_id"]
+                        )
+                        .values_list("appeal_fax_number", flat=True)
+                        .afirst()
+                    )
+                    if company_fax:
+                        appeal_fax_number = company_fax
+                        logger.debug(
+                            f"Using carrier-published appeal fax {appeal_fax_number}"
+                        )
+
+        if appeal_fax_number is not None:
+            # Conditional update: only write if no fax has been set since
+            # we started (extract_set_insurance_company runs concurrently
+            # and may have propagated a fax onto the denial in the meantime).
+            rows_updated = (
+                await Denial.objects.filter(denial_id=denial_id)
+                .filter(Q(appeal_fax_number__isnull=True) | Q(appeal_fax_number=""))
+                .aupdate(appeal_fax_number=appeal_fax_number)
+            )
+            if rows_updated:
+                logger.debug(f"Successfully extracted fax number: {appeal_fax_number}")
+                return appeal_fax_number
+            # Another task wrote a fax in the meantime; return whatever's
+            # currently stored so the caller sees a consistent value.
+            return (
+                await Denial.objects.filter(denial_id=denial_id)
+                .values_list("appeal_fax_number", flat=True)
+                .afirst()
+            )
         return None
 
     @classmethod
