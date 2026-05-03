@@ -2009,8 +2009,16 @@ class RemoteOpenLike(RemoteModel):
                     try:
                         response.raise_for_status()
                     except aiohttp.ClientResponseError as e:
+                        response_body = ""
+                        try:
+                            response_body = await response.text()
+                        except Exception:
+                            response_body = "<failed to read response body>"
+
+                        response_body_preview = response_body[:2000]
                         logger.warning(
-                            f"HTTP {e.status} error from {api_base} for model {model}: [response body omitted]"
+                            f"HTTP {e.status} error from {api_base} for model {model}. "
+                            f"Body preview (truncated): {response_body_preview}"
                         )
                         raise
                     json_result = await response.json()
@@ -3175,25 +3183,13 @@ class RemoteAnthropic(RemoteFullOpenLike):
             logger.debug("RemoteAnthropic.models: ANTHROPIC_API_KEY not set, skipping")
             return []
 
+        # Temporarily prefer a single Claude model to reduce parallel
+        # Anthropic requests and simplify debugging of provider-specific failures.
         return [
-            # Speed tier - cheapest Claude option
-            ModelDescription(
-                cost=25,
-                name="anthropic/claude-haiku-4-5",
-                internal_name="claude-haiku-4-5-20251001",
-            ),
-            # Quality tier - mid-priced, similar to DeepInfra's largest llama
             ModelDescription(
                 cost=90,
                 name="anthropic/claude-sonnet-4-6",
                 internal_name="claude-sonnet-4-6",
-            ),
-            # Premium tier - highest cost, only used when other backends fail
-            # or are explicitly preferred for quality.
-            ModelDescription(
-                cost=250,
-                name="anthropic/claude-opus-4-7",
-                internal_name="claude-opus-4-7",
             ),
         ]
 
