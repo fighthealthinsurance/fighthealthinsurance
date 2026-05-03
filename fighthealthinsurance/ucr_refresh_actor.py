@@ -3,6 +3,11 @@
 See UCR-OON-Reimbursement-Plan.md §10.4. Two independent loops run
 concurrently inside one Ray actor so a slow upstream source does not stall
 per-denial refreshes.
+
+The Ray-decorated `UCRRefreshActor` is a thin wrapper around
+`UCRRefreshController`. The controller holds the loop logic and is plain
+(non-decorated) Python so it can be unit-tested directly without spinning a
+Ray runtime — see tests/sync-actor/test_ucr_refresh_actor.py.
 """
 
 import asyncio
@@ -19,53 +24,17 @@ from fighthealthinsurance.utils import get_env_variable
 name = "UCRRefreshActor"
 
 
-@ray.remote(max_restarts=-1, max_task_retries=-1)
-class UCRRefreshActor:
-    def __init__(self):
-        time.sleep(1)
+class UCRRefreshController:
+    """Non-Ray loop logic, shared between the @ray.remote actor and tests."""
 
-        os.environ.setdefault(
-            "DJANGO_SETTINGS_MODULE",
-            get_env_variable("DJANGO_SETTINGS_MODULE", "fighthealthinsurance.settings"),
-        )
-
-        from configurations.wsgi import get_wsgi_application
-
-        _application = get_wsgi_application()
-        from loguru import logger
-
+    def __init__(self, logger):
         self._logger = logger
-        self._logger.info("UCRRefreshActor initialized")
-
         self.running = False
         self._actor_error_count = 0
         self._loop_count = 0
+        self._last_seen_effective: dict[str, datetime.date] = {}
 
-    async def hello(self) -> str:
-        return "Hi"
-
-    async def count(self) -> int:
-        return self._loop_count
-
-    async def actor_error_count(self) -> int:
-        return self._actor_error_count
-
-    async def health_check(self) -> bool:
-        return getattr(self, "running", False)
-
-    async def run(self) -> None:
-        """Drive both refresh loops concurrently. If either crashes, the actor
-        exits and `relaunch_actors` brings us back (matches existing pattern)."""
-        self._logger.info("Starting UCRRefreshActor run")
-        self.running = True
-        try:
-            await asyncio.gather(
-                self._source_refresh_loop(),
-                self._denial_refresh_loop(),
-            )
-        finally:
-            self.running = False
-            self._logger.warning("UCRRefreshActor stopped running")
+    # ------------------------------------------------------------- entrypoints
 
     async def refresh_denial(self, denial_id: int) -> bool:
         """Out-of-cycle trigger for a single denial — called from REST (§7).
@@ -86,15 +55,13 @@ class UCRRefreshActor:
         )
         return result is not None
 
-    # -------------------------------------------------------- internal loops
-
-    async def _source_refresh_loop(self) -> None:
+    async def source_refresh_loop(self) -> None:
         from django.conf import settings
 
         while self.running:
-            await asyncio.sleep(1)  # yield
+            await asyncio.sleep(1)
             try:
-                await self._refresh_sources_once()
+                await self.refresh_sources_once()
                 self._loop_count += 1
                 self._actor_error_count = 0
             except Exception:
@@ -105,13 +72,13 @@ class UCRRefreshActor:
             base = settings.UCR_SOURCE_REFRESH_INTERVAL_HOURS * 3600
             await asyncio.sleep(random.uniform(base * 0.85, base * 1.15))
 
-    async def _denial_refresh_loop(self) -> None:
+    async def denial_refresh_loop(self) -> None:
         from django.conf import settings
 
         while self.running:
-            await asyncio.sleep(1)  # yield
+            await asyncio.sleep(1)
             try:
-                processed, failed = await self._refresh_denials_once()
+                processed, failed = await self.refresh_denials_once()
                 self._loop_count += 1
                 if processed or failed:
                     self._logger.info(
@@ -131,12 +98,7 @@ class UCRRefreshActor:
 
     # --------------------------------------------------------- source helpers
 
-    async def _refresh_sources_once(self) -> list[str]:
-        """Probe each source and fan out denial refreshes for any that advanced.
-
-        Phase 1 only Medicare PFS is real; FAIR Health and FHI aggregate are
-        stubs that no-op until those sources are wired in (see §13).
-        """
+    async def refresh_sources_once(self) -> list[str]:
         advanced: list[str] = []
         for source, predicate in self._source_predicates():
             try:
@@ -149,7 +111,7 @@ class UCRRefreshActor:
 
         for source in advanced:
             try:
-                await self._mark_denials_using_source_stale(source)
+                await self.mark_denials_using_source_stale(source)
             except Exception:
                 self._logger.opt(exception=True).error(
                     "Failed to mark denials stale for source {}", source
@@ -164,10 +126,6 @@ class UCRRefreshActor:
         ]
 
     async def _refresh_medicare_pfs_if_due(self) -> bool:
-        """Yearly probe: if the latest Medicare effective_date.year < this year,
-        we'd kick off the loader. Phase 1 returns False (loader is run as a
-        management command); the actor only fans out denial refreshes when
-        the loader has populated new data."""
         from fighthealthinsurance.models import UCRRate
         from fighthealthinsurance.ucr_constants import UCRSource
 
@@ -179,8 +137,6 @@ class UCRRefreshActor:
         )()
         if latest is None:
             return False
-        # We mark "advanced" only when the actor has previously seen an older
-        # latest_effective_date for this source.
         return self._note_source_advance("medicare_pfs", latest)
 
     async def _refresh_fair_health_if_due(self) -> bool:
@@ -192,18 +148,11 @@ class UCRRefreshActor:
     def _note_source_advance(
         self, source: str, latest_effective_date: datetime.date
     ) -> bool:
-        """Track per-source "last seen effective_date"; report True when it
-        moves forward so the loop fans out denial refreshes."""
-        seen = getattr(self, "_last_seen_effective", {})
-        prior = seen.get(source)
-        seen[source] = latest_effective_date
-        self._last_seen_effective = seen
+        prior = self._last_seen_effective.get(source)
+        self._last_seen_effective[source] = latest_effective_date
         return prior is not None and latest_effective_date > prior
 
-    async def _mark_denials_using_source_stale(self, source: str) -> int:
-        """Reset ucr_refreshed_at to NULL for non-finalized denials whose
-        latest_ucr_lookup snapshot referenced `source`. The denial-refresh
-        loop will then pick them up immediately (next cycle)."""
+    async def mark_denials_using_source_stale(self, source: str) -> int:
         from fighthealthinsurance.models import Denial, UCRLookup
 
         affected_denial_ids = await sync_to_async(
@@ -224,7 +173,7 @@ class UCRRefreshActor:
 
     # -------------------------------------------------------- denial helpers
 
-    async def _refresh_denials_once(self) -> tuple[int, int]:
+    async def refresh_denials_once(self) -> tuple[int, int]:
         from django.conf import settings
         from django.db.models import Q
         from django.utils import timezone
@@ -270,3 +219,49 @@ class UCRRefreshActor:
                     "UCR enrich failed for denial_id={}", denial.id
                 )
         return len(stale) - failed, failed
+
+
+@ray.remote(max_restarts=-1, max_task_retries=-1)
+class UCRRefreshActor:
+    def __init__(self):
+        time.sleep(1)
+
+        os.environ.setdefault(
+            "DJANGO_SETTINGS_MODULE",
+            get_env_variable("DJANGO_SETTINGS_MODULE", "fighthealthinsurance.settings"),
+        )
+
+        from configurations.wsgi import get_wsgi_application
+
+        _application = get_wsgi_application()
+        from loguru import logger
+
+        self._controller = UCRRefreshController(logger)
+        logger.info("UCRRefreshActor initialized")
+
+    async def hello(self) -> str:
+        return "Hi"
+
+    async def count(self) -> int:
+        return self._controller._loop_count
+
+    async def actor_error_count(self) -> int:
+        return self._controller._actor_error_count
+
+    async def health_check(self) -> bool:
+        return self._controller.running
+
+    async def run(self) -> None:
+        self._controller._logger.info("Starting UCRRefreshActor run")
+        self._controller.running = True
+        try:
+            await asyncio.gather(
+                self._controller.source_refresh_loop(),
+                self._controller.denial_refresh_loop(),
+            )
+        finally:
+            self._controller.running = False
+            self._controller._logger.warning("UCRRefreshActor stopped running")
+
+    async def refresh_denial(self, denial_id: int) -> bool:
+        return await self._controller.refresh_denial(denial_id)

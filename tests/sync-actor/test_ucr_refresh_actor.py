@@ -1,9 +1,10 @@
 """Tests for UCRRefreshActor under the sync-actor tox env.
 
-The Ray-based smoke test mirrors the fax_polling_actor pattern: spin the actor
-up, kick run(), and confirm it transitions into a healthy looping state. The
-remaining tests exercise the per-denial helpers without Ray (they're plain
-async coroutines on the actor class).
+The Ray-based smoke test mirrors the fax_polling_actor pattern: spin the
+actor up, kick run(), and confirm it transitions into a healthy looping
+state. The remaining tests exercise UCRRefreshController directly — it's
+the non-Ray companion class that holds the loop logic, which means we can
+unit-test it without spinning Ray.
 """
 
 import asyncio
@@ -14,6 +15,7 @@ import time
 import pytest
 import ray
 from django.test import TestCase
+from loguru import logger
 
 from fighthealthinsurance.models import (
     Denial,
@@ -21,7 +23,10 @@ from fighthealthinsurance.models import (
     UCRRate,
 )
 from fighthealthinsurance.ucr_constants import UCRAreaKind, UCRSource
-from fighthealthinsurance.ucr_refresh_actor import UCRRefreshActor
+from fighthealthinsurance.ucr_refresh_actor import (
+    UCRRefreshActor,
+    UCRRefreshController,
+)
 
 
 @pytest.mark.django_db
@@ -69,25 +74,11 @@ class TestUCRRefreshActorRayLifecycle(TestCase):
         self.assertTrue(loop_executed, "run() loop body should have executed")
 
 
-class _ActorUnderTest(UCRRefreshActor):
-    """Bypass the @ray.remote decorator so we can call coroutines directly.
+class TestUCRRefreshControllerDenialBatch(TestCase):
+    """Exercise the denial-refresh loop body via UCRRefreshController.
 
-    Avoids spinning Ray for tests that just exercise the loop-body math.
+    Direct call avoids the Ray bootstrap; we just want to test the math.
     """
-
-    def __init__(self):  # noqa: D401  (deliberately skip parent init)
-        # We don't want to bootstrap a fresh Django app inside an existing
-        # TestCase, so skip the heavy __init__ entirely.
-        from loguru import logger
-
-        self._logger = logger
-        self.running = True
-        self._actor_error_count = 0
-        self._loop_count = 0
-
-
-class TestUCRRefreshActorDenialBatch(TestCase):
-    """Exercise the denial-refresh loop body without Ray."""
 
     def setUp(self):
         self.area = UCRGeographicArea.objects.create(kind=UCRAreaKind.ZIP3, code="941")
@@ -100,7 +91,7 @@ class TestUCRRefreshActorDenialBatch(TestCase):
                 source=UCRSource.MEDICARE_PFS,
                 effective_date=datetime.date(2026, 1, 1),
             )
-        self.actor = _ActorUnderTest()
+        self.controller = UCRRefreshController(logger)
 
     def _make_denial(self) -> Denial:
         denial = Denial.objects.create(
@@ -116,8 +107,8 @@ class TestUCRRefreshActorDenialBatch(TestCase):
         return denial
 
     def test_processes_stale_denials(self):
-        denial = self._make_denial()  # ucr_refreshed_at is NULL -> stale
-        processed, failed = asyncio.run(self.actor._refresh_denials_once())
+        denial = self._make_denial()
+        processed, failed = asyncio.run(self.controller.refresh_denials_once())
         self.assertEqual(processed, 1)
         self.assertEqual(failed, 0)
         denial.refresh_from_db()
@@ -128,16 +119,12 @@ class TestUCRRefreshActorDenialBatch(TestCase):
         denial = self._make_denial()
         denial.appeal_result = "submitted"
         denial.save(update_fields=["appeal_result"])
-        processed, failed = asyncio.run(self.actor._refresh_denials_once())
+        processed, failed = asyncio.run(self.controller.refresh_denials_once())
         self.assertEqual(processed, 0)
 
     def test_per_denial_failures_are_logged_not_raised(self):
-        # A denial with no resolvable area returns None from maybe_enrich
-        # (a skip, not a raise). Use a real failure path: corrupt
-        # `procedure_code` to something that forces a DB error in the helper.
         denial = self._make_denial()
 
-        # Patch maybe_enrich to raise for one denial, succeed for another.
         from fighthealthinsurance import ucr_helper
 
         original = ucr_helper.UCREnrichmentHelper.maybe_enrich
@@ -151,12 +138,12 @@ class TestUCRRefreshActorDenialBatch(TestCase):
             call_state["ok"] = True
             return original(d, **kwargs)
 
-        good = self._make_denial()  # second denial that should still process
+        good = self._make_denial()
         ucr_helper.UCREnrichmentHelper.maybe_enrich = (  # type: ignore[assignment]
             maybe_enrich_with_one_failure
         )
         try:
-            processed, failed = asyncio.run(self.actor._refresh_denials_once())
+            processed, failed = asyncio.run(self.controller.refresh_denials_once())
         finally:
             ucr_helper.UCREnrichmentHelper.maybe_enrich = original  # type: ignore[assignment]
 
@@ -164,6 +151,5 @@ class TestUCRRefreshActorDenialBatch(TestCase):
         self.assertEqual(failed, 1)
         self.assertTrue(call_state["raised"])
         self.assertTrue(call_state["ok"])
-        # The good denial got refreshed despite the bad one raising.
         good.refresh_from_db()
         self.assertIsNotNone(good.ucr_refreshed_at)

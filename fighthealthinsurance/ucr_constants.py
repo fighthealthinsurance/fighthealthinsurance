@@ -35,10 +35,13 @@ UCR_PERCENTILES: tuple[int, ...] = (50, 80, 90)
 
 # Source priority when more than one source matches a query.
 # Higher-index source wins (so fhi_aggregate beats fair_health beats medicare_pfs).
+# Spelled out as plain strings (rather than UCRSource.X.value) because mypy without
+# the django-stubs plugin reads TextChoices members as tuple[str, str] and rejects
+# .value. The strings here MUST match the enum values above.
 UCR_SOURCE_PRIORITY: tuple[str, ...] = (
-    UCRSource.MEDICARE_PFS.value,
-    UCRSource.FAIR_HEALTH.value,
-    UCRSource.FHI_AGGREGATE.value,
+    "medicare_pfs",
+    "fair_health",
+    "fhi_aggregate",
 )
 
 

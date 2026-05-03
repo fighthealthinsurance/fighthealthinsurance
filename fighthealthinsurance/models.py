@@ -1851,13 +1851,15 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
         return self._ucr_amount_to_int(self.paid_amount_cents)
 
     def set_billed_cents(self, value: typing.Optional[int]) -> None:
-        self.billed_amount_cents = self._ucr_amount_to_str(value)
+        # setattr (vs direct assignment) keeps mypy happy without the
+        # django-stubs plugin, which is also how CI runs in some envs.
+        setattr(self, "billed_amount_cents", self._ucr_amount_to_str(value))
 
     def set_allowed_cents(self, value: typing.Optional[int]) -> None:
-        self.allowed_amount_cents = self._ucr_amount_to_str(value)
+        setattr(self, "allowed_amount_cents", self._ucr_amount_to_str(value))
 
     def set_paid_cents(self, value: typing.Optional[int]) -> None:
-        self.paid_amount_cents = self._ucr_amount_to_str(value)
+        setattr(self, "paid_amount_cents", self._ucr_amount_to_str(value))
 
     @classmethod
     def filter_to_allowed_denials(cls, current_user: User):
