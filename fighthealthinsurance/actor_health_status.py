@@ -1,10 +1,11 @@
 """
 Actor health check module for Ray polling actors.
 
-This module provides health checks for the three polling actors:
+This module provides health checks for the polling actors:
 - EmailPollingActor
 - FaxPollingActor
 - ChooserRefillActor
+- IMRRefreshActor
 
 It checks if actors are alive and returns their status.
 """
@@ -37,6 +38,7 @@ def check_actor_health() -> Dict[str, Any]:
         ("email_polling_actor", "fhi"),
         ("fax_polling_actor", "fhi"),
         ("chooser_refill_actor", "fhi"),
+        ("imr_refresh_actor", "fhi"),
     ]
 
     details: List[ActorHealthDetail] = []
@@ -119,17 +121,20 @@ def relaunch_actors(force: bool = False) -> Dict[str, Any]:
     from fighthealthinsurance.chooser_refill_actor_ref import chooser_refill_actor_ref
     from fighthealthinsurance.email_polling_actor_ref import email_polling_actor_ref
     from fighthealthinsurance.fax_polling_actor_ref import fax_polling_actor_ref
+    from fighthealthinsurance.imr_refresh_actor_ref import imr_refresh_actor_ref
 
     results: Dict[str, Dict[str, Any]] = {
         "email_polling_actor": {"status": "pending"},
         "fax_polling_actor": {"status": "pending"},
         "chooser_refill_actor": {"status": "pending"},
+        "imr_refresh_actor": {"status": "pending"},
     }
 
     actors = [
         ("email_polling_actor", email_polling_actor_ref),
         ("fax_polling_actor", fax_polling_actor_ref),
         ("chooser_refill_actor", chooser_refill_actor_ref),
+        ("imr_refresh_actor", imr_refresh_actor_ref),
     ]
 
     for actor_name, actor_ref in actors:
@@ -148,15 +153,11 @@ def relaunch_actors(force: bool = False) -> Dict[str, Any]:
                     logger.warning(f"Error killing actor {actor_name}: {e}")
                     results[actor_name]["kill_error"] = str(e)
 
-                # Reset the actor reference to force recreation
-                if actor_name == "email_polling_actor":
-                    actor_ref.email_polling_actor = None  # type: ignore
-                elif actor_name == "fax_polling_actor":
-                    actor_ref.fax_polling_actor = None  # type: ignore
-                elif actor_name == "chooser_refill_actor":
-                    actor_ref.chooser_refill_actor = None  # type: ignore
-
-                # Clear the cached property by deleting it from the instance
+                # Reset the actor reference so the next .get builds a fresh
+                # handle. BaseActorRef caches the live handle in
+                # _actor_instance and the cached_property in __dict__["get"];
+                # both must be cleared or .get returns the dead handle.
+                actor_ref._actor_instance = None  # type: ignore
                 try:
                     if hasattr(actor_ref, "get"):
                         delattr(actor_ref, "get")

@@ -50,6 +50,16 @@ class Base(Configuration):
 
     # Audit logging - disabled by default, enable via environment variable
     ENABLE_AUDIT_LOGGING = os.getenv("ENABLE_AUDIT_LOGGING", "false").lower() == "true"
+
+    # IMR / external-appeal corpus refresh. URLs are optional; the actor skips
+    # any source whose URL is unset. Interval defaults to weekly (168 hours).
+    IMR_DMHC_CSV_URL = os.getenv("IMR_DMHC_CSV_URL", "")
+    IMR_DFS_CSV_URL = os.getenv("IMR_DFS_CSV_URL", "")
+    try:
+        IMR_REFRESH_INTERVAL_HOURS = int(os.getenv("IMR_REFRESH_INTERVAL_HOURS") or 168)
+    except ValueError:
+        # Misconfigured env var should not block app startup.
+        IMR_REFRESH_INTERVAL_HOURS = 168
     ENABLE_VOICE_INTAKE = os.getenv("ENABLE_VOICE_INTAKE", "false").lower() == "true"
     ENABLE_LOCAL_STT = os.getenv("ENABLE_LOCAL_STT", "true").lower() == "true"
     LOGIN_URL = "login"

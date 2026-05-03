@@ -20,8 +20,8 @@ class TestActorHealthStatus(TestCase):
         assert "alive_actors" in data
         assert "total_actors" in data
         assert "details" in data
-        # Total actors should always be 3
-        assert data["total_actors"] == 3
+        # Total actors: email, fax, chooser, IMR refresh
+        assert data["total_actors"] == 4
 
     @mock.patch("fighthealthinsurance.actor_health_status.ray")
     def test_actor_health_all_down(self, mock_ray):
@@ -33,8 +33,8 @@ class TestActorHealthStatus(TestCase):
 
         result = check_actor_health()
         assert result["alive_actors"] == 0
-        assert result["total_actors"] == 3
-        assert len(result["details"]) == 3
+        assert result["total_actors"] == 4
+        assert len(result["details"]) == 4
         # All should have error messages
         for detail in result["details"]:
             assert detail["alive"] is False
@@ -54,9 +54,9 @@ class TestActorHealthStatus(TestCase):
         from fighthealthinsurance.actor_health_status import check_actor_health
 
         result = check_actor_health()
-        assert result["alive_actors"] == 3
-        assert result["total_actors"] == 3
-        assert len(result["details"]) == 3
+        assert result["alive_actors"] == 4
+        assert result["total_actors"] == 4
+        assert len(result["details"]) == 4
         # All should be alive
         for detail in result["details"]:
             assert detail["alive"] is True
@@ -84,8 +84,8 @@ class TestActorHealthStatus(TestCase):
 
         result = check_actor_health()
         assert result["alive_actors"] == 1
-        assert result["total_actors"] == 3
-        assert len(result["details"]) == 3
+        assert result["total_actors"] == 4
+        assert len(result["details"]) == 4
 
     def test_actor_health_endpoint_caching(self):
         """Test that the actor health endpoint has appropriate cache headers."""

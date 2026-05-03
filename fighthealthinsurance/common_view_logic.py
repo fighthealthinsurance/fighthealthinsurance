@@ -51,6 +51,7 @@ from fighthealthinsurance.form_utils import *
 from fighthealthinsurance.generate_appeal import *
 from fighthealthinsurance.ml.ml_appeal_questions_helper import MLAppealQuestionsHelper
 from fighthealthinsurance.ml.ml_citations_helper import MLCitationsHelper
+from fighthealthinsurance.ml.imr_decision_retriever import IMRDecisionRetriever
 from fighthealthinsurance.ml.ml_plan_doc_helper import MLPlanDocHelper
 from fighthealthinsurance.models import *
 from fighthealthinsurance.process_denial import ProcessDenialCodes
@@ -2488,6 +2489,7 @@ class AppealsBackendHelper:
         ml_citation_context: Optional[Any] = None
         rag_context: Optional[str] = None
         nice_context: Optional[str] = None
+        imr_context: Optional[str] = None
 
         # Get PubMed context
         logger.debug("Looking up the pubmed context")
@@ -2595,6 +2597,16 @@ class AppealsBackendHelper:
                 done_msg="Guidelines lookup complete",
             )
 
+            # Get prior IMR / external-appeal decisions similar to this denial
+            imr_context_awaitable = tracked_awaitable(
+                asyncio.wait_for(
+                    IMRDecisionRetriever.get_context_for_denial(denial),
+                    timeout=10,
+                ),
+                substep="imr_decisions",
+                done_msg="Prior IMR decisions lookup complete",
+            )
+
             # Skip the NICE task entirely when no key is configured: avoids a
             # misleading "NICE guidance lookup complete" status and the wait_for
             # overhead in environments without syndication access.
@@ -2602,6 +2614,7 @@ class AppealsBackendHelper:
                 pubmed_context_awaitable,
                 ml_citation_context_awaitable,
                 rag_context_awaitable,
+                imr_context_awaitable,
             ]
             if cls.nice.api_key:
                 gather_awaitables.append(
@@ -2649,8 +2662,11 @@ class AppealsBackendHelper:
                     rag_context = None
                     if results[2] is not None:
                         logger.debug(f"RAG context not available: {results[2]}")
-                if len(results) > 3 and isinstance(results[3], str):
-                    nice_context = results[3]
+                if isinstance(results[3], str) and results[3]:
+                    imr_context = results[3]
+                    logger.info("IMR decisions context retrieved")
+                if len(results) > 4 and isinstance(results[4], str):
+                    nice_context = results[4]
                 else:
                     # No fresh NICE result (skipped task or non-string error). Fall
                     # back to whatever is already persisted on the denial so cached
@@ -2720,6 +2736,18 @@ class AppealsBackendHelper:
                     else:
                         # Use microsite context as standalone context
                         ml_citation_context = microsite_context
+
+        if imr_context:
+            if ml_citation_context:
+                if isinstance(ml_citation_context, list):
+                    ml_citation_context = "\n".join(
+                        str(c) for c in ml_citation_context if c
+                    )
+                ml_citation_context = f"{ml_citation_context}\n\n{imr_context}"
+            elif pubmed_context:
+                pubmed_context = f"{pubmed_context}\n\n{imr_context}"
+            else:
+                ml_citation_context = imr_context
 
         async def save_appeal(appeal_text: str) -> dict[str, str]:
             # Save all of the proposed appeals, so we can use RL later.
