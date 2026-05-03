@@ -1843,13 +1843,48 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     def set_billed_cents(self, value: typing.Optional[int]) -> None:
         # setattr (vs direct assignment) keeps mypy happy without the
         # django-stubs plugin, which is also how CI runs in some envs.
+        self._reject_negative_cents(value, "billed_amount_cents")
         setattr(self, "billed_amount_cents", amount_to_str(value))
 
     def set_allowed_cents(self, value: typing.Optional[int]) -> None:
+        self._reject_negative_cents(value, "allowed_amount_cents")
         setattr(self, "allowed_amount_cents", amount_to_str(value))
 
     def set_paid_cents(self, value: typing.Optional[int]) -> None:
+        self._reject_negative_cents(value, "paid_amount_cents")
         setattr(self, "paid_amount_cents", amount_to_str(value))
+
+    @staticmethod
+    def _reject_negative_cents(
+        value: typing.Optional[int], field_name: str
+    ) -> None:
+        # EncryptedAmountField stores cents as a string blob, so the DB has no
+        # CHECK constraint to lean on; validate here instead. Negative values
+        # would silently poison UCR comparisons (e.g., "billed = -$50").
+        if value is not None and value < 0:
+            raise ValueError(f"{field_name} cannot be negative, got {value!r}")
+
+    def save(self, *args: typing.Any, **kwargs: typing.Any) -> None:
+        # Defensive guard: latest_ucr_lookup must point at a UCRLookup whose
+        # own denial FK matches this row. Without this, a bad assignment could
+        # surface another denial's snapshot/context to UCREnrichmentHelper.
+        # Skip the lookup query when this field isn't being touched.
+        update_fields = kwargs.get("update_fields")
+        check_lookup = update_fields is None or "latest_ucr_lookup" in update_fields
+        if check_lookup and self.latest_ucr_lookup_id:
+            owner_denial_id = (
+                UCRLookup.objects.filter(pk=self.latest_ucr_lookup_id)
+                .values_list("denial_id", flat=True)
+                .first()
+            )
+            if owner_denial_id not in (None, self.denial_id):
+                raise ValueError(
+                    "latest_ucr_lookup must reference a UCRLookup owned by "
+                    "this denial (got UCRLookup.denial_id={!r}, expected {!r})".format(
+                        owner_denial_id, self.denial_id
+                    )
+                )
+        super().save(*args, **kwargs)
 
     @classmethod
     def filter_to_allowed_denials(cls, current_user: User):

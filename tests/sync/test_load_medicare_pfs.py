@@ -131,6 +131,17 @@ class LoadMedicarePFSTests(TestCase):
         self.assertEqual(UCRRate.objects.count(), 3)
         self.assertFalse(UCRRate.objects.filter(procedure_code="99214").exists())
 
+    def test_skips_negative_allowed_cents(self):
+        self._write_inputs(
+            rvu="99213,5,9842\n99215,5,-100\n",
+            localities="5,Locality 5 (CA)\n",
+        )
+
+        self._call()
+
+        self.assertEqual(UCRRate.objects.count(), 3)
+        self.assertFalse(UCRRate.objects.filter(procedure_code="99215").exists())
+
     def test_dry_run_writes_nothing(self):
         self._write_inputs(
             rvu="99213,5,9842\n",

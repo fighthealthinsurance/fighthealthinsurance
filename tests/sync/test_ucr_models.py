@@ -97,6 +97,19 @@ class DenialEncryptedBillingTests(TestCase):
         self.assertIsNone(denial.get_allowed_cents())
         self.assertIsNone(denial.get_paid_cents())
 
+    def test_setters_reject_negative_cents(self):
+        denial = Denial.objects.create(hashed_email="hash:test@example.com")
+        with self.assertRaises(ValueError):
+            denial.set_billed_cents(-1)
+        with self.assertRaises(ValueError):
+            denial.set_allowed_cents(-100)
+        with self.assertRaises(ValueError):
+            denial.set_paid_cents(-9999)
+        # None still acceptable (means "unset").
+        denial.set_billed_cents(None)
+        denial.set_allowed_cents(None)
+        denial.set_paid_cents(None)
+
     def test_storage_is_not_plaintext(self):
         """Defence-in-depth: the raw column must not be the literal int.
 
@@ -149,3 +162,16 @@ class DenialLatestUCRLookupTests(TestCase):
         self.denial.delete()
         self.assertFalse(UCRLookup.objects.filter(pk=lookup.pk).exists())
         self.assertFalse(Denial.objects.filter(pk=denial_id).exists())
+
+    def test_save_rejects_lookup_owned_by_other_denial(self):
+        # latest_ucr_lookup must point at a snapshot whose denial FK matches.
+        other_denial = Denial.objects.create(hashed_email="hash:other@example.com")
+        foreign_lookup = UCRLookup.objects.create(
+            denial=other_denial,
+            procedure_code="99213",
+            matched_area=self.area,
+            rates_snapshot=[],
+        )
+        self.denial.latest_ucr_lookup = foreign_lookup
+        with self.assertRaises(ValueError):
+            self.denial.save(update_fields=["latest_ucr_lookup"])

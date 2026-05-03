@@ -106,10 +106,13 @@ class Command(BaseCommand):
         multipliers = settings.UCR_MEDICARE_PERCENTILE_MULTIPLIERS
 
         if dry_run:
+            active_percentiles = sum(
+                1 for p in UCR_PERCENTILES if p in multipliers
+            )
             self.stdout.write(
                 self.style.WARNING(
-                    "Dry run: would write %d Medicare rows + %d derived rows."
-                    % (len(rates), len(rates) * len(UCR_PERCENTILES))
+                    "Dry run: would write %d derived percentile rows."
+                    % (len(rates) * active_percentiles)
                 )
             )
             return
@@ -206,6 +209,16 @@ def _parse_rvu_rows(csv_text: str) -> Iterable[dict[str, Any]]:
                 "Skipping malformed allowed_cents={!r} for hcpcs={}",
                 allowed_raw,
                 hcpcs,
+            )
+            continue
+        if allowed_cents < 0:
+            # CMS files shouldn't contain negative allowed amounts; skip rather
+            # than propagate them through multipliers into derived rates.
+            logger.warning(
+                "Skipping negative allowed_cents={} for hcpcs={} locality={}",
+                allowed_cents,
+                hcpcs,
+                locality,
             )
             continue
         yield {
