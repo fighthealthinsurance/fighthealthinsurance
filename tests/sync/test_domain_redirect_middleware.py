@@ -68,3 +68,17 @@ class DomainRedirectMiddlewareTest(TestCase):
         response = middleware(request)
         self.assertEqual(response.status_code, 301)
         self.assertEqual(response["Location"], "https://www.fighthealthinsurance.com/")
+
+    @override_settings(
+        DOMAIN_REDIRECTS={"fuckhealthinsurance.com": "www.fighthealthinsurance.com"}
+    )
+    def test_post_uses_method_preserving_redirect(self):
+        middleware = DomainRedirectMiddleware(_ok)
+        request = self.factory.post(
+            "/submit", data={"a": "b"}, HTTP_HOST="fuckhealthinsurance.com"
+        )
+        response = middleware(request)
+        self.assertEqual(response.status_code, 308)
+        self.assertEqual(
+            response["Location"], "https://www.fighthealthinsurance.com/submit"
+        )
