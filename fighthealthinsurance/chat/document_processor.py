@@ -11,7 +11,7 @@ from typing import Dict, List, Optional
 
 from loguru import logger
 
-from fighthealthinsurance.ml.ml_router import ml_router
+from fighthealthinsurance.ml.ml_inference import infer_with_fallback
 from fighthealthinsurance.models import ChatDocument
 from fighthealthinsurance.utils import fire_and_forget_in_new_threadpool
 
@@ -89,23 +89,14 @@ async def _try_internal_models(
     temperature: float = 0.3,
 ) -> Optional[str]:
     """Try the top-3 internal models sequentially, returning the first valid result."""
-    for model in ml_router.internal_models_by_cost[:3]:
-        try:
-            result = await asyncio.wait_for(
-                model._infer_no_context(
-                    system_prompts=[system_prompt],
-                    prompt=prompt,
-                    temperature=temperature,
-                ),
-                timeout=timeout,
-            )
-            if result and len(result.strip()) > min_length:
-                return str(result).strip()
-        except asyncio.TimeoutError:
-            logger.debug(f"Timeout with {model}")
-        except Exception as e:
-            logger.debug(f"Error with {model}: {e}")
-    return None
+    return await infer_with_fallback(
+        system_prompts=[system_prompt],
+        prompt=prompt,
+        temperature=temperature,
+        timeout=timeout,
+        min_length=min_length,
+        label="doc chunk summary",
+    )
 
 
 async def _summarize_single_chunk(

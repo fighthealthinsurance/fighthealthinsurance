@@ -37,12 +37,50 @@ from loguru import logger
 from PIL import Image
 
 from fighthealthinsurance import common_view_logic, forms as core_forms, models
-from fighthealthinsurance.chat_forms import UserConsentForm
+from fighthealthinsurance.chat_forms import UnderstandPolicyForm, UserConsentForm
 from fighthealthinsurance.helpers.data_helpers import RemoveDataHelper
 from fighthealthinsurance.helpers.stripe_helpers import StripeWebhookHelper
-from fighthealthinsurance.models import DeleteToken, UsedDeleteToken, StripeRecoveryInfo
+from fighthealthinsurance.models import (
+    DeleteToken,
+    PolicyDocument,
+    UsedDeleteToken,
+    StripeRecoveryInfo,
+)
 from fighthealthinsurance.type_utils import User
 from fighthealthinsurance.utils import send_fallback_email
+
+
+def _handle_mailing_list_subscribe(form: forms.Form, source_page: str) -> None:
+    """Subscribe user to mailing list if opted in. Swallows errors."""
+    if not form.cleaned_data.get("subscribe"):
+        return
+    name = f"{form.cleaned_data.get('first_name')} {form.cleaned_data.get('last_name')}"
+    try:
+        email = str(form.cleaned_data.get("email", ""))
+        defaults = {
+            "name": name,
+            "phone": form.cleaned_data.get("phone", ""),
+            "comments": f"From {source_page}",
+            "referral_source": form.cleaned_data.get("referral_source", ""),
+            "referral_source_details": form.cleaned_data.get(
+                "referral_source_details", ""
+            ),
+        }
+        existing = (
+            models.MailingListSubscriber.objects.filter(email=email)
+            .order_by("-pk")
+            .first()
+        )
+        if existing is not None:
+            for field, value in defaults.items():
+                setattr(existing, field, value)
+            existing.save(update_fields=list(defaults.keys()))
+        else:
+            models.MailingListSubscriber.objects.create(email=email, **defaults)
+    except Exception as e:
+        logger.opt(exception=True).warning(
+            f"Failed to create mailing list subscriber from {source_page}"
+        )
 
 
 class BlogPostMetadata(TypedDict, total=False):
@@ -1982,9 +2020,12 @@ def chat_interface_view(request):
     if not denial_text:
         denial_text = request.session.pop("denial_text_for_explanation", "")
 
+    # Check for a pre-built initial message (e.g. from policy analysis redirect)
     initial_message = ""
-    if denial_text:
-        # Format the initial message for the chat
+    if request.method == "POST":
+        initial_message = request.POST.get("initial_message", "")
+
+    if not initial_message and denial_text:
         initial_message = (
             "I received this denial letter from my insurance and need help understanding it:\n\n"
             f"{denial_text}\n\n"
@@ -2063,21 +2104,7 @@ class ChatUserConsentView(FormView):
 
     def form_valid(self, form):
         mark_session_consent(self.request.session, form.cleaned_data.get("email"))
-        if form.cleaned_data.get("subscribe"):
-            name = f"{form.cleaned_data.get('first_name')} {form.cleaned_data.get('last_name')}"
-            referral_source = form.cleaned_data.get("referral_source", "")
-            referral_source_details = form.cleaned_data.get(
-                "referral_source_details", ""
-            )
-            # Does the user want to subscribe to the newsletter?
-            models.MailingListSubscriber.objects.create(
-                email=form.cleaned_data.get("email"),
-                phone=form.cleaned_data.get("phone"),
-                name=name,
-                comments="From chat consent form",
-                referral_source=referral_source,
-                referral_source_details=referral_source_details,
-            )
+        _handle_mailing_list_subscribe(form, "chat consent form")
 
         # Check if there's denial text to pass through
         denial_text = self.request.POST.get("denial_text", "")
@@ -2338,30 +2365,114 @@ class ExplainDenialView(FormView):
 
         mark_session_consent(self.request.session, form.cleaned_data.get("email"))
 
-        # Handle mailing list subscription
-        if form.cleaned_data.get("subscribe"):
-            name = f"{form.cleaned_data.get('first_name')} {form.cleaned_data.get('last_name')}"
-            referral_source = form.cleaned_data.get("referral_source", "")
-            referral_source_details = form.cleaned_data.get(
-                "referral_source_details", ""
-            )
-
-            try:
-                models.MailingListSubscriber.objects.create(
-                    email=form.cleaned_data.get("email"),
-                    phone=form.cleaned_data.get("phone"),
-                    name=name,
-                    comments="From explain denial page",
-                    referral_source=referral_source,
-                    referral_source_details=referral_source_details,
-                )
-            except Exception as e:
-                # Log the error but don't fail the form submission
-                logger.warning(f"Failed to create mailing list subscriber: {e}")
+        _handle_mailing_list_subscribe(form, "explain denial page")
 
         # Render auto-submit form to POST to chat
         context = {
             "denial_text": denial_text,
+            "chat_url": reverse("chat"),
+        }
+        return render(self.request, "chat_redirect.html", context)
+
+
+class UnderstandPolicyView(FormView):
+    """
+    View for the Understand My Policy page - allows users to upload insurance policy
+    documents (Summary of Benefits, Medical Policy PDFs) for AI analysis.
+    The AI will extract exclusions, inclusions, and appeal-relevant clauses.
+    """
+
+    template_name = "understand_policy.html"
+    form_class = UnderstandPolicyForm
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context["title"] = "Understand My Policy"
+        return context
+
+    def form_valid(self, form) -> HttpResponse:
+        """Process the uploaded policy document and redirect to chat."""
+        email = form.cleaned_data.get("email")
+        document_type = form.cleaned_data.get("document_type")
+        plan_category = form.cleaned_data.get("plan_category", "unknown")
+        user_question = form.cleaned_data.get("user_question", "")
+        uploaded_file = form.cleaned_data.get("policy_document")
+
+        if not uploaded_file:
+            form.add_error("policy_document", "File upload failed.")
+            return self.form_invalid(form)
+
+        # Sanitize filename, preserving extension for downstream dispatch
+        sanitized = re.sub(r"[^\w .\-]", "_", uploaded_file.name)
+        stem, ext = os.path.splitext(sanitized)
+        safe_filename = f"{stem[:max(1, 200 - len(ext))]}{ext.lower()}"
+        uploaded_file.name = safe_filename
+
+        mark_session_consent(self.request.session, email or "")
+
+        # Create PolicyDocument record
+        try:
+            from fighthealthinsurance.models import Denial
+
+            hashed_email = Denial.get_hashed_email(email) if email else ""
+            if not self.request.session.session_key:
+                self.request.session.save()
+            session_key = self.request.session.session_key or ""
+
+            policy_doc = PolicyDocument.objects.create(
+                document_enc=uploaded_file,
+                document_type=document_type,
+                plan_category=plan_category,
+                filename=safe_filename,
+                hashed_email=hashed_email,
+                session_key=session_key,
+            )
+
+            logger.info(f"Created PolicyDocument {policy_doc.id}")
+
+            # Store the document ID in session for chat to pick up
+            self.request.session["policy_document_id"] = str(policy_doc.id)
+            self.request.session["policy_document_question"] = user_question
+
+        except Exception as e:
+            logger.opt(exception=True).error(f"Failed to save policy document: {e}")
+            form.add_error(None, "Failed to upload document. Please try again.")
+            return self.form_invalid(form)
+
+        _handle_mailing_list_subscribe(form, "understand policy page")
+
+        # Build initial message for chat — must match the regex in
+        # chat_interface._POLICY_ANALYSIS_REGEX so the chat handler picks it up.
+        doc_type_display = dict(PolicyDocument.DOCUMENT_TYPE_CHOICES).get(
+            document_type, "policy document"
+        )
+
+        plan_category_display = dict(UnderstandPolicyForm.PLAN_CATEGORY_CHOICES).get(
+            plan_category, ""
+        )
+
+        initial_message = f"I've uploaded my insurance {doc_type_display}.\n"
+
+        if plan_category and plan_category != "unknown":
+            initial_message += f"Plan type: {plan_category_display}\n"
+
+        initial_message += "\n"
+
+        normalized_question = re.sub(r"\s+", " ", user_question).strip()
+        if normalized_question:
+            initial_message += f"My question: {normalized_question}\n\n"
+
+        initial_message += (
+            "Please analyze this document and help me understand:\n"
+            "1. What is covered (inclusions)\n"
+            "2. What is NOT covered (exclusions)\n"
+            "3. Any clauses that would be useful if I need to appeal a denial\n"
+            "4. Key quotes I could use in an appeal letter\n"
+            "5. Which regulator oversees this plan and how to file a complaint"
+        )
+
+        context = {
+            "initial_message": initial_message,
             "chat_url": reverse("chat"),
         }
         return render(self.request, "chat_redirect.html", context)
