@@ -83,6 +83,7 @@ class DenialResponseInfoSerializer(serializers.Serializer):
         if not is_valid_denial_id(value):
             raise serializers.ValidationError("Invalid denial_id format in response")
         return value
+
     plan_id = serializers.CharField(required=False)
     claim_id = serializers.CharField(required=False)
     insurance_company = serializers.CharField(required=False)
