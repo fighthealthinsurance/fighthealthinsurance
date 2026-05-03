@@ -99,7 +99,7 @@ STATE_CONFIG: dict[str, dict[str, Any]] = {
         "notes": "Use complaint + external review instructions from denial packet.",
         "last_verified_at": "2026-05-02",
     },
-
+}
 
 FEDERAL_FALLBACK: dict[str, Any] = {
     "state": "FEDERAL",
