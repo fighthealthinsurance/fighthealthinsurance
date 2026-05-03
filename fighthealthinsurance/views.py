@@ -1028,6 +1028,31 @@ class FindNextSteps(View):
         )
 
 
+class FindNextStepsLoading(View):
+    """Interim loading screen before the questions page is rendered."""
+
+    def post(self, request):
+        form = core_forms.PostInferedForm(request.POST)
+        if not form.is_valid():
+            return render(
+                request,
+                "categorize.html",
+                context={
+                    "post_infered_form": form,
+                    "upload_more": True,
+                },
+            )
+
+        return render(
+            request,
+            "find_next_steps_loading.html",
+            context={
+                "payload": form.cleaned_data,
+                "current_step": 6,
+            },
+        )
+
+
 class ChooseAppeal(View):
     """View for selecting and finalizing appeal text before sending."""
 
