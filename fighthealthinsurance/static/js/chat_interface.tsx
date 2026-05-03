@@ -706,8 +706,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
   // Handle retrying the last message
   const handleRetryLastMessage = () => {
     if (!wsRef.current) return;
-    // Allow retry if there's an error OR if currently loading
-    if (state.isLoading && !state.error) return;
+    // Allow retry even while loading so long-running requests can be manually re-sent.
 
     // Find the last user message
     const lastUserMessage = [...state.messages]
