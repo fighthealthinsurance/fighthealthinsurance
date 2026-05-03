@@ -1824,7 +1824,18 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
 
     @staticmethod
     def _ucr_amount_to_int(value: str) -> typing.Optional[int]:
-        return int(value) if value else None
+        if not value:
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            # If decryption returned ciphertext-looking bytes (e.g. settings
+            # rotation or a corrupted column) we'd rather log and surface
+            # None than 500 the entire detail view.
+            logger.warning(
+                "UCR amount field could not be parsed as int: {!r}", value[:32]
+            )
+            return None
 
     @staticmethod
     def _ucr_amount_to_str(value: typing.Optional[int]) -> str:

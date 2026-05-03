@@ -560,20 +560,21 @@ class UCRPublicLookupView(APIView):
     )
     def get(self, request: Request) -> Response:
         from django.core.cache import cache
+        from django.db.models import Max, Q
+        from django.utils import timezone
 
         from fighthealthinsurance.models import UCRGeographicArea, UCRRate
-        from fighthealthinsurance.ucr_constants import UCR_PERCENTILES, UCRAreaKind
+        from fighthealthinsurance.ucr_constants import (
+            UCR_PERCENTILES,
+            UCR_SOURCE_PRIORITY,
+            UCRAreaKind,
+        )
 
         query = serializers.UCRPublicLookupQuerySerializer(data=request.query_params)
         query.is_valid(raise_exception=True)
         cpt = query.validated_data["cpt"]
         zip_code = query.validated_data["zip"]
         zip3 = zip_code[:3]
-        cache_key = f"ucr-lookup:{cpt}:{zip3}"
-
-        cached = cache.get(cache_key)
-        if cached is not None:
-            return Response(cached, status=status.HTTP_200_OK)
 
         area = UCRGeographicArea.objects.filter(
             kind=UCRAreaKind.ZIP3, code=zip3
@@ -586,13 +587,37 @@ class UCRPublicLookupView(APIView):
                 status=status.HTTP_200_OK,
             )
 
-        rates = list(
-            UCRRate.objects.filter(
-                procedure_code=cpt,
-                geographic_area=area,
-                percentile__in=UCR_PERCENTILES,
-            ).order_by("percentile")
+        today = timezone.now().date()
+        live_qs = UCRRate.objects.filter(
+            procedure_code=cpt,
+            geographic_area=area,
+            percentile__in=UCR_PERCENTILES,
+            modifier="",
+        ).filter(Q(expires_date__isnull=True) | Q(expires_date__gte=today))
+
+        # Cache version is the latest effective_date across the live set so
+        # the cache invalidates naturally when the loader publishes new data.
+        latest_effective = live_qs.aggregate(latest=Max("effective_date"))["latest"]
+        cache_key = (
+            f"ucr-lookup:{cpt}:{zip3}:{latest_effective.isoformat()}"
+            if latest_effective
+            else f"ucr-lookup:{cpt}:{zip3}:none"
         )
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return Response(cached, status=status.HTTP_200_OK)
+
+        # Pick one row per percentile: latest effective_date, then source priority.
+        priority_index = {s: i for i, s in enumerate(UCR_SOURCE_PRIORITY)}
+        by_percentile: dict[int, UCRRate] = {}
+        for r in live_qs.order_by("-effective_date"):
+            existing = by_percentile.get(r.percentile)
+            if existing is None or priority_index.get(
+                r.source, -1
+            ) > priority_index.get(existing.source, -1):
+                by_percentile[r.percentile] = r
+
+        rates = sorted(by_percentile.values(), key=lambda r: r.percentile)
         payload = {
             "cpt": cpt,
             "area_kind": area.kind,

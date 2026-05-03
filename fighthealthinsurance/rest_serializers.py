@@ -863,10 +863,13 @@ class ChooserSkipResponseSerializer(serializers.Serializer):
 
 
 class UCRSetBillingInfoRequestSerializer(serializers.Serializer):
-    """Request schema for POST /denial/{id}/set_billing_info/.
+    """Request schema for POST /ziggy/rest/denials/set_billing_info/.
 
-    Field names match Denial fields (see UCR plan §7) so a serializer can map
-    them directly with no implicit renaming.
+    The ViewSet @action is `detail=False` so the denial is identified by the
+    `denial_id` field in the request body (matching the existing
+    `select_articles` / `get_candidate_articles` actions on DenialViewSet).
+    Field names match Denial fields so a `ModelSerializer` can map them
+    directly with no implicit renaming.
     """
 
     denial_id = serializers.IntegerField()

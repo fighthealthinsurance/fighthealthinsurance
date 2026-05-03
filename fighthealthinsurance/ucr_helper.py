@@ -55,6 +55,7 @@ class RateRow:
     source: str
     effective_date: str
     is_derived: bool = False
+    modifier: str = ""
 
 
 @dataclass
@@ -115,10 +116,15 @@ class UCREnrichmentHelper:
         force: bool = False,
         rates: Optional[RateCache] = None,
     ) -> Optional[Comparison]:
-        """Compute and persist a UCR comparison for `denial`, if applicable.
+        """Compute (and usually persist) a UCR comparison for `denial`.
 
-        Returns the new Comparison, or None if the denial was skipped (no code,
-        no area, finalized appeal, or hash unchanged).
+        Returns the Comparison whenever one could be produced; only returns
+        None if the denial was *skipped* (finalized appeal, no code resolved,
+        no area resolved, or no rates available). When the comparison hash
+        matches what's already persisted, the helper short-circuits the
+        UCRLookup insert and the ucr_context rewrite (only `ucr_refreshed_at`
+        is bumped) but still returns the Comparison so callers can render or
+        inspect it.
         """
         if cls._is_finalized(denial):
             logger.debug("UCR enrich skipped: denial {} is finalized", denial.pk)
@@ -134,7 +140,9 @@ class UCREnrichmentHelper:
             logger.debug("UCR enrich skipped: no area resolved for {}", denial.pk)
             return None
 
-        rate_rows = cls._lookup_rates(code, area, rates)
+        rate_rows = cls._lookup_rates(
+            code, area, rates, modifier=denial.procedure_modifier or ""
+        )
         if not rate_rows:
             logger.debug("UCR enrich skipped: no rates for code={} area={}", code, area)
             return None
@@ -176,12 +184,19 @@ class UCREnrichmentHelper:
 
         codes = {p[0] for p in pairs}
         area_ids = {p[1] for p in pairs}
-        qs = UCRRate.objects.filter(
-            procedure_code__in=codes,
-            geographic_area_id__in=area_ids,
-            percentile__in=UCR_PERCENTILES,
-        ).filter(
-            Q(expires_date__isnull=True) | Q(expires_date__gte=timezone.now().date())
+        # Order by -effective_date so the per-percentile dedupe applied later
+        # (when we know the per-denial modifier) prefers newer rows.
+        qs = (
+            UCRRate.objects.filter(
+                procedure_code__in=codes,
+                geographic_area_id__in=area_ids,
+                percentile__in=UCR_PERCENTILES,
+            )
+            .filter(
+                Q(expires_date__isnull=True)
+                | Q(expires_date__gte=timezone.now().date())
+            )
+            .order_by("-effective_date")
         )
 
         cache: dict[tuple[str, int], list[RateRow]] = {}
@@ -266,10 +281,22 @@ class UCREnrichmentHelper:
         if c.paid_cents is not None:
             lines.append(f"Insurer paid: {_dollars(c.paid_cents)}")
         if c.rates:
-            primary_source = c.rates[0].source
-            primary_date = c.rates[0].effective_date
+            # The narrative emphasizes the proxy-p80 gap, so attribute the
+            # header to the p80 row when available; otherwise fall back to
+            # the highest-priority rate by source priority then newest date.
+            representative = next((r for r in c.rates if r.percentile == 80), None)
+            if representative is None:
+                priority_index = {s: i for i, s in enumerate(UCR_SOURCE_PRIORITY)}
+                representative = max(
+                    c.rates,
+                    key=lambda r: (
+                        priority_index.get(r.source, -1),
+                        r.effective_date,
+                    ),
+                )
             lines.append(
-                f"Independent benchmark ({primary_source}, effective {primary_date}):"
+                f"Independent benchmark ({representative.source}, "
+                f"effective {representative.effective_date}):"
             )
             for r in c.rates:
                 tag = " (derived)" if r.is_derived else ""
@@ -315,48 +342,84 @@ class UCREnrichmentHelper:
         code: str,
         area: UCRGeographicArea,
         rate_cache: Optional[RateCache],
+        modifier: str = "",
     ) -> list[RateRow]:
         if rate_cache is not None:
             cached = rate_cache.get((code, area.pk))
             if cached is not None:
-                return list(cached)
+                # bulk_load_rates already applied dedupe; filter to the
+                # caller's modifier preference.
+                return cls._select_modifier_rows(cached, modifier)
 
-        qs = UCRRate.objects.filter(
-            procedure_code=code,
-            geographic_area=area,
-            percentile__in=UCR_PERCENTILES,
-        ).filter(
-            Q(expires_date__isnull=True) | Q(expires_date__gte=timezone.now().date())
+        modifier_filter = (
+            Q(modifier=modifier) | Q(modifier="") if modifier else Q(modifier="")
         )
-        rows = [cls._rate_to_row(r) for r in qs]
-        return cls._dedupe_by_priority(rows)
+        qs = (
+            UCRRate.objects.filter(
+                procedure_code=code,
+                geographic_area=area,
+                percentile__in=UCR_PERCENTILES,
+            )
+            .filter(modifier_filter)
+            .filter(
+                Q(expires_date__isnull=True)
+                | Q(expires_date__gte=timezone.now().date())
+            )
+            .order_by("-effective_date")
+        )
+        rows = [cls._rate_to_row(r, modifier=r.modifier) for r in qs]
+        return cls._dedupe_by_priority(rows, prefer_modifier=modifier)
 
     @staticmethod
-    def _rate_to_row(rate: UCRRate) -> RateRow:
+    def _rate_to_row(rate: UCRRate, *, modifier: str = "") -> RateRow:
         return RateRow(
             percentile=rate.percentile,
             amount_cents=rate.amount_cents,
             source=rate.source,
             effective_date=rate.effective_date.isoformat(),
             is_derived=bool(rate.metadata and rate.metadata.get("derived_from")),
+            modifier=modifier or rate.modifier,
         )
 
     @staticmethod
-    def _dedupe_by_priority(rows: list[RateRow]) -> list[RateRow]:
-        """When multiple sources match the same (percentile, code, area), keep
-        the highest-priority one per UCR_SOURCE_PRIORITY (§3.1)."""
+    def _dedupe_by_priority(
+        rows: list[RateRow], *, prefer_modifier: str = ""
+    ) -> list[RateRow]:
+        """Pick one row per percentile.
+
+        Tiebreakers (highest wins):
+          1. Exact modifier match (vs blank fallback) when prefer_modifier is set.
+          2. Source priority per UCR_SOURCE_PRIORITY (§3.1).
+          3. Newer effective_date.
+        """
         priority_index = {s: i for i, s in enumerate(UCR_SOURCE_PRIORITY)}
+
+        def score(r: RateRow) -> tuple[int, int, str]:
+            modifier_match = (
+                1 if prefer_modifier and r.modifier == prefer_modifier else 0
+            )
+            return (
+                modifier_match,
+                priority_index.get(r.source, -1),
+                r.effective_date,
+            )
+
         by_pct: dict[int, RateRow] = {}
         for r in rows:
             existing = by_pct.get(r.percentile)
-            if existing is None:
-                by_pct[r.percentile] = r
-                continue
-            if priority_index.get(r.source, -1) > priority_index.get(
-                existing.source, -1
-            ):
+            if existing is None or score(r) > score(existing):
                 by_pct[r.percentile] = r
         return sorted(by_pct.values(), key=lambda r: r.percentile)
+
+    @staticmethod
+    def _select_modifier_rows(cached: list[RateRow], modifier: str) -> list[RateRow]:
+        """Filter a pre-cached rate list down to (modifier match preferred, blank
+        fallback) per percentile. Mirrors the DB-side filter in _lookup_rates so
+        bulk-prefetched callers see the same selection as on-demand callers."""
+        candidates = [r for r in cached if not modifier or r.modifier in (modifier, "")]
+        return UCREnrichmentHelper._dedupe_by_priority(
+            candidates, prefer_modifier=modifier
+        )
 
     @staticmethod
     def _compute_gaps(c: Comparison) -> None:
