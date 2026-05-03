@@ -1913,9 +1913,10 @@ class CompletePaymentView(View):
                         status=400,
                         content_type="application/json",
                     )
-                lost_session = models.LostStripeSession.objects.get(id=legacy_id)
-                has_missing_token = not bool(lost_session.secure_token)
-                if not has_missing_token:
+                lost_session = models.LostStripeSession.objects.filter(
+                    id=legacy_id, secure_token__in=["", None]
+                ).first()
+                if lost_session is None:
                     return HttpResponse(
                         json.dumps({"error": "Invalid or expired link"}),
                         status=400,
@@ -1961,7 +1962,7 @@ class CompletePaymentView(View):
             )
         except models.LostStripeSession.DoesNotExist:
             return HttpResponse(
-                json.dumps({"error": "Session not found"}),
+                json.dumps({"error": "Invalid or expired link"}),
                 status=400,
                 content_type="application/json",
             )

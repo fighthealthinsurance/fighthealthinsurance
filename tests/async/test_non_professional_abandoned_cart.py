@@ -82,12 +82,12 @@ def test_non_professional_abandoned_cart():
     )
     assert response.status_code == 400
 
-    # Legacy support: rows created before the token rollout were emailed with
-    # ?session_id=<row_id>; honor that for ids below the cutoff so old emails
-    # still work.
+    # Legacy support: rows that never received a secure_token were emailed
+    # with ?session_id=<row_id>; honor those old links.
     legacy_session = LostStripeSession(
         pk=42,
         session_id="legacy_stripe_session",
+        secure_token="",
         payment_type="non_professional_item",
         email=email,
         metadata=metadata,
