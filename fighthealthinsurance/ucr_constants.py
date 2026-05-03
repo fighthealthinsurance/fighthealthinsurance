@@ -41,5 +41,15 @@ UCR_SOURCE_PRIORITY: tuple[str, ...] = (
 )
 
 
+# Public reference URL per source. Surfaced in the [UCR PRICING CONTEXT] block
+# the appeal LLM sees so the model can cite where the benchmark came from.
+UCR_SOURCE_URLS: dict[str, str] = {
+    UCRSource.MEDICARE_PFS: (
+        "https://www.cms.gov/medicare/medicare-fee-for-service-payment/physicianfeesched"
+    ),
+    # FAIR Health and FHI Aggregate are stubs; URLs land when those sources do.
+}
+
+
 # Sentinel key inside Denial.ucr_context so callers can avoid stringly-typed access.
 UCR_CONTEXT_HASH_KEY = "hash"

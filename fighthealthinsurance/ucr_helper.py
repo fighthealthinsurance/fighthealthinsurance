@@ -35,6 +35,7 @@ from fighthealthinsurance.ucr_constants import (
     UCR_CONTEXT_HASH_KEY,
     UCR_PERCENTILES,
     UCR_SOURCE_PRIORITY,
+    UCR_SOURCE_URLS,
     UCRAreaKind,
     UCRSource,
 )
@@ -78,6 +79,11 @@ def is_under_reimbursement_claim(denial_text: Optional[str]) -> bool:
 
 def dispatch_ucr_refresh(denial_id: int) -> None:
     """Fire-and-forget UCRRefreshActor.refresh_denial.remote(...).
+
+    The work itself is DB-only — UCREnrichmentHelper.maybe_enrich resolves
+    procedure/area/rates against existing UCRRate/UCRGeographicArea rows and
+    writes a UCRLookup snapshot. CSV downloads only happen on the actor's
+    independent source-refresh loop, never on this per-denial path.
 
     Failures (Ray not available, e.g. in tests) fall back to a synchronous
     enrichment so the user-facing flow still works. The actor is the primary
@@ -335,6 +341,9 @@ class UCREnrichmentHelper:
                 f"Independent benchmark ({representative.source}, "
                 f"effective {representative.effective_date}):"
             )
+            source_url = UCR_SOURCE_URLS.get(representative.source)
+            if source_url:
+                lines.append(f"Source: {source_url}")
             for r in c.rates:
                 tag = " (derived)" if r.is_derived else ""
                 lines.append(f"  - p{r.percentile}: {_dollars(r.amount_cents)}{tag}")

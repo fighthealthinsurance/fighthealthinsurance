@@ -19,6 +19,7 @@ class UCRPromptInjectionTests(TestCase):
             "Procedure: 99213\n"
             "Geographic area: zip3 941\n"
             "Independent benchmark (medicare_pfs, effective 2026-01-01):\n"
+            "Source: https://www.cms.gov/medicare/medicare-fee-for-service-payment/physicianfeesched\n"
             "  - p50: $147.63\n"
             "  - p80: $196.84 (derived)\n"
             "  - p90: $246.05\n"
@@ -35,6 +36,7 @@ class UCRPromptInjectionTests(TestCase):
         self.assertIn("UCR PRICING CONTEXT", prompt)
         self.assertIn("[UCR PRICING CONTEXT]", prompt)
         self.assertIn("p80: $196.84", prompt)
+        self.assertIn("Source: https://www.cms.gov/", prompt)
 
     def test_no_ucr_block_when_absent(self):
         prompt = self.gen.make_open_prompt(

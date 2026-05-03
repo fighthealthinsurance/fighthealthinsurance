@@ -1,21 +1,19 @@
 """Load CMS Medicare Physician Fee Schedule (PFS) data into UCRRate.
 
-Generates one Medicare-allowed UCRRate per (HCPCS, locality, year) plus one row
-per percentile in UCR_PERCENTILES via UCR_MEDICARE_PERCENTILE_MULTIPLIERS.
+Generates one row per percentile in UCR_PERCENTILES per (HCPCS, locality, year)
+via UCR_MEDICARE_PERCENTILE_MULTIPLIERS.
 
 Idempotent: re-running the command upserts on the
 (procedure_code, modifier, geographic_area, percentile, source, effective_date)
 unique key on UCRRate.
 
-Phase 1 reads from local CSV files; URL fetching is wired but disabled by
-default so unit tests can run against fixture files. Specify --rvu-file and
---locality-file for local input. CSV headers expected (case-insensitive):
+CLI for ad-hoc loads from local files or URLs. The actor's source-refresh
+loop calls `refresh_medicare_pfs` directly so periodic auto-download is
+wired without invoking the management command.
+
+CSV headers expected (case-insensitive):
   RVU file: hcpcs, locality, allowed_cents
   Locality file: locality, description
-
-Future work: pull these CSVs straight from cms.gov in parallel via
-asyncio.gather. The file path interface lets that change without
-breaking callers.
 """
 
 import asyncio
@@ -25,6 +23,7 @@ from pathlib import Path
 from typing import Any, Iterable, Optional
 
 import aiohttp
+from asgiref.sync import sync_to_async
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
@@ -39,7 +38,7 @@ from fighthealthinsurance.ucr_constants import (
 
 
 class Command(BaseCommand):
-    help = "Load CMS Medicare PFS data into UCRRate (Medicare allowed + multiplier-derived percentiles)"
+    help = "Load CMS Medicare PFS data into UCRRate (multiplier-derived percentiles)"
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -86,39 +85,114 @@ class Command(BaseCommand):
                 "Provide --rvu-file or --rvu-url AND --locality-file or --locality-url"
             )
 
-        rvu_csv, locality_csv = asyncio.run(
-            _fetch_inputs(
+        result = asyncio.run(
+            refresh_medicare_pfs(
                 rvu_file=rvu_file,
                 rvu_url=rvu_url,
                 locality_file=locality_file,
                 locality_url=locality_url,
+                effective_year=options["effective_year"],
+                dry_run=bool(options.get("dry_run")),
             )
         )
-
-        effective_date = datetime.date(options["effective_year"], 1, 1)
-        dry_run = bool(options.get("dry_run"))
-
-        localities = _parse_localities(locality_csv)
-        rates = list(_parse_rvu_rows(rvu_csv))
-        self.stdout.write(
-            f"Parsed {len(localities)} localities, {len(rates)} HCPCS rows."
-        )
-
-        multipliers = settings.UCR_MEDICARE_PERCENTILE_MULTIPLIERS
-
-        if dry_run:
-            active_percentiles = sum(1 for p in UCR_PERCENTILES if p in multipliers)
+        if result.dry_run:
+            self.stdout.write(
+                f"Parsed {result.localities} localities, {result.rates} HCPCS rows."
+            )
             self.stdout.write(
                 self.style.WARNING(
-                    "Dry run: would write %d derived percentile rows."
-                    % (len(rates) * active_percentiles)
+                    f"Dry run: would write {result.would_write} derived percentile rows."
                 )
             )
             return
+        self.stdout.write(
+            f"Parsed {result.localities} localities, {result.rates} HCPCS rows."
+        )
+        self.stdout.write(
+            self.style.SUCCESS(
+                f"Wrote {result.written} UCRRate rows ({result.skipped} skipped as already-current)."
+            )
+        )
 
+
+# --------------------------------------------------------------- public API
+
+
+class RefreshResult:
+    """Plain results bag for refresh_medicare_pfs callers."""
+
+    __slots__ = ("localities", "rates", "written", "skipped", "dry_run", "would_write")
+
+    def __init__(
+        self,
+        *,
+        localities: int,
+        rates: int,
+        written: int,
+        skipped: int,
+        dry_run: bool,
+        would_write: int,
+    ):
+        self.localities = localities
+        self.rates = rates
+        self.written = written
+        self.skipped = skipped
+        self.dry_run = dry_run
+        self.would_write = would_write
+
+
+async def refresh_medicare_pfs(
+    *,
+    rvu_url: Optional[str] = None,
+    locality_url: Optional[str] = None,
+    rvu_file: Optional[str] = None,
+    locality_file: Optional[str] = None,
+    effective_year: Optional[int] = None,
+    dry_run: bool = False,
+) -> RefreshResult:
+    """Download (or read) and upsert the CMS PFS rate set.
+
+    URL inputs win over file paths if both are set. Both an RVU source and a
+    locality source must be supplied (URL or path). Returns a RefreshResult
+    with parse counts and write counts. Safe to invoke from the source-refresh
+    actor loop (idempotent upsert keyed on UCRRate's unique constraint).
+    """
+    if not (rvu_url or rvu_file) or not (locality_url or locality_file):
+        raise ValueError(
+            "refresh_medicare_pfs requires both an RVU and a locality source"
+        )
+
+    rvu_csv, locality_csv = await _fetch_inputs(
+        rvu_file=rvu_file,
+        rvu_url=rvu_url,
+        locality_file=locality_file,
+        locality_url=locality_url,
+    )
+
+    effective_date = datetime.date(effective_year or datetime.date.today().year, 1, 1)
+    localities = _parse_localities(locality_csv)
+    rates = list(_parse_rvu_rows(rvu_csv))
+    multipliers = settings.UCR_MEDICARE_PERCENTILE_MULTIPLIERS
+
+    if dry_run:
+        active_percentiles = sum(1 for p in UCR_PERCENTILES if p in multipliers)
+        return RefreshResult(
+            localities=len(localities),
+            rates=len(rates),
+            written=0,
+            skipped=0,
+            dry_run=True,
+            would_write=len(rates) * active_percentiles,
+        )
+
+    # Bridge to sync ORM. thread_sensitive=True keeps the DB connection
+    # local to one thread so a TestCase's atomic wrapper stays in scope
+    # and rollbacks behave; asyncio.to_thread would escape to a worker
+    # connection that commits independently.
+    def _persist() -> tuple[int, int]:
         with transaction.atomic():
             area_by_code = _ensure_localities(localities)
-            written, skipped = _upsert_rates(
+            return _upsert_rates(
                 rates=rates,
                 area_by_code=area_by_code,
                 effective_date=effective_date,
@@ -126,11 +200,15 @@ class Command(BaseCommand):
                 multipliers=multipliers,
             )
 
-        self.stdout.write(
-            self.style.SUCCESS(
-                f"Wrote {written} UCRRate rows ({skipped} skipped as already-current)."
-            )
-        )
+    written, skipped = await sync_to_async(_persist, thread_sensitive=True)()
+    return RefreshResult(
+        localities=len(localities),
+        rates=len(rates),
+        written=written,
+        skipped=skipped,
+        dry_run=False,
+        would_write=0,
+    )
 
 
 # --------------------------------------------------------------- I/O helpers
@@ -154,7 +232,7 @@ async def _fetch_inputs(
 
 async def _fetch_path(path: Optional[str]) -> str:
     if not path:
-        raise CommandError("CSV path required")
+        raise ValueError("CSV path required")
     return await asyncio.to_thread(Path(path).read_text)
 
 

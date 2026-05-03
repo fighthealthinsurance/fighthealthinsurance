@@ -11,7 +11,7 @@ from io import StringIO
 from pathlib import Path
 
 from django.core.management import call_command
-from django.test import TestCase, override_settings
+from django.test import TransactionTestCase, override_settings
 
 from fighthealthinsurance.models import UCRGeographicArea, UCRRate
 from fighthealthinsurance.ucr_constants import UCRAreaKind, UCRSource
@@ -20,7 +20,11 @@ _RVU_HEADER = "hcpcs,locality,allowed_cents\n"
 _LOCALITY_HEADER = "locality,description\n"
 
 
-class LoadMedicarePFSTests(TestCase):
+# TransactionTestCase (not TestCase): the loader bridges async->sync via
+# sync_to_async, which uses a thread that holds its own DB connection. The
+# resulting writes commit instead of nesting under TestCase's atomic wrapper,
+# so we let TransactionTestCase truncate tables between cases.
+class LoadMedicarePFSTests(TransactionTestCase):
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp()
         self.rvu_path = Path(self.tmpdir) / "rvu.csv"
@@ -161,3 +165,49 @@ class LoadMedicarePFSTests(TestCase):
         self._call()
         p80 = UCRRate.objects.get(procedure_code="99213", percentile=80)
         self.assertEqual(p80.amount_cents, 9842)
+
+    def test_refresh_helper_callable_from_python(self):
+        """The actor calls refresh_medicare_pfs() directly — verify it works
+        without going through call_command."""
+        import asyncio
+
+        from fighthealthinsurance.management.commands.load_medicare_pfs import (
+            refresh_medicare_pfs,
+        )
+
+        self._write_inputs(
+            rvu="99213,5,9842\n",
+            localities="5,Locality 5 (CA)\n",
+        )
+        result = asyncio.run(
+            refresh_medicare_pfs(
+                rvu_file=str(self.rvu_path),
+                locality_file=str(self.locality_path),
+                effective_year=2026,
+            )
+        )
+        self.assertEqual(result.localities, 1)
+        self.assertEqual(result.rates, 1)
+        self.assertEqual(result.written, 3)
+        self.assertEqual(UCRRate.objects.count(), 3)
+
+        # Re-running with the same inputs should be a no-op (idempotent upsert).
+        rerun = asyncio.run(
+            refresh_medicare_pfs(
+                rvu_file=str(self.rvu_path),
+                locality_file=str(self.locality_path),
+                effective_year=2026,
+            )
+        )
+        self.assertEqual(rerun.written, 0)
+        self.assertEqual(rerun.skipped, 3)
+
+    def test_refresh_helper_requires_both_sources(self):
+        import asyncio
+
+        from fighthealthinsurance.management.commands.load_medicare_pfs import (
+            refresh_medicare_pfs,
+        )
+
+        with self.assertRaises(ValueError):
+            asyncio.run(refresh_medicare_pfs(rvu_url="https://example.gov/rvu.csv"))

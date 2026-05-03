@@ -110,6 +110,8 @@ class NarrativeContentTests(TestCase):
         self.assertIn("Procedure: 99213", comparison.narrative)
         self.assertIn("p80: $196.84", comparison.narrative)
         self.assertIn("p90: $246.05", comparison.narrative)
+        # Source URL surfaces so the appeal LLM can cite where rates came from.
+        self.assertIn("Source: https://www.cms.gov/", comparison.narrative)
         # No gap math, no billed/allowed/paid lines.
         self.assertNotIn("Gap vs.", comparison.narrative)
         self.assertNotIn("Billed:", comparison.narrative)

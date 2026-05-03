@@ -126,8 +126,38 @@ class UCRRefreshController:
         ]
 
     async def _refresh_medicare_pfs_if_due(self) -> bool:
+        from django.conf import settings
+
+        from fighthealthinsurance.management.commands.load_medicare_pfs import (
+            refresh_medicare_pfs,
+        )
         from fighthealthinsurance.models import UCRRate
         from fighthealthinsurance.ucr_constants import UCRSource
+
+        # Auto-download CMS PFS data when both URLs are configured. The loader
+        # is idempotent so polling it on every cycle is safe — it'll no-op if
+        # the upstream effective_date hasn't changed. Skip silently when the
+        # operator hasn't set the URLs (dev / test envs run from local files
+        # via the management command).
+        rvu_url = getattr(settings, "UCR_MEDICARE_PFS_RVU_URL", "") or ""
+        locality_url = getattr(settings, "UCR_MEDICARE_PFS_LOCALITY_URL", "") or ""
+        if rvu_url and locality_url:
+            try:
+                result = await refresh_medicare_pfs(
+                    rvu_url=rvu_url, locality_url=locality_url
+                )
+                self._logger.info(
+                    "UCR Medicare PFS refresh: parsed {} localities, {} HCPCS rows; "
+                    "wrote {} ({} unchanged)",
+                    result.localities,
+                    result.rates,
+                    result.written,
+                    result.skipped,
+                )
+            except Exception:
+                self._logger.opt(exception=True).error(
+                    "UCR Medicare PFS auto-download failed"
+                )
 
         latest = await sync_to_async(
             lambda: UCRRate.objects.filter(source=UCRSource.MEDICARE_PFS)

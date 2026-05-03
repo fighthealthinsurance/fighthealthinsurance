@@ -133,6 +133,13 @@ class Base(Configuration):
     UCR_DENIAL_REFRESH_BATCH_SIZE = _ucr_int("UCR_DENIAL_REFRESH_BATCH_SIZE", 50, 1)
     UCR_LOOKUP_RETENTION_PER_DENIAL = _ucr_int("UCR_LOOKUP_RETENTION_PER_DENIAL", 10, 0)
     UCR_MEDICARE_PERCENTILE_MULTIPLIERS = {50: 1.5, 80: 2.0, 90: 2.5}
+    # Auto-download URLs for the refresh actor's source-refresh loop. Both
+    # must be set for auto-refresh to fire; left empty in dev/test envs that
+    # load fixtures via `manage.py load_medicare_pfs` instead. CMS publishes
+    # year-versioned download bundles under
+    # https://www.cms.gov/medicare/medicare-fee-for-service-payment/physicianfeesched
+    UCR_MEDICARE_PFS_RVU_URL = os.getenv("UCR_MEDICARE_PFS_RVU_URL", "")
+    UCR_MEDICARE_PFS_LOCALITY_URL = os.getenv("UCR_MEDICARE_PFS_LOCALITY_URL", "")
 
     # SECURITY WARNING: keep the secret key used in production secret!
     SECRET_KEY = "django-insecure-4b6t3cnic_(g*0cexqe8w)=1&vyb#(erhad#7@y4sv)jzb2kaf"

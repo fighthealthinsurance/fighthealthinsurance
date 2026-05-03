@@ -158,3 +158,54 @@ class TestUCRRefreshControllerDenialBatch(TransactionTestCase):
         self.assertTrue(call_state["ok"])
         good.refresh_from_db()
         self.assertIsNotNone(good.ucr_refreshed_at)
+
+
+class TestUCRSourceRefreshAutoDownload(TransactionTestCase):
+    """The Medicare PFS source-refresh path should call refresh_medicare_pfs
+    when both URLs are configured, and skip silently otherwise."""
+
+    def setUp(self):
+        self.controller = UCRRefreshController(logger)
+
+    def test_skips_download_when_urls_unset(self):
+        from unittest.mock import patch
+
+        from django.test import override_settings
+
+        with override_settings(
+            UCR_MEDICARE_PFS_RVU_URL="", UCR_MEDICARE_PFS_LOCALITY_URL=""
+        ), patch(
+            "fighthealthinsurance.management.commands.load_medicare_pfs.refresh_medicare_pfs"
+        ) as mock_refresh:
+            asyncio.run(self.controller._refresh_medicare_pfs_if_due())
+        mock_refresh.assert_not_called()
+
+    def test_invokes_loader_when_urls_set(self):
+        from unittest.mock import AsyncMock, patch
+
+        from django.test import override_settings
+
+        from fighthealthinsurance.management.commands.load_medicare_pfs import (
+            RefreshResult,
+        )
+
+        with override_settings(
+            UCR_MEDICARE_PFS_RVU_URL="https://example.gov/rvu.csv",
+            UCR_MEDICARE_PFS_LOCALITY_URL="https://example.gov/loc.csv",
+        ), patch(
+            "fighthealthinsurance.management.commands.load_medicare_pfs.refresh_medicare_pfs",
+            new_callable=AsyncMock,
+            return_value=RefreshResult(
+                localities=1,
+                rates=1,
+                written=3,
+                skipped=0,
+                dry_run=False,
+                would_write=0,
+            ),
+        ) as mock_refresh:
+            asyncio.run(self.controller._refresh_medicare_pfs_if_due())
+        mock_refresh.assert_awaited_once_with(
+            rvu_url="https://example.gov/rvu.csv",
+            locality_url="https://example.gov/loc.csv",
+        )
