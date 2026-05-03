@@ -17,6 +17,7 @@ from django.http import (
     HttpResponseBase,
     HttpResponseForbidden,
     HttpResponseRedirect,
+    JsonResponse,
 )
 from django.shortcuts import get_object_or_404, redirect, render
 from django.template import loader
@@ -1896,13 +1897,9 @@ class CompletePaymentView(View):
         return self.process_payment(data)
 
     @staticmethod
-    def _json_error_response(error: str, status_code: int) -> HttpResponse:
+    def _json_error_response(error: str, status_code: int) -> JsonResponse:
         """Return a standardized JSON error response for payment completion."""
-        return HttpResponse(
-            json.dumps({"error": error}),
-            status=status_code,
-            content_type="application/json",
-        )
+        return JsonResponse({"error": error}, status=status_code)
 
     def process_payment(self, data):
         token = data.get("token")
@@ -1939,8 +1936,8 @@ class CompletePaymentView(View):
             if not recovery_info_id:
                 line_items_json = metadata.get("line_items")
                 if not line_items_json:
-                    logger.error(f"No recover info found in metadata {metadata}")
-                    return self._json_error_response("No recover info found in metadata", 400)
+                    logger.error(f"No recovery info found in metadata {metadata}")
+                    return self._json_error_response("No recovery info found in metadata", 400)
                 line_items = json.loads(line_items_json)
             else:
                 line_items = StripeRecoveryInfo.objects.get(id=recovery_info_id).items
