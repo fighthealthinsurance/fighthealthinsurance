@@ -11,7 +11,7 @@ import fighthealthinsurance.encrypted_amount_field
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("fighthealthinsurance", "0160_niceguidance_denial_nice_context_and_more"),
+        ("fighthealthinsurance", "0163_imrdecision_pg_trgm_index"),
     ]
 
     operations = [
