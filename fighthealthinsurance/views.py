@@ -1937,7 +1937,9 @@ class CompletePaymentView(View):
                 line_items_json = metadata.get("line_items")
                 if not line_items_json:
                     logger.error(f"No recovery info found in metadata {metadata}")
-                    return self._json_error_response("No recovery info found in metadata", 400)
+                    return self._json_error_response(
+                        "No recovery info found in metadata", 400
+                    )
                 line_items = json.loads(line_items_json)
             else:
                 line_items = StripeRecoveryInfo.objects.get(id=recovery_info_id).items

@@ -187,7 +187,9 @@ def _summary_preview_for_document(doc: ChatDocument, max_chars: int = 200) -> st
 def _is_document_processing_complete(doc: ChatDocument) -> bool:
     """Return True once chunk summaries are expected to exist for searching."""
     try:
-        return ChatDocument.Status(doc.processing_status) == ChatDocument.Status.COMPLETED
+        return (
+            ChatDocument.Status(doc.processing_status) == ChatDocument.Status.COMPLETED
+        )
     except ValueError:
         return False
 
