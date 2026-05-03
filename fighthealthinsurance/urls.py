@@ -309,7 +309,9 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
     ),
     path("share_denial", views.ShareDenialView.as_view(), name="share_denial"),
     path("share_appeal", views.ShareAppealView.as_view(), name="share_appeal"),
+    # Public, unauthenticated start of delete-data flow (email + captcha).
     path("remove_data", views.RemoveDataView.as_view(), name="remove_data"),
+    # Public, unauthenticated confirmation endpoint (GET confirm page, POST executes deletion).
     path(
         "confirm-delete",
         views.ConfirmDeleteDataView.as_view(),
