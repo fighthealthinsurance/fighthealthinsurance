@@ -202,11 +202,12 @@ class UCRRefreshController:
 
         # return_exceptions=True so one bad denial doesn't cancel the batch
         # and we get per-denial visibility into failures (§10.4).
+        # No force=True: we want the helper's hash short-circuit so the actor
+        # only writes when something actually changed. ucr_refreshed_at is
+        # bumped by the helper either way, so the stale-batch query advances.
         results = await asyncio.gather(
             *(
-                sync_to_async(UCREnrichmentHelper.maybe_enrich)(
-                    d, force=True, rates=rate_cache
-                )
+                sync_to_async(UCREnrichmentHelper.maybe_enrich)(d, rates=rate_cache)
                 for d in stale
             ),
             return_exceptions=True,

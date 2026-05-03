@@ -27,7 +27,11 @@ from fighthealthinsurance.constants import (
     FHI_PHONE_NUMBER,
     FHI_FAX_NUMBER,
 )
-from fighthealthinsurance.encrypted_amount_field import EncryptedAmountField
+from fighthealthinsurance.encrypted_amount_field import (
+    EncryptedAmountField,
+    amount_to_int,
+    amount_to_str,
+)
 from fighthealthinsurance.exceptions import (
     MissingDocumentError,
     DocumentRegenerationError,
@@ -1818,48 +1822,30 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
         ]
 
     # --- UCR helpers (see UCR-OON-Reimbursement-Plan.md §10.3) ---
-    # The billing-amount fields are EncryptedAmountField storing decimal-cents
-    # strings. These helpers keep callers working in ints while preserving the
-    # encrypted-at-rest invariant.
-
-    @staticmethod
-    def _ucr_amount_to_int(value: str) -> typing.Optional[int]:
-        if not value:
-            return None
-        try:
-            return int(value)
-        except (TypeError, ValueError):
-            # If decryption returned ciphertext-looking bytes (e.g. settings
-            # rotation or a corrupted column) we'd rather log and surface
-            # None than 500 the entire detail view.
-            logger.warning(
-                "UCR amount field could not be parsed as int: {!r}", value[:32]
-            )
-            return None
-
-    @staticmethod
-    def _ucr_amount_to_str(value: typing.Optional[int]) -> str:
-        return "" if value is None else str(int(value))
+    # Billing fields are EncryptedAmountField storing decimal-cents strings.
+    # The module-level amount_to_int / amount_to_str helpers handle parse and
+    # serialization (and tolerate corrupt/non-numeric values gracefully); see
+    # encrypted_amount_field.py. Do NOT assign ints directly to these fields.
 
     def get_billed_cents(self) -> typing.Optional[int]:
-        return self._ucr_amount_to_int(self.billed_amount_cents)
+        return amount_to_int(self.billed_amount_cents)
 
     def get_allowed_cents(self) -> typing.Optional[int]:
-        return self._ucr_amount_to_int(self.allowed_amount_cents)
+        return amount_to_int(self.allowed_amount_cents)
 
     def get_paid_cents(self) -> typing.Optional[int]:
-        return self._ucr_amount_to_int(self.paid_amount_cents)
+        return amount_to_int(self.paid_amount_cents)
 
     def set_billed_cents(self, value: typing.Optional[int]) -> None:
         # setattr (vs direct assignment) keeps mypy happy without the
         # django-stubs plugin, which is also how CI runs in some envs.
-        setattr(self, "billed_amount_cents", self._ucr_amount_to_str(value))
+        setattr(self, "billed_amount_cents", amount_to_str(value))
 
     def set_allowed_cents(self, value: typing.Optional[int]) -> None:
-        setattr(self, "allowed_amount_cents", self._ucr_amount_to_str(value))
+        setattr(self, "allowed_amount_cents", amount_to_str(value))
 
     def set_paid_cents(self, value: typing.Optional[int]) -> None:
-        setattr(self, "paid_amount_cents", self._ucr_amount_to_str(value))
+        setattr(self, "paid_amount_cents", amount_to_str(value))
 
     @classmethod
     def filter_to_allowed_denials(cls, current_user: User):
@@ -3003,9 +2989,12 @@ class UCRLookup(models.Model):
         UCRGeographicArea, null=True, blank=True, on_delete=models.SET_NULL
     )
     rates_snapshot = models.JSONField()
-    billed_amount_cents = models.PositiveIntegerField(null=True, blank=True)
-    allowed_amount_cents = models.PositiveIntegerField(null=True, blank=True)
-    paid_amount_cents = models.PositiveIntegerField(null=True, blank=True)
+    # Billing snapshot fields — encrypted to match Denial's posture so the
+    # audit table doesn't leak amounts that the parent record protects.
+    # Use the helpers (get_*_cents) for int round-trip; do NOT assign ints.
+    billed_amount_cents = EncryptedAmountField(blank=True, default="")
+    allowed_amount_cents = EncryptedAmountField(blank=True, default="")
+    paid_amount_cents = EncryptedAmountField(blank=True, default="")
     created = models.DateTimeField(db_default=Now())
 
     class Meta:
@@ -3016,3 +3005,12 @@ class UCRLookup(models.Model):
 
     def __str__(self) -> str:
         return f"UCRLookup<denial={self.denial_id} created={self.created}>"
+
+    def get_billed_cents(self) -> typing.Optional[int]:
+        return amount_to_int(self.billed_amount_cents)
+
+    def get_allowed_cents(self) -> typing.Optional[int]:
+        return amount_to_int(self.allowed_amount_cents)
+
+    def get_paid_cents(self) -> typing.Optional[int]:
+        return amount_to_int(self.paid_amount_cents)

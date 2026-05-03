@@ -138,9 +138,10 @@ function HeadlineGap({
   rates,
 }: {
   allowedCents: number | null;
-  rates: UCRRateRow[];
+  rates?: UCRRateRow[];
 }) {
-  const p80 = rates.find((r) => r.percentile === 80);
+  const safeRates = rates ?? [];
+  const p80 = safeRates.find((r) => r.percentile === 80);
   if (!p80 || allowedCents === null) {
     return null;
   }
@@ -152,13 +153,14 @@ function HeadlineGap({
   );
 }
 
-function RateTable({ rates }: { rates: UCRRateRow[] }) {
-  if (rates.length === 0) {
+function RateTable({ rates }: { rates?: UCRRateRow[] }) {
+  const safeRates = rates ?? [];
+  if (safeRates.length === 0) {
     return <Text size="sm">No rate data available for this code/area.</Text>;
   }
   return (
     <Stack gap="xs">
-      {rates.map((r) => (
+      {safeRates.map((r) => (
         <Group justify="space-between" key={`${r.source}-${r.percentile}`}>
           <Text size="sm">
             p{r.percentile} ({r.source}
@@ -275,6 +277,42 @@ export function UCRComparisonPanel({
     }
   }, [denialId, apiBase]);
 
+  // Single source of truth for the billing-form submit handler. Both the
+  // pending-state and ready-state forms below use this so the POST shape
+  // and post-submit behavior can't drift between them.
+  const handleBillingSubmit = useCallback(
+    async (values: {
+      service_zip: string;
+      procedure_code: string;
+      billed: number | null;
+      allowed: number | null;
+      paid: number | null;
+    }) => {
+      setBusy(true);
+      try {
+        await postSetBillingInfo(
+          denialId,
+          {
+            service_zip: values.service_zip || undefined,
+            procedure_code: values.procedure_code || undefined,
+            billed_amount_cents: values.billed,
+            allowed_amount_cents: values.allowed,
+            paid_amount_cents: values.paid,
+          },
+          csrfToken,
+          apiBase,
+        );
+        setEditing(false);
+        await refresh();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setBusy(false);
+      }
+    },
+    [denialId, csrfToken, apiBase, refresh],
+  );
+
   useEffect(() => {
     refresh();
   }, [refresh]);
@@ -307,32 +345,7 @@ export function UCRComparisonPanel({
             Add billing details
           </Button>
           <Collapse in={editing}>
-            <BillingForm
-              busy={busy}
-              onSubmit={async (values) => {
-                setBusy(true);
-                try {
-                  await postSetBillingInfo(
-                    denialId,
-                    {
-                      service_zip: values.service_zip || undefined,
-                      procedure_code: values.procedure_code || undefined,
-                      billed_amount_cents: values.billed,
-                      allowed_amount_cents: values.allowed,
-                      paid_amount_cents: values.paid,
-                    },
-                    csrfToken,
-                    apiBase,
-                  );
-                  setEditing(false);
-                  await refresh();
-                } catch (e) {
-                  setError(e instanceof Error ? e.message : String(e));
-                } finally {
-                  setBusy(false);
-                }
-              }}
-            />
+            <BillingForm busy={busy} onSubmit={handleBillingSubmit} />
           </Collapse>
         </Stack>
       </Paper>
@@ -401,32 +414,7 @@ export function UCRComparisonPanel({
         </Group>
 
         <Collapse in={editing}>
-          <BillingForm
-            busy={busy}
-            onSubmit={async (values) => {
-              setBusy(true);
-              try {
-                await postSetBillingInfo(
-                  denialId,
-                  {
-                    service_zip: values.service_zip || undefined,
-                    procedure_code: values.procedure_code || undefined,
-                    billed_amount_cents: values.billed,
-                    allowed_amount_cents: values.allowed,
-                    paid_amount_cents: values.paid,
-                  },
-                  csrfToken,
-                  apiBase,
-                );
-                setEditing(false);
-                await refresh();
-              } catch (e) {
-                setError(e instanceof Error ? e.message : String(e));
-              } finally {
-                setBusy(false);
-              }
-            }}
-          />
+          <BillingForm busy={busy} onSubmit={handleBillingSubmit} />
         </Collapse>
 
         {context.refreshed_at && (

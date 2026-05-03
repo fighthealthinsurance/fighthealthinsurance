@@ -157,7 +157,10 @@ async def _fetch_path(path: Optional[str]) -> str:
 
 
 async def _fetch_url(url: str) -> str:
-    async with aiohttp.ClientSession() as session:
+    # 2-minute total cap so a slow or unresponsive cms.gov mirror can't hang
+    # the management command indefinitely.
+    timeout = aiohttp.ClientTimeout(total=120)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
         async with session.get(url) as response:
             response.raise_for_status()
             text: str = await response.text()

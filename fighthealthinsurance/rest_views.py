@@ -464,18 +464,24 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
             denial_id=data["denial_id"],
         )
 
-        if data.get("service_zip"):
-            denial.service_zip = data["service_zip"]
-        if data.get("procedure_code"):
-            denial.procedure_code = data["procedure_code"]
-        if data.get("procedure_modifier"):
-            denial.procedure_modifier = data["procedure_modifier"]
-        if data.get("billed_amount_cents") is not None:
-            denial.set_billed_cents(data["billed_amount_cents"])
-        if data.get("allowed_amount_cents") is not None:
-            denial.set_allowed_cents(data["allowed_amount_cents"])
-        if data.get("paid_amount_cents") is not None:
-            denial.set_paid_cents(data["paid_amount_cents"])
+        # Use key presence (not truthiness) so a request like
+        # {"service_zip": ""} or {"billed_amount_cents": null} clears the
+        # field rather than leaving the old value. The actor needs that
+        # distinction to decide what to re-enrich against.
+        plain_field_keys = ("service_zip", "procedure_code", "procedure_modifier")
+        for key in plain_field_keys:
+            if key in request.data:
+                setattr(denial, key, data.get(key) or "")
+
+        amount_setters = {
+            "billed_amount_cents": denial.set_billed_cents,
+            "allowed_amount_cents": denial.set_allowed_cents,
+            "paid_amount_cents": denial.set_paid_cents,
+        }
+        for key, setter in amount_setters.items():
+            if key in request.data:
+                setter(data.get(key))
+
         denial.ucr_refreshed_at = None  # mark stale so the actor picks it up
         denial.save()
 
@@ -607,12 +613,20 @@ class UCRPublicLookupView(APIView):
         if cached is not None:
             return Response(cached, status=status.HTTP_200_OK)
 
-        # Pick one row per percentile: latest effective_date, then source priority.
+        # Pick one row per percentile: latest effective_date wins; source
+        # priority breaks ties on equal dates. Comparing effective_date first
+        # prevents an older row with a higher-priority source from displacing
+        # a newer winner already in the dict.
         priority_index = {s: i for i, s in enumerate(UCR_SOURCE_PRIORITY)}
         by_percentile: dict[int, UCRRate] = {}
         for r in live_qs.order_by("-effective_date"):
             existing = by_percentile.get(r.percentile)
-            if existing is None or priority_index.get(
+            if existing is None:
+                by_percentile[r.percentile] = r
+                continue
+            if r.effective_date > existing.effective_date:
+                by_percentile[r.percentile] = r
+            elif r.effective_date == existing.effective_date and priority_index.get(
                 r.source, -1
             ) > priority_index.get(existing.source, -1):
                 by_percentile[r.percentile] = r

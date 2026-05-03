@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 from dataclasses import dataclass, field
 from typing import Iterable, Mapping, Optional, Sequence
 
@@ -24,6 +23,7 @@ from django.db.models import Q
 from django.utils import timezone
 from loguru import logger
 
+from fighthealthinsurance.medical_code_extractor import extract_procedure_codes
 from fighthealthinsurance.models import (
     Denial,
     UCRGeographicArea,
@@ -40,10 +40,6 @@ from fighthealthinsurance.ucr_constants import (
     UCRAreaKind,
     UCRSource,
 )
-
-# 5-digit CPT or 1-letter + 4-digit HCPCS Level II (e.g. J3490, A0428).
-# Phase-1 extraction; ML-based extraction lands in phase 2 (§5.3).
-_PROCEDURE_CODE_RE = re.compile(r"\b([A-Z]\d{4}|\d{5})\b")
 
 
 @dataclass
@@ -130,14 +126,19 @@ class UCREnrichmentHelper:
             logger.debug("UCR enrich skipped: denial {} is finalized", denial.pk)
             return None
 
+        # Skip paths below all bump ucr_refreshed_at before returning so the
+        # actor's stale-batch query (NULL OR < cutoff) doesn't reselect this
+        # denial on every cycle and starve real work.
         code = cls.resolve_procedure_code(denial)
         if not code:
             logger.debug("UCR enrich skipped: no procedure code for {}", denial.pk)
+            cls._mark_refreshed(denial)
             return None
 
         area = cls.resolve_geographic_area(denial)
         if area is None:
             logger.debug("UCR enrich skipped: no area resolved for {}", denial.pk)
+            cls._mark_refreshed(denial)
             return None
 
         rate_rows = cls._lookup_rates(
@@ -145,6 +146,7 @@ class UCREnrichmentHelper:
         )
         if not rate_rows:
             logger.debug("UCR enrich skipped: no rates for code={} area={}", code, area)
+            cls._mark_refreshed(denial)
             return None
 
         comparison = cls.build_comparison(
@@ -209,7 +211,11 @@ class UCREnrichmentHelper:
 
     @classmethod
     def resolve_procedure_code(cls, denial: Denial) -> str:
-        """Pull a CPT/HCPCS code from `denial`, preferring explicit fields."""
+        """Pull a CPT/HCPCS code from `denial`, preferring explicit fields.
+
+        Delegates extraction to the project's centralized
+        `medical_code_extractor` so we don't drift from the canonical regex.
+        """
         for explicit in (
             denial.procedure_code,
             getattr(denial, "verified_procedure", "") or "",
@@ -217,9 +223,9 @@ class UCREnrichmentHelper:
         ):
             if not explicit:
                 continue
-            match = _PROCEDURE_CODE_RE.search(explicit.upper())
-            if match:
-                return match.group(1)
+            codes = sorted(extract_procedure_codes(explicit))
+            if codes:
+                return codes[0]
         return ""
 
     @classmethod
@@ -416,7 +422,12 @@ class UCREnrichmentHelper:
         """Filter a pre-cached rate list down to (modifier match preferred, blank
         fallback) per percentile. Mirrors the DB-side filter in _lookup_rates so
         bulk-prefetched callers see the same selection as on-demand callers."""
-        candidates = [r for r in cached if not modifier or r.modifier in (modifier, "")]
+        if modifier:
+            candidates = [r for r in cached if r.modifier in (modifier, "")]
+        else:
+            # Empty modifier means "the unspecified-modifier rate set" — must
+            # not silently mix in modifier-specific rows from the cache.
+            candidates = [r for r in cached if r.modifier == ""]
         return UCREnrichmentHelper._dedupe_by_priority(
             candidates, prefer_modifier=modifier
         )
@@ -465,7 +476,10 @@ class UCREnrichmentHelper:
 
     @classmethod
     def _persist(cls, denial: Denial, comparison: Comparison) -> None:
+        from fighthealthinsurance.encrypted_amount_field import amount_to_str
+
         with transaction.atomic():
+            # UCRLookup billing fields are EncryptedAmountField — pass strings.
             lookup = UCRLookup.objects.create(
                 denial=denial,
                 procedure_code=comparison.procedure_code,
@@ -473,9 +487,9 @@ class UCREnrichmentHelper:
                 service_zip=denial.service_zip or "",
                 matched_area_id=cls._area_id_from_comparison(comparison),
                 rates_snapshot=[r.__dict__ for r in comparison.rates],
-                billed_amount_cents=comparison.billed_cents,
-                allowed_amount_cents=comparison.allowed_cents,
-                paid_amount_cents=comparison.paid_cents,
+                billed_amount_cents=amount_to_str(comparison.billed_cents),
+                allowed_amount_cents=amount_to_str(comparison.allowed_cents),
+                paid_amount_cents=amount_to_str(comparison.paid_cents),
             )
             denial.ucr_context = comparison.to_jsonable()
             denial.latest_ucr_lookup = lookup

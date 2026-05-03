@@ -135,15 +135,21 @@ class Migration(migrations.Migration):
                 ("rates_snapshot", models.JSONField()),
                 (
                     "billed_amount_cents",
-                    models.PositiveIntegerField(blank=True, null=True),
+                    fighthealthinsurance.encrypted_amount_field.EncryptedAmountField(
+                        blank=True, default="", max_length=512
+                    ),
                 ),
                 (
                     "allowed_amount_cents",
-                    models.PositiveIntegerField(blank=True, null=True),
+                    fighthealthinsurance.encrypted_amount_field.EncryptedAmountField(
+                        blank=True, default="", max_length=512
+                    ),
                 ),
                 (
                     "paid_amount_cents",
-                    models.PositiveIntegerField(blank=True, null=True),
+                    fighthealthinsurance.encrypted_amount_field.EncryptedAmountField(
+                        blank=True, default="", max_length=512
+                    ),
                 ),
                 ("created", models.DateTimeField(db_default=Now())),
                 (
