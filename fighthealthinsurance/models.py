@@ -18,6 +18,7 @@ from django.utils import timezone
 from django_encrypted_filefield.crypt import Cryptographer
 from django_encrypted_filefield.fields import EncryptedFileField
 from django_prometheus.models import ExportModelOperationsMixin
+from encrypted_model_fields.fields import EncryptedCharField
 from loguru import logger
 from regex_field.fields import RegexField
 
@@ -33,6 +34,7 @@ from fighthealthinsurance.exceptions import (
     MissingRequiredDataError,
 )
 from fighthealthinsurance.type_utils import User
+from fighthealthinsurance.ucr_constants import UCRAreaKind, UCRSource
 from fighthealthinsurance.utils import sekret_gen
 
 
@@ -1783,11 +1785,68 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     # IP address only stored for professional users (privacy-sensitive)
     ip_address = models.GenericIPAddressField(null=True, blank=True)
 
+    # UCR (Usual & Customary Rate) — see UCR-OON-Reimbursement-Plan.md §4.2.
+    # Billing fields. Amounts are stored as decimal-cents strings under encryption;
+    # `*_amount_int` properties below wrap parse/format so callers see ints.
+    service_zip = models.CharField(max_length=5, blank=True, default="")
+    procedure_code = models.CharField(
+        max_length=10, blank=True, default="", db_index=True
+    )
+    procedure_modifier = EncryptedCharField(max_length=64, blank=True, default="")
+    billed_amount_cents = EncryptedCharField(max_length=64, blank=True, default="")
+    allowed_amount_cents = EncryptedCharField(max_length=64, blank=True, default="")
+    paid_amount_cents = EncryptedCharField(max_length=64, blank=True, default="")
+    # Flat indexed timestamp so the refresh actor can find stale rows without
+    # scanning JSONField paths (see §10.4). NULL means "needs enrichment".
+    ucr_refreshed_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    # Durable pointer to the active UCRLookup snapshot — preserved by retention
+    # pruning regardless of age (see §10.5). related_name="+" because we don't
+    # need a reverse accessor; UCRLookup.denial already gives us the audit trail.
+    latest_ucr_lookup = models.ForeignKey(
+        "UCRLookup",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="+",
+    )
+    ucr_context = models.JSONField(null=True, blank=True)
+
     class Meta:
         indexes = [
             models.Index(fields=["hashed_email"], name="denial_hashed_email_idx"),
             models.Index(fields=["created"], name="denial_created_idx"),
         ]
+
+    # --- UCR helpers (see UCR-OON-Reimbursement-Plan.md §10.3) ---
+    # The billing-amount fields are EncryptedCharField storing decimal-cents
+    # strings. These helpers keep callers working in ints while preserving the
+    # encrypted-at-rest invariant.
+
+    @staticmethod
+    def _ucr_amount_to_int(value: str) -> typing.Optional[int]:
+        return int(value) if value else None
+
+    @staticmethod
+    def _ucr_amount_to_str(value: typing.Optional[int]) -> str:
+        return "" if value is None else str(int(value))
+
+    def get_billed_cents(self) -> typing.Optional[int]:
+        return self._ucr_amount_to_int(self.billed_amount_cents)
+
+    def get_allowed_cents(self) -> typing.Optional[int]:
+        return self._ucr_amount_to_int(self.allowed_amount_cents)
+
+    def get_paid_cents(self) -> typing.Optional[int]:
+        return self._ucr_amount_to_int(self.paid_amount_cents)
+
+    def set_billed_cents(self, value: typing.Optional[int]) -> None:
+        self.billed_amount_cents = self._ucr_amount_to_str(value)
+
+    def set_allowed_cents(self, value: typing.Optional[int]) -> None:
+        self.allowed_amount_cents = self._ucr_amount_to_str(value)
+
+    def set_paid_cents(self, value: typing.Optional[int]) -> None:
+        self.paid_amount_cents = self._ucr_amount_to_str(value)
 
     @classmethod
     def filter_to_allowed_denials(cls, current_user: User):
@@ -2841,3 +2900,106 @@ class UsedDeleteToken(models.Model):
     token = models.CharField(max_length=255, unique=True)
     hashed_email = models.CharField(max_length=300)
     used_at = models.DateTimeField(auto_now_add=True)
+
+
+class UCRGeographicArea(models.Model):
+    """A geographic billing area shared across UCR data sources.
+
+    See UCR-OON-Reimbursement-Plan.md §4.1.
+    """
+
+    kind = models.CharField(max_length=24, choices=UCRAreaKind.choices)
+    code = models.CharField(max_length=32, db_index=True)
+    description = models.CharField(max_length=200, blank=True, default="")
+
+    class Meta:
+        unique_together = [("kind", "code")]
+
+    def __str__(self) -> str:
+        return f"{self.kind}:{self.code}"
+
+
+class UCRRate(models.Model):
+    """A single UCR rate observation. Source-agnostic.
+
+    Multiple sources can coexist for the same (procedure_code, area, percentile,
+    effective_date); the helper picks one by `UCR_SOURCE_PRIORITY`.
+    See UCR-OON-Reimbursement-Plan.md §4.1.
+    """
+
+    procedure_code = models.CharField(max_length=10, db_index=True)
+    modifier = models.CharField(max_length=4, blank=True, default="")
+    geographic_area = models.ForeignKey(
+        UCRGeographicArea, on_delete=models.PROTECT, related_name="rates"
+    )
+    percentile = models.PositiveSmallIntegerField()
+    amount_cents = models.PositiveIntegerField()
+    source = models.CharField(max_length=32, choices=UCRSource.choices)
+    effective_date = models.DateField()
+    expires_date = models.DateField(null=True, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        indexes = [
+            models.Index(
+                fields=[
+                    "procedure_code",
+                    "geographic_area",
+                    "effective_date",
+                    "expires_date",
+                ],
+                name="ucr_rate_lookup_idx",
+            ),
+            models.Index(
+                fields=["source", "effective_date"], name="ucr_rate_source_idx"
+            ),
+        ]
+        unique_together = [
+            (
+                "procedure_code",
+                "modifier",
+                "geographic_area",
+                "percentile",
+                "source",
+                "effective_date",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return (
+            f"{self.procedure_code}@{self.geographic_area} p{self.percentile} "
+            f"${self.amount_cents / 100:.2f} ({self.source})"
+        )
+
+
+class UCRLookup(models.Model):
+    """Audit log of UCR queries tied to a denial.
+
+    Persists what we showed the user even if upstream rates change. The active
+    snapshot for a denial is referenced by `Denial.latest_ucr_lookup`; older
+    snapshots are kept up to a per-denial retention cap (see §10.5).
+    """
+
+    denial = models.ForeignKey(
+        "Denial", on_delete=models.CASCADE, related_name="ucr_lookups"
+    )
+    procedure_code = models.CharField(max_length=10)
+    modifier = models.CharField(max_length=4, blank=True, default="")
+    service_zip = models.CharField(max_length=5, blank=True, default="")
+    matched_area = models.ForeignKey(
+        UCRGeographicArea, null=True, blank=True, on_delete=models.SET_NULL
+    )
+    rates_snapshot = models.JSONField()
+    billed_amount_cents = models.PositiveIntegerField(null=True, blank=True)
+    allowed_amount_cents = models.PositiveIntegerField(null=True, blank=True)
+    paid_amount_cents = models.PositiveIntegerField(null=True, blank=True)
+    created = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["denial", "created"], name="ucr_lookup_denial_idx"),
+        ]
+        ordering = ["-created"]
+
+    def __str__(self) -> str:
+        return f"UCRLookup<denial={self.denial_id} created={self.created}>"
