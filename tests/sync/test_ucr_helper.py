@@ -70,9 +70,7 @@ class AreaResolutionTests(TestCase):
         self.assertEqual(UCREnrichmentHelper.resolve_geographic_area(denial), state)
 
     def test_national_last_resort(self):
-        natl = UCRGeographicArea.objects.create(
-            kind=UCRAreaKind.NATIONAL, code="us"
-        )
+        natl = UCRGeographicArea.objects.create(kind=UCRAreaKind.NATIONAL, code="us")
         denial = Denial(service_zip="", your_state="")
         self.assertEqual(UCREnrichmentHelper.resolve_geographic_area(denial), natl)
 
@@ -83,9 +81,7 @@ class AreaResolutionTests(TestCase):
 
 class GapMathTests(TestCase):
     def setUp(self):
-        self.area = UCRGeographicArea.objects.create(
-            kind=UCRAreaKind.ZIP3, code="941"
-        )
+        self.area = UCRGeographicArea.objects.create(kind=UCRAreaKind.ZIP3, code="941")
 
     def test_p80_gap(self):
         comparison = UCREnrichmentHelper.build_comparison(
@@ -153,9 +149,7 @@ class SourcePriorityTests(TestCase):
 
 class MaybeEnrichEndToEndTests(TestCase):
     def setUp(self):
-        self.area = UCRGeographicArea.objects.create(
-            kind=UCRAreaKind.ZIP3, code="941"
-        )
+        self.area = UCRGeographicArea.objects.create(kind=UCRAreaKind.ZIP3, code="941")
         _make_rate(self.area, percentile=50, amount_cents=14763)
         _make_rate(self.area, percentile=80, amount_cents=19684)
         _make_rate(self.area, percentile=90, amount_cents=24605)
@@ -208,9 +202,7 @@ class MaybeEnrichEndToEndTests(TestCase):
 
 class PruneLookupsTests(TestCase):
     def setUp(self):
-        self.area = UCRGeographicArea.objects.create(
-            kind=UCRAreaKind.ZIP3, code="941"
-        )
+        self.area = UCRGeographicArea.objects.create(kind=UCRAreaKind.ZIP3, code="941")
         self.denial = Denial.objects.create(hashed_email="hash:test")
 
     def _make_lookup(self) -> UCRLookup:

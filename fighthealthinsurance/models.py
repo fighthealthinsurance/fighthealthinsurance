@@ -18,7 +18,6 @@ from django.utils import timezone
 from django_encrypted_filefield.crypt import Cryptographer
 from django_encrypted_filefield.fields import EncryptedFileField
 from django_prometheus.models import ExportModelOperationsMixin
-from encrypted_model_fields.fields import EncryptedCharField
 from loguru import logger
 from regex_field.fields import RegexField
 
@@ -28,6 +27,7 @@ from fighthealthinsurance.constants import (
     FHI_PHONE_NUMBER,
     FHI_FAX_NUMBER,
 )
+from fighthealthinsurance.encrypted_amount_field import EncryptedAmountField
 from fighthealthinsurance.exceptions import (
     MissingDocumentError,
     DocumentRegenerationError,
@@ -1792,10 +1792,10 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     procedure_code = models.CharField(
         max_length=10, blank=True, default="", db_index=True
     )
-    procedure_modifier = EncryptedCharField(max_length=64, blank=True, default="")
-    billed_amount_cents = EncryptedCharField(max_length=64, blank=True, default="")
-    allowed_amount_cents = EncryptedCharField(max_length=64, blank=True, default="")
-    paid_amount_cents = EncryptedCharField(max_length=64, blank=True, default="")
+    procedure_modifier = EncryptedAmountField(max_length=512, blank=True, default="")
+    billed_amount_cents = EncryptedAmountField(max_length=512, blank=True, default="")
+    allowed_amount_cents = EncryptedAmountField(max_length=512, blank=True, default="")
+    paid_amount_cents = EncryptedAmountField(max_length=512, blank=True, default="")
     # Flat indexed timestamp so the refresh actor can find stale rows without
     # scanning JSONField paths (see §10.4). NULL means "needs enrichment".
     ucr_refreshed_at = models.DateTimeField(null=True, blank=True, db_index=True)

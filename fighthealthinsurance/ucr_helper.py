@@ -41,7 +41,6 @@ from fighthealthinsurance.ucr_constants import (
     UCRSource,
 )
 
-
 # 5-digit CPT or 1-letter + 4-digit HCPCS Level II (e.g. J3490, A0428).
 # Phase-1 extraction; ML-based extraction lands in phase 2 (§5.3).
 _PROCEDURE_CODE_RE = re.compile(r"\b([A-Z]\d{4}|\d{5})\b")
@@ -137,9 +136,7 @@ class UCREnrichmentHelper:
 
         rate_rows = cls._lookup_rates(code, area, rates)
         if not rate_rows:
-            logger.debug(
-                "UCR enrich skipped: no rates for code={} area={}", code, area
-            )
+            logger.debug("UCR enrich skipped: no rates for code={} area={}", code, area)
             return None
 
         comparison = cls.build_comparison(
@@ -301,9 +298,9 @@ class UCREnrichmentHelper:
         protected = set(keepers)
         if denial.latest_ucr_lookup_id:
             protected.add(denial.latest_ucr_lookup_id)
-        deleted, _ = UCRLookup.objects.filter(denial=denial).exclude(
-            id__in=protected
-        ).delete()
+        deleted, _ = (
+            UCRLookup.objects.filter(denial=denial).exclude(id__in=protected).delete()
+        )
         return deleted
 
     # ----------------------------------------------------------------- private

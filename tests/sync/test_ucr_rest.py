@@ -33,7 +33,6 @@ from fighthealthinsurance.ucr_constants import (
     UCRSource,
 )
 
-
 if typing.TYPE_CHECKING:
     from django.contrib.auth.models import User
 else:
@@ -80,9 +79,7 @@ class _UCRRestBase(APITestCase):
             primary_professional=professional,
         )
 
-        self.area = UCRGeographicArea.objects.create(
-            kind=UCRAreaKind.ZIP3, code="941"
-        )
+        self.area = UCRGeographicArea.objects.create(kind=UCRAreaKind.ZIP3, code="941")
         for percentile, amount in [(50, 14763), (80, 19684), (90, 24605)]:
             UCRRate.objects.create(
                 procedure_code="99213",
@@ -96,9 +93,7 @@ class _UCRRestBase(APITestCase):
 
 class SetBillingInfoTests(_UCRRestBase):
     def test_writes_fields_and_dispatches(self):
-        with patch(
-            "fighthealthinsurance.rest_views._dispatch_ucr_refresh"
-        ) as dispatch:
+        with patch("fighthealthinsurance.rest_views._dispatch_ucr_refresh") as dispatch:
             response = self.client.post(
                 reverse("denials-set-billing-info"),
                 data={
@@ -195,9 +190,7 @@ class RefreshUCRTests(_UCRRestBase):
         self.denial.refresh_from_db()
         self.assertIsNotNone(self.denial.ucr_refreshed_at)
 
-        with patch(
-            "fighthealthinsurance.rest_views._dispatch_ucr_refresh"
-        ) as dispatch:
+        with patch("fighthealthinsurance.rest_views._dispatch_ucr_refresh") as dispatch:
             response = self.client.post(
                 reverse("denials-refresh-ucr"),
                 data={"denial_id": self.denial.denial_id},
@@ -212,9 +205,7 @@ class RefreshUCRTests(_UCRRestBase):
 
 class UCRPublicLookupTests(APITestCase):
     def setUp(self):
-        self.area = UCRGeographicArea.objects.create(
-            kind=UCRAreaKind.ZIP3, code="941"
-        )
+        self.area = UCRGeographicArea.objects.create(kind=UCRAreaKind.ZIP3, code="941")
         for percentile, amount in [(50, 14763), (80, 19684), (90, 24605)]:
             UCRRate.objects.create(
                 procedure_code="99213",

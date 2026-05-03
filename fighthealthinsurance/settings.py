@@ -104,16 +104,6 @@ class Base(Configuration):
     DEFF_SALT = os.getenv("DEFF_SALT", "base-salt")
     DEFF_PASSWORD = os.getenv("DEFF_PASSWORD", "base-password")
 
-    # Fernet key for encrypted_model_fields (UCR billing fields, etc.).
-    # 44-char urlsafe-base64-encoded 32-byte key. Generate with:
-    #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-    # Production must set this via env; the in-code default is a stable
-    # placeholder so dev/test runs without env vars don't crash on import.
-    FIELD_ENCRYPTION_KEY = os.getenv(
-        "FIELD_ENCRYPTION_KEY",
-        "qiVAlnXgWGxcaCtdCJsDoFiyf3uZZbsrVH4omLSIZpc=",
-    )
-
     # UCR (Usual & Customary Rate) settings — see UCR-OON-Reimbursement-Plan.md §10.4.
     UCR_SOURCE_REFRESH_INTERVAL_HOURS = int(
         os.getenv("UCR_SOURCE_REFRESH_INTERVAL_HOURS", "24")

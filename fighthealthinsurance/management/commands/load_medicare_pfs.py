@@ -142,15 +142,9 @@ async def _fetch_inputs(
     locality_url: Optional[str],
 ) -> tuple[str, str]:
     """Read both inputs concurrently. URLs win over file paths if both are set."""
-    rvu_task = (
-        _fetch_url(rvu_url)
-        if rvu_url
-        else _fetch_path(rvu_file)
-    )
+    rvu_task = _fetch_url(rvu_url) if rvu_url else _fetch_path(rvu_file)
     locality_task = (
-        _fetch_url(locality_url)
-        if locality_url
-        else _fetch_path(locality_file)
+        _fetch_url(locality_url) if locality_url else _fetch_path(locality_file)
     )
     rvu_csv, locality_csv = await asyncio.gather(rvu_task, locality_task)
     return rvu_csv, locality_csv
@@ -311,10 +305,7 @@ def _upsert_one(
             metadata=metadata,
         )
         return True
-    if (
-        existing.amount_cents == amount_cents
-        and existing.metadata == metadata
-    ):
+    if existing.amount_cents == amount_cents and existing.metadata == metadata:
         return False
     existing.amount_cents = amount_cents
     existing.metadata = metadata

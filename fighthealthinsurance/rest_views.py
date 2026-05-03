@@ -579,9 +579,7 @@ class UCRPublicLookupView(APIView):
             kind=UCRAreaKind.ZIP3, code=zip3
         ).first()
         if area is None:
-            area = UCRGeographicArea.objects.filter(
-                kind=UCRAreaKind.NATIONAL
-            ).first()
+            area = UCRGeographicArea.objects.filter(kind=UCRAreaKind.NATIONAL).first()
         if area is None:
             return Response(
                 {"cpt": cpt, "area_kind": "", "area_code": "", "rates": []},
@@ -605,9 +603,7 @@ class UCRPublicLookupView(APIView):
                     "amount_cents": r.amount_cents,
                     "source": r.source,
                     "effective_date": r.effective_date.isoformat(),
-                    "is_derived": bool(
-                        r.metadata and r.metadata.get("derived_from")
-                    ),
+                    "is_derived": bool(r.metadata and r.metadata.get("derived_from")),
                 }
                 for r in rates
             ],

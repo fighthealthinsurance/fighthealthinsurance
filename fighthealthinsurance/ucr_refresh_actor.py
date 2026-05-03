@@ -16,7 +16,6 @@ from asgiref.sync import sync_to_async
 
 from fighthealthinsurance.utils import get_env_variable
 
-
 name = "UCRRefreshActor"
 
 
@@ -79,9 +78,7 @@ class UCRRefreshActor:
         try:
             denial = await sync_to_async(Denial.objects.get)(id=denial_id)
         except Denial.DoesNotExist:
-            self._logger.warning(
-                "UCR refresh_denial: denial {} not found", denial_id
-            )
+            self._logger.warning("UCR refresh_denial: denial {} not found", denial_id)
             return False
 
         result = await sync_to_async(UCREnrichmentHelper.maybe_enrich)(
@@ -243,8 +240,7 @@ class UCRRefreshActor:
             lambda: list(
                 Denial.objects.filter(appeal_result__isnull=True)
                 .filter(
-                    Q(ucr_refreshed_at__isnull=True)
-                    | Q(ucr_refreshed_at__lt=cutoff)
+                    Q(ucr_refreshed_at__isnull=True) | Q(ucr_refreshed_at__lt=cutoff)
                 )
                 .order_by("id")[:batch_size]
             )

@@ -90,9 +90,7 @@ class TestUCRRefreshActorDenialBatch(TestCase):
     """Exercise the denial-refresh loop body without Ray."""
 
     def setUp(self):
-        self.area = UCRGeographicArea.objects.create(
-            kind=UCRAreaKind.ZIP3, code="941"
-        )
+        self.area = UCRGeographicArea.objects.create(kind=UCRAreaKind.ZIP3, code="941")
         for percentile, amount in [(50, 14763), (80, 19684), (90, 24605)]:
             UCRRate.objects.create(
                 procedure_code="99213",

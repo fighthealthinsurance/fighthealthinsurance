@@ -16,7 +16,6 @@ from django.test import TestCase, override_settings
 from fighthealthinsurance.models import UCRGeographicArea, UCRRate
 from fighthealthinsurance.ucr_constants import UCRAreaKind, UCRSource
 
-
 _RVU_HEADER = "hcpcs,locality,allowed_cents\n"
 _LOCALITY_HEADER = "locality,description\n"
 
@@ -127,9 +126,7 @@ class LoadMedicarePFSTests(TestCase):
 
         # 99213 wrote (1+3) rows; 99214 was skipped entirely.
         self.assertEqual(UCRRate.objects.count(), 4)
-        self.assertFalse(
-            UCRRate.objects.filter(procedure_code="99214").exists()
-        )
+        self.assertFalse(UCRRate.objects.filter(procedure_code="99214").exists())
 
     def test_dry_run_writes_nothing(self):
         self._write_inputs(
@@ -141,9 +138,7 @@ class LoadMedicarePFSTests(TestCase):
         self.assertEqual(UCRRate.objects.count(), 0)
         self.assertEqual(UCRGeographicArea.objects.count(), 0)
 
-    @override_settings(
-        UCR_MEDICARE_PERCENTILE_MULTIPLIERS={50: 1.0, 80: 1.0, 90: 1.0}
-    )
+    @override_settings(UCR_MEDICARE_PERCENTILE_MULTIPLIERS={50: 1.0, 80: 1.0, 90: 1.0})
     def test_multipliers_pluck_from_settings(self):
         self._write_inputs(
             rvu="99213,5,9842\n",

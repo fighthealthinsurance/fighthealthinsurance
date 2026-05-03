@@ -2,9 +2,10 @@
 # Format matches Django 5.2.9 auto-generated output.
 
 import django.db.models.deletion
-import encrypted_model_fields.fields
 from django.db import migrations, models
 from django.db.models.functions import Now
+
+import fighthealthinsurance.encrypted_amount_field
 
 
 class Migration(migrations.Migration):
@@ -188,29 +189,29 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name="denial",
             name="procedure_modifier",
-            field=encrypted_model_fields.fields.EncryptedCharField(
-                blank=True, default="", max_length=64
+            field=fighthealthinsurance.encrypted_amount_field.EncryptedAmountField(
+                blank=True, default="", max_length=512
             ),
         ),
         migrations.AddField(
             model_name="denial",
             name="billed_amount_cents",
-            field=encrypted_model_fields.fields.EncryptedCharField(
-                blank=True, default="", max_length=64
+            field=fighthealthinsurance.encrypted_amount_field.EncryptedAmountField(
+                blank=True, default="", max_length=512
             ),
         ),
         migrations.AddField(
             model_name="denial",
             name="allowed_amount_cents",
-            field=encrypted_model_fields.fields.EncryptedCharField(
-                blank=True, default="", max_length=64
+            field=fighthealthinsurance.encrypted_amount_field.EncryptedAmountField(
+                blank=True, default="", max_length=512
             ),
         ),
         migrations.AddField(
             model_name="denial",
             name="paid_amount_cents",
-            field=encrypted_model_fields.fields.EncryptedCharField(
-                blank=True, default="", max_length=64
+            field=fighthealthinsurance.encrypted_amount_field.EncryptedAmountField(
+                blank=True, default="", max_length=512
             ),
         ),
         migrations.AddField(

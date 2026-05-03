@@ -35,9 +35,7 @@ class UCRGeographicAreaTests(TestCase):
 
 class UCRRateTests(TestCase):
     def setUp(self):
-        self.area = UCRGeographicArea.objects.create(
-            kind=UCRAreaKind.ZIP3, code="941"
-        )
+        self.area = UCRGeographicArea.objects.create(kind=UCRAreaKind.ZIP3, code="941")
 
     def test_unique_composite_key(self):
         UCRRate.objects.create(
@@ -126,9 +124,7 @@ class DenialEncryptedBillingTests(TestCase):
 class DenialLatestUCRLookupTests(TestCase):
     def setUp(self):
         self.denial = Denial.objects.create(hashed_email="hash:test@example.com")
-        self.area = UCRGeographicArea.objects.create(
-            kind=UCRAreaKind.ZIP3, code="941"
-        )
+        self.area = UCRGeographicArea.objects.create(kind=UCRAreaKind.ZIP3, code="941")
 
     def _make_lookup(self) -> UCRLookup:
         return UCRLookup.objects.create(
