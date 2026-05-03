@@ -265,6 +265,27 @@ class TestDenialTypes(TestCase):
         assert len(result) == 1
         assert result[0].name == "Preventive Care"
 
+
+
+    @pytest.mark.asyncio
+    async def test_find_uspstf_evidence_extracts_cpt_and_hcpcs_codes(self):
+        """find_uspstf_evidence should pass non-ICD procedure codes through
+        to USPSTF lookup so CPT/HCPCS-only denials still surface guidance."""
+        processor = await sync_to_async(ProcessDenialCodes)()
+        fake_recs = [{"id": "rec-1", "grade": "B"}]
+
+        with patch(
+            "fighthealthinsurance.uspstf_api.find_recommendations_for_codes",
+            return_value=fake_recs,
+        ) as mock_lookup:
+            result = processor.find_uspstf_evidence(
+                "Denied services include CPT 99396 and HCPCS G0439."
+            )
+
+        assert result == fake_recs
+        (codes_arg,) = mock_lookup.call_args.args
+        assert {"99396", "G0439"}.issubset(set(codes_arg))
+
     @pytest.mark.asyncio
     async def test_find_uspstf_evidence_returns_empty_on_error(self):
         """find_uspstf_evidence swallows exceptions so classification never breaks."""
