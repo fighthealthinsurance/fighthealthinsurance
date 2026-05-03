@@ -175,6 +175,22 @@ def _score_chunk(chunk_text: str, search_terms: List[str]) -> float:
     return score / len(search_terms)
 
 
+def _summary_preview_for_document(doc: ChatDocument, max_chars: int = 200) -> str:
+    """Return stable summary preview text, with explicit status fallback."""
+    if doc.summary:
+        return doc.summary[:max_chars]
+
+    status_label = dict(ChatDocument.Status.choices).get(
+        doc.processing_status, doc.processing_status
+    )
+    return f"({status_label})"
+
+
+def _is_document_processing_complete(doc: ChatDocument) -> bool:
+    """Return True once chunk summaries are expected to exist for searching."""
+    return doc.processing_status == ChatDocument.Status.COMPLETED
+
+
 def _format_chunk_text(chunk: Dict, full_text: str) -> str:
     """Return the text for a chunk, reconstructing from offsets if needed."""
     text = chunk.get("text")
@@ -206,9 +222,7 @@ async def get_document_context_for_message(
     scored_chunks: List[Dict] = []
 
     async for doc in documents.aiterator():
-        summary_preview = (
-            doc.summary[:200] if doc.summary else f"({doc.processing_status})"
-        )
+        summary_preview = _summary_preview_for_document(doc)
         summary_entries.append(
             f"- {doc.document_name} ({doc.char_count:,} chars, {doc.processing_status}): {summary_preview}"
         )
@@ -216,7 +230,7 @@ async def get_document_context_for_message(
         if not search_terms:
             continue
 
-        if not doc.chunk_summaries:
+        if not doc.chunk_summaries and not _is_document_processing_complete(doc):
             # Documents still being processed: score and return a preview of
             # the same text so the LLM sees the content we found matches in.
             sample = doc.full_text[:max_chars]

@@ -1895,6 +1895,15 @@ class CompletePaymentView(View):
         data = json.loads(request.body)
         return self.process_payment(data)
 
+    @staticmethod
+    def _json_error_response(error: str, status_code: int) -> HttpResponse:
+        """Return a standardized JSON error response for payment completion."""
+        return HttpResponse(
+            json.dumps({"error": error}),
+            status=status_code,
+            content_type="application/json",
+        )
+
     def process_payment(self, data):
         token = data.get("token")
         session_id = data.get("session_id")
@@ -1917,18 +1926,10 @@ class CompletePaymentView(View):
                     legacy_id is None
                     or not 0 < legacy_id < self.LEGACY_SESSION_ID_CUTOFF
                 ):
-                    return HttpResponse(
-                        json.dumps({"error": "Invalid or expired link"}),
-                        status=400,
-                        content_type="application/json",
-                    )
+                    return self._json_error_response("Invalid or expired link", 400)
                 lost_session = models.LostStripeSession.objects.get(id=legacy_id)
             else:
-                return HttpResponse(
-                    json.dumps({"error": "Missing token"}),
-                    status=400,
-                    content_type="application/json",
-                )
+                return self._json_error_response("Missing token", 400)
             continue_url = lost_session.success_url
             cancel_url = lost_session.cancel_url
             payment_type = lost_session.payment_type
@@ -1939,11 +1940,7 @@ class CompletePaymentView(View):
                 line_items_json = metadata.get("line_items")
                 if not line_items_json:
                     logger.error(f"No recover info found in metadata {metadata}")
-                    return HttpResponse(
-                        json.dumps({"error": "No recover info found in metadata"}),
-                        status=400,
-                        content_type="application/json",
-                    )
+                    return self._json_error_response("No recover info found in metadata", 400)
                 line_items = json.loads(line_items_json)
             else:
                 line_items = StripeRecoveryInfo.objects.get(id=recovery_info_id).items
@@ -1962,18 +1959,10 @@ class CompletePaymentView(View):
                 content_type="application/json",
             )
         except models.LostStripeSession.DoesNotExist:
-            return HttpResponse(
-                json.dumps({"error": "Session not found"}),
-                status=400,
-                content_type="application/json",
-            )
+            return self._json_error_response("Session not found", 400)
         except Exception as e:
             logger.opt(exception=e).error("Error in finishing payment")
-            return HttpResponse(
-                json.dumps({"error": "An internal error occurred"}),
-                status=500,
-                content_type="application/json",
-            )
+            return self._json_error_response("An internal error occurred", 500)
 
 
 @ensure_csrf_cookie
