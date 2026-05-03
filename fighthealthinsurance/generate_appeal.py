@@ -1453,8 +1453,9 @@ class AppealGenerator(object):
             is_tpa = denial.insurance_company_obj.is_tpa
 
         ucr_narrative = None
-        if isinstance(denial.ucr_context, dict):
-            ucr_narrative = denial.ucr_context.get("narrative") or None
+        ucr_ctx = getattr(denial, "ucr_context", None)
+        if isinstance(ucr_ctx, dict):
+            ucr_narrative = ucr_ctx.get("narrative") or None
 
         open_prompt = self.make_open_prompt(
             denial_text=denial.denial_text,
