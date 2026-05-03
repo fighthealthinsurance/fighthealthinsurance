@@ -14,7 +14,7 @@ import time
 
 import pytest
 import ray
-from django.test import TestCase
+from django.test import TransactionTestCase
 from loguru import logger
 
 from fighthealthinsurance.models import (
@@ -30,7 +30,7 @@ from fighthealthinsurance.ucr_refresh_actor import (
 
 
 @pytest.mark.django_db
-class TestUCRRefreshActorRayLifecycle(TestCase):
+class TestUCRRefreshActorRayLifecycle(TransactionTestCase):
     fixtures = ["fighthealthinsurance/fixtures/initial.yaml"]
 
     def setUp(self):
@@ -84,7 +84,7 @@ class TestUCRRefreshActorRayLifecycle(TestCase):
         self.assertTrue(loop_executed, "run() loop body should have executed")
 
 
-class TestUCRRefreshControllerDenialBatch(TestCase):
+class TestUCRRefreshControllerDenialBatch(TransactionTestCase):
     """Exercise the denial-refresh loop body via UCRRefreshController.
 
     Direct call avoids the Ray bootstrap; we just want to test the math.
