@@ -2383,6 +2383,28 @@ class AppealsBackendHelper:
                 f"{algorithmic_detection.debug_reason}"
             )
 
+        # Specialized denial-type templates (e.g., MentalHealthParityAppeal)
+        # surface a fully-formed letter as a static appeal AND seed a
+        # citation hint for the highest-quality internal model.
+        specialized_templates = detect_specialized_templates(
+            denial.denial_text,
+            denial.procedure,
+            denial.diagnosis,
+        )
+        if specialized_templates:
+            logger.info(
+                "Specialized denial-type templates matched for denial "
+                f"{denial.denial_id}: "
+                f"{[t.name for t in specialized_templates]}"
+            )
+            for t in specialized_templates:
+                try:
+                    non_ai_appeals.append(t.static_appeal())
+                except Exception as e:
+                    logger.opt(exception=True).warning(
+                        f"Failed to render specialized template {t.name}: {e}"
+                    )
+
         insurance_company = denial.insurance_company or "insurance company;"
         claim_id = denial.claim_id or "YOURCLAIMIDGOESHERE"
         prefaces = []
@@ -2774,6 +2796,7 @@ class AppealsBackendHelper:
             plan_context=model_plan_context,
             rag_context=rag_context,
             nice_context=nice_context,
+            specialized_templates=specialized_templates,
         )
         # Only filters out None
         filtered_appeals: Iterator[str] = filter(lambda x: x != None, appeals)

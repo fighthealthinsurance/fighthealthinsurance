@@ -1,4 +1,5 @@
 import asyncio
+import datetime
 import json
 import typing
 from typing import Optional
@@ -29,6 +30,10 @@ from stopit import ThreadingTimeout as Timeout
 from fhi_users.auth import auth_utils
 from fhi_users.models import PatientUser, ProfessionalUser, UserDomain
 from fighthealthinsurance import common_view_logic, rest_serializers as serializers
+from fighthealthinsurance.external_review import (
+    generate_external_review_packet,
+    schedule_external_review_followups,
+)
 from fighthealthinsurance.helpers.fax_helpers import SendFaxHelper
 from fighthealthinsurance.ml.health_status import health_status
 from fighthealthinsurance.ml.ml_router import ml_router
@@ -59,7 +64,7 @@ from fighthealthinsurance.rest_mixins import (
 from fighthealthinsurance.type_utils import User
 
 from .common_view_logic import AppealAssemblyHelper
-from .utils import is_convertible_to_int
+from .utils import is_convertible_to_int, is_valid_denial_id
 
 appeal_assembly_helper = AppealAssemblyHelper()
 pubmed_tools = PubMedTools()
@@ -291,6 +296,7 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
         serializer.is_valid(raise_exception=True)
         serializer_data = serializer.validated_data
         logger.debug(f"Using data {serializer_data}")
+        session_key = request.session.session_key or "no_session_key"
         if (
             "primary_professional" in serializer_data
             and serializer_data["primary_professional"] is not None
@@ -303,14 +309,19 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
         denial: Optional[Denial] = None
         if "denial_id" in serializer_data:
             denial_id = serializer_data.pop("denial_id")
-            if denial_id and is_convertible_to_int(denial_id):
+            if denial_id and is_valid_denial_id(denial_id):
                 logger.debug(f"Looking up existing denial {denial_id}")
                 denial_id = int(denial_id)
                 denial = Denial.filter_to_allowed_denials(current_user).get(
                     denial_id=denial_id
                 )
             elif denial_id and denial_id != "":
-                logger.debug(f"Unexpected format of denial id {denial_id}")
+                logger.warning(
+                    "Invalid denial_id format during denial create/update. "
+                    f"user_id={current_user.id} session_key={session_key} "
+                    f"remote_ip={request.META.get('REMOTE_ADDR', 'unknown')} "
+                    f"denial_id={denial_id}"
+                )
             else:
                 # Denial ID provided but is None
                 pass
@@ -370,6 +381,14 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
                 pending=True,
             )
             denial_response_info.appeal_id = appeal.id
+        if not is_valid_denial_id(denial_response_info.denial_id):
+            logger.error(
+                "Invalid denial_id in denial create response. "
+                f"user_id={current_user.id} session_key={session_key} "
+                f"denial_uuid={denial_response_info.uuid} "
+                f"denial_id={denial_response_info.denial_id}"
+            )
+            raise ValidationError("Invalid denial_id generated while creating denial")
         return Response(
             serializers.DenialResponseInfoSerializer(
                 instance=denial_response_info
@@ -510,13 +529,67 @@ class ReportClientError(APIView):
 
         # Sanitize inputs: truncate and strip CR/LF to prevent log injection
         denial_id = _sanitize(str(request.data.get("denial_id", "unknown")), 200)
+        denial_id_raw = _sanitize(str(request.data.get("denial_id_raw", "")), 200)
         error_message = _sanitize(str(request.data.get("error", "unknown error")), 500)
         browser_info = _sanitize(str(request.data.get("browser_info", "")), 500)
+        session_key = request.session.session_key or "no_session_key"
+        denial_id_valid = is_valid_denial_id(denial_id)
         logger.error(
             f"Client-reported appeal error for denial {denial_id}: "
-            f"{error_message} | browser: {browser_info}"
+            f"{error_message} | browser: {browser_info} | "
+            f"session_key={session_key} | remote_ip={request.META.get('REMOTE_ADDR', 'unknown')} | "
+            f"denial_id_valid={denial_id_valid} | denial_id_raw={denial_id_raw}"
         )
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class ExternalReviewWizardView(APIView):
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def post(self, request: Request) -> Response:
+        denial_id = request.data.get("denial_id")
+        email = request.data.get("email")
+        semi_sekret = request.data.get("semi_sekret")
+        if not denial_id or not email or not semi_sekret:
+            return Response(
+                {"error": "denial_id, email, and semi_sekret required"}, status=400
+            )
+
+        hashed_email = Denial.get_hashed_email(email)
+        denial = get_object_or_404(
+            Denial,
+            denial_id=denial_id,
+            semi_sekret=semi_sekret,
+            hashed_email=hashed_email,
+        )
+        payload = {
+            "state": request.data.get("state"),
+            "plan_type": request.data.get("plan_type"),
+            "denial_type": request.data.get("denial_type"),
+            "appeal_denial_date": request.data.get("appeal_denial_date"),
+            "urgent": request.data.get("urgent"),
+        }
+        packet = generate_external_review_packet(denial, payload)
+
+        deadline_date = timezone.now().date() + datetime.timedelta(days=120)
+        schedule_external_review_followups(denial, email, deadline_date)
+
+        return Response(
+            {
+                "wizard": {
+                    "steps": [
+                        "upload final internal denial",
+                        "confirm state",
+                        "confirm plan type",
+                        "confirm urgent medical risk",
+                        "collect provider letter/supporting docs",
+                        "generate checklist and cover letter",
+                    ]
+                },
+                "packet": packet,
+            }
+        )
 
 
 class Ping(APIView):

@@ -60,6 +60,11 @@ urlpatterns = [
     ),
     path("check_storage", rest_views.CheckStorage.as_view(), name="check_storage"),
     path(
+        "external_review_wizard",
+        rest_views.ExternalReviewWizardView.as_view(),
+        name="external_review_wizard",
+    ),
+    path(
         "check_ml_backend", rest_views.CheckMlBackend.as_view(), name="check_ml_backend"
     ),
     path(

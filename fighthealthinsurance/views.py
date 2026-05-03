@@ -47,7 +47,7 @@ from fighthealthinsurance.models import (
     StripeRecoveryInfo,
 )
 from fighthealthinsurance.type_utils import User
-from fighthealthinsurance.utils import send_fallback_email
+from fighthealthinsurance.utils import is_valid_denial_id, send_fallback_email
 
 
 def _handle_mailing_list_subscribe(form: forms.Form, source_page: str) -> None:
@@ -1491,8 +1491,17 @@ class InitialProcessView(generic.FormView):
 
         # Store the denial ID in the session to maintain state across the multi-step form process
         # This allows the SessionRequiredMixin to verify the user is working with a valid denial
+        if not is_valid_denial_id(denial_response.denial_id):
+            logger.error(
+                "Invalid denial_id generated in form workflow. "
+                f"session_key={self.request.session.session_key or 'no_session_key'} "
+                f"remote_ip={self.request.META.get('REMOTE_ADDR', 'unknown')} "
+                f"denial_uuid={denial_response.uuid} denial_id={denial_response.denial_id}"
+            )
+            raise ValueError("Invalid denial ID generated")
+
         self.request.session["denial_uuid"] = str(denial_response.uuid)
-        self.request.session["denial_id"] = denial_response.denial_id
+        self.request.session["denial_id"] = int(denial_response.denial_id)
 
         # Store microsite data in session for prefilling later in the flow
         default_procedure = self.request.POST.get(
@@ -1588,6 +1597,14 @@ class SessionRequiredMixin(View):
             semi_sekret = self.request.POST.get("semi_sekret")
 
         if denial_id and email and semi_sekret:
+            if not is_valid_denial_id(denial_id):
+                logger.warning(
+                    "Invalid denial_id format in request context resolution. "
+                    f"session_key={self.request.session.session_key or 'no_session_key'} "
+                    f"remote_ip={self.request.META.get('REMOTE_ADDR', 'unknown')} "
+                    f"denial_id={denial_id}"
+                )
+                return {}
             # Validate the denial exists and semi_sekret matches
             try:
                 denial = models.Denial.objects.get(
@@ -1608,7 +1625,12 @@ class SessionRequiredMixin(View):
                     "semi_sekret": semi_sekret,
                 }
             except models.Denial.DoesNotExist:
-                logger.warning(f"Invalid denial lookup: {denial_id}")
+                logger.warning(
+                    "Invalid denial lookup for provided denial reference. "
+                    f"session_key={self.request.session.session_key or 'no_session_key'} "
+                    f"remote_ip={self.request.META.get('REMOTE_ADDR', 'unknown')} "
+                    f"denial_id={denial_id}"
+                )
 
         return {}
 
@@ -2040,6 +2062,8 @@ def chat_interface_view(request):
         "medicare": medicare,
         "microsite_slug": microsite_slug,
         "initial_message": initial_message,
+        "enable_voice_intake": getattr(settings, "ENABLE_VOICE_INTAKE", False),
+        "enable_local_stt": getattr(settings, "ENABLE_LOCAL_STT", True),
     }
     logger.debug(
         f"Rendering chat interface: microsite_slug={microsite_slug}, has_default_procedure={bool(default_procedure)}, has_default_condition={bool(default_condition)}, medicare={medicare}, has_initial_message={bool(initial_message)}"
