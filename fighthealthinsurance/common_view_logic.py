@@ -41,6 +41,10 @@ from fhi_users import emails as fhi_emails
 from fhi_users.audit import TrackingInfo
 from fhi_users.models import ProfessionalUser, UserDomain
 from fighthealthinsurance import stripe_utils
+from fighthealthinsurance.denials.algorithmic_review_detector import (
+    detect_algorithmic_review_terms,
+    render_template_blocks,
+)
 from fighthealthinsurance.fax_actor_ref import fax_actor_ref
 from fighthealthinsurance.ml.bad_output_utils import strip_boilerplate_service
 from fighthealthinsurance.form_utils import *
@@ -2139,6 +2143,21 @@ class AppealsBackendHelper:
                 ),
             )
         )
+
+        algorithmic_detection = detect_algorithmic_review_terms(
+            denial.denial_text or ""
+        )
+        if algorithmic_detection.matched and algorithmic_detection.confidence in {
+            "medium",
+            "high",
+        }:
+            non_ai_appeals.extend(
+                render_template_blocks(algorithmic_detection.suggested_template_blocks)
+            )
+            logger.info(
+                f"Algorithmic-review detection matched for denial {denial.denial_id}: "
+                f"{algorithmic_detection.debug_reason}"
+            )
 
         insurance_company = denial.insurance_company or "insurance company;"
         claim_id = denial.claim_id or "YOURCLAIMIDGOESHERE"
