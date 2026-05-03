@@ -18,15 +18,8 @@
     regex: (anthem|elevance\s*health)(?!.*empire)
     negative_regex: empire
     website: https://www.anthem.com
-    member_services_url: https://www.anthem.com/ca/individual-and-family/complaints-grievances
-    appeals_info_url: https://www.anthem.com/ca/individual-and-family/complaints-grievances
-    appeal_address: |
-      Anthem Blue Cross
-      Grievances and Appeals
-      P.O. Box 4310
-      Woodland Hills, CA 91365-4310
-    appeal_phone_number: 800-365-0609
-    notes: Major national health insurance company (parent company now branded as Elevance Health). Has state-specific brands. Default address is California; verify for your state.
+    member_services_url: https://www.anthem.com/contact-us
+    notes: Major national health insurance company (parent company now branded as Elevance Health). Routing is state-specific - the regional InsuranceCompany / InsurancePlan records hold per-state appeal addresses (e.g. Anthem Blue Cross California pk 9, Empire BlueCross BlueShield pk 10). Members should check the address printed on their EOB / member ID card.
 
 - model: fighthealthinsurance.insurancecompany
   pk: 2
@@ -41,15 +34,8 @@
     regex: united\s*health(?:\s*care|\s*group)?|uhc(?!\w)
     website: https://www.uhc.com
     member_services_url: https://www.uhc.com/contact-us
-    appeals_info_url: https://member.uhc.com/myuhc/content/campaigns/myuhc-2-0/medical-appeals-grievances/address-rights-information/empire-custom-address/jcr:content/par.html
-    appeal_address: |
-      UnitedHealthcare
-      Attn: Appeals
-      P.O. Box 1600
-      Kingston, NY 12402-1600
-    appeal_fax_number: 845-336-7989
     appeals_portal_url: https://memberforms.uhc.com/Memberappealsandgrievances.html
-    notes: One of the largest health insurance providers in the U.S. Part of UnitedHealth Group. Default routing is the commercial plan address; Medicare/Medicaid plans use different addresses.
+    notes: One of the largest health insurance providers in the U.S. Part of UnitedHealth Group. UHC routes appeals per-plan rather than to a single national address - members should use the address/fax printed on their EOB or member ID card. Use the online appeals portal (appeals_portal_url) when in doubt.
 
 - model: fighthealthinsurance.insurancecompany
   pk: 3
@@ -120,15 +106,8 @@
     regex: kaiser\s*permanente|kaiser(?!\s*foundation)
     website: https://www.kp.org
     member_services_url: https://healthy.kaiserpermanente.org/
-    appeals_info_url: https://healthy.kaiserpermanente.org/content/dam/kporg/final/documents/community-providers/scal/ever/member-grievance-appeal-form-non-medicare.pdf
-    appeal_address: |
-      Kaiser Foundation Health Plan, Inc.
-      Attention: Health Plan Clinical Review Special Services
-      P.O. Box 7136
-      Pasadena, CA 91109-7136
-    appeal_fax_number: 626-405-3039
     appeal_phone_number: 800-788-0710
-    notes: Integrated managed care consortium operating in multiple states. Default address is Southern California; Mid-Atlantic uses Atlanta GA address with fax 404-949-5001.
+    notes: Integrated managed care consortium operating in multiple regions. Appeal routing is region-specific (Southern California / Northern California / Mid-Atlantic / Northwest / Hawaii / Colorado / Washington / Georgia each have their own address and fax). Members should use the contact info on their EOB or member ID card.
 
 - model: fighthealthinsurance.insurancecompany
   pk: 7
@@ -139,14 +118,7 @@
     regex: molina\s*health
     website: https://www.molinahealthcare.com
     member_services_url: https://www.molinahealthcare.com/members/common/en-US/contact-us.aspx
-    appeals_info_url: https://www.molinamarketplace.com/marketplace/il/en-us/Members/Members%20Resources/gna
-    appeal_address: |
-      Molina Healthcare
-      Attn: Member Appeals and Grievances
-      P.O. Box 182273
-      Chattanooga, TN 37422
-    appeal_fax_number: 855-502-5128
-    notes: Specializes in government-sponsored healthcare programs (Medicaid, Medicare). Address is Marketplace default; state Medicaid plans have state-specific routing (see InsurancePlan entries).
+    notes: Specializes in government-sponsored healthcare programs (Medicaid, Medicare). Routing is state-specific (Marketplace and Medicaid both use per-state addresses); see the per-state InsurancePlan entries or the address printed on the member's EOB / ID card.
 
 - model: fighthealthinsurance.insurancecompany
   pk: 8
@@ -205,15 +177,8 @@
     parent_company: 1
     website: https://www.empireblue.com
     member_services_url: https://www.empireblue.com/
-    appeals_info_url: https://mss.empireblue.com/ny/nyny_caid_changesappealsprocess.pdf
-    appeal_address: |
-      Medical Appeals
-      Empire BlueCross BlueShield HealthPlus
-      P.O. Box 62429
-      Virginia Beach, VA 23466-2429
-    appeal_fax_number: 866-495-8716
     appeal_phone_number: 800-300-8181
-    notes: Anthem's New York regional brand (Empire)
+    notes: Anthem's New York regional brand (Empire). Routing differs by product line (commercial vs HealthPlus / Medicaid); the HealthPlus Medicaid appeals address is P.O. Box 62429, Virginia Beach, VA 23466-2429 with fax 866-495-8716. Members should check the address printed on their EOB / member ID card.
 
 - model: fighthealthinsurance.insurancecompany
   pk: 11
@@ -256,7 +221,6 @@
     regex: highmark
     website: https://www.highmark.com
     member_services_url: https://www.highmark.com/contact
-    appeals_info_url: https://providers.highmark.com/resources-and-education/highmark-provider-manual/chapter-5-care-and-quality-management/unit-5-denials-adverse-benefit-determinations-grievances-and-app.html
     appeal_address: |
       Highmark Health Options
       Appeals and Grievances
@@ -264,7 +228,7 @@
       Pittsburgh, PA 15230
     appeal_fax_number: 833-841-8074
     appeal_phone_number: 855-325-6251
-    notes: Regional BCBS for PA, WV, DE, and western NY. Parent of Allegheny Health Network. Default address shown is Health Options (Medicaid); commercial PA Highmark uses different routing.
+    notes: Regional BCBS for PA, WV, DE, and western NY. Parent of Allegheny Health Network. Default address shown is Health Options (Medicaid); commercial PA Highmark uses different routing - members should check the address printed on their EOB / member ID card.
 
 - model: fighthealthinsurance.insurancecompany
   pk: 14
@@ -399,14 +363,13 @@
     regex: oscar\s*(?:health|insurance)?
     website: https://www.hioscar.com
     member_services_url: https://www.hioscar.com/help
-    appeals_info_url: https://assets.ctfassets.net/plyq12u1bv8a/4kBOcEmiBBodc9SRBooc7t/2ab3e900b460850fdca82ecee9e15263/Member_Grievance_and_Appeal_Non_Clinical_TN_GA.pdf
     appeal_address: |
       Oscar Insurance Company
       P.O. Box 52146
       Phoenix, AZ 85072-2146
     appeal_fax_number: 888-977-2062
     appeal_phone_number: 855-672-2755
-    notes: Technology-focused health insurance company, primarily individual and small group markets
+    notes: Technology-focused health insurance company, primarily individual and small group markets. The Phoenix, AZ PO Box and 888 fax are Oscar's central appeals routing per the member service page; per-state grievance forms are linked from hioscar.com/help.
     is_marketplace_focused: true
 
 - model: fighthealthinsurance.insurancecompany
@@ -419,8 +382,7 @@
     parent_company: 8
     website: https://www.ambetterhealth.com
     member_services_url: https://www.ambetterhealth.com/help/contact.html
-    appeals_info_url: https://www.ambetterhealth.com/content/dam/centene/Sunshine/Ambetter/PDFs/AMB-TX-Appeals-Grievances-Guide.pdf
-    notes: Centene's ACA marketplace brand, available in many states. Routing varies by state subsidiary.
+    notes: Centene's ACA marketplace brand, available in many states. Routing is per state subsidiary - Ambetter members should check the address printed on their EOB or member ID card; Centene's state MCO records (Sunshine Health, Superior HealthPlan, etc.) hold the per-state routing.
     is_marketplace_focused: true
 
 - model: fighthealthinsurance.insurancecompany
@@ -1662,6 +1624,26 @@
     plan_source: 100
     regex: bcbs.*michigan.*medicare|michigan.*bcbs.*medicare
     notes: Blue Cross Blue Shield of Michigan Medicare Advantage
+
+# Plan-specific routing for UnitedHealthcare's NYS Empire Plan (a New York
+# State employee benefits program administered by UHC). Was previously
+# attached to the company-level UHC record by mistake; moved here so it
+# only fires for actual Empire Plan denials.
+- model: fighthealthinsurance.insuranceplan
+  pk: 54
+  fields:
+    insurance_company: 2
+    plan_name: NYS Empire Plan
+    state: NY
+    regex: empire\s*plan|nys\s*empire
+    appeals_info_url: https://member.uhc.com/myuhc/content/campaigns/myuhc-2-0/medical-appeals-grievances/address-rights-information/empire-custom-address/jcr:content/par.html
+    appeal_address: |
+      UnitedHealthcare
+      Attn: Appeals
+      P.O. Box 1600
+      Kingston, NY 12402-1600
+    appeal_fax_number: 845-336-7989
+    notes: UnitedHealthcare-administered NYS Empire Plan (state employee benefits program). Routing is specific to this plan and should not be used for other UHC commercial members.
 
 #######################################################################
 # ADDITIONAL REGIONAL HEALTH PLANS (from web research)

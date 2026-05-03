@@ -24,7 +24,7 @@ from urllib.parse import urlencode
 
 from django.core.files import File
 from django.core.validators import validate_email
-from django.db.models import QuerySet
+from django.db.models import Q, QuerySet
 from django.forms import Form
 from django.template.loader import render_to_string
 from django.urls import reverse
@@ -1594,12 +1594,15 @@ class DenialCreatorHelper:
                     f"Error matching structured insurance models: {e}"
                 )
 
-            # The text field gets the LLM extraction when present; otherwise,
-            # fall back to the matched company's canonical name so callers and
-            # the stored text field stay consistent (the method also returns
-            # this resolved name).
+            # When we have a structured match, use its canonical name so
+            # Denial.insurance_company stays in sync with insurance_company_obj.
+            # Downstream prompt/cover-sheet code reads the text field, so any
+            # divergence (e.g. LLM extracted "Anthem" but matched a regional
+            # brand "Empire BlueCross BlueShield") would address the appeal
+            # to the wrong carrier name. Fall back to the LLM extraction only
+            # when no structured match was found.
             resolved_name: Optional[str] = extracted_name
-            if not resolved_name and matched_company:
+            if matched_company:
                 resolved_name = matched_company.name
 
             update_fields: dict[str, Any] = {}
@@ -1615,24 +1618,15 @@ class DenialCreatorHelper:
             # Propagate the known appeal fax number from the matched plan/company
             # onto the denial only if the denial doesn't already have one. We
             # do NOT overwrite a fax number that came directly from the denial
-            # letter or plan documents. Re-read appeal_fax_number from the DB
-            # because extract_set_fax_number may have written it concurrently.
+            # letter or plan documents. Use a single conditional ``aupdate``
+            # so the read+write is atomic - extract_set_fax_number runs
+            # concurrently and could otherwise write between our read and
+            # write.
             propagated_fax = None
             if matched_plan and matched_plan.appeal_fax_number:
                 propagated_fax = matched_plan.appeal_fax_number
             elif matched_company and matched_company.appeal_fax_number:
                 propagated_fax = matched_company.appeal_fax_number
-            if propagated_fax:
-                current_fax = (
-                    await Denial.objects.filter(denial_id=denial_id)
-                    .values_list("appeal_fax_number", flat=True)
-                    .afirst()
-                )
-                if not current_fax:
-                    update_fields["appeal_fax_number"] = propagated_fax
-                    logger.debug(
-                        f"Propagated appeal_fax_number {propagated_fax} from carrier"
-                    )
 
             if update_fields:
                 await Denial.objects.filter(denial_id=denial_id).aupdate(
@@ -1641,6 +1635,18 @@ class DenialCreatorHelper:
                 logger.debug(
                     f"Successfully extracted insurance company: {resolved_name}"
                 )
+
+            if propagated_fax:
+                rows_updated = (
+                    await Denial.objects.filter(denial_id=denial_id)
+                    .filter(Q(appeal_fax_number__isnull=True) | Q(appeal_fax_number=""))
+                    .aupdate(appeal_fax_number=propagated_fax)
+                )
+                if rows_updated:
+                    logger.debug(
+                        f"Propagated appeal_fax_number {propagated_fax} from carrier"
+                    )
+
             return resolved_name
         except Exception as e:
             logger.opt(exception=True).warning(
@@ -1954,11 +1960,24 @@ class DenialCreatorHelper:
                         )
 
         if appeal_fax_number is not None:
-            await Denial.objects.filter(denial_id=denial_id).aupdate(
-                appeal_fax_number=appeal_fax_number
+            # Conditional update: only write if no fax has been set since
+            # we started (extract_set_insurance_company runs concurrently
+            # and may have propagated a fax onto the denial in the meantime).
+            rows_updated = (
+                await Denial.objects.filter(denial_id=denial_id)
+                .filter(Q(appeal_fax_number__isnull=True) | Q(appeal_fax_number=""))
+                .aupdate(appeal_fax_number=appeal_fax_number)
             )
-            logger.debug(f"Successfully extracted fax number: {appeal_fax_number}")
-            return appeal_fax_number
+            if rows_updated:
+                logger.debug(f"Successfully extracted fax number: {appeal_fax_number}")
+                return appeal_fax_number
+            # Another task wrote a fax in the meantime; return whatever's
+            # currently stored so the caller sees a consistent value.
+            return (
+                await Denial.objects.filter(denial_id=denial_id)
+                .values_list("appeal_fax_number", flat=True)
+                .afirst()
+            )
         return None
 
     @classmethod
