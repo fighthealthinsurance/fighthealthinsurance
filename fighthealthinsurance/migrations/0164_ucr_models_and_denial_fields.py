@@ -1,11 +1,9 @@
-# Hand-written migration for UCR feature (see UCR-OON-Reimbursement-Plan.md §4.3).
+# Hand-written migration for UCR feature.
 # Format matches Django 5.2.9 auto-generated output.
 
 import django.db.models.deletion
 from django.db import migrations, models
 from django.db.models.functions import Now
-
-import fighthealthinsurance.encrypted_amount_field
 
 
 class Migration(migrations.Migration):
@@ -142,21 +140,15 @@ class Migration(migrations.Migration):
                 ("rates_snapshot", models.JSONField()),
                 (
                     "billed_amount_cents",
-                    fighthealthinsurance.encrypted_amount_field.EncryptedAmountField(
-                        blank=True, default="", max_length=512
-                    ),
+                    models.PositiveBigIntegerField(blank=True, null=True),
                 ),
                 (
                     "allowed_amount_cents",
-                    fighthealthinsurance.encrypted_amount_field.EncryptedAmountField(
-                        blank=True, default="", max_length=512
-                    ),
+                    models.PositiveBigIntegerField(blank=True, null=True),
                 ),
                 (
                     "paid_amount_cents",
-                    fighthealthinsurance.encrypted_amount_field.EncryptedAmountField(
-                        blank=True, default="", max_length=512
-                    ),
+                    models.PositiveBigIntegerField(blank=True, null=True),
                 ),
                 ("created", models.DateTimeField(db_default=Now())),
                 (
@@ -207,23 +199,17 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name="denial",
             name="billed_amount_cents",
-            field=fighthealthinsurance.encrypted_amount_field.EncryptedAmountField(
-                blank=True, default="", max_length=512
-            ),
+            field=models.PositiveBigIntegerField(blank=True, null=True),
         ),
         migrations.AddField(
             model_name="denial",
             name="allowed_amount_cents",
-            field=fighthealthinsurance.encrypted_amount_field.EncryptedAmountField(
-                blank=True, default="", max_length=512
-            ),
+            field=models.PositiveBigIntegerField(blank=True, null=True),
         ),
         migrations.AddField(
             model_name="denial",
             name="paid_amount_cents",
-            field=fighthealthinsurance.encrypted_amount_field.EncryptedAmountField(
-                blank=True, default="", max_length=512
-            ),
+            field=models.PositiveBigIntegerField(blank=True, null=True),
         ),
         migrations.AddField(
             model_name="denial",

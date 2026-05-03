@@ -3,7 +3,7 @@
 Computes a benchmark comparison between what an insurer paid for an OON service
 and an independent UCR benchmark for the same procedure + geography. The output
 gets written to `Denial.ucr_context` and surfaced in the appeal letter prompt
-(see UCR-OON-Reimbursement-Plan.md §5.2 and §6.1).
+via AppealGenerator.make_open_prompt's UCR PRICING block.
 
 The helper is sync-only on purpose; async callers (the refresh actor) wrap calls
 in `sync_to_async`. Keeps the helper simple and directly testable from sync
@@ -476,10 +476,7 @@ class UCREnrichmentHelper:
 
     @classmethod
     def _persist(cls, denial: Denial, comparison: Comparison) -> None:
-        from fighthealthinsurance.encrypted_amount_field import amount_to_str
-
         with transaction.atomic():
-            # UCRLookup billing fields are EncryptedAmountField — pass strings.
             lookup = UCRLookup.objects.create(
                 denial=denial,
                 procedure_code=comparison.procedure_code,
@@ -487,9 +484,9 @@ class UCREnrichmentHelper:
                 service_zip=denial.service_zip or "",
                 matched_area_id=cls._area_id_from_comparison(comparison),
                 rates_snapshot=[r.__dict__ for r in comparison.rates],
-                billed_amount_cents=amount_to_str(comparison.billed_cents),
-                allowed_amount_cents=amount_to_str(comparison.allowed_cents),
-                paid_amount_cents=amount_to_str(comparison.paid_cents),
+                billed_amount_cents=comparison.billed_cents,
+                allowed_amount_cents=comparison.allowed_cents,
+                paid_amount_cents=comparison.paid_cents,
             )
             denial.ucr_context = comparison.to_jsonable()
             denial.latest_ucr_lookup = lookup

@@ -1,6 +1,6 @@
 """Tests for UCREnrichmentHelper.
 
-Covers UCR-OON-Reimbursement-Plan.md §11 helper-level cases:
+Covers:
 - Procedure-code regex extraction.
 - Geographic area resolution fallback (ZIP3 -> state -> national).
 - Source-priority dedup when multiple sources match.

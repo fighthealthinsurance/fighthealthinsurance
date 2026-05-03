@@ -1353,8 +1353,8 @@ class AppealGenerator(object):
             # No citations provided - explicitly tell the model not to make any up
             base = f"{base}\n\nIMPORTANT: No specific medical citations have been provided. Do NOT invent or hallucinate any citations, PMIDs, journal names, or study references. You may state general medical knowledge without citations, but do not fabricate specific study references."
         if ucr_context:
-            # See UCR-OON-Reimbursement-Plan.md §6.1. Tells the model to cite the
-            # gap and source explicitly when arguing under-reimbursement.
+            # Tell the model to cite the gap and source explicitly when
+            # arguing under-reimbursement.
             base = (
                 f"{base}\n\nUCR PRICING INSTRUCTIONS: This is an out-of-network "
                 "under-reimbursement scenario. Use the [UCR PRICING CONTEXT] block "

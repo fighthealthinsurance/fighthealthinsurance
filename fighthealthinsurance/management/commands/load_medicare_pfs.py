@@ -3,8 +3,9 @@
 Generates one Medicare-allowed UCRRate per (HCPCS, locality, year) plus one row
 per percentile in UCR_PERCENTILES via UCR_MEDICARE_PERCENTILE_MULTIPLIERS.
 
-Idempotent: re-running the command upserts on the documented unique key
-(see UCR-OON-Reimbursement-Plan.md §10.1, §4.1).
+Idempotent: re-running the command upserts on the
+(procedure_code, modifier, geographic_area, percentile, source, effective_date)
+unique key on UCRRate.
 
 Phase 1 reads from local CSV files; URL fetching is wired but disabled by
 default so unit tests can run against fixture files. Specify --rvu-file and

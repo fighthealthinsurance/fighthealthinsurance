@@ -5,8 +5,6 @@
  * denial. Fetches `denial.ucr_context` from /ziggy/rest/denials/{id}/ucr_context/
  * and surfaces the gap between what the insurer allowed and an independent
  * benchmark, with a button to edit billing info and re-trigger enrichment.
- *
- * See UCR-OON-Reimbursement-Plan.md §8.2.
  */
 
 import React, { useState, useEffect, useCallback } from "react";

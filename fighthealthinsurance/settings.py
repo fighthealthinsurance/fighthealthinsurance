@@ -118,7 +118,7 @@ class Base(Configuration):
     DEFF_SALT = os.getenv("DEFF_SALT", "base-salt")
     DEFF_PASSWORD = os.getenv("DEFF_PASSWORD", "base-password")
 
-    # UCR (Usual & Customary Rate) settings — see UCR-OON-Reimbursement-Plan.md §10.4.
+    # UCR (Usual & Customary Rate) settings.
     # Each one is clamped to a positive minimum so a misconfigured env can't
     # zero out timing/TTL/batching math in ucr_refresh_actor (asyncio.sleep,
     # timedelta, queryset slicing). Bare int() can also abort Django startup;

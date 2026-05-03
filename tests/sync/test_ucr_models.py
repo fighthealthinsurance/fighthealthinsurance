@@ -1,16 +1,15 @@
-"""Tests for UCR data models and Denial encryption round-trip.
+"""Tests for UCR data models and Denial billing-amount round-trip.
 
-Covers UCR-OON-Reimbursement-Plan.md §11 model-level cases:
 - UCRRate uniqueness on the documented composite key.
 - UCRGeographicArea uniqueness on (kind, code).
-- Encrypted billing-amount round-trip on Denial: int in -> int out, and the
-  underlying database column is not plaintext-readable.
-- latest_ucr_lookup FK behaves as a nullable SET_NULL pointer.
+- Billing setter validation (non-negative) and round-trip through the ORM.
+- latest_ucr_lookup FK behaves as a nullable SET_NULL pointer and rejects
+  cross-denial assignments.
 """
 
 import datetime
 
-from django.db import IntegrityError, connection, transaction
+from django.db import IntegrityError, transaction
 from django.test import TestCase
 
 from fighthealthinsurance.models import (
@@ -78,7 +77,7 @@ class UCRRateTests(TestCase):
         self.assertEqual(UCRRate.objects.count(), 2)
 
 
-class DenialEncryptedBillingTests(TestCase):
+class DenialBillingTests(TestCase):
     def test_round_trip_via_helpers(self):
         denial = Denial.objects.create(hashed_email="hash:test@example.com")
         denial.set_billed_cents(25000)
@@ -109,29 +108,6 @@ class DenialEncryptedBillingTests(TestCase):
         denial.set_billed_cents(None)
         denial.set_allowed_cents(None)
         denial.set_paid_cents(None)
-
-    def test_storage_is_not_plaintext(self):
-        """Defence-in-depth: the raw column must not be the literal int.
-
-        We open a cursor and read the raw bytes to confirm the on-disk value
-        is not '25000'. encrypted_model_fields stores a Fernet ciphertext.
-        """
-        denial = Denial.objects.create(hashed_email="hash:test@example.com")
-        denial.set_billed_cents(25000)
-        denial.save()
-
-        with connection.cursor() as cursor:
-            cursor.execute(
-                "SELECT billed_amount_cents FROM fighthealthinsurance_denial "
-                "WHERE denial_id = %s",
-                [denial.pk],
-            )
-            (raw,) = cursor.fetchone()
-
-        # Stored value must not equal the cleartext int and must not be empty.
-        self.assertNotEqual(raw, "25000")
-        self.assertNotEqual(raw, 25000)
-        self.assertTrue(raw)
 
 
 class DenialLatestUCRLookupTests(TestCase):

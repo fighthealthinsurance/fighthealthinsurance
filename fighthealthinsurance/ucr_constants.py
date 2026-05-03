@@ -1,6 +1,5 @@
 """Canonical references for the UCR (Usual & Customary Rate) feature.
 
-See UCR-OON-Reimbursement-Plan.md §3.1 for the source of truth on these values.
 Importing from this module is the only correct way for code to reference UCR
 sources, area kinds, and the percentile set.
 """

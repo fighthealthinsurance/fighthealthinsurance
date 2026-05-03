@@ -1,8 +1,7 @@
 """UCR refresh polling actor.
 
-See UCR-OON-Reimbursement-Plan.md §10.4. Two independent loops run
-concurrently inside one Ray actor so a slow upstream source does not stall
-per-denial refreshes.
+Two independent loops run concurrently inside one Ray actor so a slow upstream
+source does not stall per-denial refreshes.
 
 The Ray-decorated `UCRRefreshActor` is a thin wrapper around
 `UCRRefreshController`. The controller holds the loop logic and is plain

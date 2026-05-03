@@ -28,11 +28,6 @@ from fighthealthinsurance.constants import (
     FHI_PHONE_NUMBER,
     FHI_FAX_NUMBER,
 )
-from fighthealthinsurance.encrypted_amount_field import (
-    EncryptedAmountField,
-    amount_to_int,
-    amount_to_str,
-)
 from fighthealthinsurance.exceptions import (
     MissingDocumentError,
     DocumentRegenerationError,
@@ -1790,9 +1785,9 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     # IP address only stored for professional users (privacy-sensitive)
     ip_address = models.GenericIPAddressField(null=True, blank=True)
 
-    # UCR (Usual & Customary Rate) — see UCR-OON-Reimbursement-Plan.md §4.2.
-    # Billing fields. Amounts are stored as decimal-cents strings under encryption;
-    # `*_amount_int` properties below wrap parse/format so callers see ints.
+    # UCR (Usual & Customary Rate) fields. Billing amounts are plain ints (not
+    # PHI); the get_*_cents/set_*_cents helpers below provide a stable accessor
+    # API and validate non-negative values at assignment.
     service_zip = models.CharField(max_length=5, blank=True, default="")
     procedure_code = models.CharField(
         max_length=10, blank=True, default="", db_index=True
@@ -1801,9 +1796,11 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     # not PHI — so plaintext CharField is correct here, matching
     # UCRRate.modifier and UCRLookup.modifier (4-char strings).
     procedure_modifier = models.CharField(max_length=4, blank=True, default="")
-    billed_amount_cents = EncryptedAmountField(max_length=512, blank=True, default="")
-    allowed_amount_cents = EncryptedAmountField(max_length=512, blank=True, default="")
-    paid_amount_cents = EncryptedAmountField(max_length=512, blank=True, default="")
+    # Billed/allowed/paid amounts are not PHI; storing as plain ints lets us run
+    # cross-insurer reimbursement-gap analytics without a per-row decrypt.
+    billed_amount_cents = models.PositiveBigIntegerField(null=True, blank=True)
+    allowed_amount_cents = models.PositiveBigIntegerField(null=True, blank=True)
+    paid_amount_cents = models.PositiveBigIntegerField(null=True, blank=True)
     # Flat indexed timestamp so the refresh actor can find stale rows without
     # scanning JSONField paths (see §10.4). NULL means "needs enrichment".
     ucr_refreshed_at = models.DateTimeField(null=True, blank=True, db_index=True)
@@ -1825,40 +1822,35 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
             models.Index(fields=["created"], name="denial_created_idx"),
         ]
 
-    # --- UCR helpers (see UCR-OON-Reimbursement-Plan.md §10.3) ---
-    # Billing fields are EncryptedAmountField storing decimal-cents strings.
-    # The module-level amount_to_int / amount_to_str helpers handle parse and
-    # serialization (and tolerate corrupt/non-numeric values gracefully); see
-    # encrypted_amount_field.py. Do NOT assign ints directly to these fields.
+    # --- UCR helpers ---
+    # Wrappers preserve a stable API for callers (views, ucr_helper, tests).
+    # set_*_cents validates non-negativity in Python so the error fires at
+    # call time rather than later at .save(); PositiveBigIntegerField also
+    # enforces this at the DB layer.
 
     def get_billed_cents(self) -> typing.Optional[int]:
-        return amount_to_int(self.billed_amount_cents)
+        return self.billed_amount_cents
 
     def get_allowed_cents(self) -> typing.Optional[int]:
-        return amount_to_int(self.allowed_amount_cents)
+        return self.allowed_amount_cents
 
     def get_paid_cents(self) -> typing.Optional[int]:
-        return amount_to_int(self.paid_amount_cents)
+        return self.paid_amount_cents
 
     def set_billed_cents(self, value: typing.Optional[int]) -> None:
-        # setattr (vs direct assignment) keeps mypy happy without the
-        # django-stubs plugin, which is also how CI runs in some envs.
         self._reject_negative_cents(value, "billed_amount_cents")
-        setattr(self, "billed_amount_cents", amount_to_str(value))
+        self.billed_amount_cents = value
 
     def set_allowed_cents(self, value: typing.Optional[int]) -> None:
         self._reject_negative_cents(value, "allowed_amount_cents")
-        setattr(self, "allowed_amount_cents", amount_to_str(value))
+        self.allowed_amount_cents = value
 
     def set_paid_cents(self, value: typing.Optional[int]) -> None:
         self._reject_negative_cents(value, "paid_amount_cents")
-        setattr(self, "paid_amount_cents", amount_to_str(value))
+        self.paid_amount_cents = value
 
     @staticmethod
     def _reject_negative_cents(value: typing.Optional[int], field_name: str) -> None:
-        # EncryptedAmountField stores cents as a string blob, so the DB has no
-        # CHECK constraint to lean on; validate here instead. Negative values
-        # would silently poison UCR comparisons (e.g., "billed = -$50").
         if value is not None and value < 0:
             raise ValueError(f"{field_name} cannot be negative, got {value!r}")
 
@@ -2939,10 +2931,7 @@ class UsedDeleteToken(models.Model):
 
 
 class UCRGeographicArea(models.Model):
-    """A geographic billing area shared across UCR data sources.
-
-    See UCR-OON-Reimbursement-Plan.md §4.1.
-    """
+    """A geographic billing area shared across UCR data sources."""
 
     kind = models.CharField(max_length=24, choices=UCRAreaKind.choices)
     code = models.CharField(max_length=32, db_index=True)
@@ -2960,7 +2949,6 @@ class UCRRate(models.Model):
 
     Multiple sources can coexist for the same (procedure_code, area, percentile,
     effective_date); the helper picks one by `UCR_SOURCE_PRIORITY`.
-    See UCR-OON-Reimbursement-Plan.md §4.1.
     """
 
     procedure_code = models.CharField(max_length=10, db_index=True)
@@ -3036,12 +3024,11 @@ class UCRLookup(models.Model):
         UCRGeographicArea, null=True, blank=True, on_delete=models.SET_NULL
     )
     rates_snapshot = models.JSONField()
-    # Billing snapshot fields — encrypted to match Denial's posture so the
-    # audit table doesn't leak amounts that the parent record protects.
-    # Use the helpers (get_*_cents) for int round-trip; do NOT assign ints.
-    billed_amount_cents = EncryptedAmountField(blank=True, default="")
-    allowed_amount_cents = EncryptedAmountField(blank=True, default="")
-    paid_amount_cents = EncryptedAmountField(blank=True, default="")
+    # Plain ints — these mirror Denial's billing fields and are used for
+    # cross-insurer reimbursement-gap analytics.
+    billed_amount_cents = models.PositiveBigIntegerField(null=True, blank=True)
+    allowed_amount_cents = models.PositiveBigIntegerField(null=True, blank=True)
+    paid_amount_cents = models.PositiveBigIntegerField(null=True, blank=True)
     created = models.DateTimeField(db_default=Now())
 
     class Meta:
@@ -3065,12 +3052,3 @@ class UCRLookup(models.Model):
 
     def __str__(self) -> str:
         return f"UCRLookup<denial={self.denial_id} created={self.created}>"
-
-    def get_billed_cents(self) -> typing.Optional[int]:
-        return amount_to_int(self.billed_amount_cents)
-
-    def get_allowed_cents(self) -> typing.Optional[int]:
-        return amount_to_int(self.allowed_amount_cents)
-
-    def get_paid_cents(self) -> typing.Optional[int]:
-        return amount_to_int(self.paid_amount_cents)
