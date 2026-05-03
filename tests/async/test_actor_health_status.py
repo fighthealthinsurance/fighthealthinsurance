@@ -54,7 +54,7 @@ class TestActorHealthStatus(TestCase):
         from fighthealthinsurance.actor_health_status import check_actor_health
 
         result = check_actor_health()
-        assert result["alive_actors"] == 4
+        assert result["alive_actors"] == 5
         assert result["total_actors"] == 5
         assert len(result["details"]) == 5
         # All should be alive
