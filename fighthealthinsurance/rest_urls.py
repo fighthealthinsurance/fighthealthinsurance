@@ -77,6 +77,12 @@ urlpatterns = [
         rest_views.ActorHealthStatus.as_view(),
         name="actor_health_status",
     ),
+    # UCR public lookup (unauthenticated, cached). See UCR plan §7.
+    path(
+        "ucr/lookup",
+        rest_views.UCRPublicLookupView.as_view(),
+        name="ucr_public_lookup",
+    ),
     # Router
     path("", include(router.urls)),
 ]

@@ -439,6 +439,212 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
             status=status.HTTP_200_OK,
         )
 
+    # --------------------------------------------------------------- UCR (§7)
+
+    @extend_schema(
+        request=serializers.UCRSetBillingInfoRequestSerializer,
+        responses=serializers.UCRPendingResponseSerializer,
+    )
+    @action(detail=False, methods=["post"])
+    def set_billing_info(self, request: Request) -> Response:
+        """Capture billing details for a denial and dispatch UCR enrichment.
+
+        Returns 202 immediately; the actual UCRRefreshActor.refresh_denial call
+        runs in the background.
+        """
+        from fighthealthinsurance.ucr_helper import make_pending_context
+
+        serializer = serializers.UCRSetBillingInfoRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        current_user: User = request.user  # type: ignore
+        denial = get_object_or_404(
+            Denial.filter_to_allowed_denials(current_user),
+            denial_id=data["denial_id"],
+        )
+
+        if data.get("service_zip"):
+            denial.service_zip = data["service_zip"]
+        if data.get("procedure_code"):
+            denial.procedure_code = data["procedure_code"]
+        if data.get("procedure_modifier"):
+            denial.procedure_modifier = data["procedure_modifier"]
+        if data.get("billed_amount_cents") is not None:
+            denial.set_billed_cents(data["billed_amount_cents"])
+        if data.get("allowed_amount_cents") is not None:
+            denial.set_allowed_cents(data["allowed_amount_cents"])
+        if data.get("paid_amount_cents") is not None:
+            denial.set_paid_cents(data["paid_amount_cents"])
+        denial.ucr_refreshed_at = None  # mark stale so the actor picks it up
+        denial.save()
+
+        _dispatch_ucr_refresh(denial.pk)
+
+        return Response(
+            serializers.UCRPendingResponseSerializer(make_pending_context()).data,
+            status=status.HTTP_202_ACCEPTED,
+        )
+
+    @extend_schema(responses=serializers.UCRContextSerializer)
+    @action(detail=True, methods=["get"])
+    def ucr_context(self, request: Request, pk: int) -> Response:
+        """Return the current UCR comparison snapshot for a denial."""
+        from fighthealthinsurance.ucr_constants import (
+            UCR_CONTEXT_STATUS_KEY,
+            UCR_CONTEXT_STATUS_PENDING,
+        )
+
+        current_user: User = request.user  # type: ignore
+        denial = get_object_or_404(
+            Denial.filter_to_allowed_denials(current_user), pk=pk
+        )
+
+        if denial.ucr_refreshed_at is None or not denial.ucr_context:
+            payload = {UCR_CONTEXT_STATUS_KEY: UCR_CONTEXT_STATUS_PENDING}
+            return Response(
+                serializers.UCRContextSerializer(payload).data,
+                status=status.HTTP_200_OK,
+            )
+
+        payload = dict(denial.ucr_context)
+        payload["refreshed_at"] = denial.ucr_refreshed_at
+        return Response(
+            serializers.UCRContextSerializer(payload).data,
+            status=status.HTTP_200_OK,
+        )
+
+    @extend_schema(
+        request=serializers.UCRRefreshRequestSerializer,
+        responses=serializers.UCRPendingResponseSerializer,
+    )
+    @action(detail=False, methods=["post"])
+    def refresh_ucr(self, request: Request) -> Response:
+        """Re-run UCR enrichment for a denial (no body change)."""
+        from fighthealthinsurance.ucr_helper import make_pending_context
+
+        serializer = serializers.UCRRefreshRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        denial_id = serializer.validated_data["denial_id"]
+
+        current_user: User = request.user  # type: ignore
+        denial = get_object_or_404(
+            Denial.filter_to_allowed_denials(current_user), denial_id=denial_id
+        )
+        denial.ucr_refreshed_at = None
+        denial.save(update_fields=["ucr_refreshed_at"])
+
+        _dispatch_ucr_refresh(denial.pk)
+
+        return Response(
+            serializers.UCRPendingResponseSerializer(make_pending_context()).data,
+            status=status.HTTP_202_ACCEPTED,
+        )
+
+
+class UCRPublicLookupView(APIView):
+    """Unauthenticated rate lookup for marketing pages and pre-intake widgets.
+
+    Backed by Django cache keyed on (cpt, zip3, latest effective_date) with a
+    24h TTL so we don't hammer the rate table from the public web (§7).
+    """
+
+    permission_classes = [AllowAny]
+
+    @extend_schema(
+        parameters=[
+            OpenApiParameter("cpt", OpenApiTypes.STR, OpenApiParameter.QUERY),
+            OpenApiParameter("zip", OpenApiTypes.STR, OpenApiParameter.QUERY),
+        ],
+        responses=serializers.UCRPublicLookupResponseSerializer,
+    )
+    def get(self, request: Request) -> Response:
+        from django.core.cache import cache
+
+        from fighthealthinsurance.models import UCRGeographicArea, UCRRate
+        from fighthealthinsurance.ucr_constants import UCR_PERCENTILES, UCRAreaKind
+
+        query = serializers.UCRPublicLookupQuerySerializer(data=request.query_params)
+        query.is_valid(raise_exception=True)
+        cpt = query.validated_data["cpt"]
+        zip_code = query.validated_data["zip"]
+        zip3 = zip_code[:3]
+        cache_key = f"ucr-lookup:{cpt}:{zip3}"
+
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return Response(cached, status=status.HTTP_200_OK)
+
+        area = UCRGeographicArea.objects.filter(
+            kind=UCRAreaKind.ZIP3, code=zip3
+        ).first()
+        if area is None:
+            area = UCRGeographicArea.objects.filter(
+                kind=UCRAreaKind.NATIONAL
+            ).first()
+        if area is None:
+            return Response(
+                {"cpt": cpt, "area_kind": "", "area_code": "", "rates": []},
+                status=status.HTTP_200_OK,
+            )
+
+        rates = list(
+            UCRRate.objects.filter(
+                procedure_code=cpt,
+                geographic_area=area,
+                percentile__in=UCR_PERCENTILES,
+            ).order_by("percentile")
+        )
+        payload = {
+            "cpt": cpt,
+            "area_kind": area.kind,
+            "area_code": area.code,
+            "rates": [
+                {
+                    "percentile": r.percentile,
+                    "amount_cents": r.amount_cents,
+                    "source": r.source,
+                    "effective_date": r.effective_date.isoformat(),
+                    "is_derived": bool(
+                        r.metadata and r.metadata.get("derived_from")
+                    ),
+                }
+                for r in rates
+            ],
+        }
+        cache.set(cache_key, payload, timeout=24 * 3600)
+        return Response(payload, status=status.HTTP_200_OK)
+
+
+def _dispatch_ucr_refresh(denial_id: int) -> None:
+    """Fire-and-forget UCRRefreshActor.refresh_denial.remote(...).
+
+    Failures (Ray not available, e.g. in tests) fall back to a synchronous
+    enrichment so the user-facing flow still works. The actor is the primary
+    path in production.
+    """
+    try:
+        from fighthealthinsurance.ucr_refresh_actor_ref import ucr_refresh_actor_ref
+
+        actor, _task = ucr_refresh_actor_ref.get  # type: ignore[misc]
+        actor.refresh_denial.remote(denial_id)
+        return
+    except Exception:
+        logger.opt(exception=True).warning(
+            "UCR actor dispatch unavailable; falling back to inline enrich"
+        )
+
+    try:
+        from fighthealthinsurance.models import Denial
+        from fighthealthinsurance.ucr_helper import UCREnrichmentHelper
+
+        denial = Denial.objects.get(pk=denial_id)
+        UCREnrichmentHelper.maybe_enrich(denial, force=True)
+    except Exception:
+        logger.opt(exception=True).error(
+            "UCR inline fallback failed for denial_id={}", denial_id
+        )
+
 
 class QAResponseViewSet(viewsets.ViewSet, CreateMixin):
     """
