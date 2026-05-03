@@ -195,9 +195,7 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name="denial",
             name="procedure_modifier",
-            field=fighthealthinsurance.encrypted_amount_field.EncryptedAmountField(
-                blank=True, default="", max_length=512
-            ),
+            field=models.CharField(blank=True, default="", max_length=4),
         ),
         migrations.AddField(
             model_name="denial",

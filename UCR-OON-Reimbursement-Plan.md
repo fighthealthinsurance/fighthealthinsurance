@@ -143,15 +143,19 @@ intake keeps working.
 
 ```python
 # Inside Denial (around models.py:1235+)
-# Billing/geographic intake fields. Amounts are stored as EncryptedCharField
-# (string of decimal cents) per the §10.3 phase-1 encryption requirement;
-# helpers wrap parse/format so callers see ints.
+# Billing/geographic intake fields. Cents amounts are stored as
+# EncryptedAmountField (a project-local CharField subclass in
+# fighthealthinsurance/encrypted_amount_field.py, backed by the existing
+# django_encrypted_filefield Cryptographer + DEFF_SALT/DEFF_PASSWORD
+# config). max_length is enforced at >=512 in __init__ so a Fernet token
+# always fits. Procedure modifier is plaintext — it's a public CPT/HCPCS
+# code suffix (e.g. "26", "59", "TC"), not PHI.
 service_zip = models.CharField(max_length=5, blank=True, default="")
 procedure_code = models.CharField(max_length=10, blank=True, default="", db_index=True)
-procedure_modifier = EncryptedCharField(max_length=4, blank=True, default="")
-billed_amount_cents = EncryptedCharField(max_length=16, blank=True, default="")
-allowed_amount_cents = EncryptedCharField(max_length=16, blank=True, default="")
-paid_amount_cents = EncryptedCharField(max_length=16, blank=True, default="")
+procedure_modifier = models.CharField(max_length=4, blank=True, default="")
+billed_amount_cents = EncryptedAmountField(max_length=512, blank=True, default="")
+allowed_amount_cents = EncryptedAmountField(max_length=512, blank=True, default="")
+paid_amount_cents = EncryptedAmountField(max_length=512, blank=True, default="")
 
 # Enrichment state.
 # ucr_refreshed_at: flat indexed DateTimeField so the refresh actor can find
@@ -358,19 +362,32 @@ or when `Denial.ucr_refreshed_at` is older than `UCR_DENIAL_STALE_TTL_DAYS` and
 the appeal is not yet finalized.
 
 ### 10.3 PII / HIPAA
-Billed/allowed/paid amounts on a `Denial` are PHI-adjacent in combination with
-the denial, so phase 1 stores them as `EncryptedCharField` (the same
-`django-encrypted-model-fields` package referenced in CLAUDE.md). Cents are
-serialized as decimal strings; a thin helper on `Denial` (or the serializer)
-wraps parse/format so callers see ints. Migration plan:
-1. New columns are added empty in the schema migration; no backfill needed
-   (no existing data — these are new fields).
-2. `FIELD_ENCRYPTION_KEY` (or whatever the project's env name is) must be set
-   in `Dev`, `Test*`, and `Prod` configuration classes; `.env.example` is
-   updated to document it.
-3. Round-trip test in `tests/sync/test_ucr_models.py` verifies that an
-   integer-valued `set_billed_amount_cents(12345)` reads back as `12345` and
-   that the underlying column is not plaintext-readable.
+Billed/allowed/paid amounts on a `Denial` (and on `UCRLookup` audit rows)
+are PHI-adjacent in combination with the denial, so phase 1 stores them as
+`EncryptedAmountField`. The field is a project-local `CharField` subclass
+in `fighthealthinsurance/encrypted_amount_field.py` that delegates to the
+existing `django_encrypted_filefield.Cryptographer`. It reuses the
+`DEFF_SALT` / `DEFF_PASSWORD` env keys already wired across the
+`Base`/`Dev`/`Test*`/`Prod` configuration classes — no new env var.
+
+Implementation notes:
+- `EncryptedAmountField.__init__` enforces `max_length >= 512` so a Fernet
+  ciphertext (~100 base64 chars even for a 5-byte int) always fits. SQLite
+  would silently accept narrower columns; PostgreSQL would `DataError`.
+- Cents are stored as decimal-string ciphertext. Module-level
+  `amount_to_int` / `amount_to_str` helpers wrap parse/serialize; the
+  parse path tolerates non-numeric fallback strings by logging and
+  returning `None` instead of 500ing the request.
+- `Denial.get_billed_cents()` / `set_billed_cents(int)` (and the
+  `allowed`/`paid` siblings, plus the same readers on `UCRLookup`) are
+  the public int interface.
+- `procedure_modifier` is **plaintext** `CharField(max_length=4)` — it's a
+  public CPT/HCPCS modifier code (e.g. "26", "59", "TC"), not PHI.
+- Migration plan: new columns are added empty in the schema migration; no
+  backfill (these are new fields).
+- Round-trip test in `tests/sync/test_ucr_models.py` verifies
+  `set_billed_cents(25000)` reads back as `25000` and the underlying
+  column is not plaintext-readable.
 
 The unauthenticated `/ucr/lookup/` endpoint never sees patient data — just CPT
 and ZIP3.
@@ -559,7 +576,7 @@ ProfessionalUser disable display per UserDomain if desired.
 Phase 1 — MVP (1–2 sprints)
 - Models (§4), migrations, `Denial` field extensions including
   `ucr_refreshed_at`, `latest_ucr_lookup` FK, and `ucr_context`;
-  `ucr_constants.py` enums; `EncryptedCharField` for billing amounts (§10.3).
+  `ucr_constants.py` enums; `EncryptedAmountField` for billing amounts (§10.3).
 - Medicare PFS loader; retention pruning (§10.5).
 - Regex code extraction + manual entry on intake.
 - `UCREnrichmentHelper` with multiplier-based benchmarks. Per §12.2, letters

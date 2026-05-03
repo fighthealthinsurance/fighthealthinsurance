@@ -1796,7 +1796,10 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     procedure_code = models.CharField(
         max_length=10, blank=True, default="", db_index=True
     )
-    procedure_modifier = EncryptedAmountField(max_length=512, blank=True, default="")
+    # Modifiers (e.g. "26", "59", "RT", "TC") are public CPT/HCPCS codes —
+    # not PHI — so plaintext CharField is correct here, matching
+    # UCRRate.modifier and UCRLookup.modifier (4-char strings).
+    procedure_modifier = models.CharField(max_length=4, blank=True, default="")
     billed_amount_cents = EncryptedAmountField(max_length=512, blank=True, default="")
     allowed_amount_cents = EncryptedAmountField(max_length=512, blank=True, default="")
     paid_amount_cents = EncryptedAmountField(max_length=512, blank=True, default="")

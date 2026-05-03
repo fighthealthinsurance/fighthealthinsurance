@@ -170,14 +170,22 @@ async def _fetch_url(url: str) -> str:
 # ----------------------------------------------------------------- parsing
 
 
+def _normalize_row(row: dict[str, Any]) -> dict[str, str]:
+    """Lowercase and BOM-strip CSV headers so subsequent .get() calls can use
+    canonical lowercase keys regardless of how CMS happened to capitalize the
+    export this year."""
+    return {(k or "").strip().lstrip("﻿").lower(): (v or "") for k, v in row.items()}
+
+
 def _parse_localities(csv_text: str) -> dict[str, str]:
     out: dict[str, str] = {}
     reader = csv.DictReader(csv_text.splitlines())
     for row in reader:
-        code = (row.get("locality") or row.get("LOCALITY") or "").strip()
+        norm = _normalize_row(row)
+        code = norm.get("locality", "").strip()
         if not code:
             continue
-        desc = (row.get("description") or row.get("DESCRIPTION") or "").strip()
+        desc = norm.get("description", "").strip()
         out[code] = desc
     return out
 
@@ -185,11 +193,10 @@ def _parse_localities(csv_text: str) -> dict[str, str]:
 def _parse_rvu_rows(csv_text: str) -> Iterable[dict[str, Any]]:
     reader = csv.DictReader(csv_text.splitlines())
     for row in reader:
-        hcpcs = (row.get("hcpcs") or row.get("HCPCS") or "").strip().upper()
-        locality = (row.get("locality") or row.get("LOCALITY") or "").strip()
-        allowed_raw = (
-            row.get("allowed_cents") or row.get("ALLOWED_CENTS") or ""
-        ).strip()
+        norm = _normalize_row(row)
+        hcpcs = norm.get("hcpcs", "").strip().upper()
+        locality = norm.get("locality", "").strip()
+        allowed_raw = norm.get("allowed_cents", "").strip()
         if not hcpcs or not locality or not allowed_raw:
             continue
         try:

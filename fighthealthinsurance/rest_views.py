@@ -594,11 +594,13 @@ class UCRPublicLookupView(APIView):
             )
 
         today = timezone.now().date()
+        # effective_date__lte=today: don't leak next-year rates loaded early.
         live_qs = UCRRate.objects.filter(
             procedure_code=cpt,
             geographic_area=area,
             percentile__in=UCR_PERCENTILES,
             modifier="",
+            effective_date__lte=today,
         ).filter(Q(expires_date__isnull=True) | Q(expires_date__gte=today))
 
         # Cache version is the latest effective_date across the live set so

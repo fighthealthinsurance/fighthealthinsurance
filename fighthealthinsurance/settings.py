@@ -105,19 +105,25 @@ class Base(Configuration):
     DEFF_PASSWORD = os.getenv("DEFF_PASSWORD", "base-password")
 
     # UCR (Usual & Customary Rate) settings — see UCR-OON-Reimbursement-Plan.md §10.4.
-    UCR_SOURCE_REFRESH_INTERVAL_HOURS = int(
-        os.getenv("UCR_SOURCE_REFRESH_INTERVAL_HOURS", "24")
+    # Each one is clamped to a positive minimum so a misconfigured env can't
+    # zero out timing/TTL/batching math in ucr_refresh_actor (asyncio.sleep,
+    # timedelta, queryset slicing).
+    def _ucr_int(name: str, default: int, minimum: int) -> int:
+        try:
+            value = int(os.getenv(name) or default)
+        except ValueError:
+            value = default
+        return max(value, minimum)
+
+    UCR_SOURCE_REFRESH_INTERVAL_HOURS = _ucr_int(
+        "UCR_SOURCE_REFRESH_INTERVAL_HOURS", 24, 1
     )
-    UCR_DENIAL_REFRESH_INTERVAL_MINUTES = int(
-        os.getenv("UCR_DENIAL_REFRESH_INTERVAL_MINUTES", "60")
+    UCR_DENIAL_REFRESH_INTERVAL_MINUTES = _ucr_int(
+        "UCR_DENIAL_REFRESH_INTERVAL_MINUTES", 60, 1
     )
-    UCR_DENIAL_STALE_TTL_DAYS = int(os.getenv("UCR_DENIAL_STALE_TTL_DAYS", "90"))
-    UCR_DENIAL_REFRESH_BATCH_SIZE = int(
-        os.getenv("UCR_DENIAL_REFRESH_BATCH_SIZE", "50")
-    )
-    UCR_LOOKUP_RETENTION_PER_DENIAL = int(
-        os.getenv("UCR_LOOKUP_RETENTION_PER_DENIAL", "10")
-    )
+    UCR_DENIAL_STALE_TTL_DAYS = _ucr_int("UCR_DENIAL_STALE_TTL_DAYS", 90, 1)
+    UCR_DENIAL_REFRESH_BATCH_SIZE = _ucr_int("UCR_DENIAL_REFRESH_BATCH_SIZE", 50, 1)
+    UCR_LOOKUP_RETENTION_PER_DENIAL = _ucr_int("UCR_LOOKUP_RETENTION_PER_DENIAL", 10, 0)
     UCR_MEDICARE_PERCENTILE_MULTIPLIERS = {50: 1.5, 80: 2.0, 90: 2.5}
 
     # SECURITY WARNING: keep the secret key used in production secret!

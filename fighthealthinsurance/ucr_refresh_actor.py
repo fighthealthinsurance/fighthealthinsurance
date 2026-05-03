@@ -153,21 +153,16 @@ class UCRRefreshController:
         return prior is not None and latest_effective_date > prior
 
     async def mark_denials_using_source_stale(self, source: str) -> int:
-        from fighthealthinsurance.models import Denial, UCRLookup
+        # Filter via Denial.latest_ucr_lookup so we only mark denials whose
+        # *currently surfaced* snapshot uses this source. Querying UCRLookup
+        # directly would match any historical audit row and re-stale denials
+        # that have already moved to a different source.
+        from fighthealthinsurance.models import Denial
 
-        affected_denial_ids = await sync_to_async(
-            lambda: list(
-                UCRLookup.objects.filter(
-                    rates_snapshot__contains=[{"source": source}]
-                ).values_list("denial_id", flat=True)
-            )
-        )()
-        if not affected_denial_ids:
-            return 0
         return await sync_to_async(
             lambda: Denial.objects.filter(
-                pk__in=affected_denial_ids,
                 appeal_result__isnull=True,
+                latest_ucr_lookup__rates_snapshot__contains=[{"source": source}],
             ).update(ucr_refreshed_at=None)
         )()
 

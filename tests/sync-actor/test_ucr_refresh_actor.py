@@ -61,17 +61,20 @@ class TestUCRRefreshActorRayLifecycle(TestCase):
         loop_executed = False
         while time.time() - start < max_wait:
             running = ray.get(actor.health_check.remote())
-            if running:
-                if (
-                    ray.get(actor.actor_error_count.remote()) > 0
-                    or ray.get(actor.count.remote()) > 0
-                ):
-                    loop_executed = True
-                    break
+            if running and ray.get(actor.count.remote()) > 0:
+                # Only count successful loop iterations; an immediate crash
+                # bumps actor_error_count without proving the body ran.
+                loop_executed = True
+                break
             time.sleep(0.5)
 
         self.assertTrue(running, "run() should mark the actor as running")
         self.assertTrue(loop_executed, "run() loop body should have executed")
+        self.assertEqual(
+            ray.get(actor.actor_error_count.remote()),
+            0,
+            "actor should not have errored during the smoke run",
+        )
 
 
 class TestUCRRefreshControllerDenialBatch(TestCase):

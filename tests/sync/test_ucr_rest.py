@@ -121,6 +121,34 @@ class SetBillingInfoTests(_UCRRestBase):
         self.assertEqual(self.denial.get_paid_cents(), 6400)
         self.assertIsNone(self.denial.ucr_refreshed_at)
 
+    def test_clears_fields_when_empty_or_null_provided(self):
+        """Locks in the key-presence semantics: explicit "" / null clears."""
+        # First fill in everything.
+        self.denial.service_zip = "94110"
+        self.denial.procedure_code = "99213"
+        self.denial.set_billed_cents(25000)
+        self.denial.set_allowed_cents(8000)
+        self.denial.save()
+
+        with patch("fighthealthinsurance.rest_views._dispatch_ucr_refresh"):
+            response = self.client.post(
+                reverse("denials-set-billing-info"),
+                data={
+                    "denial_id": self.denial.denial_id,
+                    "service_zip": "",
+                    "allowed_amount_cents": None,
+                },
+                format="json",
+            )
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+
+        self.denial.refresh_from_db()
+        self.assertEqual(self.denial.service_zip, "")
+        self.assertIsNone(self.denial.get_allowed_cents())
+        # Fields not present in the body retain their prior values.
+        self.assertEqual(self.denial.procedure_code, "99213")
+        self.assertEqual(self.denial.get_billed_cents(), 25000)
+
     def test_rejects_unowned_denial(self):
         other_user = User.objects.create_user(
             username="other_pro🐼", password="x", email="other@example.com"
