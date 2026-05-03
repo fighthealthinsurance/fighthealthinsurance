@@ -1,12 +1,12 @@
 """Tests for UCREnrichmentHelper.
 
 Covers:
-- Procedure-code regex extraction.
+- Procedure-code regex extraction (free-text only — no Denial.procedure_code).
 - Geographic area resolution fallback (ZIP3 -> state -> national).
 - Source-priority dedup when multiple sources match.
-- Gap math at p80 and p90.
 - Hash-unchanged short-circuit (no UCRLookup insert when nothing changed).
 - prune_lookups preserves Denial.latest_ucr_lookup regardless of age.
+- is_under_reimbursement_claim regex gate.
 """
 
 import datetime
@@ -25,7 +25,11 @@ from fighthealthinsurance.ucr_constants import (
     UCRAreaKind,
     UCRSource,
 )
-from fighthealthinsurance.ucr_helper import RateRow, UCREnrichmentHelper
+from fighthealthinsurance.ucr_helper import (
+    RateRow,
+    UCREnrichmentHelper,
+    is_under_reimbursement_claim,
+)
 
 
 def _make_rate(area, *, percentile, amount_cents, source=UCRSource.MEDICARE_PFS):
@@ -40,20 +44,20 @@ def _make_rate(area, *, percentile, amount_cents, source=UCRSource.MEDICARE_PFS)
 
 
 class ProcedureCodeExtractionTests(TestCase):
-    def test_explicit_procedure_code_field_wins(self):
-        denial = Denial(procedure_code="99213", procedure="some text 12345")
-        self.assertEqual(UCREnrichmentHelper.resolve_procedure_code(denial), "99213")
-
-    def test_falls_back_to_freeform_procedure(self):
-        denial = Denial(procedure_code="", procedure="Office visit CPT 99213")
+    def test_extracts_from_procedure_field(self):
+        denial = Denial(procedure="Office visit CPT 99213")
         self.assertEqual(UCREnrichmentHelper.resolve_procedure_code(denial), "99213")
 
     def test_hcpcs_alpha_prefix(self):
-        denial = Denial(procedure_code="", procedure="J3490 unclassified drug")
+        denial = Denial(procedure="J3490 unclassified drug")
         self.assertEqual(UCREnrichmentHelper.resolve_procedure_code(denial), "J3490")
 
+    def test_falls_back_to_denial_text(self):
+        denial = Denial(procedure="", denial_text="Per CPT 99213, this claim...")
+        self.assertEqual(UCREnrichmentHelper.resolve_procedure_code(denial), "99213")
+
     def test_no_match_returns_empty(self):
-        denial = Denial(procedure_code="", procedure="No structured code here")
+        denial = Denial(procedure="No structured code here")
         self.assertEqual(UCREnrichmentHelper.resolve_procedure_code(denial), "")
 
 
@@ -79,17 +83,14 @@ class AreaResolutionTests(TestCase):
         self.assertIsNone(UCREnrichmentHelper.resolve_geographic_area(denial))
 
 
-class GapMathTests(TestCase):
+class NarrativeContentTests(TestCase):
     def setUp(self):
         self.area = UCRGeographicArea.objects.create(kind=UCRAreaKind.ZIP3, code="941")
 
-    def test_p80_gap(self):
+    def test_narrative_emits_rate_table_only(self):
         comparison = UCREnrichmentHelper.build_comparison(
             procedure_code="99213",
             area=self.area,
-            billed_cents=25000,
-            allowed_cents=8000,
-            paid_cents=6400,
             rates=[
                 RateRow(
                     percentile=80,
@@ -105,28 +106,47 @@ class GapMathTests(TestCase):
                 ),
             ],
         )
-        self.assertEqual(comparison.gap_p80_cents, 19684 - 8000)
-        self.assertAlmostEqual(comparison.gap_p80_pct, 59.4, places=1)
-        self.assertEqual(comparison.gap_p90_cents, 24605 - 8000)
+        self.assertIn("[UCR PRICING CONTEXT]", comparison.narrative)
+        self.assertIn("Procedure: 99213", comparison.narrative)
+        self.assertIn("p80: $196.84", comparison.narrative)
+        self.assertIn("p90: $246.05", comparison.narrative)
+        # No gap math, no billed/allowed/paid lines.
+        self.assertNotIn("Gap vs.", comparison.narrative)
+        self.assertNotIn("Billed:", comparison.narrative)
+        self.assertNotIn("Insurer allowed:", comparison.narrative)
 
-    def test_no_allowed_amount_no_gap(self):
-        comparison = UCREnrichmentHelper.build_comparison(
-            procedure_code="99213",
-            area=self.area,
-            billed_cents=None,
-            allowed_cents=None,
-            paid_cents=None,
-            rates=[
-                RateRow(
-                    percentile=80,
-                    amount_cents=19684,
-                    source=UCRSource.MEDICARE_PFS,
-                    effective_date="2026-01-01",
-                ),
-            ],
+
+class UnderReimbursementGateTests(TestCase):
+    def test_all_three_signals_present(self):
+        text = (
+            "Your claim was processed as out-of-network. The allowed amount "
+            "was below the usual and customary rate for this procedure."
         )
-        self.assertIsNone(comparison.gap_p80_cents)
-        self.assertIsNone(comparison.gap_p80_pct)
+        self.assertTrue(is_under_reimbursement_claim(text))
+
+    def test_alternate_phrasings(self):
+        text = "Non-participating provider. Allowed charges were limited to UCR."
+        self.assertTrue(is_under_reimbursement_claim(text))
+
+    def test_missing_oon_signal(self):
+        text = "The allowed amount was set per the usual and customary rate."
+        self.assertFalse(is_under_reimbursement_claim(text))
+
+    def test_missing_allowed_signal(self):
+        text = "Out of network claim. Reviewed against usual and customary."
+        self.assertFalse(is_under_reimbursement_claim(text))
+
+    def test_missing_uc_signal(self):
+        text = "Out of network. Allowed amount was $80.00."
+        self.assertFalse(is_under_reimbursement_claim(text))
+
+    def test_empty_or_none(self):
+        self.assertFalse(is_under_reimbursement_claim(""))
+        self.assertFalse(is_under_reimbursement_claim(None))
+
+    def test_case_insensitive(self):
+        text = "OON. ALLOWED AMOUNT below USUAL AND CUSTOMARY rate."
+        self.assertTrue(is_under_reimbursement_claim(text))
 
 
 class SourcePriorityTests(TestCase):
@@ -155,14 +175,10 @@ class MaybeEnrichEndToEndTests(TestCase):
         _make_rate(self.area, percentile=90, amount_cents=24605)
         self.denial = Denial.objects.create(
             hashed_email="hash:test",
-            procedure_code="99213",
-            service_zip="94110",
+            procedure="CPT 99213 office visit",
+            service_zip="941",
             your_state="CA",
         )
-        self.denial.set_billed_cents(25000)
-        self.denial.set_allowed_cents(8000)
-        self.denial.set_paid_cents(6400)
-        self.denial.save()
 
     def test_first_enrichment_writes_lookup_and_context(self):
         result = UCREnrichmentHelper.maybe_enrich(self.denial)

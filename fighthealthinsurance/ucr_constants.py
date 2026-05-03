@@ -51,5 +51,4 @@ UCR_DEFAULT_MEDICARE_MULTIPLIERS: Mapping[int, float] = {50: 1.5, 80: 2.0, 90: 2
 # Sentinel keys inside Denial.ucr_context so callers can avoid stringly-typed access.
 UCR_CONTEXT_HASH_KEY = "hash"
 UCR_CONTEXT_STATUS_KEY = "status"
-UCR_CONTEXT_STATUS_PENDING = "pending"
 UCR_CONTEXT_STATUS_READY = "ready"

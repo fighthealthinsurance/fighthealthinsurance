@@ -1204,6 +1204,12 @@ class DenialCreatorHelper:
                 # Default to no state - zip lookup can fail for invalid/unknown zips
                 logger.debug(f"Zip code lookup failed for {zip}: {e}")
                 your_state = None
+            # ZIP3 is HIPAA Safe Harbor de-identified, so it's safe to keep on
+            # the row; UCREnrichmentHelper.resolve_geographic_area uses it.
+            # Persist alongside `your_state` so neither field is silently
+            # dropped on update paths that don't otherwise call save().
+            denial.service_zip = zip[:3]
+            denial.save(update_fields=["service_zip", "your_state"])
         # Optionally:
         # Fire off some async requests to the model to extract info.
         # denial_id = denial.denial_id
@@ -1282,7 +1288,7 @@ class DenialCreatorHelper:
             async for item in execute_critical_optional_fireandforget(
                 optional=optional_awaitables,
                 required=required_awaitables,
-                fire_and_forget=[],
+                fire_and_forget=[cls._maybe_dispatch_ucr(denial_id)],
                 done_record=("Extraction complete", None),
                 timeout=90,
             ):
@@ -1291,6 +1297,31 @@ class DenialCreatorHelper:
         except Exception as e:
             logger.opt(exception=True).debug(
                 f"Error during extraction for denial {denial_id}: {e}"
+            )
+
+    @classmethod
+    async def _maybe_dispatch_ucr(cls, denial_id: int) -> None:
+        """Fire-and-forget UCR enrichment when the denial looks like an OON
+        under-reimbursement.
+
+        Heuristic gate first (regex on denial_text) so we don't waste rate
+        lookups on denials with no UCR-relevant context. The dispatch itself
+        prefers the Ray actor and falls back to a sync inline enrich if Ray
+        isn't available — see ucr_helper.dispatch_ucr_refresh.
+        """
+        try:
+            from fighthealthinsurance.ucr_helper import (
+                dispatch_ucr_refresh,
+                is_under_reimbursement_claim,
+            )
+
+            denial = await Denial.objects.filter(denial_id=denial_id).aget()
+            if not is_under_reimbursement_claim(denial.denial_text):
+                return
+            await sync_to_async(dispatch_ucr_refresh)(denial.pk)
+        except Exception:
+            logger.opt(exception=True).warning(
+                "UCR fire-and-forget dispatch failed for denial {}", denial_id
             )
 
     @classmethod

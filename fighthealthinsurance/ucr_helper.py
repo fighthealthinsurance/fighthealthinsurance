@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass, field
 from typing import Iterable, Mapping, Optional, Sequence
 
@@ -33,13 +34,75 @@ from fighthealthinsurance.models import (
 from fighthealthinsurance.ucr_constants import (
     UCR_CONTEXT_HASH_KEY,
     UCR_CONTEXT_STATUS_KEY,
-    UCR_CONTEXT_STATUS_PENDING,
     UCR_CONTEXT_STATUS_READY,
     UCR_PERCENTILES,
     UCR_SOURCE_PRIORITY,
     UCRAreaKind,
     UCRSource,
 )
+
+# ---------------------------------------------------- OON heuristic detector
+
+# Compiled at import so the gate is a constant-cost check on every denial. All
+# three patterns must match (case-insensitive) before we bother dispatching
+# enrichment, otherwise we'd run rate lookups against denials that have no
+# under-reimbursement context to argue.
+_OON_KEYWORDS_RE = re.compile(
+    r"\b(?:out[\s-]?of[\s-]?network|non[\s-]?participating|non[\s-]?par|OON)\b",
+    re.IGNORECASE,
+)
+_ALLOWED_AMOUNT_RE = re.compile(
+    r"\ballowed\s+(?:amount|charge|amounts|charges)\b",
+    re.IGNORECASE,
+)
+_USUAL_AND_CUSTOMARY_RE = re.compile(
+    r"\b(?:usual\s+and\s+customary|usual,\s*customary,?\s*and\s+reasonable|UCR)\b",
+    re.IGNORECASE,
+)
+
+
+def is_under_reimbursement_claim(denial_text: Optional[str]) -> bool:
+    """Heuristic gate: does this denial look like an OON under-reimbursement?
+
+    Returns True only when the text contains all three signals. The gate is
+    intentionally conservative — false negatives (missed enrichment) are
+    cheaper than false positives (wasted rate lookups + an irrelevant UCR
+    block in the appeal prompt).
+    """
+    if not denial_text:
+        return False
+    return bool(
+        _OON_KEYWORDS_RE.search(denial_text)
+        and _ALLOWED_AMOUNT_RE.search(denial_text)
+        and _USUAL_AND_CUSTOMARY_RE.search(denial_text)
+    )
+
+
+def dispatch_ucr_refresh(denial_id: int) -> None:
+    """Fire-and-forget UCRRefreshActor.refresh_denial.remote(...).
+
+    Failures (Ray not available, e.g. in tests) fall back to a synchronous
+    enrichment so the user-facing flow still works. The actor is the primary
+    path in production.
+    """
+    try:
+        from fighthealthinsurance.ucr_refresh_actor_ref import ucr_refresh_actor_ref
+
+        actor, _task = ucr_refresh_actor_ref.get  # type: ignore[misc]
+        actor.refresh_denial.remote(denial_id)
+        return
+    except Exception:
+        logger.opt(exception=True).warning(
+            "UCR actor dispatch unavailable; falling back to inline enrich"
+        )
+
+    try:
+        denial = Denial.objects.get(pk=denial_id)
+        UCREnrichmentHelper.maybe_enrich(denial, force=True)
+    except Exception:
+        logger.opt(exception=True).error(
+            "UCR inline fallback failed for denial_id={}", denial_id
+        )
 
 
 @dataclass
@@ -61,35 +124,20 @@ class Comparison:
     procedure_code: str
     area_kind: str
     area_code: str
-    billed_cents: Optional[int]
-    allowed_cents: Optional[int]
-    paid_cents: Optional[int]
     rates: list[RateRow] = field(default_factory=list)
-    gap_p80_cents: Optional[int] = None
-    gap_p80_pct: Optional[float] = None
-    gap_p90_cents: Optional[int] = None
-    gap_p90_pct: Optional[float] = None
     narrative: str = ""
     hash: str = ""
 
     def to_jsonable(self) -> dict:
-        d = {
+        return {
             "procedure_code": self.procedure_code,
             "area_kind": self.area_kind,
             "area_code": self.area_code,
-            "billed_cents": self.billed_cents,
-            "allowed_cents": self.allowed_cents,
-            "paid_cents": self.paid_cents,
             "rates": [r.__dict__ for r in self.rates],
-            "gap_p80_cents": self.gap_p80_cents,
-            "gap_p80_pct": self.gap_p80_pct,
-            "gap_p90_cents": self.gap_p90_cents,
-            "gap_p90_pct": self.gap_p90_pct,
             "narrative": self.narrative,
             UCR_CONTEXT_HASH_KEY: self.hash,
             UCR_CONTEXT_STATUS_KEY: UCR_CONTEXT_STATUS_READY,
         }
-        return d
 
 
 # Map from (procedure_code, area_id) -> list[RateRow]; keys are stable so the
@@ -141,9 +189,7 @@ class UCREnrichmentHelper:
             cls._mark_refreshed(denial)
             return None
 
-        rate_rows = cls._lookup_rates(
-            code, area, rates, modifier=denial.procedure_modifier or ""
-        )
+        rate_rows = cls._lookup_rates(code, area, rates, modifier="")
         if not rate_rows:
             logger.debug("UCR enrich skipped: no rates for code={} area={}", code, area)
             cls._mark_refreshed(denial)
@@ -152,9 +198,6 @@ class UCREnrichmentHelper:
         comparison = cls.build_comparison(
             procedure_code=code,
             area=area,
-            billed_cents=denial.get_billed_cents(),
-            allowed_cents=denial.get_allowed_cents(),
-            paid_cents=denial.get_paid_cents(),
             rates=rate_rows,
         )
 
@@ -211,15 +254,15 @@ class UCREnrichmentHelper:
 
     @classmethod
     def resolve_procedure_code(cls, denial: Denial) -> str:
-        """Pull a CPT/HCPCS code from `denial`, preferring explicit fields.
+        """Pull a CPT/HCPCS code from `denial`'s free-text fields.
 
         Delegates extraction to the project's centralized
         `medical_code_extractor` so we don't drift from the canonical regex.
         """
         for explicit in (
-            denial.procedure_code,
             getattr(denial, "verified_procedure", "") or "",
             denial.procedure or "",
+            denial.denial_text or "",
         ):
             if not explicit:
                 continue
@@ -253,9 +296,6 @@ class UCREnrichmentHelper:
         *,
         procedure_code: str,
         area: UCRGeographicArea,
-        billed_cents: Optional[int],
-        allowed_cents: Optional[int],
-        paid_cents: Optional[int],
         rates: Iterable[RateRow],
     ) -> Comparison:
         rates_list = list(rates)
@@ -264,32 +304,26 @@ class UCREnrichmentHelper:
             procedure_code=procedure_code,
             area_kind=area.kind,
             area_code=area.code,
-            billed_cents=billed_cents,
-            allowed_cents=allowed_cents,
-            paid_cents=paid_cents,
             rates=rates_list,
         )
-        cls._compute_gaps(comparison)
         comparison.narrative = cls.build_narrative(comparison)
         comparison.hash = cls._hash_comparison(comparison)
         return comparison
 
     @classmethod
     def build_narrative(cls, c: Comparison) -> str:
-        """Produce the [UCR PRICING CONTEXT] block injected into ML prompts (§6.1)."""
+        """Produce the [UCR PRICING CONTEXT] block injected into ML prompts.
+
+        Rate-table only — billing-amount math is intentionally absent; the
+        appeal LLM decides whether the benchmark evidence is useful for the
+        argument it's constructing.
+        """
         lines: list[str] = ["[UCR PRICING CONTEXT]"]
         lines.append(f"Procedure: {c.procedure_code}")
         lines.append(f"Geographic area: {c.area_kind} {c.area_code}")
-        if c.billed_cents is not None:
-            lines.append(f"Billed: {_dollars(c.billed_cents)}")
-        if c.allowed_cents is not None:
-            lines.append(f"Insurer allowed: {_dollars(c.allowed_cents)}")
-        if c.paid_cents is not None:
-            lines.append(f"Insurer paid: {_dollars(c.paid_cents)}")
         if c.rates:
-            # The narrative emphasizes the proxy-p80 gap, so attribute the
-            # header to the p80 row when available; otherwise fall back to
-            # the highest-priority rate by source priority then newest date.
+            # Attribute the header to p80 when available; otherwise fall back
+            # to the highest-priority rate by source priority then newest date.
             representative = next((r for r in c.rates if r.percentile == 80), None)
             if representative is None:
                 priority_index = {s: i for i, s in enumerate(UCR_SOURCE_PRIORITY)}
@@ -307,11 +341,6 @@ class UCREnrichmentHelper:
             for r in c.rates:
                 tag = " (derived)" if r.is_derived else ""
                 lines.append(f"  - p{r.percentile}: {_dollars(r.amount_cents)}{tag}")
-        if c.gap_p80_cents is not None and c.gap_p80_pct is not None:
-            lines.append(
-                f"Gap vs. proxy-p80 benchmark: {_dollars(c.gap_p80_cents)} "
-                f"({c.gap_p80_pct:.0f}%) under-reimbursed"
-            )
         lines.append("[/UCR PRICING CONTEXT]")
         return "\n".join(lines)
 
@@ -433,20 +462,6 @@ class UCREnrichmentHelper:
         )
 
     @staticmethod
-    def _compute_gaps(c: Comparison) -> None:
-        if c.allowed_cents is None:
-            return
-        for r in c.rates:
-            if r.percentile == 80:
-                c.gap_p80_cents = r.amount_cents - c.allowed_cents
-                if r.amount_cents > 0:
-                    c.gap_p80_pct = round(c.gap_p80_cents / r.amount_cents * 100, 1)
-            elif r.percentile == 90:
-                c.gap_p90_cents = r.amount_cents - c.allowed_cents
-                if r.amount_cents > 0:
-                    c.gap_p90_pct = round(c.gap_p90_cents / r.amount_cents * 100, 1)
-
-    @staticmethod
     def _hash_comparison(c: Comparison) -> str:
         # Hash inputs that drive the narrative; intentionally excludes `narrative`
         # itself (since narrative is derived) and `hash` (chicken-and-egg).
@@ -454,9 +469,6 @@ class UCREnrichmentHelper:
             "procedure_code": c.procedure_code,
             "area_kind": c.area_kind,
             "area_code": c.area_code,
-            "billed_cents": c.billed_cents,
-            "allowed_cents": c.allowed_cents,
-            "paid_cents": c.paid_cents,
             "rates": [r.__dict__ for r in c.rates],
         }
         digest = hashlib.sha256(
@@ -480,13 +492,9 @@ class UCREnrichmentHelper:
             lookup = UCRLookup.objects.create(
                 denial=denial,
                 procedure_code=comparison.procedure_code,
-                modifier=denial.procedure_modifier or "",
                 service_zip=denial.service_zip or "",
                 matched_area_id=cls._area_id_from_comparison(comparison),
                 rates_snapshot=[r.__dict__ for r in comparison.rates],
-                billed_amount_cents=comparison.billed_cents,
-                allowed_amount_cents=comparison.allowed_cents,
-                paid_amount_cents=comparison.paid_cents,
             )
             denial.ucr_context = comparison.to_jsonable()
             denial.latest_ucr_lookup = lookup
@@ -506,11 +514,6 @@ class UCREnrichmentHelper:
             kind=comparison.area_kind, code=comparison.area_code
         ).first()
         return area.pk if area else None
-
-
-def make_pending_context() -> dict:
-    """Returned to API callers when enrichment hasn't completed yet (§7)."""
-    return {UCR_CONTEXT_STATUS_KEY: UCR_CONTEXT_STATUS_PENDING}
 
 
 def _dollars(cents: int) -> str:

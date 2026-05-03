@@ -1,8 +1,7 @@
-"""Tests for UCR data models and Denial billing-amount round-trip.
+"""Tests for UCR data models.
 
 - UCRRate uniqueness on the documented composite key.
 - UCRGeographicArea uniqueness on (kind, code).
-- Billing setter validation (non-negative) and round-trip through the ORM.
 - latest_ucr_lookup FK behaves as a nullable SET_NULL pointer and rejects
   cross-denial assignments.
 """
@@ -75,39 +74,6 @@ class UCRRateTests(TestCase):
             effective_date=datetime.date(2026, 1, 1),
         )
         self.assertEqual(UCRRate.objects.count(), 2)
-
-
-class DenialBillingTests(TestCase):
-    def test_round_trip_via_helpers(self):
-        denial = Denial.objects.create(hashed_email="hash:test@example.com")
-        denial.set_billed_cents(25000)
-        denial.set_allowed_cents(8000)
-        denial.set_paid_cents(6400)
-        denial.save()
-
-        denial.refresh_from_db()
-        self.assertEqual(denial.get_billed_cents(), 25000)
-        self.assertEqual(denial.get_allowed_cents(), 8000)
-        self.assertEqual(denial.get_paid_cents(), 6400)
-
-    def test_unset_amount_reads_as_none(self):
-        denial = Denial.objects.create(hashed_email="hash:test@example.com")
-        self.assertIsNone(denial.get_billed_cents())
-        self.assertIsNone(denial.get_allowed_cents())
-        self.assertIsNone(denial.get_paid_cents())
-
-    def test_setters_reject_negative_cents(self):
-        denial = Denial.objects.create(hashed_email="hash:test@example.com")
-        with self.assertRaises(ValueError):
-            denial.set_billed_cents(-1)
-        with self.assertRaises(ValueError):
-            denial.set_allowed_cents(-100)
-        with self.assertRaises(ValueError):
-            denial.set_paid_cents(-9999)
-        # None still acceptable (means "unset").
-        denial.set_billed_cents(None)
-        denial.set_allowed_cents(None)
-        denial.set_paid_cents(None)
 
 
 class DenialLatestUCRLookupTests(TestCase):

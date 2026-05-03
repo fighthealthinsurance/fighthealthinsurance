@@ -1785,28 +1785,17 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     # IP address only stored for professional users (privacy-sensitive)
     ip_address = models.GenericIPAddressField(null=True, blank=True)
 
-    # UCR (Usual & Customary Rate) fields. Billing amounts are plain ints (not
-    # PHI); the get_*_cents/set_*_cents helpers below provide a stable accessor
-    # API and validate non-negative values at assignment.
+    # UCR (Usual & Customary Rate) fields.
+    # service_zip stores ZIP3 (HIPAA Safe Harbor de-identified). Procedure
+    # codes are extracted from free-text via medical_code_extractor, so we
+    # don't carry separate procedure_code/modifier columns on Denial.
     service_zip = models.CharField(max_length=5, blank=True, default="")
-    procedure_code = models.CharField(
-        max_length=10, blank=True, default="", db_index=True
-    )
-    # Modifiers (e.g. "26", "59", "RT", "TC") are public CPT/HCPCS codes —
-    # not PHI — so plaintext CharField is correct here, matching
-    # UCRRate.modifier and UCRLookup.modifier (4-char strings).
-    procedure_modifier = models.CharField(max_length=4, blank=True, default="")
-    # Billed/allowed/paid amounts are not PHI; storing as plain ints lets us run
-    # cross-insurer reimbursement-gap analytics without a per-row decrypt.
-    billed_amount_cents = models.PositiveBigIntegerField(null=True, blank=True)
-    allowed_amount_cents = models.PositiveBigIntegerField(null=True, blank=True)
-    paid_amount_cents = models.PositiveBigIntegerField(null=True, blank=True)
     # Flat indexed timestamp so the refresh actor can find stale rows without
-    # scanning JSONField paths (see §10.4). NULL means "needs enrichment".
+    # scanning JSONField paths. NULL means "needs enrichment".
     ucr_refreshed_at = models.DateTimeField(null=True, blank=True, db_index=True)
     # Durable pointer to the active UCRLookup snapshot — preserved by retention
-    # pruning regardless of age (see §10.5). related_name="+" because we don't
-    # need a reverse accessor; UCRLookup.denial already gives us the audit trail.
+    # pruning regardless of age. related_name="+" because we don't need a
+    # reverse accessor; UCRLookup.denial already gives us the audit trail.
     latest_ucr_lookup = models.ForeignKey(
         "UCRLookup",
         null=True,
@@ -1821,38 +1810,6 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
             models.Index(fields=["hashed_email"], name="denial_hashed_email_idx"),
             models.Index(fields=["created"], name="denial_created_idx"),
         ]
-
-    # --- UCR helpers ---
-    # Wrappers preserve a stable API for callers (views, ucr_helper, tests).
-    # set_*_cents validates non-negativity in Python so the error fires at
-    # call time rather than later at .save(); PositiveBigIntegerField also
-    # enforces this at the DB layer.
-
-    def get_billed_cents(self) -> typing.Optional[int]:
-        return self.billed_amount_cents
-
-    def get_allowed_cents(self) -> typing.Optional[int]:
-        return self.allowed_amount_cents
-
-    def get_paid_cents(self) -> typing.Optional[int]:
-        return self.paid_amount_cents
-
-    def set_billed_cents(self, value: typing.Optional[int]) -> None:
-        self._reject_negative_cents(value, "billed_amount_cents")
-        self.billed_amount_cents = value
-
-    def set_allowed_cents(self, value: typing.Optional[int]) -> None:
-        self._reject_negative_cents(value, "allowed_amount_cents")
-        self.allowed_amount_cents = value
-
-    def set_paid_cents(self, value: typing.Optional[int]) -> None:
-        self._reject_negative_cents(value, "paid_amount_cents")
-        self.paid_amount_cents = value
-
-    @staticmethod
-    def _reject_negative_cents(value: typing.Optional[int], field_name: str) -> None:
-        if value is not None and value < 0:
-            raise ValueError(f"{field_name} cannot be negative, got {value!r}")
 
     def save(self, *args: typing.Any, **kwargs: typing.Any) -> None:
         # Defensive guard: latest_ucr_lookup must point at a UCRLookup whose
@@ -3018,17 +2975,11 @@ class UCRLookup(models.Model):
         "Denial", on_delete=models.CASCADE, related_name="ucr_lookups"
     )
     procedure_code = models.CharField(max_length=10)
-    modifier = models.CharField(max_length=4, blank=True, default="")
     service_zip = models.CharField(max_length=5, blank=True, default="")
     matched_area = models.ForeignKey(
         UCRGeographicArea, null=True, blank=True, on_delete=models.SET_NULL
     )
     rates_snapshot = models.JSONField()
-    # Plain ints — these mirror Denial's billing fields and are used for
-    # cross-insurer reimbursement-gap analytics.
-    billed_amount_cents = models.PositiveBigIntegerField(null=True, blank=True)
-    allowed_amount_cents = models.PositiveBigIntegerField(null=True, blank=True)
-    paid_amount_cents = models.PositiveBigIntegerField(null=True, blank=True)
     created = models.DateTimeField(db_default=Now())
 
     class Meta:

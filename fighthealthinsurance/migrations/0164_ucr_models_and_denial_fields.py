@@ -135,21 +135,8 @@ class Migration(migrations.Migration):
                     ),
                 ),
                 ("procedure_code", models.CharField(max_length=10)),
-                ("modifier", models.CharField(blank=True, default="", max_length=4)),
                 ("service_zip", models.CharField(blank=True, default="", max_length=5)),
                 ("rates_snapshot", models.JSONField()),
-                (
-                    "billed_amount_cents",
-                    models.PositiveBigIntegerField(blank=True, null=True),
-                ),
-                (
-                    "allowed_amount_cents",
-                    models.PositiveBigIntegerField(blank=True, null=True),
-                ),
-                (
-                    "paid_amount_cents",
-                    models.PositiveBigIntegerField(blank=True, null=True),
-                ),
                 ("created", models.DateTimeField(db_default=Now())),
                 (
                     "denial",
@@ -183,33 +170,6 @@ class Migration(migrations.Migration):
             model_name="denial",
             name="service_zip",
             field=models.CharField(blank=True, default="", max_length=5),
-        ),
-        migrations.AddField(
-            model_name="denial",
-            name="procedure_code",
-            field=models.CharField(
-                blank=True, db_index=True, default="", max_length=10
-            ),
-        ),
-        migrations.AddField(
-            model_name="denial",
-            name="procedure_modifier",
-            field=models.CharField(blank=True, default="", max_length=4),
-        ),
-        migrations.AddField(
-            model_name="denial",
-            name="billed_amount_cents",
-            field=models.PositiveBigIntegerField(blank=True, null=True),
-        ),
-        migrations.AddField(
-            model_name="denial",
-            name="allowed_amount_cents",
-            field=models.PositiveBigIntegerField(blank=True, null=True),
-        ),
-        migrations.AddField(
-            model_name="denial",
-            name="paid_amount_cents",
-            field=models.PositiveBigIntegerField(blank=True, null=True),
         ),
         migrations.AddField(
             model_name="denial",

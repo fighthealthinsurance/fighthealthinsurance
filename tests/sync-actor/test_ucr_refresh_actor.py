@@ -104,17 +104,12 @@ class TestUCRRefreshControllerDenialBatch(TransactionTestCase):
         self.controller = UCRRefreshController(logger)
 
     def _make_denial(self) -> Denial:
-        denial = Denial.objects.create(
+        return Denial.objects.create(
             hashed_email="hash:test",
-            procedure_code="99213",
-            service_zip="94110",
+            procedure="CPT 99213 office visit",
+            service_zip="941",
             your_state="CA",
         )
-        denial.set_billed_cents(25000)
-        denial.set_allowed_cents(8000)
-        denial.set_paid_cents(6400)
-        denial.save()
-        return denial
 
     def test_processes_stale_denials(self):
         denial = self._make_denial()

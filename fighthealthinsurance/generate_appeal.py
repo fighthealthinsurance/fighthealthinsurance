@@ -1353,16 +1353,19 @@ class AppealGenerator(object):
             # No citations provided - explicitly tell the model not to make any up
             base = f"{base}\n\nIMPORTANT: No specific medical citations have been provided. Do NOT invent or hallucinate any citations, PMIDs, journal names, or study references. You may state general medical knowledge without citations, but do not fabricate specific study references."
         if ucr_context:
-            # Tell the model to cite the gap and source explicitly when
-            # arguing under-reimbursement.
+            # The block carries an independent rate benchmark for this
+            # procedure + area; the model decides whether the evidence is
+            # useful for the argument it's making.
             base = (
-                f"{base}\n\nUCR PRICING INSTRUCTIONS: This is an out-of-network "
-                "under-reimbursement scenario. Use the [UCR PRICING CONTEXT] block "
-                "below to cite the specific dollar gap between what the insurer "
-                "allowed and an independent benchmark, and request reprocessing "
-                "under the plan's out-of-network allowable methodology. Quote the "
-                "source and effective date verbatim. Do NOT invent rates or "
-                "percentile values that are not in the block.\n\n"
+                f"{base}\n\nUCR PRICING CONTEXT: The denial may involve "
+                "out-of-network under-reimbursement. The [UCR PRICING CONTEXT] "
+                "block below carries an independent rate benchmark for this "
+                "procedure and geographic area. If it strengthens the appeal — "
+                "e.g. arguing the plan's allowable methodology is below typical "
+                "rates — cite the source and effective date verbatim. If it "
+                "isn't relevant to the arguments you're making, you may omit "
+                "it. Do NOT invent rates or percentile values that are not in "
+                "the block.\n\n"
                 f"{ucr_context}"
             )
         if (

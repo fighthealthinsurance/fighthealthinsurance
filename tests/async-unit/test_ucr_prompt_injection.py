@@ -17,10 +17,11 @@ class UCRPromptInjectionTests(TestCase):
         narrative = (
             "[UCR PRICING CONTEXT]\n"
             "Procedure: 99213\n"
-            "Insurer allowed: $80.00\n"
-            "Independent benchmark (medicare_pfs):\n"
+            "Geographic area: zip3 941\n"
+            "Independent benchmark (medicare_pfs, effective 2026-01-01):\n"
+            "  - p50: $147.63\n"
             "  - p80: $196.84 (derived)\n"
-            "Gap vs. proxy-p80 benchmark: $116.84 (59%) under-reimbursed\n"
+            "  - p90: $246.05\n"
             "[/UCR PRICING CONTEXT]"
         )
         prompt = self.gen.make_open_prompt(
@@ -31,9 +32,8 @@ class UCRPromptInjectionTests(TestCase):
         )
         self.assertIsNotNone(prompt)
         assert prompt is not None  # for mypy / type narrowing
-        self.assertIn("UCR PRICING INSTRUCTIONS", prompt)
+        self.assertIn("UCR PRICING CONTEXT", prompt)
         self.assertIn("[UCR PRICING CONTEXT]", prompt)
-        self.assertIn("$116.84", prompt)
         self.assertIn("p80: $196.84", prompt)
 
     def test_no_ucr_block_when_absent(self):

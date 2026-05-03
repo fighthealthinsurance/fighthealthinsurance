@@ -859,48 +859,7 @@ class ChooserSkipResponseSerializer(serializers.Serializer):
     message = serializers.CharField()
 
 
-# --------------------------------------------------------------- UCR (§7) ---
-
-
-class UCRSetBillingInfoRequestSerializer(serializers.Serializer):
-    """Request schema for POST /ziggy/rest/denials/set_billing_info/.
-
-    The ViewSet @action is `detail=False` so the denial is identified by the
-    `denial_id` field in the request body (matching the existing
-    `select_articles` / `get_candidate_articles` actions on DenialViewSet).
-    Field names match Denial fields so a `ModelSerializer` can map them
-    directly with no implicit renaming.
-    """
-
-    denial_id = serializers.IntegerField()
-    service_zip = serializers.CharField(
-        max_length=5, required=False, allow_blank=True, default=""
-    )
-    procedure_code = serializers.CharField(
-        max_length=10, required=False, allow_blank=True, default=""
-    )
-    procedure_modifier = serializers.CharField(
-        max_length=4, required=False, allow_blank=True, default=""
-    )
-    billed_amount_cents = serializers.IntegerField(
-        required=False, allow_null=True, min_value=0
-    )
-    allowed_amount_cents = serializers.IntegerField(
-        required=False, allow_null=True, min_value=0
-    )
-    paid_amount_cents = serializers.IntegerField(
-        required=False, allow_null=True, min_value=0
-    )
-
-
-class UCRRefreshRequestSerializer(serializers.Serializer):
-    """Request body for refresh_ucr / ucr_context retrieval (denial_id-only)."""
-
-    denial_id = serializers.IntegerField()
-
-
-class UCRPendingResponseSerializer(serializers.Serializer):
-    status = serializers.CharField()
+# ----------------------------------------------------- UCR public lookup ---
 
 
 class UCRRateRowSerializer(serializers.Serializer):
@@ -909,25 +868,6 @@ class UCRRateRowSerializer(serializers.Serializer):
     source = serializers.CharField()
     effective_date = serializers.CharField()
     is_derived = serializers.BooleanField()
-
-
-class UCRContextSerializer(serializers.Serializer):
-    """Response schema for GET /denial/{id}/ucr_context/."""
-
-    status = serializers.CharField()
-    procedure_code = serializers.CharField(required=False)
-    area_kind = serializers.CharField(required=False)
-    area_code = serializers.CharField(required=False)
-    billed_cents = serializers.IntegerField(required=False, allow_null=True)
-    allowed_cents = serializers.IntegerField(required=False, allow_null=True)
-    paid_cents = serializers.IntegerField(required=False, allow_null=True)
-    rates = UCRRateRowSerializer(many=True, required=False)
-    gap_p80_cents = serializers.IntegerField(required=False, allow_null=True)
-    gap_p80_pct = serializers.FloatField(required=False, allow_null=True)
-    gap_p90_cents = serializers.IntegerField(required=False, allow_null=True)
-    gap_p90_pct = serializers.FloatField(required=False, allow_null=True)
-    narrative = serializers.CharField(required=False)
-    refreshed_at = serializers.DateTimeField(required=False, allow_null=True)
 
 
 class UCRPublicLookupQuerySerializer(serializers.Serializer):
