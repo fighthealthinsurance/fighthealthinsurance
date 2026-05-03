@@ -1,4 +1,5 @@
 import asyncio
+import datetime
 import json
 import typing
 from typing import Optional
@@ -29,6 +30,10 @@ from stopit import ThreadingTimeout as Timeout
 from fhi_users.auth import auth_utils
 from fhi_users.models import PatientUser, ProfessionalUser, UserDomain
 from fighthealthinsurance import common_view_logic, rest_serializers as serializers
+from fighthealthinsurance.external_review import (
+    generate_external_review_packet,
+    schedule_external_review_followups,
+)
 from fighthealthinsurance.helpers.fax_helpers import SendFaxHelper
 from fighthealthinsurance.ml.health_status import health_status
 from fighthealthinsurance.ml.ml_router import ml_router
@@ -517,6 +522,55 @@ class ReportClientError(APIView):
             f"{error_message} | browser: {browser_info}"
         )
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class ExternalReviewWizardView(APIView):
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def post(self, request: Request) -> Response:
+        denial_id = request.data.get("denial_id")
+        email = request.data.get("email")
+        semi_sekret = request.data.get("semi_sekret")
+        if not denial_id or not email or not semi_sekret:
+            return Response(
+                {"error": "denial_id, email, and semi_sekret required"}, status=400
+            )
+
+        hashed_email = Denial.get_hashed_email(email)
+        denial = get_object_or_404(
+            Denial,
+            denial_id=denial_id,
+            semi_sekret=semi_sekret,
+            hashed_email=hashed_email,
+        )
+        payload = {
+            "state": request.data.get("state"),
+            "plan_type": request.data.get("plan_type"),
+            "denial_type": request.data.get("denial_type"),
+            "appeal_denial_date": request.data.get("appeal_denial_date"),
+            "urgent": request.data.get("urgent"),
+        }
+        packet = generate_external_review_packet(denial, payload)
+
+        deadline_date = timezone.now().date() + datetime.timedelta(days=120)
+        schedule_external_review_followups(denial, email, deadline_date)
+
+        return Response(
+            {
+                "wizard": {
+                    "steps": [
+                        "upload final internal denial",
+                        "confirm state",
+                        "confirm plan type",
+                        "confirm urgent medical risk",
+                        "collect provider letter/supporting docs",
+                        "generate checklist and cover letter",
+                    ]
+                },
+                "packet": packet,
+            }
+        )
 
 
 class Ping(APIView):
