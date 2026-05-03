@@ -117,6 +117,18 @@ class TestBuildSuggestion:
         for opt in suggestion.pharmacy_options:
             assert "metformin" in opt.url
 
+    def test_amazon_url_uses_affiliate_tag(self):
+        # The Amazon link must carry our Amazon Associates affiliate
+        # parameters - dropping them would forfeit revenue that helps fund
+        # the appeal-generation service.
+        suggestion = build_suggestion("metformin")
+        amazon = next(
+            opt for opt in suggestion.pharmacy_options if opt.name == "Amazon Pharmacy"
+        )
+        assert amazon.url.startswith("https://www.amazon.com/s?k=metformin")
+        assert "tag=totallylegitco-20" in amazon.url
+        assert "linkCode=ll2" in amazon.url
+
     def test_oop_max_warning_present(self):
         suggestion = build_suggestion("metformin")
         # Discount-program payments do not count toward OOP max - this is the
