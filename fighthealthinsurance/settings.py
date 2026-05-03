@@ -43,6 +43,20 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 from rest_framework.authentication import SessionAuthentication
 
 
+def _ucr_int(name: str, default: int, minimum: int) -> int:
+    """Parse a UCR-related env-backed int and clamp to a sensible minimum.
+
+    Used for refresh intervals, TTL, batch size, and retention so a
+    misconfigured env can't zero out timing/TTL/batching math at runtime
+    or abort Django startup with a ValueError.
+    """
+    try:
+        value = int(os.getenv(name) or default)
+    except ValueError:
+        value = default
+    return max(value, minimum)
+
+
 class Base(Configuration):
     SENTRY_ENDPOINT = os.getenv("SENTRY_ENDPOINT")
     COOKIE_CONSENT_ENABLED = False
@@ -107,14 +121,8 @@ class Base(Configuration):
     # UCR (Usual & Customary Rate) settings — see UCR-OON-Reimbursement-Plan.md §10.4.
     # Each one is clamped to a positive minimum so a misconfigured env can't
     # zero out timing/TTL/batching math in ucr_refresh_actor (asyncio.sleep,
-    # timedelta, queryset slicing).
-    def _ucr_int(name: str, default: int, minimum: int) -> int:
-        try:
-            value = int(os.getenv(name) or default)
-        except ValueError:
-            value = default
-        return max(value, minimum)
-
+    # timedelta, queryset slicing). Bare int() can also abort Django startup;
+    # the IMR settings just above use the same try/except guard.
     UCR_SOURCE_REFRESH_INTERVAL_HOURS = _ucr_int(
         "UCR_SOURCE_REFRESH_INTERVAL_HOURS", 24, 1
     )
