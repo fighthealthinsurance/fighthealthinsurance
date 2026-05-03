@@ -3183,13 +3183,21 @@ class RemoteAnthropic(RemoteFullOpenLike):
             logger.debug("RemoteAnthropic.models: ANTHROPIC_API_KEY not set, skipping")
             return []
 
-        # Temporarily prefer a single Claude model to reduce parallel
-        # Anthropic requests and simplify debugging of provider-specific failures.
         return [
+            ModelDescription(
+                cost=50,
+                name="anthropic/claude-haiku-4-5",
+                internal_name="claude-haiku-4-5-20251001",
+            ),
             ModelDescription(
                 cost=90,
                 name="anthropic/claude-sonnet-4-6",
                 internal_name="claude-sonnet-4-6",
+            ),
+            ModelDescription(
+                cost=130,
+                name="anthropic/claude-opus-4-7",
+                internal_name="claude-opus-4-7",
             ),
         ]
 
