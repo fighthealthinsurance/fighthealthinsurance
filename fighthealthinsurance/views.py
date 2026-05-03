@@ -1047,7 +1047,7 @@ class FindNextStepsLoading(View):
             request,
             "find_next_steps_loading.html",
             context={
-                "payload": form.cleaned_data,
+                "payload": request.POST,
                 "current_step": 6,
             },
         )

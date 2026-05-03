@@ -19,22 +19,62 @@ Getting Your Questions Ready
     </div>
   </div>
 
-  <form id="next-steps-form" action="{% url 'find_next_steps' %}" method="post" style="display:none;">
+  <form id="next-steps-form" action="{% url 'find_next_steps' %}" method="post">
     {% csrf_token %}
-    {% for key, value in payload.items %}
-      <input type="hidden" name="{{ key }}" value="{{ value }}">
+    {% for key, values in payload.lists %}
+      {% if key != 'csrfmiddlewaretoken' %}
+        {% for value in values %}
+          <input type="hidden" name="{{ key }}" value="{{ value }}">
+        {% endfor %}
+      {% endif %}
     {% endfor %}
+
+    <div id="manual-continue" style="display:none; text-align:center; margin-top:1rem;">
+      <p style="margin-bottom:0.75rem; color:#4f5b67;">Ready to keep going? Hit continue.</p>
+      <button type="submit" class="btn btn-green">Continue →</button>
+    </div>
+    <noscript>
+      <div style="text-align:center; margin-top:1rem;">
+        <p style="margin-bottom:0.75rem; color:#4f5b67;">JavaScript is off, so this step needs a quick click.</p>
+        <button type="submit" class="btn btn-green">Continue →</button>
+      </div>
+    </noscript>
   </form>
 </div>
 
 <script>
-  window.addEventListener('load', function () {
-    window.setTimeout(function () {
-      const form = document.getElementById('next-steps-form');
-      if (form) {
-        form.submit();
+  (function () {
+    function cameFromBackForward(event) {
+      if (event && event.persisted) {
+        return true;
       }
-    }, 250);
-  });
+      if (window.performance && typeof window.performance.getEntriesByType === 'function') {
+        const navEntries = window.performance.getEntriesByType('navigation');
+        if (navEntries.length > 0 && navEntries[0].type === 'back_forward') {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    window.addEventListener('pageshow', function (event) {
+      const form = document.getElementById('next-steps-form');
+      if (!form) {
+        return;
+      }
+
+      if (cameFromBackForward(event)) {
+        const manualContinue = document.getElementById('manual-continue');
+        if (manualContinue) {
+          manualContinue.style.display = 'block';
+        }
+        return;
+      }
+
+      window.setTimeout(function () {
+        form.submit();
+      }, 250);
+    });
+  }());
 </script>
 {% endblock content %}
