@@ -128,11 +128,11 @@ class TestUCRRefreshControllerDenialBatch(TestCase):
         from fighthealthinsurance import ucr_helper
 
         original = ucr_helper.UCREnrichmentHelper.maybe_enrich
-        boom_target = denial.id
+        boom_target = denial.pk
         call_state = {"raised": False, "ok": False}
 
         def maybe_enrich_with_one_failure(d, **kwargs):
-            if d.id == boom_target and not call_state["raised"]:
+            if d.pk == boom_target and not call_state["raised"]:
                 call_state["raised"] = True
                 raise RuntimeError("synthetic failure")
             call_state["ok"] = True

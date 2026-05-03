@@ -110,8 +110,8 @@ class DenialEncryptedBillingTests(TestCase):
         with connection.cursor() as cursor:
             cursor.execute(
                 "SELECT billed_amount_cents FROM fighthealthinsurance_denial "
-                "WHERE id = %s",
-                [denial.id],
+                "WHERE denial_id = %s",
+                [denial.pk],
             )
             (raw,) = cursor.fetchone()
 
@@ -145,7 +145,7 @@ class DenialLatestUCRLookupTests(TestCase):
 
     def test_lookup_cascades_when_denial_deleted(self):
         lookup = self._make_lookup()
-        denial_id = self.denial.id
+        denial_id = self.denial.pk
         self.denial.delete()
         self.assertFalse(UCRLookup.objects.filter(pk=lookup.pk).exists())
         self.assertFalse(Denial.objects.filter(pk=denial_id).exists())

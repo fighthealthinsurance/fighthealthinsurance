@@ -39,23 +39,25 @@ class EncryptedAmountField(models.CharField):
         if value is None or value == "":
             return ""
         try:
-            return Cryptographer.decrypted(value.encode("utf-8")).decode("utf-8")
+            decrypted: bytes = Cryptographer.decrypted(value.encode("utf-8"))
+            return decrypted.decode("utf-8")
         except Exception:
             # Backwards-compat: if the column was written before encryption
             # was wired in (e.g. unit-test fixtures), pass the raw value
             # through rather than crashing.
-            return value
+            return str(value)
 
     def to_python(self, value: Any) -> str:
         if value is None:
             return ""
         if isinstance(value, bytes):
-            value = value.decode("utf-8")
-        return value
+            return value.decode("utf-8")
+        return str(value)
 
     def get_prep_value(self, value: Any) -> str:
         if value is None or value == "":
             return ""
         if isinstance(value, bytes):
             value = value.decode("utf-8")
-        return Cryptographer.encrypted(value.encode("utf-8")).decode("utf-8")
+        encrypted: bytes = Cryptographer.encrypted(str(value).encode("utf-8"))
+        return encrypted.decode("utf-8")

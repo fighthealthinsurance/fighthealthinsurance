@@ -45,7 +45,7 @@ class UCRRefreshController:
         from fighthealthinsurance.ucr_helper import UCREnrichmentHelper
 
         try:
-            denial = await sync_to_async(Denial.objects.get)(id=denial_id)
+            denial = await sync_to_async(Denial.objects.get)(pk=denial_id)
         except Denial.DoesNotExist:
             self._logger.warning("UCR refresh_denial: denial {} not found", denial_id)
             return False
@@ -166,7 +166,7 @@ class UCRRefreshController:
             return 0
         return await sync_to_async(
             lambda: Denial.objects.filter(
-                id__in=affected_denial_ids,
+                pk__in=affected_denial_ids,
                 appeal_result__isnull=True,
             ).update(ucr_refreshed_at=None)
         )()
@@ -191,7 +191,7 @@ class UCRRefreshController:
                 .filter(
                     Q(ucr_refreshed_at__isnull=True) | Q(ucr_refreshed_at__lt=cutoff)
                 )
-                .order_by("id")[:batch_size]
+                .order_by("pk")[:batch_size]
             )
         )()
 
@@ -216,7 +216,7 @@ class UCRRefreshController:
             if isinstance(result, Exception):
                 failed += 1
                 self._logger.opt(exception=result).error(
-                    "UCR enrich failed for denial_id={}", denial.id
+                    "UCR enrich failed for denial_id={}", denial.pk
                 )
         return len(stale) - failed, failed
 

@@ -160,7 +160,8 @@ async def _fetch_url(url: str) -> str:
     async with aiohttp.ClientSession() as session:
         async with session.get(url) as response:
             response.raise_for_status()
-            return await response.text()
+            text: str = await response.text()
+            return text
 
 
 # ----------------------------------------------------------------- parsing
