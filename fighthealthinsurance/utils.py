@@ -192,6 +192,15 @@ def is_convertible_to_int(s):
         return False
 
 
+def is_valid_denial_id(value) -> bool:
+    """Return True when value represents a positive integer denial ID."""
+    if value is None:
+        return False
+    if not is_convertible_to_int(value):
+        return False
+    return int(value) > 0
+
+
 def ensure_message_alternation(history: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
     Ensure messages alternate between user and assistant roles.
