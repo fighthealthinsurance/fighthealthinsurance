@@ -53,9 +53,9 @@ class ExternalReviewTests(TestCase):
         self.assertEqual(cfg["state"], "FEDERAL")
 
     def test_new_seed_state_configured(self):
-        cfg = get_state_config("NJ")
-        self.assertEqual(cfg["state"], "NJ")
-        self.assertIn("New Jersey", cfg["regulator_name"])
+        cfg = get_state_config("WA")
+        self.assertEqual(cfg["state"], "WA")
+        self.assertIn("Washington Office of the", cfg["regulator_name"])
 
     def test_reminders_are_scheduled(self):
         schedule_external_review_followups(
