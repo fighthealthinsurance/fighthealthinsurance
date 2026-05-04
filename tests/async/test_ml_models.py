@@ -9,6 +9,8 @@ from fighthealthinsurance.ml.ml_models import (
     ModelDescription,
     RemoteModel,
     RemoteFullOpenLike,
+    _debug_payload_models,
+    _log_prepared_messages_for_debug,
 )
 
 
@@ -485,4 +487,34 @@ class TestRemoteFullOpenLike(TestCase):
         self.assertTrue(
             len(generic_prompts) > 0,
             "Should return default prompts when specific ones don't exist",
+        )
+
+
+class TestDebugPayloadLogging(TestCase):
+    def setUp(self):
+        _debug_payload_models.clear()
+
+    @patch("fighthealthinsurance.ml.ml_models.logger.debug")
+    def test_dedup_logs_and_still_logs_repeat_same_model(self, mock_debug):
+        cleaned_messages = [
+            {"role": "system", "content": "be helpful"},
+            {"role": "user", "content": "hello"},
+        ]
+
+        _log_prepared_messages_for_debug(cleaned_messages, "model-a")
+        _log_prepared_messages_for_debug(cleaned_messages, "model-b")
+        _log_prepared_messages_for_debug(cleaned_messages, "model-b")
+
+        self.assertEqual(mock_debug.call_count, 3)
+        self.assertIn(
+            "Prepared {} messages once for models={} payload={}",
+            mock_debug.call_args_list[0].args[0],
+        )
+        self.assertIn(
+            "Prepared-message payload already logged; also sent to models={}",
+            mock_debug.call_args_list[1].args[0],
+        )
+        self.assertIn(
+            "Prepared-message payload already logged for model={} (models_seen={})",
+            mock_debug.call_args_list[2].args[0],
         )

@@ -53,6 +53,20 @@ _sentence_split_re = re.compile(r"(?<=[.!?])\s+(?=[A-Z])")
 
 _debug_payload_models_lock = threading.Lock()
 _debug_payload_models: dict[str, set[str]] = {}
+_DEBUG_PAYLOAD_CACHE_MAX = 256
+
+
+def _payload_signature(cleaned_messages: list[dict[str, str | None]]) -> str:
+    """Build a deterministic payload signature without materializing repr(...)."""
+    hasher = hashlib.sha256()
+    for msg in cleaned_messages:
+        role = msg.get("role") or ""
+        content = msg.get("content") or ""
+        hasher.update(role.encode("utf-8", errors="replace"))
+        hasher.update(b"\x1f")
+        hasher.update(content.encode("utf-8", errors="replace"))
+        hasher.update(b"\x1e")
+    return hasher.hexdigest()
 
 
 def _log_prepared_messages_for_debug(
@@ -63,17 +77,20 @@ def _log_prepared_messages_for_debug(
     This keeps debug logs readable when we send an identical payload to many
     backends/models in parallel.
     """
-    payload_signature = hashlib.sha256(
-        repr(cleaned_messages).encode("utf-8")
-    ).hexdigest()
+    payload_signature = _payload_signature(cleaned_messages)
     should_log_payload = False
+    is_new_model_for_payload = False
     models_for_payload: list[str]
 
     with _debug_payload_models_lock:
+        if payload_signature not in _debug_payload_models:
+            if len(_debug_payload_models) >= _DEBUG_PAYLOAD_CACHE_MAX:
+                _debug_payload_models.pop(next(iter(_debug_payload_models)))
         model_set = _debug_payload_models.setdefault(payload_signature, set())
         before = len(model_set)
         model_set.add(model)
         after = len(model_set)
+        is_new_model_for_payload = after != before
         models_for_payload = sorted(model_set)
         should_log_payload = before == 0
 
@@ -84,9 +101,15 @@ def _log_prepared_messages_for_debug(
             models_for_payload,
             cleaned_messages,
         )
-    elif after != before:
+    elif is_new_model_for_payload:
         logger.debug(
             "Prepared-message payload already logged; also sent to models={}",
+            models_for_payload,
+        )
+    else:
+        logger.debug(
+            "Prepared-message payload already logged for model={} (models_seen={})",
+            model,
             models_for_payload,
         )
 
