@@ -799,10 +799,13 @@ class PubMedTools(object):
         # Order matters for deterministic PER_QUERY truncation when queries
         # share overlapping PubMed results.
         queries: List[str] = []
+        # Dedup is case-insensitive — PubMed treats "Lipitor" and "lipitor"
+        # as the same query, and we don't want a brand expansion to fire a
+        # second identical search just because the casing differs.
         seen_queries: Set[str] = set()
         if query:
             queries.append(query)
-            seen_queries.add(query)
+            seen_queries.add(query.casefold())
 
         # If the procedure is a single drug-like term, add searches that
         # use the canonical name plus a couple of synonyms (e.g. brand
@@ -811,9 +814,10 @@ class PubMedTools(object):
         if procedure_opt:
             for synonym in await self._expand_drug_term_for_search(procedure_opt):
                 expanded = f"{synonym} {diagnosis_opt}".strip()
-                if expanded and expanded not in seen_queries:
+                key = expanded.casefold()
+                if expanded and key not in seen_queries:
                     queries.append(expanded)
-                    seen_queries.add(expanded)
+                    seen_queries.add(key)
 
         if denial.microsite_slug:
             try:
@@ -821,18 +825,20 @@ class PubMedTools(object):
                 if microsite and microsite.pubmed_search_terms:
                     for term in microsite.pubmed_search_terms:
                         stripped = term.strip()
-                        if stripped and stripped not in seen_queries:
+                        key = stripped.casefold()
+                        if stripped and key not in seen_queries:
                             queries.append(stripped)
-                            seen_queries.add(stripped)
+                            seen_queries.add(key)
                         # Microsite search terms are often single drug
                         # names; expand them too so brand/generic variants
                         # don't slip past the search.
                         for synonym in await self._expand_drug_term_for_search(
                             stripped
                         ):
-                            if synonym not in seen_queries:
+                            syn_key = synonym.casefold()
+                            if syn_key not in seen_queries:
                                 queries.append(synonym)
-                                seen_queries.add(synonym)
+                                seen_queries.add(syn_key)
                     if microsite.pubmed_search_terms:
                         logger.debug(
                             f"Adding {len(microsite.pubmed_search_terms)} microsite search terms for {denial.microsite_slug}"

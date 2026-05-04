@@ -522,7 +522,7 @@ class TestRxNormLookupToolHandle:
             rxnorm, "get_brands_and_generics", new_callable=AsyncMock
         ) as mock_info:
             tool = RxNormLookupTool(send_status, rxnorm_tools=rxnorm)
-            cleaned, ctx, handled = await tool.handle(
+            cleaned, _ctx, handled = await tool.handle(
                 "I might do an RxNorm lookup for the medication.", ""
             )
 

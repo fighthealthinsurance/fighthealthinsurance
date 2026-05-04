@@ -115,6 +115,20 @@ class PriorAuthGenerator:
             proposal_type = prior_auth.proposal_type
         logger.debug(f"Creating proposal type {proposal_type} from {prior_auth}")
 
+        # Resolve the RxNorm hint once up front. Each concurrent proposal
+        # path used to call .normalize() independently in _create_prompt,
+        # which fanned out to N identical RxNav requests per request.
+        rx_hint = ""
+        if treatment and treatment.strip():
+            try:
+                normalized = await self._get_rxnorm_tools().normalize(treatment)
+            except Exception as e:
+                logger.opt(exception=True).debug(
+                    f"RxNorm normalization failed for treatment {treatment!r}: {e}"
+                )
+                normalized = None
+            rx_hint = _build_rxnorm_context(treatment, normalized)
+
         # Prepare prompt context
         context = {
             "diagnosis": diagnosis,
@@ -126,6 +140,7 @@ class PriorAuthGenerator:
             "urgent": prior_auth.urgent,
             "patient_info": patient_info,
             "proposal_type": proposal_type,
+            "rxnorm_hint": rx_hint,
         }  # type: Dict[str, Any]
 
         # Get available models
@@ -271,21 +286,12 @@ class PriorAuthGenerator:
         Insurance Company: {insurance_company}
         """
 
-        # If the treatment is a drug name, attach the RxNorm canonical form
-        # as a hint. We deliberately don't rewrite the user-supplied
-        # ``treatment`` value so the letter still uses whatever wording
-        # the patient/provider used in the prescription.
-        if treatment and treatment.strip():
-            try:
-                normalized = await self._get_rxnorm_tools().normalize(treatment)
-            except Exception as e:
-                logger.opt(exception=True).debug(
-                    f"RxNorm normalization failed for treatment {treatment!r}: {e}"
-                )
-                normalized = None
-            rx_hint = _build_rxnorm_context(treatment, normalized)
-            if rx_hint:
-                prompt += f"\n\n{rx_hint}\n"
+        # The RxNorm hint is resolved once in ``generate_prior_auth_proposals``
+        # and passed through ``context`` so concurrent proposal paths share
+        # the same lookup result instead of each calling RxNav.
+        rx_hint = context.get("rxnorm_hint", "")
+        if rx_hint:
+            prompt += f"\n\n{rx_hint}\n"
 
         # Add Q&A information if available
         if qa_pairs:

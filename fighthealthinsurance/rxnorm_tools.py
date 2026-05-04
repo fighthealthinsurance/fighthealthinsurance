@@ -209,8 +209,13 @@ class RxNormTools:
 
     async def _cache_get(self, query: str) -> Optional[RxNormConcept]:
         cutoff = timezone.now() - CACHE_TTL
+        # Use ``last_used`` (auto_now) rather than ``created`` so we measure
+        # "time since last refresh" — which is what TTL really means here.
+        # ``aupdate_or_create`` doesn't reset ``created``, so a row that
+        # ages past TTL would otherwise stay stale forever, even if every
+        # subsequent miss re-populated it from the API.
         return await RxNormConcept.objects.filter(
-            query=query, created__gte=cutoff
+            query=query, last_used__gte=cutoff
         ).afirst()
 
     async def _cache_put(
