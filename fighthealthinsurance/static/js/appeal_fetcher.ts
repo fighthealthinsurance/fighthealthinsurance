@@ -364,6 +364,7 @@ let my_data: Map<string, string> = new Map<string, string>();
 let my_backend_url = "";
 let my_rest_fallback_url = "";
 let usingRestFallback = false;
+let hasAutoScrolledToFirstAppeal = false;
 
 let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
 
@@ -614,6 +615,11 @@ function processResponseChunk(chunk: string): void {
         appealTextElem[0].setAttribute("form", `form_${appealId}`);
 
         outputContainer.append(clonedForm);
+
+        if (!hasAutoScrolledToFirstAppeal) {
+          hasAutoScrolledToFirstAppeal = true;
+          (clonedForm[0] as HTMLElement).scrollIntoView({ behavior: "smooth", block: "start" });
+        }
       } catch (error) {
         console.error("Error parsing line:", error);
       }
