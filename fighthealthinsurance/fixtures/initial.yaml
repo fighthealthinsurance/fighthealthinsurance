@@ -283,6 +283,17 @@ As is evident from my previous medical claims, I was diagnosed with $diagnosis o
 Unfortunately, there is significant impact to my daily life as evidenced by [explain symptoms]. I am currently
 under the care of [doctor name] at [facility name]."
     regex: "migrane|G43"
+# Out-of-network under-reimbursement template (UCR plan §6.2). Triggered by
+# under-reimbursement / balance-bill / UCR / usual-and-customary language; the
+# UCREnrichmentHelper provides the structured pricing block that the ML appeal
+# generator stitches into the body.
+- model: fighthealthinsurance.appealtemplates
+  pk: 3
+  fields:
+    name: Out-of-Network Under-Reimbursement
+    appeal_text: "To Whom it May Concern at $insurance_company:
+I am writing to formally appeal the under-reimbursement of my claim [CLAIM_NUMBER] for $procedure on [DATE OF SERVICE]. The amount your plan allowed for this out-of-network service is materially below an independent benchmark for the same procedure code in my geographic area. I am requesting that my claim be reprocessed under your plan's out-of-network allowable methodology using a defensible benchmark, and that the additional amount be paid directly to me or to my provider as appropriate. The structured pricing comparison used to support this appeal is included in the body of this letter.\n\nUnder the No Surprises Act and applicable state surprise-billing laws, I also request written confirmation that the qualifying-payment amount (where applicable) was correctly calculated, and a copy of the methodology used to determine the allowed amount."
+    regex: "(?i)(usual\\s*and\\s*customary|\\bUCR\\b|under[- ]?reimburs|balance\\s*bill|out[- ]?of[- ]?network\\s*allowable)"
 # Colonoscopy denial type
 - model: fighthealthinsurance.denialtypes
   pk: 26

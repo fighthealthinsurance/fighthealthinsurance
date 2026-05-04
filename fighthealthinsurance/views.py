@@ -17,6 +17,7 @@ from django.http import (
     HttpResponseBase,
     HttpResponseForbidden,
     HttpResponseRedirect,
+    JsonResponse,
 )
 from django.shortcuts import get_object_or_404, redirect, render
 from django.template import loader
@@ -47,7 +48,7 @@ from fighthealthinsurance.models import (
     StripeRecoveryInfo,
 )
 from fighthealthinsurance.type_utils import User
-from fighthealthinsurance.utils import send_fallback_email
+from fighthealthinsurance.utils import is_valid_denial_id, send_fallback_email
 
 
 def _handle_mailing_list_subscribe(form: forms.Form, source_page: str) -> None:
@@ -1026,6 +1027,31 @@ class FindNextSteps(View):
         )
 
 
+class FindNextStepsLoading(View):
+    """Interim loading screen before the questions page is rendered."""
+
+    def post(self, request):
+        form = core_forms.BasePostInferedForm(request.POST)
+        if not form.is_valid():
+            return render(
+                request,
+                "categorize.html",
+                context={
+                    "post_infered_form": form,
+                    "upload_more": True,
+                },
+            )
+
+        return render(
+            request,
+            "find_next_steps_loading.html",
+            context={
+                "payload": request.POST,
+                "current_step": 6,
+            },
+        )
+
+
 class ChooseAppeal(View):
     """View for selecting and finalizing appeal text before sending."""
 
@@ -1490,8 +1516,17 @@ class InitialProcessView(generic.FormView):
 
         # Store the denial ID in the session to maintain state across the multi-step form process
         # This allows the SessionRequiredMixin to verify the user is working with a valid denial
+        if not is_valid_denial_id(denial_response.denial_id):
+            logger.error(
+                "Invalid denial_id generated in form workflow. "
+                f"session_key={self.request.session.session_key or 'no_session_key'} "
+                f"remote_ip={self.request.META.get('REMOTE_ADDR', 'unknown')} "
+                f"denial_uuid={denial_response.uuid} denial_id={denial_response.denial_id}"
+            )
+            raise ValueError("Invalid denial ID generated")
+
         self.request.session["denial_uuid"] = str(denial_response.uuid)
-        self.request.session["denial_id"] = denial_response.denial_id
+        self.request.session["denial_id"] = int(denial_response.denial_id)
 
         # Store microsite data in session for prefilling later in the flow
         default_procedure = self.request.POST.get(
@@ -1587,6 +1622,14 @@ class SessionRequiredMixin(View):
             semi_sekret = self.request.POST.get("semi_sekret")
 
         if denial_id and email and semi_sekret:
+            if not is_valid_denial_id(denial_id):
+                logger.warning(
+                    "Invalid denial_id format in request context resolution. "
+                    f"session_key={self.request.session.session_key or 'no_session_key'} "
+                    f"remote_ip={self.request.META.get('REMOTE_ADDR', 'unknown')} "
+                    f"denial_id={denial_id}"
+                )
+                return {}
             # Validate the denial exists and semi_sekret matches
             try:
                 denial = models.Denial.objects.get(
@@ -1607,7 +1650,12 @@ class SessionRequiredMixin(View):
                     "semi_sekret": semi_sekret,
                 }
             except models.Denial.DoesNotExist:
-                logger.warning(f"Invalid denial lookup: {denial_id}")
+                logger.warning(
+                    "Invalid denial lookup for provided denial reference. "
+                    f"session_key={self.request.session.session_key or 'no_session_key'} "
+                    f"remote_ip={self.request.META.get('REMOTE_ADDR', 'unknown')} "
+                    f"denial_id={denial_id}"
+                )
 
         return {}
 
@@ -1889,6 +1937,11 @@ class CompletePaymentView(View):
         data = json.loads(request.body)
         return self.process_payment(data)
 
+    @staticmethod
+    def _json_error_response(error: str, status_code: int) -> JsonResponse:
+        """Return a standardized JSON error response for payment completion."""
+        return JsonResponse({"error": error}, status=status_code)
+
     def process_payment(self, data):
         token = data.get("token")
         session_id = data.get("session_id")
@@ -1907,11 +1960,7 @@ class CompletePaymentView(View):
                 except (TypeError, ValueError):
                     pass
                 if legacy_id is None or legacy_id <= 0:
-                    return HttpResponse(
-                        json.dumps({"error": "Invalid or expired link"}),
-                        status=400,
-                        content_type="application/json",
-                    )
+                    return self._json_error_response("Invalid or expired link")
                 rollout_at = getattr(settings, "SECURE_TOKEN_ROLLOUT_AT", None)
                 if rollout_at is None:
                     return HttpResponse(
@@ -1924,17 +1973,9 @@ class CompletePaymentView(View):
                     created_at__lt=rollout_at,
                 ).first()
                 if lost_session is None:
-                    return HttpResponse(
-                        json.dumps({"error": "Invalid or expired link"}),
-                        status=400,
-                        content_type="application/json",
-                    )
+                    return self._json_error_response("Invalid or expired link")
             else:
-                return HttpResponse(
-                    json.dumps({"error": "Missing token"}),
-                    status=400,
-                    content_type="application/json",
-                )
+                return self._json_error_response("Missing token", 400)
             continue_url = lost_session.success_url
             cancel_url = lost_session.cancel_url
             payment_type = lost_session.payment_type
@@ -1944,11 +1985,9 @@ class CompletePaymentView(View):
             if not recovery_info_id:
                 line_items_json = metadata.get("line_items")
                 if not line_items_json:
-                    logger.error(f"No recover info found in metadata {metadata}")
-                    return HttpResponse(
-                        json.dumps({"error": "No recover info found in metadata"}),
-                        status=400,
-                        content_type="application/json",
+                    logger.error(f"No recovery info found in metadata {metadata}")
+                    return self._json_error_response(
+                        "No recovery info found in metadata", 400
                     )
                 line_items = json.loads(line_items_json)
             else:
@@ -1968,18 +2007,10 @@ class CompletePaymentView(View):
                 content_type="application/json",
             )
         except models.LostStripeSession.DoesNotExist:
-            return HttpResponse(
-                json.dumps({"error": "Invalid or expired link"}),
-                status=400,
-                content_type="application/json",
-            )
+            return self._json_error_response("Session not found", 400)
         except Exception as e:
             logger.opt(exception=e).error("Error in finishing payment")
-            return HttpResponse(
-                json.dumps({"error": "An internal error occurred"}),
-                status=500,
-                content_type="application/json",
-            )
+            return self._json_error_response("An internal error occurred", 500)
 
 
 @ensure_csrf_cookie
@@ -2046,6 +2077,8 @@ def chat_interface_view(request):
         "medicare": medicare,
         "microsite_slug": microsite_slug,
         "initial_message": initial_message,
+        "enable_voice_intake": getattr(settings, "ENABLE_VOICE_INTAKE", False),
+        "enable_local_stt": getattr(settings, "ENABLE_LOCAL_STT", True),
     }
     logger.debug(
         f"Rendering chat interface: microsite_slug={microsite_slug}, has_default_procedure={bool(default_procedure)}, has_default_condition={bool(default_condition)}, medicare={medicare}, has_initial_message={bool(initial_message)}"

@@ -23,7 +23,7 @@ Categorize Your Denial
     <p>We've tried our best to extract information from your denial letter. Please review and correct anything that looks wrong below.</p>
   </div>
 
-  <form action="{% url 'find_next_steps' %}" method="post">
+  <form action="{% url 'find_next_steps_loading' %}" method="post">
     {% csrf_token %}
     <table class="post-infered-table">
       {{ post_infered_form.as_table }}

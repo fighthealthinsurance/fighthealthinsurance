@@ -8,6 +8,7 @@ import typing
 import uuid
 
 from django.conf import settings
+from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models, transaction
 from django.db.models.signals import post_delete
 from django.dispatch import receiver
@@ -33,6 +34,7 @@ from fighthealthinsurance.exceptions import (
     MissingRequiredDataError,
 )
 from fighthealthinsurance.type_utils import User
+from fighthealthinsurance.ucr_constants import UCRAreaKind, UCRSource
 from fighthealthinsurance.utils import sekret_gen
 
 
@@ -115,6 +117,107 @@ class CMSCoverageCache(ExportModelOperationsMixin("CMSCoverageCache"), models.Mo
 
     def __str__(self):
         return f"CMS Coverage: {self.procedure} / {self.diagnosis}"
+
+
+class IMRDecision(ExportModelOperationsMixin("IMRDecision"), models.Model):  # type: ignore
+    """
+    Public independent medical review / external appeal decisions used as a
+    "similar prior decisions" retrieval corpus when generating appeals.
+
+    Sources include the California DMHC IMR dataset (CHHS open data) and the
+    New York DFS External Appeals database. These are jurisdiction- and
+    fact-specific and are surfaced to the model as illustrative prior decisions,
+    not legal precedent.
+    """
+
+    SOURCE_CA_DMHC = "ca_dmhc"
+    SOURCE_NY_DFS = "ny_dfs"
+    SOURCE_CHOICES = [
+        (SOURCE_CA_DMHC, "California DMHC"),
+        (SOURCE_NY_DFS, "New York DFS"),
+    ]
+
+    DETERMINATION_OVERTURNED = "overturned"
+    DETERMINATION_UPHELD = "upheld"
+    DETERMINATION_OVERTURNED_IN_PART = "overturned_in_part"
+    DETERMINATION_OTHER = "other"
+    DETERMINATION_CHOICES = [
+        (DETERMINATION_OVERTURNED, "Overturned"),
+        (DETERMINATION_UPHELD, "Upheld"),
+        (DETERMINATION_OVERTURNED_IN_PART, "Overturned in part"),
+        (DETERMINATION_OTHER, "Other"),
+    ]
+
+    id = models.AutoField(primary_key=True)
+    source = models.CharField(max_length=20, choices=SOURCE_CHOICES)
+    # Original case identifier from the source (combined with source for uniqueness)
+    case_id = models.CharField(max_length=100)
+    state = models.CharField(max_length=2)
+    decision_year = models.IntegerField(null=True, blank=True)
+    decision_date = models.DateField(null=True, blank=True)
+    # Normalized lowercase searchable fields
+    diagnosis = models.CharField(max_length=500, default="", blank=True)
+    diagnosis_category = models.CharField(max_length=300, default="", blank=True)
+    treatment = models.CharField(max_length=500, default="", blank=True)
+    treatment_category = models.CharField(max_length=300, default="", blank=True)
+    treatment_subcategory = models.CharField(max_length=300, default="", blank=True)
+    determination = models.CharField(
+        max_length=30, choices=DETERMINATION_CHOICES, default=DETERMINATION_OTHER
+    )
+    decision_type = models.CharField(max_length=100, default="", blank=True)
+    insurance_type = models.CharField(max_length=200, default="", blank=True)
+    age_range = models.CharField(max_length=50, default="", blank=True)
+    gender = models.CharField(max_length=30, default="", blank=True)
+    findings = models.TextField(default="", blank=True)
+    summary = models.TextField(default="", blank=True)
+    source_url = models.URLField(max_length=500, default="", blank=True)
+    raw_data = models.JSONField(null=True, blank=True)
+    # Lowercased concatenation of treatment + diagnosis fields. Lets the
+    # retriever filter on a single column instead of OR-ing icontains across
+    # five, and is the column the Postgres trigram GIN index targets.
+    search_text = models.TextField(default="", blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(
+                fields=["diagnosis", "treatment"], name="imrdec_diag_treat_idx"
+            ),
+            models.Index(
+                fields=["treatment_category", "determination"],
+                name="imrdec_tcat_det_idx",
+            ),
+            models.Index(
+                fields=["state", "determination"], name="imrdec_state_det_idx"
+            ),
+            models.Index(
+                fields=["source", "determination"], name="imrdec_source_det_idx"
+            ),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["source", "case_id"],
+                name="imrdecision_unique_source_case",
+            ),
+        ]
+
+    def compute_search_text(self) -> str:
+        parts = [
+            self.treatment,
+            self.treatment_category,
+            self.treatment_subcategory,
+            self.diagnosis,
+            self.diagnosis_category,
+        ]
+        return " ".join(p.lower() for p in parts if p).strip()
+
+    def save(self, *args, **kwargs):
+        self.search_text = self.compute_search_text()
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"IMR {self.source}/{self.case_id}: {self.determination} {self.treatment} for {self.diagnosis}"
 
 
 # Money related :p
@@ -1682,11 +1785,53 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     # IP address only stored for professional users (privacy-sensitive)
     ip_address = models.GenericIPAddressField(null=True, blank=True)
 
+    # UCR (Usual & Customary Rate) fields.
+    # service_zip stores ZIP3 (HIPAA Safe Harbor de-identified). Procedure
+    # codes are extracted from free-text via medical_code_extractor, so we
+    # don't carry separate procedure_code/modifier columns on Denial.
+    service_zip = models.CharField(max_length=5, blank=True, default="")
+    # Flat indexed timestamp so the refresh actor can find stale rows without
+    # scanning JSONField paths. NULL means "needs enrichment".
+    ucr_refreshed_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    # Durable pointer to the active UCRLookup snapshot — preserved by retention
+    # pruning regardless of age. related_name="+" because we don't need a
+    # reverse accessor; UCRLookup.denial already gives us the audit trail.
+    latest_ucr_lookup = models.ForeignKey(
+        "UCRLookup",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="+",
+    )
+    ucr_context = models.JSONField(null=True, blank=True)
+
     class Meta:
         indexes = [
             models.Index(fields=["hashed_email"], name="denial_hashed_email_idx"),
             models.Index(fields=["created"], name="denial_created_idx"),
         ]
+
+    def save(self, *args: typing.Any, **kwargs: typing.Any) -> None:
+        # Defensive guard: latest_ucr_lookup must point at a UCRLookup whose
+        # own denial FK matches this row. Without this, a bad assignment could
+        # surface another denial's snapshot/context to UCREnrichmentHelper.
+        # Skip the lookup query when this field isn't being touched.
+        update_fields = kwargs.get("update_fields")
+        check_lookup = update_fields is None or "latest_ucr_lookup" in update_fields
+        if check_lookup and self.latest_ucr_lookup_id:
+            owner_denial_id = (
+                UCRLookup.objects.filter(pk=self.latest_ucr_lookup_id)
+                .values_list("denial_id", flat=True)
+                .first()
+            )
+            if owner_denial_id not in (None, self.denial_id):
+                raise ValueError(
+                    "latest_ucr_lookup must reference a UCRLookup owned by "
+                    "this denial (got UCRLookup.denial_id={!r}, expected {!r})".format(
+                        owner_denial_id, self.denial_id
+                    )
+                )
+        super().save(*args, **kwargs)
 
     @classmethod
     def filter_to_allowed_denials(cls, current_user: User):
@@ -2740,3 +2885,121 @@ class UsedDeleteToken(models.Model):
     token = models.CharField(max_length=255, unique=True)
     hashed_email = models.CharField(max_length=300)
     used_at = models.DateTimeField(auto_now_add=True)
+
+
+class UCRGeographicArea(models.Model):
+    """A geographic billing area shared across UCR data sources."""
+
+    kind = models.CharField(max_length=24, choices=UCRAreaKind.choices)
+    code = models.CharField(max_length=32, db_index=True)
+    description = models.CharField(max_length=200, blank=True, default="")
+
+    class Meta:
+        unique_together = [("kind", "code")]
+
+    def __str__(self) -> str:
+        return f"{self.kind}:{self.code}"
+
+
+class UCRRate(models.Model):
+    """A single UCR rate observation. Source-agnostic.
+
+    Multiple sources can coexist for the same (procedure_code, area, percentile,
+    effective_date); the helper picks one by `UCR_SOURCE_PRIORITY`.
+    """
+
+    procedure_code = models.CharField(max_length=10, db_index=True)
+    modifier = models.CharField(max_length=4, blank=True, default="")
+    geographic_area = models.ForeignKey(
+        UCRGeographicArea, on_delete=models.PROTECT, related_name="rates"
+    )
+    # Constrained 1-100 in Meta below; loader rows outside that range are
+    # rejected at the DB layer instead of silently poisoning lookups.
+    percentile = models.PositiveSmallIntegerField(
+        validators=[MinValueValidator(1), MaxValueValidator(100)]
+    )
+    amount_cents = models.PositiveIntegerField()
+    source = models.CharField(max_length=32, choices=UCRSource.choices)
+    effective_date = models.DateField()
+    expires_date = models.DateField(null=True, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        indexes = [
+            models.Index(
+                fields=[
+                    "procedure_code",
+                    "geographic_area",
+                    "effective_date",
+                    "expires_date",
+                ],
+                name="ucr_rate_lookup_idx",
+            ),
+            models.Index(
+                fields=["source", "effective_date"], name="ucr_rate_source_idx"
+            ),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(percentile__gte=1) & Q(percentile__lte=100),
+                name="ucr_rate_percentile_range",
+            ),
+        ]
+        unique_together = [
+            (
+                "procedure_code",
+                "modifier",
+                "geographic_area",
+                "percentile",
+                "source",
+                "effective_date",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return (
+            f"{self.procedure_code}@{self.geographic_area} p{self.percentile} "
+            f"${self.amount_cents / 100:.2f} ({self.source})"
+        )
+
+
+class UCRLookup(models.Model):
+    """Audit log of UCR queries tied to a denial.
+
+    Persists what we showed the user even if upstream rates change. The active
+    snapshot for a denial is referenced by `Denial.latest_ucr_lookup`; older
+    snapshots are kept up to a per-denial retention cap (UCR_LOOKUP_RETENTION_PER_DENIAL).
+    """
+
+    denial = models.ForeignKey(
+        "Denial", on_delete=models.CASCADE, related_name="ucr_lookups"
+    )
+    procedure_code = models.CharField(max_length=10)
+    service_zip = models.CharField(max_length=5, blank=True, default="")
+    matched_area = models.ForeignKey(
+        UCRGeographicArea, null=True, blank=True, on_delete=models.SET_NULL
+    )
+    rates_snapshot = models.JSONField()
+    created = models.DateTimeField(db_default=Now())
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["denial", "created"], name="ucr_lookup_denial_idx"),
+        ]
+        ordering = ["-created"]
+
+    def save(self, *args: typing.Any, **kwargs: typing.Any) -> None:
+        # UCRLookup is the audit log: every refresh inserts a fresh snapshot
+        # rather than mutating an old one. The _state.adding check only blocks
+        # application-level instance.save() calls — Django's on_delete=SET_NULL
+        # cascade for matched_area emits raw SQL that bypasses save(), so the
+        # FK semantics still work.
+        if not self._state.adding:
+            raise ValueError(
+                "UCRLookup is append-only; create a new snapshot instead of "
+                "updating pk={!r}".format(self.pk)
+            )
+        super().save(*args, **kwargs)
+
+    def __str__(self) -> str:
+        return f"UCRLookup<denial={self.denial_id} created={self.created}>"

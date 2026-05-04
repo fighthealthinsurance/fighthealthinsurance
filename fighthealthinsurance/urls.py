@@ -309,7 +309,9 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
     ),
     path("share_denial", views.ShareDenialView.as_view(), name="share_denial"),
     path("share_appeal", views.ShareAppealView.as_view(), name="share_appeal"),
+    # Public, unauthenticated start of delete-data flow (email + captcha).
     path("remove_data", views.RemoveDataView.as_view(), name="remove_data"),
+    # Public, unauthenticated confirmation endpoint (GET confirm page, POST executes deletion).
     path(
         "confirm-delete",
         views.ConfirmDeleteDataView.as_view(),
@@ -333,6 +335,11 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         "mhmda",
         cache_control(public=True)(cache_page(60 * 60 * 2)(views.MHMDAView.as_view())),
         name="mhmda",
+    ),
+    path(
+        "find_next_steps_loading",
+        sensitive_post_parameters("email")(views.FindNextStepsLoading.as_view()),
+        name="find_next_steps_loading",
     ),
     path(
         "find_next_steps",

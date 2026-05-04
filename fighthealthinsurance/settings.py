@@ -44,6 +44,20 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 from rest_framework.authentication import SessionAuthentication
 
 
+def _ucr_int(name: str, default: int, minimum: int) -> int:
+    """Parse a UCR-related env-backed int and clamp to a sensible minimum.
+
+    Used for refresh intervals, TTL, batch size, and retention so a
+    misconfigured env can't zero out timing/TTL/batching math at runtime
+    or abort Django startup with a ValueError.
+    """
+    try:
+        value = int(os.getenv(name) or default)
+    except ValueError:
+        value = default
+    return max(value, minimum)
+
+
 class Base(Configuration):
     SENTRY_ENDPOINT = os.getenv("SENTRY_ENDPOINT")
     COOKIE_CONSENT_ENABLED = False
@@ -51,6 +65,18 @@ class Base(Configuration):
 
     # Audit logging - disabled by default, enable via environment variable
     ENABLE_AUDIT_LOGGING = os.getenv("ENABLE_AUDIT_LOGGING", "false").lower() == "true"
+
+    # IMR / external-appeal corpus refresh. URLs are optional; the actor skips
+    # any source whose URL is unset. Interval defaults to weekly (168 hours).
+    IMR_DMHC_CSV_URL = os.getenv("IMR_DMHC_CSV_URL", "")
+    IMR_DFS_CSV_URL = os.getenv("IMR_DFS_CSV_URL", "")
+    try:
+        IMR_REFRESH_INTERVAL_HOURS = int(os.getenv("IMR_REFRESH_INTERVAL_HOURS") or 168)
+    except ValueError:
+        # Misconfigured env var should not block app startup.
+        IMR_REFRESH_INTERVAL_HOURS = 168
+    ENABLE_VOICE_INTAKE = os.getenv("ENABLE_VOICE_INTAKE", "false").lower() == "true"
+    ENABLE_LOCAL_STT = os.getenv("ENABLE_LOCAL_STT", "true").lower() == "true"
     LOGIN_URL = "login"
     LOGIN_REDIRECT_URL = "/"
     THUMBNAIL_DEBUG = True
@@ -93,6 +119,32 @@ class Base(Configuration):
 
     DEFF_SALT = os.getenv("DEFF_SALT", "base-salt")
     DEFF_PASSWORD = os.getenv("DEFF_PASSWORD", "base-password")
+
+    # UCR (Usual & Customary Rate) settings.
+    # Each one is clamped to a positive minimum so a misconfigured env can't
+    # zero out timing/TTL/batching math in ucr_refresh_actor (asyncio.sleep,
+    # timedelta, queryset slicing). Bare int() can also abort Django startup;
+    # the IMR settings just above use the same try/except guard.
+    UCR_SOURCE_REFRESH_INTERVAL_HOURS = _ucr_int(
+        "UCR_SOURCE_REFRESH_INTERVAL_HOURS", 24, 1
+    )
+    UCR_DENIAL_REFRESH_INTERVAL_MINUTES = _ucr_int(
+        "UCR_DENIAL_REFRESH_INTERVAL_MINUTES", 60, 1
+    )
+    UCR_DENIAL_STALE_TTL_DAYS = _ucr_int("UCR_DENIAL_STALE_TTL_DAYS", 90, 1)
+    UCR_DENIAL_REFRESH_BATCH_SIZE = _ucr_int("UCR_DENIAL_REFRESH_BATCH_SIZE", 50, 1)
+    UCR_LOOKUP_RETENTION_PER_DENIAL = _ucr_int("UCR_LOOKUP_RETENTION_PER_DENIAL", 10, 0)
+    UCR_MEDICARE_PERCENTILE_MULTIPLIERS = {50: 1.5, 80: 2.0, 90: 2.5}
+    # Auto-download URLs for the refresh actor's source-refresh loop. CMS
+    # ships the PFS national payment amount file as a year-versioned nested
+    # ZIP at the URL below; the loader unwraps + parses it natively, so a
+    # locality file isn't required for this format. Operators bumping years
+    # set the env var; defaults are convenient for dev.
+    UCR_MEDICARE_PFS_RVU_URL = os.getenv(
+        "UCR_MEDICARE_PFS_RVU_URL",
+        "https://www.cms.gov/files/zip/pfrev26a-updated-12-29-2025.zip",
+    )
+    UCR_MEDICARE_PFS_LOCALITY_URL = os.getenv("UCR_MEDICARE_PFS_LOCALITY_URL", "")
 
     # SECURITY WARNING: keep the secret key used in production secret!
     SECRET_KEY = "django-insecure-4b6t3cnic_(g*0cexqe8w)=1&vyb#(erhad#7@y4sv)jzb2kaf"

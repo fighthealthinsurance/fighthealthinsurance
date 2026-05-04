@@ -46,11 +46,16 @@ from fighthealthinsurance.denials.algorithmic_review_detector import (
     render_template_blocks,
 )
 from fighthealthinsurance.fax_actor_ref import fax_actor_ref
+from fighthealthinsurance.medical_code_extractor import (
+    extract_icd10_codes,
+    extract_procedure_codes,
+)
 from fighthealthinsurance.ml.bad_output_utils import strip_boilerplate_service
 from fighthealthinsurance.form_utils import *
 from fighthealthinsurance.generate_appeal import *
 from fighthealthinsurance.ml.ml_appeal_questions_helper import MLAppealQuestionsHelper
 from fighthealthinsurance.ml.ml_citations_helper import MLCitationsHelper
+from fighthealthinsurance.ml.imr_decision_retriever import IMRDecisionRetriever
 from fighthealthinsurance.ml.ml_plan_doc_helper import MLPlanDocHelper
 from fighthealthinsurance.models import *
 from fighthealthinsurance.process_denial import ProcessDenialCodes
@@ -1199,6 +1204,12 @@ class DenialCreatorHelper:
                 # Default to no state - zip lookup can fail for invalid/unknown zips
                 logger.debug(f"Zip code lookup failed for {zip}: {e}")
                 your_state = None
+            # ZIP3 is HIPAA Safe Harbor de-identified, so it's safe to keep on
+            # the row; UCREnrichmentHelper.resolve_geographic_area uses it.
+            # Persist alongside `your_state` so neither field is silently
+            # dropped on update paths that don't otherwise call save().
+            denial.service_zip = zip[:3]
+            denial.save(update_fields=["service_zip", "your_state"])
         # Optionally:
         # Fire off some async requests to the model to extract info.
         # denial_id = denial.denial_id
@@ -1277,7 +1288,7 @@ class DenialCreatorHelper:
             async for item in execute_critical_optional_fireandforget(
                 optional=optional_awaitables,
                 required=required_awaitables,
-                fire_and_forget=[],
+                fire_and_forget=[cls._maybe_dispatch_ucr(denial_id)],
                 done_record=("Extraction complete", None),
                 timeout=90,
             ):
@@ -1286,6 +1297,31 @@ class DenialCreatorHelper:
         except Exception as e:
             logger.opt(exception=True).debug(
                 f"Error during extraction for denial {denial_id}: {e}"
+            )
+
+    @classmethod
+    async def _maybe_dispatch_ucr(cls, denial_id: int) -> None:
+        """Fire-and-forget UCR enrichment when the denial looks like an OON
+        under-reimbursement.
+
+        Heuristic gate first (regex on denial_text) so we don't waste rate
+        lookups on denials with no UCR-relevant context. The dispatch itself
+        prefers the Ray actor and falls back to a sync inline enrich if Ray
+        isn't available — see ucr_helper.dispatch_ucr_refresh.
+        """
+        try:
+            from fighthealthinsurance.ucr_helper import (
+                dispatch_ucr_refresh,
+                is_under_reimbursement_claim,
+            )
+
+            denial = await Denial.objects.filter(denial_id=denial_id).aget()
+            if not is_under_reimbursement_claim(denial.denial_text):
+                return
+            await sync_to_async(dispatch_ucr_refresh)(denial.pk)
+        except Exception:
+            logger.opt(exception=True).warning(
+                "UCR fire-and-forget dispatch failed for denial {}", denial_id
             )
 
     @classmethod
@@ -2382,6 +2418,28 @@ class AppealsBackendHelper:
                 f"{algorithmic_detection.debug_reason}"
             )
 
+        # Specialized denial-type templates (e.g., MentalHealthParityAppeal)
+        # surface a fully-formed letter as a static appeal AND seed a
+        # citation hint for the highest-quality internal model.
+        specialized_templates = detect_specialized_templates(
+            denial.denial_text,
+            denial.procedure,
+            denial.diagnosis,
+        )
+        if specialized_templates:
+            logger.info(
+                "Specialized denial-type templates matched for denial "
+                f"{denial.denial_id}: "
+                f"{[t.name for t in specialized_templates]}"
+            )
+            for t in specialized_templates:
+                try:
+                    non_ai_appeals.append(t.static_appeal())
+                except Exception as e:
+                    logger.opt(exception=True).warning(
+                        f"Failed to render specialized template {t.name}: {e}"
+                    )
+
         insurance_company = denial.insurance_company or "insurance company;"
         claim_id = denial.claim_id or "YOURCLAIMIDGOESHERE"
         prefaces = []
@@ -2466,6 +2524,7 @@ class AppealsBackendHelper:
         ml_citation_context: Optional[Any] = None
         rag_context: Optional[str] = None
         nice_context: Optional[str] = None
+        imr_context: Optional[str] = None
 
         # Get PubMed context
         logger.debug("Looking up the pubmed context")
@@ -2535,26 +2594,18 @@ class AppealsBackendHelper:
                 done_msg="Citations generated",
             )
 
-            # Extract CPT/ICD codes from denial text for RAG search
+            # Extract procedure (CPT + HCPCS) and ICD-10 codes from the
+            # denial text for RAG search. HCPCS Level II codes (DME,
+            # drugs, prosthetics) are now included alongside CPT codes
+            # so DME-coded denials get properly enriched context.
             rag_procedure_codes = None
             rag_diagnosis_codes = None
             denial_text_for_rag = denial.denial_text or ""
             if denial_text_for_rag:
-                cpt_re = re.compile(
-                    r"[\(\s:,]+(\d{4}[A-Z0-9])[\s:\.\),]", re.M | re.UNICODE
-                )
-                icd_re = re.compile(
-                    r"[\(\s:\.,]+([A-TV-Z][0-9][0-9AB]\.?[0-9A-TV-Z]{0,4})[\s:\.\),]",
-                    re.M | re.UNICODE,
-                )
-                cpt_matches = list(
-                    set(m.group(1) for m in cpt_re.finditer(denial_text_for_rag))
-                )
-                icd_matches = list(
-                    set(m.group(1) for m in icd_re.finditer(denial_text_for_rag))
-                )
-                if cpt_matches:
-                    rag_procedure_codes = cpt_matches
+                procedure_matches = sorted(extract_procedure_codes(denial_text_for_rag))
+                icd_matches = sorted(extract_icd10_codes(denial_text_for_rag))
+                if procedure_matches:
+                    rag_procedure_codes = procedure_matches
                 if icd_matches:
                     rag_diagnosis_codes = icd_matches
 
@@ -2573,6 +2624,16 @@ class AppealsBackendHelper:
                 done_msg="Guidelines lookup complete",
             )
 
+            # Get prior IMR / external-appeal decisions similar to this denial
+            imr_context_awaitable = tracked_awaitable(
+                asyncio.wait_for(
+                    IMRDecisionRetriever.get_context_for_denial(denial),
+                    timeout=10,
+                ),
+                substep="imr_decisions",
+                done_msg="Prior IMR decisions lookup complete",
+            )
+
             # Skip the NICE task entirely when no key is configured: avoids a
             # misleading "NICE guidance lookup complete" status and the wait_for
             # overhead in environments without syndication access.
@@ -2580,6 +2641,7 @@ class AppealsBackendHelper:
                 pubmed_context_awaitable,
                 ml_citation_context_awaitable,
                 rag_context_awaitable,
+                imr_context_awaitable,
             ]
             if cls.nice.api_key:
                 gather_awaitables.append(
@@ -2627,8 +2689,11 @@ class AppealsBackendHelper:
                     rag_context = None
                     if results[2] is not None:
                         logger.debug(f"RAG context not available: {results[2]}")
-                if len(results) > 3 and isinstance(results[3], str):
-                    nice_context = results[3]
+                if isinstance(results[3], str) and results[3]:
+                    imr_context = results[3]
+                    logger.info("IMR decisions context retrieved")
+                if len(results) > 4 and isinstance(results[4], str):
+                    nice_context = results[4]
                 else:
                     # No fresh NICE result (skipped task or non-string error). Fall
                     # back to whatever is already persisted on the denial so cached
@@ -2699,6 +2764,18 @@ class AppealsBackendHelper:
                         # Use microsite context as standalone context
                         ml_citation_context = microsite_context
 
+        if imr_context:
+            if ml_citation_context:
+                if isinstance(ml_citation_context, list):
+                    ml_citation_context = "\n".join(
+                        str(c) for c in ml_citation_context if c
+                    )
+                ml_citation_context = f"{ml_citation_context}\n\n{imr_context}"
+            elif pubmed_context:
+                pubmed_context = f"{pubmed_context}\n\n{imr_context}"
+            else:
+                ml_citation_context = imr_context
+
         async def save_appeal(appeal_text: str) -> dict[str, str]:
             # Save all of the proposed appeals, so we can use RL later.
             t = time.time()
@@ -2746,6 +2823,7 @@ class AppealsBackendHelper:
             plan_context=model_plan_context,
             rag_context=rag_context,
             nice_context=nice_context,
+            specialized_templates=specialized_templates,
         )
         # Only filters out None
         filtered_appeals: Iterator[str] = filter(lambda x: x != None, appeals)

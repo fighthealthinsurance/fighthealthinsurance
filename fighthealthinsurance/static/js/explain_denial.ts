@@ -7,6 +7,8 @@
 
 import { recognize } from "./scrub_ocr";
 
+const MAX_UPLOAD_SIZE_BYTES = 20 * 1024 * 1024;
+
 /**
  * Add recognized text to the denial_text textarea.
  * Appends text with a newline separator if textarea already has content.
@@ -39,6 +41,25 @@ async function recognizeEvent(event: Event): Promise<void> {
     return;
   }
 
+  const fileList = Array.from(files);
+  const oversizedFiles = fileList.filter(
+    (file) => file.size > MAX_UPLOAD_SIZE_BYTES
+  );
+  if (oversizedFiles.length > 0) {
+    const tooLargeNames = oversizedFiles.map((file) => file.name).join(", ");
+    alert(
+      `These files exceed the 20MB upload limit and were not processed: ${tooLargeNames}`
+    );
+  }
+
+  const filesToProcess = fileList.filter(
+    (file) => file.size <= MAX_UPLOAD_SIZE_BYTES
+  );
+  if (filesToProcess.length === 0) {
+    input.value = "";
+    return;
+  }
+
   // Show processing indicator
   const uploadLabel = document.querySelector(
     'label[for="uploader"]'
@@ -49,9 +70,11 @@ async function recognizeEvent(event: Event): Promise<void> {
   }
 
   try {
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      console.log(`Processing file ${i + 1}/${files.length}: ${file.name}`);
+    for (let i = 0; i < filesToProcess.length; i++) {
+      const file = filesToProcess[i];
+      console.log(
+        `Processing file ${i + 1}/${filesToProcess.length}: ${file.name}`
+      );
       await recognize(file, addText);
     }
   } catch (error) {

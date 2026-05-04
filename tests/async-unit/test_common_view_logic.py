@@ -389,3 +389,71 @@ class TestCommonViewLogic(TestCase):
                 await Denial.objects.filter(denial_id=13).adelete()
 
         async_to_sync(test)()
+
+    @pytest.mark.django_db
+    @patch(
+        "fighthealthinsurance.common_view_logic.get_rag_context_for_denial",
+        new_callable=AsyncMock,
+        return_value=None,
+    )
+    @patch(
+        "fighthealthinsurance.common_view_logic.MLCitationsHelper.generate_citations_for_denial",
+        new_callable=AsyncMock,
+        return_value=None,
+    )
+    @patch("fighthealthinsurance.common_view_logic.AppealsBackendHelper.pmt")
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_rag_lookup_forwards_cpt_and_hcpcs_codes(
+        self, mock_appeal_generator, mock_pmt, mock_ml_citations, mock_rag
+    ):
+        """The RAG context builder must extract CPT *and* HCPCS Level II
+        codes from denial text and forward them to the RAG service via
+        ``procedure_codes``. A regression that drops HCPCS support (e.g.
+        reverting to the CPT-only regex) would leave DME-coded denials
+        without enriched RAG context."""
+        mock_pmt.find_context_for_denial = AsyncMock(return_value=None)
+        email = "test@example.com"
+        denial = Denial.objects.create(
+            denial_id=14,
+            semi_sekret="sekret",
+            hashed_email=Denial.get_hashed_email(email),
+            gen_attempts=0,
+            denial_text=(
+                "Service with CPT 99213 and DME E0260 hospital bed denied. "
+                "Diagnosis Z00.00 documented."
+            ),
+        )
+        mock_appeal_generator.make_appeals.return_value = iter(
+            ["Dear Insurance Company, this is an appeal."]
+        )
+
+        async def test():
+            try:
+                await self.collect_appeal_responses(
+                    {
+                        "denial_id": 14,
+                        "email": email,
+                        "semi_sekret": denial.semi_sekret,
+                    }
+                )
+
+                mock_rag.assert_called()
+                _args, kwargs = mock_rag.call_args
+                forwarded_codes = kwargs.get("procedure_codes") or []
+                # Both the CPT code and the HCPCS DME code should be
+                # forwarded for RAG enrichment.
+                assert (
+                    "99213" in forwarded_codes
+                ), f"CPT 99213 missing from procedure_codes: {forwarded_codes}"
+                assert (
+                    "E0260" in forwarded_codes
+                ), f"HCPCS E0260 missing from procedure_codes: {forwarded_codes}"
+                forwarded_diagnosis = kwargs.get("diagnosis_codes") or []
+                assert "Z00.00" in forwarded_diagnosis, (
+                    f"ICD-10 Z00.00 missing from diagnosis_codes: "
+                    f"{forwarded_diagnosis}"
+                )
+            finally:
+                await Denial.objects.filter(denial_id=14).adelete()
+
+        async_to_sync(test)()
