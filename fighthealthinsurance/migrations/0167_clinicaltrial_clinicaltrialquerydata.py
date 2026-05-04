@@ -7,7 +7,7 @@ from django.db import migrations, models
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("fighthealthinsurance", "0164_ucr_models_and_denial_fields"),
+        ("fighthealthinsurance", "0166_insurancecompany_is_major_commercial_payer_and_more"),
     ]
 
     operations = [
