@@ -1,5 +1,5 @@
 # Seed MedicationContext rows for the most commonly-denied therapeutic
-# classes. This complements the schema migration (0164) by populating the
+# classes. This complements the schema migration (0165) by populating the
 # table on every fresh database — without this, _collect_medication_context()
 # would return no matches and the drug-class guidance feature would be
 # silently disabled in production.

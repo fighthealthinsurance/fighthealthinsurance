@@ -1282,6 +1282,10 @@ class AppealGenerator(object):
             professional_to_finish: If True, instructs to write from the professional's point of view.
             plan_id: Insurance plan ID to include.
             claim_id: Claim ID to include.
+            medication_context: Pre-rendered drug-class guidance block from
+                ``_collect_medication_context``. When non-empty, appended as a
+                DRUG-CLASS GUIDANCE section to nudge the model toward
+                class-specific argumentation. Pass ``None`` to omit.
 
         Returns:
             A formatted prompt string for appeal generation, or None if denial_text is not provided.
