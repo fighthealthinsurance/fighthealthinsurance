@@ -1019,6 +1019,67 @@ class USPSTFRecommendation(models.Model):
         return f"USPSTF {self.grade} - {self.title}"
 
 
+class ClinicalTrial(models.Model):
+    """
+    Cached metadata for a ClinicalTrials.gov study, keyed by NCT ID.
+
+    Used to support appeals where insurers label a treatment "experimental
+    or investigational" -- the trial registry plus FDA labels and clinical
+    guidelines help distinguish standard-of-care, off-label-but-supported,
+    actively-studied, and truly speculative uses.
+    """
+
+    nct_id = models.CharField(max_length=20, unique=True)
+    brief_title = models.TextField(blank=True)
+    official_title = models.TextField(blank=True)
+    overall_status = models.CharField(max_length=50, blank=True)
+    phases = models.TextField(blank=True)  # comma-separated, e.g. "PHASE2,PHASE3"
+    study_type = models.CharField(max_length=50, blank=True)
+    conditions = models.TextField(blank=True)  # newline-separated
+    interventions = models.TextField(blank=True)  # newline-separated
+    brief_summary = models.TextField(blank=True)
+    start_date = models.CharField(max_length=20, blank=True)
+    completion_date = models.CharField(max_length=20, blank=True)
+    last_update_date = models.CharField(max_length=20, blank=True)
+    has_results = models.BooleanField(default=False)
+    created = models.DateTimeField(db_default=Now(), null=True)
+
+    @property
+    def study_url(self) -> str:
+        return f"https://clinicaltrials.gov/study/{self.nct_id}"
+
+    def __str__(self):
+        return f"{self.nct_id} -- {self.brief_title}"
+
+
+class ClinicalTrialQueryData(models.Model):
+    """
+    Caches ClinicalTrials.gov search results to avoid redundant API calls.
+    """
+
+    internal_id = models.AutoField(primary_key=True)
+    query = models.TextField(null=False, max_length=300)
+    condition = models.TextField(null=True, blank=True)
+    intervention = models.TextField(null=True, blank=True)
+    nct_ids = models.TextField(null=True)  # JSON array
+    denial_id = models.ForeignKey("Denial", on_delete=models.SET_NULL, null=True)
+    created = models.DateTimeField(db_default=Now(), null=True)
+
+    class Meta:
+        indexes = [
+            # find_trials_for_query() filters by (query, condition, intervention,
+            # created, denial_id__isnull); this composite index covers the hot
+            # path for the global cache.
+            models.Index(
+                fields=["query", "condition", "intervention", "created"],
+                name="cttq_cache_lookup_idx",
+            ),
+            # Denial-scoped audit lookups stay fast as the table grows.
+            models.Index(fields=["denial_id", "created"], name="cttq_denial_idx"),
+        ]
+
+
+
 class ExtraLinkDocument(
     ExportModelOperationsMixin("ExtraLinkDocument"), models.Model  # type: ignore
 ):

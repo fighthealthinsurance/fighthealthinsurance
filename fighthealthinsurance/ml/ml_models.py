@@ -672,13 +672,15 @@ It's possible the pubmed integration will be disabled, so if it doesn't work you
 Keep in mind PubMed is a database of medical literature, so you should only use it for clinical information. That is to say Pubmed is only good for **medical** queries, not billing or insurance questions.
 
 **CRITICAL RULE ABOUT REFERENCES AND CITATIONS:**
-- NEVER invent, fabricate, or hallucinate citations, studies, PMIDs, journal names, or author names
-- You may ONLY cite references that have been provided to you in pubmedcontext:[...] responses
-- If you haven't received pubmedcontext results, do NOT cite any specific studies
-- If asked for references and you don't have any from pubmedcontext, either:
-  1. Use **pubmedquery:[search terms]** to look them up first, OR
-  2. Say "I can search PubMed for relevant studies if you'd like" instead of making up citations
+- NEVER invent, fabricate, or hallucinate citations, studies, PMIDs, NCT IDs, journal names, or author names
+- You may ONLY cite references that have been provided to you in pubmedcontext:[...] or clinicaltrialscontext:[...] responses
+- If you haven't received either, do NOT cite any specific studies or trials
+- If asked for references and you don't have any, either:
+  1. Use **pubmedquery:[search terms]** to look up literature, OR
+  2. Use **clinical_trials_query:[search terms]** to look up registered trials (especially for "experimental/investigational" denials), OR
+  3. Say "I can search PubMed or ClinicalTrials.gov for relevant evidence if you'd like" instead of making up citations
 - When you DO have pubmedcontext results, cite them accurately using the title and journal provided
+- When you DO have clinicaltrialscontext results, cite them accurately using the NCT ID and the URL provided
 - Generic medical knowledge is fine to share, but do NOT attach fake citations to it
 
 If your asked to do anything related to {product_name} account billing (for example cancelling the {product_name} subscription), tell them you can't and direct them to the billing page or suggest they e-mail {support_email}.
@@ -747,6 +749,9 @@ For detailed information and state-specific details, visit: [Medicaid Work Requi
 RULE: Do NOT add any conversational text, questions, or additional explanations when providing work requirements information. Use ONLY the text above.
 """
         pubmed_tool = """**PubMed Research Tool**: For medical research questions, you can search PubMed using: [*pubmed query: search terms*]. This provides access to recent medical literature and research. It can be a little slow but is a great way to learn possibly relevant medical information. Pubmed is not good for insurance information."""
+
+        clinical_trials_tool = """**ClinicalTrials.gov Tool**: When an insurer denies a treatment as "experimental" or "investigational", you can check the public trial registry using: [*clinical trials query: search terms*]. The system returns clinicaltrialscontext:[...] with NCT IDs, study phases, status, conditions, interventions, and a brief summary you can cite.
+Use this to distinguish between (1) FDA-approved standard-of-care, (2) off-label but guideline-supported, (3) actively studied but not yet established, and (4) truly speculative therapies. The existence of registered trials does NOT by itself prove insurance coverage -- the appeal argument is that the therapy is being actively studied or used clinically, so the relevant question is whether it is medically appropriate for THIS patient, not whether the therapy is hypothetical. When you cite a trial, include the NCT ID and the URL provided in the response."""
 
         doc_fetcher_tool = """**Document Fetcher Tool**: If a user shares a URL to a document (insurance plan, medical guidelines, denial letter, etc.), you can fetch and read it using: **fetch_doc {"url": "https://example.com/document.pdf"}**
 This tool can read PDF, DOCX, HTML, and plain text documents. Use it when a user shares a link and you need to reference the document's contents. Only use it for URLs the user has explicitly shared or referenced."""
@@ -822,6 +827,7 @@ We have a selection of tools to help you. You should try and use these tools whe
 {medicaid_resources_tool}
 {pubmed_tool}
 {uspstf_tool}
+{clinical_trials_tool}
 {doc_fetcher_tool}
 
 For eligibility determinations if you have a tool you must use the tool rather than guessing on your own.
@@ -839,6 +845,7 @@ We have a selection of tools to help you. You should try and use these tools whe
 
 {pubmed_tool}
 {uspstf_tool}
+{clinical_trials_tool}
 {doc_fetcher_tool}
 
 If the user asks about Medicaid or Medicare eligibility, let them know you can help with that and ask them to tell you more about their situation. You have specialized tools for Medicaid/Medicare questions that will activate when needed.

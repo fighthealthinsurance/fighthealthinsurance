@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from django.test import TestCase
 
 from fighthealthinsurance.chat.tools import (
+    CLINICAL_TRIALS_QUERY_REGEX,
     PUBMED_QUERY_REGEX,
     MEDICAID_INFO_REGEX,
     MEDICAID_ELIGIBILITY_REGEX,
@@ -14,6 +15,7 @@ from fighthealthinsurance.chat.tools import (
     FETCH_DOC_REGEX,
     USPSTF_LOOKUP_REGEX,
     BaseTool,
+    ClinicalTrialsTool,
     PubMedTool,
     MedicaidInfoTool,
     MedicaidEligibilityTool,
@@ -42,6 +44,41 @@ class TestToolPatterns(TestCase):
             match = re.search(PUBMED_QUERY_REGEX, text, re.IGNORECASE)
             self.assertIsNotNone(match, f"Failed to match: {text}")
             self.assertEqual(match.group(1).strip(), expected_query)
+
+    def test_clinical_trials_query_pattern(self):
+        """Test ClinicalTrials.gov query pattern matches various formats."""
+        test_cases = [
+            (
+                "clinical_trials_query: pembrolizumab melanoma",
+                "pembrolizumab melanoma",
+            ),
+            (
+                "clinical trials query: car-t lymphoma",
+                "car-t lymphoma",
+            ),
+            (
+                "**clinical_trials_query: gene therapy SMA**",
+                "gene therapy SMA",
+            ),
+            (
+                "[clinical trials query: tirzepatide obesity]",
+                "tirzepatide obesity",
+            ),
+            (
+                "*clinical_trial_query: TMS depression*",
+                "TMS depression",
+            ),
+        ]
+        for text, expected_query in test_cases:
+            match = re.search(CLINICAL_TRIALS_QUERY_REGEX, text, re.IGNORECASE)
+            self.assertIsNotNone(match, f"Failed to match: {text}")
+            self.assertEqual(match.group(1).strip(), expected_query)
+
+    def test_clinical_trials_pattern_does_not_match_pubmed(self):
+        """ClinicalTrials regex must not be triggered by a plain pubmed_query."""
+        text = "pubmed_query: heart failure"
+        match = re.search(CLINICAL_TRIALS_QUERY_REGEX, text, re.IGNORECASE)
+        self.assertIsNone(match)
 
     def test_medicaid_info_pattern(self):
         """Test Medicaid info pattern matches JSON format."""
@@ -132,6 +169,78 @@ class TestPubMedTool(TestCase):
         match = tool.detect(text)
 
         self.assertIsNone(match)
+
+
+class TestClinicalTrialsTool(TestCase):
+    """Test ClinicalTrialsTool detection and helper rendering."""
+
+    def test_detect_clinical_trials_query(self):
+        mock_status = AsyncMock()
+        tool = ClinicalTrialsTool(mock_status)
+
+        text = (
+            "Insurer says it's experimental. "
+            "**clinical_trials_query: pembrolizumab melanoma**"
+        )
+        match = tool.detect(text)
+
+        self.assertIsNotNone(match)
+        self.assertEqual(match.group(1).strip(), "pembrolizumab melanoma")
+
+    def test_does_not_detect_unrelated(self):
+        mock_status = AsyncMock()
+        tool = ClinicalTrialsTool(mock_status)
+
+        text = "I think we should try a clinical study but no tool token here."
+        match = tool.detect(text)
+
+        self.assertIsNone(match)
+
+    def test_clean_response_strips_trailing_delimiters(self):
+        """The regex must consume closing ** / ] so clean_response leaves no
+        stray markdown in the user-visible reply."""
+        mock_status = AsyncMock()
+        tool = ClinicalTrialsTool(mock_status)
+        cases = [
+            "**clinical_trials_query: gene therapy SMA**",
+            "[clinical_trials_query: tirzepatide obesity]",
+            "*clinical_trial_query: TMS depression*",
+        ]
+        for text in cases:
+            match = tool.detect(text)
+            self.assertIsNotNone(match, f"Failed to match: {text}")
+            self.assertEqual(tool.clean_response(text, match), "")
+
+    def test_build_trials_context_includes_guidance(self):
+        """The context block should remind the LLM that a trial != coverage."""
+        mock_status = AsyncMock()
+        tool = ClinicalTrialsTool(mock_status)
+
+        trial = MagicMock()
+        trial.nct_id = "NCT01234567"
+        trial.brief_title = "A Study of Test Drug in Test Condition"
+        trial.overall_status = "RECRUITING"
+        trial.phases = "PHASE3"
+        trial.study_type = "INTERVENTIONAL"
+        trial.conditions = "Test Condition"
+        trial.interventions = "Drug: Test Drug"
+        trial.has_results = False
+        trial.start_date = "2023-01-01"
+        trial.completion_date = "2026-01-01"
+        trial.brief_summary = "This trial evaluates Test Drug for Test Condition."
+        trial.study_url = "https://clinicaltrials.gov/study/NCT01234567"
+
+        rendered = tool._build_trials_context([trial])
+
+        self.assertIn("clinicaltrialscontext", rendered)
+        self.assertIn("NCT01234567", rendered)
+        self.assertIn("does not by itself", rendered)
+        self.assertIn("https://clinicaltrials.gov/study/NCT01234567", rendered)
+
+    def test_build_trials_context_empty_when_no_trials(self):
+        mock_status = AsyncMock()
+        tool = ClinicalTrialsTool(mock_status)
+        self.assertEqual(tool._build_trials_context([]), "")
 
 
 class TestMedicaidInfoTool(TestCase):

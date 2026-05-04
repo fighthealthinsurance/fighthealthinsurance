@@ -40,6 +40,14 @@ FETCH_DOC_REGEX = r"(?:\*\*)?fetch_doc\s*(\{[^}]*\})\s*(?:\*\*)?"
 # Matches: uspstf_lookup {JSON} or **uspstf_lookup {JSON}**
 USPSTF_LOOKUP_REGEX = r"(?:\*\*)?uspstf_lookup\s*(\{[^}]*\})\s*(?:\*\*)?"
 
+# ClinicalTrials.gov query tool - captures search terms
+# Matches: [clinical_trials_query: terms], **clinical trials query: terms**, etc.
+# Useful when an insurer denies a treatment as "experimental/investigational"
+# and we need to check the public trial registry.
+CLINICAL_TRIALS_QUERY_REGEX = (
+    r"[\[\*]{0,4}clinical[ _]?trials?[ _]?query:?\s*([^*\[\]]+)[\]\*]{0,4}"
+)
+
 # List of all tool patterns for scoring/detection
 ALL_TOOL_PATTERNS = [
     PUBMED_QUERY_REGEX,
@@ -49,4 +57,5 @@ ALL_TOOL_PATTERNS = [
     CREATE_OR_UPDATE_PRIOR_AUTH_REGEX,
     FETCH_DOC_REGEX,
     USPSTF_LOOKUP_REGEX,
+    CLINICAL_TRIALS_QUERY_REGEX,
 ]
