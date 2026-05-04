@@ -348,6 +348,10 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
         tracking_info = extract_tracking_info(
             request=request, is_professional=(creating_professional is not None)
         )
+        if str(serializer_data.get("email", "")).strip().lower() == "testing@example.com":
+            from fhi_users.audit import get_client_ip
+
+            tracking_info.ip_address = get_client_ip(request)
 
         denial_response_info = (
             common_view_logic.DenialCreatorHelper.create_or_update_denial(
