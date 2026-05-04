@@ -10,10 +10,12 @@ and call their handle() method with the LLM response text.
 
 from .appeal_tool import AppealTool
 from .base_tool import BaseTool
+from .clinical_trials_tool import ClinicalTrialsTool
 from .doc_fetcher_tool import DocFetcherTool
 from .medicaid_tool import MedicaidEligibilityTool, MedicaidInfoTool
 from .patterns import (
     ALL_TOOL_PATTERNS,
+    CLINICAL_TRIALS_QUERY_REGEX,
     CREATE_OR_UPDATE_APPEAL_REGEX,
     CREATE_OR_UPDATE_PRIOR_AUTH_REGEX,
     FETCH_DOC_REGEX,
@@ -35,6 +37,7 @@ __all__ = [
     "CREATE_OR_UPDATE_PRIOR_AUTH_REGEX",
     "FETCH_DOC_REGEX",
     "USPSTF_LOOKUP_REGEX",
+    "CLINICAL_TRIALS_QUERY_REGEX",
     "ALL_TOOL_PATTERNS",
     # Tool handlers
     "BaseTool",
@@ -45,4 +48,5 @@ __all__ = [
     "PriorAuthTool",
     "DocFetcherTool",
     "USPSTFLookupTool",
+    "ClinicalTrialsTool",
 ]
