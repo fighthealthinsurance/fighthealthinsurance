@@ -751,6 +751,219 @@ class InsurancePlan(models.Model):
         return destinations
 
 
+class LineOfBusiness(models.TextChoices):
+    COMMERCIAL = "commercial", "Commercial"
+    MEDICARE_ADVANTAGE = "medicare_advantage", "Medicare Advantage"
+    MEDICAID = "medicaid", "Medicaid"
+    EXCHANGE = "exchange", "Exchange / Marketplace"
+    DSNP = "dsnp", "Dual Special Needs Plan"
+    OTHER = "other", "Other"
+    ALL = "all", "All Lines of Business"
+
+
+class PayerPriorAuthRequirement(models.Model):
+    """
+    Indexes a payer's published prior-authorization rules from carrier PA
+    requirement / advance-notification PDFs (e.g., UnitedHealthcare's
+    plan-specific PA requirement lists).
+
+    Used to answer "was PA required for this CPT/HCPCS?" and "what coverage
+    criteria / submission channel applies?" workflows. Rows must target a
+    single ``cpt_hcpcs_code`` or a ``code_range_start..code_range_end``
+    range — ``pa_category`` is metadata for grouping/display only and is
+    not used to match codes during lookup. Filtering supports
+    line-of-business, state, plan, and effective-date windows so we can
+    reason about the right rule at the time the service was rendered.
+    """
+
+    id = models.AutoField(primary_key=True)
+    insurance_company = models.ForeignKey(
+        InsuranceCompany,
+        on_delete=models.CASCADE,
+        related_name="pa_requirements",
+        help_text="Payer that publishes this PA requirement",
+    )
+    plan = models.ForeignKey(
+        InsurancePlan,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="pa_requirements",
+        help_text="Specific plan this requirement applies to (optional)",
+    )
+    line_of_business = models.CharField(
+        max_length=30,
+        choices=LineOfBusiness.choices,
+        default=LineOfBusiness.ALL,
+        db_index=True,
+    )
+    state = models.CharField(
+        max_length=2,
+        blank=True,
+        db_index=True,
+        help_text="Two-letter state code if requirement is state-specific",
+    )
+    cpt_hcpcs_code = models.CharField(
+        max_length=10,
+        blank=True,
+        db_index=True,
+        help_text="Specific CPT or HCPCS code requiring PA (leave blank for ranges)",
+    )
+    code_range_start = models.CharField(
+        max_length=10,
+        blank=True,
+        help_text="Inclusive start of a CPT/HCPCS range (alphanumeric compare)",
+    )
+    code_range_end = models.CharField(
+        max_length=10,
+        blank=True,
+        help_text="Inclusive end of a CPT/HCPCS range",
+    )
+    code_description = models.TextField(blank=True)
+    pa_category = models.CharField(
+        max_length=200,
+        blank=True,
+        help_text="Category like 'Genetic Testing', 'Outpatient Surgery'",
+    )
+    requires_pa = models.BooleanField(
+        default=True,
+        help_text="True if PA is required. Set False for entries that explicitly do NOT require PA.",
+    )
+    notification_only = models.BooleanField(
+        default=False,
+        help_text="True for codes that only require notification (not full PA review)",
+    )
+    submission_channel = models.TextField(
+        blank=True,
+        help_text="How to submit (e.g., 'UHCprovider.com / 866-889-8054')",
+    )
+    criteria_reference = models.TextField(
+        blank=True,
+        help_text="Pointer to coverage criteria (e.g., a UHC Medical Policy or Coverage Determination Guideline name)",
+    )
+    criteria_url = models.URLField(blank=True)
+    source_document = models.CharField(
+        max_length=300,
+        blank=True,
+        help_text="Filename or title of the source PA requirement list",
+    )
+    source_document_date = models.DateField(null=True, blank=True)
+    effective_date = models.DateField(null=True, blank=True)
+    end_date = models.DateField(null=True, blank=True)
+    notes = models.TextField(blank=True)
+
+    class Meta:
+        verbose_name = "Payer Prior Auth Requirement"
+        verbose_name_plural = "Payer Prior Auth Requirements"
+        indexes = [
+            models.Index(
+                fields=["insurance_company", "cpt_hcpcs_code"],
+                name="pa_req_company_code_idx",
+            ),
+            models.Index(
+                fields=["insurance_company", "line_of_business", "cpt_hcpcs_code"],
+                name="pa_req_co_lob_code_idx",
+            ),
+        ]
+
+    def covers_code(self, code: str) -> bool:
+        """Return True if this requirement applies to the given CPT/HCPCS code."""
+        if not code:
+            return False
+        normalized = code.upper().strip()
+        if self.cpt_hcpcs_code and self.cpt_hcpcs_code.upper() == normalized:
+            return True
+        if self.code_range_start and self.code_range_end:
+            return (
+                self.code_range_start.upper()
+                <= normalized
+                <= self.code_range_end.upper()
+            )
+        return False
+
+    def clean(self):
+        """Validate row consistency.
+
+        Two invariants are enforced:
+
+        1. ``plan`` (if set) must belong to ``insurance_company`` — pairing
+           a UHC requirement with an Aetna plan would surface contradictory
+           payer metadata downstream.
+        2. The row must specify exactly one of ``cpt_hcpcs_code`` or a
+           complete ``code_range_start`` / ``code_range_end`` pair (with
+           start ≤ end). A row with neither will never match a lookup; a
+           row with both is ambiguous about which value to honor.
+        """
+        from django.core.exceptions import ValidationError
+
+        super().clean()
+
+        plan = self.plan
+        if (
+            plan is not None
+            and self.insurance_company_id
+            and plan.insurance_company_id != self.insurance_company_id
+        ):
+            raise ValidationError(
+                {
+                    "plan": (
+                        f"Plan '{plan}' belongs to {plan.insurance_company}, "
+                        f"but this requirement is scoped to "
+                        f"{self.insurance_company}. The plan and "
+                        "insurance_company must match."
+                    )
+                }
+            )
+
+        cpt = (self.cpt_hcpcs_code or "").strip()
+        start = (self.code_range_start or "").strip()
+        end = (self.code_range_end or "").strip()
+        has_code = bool(cpt)
+        has_range = bool(start and end)
+        if has_code and has_range:
+            raise ValidationError(
+                "Set either cpt_hcpcs_code OR a code range, not both."
+            )
+        if not has_code and not has_range:
+            raise ValidationError(
+                "A PA requirement must target either a single "
+                "cpt_hcpcs_code or a complete code range "
+                "(code_range_start and code_range_end)."
+            )
+        if has_range and start.upper() > end.upper():
+            raise ValidationError(
+                {
+                    "code_range_end": (
+                        f"code_range_start ({start}) must be ≤ "
+                        f"code_range_end ({end})."
+                    )
+                }
+            )
+        if bool(start) ^ bool(end):
+            raise ValidationError(
+                {
+                    "code_range_end" if start else "code_range_start": (
+                        "code_range_start and code_range_end must be set " "together."
+                    )
+                }
+            )
+
+    def save(self, *args, **kwargs):
+        # Run full_clean so the plan/payer guard fires on every save path
+        # (admin saves, fixture loads, programmatic creates), not just the
+        # admin form.
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    def __str__(self):
+        label = self.cpt_hcpcs_code or (
+            f"{self.code_range_start}-{self.code_range_end}"
+            if self.code_range_start and self.code_range_end
+            else self.pa_category or "(unspecified)"
+        )
+        return f"{self.insurance_company.name} PA: {label}"
+
+
 class Diagnosis(models.Model):
     """
     These represent rules for extracting a diagnosis from text.
