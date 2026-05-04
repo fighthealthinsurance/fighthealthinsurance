@@ -75,6 +75,24 @@ def followup_types(db):
     return fut_7, fut_30, fut_90
 
 
+
+
+@pytest.mark.django_db
+def test_schedule_followups_includes_1day_when_type_exists(test_denial):
+    """A 1-day follow-up is scheduled when followup_1day type exists."""
+    from fighthealthinsurance.common_view_logic import schedule_followup
+
+    FollowUpType.objects.create(
+        name="followup_1day",
+        template_name="followup_1day",
+        subject="day1",
+        duration=datetime.timedelta(days=1),
+    )
+
+    schedule_followup(email="patient@gmail.com", denial=test_denial)
+
+    sched = FollowUpSched.objects.get(denial_id=test_denial, follow_up_type__name="followup_1day")
+    assert sched.follow_up_date == test_denial.date + datetime.timedelta(days=1)
 @pytest.mark.django_db
 class TestFollowUpEmailSender:
     """Test the FollowUpEmailSender class."""
@@ -508,10 +526,24 @@ class TestFollowUpEmailTemplates:
         context = {
             "followup_link": "https://example.com/followup/123",
             "selected_appeal": False,
+            "generated_proposals": True,
         }
         html_content = render_to_string("emails/followup.html", context)
 
-        assert "didn't generate an appeal that worked" in html_content
+        assert "generated draft proposals" in html_content
+        assert "Thank you for trying Fight Health Insurance" in html_content
+
+    def test_followup_html_shows_correct_message_for_no_proposals(self):
+        """Test follow-up template fallback message when no proposal was generated."""
+        context = {
+            "followup_link": "https://example.com/followup/123",
+            "selected_appeal": False,
+            "generated_proposals": False,
+        }
+        html_content = render_to_string("emails/followup.html", context)
+
+        assert "didn't manage to generate a proposal" in html_content
+        assert "feedback on how we can improve" in html_content
 
     def test_fax_followup_success_message(self):
         """Test that the fax follow-up shows success message when fax succeeded."""

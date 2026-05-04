@@ -1,0 +1,17 @@
+Hello,
+
+Thanks again for trying Fight Health Insurance.
+
+{% if selected_appeal %}
+Quick check-in: were you able to submit your appeal yet?
+{% elif generated_proposals %}
+Quick check-in: we generated draft proposals, but it looks like none were selected. We'd love your feedback on what we could do better.
+{% else %}
+Quick check-in: it looks like we weren't able to generate a usable proposal this time. We'd love your feedback so we can improve.
+{% endif %}
+
+If you can fill-out the follow up form at {{ followup_link }} that would be greatly appreciated.
+
+Thank you for being part of our community.
+
+The Fight Health Insurance team
