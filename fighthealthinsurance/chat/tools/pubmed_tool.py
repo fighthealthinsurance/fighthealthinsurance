@@ -12,7 +12,7 @@ from typing import Any, Awaitable, Callable, Optional, Tuple, Union
 from loguru import logger
 
 from fighthealthinsurance.pubmed_tools import PubMedTools
-from fighthealthinsurance.rxnorm_tools import RxNormTools
+from fighthealthinsurance.rxnorm_tools import RxNormTools, looks_like_single_drug_query
 
 from .base_tool import BaseTool
 from .patterns import PUBMED_QUERY_REGEX
@@ -165,48 +165,16 @@ class PubMedTool(BaseTool):
 
         return cleaned_response, updated_context
 
-    # Conjunctions/operators that signal a multi-concept query like
-    # "metformin AND kidney disease" — never rewrite the whole thing.
-    _MULTI_CONCEPT_TOKENS = (
-        " and ",
-        " or ",
-        " vs ",
-        " versus ",
-        ",",
-        ";",
-        " AND ",
-        " OR ",
-    )
-
-    @classmethod
-    def _looks_like_single_drug_query(cls, query: str) -> bool:
-        """Heuristic: is this short enough and unitary enough that it might
-        be a single drug name?
-
-        We cap at 2 tokens because anything longer is ambiguous between
-        "drug + dose" (e.g., ``"metformin 500mg"``) and "drug + condition"
-        (e.g., ``"metformin kidney"``). Rewriting the latter would silently
-        drop the condition, so we err on the side of leaving multi-token
-        queries alone — PubMed still finds drug results from the user's
-        original spelling, we just skip the canonical-name optimization.
-        """
-        q = (query or "").strip()
-        if not q:
-            return False
-        if any(tok in q for tok in cls._MULTI_CONCEPT_TOKENS):
-            return False
-        return len(q.split()) <= 2
-
     async def _normalize_drug_terms(self, query: str) -> str:
         """Best-effort drug-name normalization for a PubMed query.
 
         Only runs for queries that look like a single drug name (see
-        :py:meth:`_looks_like_single_drug_query`) and only rewrites when
-        RxNorm returns a high-confidence match. Multi-concept queries like
-        "metformin kidney disease" fall through unchanged, since rewriting
-        them would drop the non-drug terms.
+        :py:func:`~fighthealthinsurance.rxnorm_tools.looks_like_single_drug_query`)
+        and only rewrites when RxNorm returns a high-confidence match.
+        Multi-concept queries like "metformin kidney disease" fall through
+        unchanged, since rewriting them would drop the non-drug terms.
         """
-        if not self._looks_like_single_drug_query(query):
+        if not looks_like_single_drug_query(query):
             return query
         try:
             normalized = await self.rxnorm_tools.normalize(query)

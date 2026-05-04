@@ -113,6 +113,38 @@ def _clean_query(name: str) -> str:
     return s
 
 
+# Conjunctions/operators that mark a query as multi-concept.
+# Queries containing these tokens should NOT be treated as a single drug name
+# and should not be rewritten via RxNorm normalization.
+_MULTI_CONCEPT_TOKENS = (
+    " and ",
+    " or ",
+    " vs ",
+    " versus ",
+    ",",
+    ";",
+    " AND ",
+    " OR ",
+)
+
+
+def looks_like_single_drug_query(query: str) -> bool:
+    """Heuristic: is *query* short/unitary enough to be a single drug name?
+
+    Caps at 2 tokens because anything longer could be "drug + condition"
+    (e.g., ``"metformin kidney"``). Multi-concept queries like
+    ``"metformin AND kidney disease"`` are identified by the presence of
+    boolean connectors. Both cases should fall through unchanged — we err on
+    the side of leaving the query alone rather than silently dropping parts.
+    """
+    q = (query or "").strip()
+    if not q:
+        return False
+    if any(tok in q for tok in _MULTI_CONCEPT_TOKENS):
+        return False
+    return len(q.split()) <= 2
+
+
 class RxNormTools:
     """Async client for RxNav with database-backed caching.
 

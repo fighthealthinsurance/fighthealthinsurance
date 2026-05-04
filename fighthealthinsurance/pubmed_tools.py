@@ -29,7 +29,7 @@ from fighthealthinsurance.pubmed_search import (
     build_structured_query,
     categorize_articles_by_strength,
 )
-from fighthealthinsurance.rxnorm_tools import RxNormTools
+from fighthealthinsurance.rxnorm_tools import RxNormTools, looks_like_single_drug_query
 from fighthealthinsurance.utils import pubmed_fetcher
 
 from .exec import pubmed_executor
@@ -91,18 +91,6 @@ class PubMedTools(object):
     # Rough bias to "recent" articles
     since_list = ["2024", None]
 
-    # Tokens that mark a query as multi-concept and disqualify it from
-    # drug-expansion (mirrors the chat-tool heuristic).
-    _MULTI_CONCEPT_TOKENS = (
-        " and ",
-        " or ",
-        " vs ",
-        " versus ",
-        ",",
-        ";",
-        " AND ",
-        " OR ",
-    )
     # Maximum extra search terms we'll add per drug-like query. Each extra
     # term costs one PubMed search round-trip, so we cap this aggressively.
     _MAX_DRUG_EXPANSIONS = 2
@@ -112,17 +100,6 @@ class PubMedTools(object):
         # across PubMedTools and chat handlers; lazy-create on first use
         # otherwise so existing call sites keep working unchanged.
         self._rxnorm_tools = rxnorm_tools
-
-    @classmethod
-    def _looks_like_single_drug_term(cls, term: str) -> bool:
-        """Mirror of PubMedTool._looks_like_single_drug_query for inline
-        procedure terms. Caps at 2 tokens, no connectors, non-empty."""
-        t = (term or "").strip()
-        if not t:
-            return False
-        if any(tok in t for tok in cls._MULTI_CONCEPT_TOKENS):
-            return False
-        return len(t.split()) <= 2
 
     def _get_rxnorm_tools(self) -> RxNormTools:
         if self._rxnorm_tools is None:
@@ -143,7 +120,7 @@ class PubMedTools(object):
         insensitive) and from each other; callers can append them to an
         existing query list without further deduplication of these.
         """
-        if not self._looks_like_single_drug_term(term):
+        if not looks_like_single_drug_query(term):
             return []
         try:
             normalized = await self._get_rxnorm_tools().normalize(term)
