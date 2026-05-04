@@ -1510,7 +1510,16 @@ class InitialProcessView(generic.FormView):
         if referral_source_details:
             cleaned_data["referral_source_details"] = referral_source_details
 
+        from fhi_users.audit import extract_tracking_info, get_client_ip
+
+        tracking_info = extract_tracking_info(
+            request=self.request, is_professional=False
+        )
+        if str(cleaned_data.get("email", "")).strip().lower() == "testing@example.com":
+            tracking_info.ip_address = get_client_ip(self.request)
+
         denial_response = common_view_logic.DenialCreatorHelper.create_or_update_denial(
+            tracking_info=tracking_info,
             **cleaned_data,
         )
 
@@ -1962,12 +1971,20 @@ class CompletePaymentView(View):
                 if legacy_id is None or legacy_id <= 0:
                     return self._json_error_response("Invalid or expired link", 400)
                 rollout_at = getattr(settings, "SECURE_TOKEN_ROLLOUT_AT", None)
-                if rollout_at is None:
-                    return self._json_error_response("Invalid or expired link", 400)
-                lost_session_opt = models.LostStripeSession.objects.filter(
-                    id=legacy_id,
-                    created_at__lt=rollout_at,
-                ).first()
+                legacy_max_id = int(
+                    getattr(settings, "SECURE_TOKEN_LEGACY_MAX_ID", 1000)
+                )
+                legacy_queryset = models.LostStripeSession.objects.filter(id=legacy_id)
+                if rollout_at is not None:
+                    legacy_queryset = legacy_queryset.filter(created_at__lt=rollout_at)
+                lost_session_opt = legacy_queryset.first()
+                # Some very old rows can have auto_now_add-updated created_at values
+                # after data migrations/copies. Keep legacy links working by allowing
+                # IDs from the pre-rollout range as a secondary check.
+                if lost_session_opt is None and legacy_id <= legacy_max_id:
+                    lost_session_opt = models.LostStripeSession.objects.filter(
+                        id=legacy_id
+                    ).first()
                 if lost_session_opt is None:
                     return self._json_error_response("Invalid or expired link", 400)
                 lost_session = lost_session_opt

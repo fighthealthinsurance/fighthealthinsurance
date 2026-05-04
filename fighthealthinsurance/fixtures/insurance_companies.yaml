@@ -20,6 +20,11 @@
     website: https://www.anthem.com
     member_services_url: https://www.anthem.com/contact-us
     notes: Major national health insurance company (parent company now branded as Elevance Health). Routing is state-specific - the regional InsuranceCompany / InsurancePlan records hold per-state appeal addresses (e.g. Anthem Blue Cross California pk 9, Empire BlueCross BlueShield pk 10). Members should check the address printed on their EOB / member ID card.
+    is_major_commercial_payer: true
+    medical_policy_url: https://www.anthem.com/provider/policies/clinical-guidelines/
+    medical_policy_url_is_static_index: false
+    medical_policy_name: Medical Policies and Clinical UM Guidelines
+    medical_policy_notes: Anthem publishes Medical Policies and Clinical Utilization Management (UM) Guidelines as coverage-decision guidelines. The landing URL requires state selection (e.g. ?cnslocale=en_US_co for Colorado) before showing applicable policies.
 
 - model: fighthealthinsurance.insurancecompany
   pk: 2
@@ -36,6 +41,11 @@
     member_services_url: https://www.uhc.com/contact-us
     appeals_portal_url: https://memberforms.uhc.com/Memberappealsandgrievances.html
     notes: One of the largest health insurance providers in the U.S. Part of UnitedHealth Group. UHC routes appeals per-plan rather than to a single national address - members should use the address/fax printed on their EOB or member ID card. Use the online appeals portal (appeals_portal_url) when in doubt.
+    is_major_commercial_payer: true
+    medical_policy_url: https://www.uhcprovider.com/en/policies-protocols/commercial-policies.html
+    medical_policy_url_is_static_index: false
+    medical_policy_name: Medical Policies and Coverage Determination Guidelines
+    medical_policy_notes: UnitedHealthcare publishes Medical Policies and Coverage Determination Guidelines that state criteria under which services are considered medically necessary or proven/unproven. The provider portal links out to category-specific PDFs.
 
 - model: fighthealthinsurance.insurancecompany
   pk: 3
@@ -56,6 +66,11 @@
       Lexington, KY 40512
     appeal_fax_number: 859-425-3379
     notes: Major health insurance company, now part of CVS Health. Address shown is the National Appeals address for member commercial appeals.
+    is_major_commercial_payer: true
+    medical_policy_url: https://www.aetna.com/health-care-professionals/clinical-policy-bulletins/medical-clinical-policy-bulletins.html
+    medical_policy_url_is_static_index: false
+    medical_policy_name: Clinical Policy Bulletins (CPBs)
+    medical_policy_notes: Aetna publishes Clinical Policy Bulletins (CPBs) that express Aetna's view on whether services are medically necessary, experimental/investigational, unproven, or cosmetic. CPBs are accessed via a search portal (no static A-Z index); individual CPBs live at URLs like https://www.aetna.com/cpb/medical/data/<range>/<id>.html.
 
 - model: fighthealthinsurance.insurancecompany
   pk: 4
@@ -77,6 +92,11 @@
       Chattanooga, TN 37422
     appeal_fax_number: 877-815-4827
     notes: Global health insurance and services company. GWH-Cigna ("G" ID cards) use a different P.O. Box and fax (877-804-1679 / P.O. Box 188062).
+    is_major_commercial_payer: true
+    medical_policy_url: https://static.cigna.com/assets/chcp/resourceLibrary/coveragePolicies/medical_a-z.html
+    medical_policy_url_is_static_index: true
+    medical_policy_name: Coverage Policies
+    medical_policy_notes: Cigna's Coverage Policies help interpret standard health-coverage plan provisions and are publicly available without login. The static A-Z index links directly to individual policy PDFs.
 
 - model: fighthealthinsurance.insurancecompany
   pk: 5
@@ -95,6 +115,9 @@
     appeal_fax_number: 888-556-2128
     appeals_portal_url: https://resolutions.humana.com/
     notes: Focuses on Medicare Advantage plans. Online appeal form available at resolutions.humana.com.
+    is_major_commercial_payer: true
+    medical_policy_name: Medical Coverage Policies
+    medical_policy_notes: Humana publishes Medical Coverage Policies that document medical-necessity and coverage criteria the plan applies, including for Medicare Advantage members where additional CMS rules also apply. The public-facing index URL has changed repeatedly; locate the current index from humana.com's provider portal.
 
 - model: fighthealthinsurance.insurancecompany
   pk: 6
@@ -108,6 +131,9 @@
     member_services_url: https://healthy.kaiserpermanente.org/
     appeal_phone_number: 800-788-0710
     notes: Integrated managed care consortium operating in multiple regions. Appeal routing is region-specific (Southern California / Northern California / Mid-Atlantic / Northwest / Hawaii / Colorado / Washington / Georgia each have their own address and fax). Members should use the contact info on their EOB or member ID card.
+    is_major_commercial_payer: true
+    medical_policy_name: Clinical Review Criteria
+    medical_policy_notes: Kaiser Permanente publishes Clinical Review Criteria documenting medical-necessity standards used by its integrated delivery system. Indices and document URLs vary by region (Washington, Northern California, Southern California, etc.).
 
 - model: fighthealthinsurance.insurancecompany
   pk: 7
@@ -269,6 +295,10 @@
       Jacksonville, FL 32231-4197
     appeal_fax_number: 904-565-6637
     notes: Independent BCBS licensee for Florida. Expedited appeals fax 305-437-7490; this entry shows the standard external review address.
+    medical_policy_url: https://mcgs.bcbsfl.com/
+    medical_policy_url_is_static_index: false
+    medical_policy_name: Medical Coverage Guidelines
+    medical_policy_notes: Florida Blue publishes Medical Coverage Guidelines (MCGs). The MCG portal renders an interactive frame-based document viewer rather than a fetchable HTML index.
 
 - model: fighthealthinsurance.insurancecompany
   pk: 16

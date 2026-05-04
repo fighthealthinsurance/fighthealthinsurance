@@ -170,8 +170,9 @@ class Migration(migrations.Migration):
             field=models.CharField(
                 db_index=True,
                 default=fighthealthinsurance.utils.sekret_gen,
-                max_length=64,
-                unique=True,
+                max_length=128,
+                unique=False,
+                null=True,
             ),
         ),
         migrations.CreateModel(

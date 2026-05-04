@@ -37,6 +37,7 @@ from fighthealthinsurance.models import (
     InterestedProfessional,
     MailingListSubscriber,
     OngoingChat,
+    PayerPolicyEntry,
     PlanDocuments,
     PlanSource,
     PlanSourceRelation,
@@ -352,8 +353,32 @@ class InsuranceCompanyAdmin(admin.ModelAdmin):
         (
             "Company Type",
             {
-                "fields": ("is_tpa", "is_marketplace_focused"),
+                "fields": (
+                    "is_tpa",
+                    "is_marketplace_focused",
+                    "is_major_commercial_payer",
+                ),
                 "description": "Flags to indicate company type for suggestions",
+            },
+        ),
+        (
+            "Public Medical Policy",
+            {
+                "fields": (
+                    "medical_policy_url",
+                    "medical_policy_url_is_static_index",
+                    "medical_policy_name",
+                    "medical_policy_notes",
+                ),
+                "description": (
+                    "Public-facing medical/coverage-policy index for this "
+                    "payer (e.g., Aetna's Clinical Policy Bulletins). Used "
+                    "as comparative evidence in appeal generation; not "
+                    "binding on a member's specific plan. Set "
+                    "'static index' true only when the URL is a "
+                    "directly-browsable HTML or PDF index, not a search "
+                    "portal or state-selection page."
+                ),
             },
         ),
         (
@@ -364,6 +389,30 @@ class InsuranceCompanyAdmin(admin.ModelAdmin):
             },
         ),
     )
+
+
+@admin.register(PayerPolicyEntry)
+class PayerPolicyEntryAdmin(admin.ModelAdmin):
+    """Read-only admin for entries written by ingest_payer_policy_indexes."""
+
+    list_display = (
+        "insurance_company",
+        "title",
+        "payer_policy_id",
+        "url",
+        "last_indexed",
+    )
+    list_filter = ("insurance_company",)
+    search_fields = ("title", "payer_policy_id", "url")
+    ordering = ("insurance_company__name", "title")
+    readonly_fields = ("last_indexed",)
+    autocomplete_fields = ["insurance_company"]
+
+    def has_add_permission(self, request):  # type: ignore[override]
+        return False
+
+    def has_change_permission(self, request, obj=None):  # type: ignore[override]
+        return False
 
 
 @admin.register(InsurancePlan)

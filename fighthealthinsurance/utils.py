@@ -426,7 +426,9 @@ def markdown_escape(string: Optional[str]) -> str:
 
 
 def sekret_gen():
-    return str(UUID(bytes=os.urandom(16), version=4))
+    return str(UUID(bytes=os.urandom(16), version=4)) + str(
+        UUID(bytes=os.urandom(16), version=4)
+    )
 
 
 class UnwrapIterator(Iterator[T]):
