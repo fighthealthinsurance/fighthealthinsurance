@@ -82,7 +82,7 @@ class Base(Configuration):
     THUMBNAIL_DEBUG = True
     DEFF_FETCH_URL_NAME = "fake_fetch_url"
     STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
-    SECURE_TOKEN_ROLLOUT_AT = datetime.datetime(2026, 5, 3, tzinfo=datetime.UTC)
+    SECURE_TOKEN_ROLLOUT_AT = datetime.datetime(2026, 5, 4, tzinfo=datetime.UTC)
     REST_FRAMEWORK = {
         "DEFAULT_AUTHENTICATION_CLASSES": [
             "rest_framework.authentication.SessionAuthentication",

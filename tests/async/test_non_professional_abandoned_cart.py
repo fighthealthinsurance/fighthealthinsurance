@@ -88,7 +88,7 @@ def test_non_professional_abandoned_cart():
     legacy_session = LostStripeSession(
         pk=42,
         session_id="legacy_stripe_session",
-        created_at=timezone.now() - timezone.timedelta(days=365),
+        created_at=datetime.datetime(2026, 5, 3, tzinfo=datetime.UTC),
         payment_type="non_professional_item",
         email=email,
         metadata=metadata,
