@@ -787,15 +787,22 @@ class PayerPriorAuthRequirement(models.Model):
         return False
 
     def clean(self):
-        """Reject rows whose ``plan`` belongs to a different payer.
+        """Validate row consistency.
 
-        Without this guard a UHC requirement could be paired with an Aetna
-        plan, and the lookup/format path would surface contradictory
-        payer metadata instead of failing fast.
+        Two invariants are enforced:
+
+        1. ``plan`` (if set) must belong to ``insurance_company`` — pairing
+           a UHC requirement with an Aetna plan would surface contradictory
+           payer metadata downstream.
+        2. The row must specify exactly one of ``cpt_hcpcs_code`` or a
+           complete ``code_range_start`` / ``code_range_end`` pair (with
+           start ≤ end). A row with neither will never match a lookup; a
+           row with both is ambiguous about which value to honor.
         """
         from django.core.exceptions import ValidationError
 
         super().clean()
+
         plan = self.plan
         if (
             plan is not None
@@ -809,6 +816,39 @@ class PayerPriorAuthRequirement(models.Model):
                         f"but this requirement is scoped to "
                         f"{self.insurance_company}. The plan and "
                         "insurance_company must match."
+                    )
+                }
+            )
+
+        cpt = (self.cpt_hcpcs_code or "").strip()
+        start = (self.code_range_start or "").strip()
+        end = (self.code_range_end or "").strip()
+        has_code = bool(cpt)
+        has_range = bool(start and end)
+        if has_code and has_range:
+            raise ValidationError(
+                "Set either cpt_hcpcs_code OR a code range, not both."
+            )
+        if not has_code and not has_range:
+            raise ValidationError(
+                "A PA requirement must target either a single "
+                "cpt_hcpcs_code or a complete code range "
+                "(code_range_start and code_range_end)."
+            )
+        if has_range and start.upper() > end.upper():
+            raise ValidationError(
+                {
+                    "code_range_end": (
+                        f"code_range_start ({start}) must be ≤ "
+                        f"code_range_end ({end})."
+                    )
+                }
+            )
+        if bool(start) ^ bool(end):
+            raise ValidationError(
+                {
+                    "code_range_end" if start else "code_range_start": (
+                        "code_range_start and code_range_end must be set " "together."
                     )
                 }
             )
