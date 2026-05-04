@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import itertools
 import os
 import random
@@ -49,6 +50,45 @@ from fighthealthinsurance.utils import all_concrete_subclasses
 # Regex to split text into sentences. Splits after sentence-ending punctuation
 # followed by whitespace and a capital letter (avoids splitting on "Dr.", "U.S.", etc.)
 _sentence_split_re = re.compile(r"(?<=[.!?])\s+(?=[A-Z])")
+
+_debug_payload_models_lock = threading.Lock()
+_debug_payload_models: dict[str, set[str]] = {}
+
+
+def _log_prepared_messages_for_debug(
+    cleaned_messages: list[dict[str, str | None]], model: str
+) -> None:
+    """Log a message payload once in DEBUG, then only track model fan-out.
+
+    This keeps debug logs readable when we send an identical payload to many
+    backends/models in parallel.
+    """
+    payload_signature = hashlib.sha256(
+        repr(cleaned_messages).encode("utf-8")
+    ).hexdigest()
+    should_log_payload = False
+    models_for_payload: list[str]
+
+    with _debug_payload_models_lock:
+        model_set = _debug_payload_models.setdefault(payload_signature, set())
+        before = len(model_set)
+        model_set.add(model)
+        after = len(model_set)
+        models_for_payload = sorted(model_set)
+        should_log_payload = before == 0
+
+    if should_log_payload:
+        logger.debug(
+            "Prepared {} messages once for models={} payload={}",
+            len(cleaned_messages),
+            models_for_payload,
+            cleaned_messages,
+        )
+    elif after != before:
+        logger.debug(
+            "Prepared-message payload already logged; also sent to models={}",
+            models_for_payload,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1994,9 +2034,7 @@ class RemoteOpenLike(RemoteModel):
                         f"Prepared {len(cleaned_messages)} messages for model {model}: {summary_msg_log}"
                     )
                 else:
-                    logger.debug(
-                        f"Prepared {len(cleaned_messages)} messages for model {model}: {cleaned_messages}"
-                    )
+                    _log_prepared_messages_for_debug(cleaned_messages, str(model))
                 async with s.post(
                     url,
                     headers={"Authorization": f"Bearer {self.token}"},
