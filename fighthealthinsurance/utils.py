@@ -801,7 +801,7 @@ async def best_within_timelimit_static(
 async def execute_critical_optional_fireandforget(
     required: Sequence[Coroutine[Any, Any, T]],
     optional: Sequence[Coroutine[Any, Any, T]],
-    fire_and_forget: Sequence[Coroutine] = [],
+    fire_and_forget: Optional[Sequence[Coroutine]] = None,
     done_record: Optional[T] = None,
     timeout: Optional[int] = None,
     max_extra_time_for_optional: int = 2,
@@ -822,6 +822,8 @@ async def execute_critical_optional_fireandforget(
     Yields:
         Results from required and optional tasks as they complete, and optionally the done_record.
     """
+    fire_and_forget = fire_and_forget or []
+
     # Start fire and forget tasks
     logger.debug("Launching fire and forget")
     for fftask in fire_and_forget:
@@ -830,19 +832,25 @@ async def execute_critical_optional_fireandforget(
 
     # We create both sets of tasks at the same time since they're mostly independent and having
     # the optional ones running at the same time gives us a chance to get more done.
+
     required_tasks: List[asyncio.Task[T]] = [asyncio.create_task(t) for t in required]
     optional_tasks: List[asyncio.Task[T]] = [asyncio.create_task(t) for t in optional]
-    all_tasks: List[asyncio.Task[T]] = required_tasks + optional_tasks
 
-    required_set = set(required_tasks)
+    async def _mark_task(task: asyncio.Task[T], is_required: bool) -> tuple[bool, T]:
+        return (is_required, await task)
+
+    all_tasks: List[asyncio.Task[tuple[bool, T]]] = [
+        asyncio.create_task(_mark_task(t, True)) for t in required_tasks
+    ] + [asyncio.create_task(_mark_task(t, False)) for t in optional_tasks]
+
     required_tasks_finished = 0
     time_started = time.time()
-    # First, execute required tasks (no timeout)
+    # First, execute required tasks (or until timeout)
     try:
-        for task in asyncio.as_completed(all_tasks, timeout=timeout):
-            if task in required_set:
+        for marked_task in asyncio.as_completed(all_tasks, timeout=timeout):
+            is_required, result = await marked_task
+            if is_required:
                 required_tasks_finished += 1
-            result: T = await task
             # Yield each result immediately for streaming
             yield result
             if required_tasks_finished >= len(required):

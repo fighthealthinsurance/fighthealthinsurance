@@ -1244,9 +1244,11 @@ class RemoteOpenLike(RemoteModel):
                     model_ids.add(mid)
 
         if self.model not in model_ids:
+            available_sorted = sorted(model_ids)
+            preview = available_sorted[:15]
             logger.debug(
                 f"Model '{self.model}' not available on backend {self.api_base}. "
-                f"Available models: {sorted(model_ids) if model_ids else 'none'}"
+                f"Available model count={len(available_sorted)} preview={preview}"
             )
             return False
 
@@ -1915,7 +1917,8 @@ class RemoteOpenLike(RemoteModel):
         if api_base is None:
             api_base = self.api_base
         logger.debug(
-            f"Looking up model {model} using {api_base} and {prompt} with system prompt {system_prompt}"
+            f"Looking up model {model} using {api_base} (prompt_len={len(prompt) if prompt else 0}, "
+            f"system_prompt_len={len(system_prompt) if system_prompt else 0})"
         )
         if self.api_base is None:
             return None
