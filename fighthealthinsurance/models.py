@@ -765,6 +765,75 @@ class AppealTemplates(models.Model):
         return f"{self.id}:{self.name}"
 
 
+class MedicationContext(models.Model):
+    """
+    Curated drug-class knowledge to seed the appeal generator with high-quality
+    arguments for commonly-denied medications (GLP-1s, biologic DMARDs, anti-CGRP
+    migraine therapies, etc.).
+
+    When an appeal mentions a drug whose name or generic matches `regex`, the
+    `appeal_context` text is injected into the LLM prompt. This lets us match
+    Claimable's drug-specific argumentation without bespoke per-drug code.
+    """
+
+    id = models.AutoField(primary_key=True)
+    drug_class = models.CharField(
+        max_length=200,
+        help_text="Therapeutic class (e.g. 'GLP-1 receptor agonist', "
+        "'anti-CGRP monoclonal antibody', 'TNF inhibitor').",
+    )
+    brand_names = models.TextField(
+        blank=True,
+        help_text="Newline-separated brand names in this class (display only).",
+    )
+    generic_names = models.TextField(
+        blank=True,
+        help_text="Newline-separated generic / INN names in this class (display only).",
+    )
+    regex = RegexField(
+        max_length=800,
+        re_flags=re.IGNORECASE | re.UNICODE | re.M,
+        help_text="Pattern that matches any brand or generic in this class "
+        "against denial text or stated diagnosis.",
+    )
+    fda_indications = models.TextField(
+        blank=True,
+        help_text="Brief summary of FDA-approved indications. Used to rebut "
+        "'experimental/investigational' denials.",
+    )
+    common_denial_reasons = models.TextField(
+        blank=True,
+        help_text="Common reasons insurers cite when denying this class.",
+    )
+    appeal_context = models.TextField(
+        help_text="Curated argumentation injected into the appeal generation "
+        "prompt. Should include guideline citations, step-therapy "
+        "counter-arguments, and any class-specific clinical context.",
+    )
+    pubmed_ids = models.TextField(
+        blank=True,
+        help_text="Newline-separated PubMed IDs of foundational evidence for "
+        "this class. Auto-fetched into the citation pipeline.",
+    )
+    active = models.BooleanField(
+        default=True,
+        help_text="Disable to temporarily exclude this context from prompts.",
+    )
+
+    class Meta:
+        verbose_name_plural = "Medication Contexts"
+        ordering = ["drug_class"]
+
+    def __str__(self):
+        return self.drug_class
+
+    def matches(self, text: typing.Optional[str]) -> bool:
+        """Return True if `text` mentions any drug covered by this context."""
+        if not text or not self.regex or not self.regex.pattern:
+            return False
+        return self.regex.search(text) is not None
+
+
 class DataSource(models.Model):
     """
     Tracks the origin of data entries (e.g., user input, ML model, expert system).
