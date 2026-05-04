@@ -2488,11 +2488,14 @@ class RemoteFullOpenLike(RemoteOpenLike):
             count = seen_line_counts.get(normalized_line, 0) + 1
             seen_line_counts[normalized_line] = count
 
-            # Treat repeated identical lines as an implicit stop token.
-            # If a line appears again, assume the model has gone off the rails
-            # and cut output starting at the first repeated line.
+            # Treat 3+ repeats of the same normalized line as a runaway pattern.
+            # When the threshold is hit, trim trailing copies of that line and
+            # stop parsing additional lines.
             if count >= 3:
-                while citations and re.sub(r"\s+", " ", citations[-1].strip().lower()) == normalized_line:
+                while citations and (
+                    re.sub(r"\s+", " ", citations[-1].strip().lower())
+                    == normalized_line
+                ):
                     citations.pop()
                 break
 

@@ -70,7 +70,12 @@ def strip_boilerplate_service(val: str) -> Optional[str]:
 
 
 def _has_repeated_line_runaway(text: str, repeat_threshold: int = 3) -> bool:
-    """Return True when a normalized line repeats consecutively >= repeat_threshold."""
+    """Return True when a normalized significant line repeats >= threshold.
+
+    Lines are normalized by lowercasing, trimming, and collapsing internal
+    whitespace. Short/blank normalized lines (length < 8) are ignored and do
+    not break an existing repetition streak.
+    """
     if repeat_threshold < 2:
         repeat_threshold = 2
 
