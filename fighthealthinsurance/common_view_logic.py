@@ -2748,8 +2748,7 @@ class AppealsBackendHelper:
                     )
 
                     pa_context = (
-                        await sync_to_async(get_pa_context_for_denial)(denial)
-                        or None
+                        await sync_to_async(get_pa_context_for_denial)(denial) or None
                     )
                 except Exception as inner:
                     logger.opt(exception=True).debug(
