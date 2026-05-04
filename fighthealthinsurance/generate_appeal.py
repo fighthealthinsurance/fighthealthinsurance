@@ -1514,21 +1514,6 @@ class AppealGenerator(object):
                 )
                 payer_policy_context = ""
 
-        # Fallback so callers that bypass common_view_logic still get PA
-        # context. Guarded so a lookup failure never blocks appeal generation.
-        if pa_context is None:
-            try:
-                from fighthealthinsurance.pa_requirements import (
-                    get_pa_context_for_denial,
-                )
-
-                pa_context = get_pa_context_for_denial(denial) or None
-            except Exception as e:
-                logger.opt(exception=True).debug(
-                    f"PA requirement lookup failed for denial {getattr(denial, 'denial_id', None)}: {e}"
-                )
-                pa_context = None
-
         open_prompt = self.make_open_prompt(
             denial_text=denial.denial_text,
             procedure=denial.procedure,

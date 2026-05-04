@@ -1,14 +1,11 @@
 """
 Payer prior-authorization requirement lookup tool for the chat interface.
 
-When the LLM emits a ``lookup_pa_requirement`` tool call, this handler:
-
-  1. Parses the JSON parameters (codes, payer name, state, line of business).
-  2. Resolves the payer to an InsuranceCompany row by name / alt-name.
-  3. Queries the indexed PA requirement list and renders a context block
-     using ``pa_requirements.format_pa_context``.
-  4. Re-invokes the LLM with that context appended so the next response
-     can quote the carrier's published rules directly.
+When the LLM emits a ``lookup_pa_requirement`` tool call, this handler
+parses the JSON parameters (codes, payer, state, line of business),
+queries the indexed PA requirement list, and re-invokes the LLM with the
+formatted result so the next reply can quote the carrier's published
+rules directly.
 
 Example call shape the model is expected to emit::
 
@@ -16,126 +13,32 @@ Example call shape the model is expected to emit::
                            "line_of_business": "commercial"}
 """
 
-import json
-import re
-from typing import Any, Awaitable, Callable, List, Optional, Tuple
+from typing import Optional, Tuple
 
 from asgiref.sync import sync_to_async
-from loguru import logger
 
-from .base_tool import BaseTool
+from .json_followup_tool import JsonFollowupTool
 from .patterns import LOOKUP_PA_REQUIREMENT_REGEX
 
 
-class PaRequirementLookupTool(BaseTool):
+class PaRequirementLookupTool(JsonFollowupTool):
     """Look up payer-published PA requirements by CPT/HCPCS code."""
 
     pattern = LOOKUP_PA_REQUIREMENT_REGEX
-    detect_flags: int = re.DOTALL | re.IGNORECASE
     name = "PA Requirement Lookup"
 
-    def __init__(
-        self,
-        send_status_message: Callable[[str], Awaitable[None]],
-        call_llm_callback: Optional[
-            Callable[..., Awaitable[Tuple[Optional[str], Optional[str]]]]
-        ] = None,
-    ):
-        super().__init__(send_status_message)
-        self.call_llm_callback = call_llm_callback
-
-    async def execute(
-        self,
-        match: re.Match[str],
-        response_text: str,
-        context: str,
-        model_backends: Any = None,
-        current_message_for_llm: str = "",
-        history_for_llm: Optional[List[dict]] = None,
-        depth: int = 0,
-        is_logged_in: bool = False,
-        is_professional: bool = False,
-        **kwargs,
+    async def run(
+        self, params: dict, *, current_message_for_llm: str = ""
     ) -> Tuple[str, str]:
-        all_matches = self.detect_all(response_text)
-        cleaned_response = self.clean_all_matches(response_text, all_matches)
-
-        if len(all_matches) > 1:
-            logger.warning(
-                f"Found {len(all_matches)} PA requirement lookup tool calls; "
-                "processing only the first one."
-            )
-
-        json_data = match.group(1).strip()
-        try:
-            params = json.loads(json_data)
-        except json.JSONDecodeError:
-            logger.warning(
-                f"Invalid JSON data in lookup_pa_requirement token: {json_data}"
-            )
-            await self.send_status_message(
-                "Could not parse PA requirement lookup parameters."
-            )
-            return cleaned_response, context
-
-        await self.send_status_message(
-            "Looking up payer prior-authorization requirements..."
-        )
-
-        try:
-            pa_block, summary = await sync_to_async(_run_lookup)(params)
-        except Exception as e:
-            logger.opt(exception=True).warning(f"PA requirement lookup failed: {e}")
-            await self.send_status_message(
-                "PA requirement lookup failed. Continuing with the model's answer."
-            )
-            return cleaned_response, context
-
+        pa_block, summary = await sync_to_async(_run_lookup)(params)
         if not pa_block:
-            await self.send_status_message(
-                "No matching PA requirements were found in the indexed list."
-            )
-            note = (
+            return (
                 "PA requirement lookup result: no entries in the indexed payer PA list "
                 "matched the requested codes/payer/LOB. This is not the same as "
-                "'PA was not required' — the rule may simply not be indexed."
+                "'PA was not required' — the rule may simply not be indexed.",
+                "No matching PA requirements were found in the indexed list.",
             )
-        else:
-            await self.send_status_message(summary)
-            note = pa_block
-
-        if self.call_llm_callback and model_backends:
-            if history_for_llm is not None:
-                history_for_llm.append(
-                    {"role": "user", "content": current_message_for_llm}
-                )
-                history_for_llm.append({"role": "agent", "content": response_text})
-
-            followup_message = (
-                f"{note}\n\n -- use this when answering: {current_message_for_llm}"
-            )
-
-            additional_response, additional_context = await self.call_llm_callback(
-                model_backends,
-                followup_message,
-                "",
-                history_for_llm,
-                depth=depth + 1,
-                is_logged_in=is_logged_in,
-                is_professional=is_professional,
-            )
-
-            if cleaned_response and additional_response:
-                cleaned_response = f"{cleaned_response}\n\n{additional_response}"
-            elif additional_response:
-                cleaned_response = additional_response
-
-            if context and additional_context:
-                context = f"{context}\n\n{additional_context}"
-            elif additional_context:
-                context = additional_context
-
-        return cleaned_response, context
+        return pa_block, summary
 
 
 def _resolve_insurance_company(payer: Optional[str]):
