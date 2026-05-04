@@ -24,15 +24,6 @@ class ProcessDenialCodes(DenialBase):
         self.preventive_denial = DenialTypes.objects.filter(
             name="Preventive Care"
         ).get()
-        # These will match many things which are not ICD10 codes or CPT codes but
-        # then the lookup will hopefully fail.
-        self.icd10_re = re.compile(
-            r"[\(\s:\.,]+([A-TV-Z][0-9][0-9AB]\.?[0-9A-TV-Z]{0,4})[\s:\.\),]",
-            re.M | re.UNICODE,
-        )
-        self.cpt_code_re = re.compile(
-            r"[\(\s:,]+(\d{4}[A-Z0-9])[\s:\.\),]", re.M | re.UNICODE
-        )
         self.preventive_regex = re.compile(
             r"(exposure to human immunodeficiency virus|preventive|high risk homosexual)",
             re.M | re.UNICODE | re.IGNORECASE,
@@ -55,12 +46,14 @@ class ProcessDenialCodes(DenialBase):
 
     def _extract_codes(self, denial_text: str) -> list[str]:
         """Return ICD-10 and CPT codes pulled from the denial text."""
-        codes: list[str] = []
-        for match in self.icd10_re.finditer(denial_text):
-            codes.append(match.group(1))
-        for match in self.cpt_code_re.finditer(denial_text):
-            codes.append(match.group(1))
-        return codes
+        from fighthealthinsurance.code_extraction import (
+            extract_loose_cpt_codes,
+            extract_loose_icd10_codes,
+        )
+
+        return extract_loose_icd10_codes(denial_text) + extract_loose_cpt_codes(
+            denial_text
+        )
 
     def find_uspstf_evidence(self, denial_text: str, limit: int = 3) -> list[dict]:
         """Find USPSTF recommendations relevant to codes referenced in a denial.
@@ -83,18 +76,19 @@ class ProcessDenialCodes(DenialBase):
 
     async def get_denialtype(self, denial_text, procedure, diagnosis):
         """Get the denial type. For now short circuit logic."""
-        icd_codes = self.icd10_re.finditer(denial_text)
-        for i in icd_codes:
-            diag = i.group(1)
+        from fighthealthinsurance.code_extraction import (
+            extract_loose_cpt_codes,
+            extract_loose_icd10_codes,
+        )
+
+        for diag in extract_loose_icd10_codes(denial_text):
             tag = icd10.find(diag)
             if tag is not None:
                 if re.search("preventive", tag.block_description, re.IGNORECASE):
                     return [self.preventive_denial]
                 if diag in self.preventive_diagnosis:
                     return [self.preventive_denial]
-        cpt_codes = self.cpt_code_re.finditer(denial_text)
-        for i in cpt_codes:
-            code = i.group(1)
+        for code in extract_loose_cpt_codes(denial_text):
             if code in self.preventive_codes:
                 return [self.preventive_denial]
         # Fall back to USPSTF coverage list — only A/B-graded recommendations

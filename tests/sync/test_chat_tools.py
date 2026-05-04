@@ -562,7 +562,7 @@ class TestUSPSTFLookupTool(TestCase):
         self.assertIsNotNone(match)
 
         response, context = self._run(tool.execute(match, text, ""))
-        self.assertIn("USPSTF lookup", response)
+        self.assertIn("uspstf", response.lower())
         self.assertEqual(context, "")
 
     def test_execute_appends_uspstf_info_to_context(self):

@@ -11,6 +11,7 @@ and call their handle() method with the LLM response text.
 from .appeal_tool import AppealTool
 from .base_tool import BaseTool
 from .doc_fetcher_tool import DocFetcherTool
+from .json_followup_tool import JsonFollowupTool
 from .medicaid_tool import MedicaidEligibilityTool, MedicaidInfoTool
 from .pa_requirement_tool import PaRequirementLookupTool
 from .patterns import (
@@ -41,6 +42,7 @@ __all__ = [
     "ALL_TOOL_PATTERNS",
     # Tool handlers
     "BaseTool",
+    "JsonFollowupTool",
     "PubMedTool",
     "MedicaidInfoTool",
     "MedicaidEligibilityTool",

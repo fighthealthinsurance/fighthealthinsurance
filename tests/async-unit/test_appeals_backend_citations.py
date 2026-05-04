@@ -69,6 +69,22 @@ def _make_empty_proposed_appeal_query():
     return mock_queryset
 
 
+def _sync_to_async_router(pa_wrapper, make_appeals_wrapper):
+    """
+    Build a side_effect for the patched ``sync_to_async`` so the PA-context
+    lookup and the make_appeals call each route to their own AsyncMock.
+    Falls back to the make_appeals wrapper for unexpected inputs.
+    """
+
+    def route(fn, *args, **kwargs):
+        name = getattr(fn, "__name__", "") or repr(fn)
+        if "get_pa_context_for_denial" in name:
+            return pa_wrapper
+        return make_appeals_wrapper
+
+    return route
+
+
 class TestAppealsBackendHelperWithCitations:
     """Tests for the AppealsBackendHelper class with ML citations integration.
 
@@ -125,11 +141,16 @@ class TestAppealsBackendHelperWithCitations:
             # regex_denial_processor.get_appeal_templates returns empty
             mock_regex_processor.get_appeal_templates = AsyncMock(return_value=[])
 
-            # sync_to_async(fn) returns an async callable; await result
+            # sync_to_async(fn) is called twice: once to wrap the PA-context
+            # lookup (sync ORM) and once to wrap make_appeals. Route each to
+            # its own AsyncMock so we can assert make_appeals was invoked.
             mock_make_appeals_wrapper = AsyncMock(
                 return_value=["Appeal text with citations"]
             )
-            mock_sync_to_async.return_value = mock_make_appeals_wrapper
+            mock_pa_wrapper = AsyncMock(return_value="")
+            mock_sync_to_async.side_effect = _sync_to_async_router(
+                mock_pa_wrapper, mock_make_appeals_wrapper
+            )
 
             # ProposedAppeal() save mock
             mock_pa_instance = MagicMock()
@@ -207,11 +228,13 @@ class TestAppealsBackendHelperWithCitations:
         ):
             mock_regex_processor.get_appeal_templates = AsyncMock(return_value=[])
 
-            # sync_to_async(fn) returns an async callable; await result
             mock_make_appeals_wrapper = AsyncMock(
                 return_value=["Appeal text without citations"]
             )
-            mock_sync_to_async.return_value = mock_make_appeals_wrapper
+            mock_pa_wrapper = AsyncMock(return_value="")
+            mock_sync_to_async.side_effect = _sync_to_async_router(
+                mock_pa_wrapper, mock_make_appeals_wrapper
+            )
 
             mock_pa_instance = MagicMock()
             mock_pa_instance.id = 1
@@ -294,7 +317,10 @@ class TestAppealsBackendHelperWithCitations:
             mock_make_appeals_wrapper = AsyncMock(
                 return_value=["Appeal with both citation types"]
             )
-            mock_sync_to_async.return_value = mock_make_appeals_wrapper
+            mock_pa_wrapper = AsyncMock(return_value="")
+            mock_sync_to_async.side_effect = _sync_to_async_router(
+                mock_pa_wrapper, mock_make_appeals_wrapper
+            )
 
             mock_pa_instance = MagicMock()
             mock_pa_instance.id = 1
