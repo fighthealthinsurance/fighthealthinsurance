@@ -75,6 +75,24 @@ def followup_types(db):
     return fut_7, fut_30, fut_90
 
 
+
+
+@pytest.mark.django_db
+def test_schedule_followups_includes_1day_when_type_exists(test_denial):
+    """A 1-day follow-up is scheduled when followup_1day type exists."""
+
+    FollowUpType.objects.create(
+        name="followup_1day",
+        template_name="followup_1day",
+        subject="day1",
+        text="hiii",
+        duration=datetime.timedelta(days=1),
+    )
+
+    schedule_followup(email="patient@gmail.com", denial=test_denial)
+
+    sched = FollowUpSched.objects.get(denial_id=test_denial, follow_up_type__name="followup_1day")
+    assert sched.follow_up_date == test_denial.date + datetime.timedelta(days=1)
 @pytest.mark.django_db
 class TestFollowUpEmailSender:
     """Test the FollowUpEmailSender class."""
@@ -157,8 +175,8 @@ class TestFollowUpEmailSender:
         sender = FollowUpEmailSender()
         count = sender.send_all()
 
-        assert count == 3
-        assert mock_send_email.call_count == 3
+        assert count == 4
+        assert mock_send_email.call_count == 4
 
     @patch("fighthealthinsurance.followup_emails.send_fallback_email")
     def test_send_all_respects_count_limit(self, mock_send_email, test_denial):
@@ -335,15 +353,15 @@ class TestFollowUpEmailSender:
 class TestScheduleFollowUps:
     """Test the schedule_follow_ups helper function."""
 
-    def test_creates_three_records_for_new_denial(self, test_denial, followup_types):
-        """Test that schedule_follow_ups creates 3 FollowUpSched records."""
+    def test_creates_multiple_records_for_new_denial(self, test_denial, followup_types):
+        """Test that schedule_follow_ups creates 4 FollowUpSched records."""
         schedule_follow_ups(test_denial.raw_email, test_denial)
 
         scheds = FollowUpSched.objects.filter(denial_id=test_denial)
-        assert scheds.count() == 3
+        assert scheds.count() == 4
 
         type_names = set(s.follow_up_type.name for s in scheds)
-        assert type_names == {"followup_7day", "followup_30day", "followup_90day"}
+        assert type_names == {"followup_1day", "followup_7day", "followup_30day", "followup_90day"}
 
     def test_correct_follow_up_dates(self, test_denial, followup_types):
         """Test that follow-up dates are correctly calculated."""
@@ -359,7 +377,7 @@ class TestScheduleFollowUps:
         schedule_follow_ups(test_denial.raw_email, test_denial)
 
         scheds = FollowUpSched.objects.filter(denial_id=test_denial)
-        assert scheds.count() == 3
+        assert scheds.count() == 4
 
     def test_skips_past_dates_for_old_denials(self, test_denial, followup_types):
         """Test that follow-ups with past dates are skipped for old denials."""
@@ -424,7 +442,7 @@ class TestScheduleFollowUps:
         schedule_follow_ups(new_email, test_denial)
 
         scheds = FollowUpSched.objects.filter(denial_id=test_denial)
-        assert scheds.count() == 3
+        assert scheds.count() == 4
         for sched in scheds:
             assert sched.email == new_email
 
@@ -432,7 +450,7 @@ class TestScheduleFollowUps:
         """Test that nothing is created when the expected FollowUpType records don't exist."""
         # Remove any matching types (may exist from data migration)
         FollowUpType.objects.filter(
-            name__in=["followup_7day", "followup_30day", "followup_90day"]
+            name__in=["followup_1day", "followup_7day", "followup_30day", "followup_90day"]
         ).delete()
 
         schedule_follow_ups(test_denial.raw_email, test_denial)
@@ -508,10 +526,24 @@ class TestFollowUpEmailTemplates:
         context = {
             "followup_link": "https://example.com/followup/123",
             "selected_appeal": False,
+            "generated_proposals": True,
         }
         html_content = render_to_string("emails/followup.html", context)
 
-        assert "didn't generate an appeal that worked" in html_content
+        assert "generated draft proposals" in html_content
+        assert "Thank you for trying Fight Health Insurance" in html_content
+
+    def test_followup_html_shows_correct_message_for_no_proposals(self):
+        """Test follow-up template fallback message when no proposal was generated."""
+        context = {
+            "followup_link": "https://example.com/followup/123",
+            "selected_appeal": False,
+            "generated_proposals": False,
+        }
+        html_content = render_to_string("emails/followup.html", context)
+
+        assert "didn't manage to generate a proposal" in html_content
+        assert "feedback on how we can improve" in html_content
 
     def test_fax_followup_success_message(self):
         """Test that the fax follow-up shows success message when fax succeeded."""

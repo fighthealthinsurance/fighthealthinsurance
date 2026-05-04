@@ -557,7 +557,7 @@ def schedule_follow_ups(
     if from_date is None:
         from_date = denial.date
     follow_up_types = FollowUpType.objects.filter(
-        name__in=["followup_7day", "followup_30day", "followup_90day"]
+        name__in=["followup_1day", "followup_7day", "followup_30day", "followup_90day"]
     )
     today = datetime.date.today()
     for fut in follow_up_types:

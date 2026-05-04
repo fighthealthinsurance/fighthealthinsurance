@@ -290,8 +290,14 @@ class FollowUpEmailSender(AsyncEmailSenderMixin):
         email = follow_up_sched.email
         denial = follow_up_sched.denial_id
         selected_appeal = denial.chose_appeal()
+        generated_proposals = (
+            denial.proposedappeal_set.exclude(appeal_text__isnull=True)
+            .exclude(appeal_text="")
+            .exists()
+        )
         context = {
             "selected_appeal": selected_appeal,
+            "generated_proposals": generated_proposals,
             "followup_link": "https://www.fighthealthinsurance.com"
             + reverse(
                 "followup",
