@@ -2,7 +2,7 @@ import asyncio
 import json
 import re
 import uuid
-from typing import AsyncIterator, Callable, Optional, Tuple
+from typing import AsyncIterator, Callable, Optional, Tuple, cast
 
 from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
@@ -35,7 +35,7 @@ def _get_client_ip_from_scope(scope: Optional[dict] = None) -> Optional[str]:
     if scope is None:
         return None
 
-    headers = dict(scope.get("headers", []))
+    headers = cast(dict[bytes, bytes], dict(scope.get("headers", [])))
     if b"x-forwarded-for" in headers:
         forwarded = headers[b"x-forwarded-for"].decode("utf-8", errors="ignore")
         return forwarded.split(",")[0].strip()
@@ -43,8 +43,14 @@ def _get_client_ip_from_scope(scope: Optional[dict] = None) -> Optional[str]:
         return headers[b"x-real-ip"].decode("utf-8", errors="ignore").strip()
 
     client = scope.get("client")
-    if client:
-        return client[0]
+    if isinstance(client, (list, tuple)) and client:
+        first_value = client[0]
+        if isinstance(first_value, str):
+            return first_value
+        if first_value is not None:
+            return str(first_value)
+
+    logger.warning("Unable to determine client IP from websocket scope")
     return None
 
 
