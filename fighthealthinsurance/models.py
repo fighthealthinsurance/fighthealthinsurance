@@ -260,7 +260,7 @@ class MailingListSubscriber(models.Model):
     signup_date = models.DateField(auto_now_add=True)
     phone = models.CharField(max_length=300, default="", blank=True)
     unsubscribe_token = models.CharField(
-        max_length=100, default=sekret_gen, unique=False
+        max_length=256, default=sekret_gen, unique=False
     )
     referral_source = models.CharField(
         max_length=300, default="", blank=True, null=True
@@ -1782,12 +1782,12 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     health_history = models.TextField(null=True, blank=True)
     qa_context = models.TextField(null=True, blank=True)
     plan_context = models.TextField(null=True, blank=True)
-    semi_sekret = models.CharField(max_length=100, default=sekret_gen)
+    semi_sekret = models.CharField(max_length=256, default=sekret_gen)
     plan_id = models.CharField(max_length=200, null=True, blank=True)
     state = models.CharField(max_length=4, null=True, blank=True)
     appeal_result = models.CharField(max_length=200, null=True, blank=True)
     last_interaction = models.DateTimeField(auto_now=True)
-    follow_up_semi_sekret = models.CharField(max_length=100, default=sekret_gen)
+    follow_up_semi_sekret = models.CharField(max_length=256, default=sekret_gen)
     references = models.TextField(null=True, blank=True)
     reference_summary = models.TextField(null=True, blank=True)
     appeal_fax_number = models.CharField(max_length=40, null=True, blank=True)
@@ -2309,7 +2309,7 @@ class LostStripeSession(models.Model):
     # Unguessable token used to authorize recovery via the abandoned-cart email
     # link. Must be kept secret; only sent to the verified customer email.
     secure_token = models.CharField(
-        max_length=128, unique=True, default=sekret_gen, db_index=True
+        max_length=256, unique=True, default=sekret_gen, db_index=True
     )
     payment_type = models.CharField(max_length=255, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True, blank=True)
