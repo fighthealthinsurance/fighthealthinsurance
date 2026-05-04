@@ -69,6 +69,27 @@ def strip_boilerplate_service(val: str) -> Optional[str]:
     return cleaned
 
 
+def _has_repeated_line_runaway(text: str, repeat_threshold: int = 3) -> bool:
+    """Return True when a normalized line repeats consecutively >= repeat_threshold."""
+    if repeat_threshold < 2:
+        repeat_threshold = 2
+
+    last_line: Optional[str] = None
+    streak = 0
+    for raw_line in text.splitlines():
+        normalized = re.sub(r"\s+", " ", raw_line.strip().lower())
+        if len(normalized) < 8:
+            continue
+        if normalized == last_line:
+            streak += 1
+        else:
+            last_line = normalized
+            streak = 1
+        if streak >= repeat_threshold:
+            return True
+    return False
+
+
 def is_bad_output(
     result: Optional[str],
     *,
@@ -90,11 +111,10 @@ def is_bad_output(
     ):
         return True
 
-    if (
-        check_severe_repetition
-        and repetition_checker is not None
-        and repetition_checker(result)
-    ):
-        return True
+    if check_severe_repetition:
+        if repetition_checker is not None and repetition_checker(result):
+            return True
+        if _has_repeated_line_runaway(result, repeat_threshold=3):
+            return True
 
     return False

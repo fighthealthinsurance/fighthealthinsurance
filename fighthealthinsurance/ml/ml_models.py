@@ -2452,6 +2452,7 @@ class RemoteFullOpenLike(RemoteOpenLike):
 
         # Process the result into a list of citations
         citations: List[str] = []
+        seen_line_counts: dict[str, int] = {}
 
         # Split by newlines and process each line
         for line in text_result.split("\n"):
@@ -2464,8 +2465,20 @@ class RemoteFullOpenLike(RemoteOpenLike):
             # Remove numbering and bullet points at the beginning of the line
             line = re.sub(r"^\s*(?:\d+[.)\-]|\*|\•|\-)\s+", "", line)
 
-            # Skip header lines
-            if line.lower().startswith(("here are", "citations", "references")):
+            normalized_line = re.sub(r"\s+", " ", line.lower()).strip()
+            count = seen_line_counts.get(normalized_line, 0) + 1
+            seen_line_counts[normalized_line] = count
+
+            # Treat repeated identical lines as an implicit stop token.
+            # If a line appears again, assume the model has gone off the rails
+            # and cut output starting at the first repeated line.
+            if count >= 3:
+                while citations and re.sub(r"\s+", " ", citations[-1].strip().lower()) == normalized_line:
+                    citations.pop()
+                break
+
+            # Skip short standalone headers, but keep informative single-line entries.
+            if line.lower().startswith(("here are", "citations", "references")) and len(line) <= 32:
                 continue
 
             citations.append(line)
