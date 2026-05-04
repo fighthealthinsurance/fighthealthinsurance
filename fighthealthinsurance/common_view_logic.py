@@ -728,14 +728,21 @@ class FindNextStepsHelper:
         Best-effort: any failure returns None rather than blocking the
         flow - the rest of the page is still useful without coupons.
         """
-        from fighthealthinsurance.pharmacy_coupon_detector import suggest_for_denial
+        from fighthealthinsurance.pharmacy_coupon_detector import (
+            PharmacyCouponSuggestion as _PharmacyCouponSuggestion,
+            suggest_for_denial,
+        )
 
         try:
-            return suggest_for_denial(
+            # Funnel through a typed local so mypy `warn_return_any`
+            # doesn't lose the return type across the lazy import +
+            # django-stubs plugin combination CI uses.
+            suggestion: Optional[_PharmacyCouponSuggestion] = suggest_for_denial(
                 denial_text=denial.denial_text,
                 procedure=denial.procedure,
                 diagnosis=denial.diagnosis,
             )
+            return suggestion
         except Exception:
             logger.opt(exception=True).debug(
                 "Pharmacy coupon suggestion failed for next-steps; returning None"
