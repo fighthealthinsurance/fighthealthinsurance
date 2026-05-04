@@ -4,6 +4,7 @@ from urllib.parse import urlencode
 from unittest.mock import patch
 from django.urls import reverse
 from django.test import Client
+from django.utils import timezone
 from fighthealthinsurance.models import LostStripeSession, StripeRecoveryInfo
 from fighthealthinsurance.helpers.stripe_helpers import StripeWebhookHelper
 
@@ -82,12 +83,12 @@ def test_non_professional_abandoned_cart():
     )
     assert response.status_code == 400
 
-    # Legacy support: rows that never received a secure_token were emailed
+    # Legacy support: rows created before secure token rollout were emailed
     # with ?session_id=<row_id>; honor those old links.
     legacy_session = LostStripeSession(
         pk=42,
         session_id="legacy_stripe_session",
-        secure_token="",
+        created_at=timezone.now() - timezone.timedelta(days=365),
         payment_type="non_professional_item",
         email=email,
         metadata=metadata,

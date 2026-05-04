@@ -1897,9 +1897,9 @@ class CompletePaymentView(View):
             if token:
                 lost_session = models.LostStripeSession.objects.get(secure_token=token)
             elif session_id:
-                # Legacy emails sent before the token rollout used the row id
-                # as ?session_id=<int>. Accept those links only for rows that
-                # still have missing/blank secure_token data; otherwise require
+                # Legacy emails sent before secure_token rollout used the row
+                # id as ?session_id=<int>. Accept those links only for rows
+                # created before SECURE_TOKEN_ROLLOUT_AT; otherwise require
                 # secure_token-based access.
                 legacy_id: typing.Optional[int] = None
                 try:
@@ -1912,8 +1912,16 @@ class CompletePaymentView(View):
                         status=400,
                         content_type="application/json",
                     )
+                rollout_at = getattr(settings, "SECURE_TOKEN_ROLLOUT_AT", None)
+                if rollout_at is None:
+                    return HttpResponse(
+                        json.dumps({"error": "Invalid or expired link"}),
+                        status=400,
+                        content_type="application/json",
+                    )
                 lost_session = models.LostStripeSession.objects.filter(
-                    id=legacy_id, secure_token__in=["", None]
+                    id=legacy_id,
+                    created_at__lt=rollout_at,
                 ).first()
                 if lost_session is None:
                     return HttpResponse(
