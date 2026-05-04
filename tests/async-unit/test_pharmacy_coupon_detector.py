@@ -148,6 +148,27 @@ class TestBuildSuggestion:
         suggestion = build_suggestion("Metformin")
         assert suggestion.drug_name == "metformin"
 
+    def test_to_dict_round_trips_all_fields(self):
+        # to_dict() is the single conversion point shared by every REST
+        # surface that returns pharmacy_coupon_suggestion. If any field
+        # ever drops out of the dict shape the frontend silently breaks,
+        # so pin every field here.
+        suggestion = build_suggestion("metformin")
+        payload = suggestion.to_dict()
+        assert payload["drug_name"] == "metformin"
+        assert payload["is_likely_cheap"] is True
+        assert payload["bridge_message"] == suggestion.bridge_message
+        assert payload["oop_max_warning"] == suggestion.oop_max_warning
+        assert len(payload["pharmacy_options"]) == 3
+        for opt_dict in payload["pharmacy_options"]:
+            assert set(opt_dict.keys()) == {
+                "name",
+                "url",
+                "description",
+                "counts_toward_oop_max",
+            }
+            assert opt_dict["counts_toward_oop_max"] is False
+
 
 class TestSuggestForDenial:
     """Tests for the top-level suggest_for_denial entry point."""

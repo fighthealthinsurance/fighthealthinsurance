@@ -98,6 +98,61 @@ class TestCommonViewLogic(TestCase):
         denial.delete()
 
     @pytest.mark.django_db
+    def test_find_next_steps_populates_pharmacy_suggestion_for_drug_denial(self):
+        """For a denial whose procedure is a known drug (Wegovy), the
+        next-steps payload should carry a PharmacyCouponSuggestion so the
+        consumer flow can surface GoodRx / Cost Plus / Amazon Pharmacy."""
+        from fighthealthinsurance.pharmacy_coupon_detector import (
+            PharmacyCouponSuggestion,
+        )
+
+        email = "drug-denial@example.com"
+        denial = Denial.objects.create(
+            denial_id=2001,
+            semi_sekret="sekret-drug",
+            hashed_email=Denial.get_hashed_email(email),
+            procedure="Wegovy",
+            diagnosis="Obesity",
+            denial_text="Wegovy denied as non-formulary.",
+        )
+        try:
+            next_steps = FindNextStepsHelper.find_next_steps_for_denial(denial, email)
+            assert isinstance(
+                next_steps.pharmacy_coupon_suggestion, PharmacyCouponSuggestion
+            )
+            assert next_steps.pharmacy_coupon_suggestion.drug_name == "wegovy"
+            # Round-trip through convert_to_serializable so the REST
+            # surface gets the same shape as DenialResponseInfoSerializer.
+            serializable = next_steps.convert_to_serializable()
+            assert serializable.pharmacy_coupon_suggestion is not None
+            assert serializable.pharmacy_coupon_suggestion["drug_name"] == "wegovy"
+            assert len(serializable.pharmacy_coupon_suggestion["pharmacy_options"]) == 3
+        finally:
+            denial.delete()
+
+    @pytest.mark.django_db
+    def test_find_next_steps_no_pharmacy_suggestion_for_non_drug_denial(self):
+        """For a non-drug denial (MRI of knee), no pharmacy suggestion is
+        produced and the field stays None - the partial template renders
+        nothing in that case."""
+        email = "mri-denial@example.com"
+        denial = Denial.objects.create(
+            denial_id=2002,
+            semi_sekret="sekret-mri",
+            hashed_email=Denial.get_hashed_email(email),
+            procedure="MRI of knee",
+            diagnosis="Knee pain",
+            denial_text="MRI denied as not medically necessary.",
+        )
+        try:
+            next_steps = FindNextStepsHelper.find_next_steps_for_denial(denial, email)
+            assert next_steps.pharmacy_coupon_suggestion is None
+            serializable = next_steps.convert_to_serializable()
+            assert serializable.pharmacy_coupon_suggestion is None
+        finally:
+            denial.delete()
+
+    @pytest.mark.django_db
     @patch("fighthealthinsurance.common_view_logic.appealGenerator")
     def test_generate_appeals(self, mock_appeal_generator):
         email = "test@example.com"

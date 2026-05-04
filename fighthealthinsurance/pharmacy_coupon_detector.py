@@ -192,6 +192,15 @@ class PharmacyOption:
     # OOP credit.
     counts_toward_oop_max: bool = False
 
+    def to_dict(self) -> dict:
+        """JSON-serializable view used by REST payloads."""
+        return {
+            "name": self.name,
+            "url": self.url,
+            "description": self.description,
+            "counts_toward_oop_max": self.counts_toward_oop_max,
+        }
+
 
 @dataclass
 class PharmacyCouponSuggestion:
@@ -215,6 +224,21 @@ class PharmacyCouponSuggestion:
         "out-of-pocket maximum. Continue your appeal to get the medication "
         "covered through insurance."
     )
+
+    def to_dict(self) -> dict:
+        """
+        JSON-serializable view of the suggestion. Shared by every REST
+        surface that returns a pharmacy_coupon_suggestion field
+        (DenialResponseInfo, NextStepInfoSerializable) so the frontend
+        sees a single stable shape regardless of which endpoint produced it.
+        """
+        return {
+            "drug_name": self.drug_name,
+            "is_likely_cheap": self.is_likely_cheap,
+            "bridge_message": self.bridge_message,
+            "oop_max_warning": self.oop_max_warning,
+            "pharmacy_options": [opt.to_dict() for opt in self.pharmacy_options],
+        }
 
 
 def _normalize(text: str) -> str:

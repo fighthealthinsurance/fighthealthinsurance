@@ -71,5 +71,9 @@ Additional Resources & Questions
   {% endautoescape %}
   {% endfor %}
 </table>
+
+{# Pharmacy discount options when the denial concerns a recognizable medication. #}
+{# Renders nothing when pharmacy_suggestion is None. #}
+{% include 'partials/pharmacy_coupon_section.html' with pharmacy_suggestion=pharmacy_suggestion %}
 </div>
 {% endblock content %}

@@ -16,6 +16,10 @@ class NextStepInfoSerializableSerializer(serializers.Serializer):
     outside_help_details = StringListField()
     combined_form = DictionaryListField()
     semi_sekret = serializers.CharField()
+    # Pharmacy discount suggestion when the denial concerns a recognizable
+    # medication. Same shape as DenialResponseInfoSerializer so the React
+    # frontend renders both with one component.
+    pharmacy_coupon_suggestion = serializers.JSONField(required=False, allow_null=True)
 
 
 class StatusResponseSerializer(serializers.Serializer):

@@ -123,8 +123,19 @@ class NextStepInfo:
     outside_help_details: list[Tuple[str, str]]
     combined_form: Form
     semi_sekret: str
+    # PharmacyCouponSuggestion when the denial concerns a recognizable
+    # prescription drug or contains generic prescription cues; None
+    # otherwise. Surfaced in outside_help.html so users see GoodRx /
+    # Cost Plus / Amazon Pharmacy options as a cash-pay bridge while
+    # they fight the denial.
+    pharmacy_coupon_suggestion: Optional[Any] = None
 
     def convert_to_serializable(self):
+        suggestion_dict = (
+            self.pharmacy_coupon_suggestion.to_dict()
+            if self.pharmacy_coupon_suggestion is not None
+            else None
+        )
         return NextStepInfoSerializable(
             outside_help_details=self.outside_help_details,
             combined_form=list(
@@ -134,6 +145,7 @@ class NextStepInfo:
                 )
             ),
             semi_sekret=self.semi_sekret,
+            pharmacy_coupon_suggestion=suggestion_dict,
         )
 
     def _field_to_dict(self, field_name: str, field: Any) -> dict[str, Any]:
@@ -534,6 +546,11 @@ class NextStepInfoSerializable:
     outside_help_details: list[Tuple[str, str]]
     combined_form: list[Any]
     semi_sekret: str
+    # Mirror of NextStepInfo.pharmacy_coupon_suggestion converted via
+    # PharmacyCouponSuggestion.to_dict() so REST consumers get the same
+    # structured pharmacy options as the consumer-flow template, with a
+    # shape consistent with DenialResponseInfoSerializer.
+    pharmacy_coupon_suggestion: Optional[dict] = None
 
 
 def schedule_follow_ups(
@@ -673,6 +690,33 @@ class FollowUpHelper:
 
 
 class FindNextStepsHelper:
+    @classmethod
+    def _build_pharmacy_coupon_suggestion(cls, denial: "Denial") -> Optional[Any]:
+        """
+        Compute a PharmacyCouponSuggestion for the denial, or None.
+
+        Surfaced on the consumer flow's "next steps" page so users with a
+        denied medication can see GoodRx / Cost Plus / Amazon Pharmacy
+        options as a short-term cash-pay bridge while they fight the
+        denial. Lazy-imports to avoid circular-import pain at module load.
+
+        Best-effort: any failure returns None rather than blocking the
+        flow - the rest of the page is still useful without coupons.
+        """
+        from fighthealthinsurance.pharmacy_coupon_detector import suggest_for_denial
+
+        try:
+            return suggest_for_denial(
+                denial_text=denial.denial_text,
+                procedure=denial.procedure,
+                diagnosis=denial.diagnosis,
+            )
+        except Exception:
+            logger.opt(exception=True).debug(
+                "Pharmacy coupon suggestion failed for next-steps; returning None"
+            )
+            return None
+
     @classmethod
     def _get_outside_help_details(
         cls, denial: "Denial", state: Optional[str] = None
@@ -878,12 +922,14 @@ class FindNextStepsHelper:
         question_forms = cls._build_question_forms(denial, existing_answers)
 
         # Combine all forms
+        pharmacy_coupon_suggestion = cls._build_pharmacy_coupon_suggestion(denial)
         try:
             combined_form = magic_combined_form(question_forms, existing_answers)
             return NextStepInfo(
                 outside_help_details=outside_help_details,
                 combined_form=combined_form,
                 semi_sekret=semi_sekret,
+                pharmacy_coupon_suggestion=pharmacy_coupon_suggestion,
             )
         except Exception as e:
             logger.opt(exception=True).error(
@@ -894,6 +940,7 @@ class FindNextStepsHelper:
                 outside_help_details=outside_help_details,
                 combined_form=combined_form,
                 semi_sekret=semi_sekret,
+                pharmacy_coupon_suggestion=pharmacy_coupon_suggestion,
             )
 
     @classmethod
@@ -910,6 +957,7 @@ class FindNextStepsHelper:
             outside_help_details=outside_help_details,
             combined_form=combined_form,
             semi_sekret=denial.semi_sekret,
+            pharmacy_coupon_suggestion=cls._build_pharmacy_coupon_suggestion(denial),
         )
 
 
@@ -2157,21 +2205,7 @@ class DenialCreatorHelper:
             return None
         if suggestion is None:
             return None
-        return {
-            "drug_name": suggestion.drug_name,
-            "is_likely_cheap": suggestion.is_likely_cheap,
-            "bridge_message": suggestion.bridge_message,
-            "oop_max_warning": suggestion.oop_max_warning,
-            "pharmacy_options": [
-                {
-                    "name": option.name,
-                    "url": option.url,
-                    "description": option.description,
-                    "counts_toward_oop_max": option.counts_toward_oop_max,
-                }
-                for option in suggestion.pharmacy_options
-            ],
-        }
+        return suggestion.to_dict()
 
     @staticmethod
     def _build_financial_assistance_payload(denial) -> Optional[dict]:
