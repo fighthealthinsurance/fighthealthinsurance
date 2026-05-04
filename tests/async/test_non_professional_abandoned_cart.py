@@ -86,15 +86,19 @@ def test_non_professional_abandoned_cart():
 
     # Legacy support: rows created before secure token rollout were emailed
     # with ?session_id=<row_id>; honor those old links.
-    legacy_session = LostStripeSession(
+    legacy_session = LostStripeSession.objects.create(
         pk=42,
         session_id="legacy_stripe_session",
-        created_at=datetime.datetime(2026, 5, 3, tzinfo=datetime.UTC),
         payment_type="non_professional_item",
         email=email,
         metadata=metadata,
     )
-    legacy_session.save()
+    # Bypass auto_now_add to backdate created_at into the pre-rollout window.
+    # `auto_now_add` ignores values passed to the constructor, so a plain
+    # save() always stamps "now"; an UPDATE goes through unmolested.
+    LostStripeSession.objects.filter(pk=legacy_session.pk).update(
+        created_at=datetime.datetime(2026, 5, 3, tzinfo=datetime.UTC)
+    )
     with patch("stripe.checkout.Session.create") as mock_create:
         mock_create.return_value.url = "https://checkout.stripe.com/legacy"
         response = client.get(
