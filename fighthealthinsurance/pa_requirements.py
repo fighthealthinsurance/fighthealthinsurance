@@ -91,12 +91,19 @@ def extract_cpt_hcpcs_codes(text: Optional[str]) -> List[str]:
     Returns a de-duplicated list preserving first-occurrence order so the
     caller can prioritize the codes most prominent in the denial.
 
-    ICD-10 diagnosis codes that share the HCPCS shape are filtered out two
-    ways: dotted ICD-10 codes (e.g. ``J45.20``) are removed from the input
-    before scanning, and any HCPCS-shaped match whose compact form also
-    appears as an ICD-10 code in the original text is dropped. This prevents
-    OCR'd diagnoses like ``M54.50`` → ``M5450`` from being misread as
-    procedure codes.
+    ICD-10 diagnosis codes that share the HCPCS shape are partially filtered
+    out: dotted ICD-10 codes (e.g. ``J45.20``) are removed from the input
+    before scanning, and any HCPCS-shaped match whose compact form *also*
+    appears as a dotted ICD-10 code elsewhere in the text is dropped. The
+    HCPCS prefix subset itself is also restricted to the active CMS
+    Level II letters (excluding F/I/M/N/O/U) which catches OCR'd
+    musculoskeletal/symptom ICD-10 codes (``M54.50``, ``N18.6``, ``U07.1``).
+
+    Compact-only ICD-10 codes (e.g. an OCR'd ``J4520`` with no dotted
+    counterpart in the same text) are *not* filtered: ``J4520`` and HCPCS
+    ``J4520`` are genuinely indistinguishable without surrounding context,
+    so any disambiguation has to happen upstream (the caller can supply
+    ``denial.diagnosis``-derived ICD-10 codes separately if needed).
     """
     if not text:
         return []
@@ -333,12 +340,16 @@ def format_pa_context(
             if req.code_range_start and req.code_range_end
             else "(category)"
         )
+        # Build a complete verb phrase so the final sentence reads cleanly
+        # whether the rule requires PA, just notification, or neither —
+        # avoids awkward "requires NOTIFICATION (not full PA) prior
+        # authorization" double-up.
         if not req.requires_pa:
-            verb = "does NOT require"
+            verb_phrase = "does NOT require prior authorization"
         elif req.notification_only:
-            verb = "requires NOTIFICATION (not full PA)"
+            verb_phrase = "requires advance notification (not full prior authorization)"
         else:
-            verb = "REQUIRES"
+            verb_phrase = "REQUIRES prior authorization"
         scope_parts = [f"LOB={req.get_line_of_business_display()}"]
         if req.state:
             scope_parts.append(f"state={req.state}")
@@ -353,7 +364,7 @@ def format_pa_context(
                 )
         scope = ", ".join(scope_parts)
         lines.append(
-            f"- {req.insurance_company.name}: code {code_label} {verb} prior authorization ({scope})."
+            f"- {req.insurance_company.name}: code {code_label} {verb_phrase} ({scope})."
         )
         if req.code_description:
             lines.append(f"    Description: {req.code_description}")

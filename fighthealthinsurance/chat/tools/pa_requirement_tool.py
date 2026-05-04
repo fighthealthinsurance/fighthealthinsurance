@@ -71,12 +71,12 @@ def _run_lookup(params: dict) -> Tuple[str, str]:
         codes = extract_cpt_hcpcs_codes(raw_codes)
         if not codes:
             # Fall back to the bare token only when it actually looks like
-            # a CPT (5 digits) or HCPCS Level II (letter + 4 digits) code.
-            # Otherwise arbitrary user text would become a phantom "code"
-            # and the lookup would emit a misleading "not in our index"
-            # message for it.
+            # a CPT (5 digits) or HCPCS Level II (active prefix + 4 digits)
+            # code. The prefix subset must match the strict extractor's so
+            # we don't reintroduce OCR'd ICD-10 false positives (M/N/U/etc.
+            # would otherwise re-match as HCPCS).
             stripped = raw_codes.strip().upper()
-            if re.fullmatch(r"\d{5}|[A-V]\d{4}", stripped):
+            if re.fullmatch(r"\d{5}|[ABCDEGHJKLPQRSTV]\d{4}", stripped):
                 codes = [stripped]
     elif isinstance(raw_codes, list):
         codes = [str(c).strip().upper() for c in raw_codes if str(c).strip()]
@@ -89,7 +89,12 @@ def _run_lookup(params: dict) -> Tuple[str, str]:
     payer_input = params.get("payer") or params.get("insurer")
     company = _resolve_insurance_company(payer_input)
     state = (params.get("state") or "").strip().upper() or None
-    lob = (params.get("line_of_business") or params.get("lob") or "").strip() or None
+    # Normalize the LOB to the lowercase keys used by ``LineOfBusiness`` so
+    # callers can pass "Commercial", "commercial", or "COMMERCIAL"
+    # interchangeably without silently breaking the filter match.
+    lob = (
+        params.get("line_of_business") or params.get("lob") or ""
+    ).strip().lower() or None
 
     if payer_input and company is None:
         return (

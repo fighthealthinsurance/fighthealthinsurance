@@ -99,6 +99,16 @@ class RunLookupTests(TestCase):
         self.assertIn("UnitedHealthcare", summary)
         self.assertIn("1 PA requirement", summary)
 
+    def test_lookup_normalizes_lob_casing(self):
+        # Mixed-case LOB inputs from the LLM must still match indexed
+        # commercial rules; the lowercase ``LineOfBusiness`` value is the
+        # canonical key.
+        block, summary = _run_lookup(
+            {"codes": ["95810"], "payer": "UHC", "line_of_business": "Commercial"}
+        )
+        self.assertIn("95810", block)
+        self.assertIn("1 PA requirement", summary)
+
     def test_lookup_accepts_string_codes(self):
         block, _ = _run_lookup({"codes": "95810", "payer": "UHC"})
         self.assertIn("95810", block)
