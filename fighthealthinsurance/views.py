@@ -1512,7 +1512,9 @@ class InitialProcessView(generic.FormView):
 
         from fhi_users.audit import extract_tracking_info, get_client_ip
 
-        tracking_info = extract_tracking_info(request=self.request, is_professional=False)
+        tracking_info = extract_tracking_info(
+            request=self.request, is_professional=False
+        )
         if str(cleaned_data.get("email", "")).strip().lower() == "testing@example.com":
             tracking_info.ip_address = get_client_ip(self.request)
 
