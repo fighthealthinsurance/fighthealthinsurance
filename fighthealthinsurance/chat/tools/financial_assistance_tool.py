@@ -6,7 +6,9 @@ combined, LLM-readable context from two sources:
 
   * `pharmacy_coupon_detector.suggest_for_denial` - pharmacy discount
     programs (GoodRx, Mark Cuban Cost Plus Drugs, Amazon Pharmacy) and
-    the OOP-max caveat. Only fires when a known drug is detected.
+    the OOP-max caveat. Returns drug-specific URLs when a known drug
+    is detected, or generic search-page links when only generic
+    prescription-denial cues are present.
   * `financial_assistance_directory.search` - diagnosis-specific copay
     foundations (CancerCare, LLS, MS Society, etc.), manufacturer copay
     cards (Wegovy, Humira, etc.), the general copay-foundation
@@ -72,13 +74,19 @@ class FinancialAssistanceTool(BaseTool):
             )
 
         json_data = match.group(1).strip()
-        logger.debug(f"Financial assistance tool call params: {json_data}")
+        # Log only metadata about the payload - the JSON values may include
+        # user-typed clinical text (denial_text, diagnosis) that should not
+        # appear in plaintext logs. Mirrors USPSTFLookupTool.
+        logger.debug(
+            f"Financial assistance tool call payload (length={len(json_data)})"
+        )
 
         try:
             params = json.loads(json_data)
         except json.JSONDecodeError as e:
             logger.warning(
-                f"Invalid JSON in financial_assistance token: {json_data} - {e}"
+                f"Invalid JSON in financial_assistance token "
+                f"(length={len(json_data)}): {e}"
             )
             await self.send_status_message(
                 "Error processing financial assistance lookup: invalid JSON."

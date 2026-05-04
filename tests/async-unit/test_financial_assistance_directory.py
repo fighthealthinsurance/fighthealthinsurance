@@ -132,6 +132,25 @@ class TestSearchByDiagnosis:
         names = {p.name for p in results.diagnosis_specific}
         assert "National Multiple Sclerosis Society" in names
 
+    def test_diagnosis_text_payload_falls_back_to_denial_text(self):
+        # When only denial_text is supplied (no separate diagnosis field),
+        # results.diagnosis_text must reflect what was actually searched so
+        # downstream consumers (REST payload, LLM context) show the matched
+        # text rather than None.
+        results = search(
+            denial_text="Patient diagnosed with multiple sclerosis, denied Tysabri."
+        )
+        assert results.diagnosis_text is not None
+        assert "multiple sclerosis" in results.diagnosis_text.lower()
+
+    def test_diagnosis_field_takes_priority_over_denial_text_in_payload(self):
+        # When both are supplied, the explicit diagnosis is preferred.
+        results = search(
+            diagnosis="multiple sclerosis",
+            denial_text="long denial text that mentions other things too",
+        )
+        assert results.diagnosis_text == "multiple sclerosis"
+
 
 class TestSearchByDrug:
     """Drug-specific manufacturer programs should fire on canonical match."""
