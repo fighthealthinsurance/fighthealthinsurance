@@ -27,7 +27,7 @@ def remove_1day_followup_type(apps, schema_editor):
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("fighthealthinsurance", "0172_payerpriorauthrequirement"),
+        ("fighthealthinsurance", "0175_rxnormconcept"),
     ]
 
     operations = [
