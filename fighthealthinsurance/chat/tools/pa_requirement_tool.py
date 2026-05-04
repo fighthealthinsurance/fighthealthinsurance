@@ -31,13 +31,11 @@ class PaRequirementLookupTool(JsonFollowupTool):
         self, params: dict, *, current_message_for_llm: str = ""
     ) -> Tuple[str, str]:
         pa_block, summary = await sync_to_async(_run_lookup)(params)
+        # Empty pa_block means the lookup found nothing usable; honor the
+        # JsonFollowupTool short-circuit contract by returning an empty
+        # note so the LLM follow-up pass is skipped.
         if not pa_block:
-            return (
-                "PA requirement lookup result: no entries in the indexed payer PA list "
-                "matched the requested codes/payer/LOB. This is not the same as "
-                "'PA was not required' — the rule may simply not be indexed.",
-                "No matching PA requirements were found in the indexed list.",
-            )
+            return "", summary
         return pa_block, summary
 
 
@@ -53,7 +51,11 @@ def _resolve_insurance_company(payer: Optional[str]):
 def _run_lookup(params: dict) -> Tuple[str, str]:
     """
     Synchronous core of the lookup, suitable for sync_to_async wrapping.
-    Returns (formatted_context, status_summary).
+    Returns ``(formatted_context, status_summary)``.
+
+    When a payer name is supplied but cannot be resolved we refuse the
+    lookup outright (rather than searching across every indexed payer)
+    so we never present another carrier's rule as if it applied here.
     """
     from fighthealthinsurance.pa_requirements import (
         extract_cpt_hcpcs_codes,
@@ -72,9 +74,16 @@ def _run_lookup(params: dict) -> Tuple[str, str]:
     if not codes:
         return "", "No CPT/HCPCS codes were provided."
 
-    company = _resolve_insurance_company(params.get("payer") or params.get("insurer"))
+    payer_input = params.get("payer") or params.get("insurer")
+    company = _resolve_insurance_company(payer_input)
     state = (params.get("state") or "").strip().upper() or None
     lob = (params.get("line_of_business") or params.get("lob") or "").strip() or None
+
+    if payer_input and company is None:
+        return (
+            "",
+            f"Could not resolve payer '{payer_input}' to a known insurance company.",
+        )
 
     requirements = lookup_pa_requirements(
         codes=codes,

@@ -216,6 +216,111 @@ class PaRequirementLookupTests(TestCase):
         self.assertEqual([r.pk for r in results], [self.req_office_visit.pk])
         self.assertFalse(results[0].requires_pa)
 
+    def test_unknown_lob_narrows_to_all_lob_only(self):
+        # The MA-only J0490 rule must not surface when the caller can't
+        # tell which line of business the denial belongs to.
+        results = lookup_pa_requirements(
+            ["J0490"], insurance_company=self.uhc, line_of_business=None
+        )
+        self.assertEqual(results, [])
+
+    def test_unknown_state_narrows_to_national_only(self):
+        from fighthealthinsurance.models import PayerPriorAuthRequirement
+
+        ny_only = PayerPriorAuthRequirement.objects.create(
+            insurance_company=self.uhc,
+            cpt_hcpcs_code="33333",
+            state="NY",
+        )
+        # Unknown state filter should not pull the NY-scoped row.
+        results = lookup_pa_requirements(
+            ["33333"], insurance_company=self.uhc, state=None
+        )
+        self.assertEqual(results, [])
+        # CA caller likewise doesn't see the NY rule, only national rules.
+        results = lookup_pa_requirements(
+            ["33333"], insurance_company=self.uhc, state="CA"
+        )
+        self.assertEqual(results, [])
+        # NY caller does see it.
+        results = lookup_pa_requirements(
+            ["33333"], insurance_company=self.uhc, state="NY"
+        )
+        self.assertEqual([r.pk for r in results], [ny_only.pk])
+
+    def test_unknown_plan_narrows_to_plan_agnostic_only(self):
+        from fighthealthinsurance.models import (
+            InsurancePlan,
+            PayerPriorAuthRequirement,
+        )
+
+        gold_plan = InsurancePlan.objects.create(
+            insurance_company=self.uhc,
+            plan_name="Gold PPO",
+        )
+        plan_only = PayerPriorAuthRequirement.objects.create(
+            insurance_company=self.uhc,
+            plan=gold_plan,
+            cpt_hcpcs_code="44444",
+        )
+        # No plan in the lookup → only plan-agnostic rules.
+        results = lookup_pa_requirements(["44444"], insurance_company=self.uhc)
+        self.assertEqual(results, [])
+        # Matching plan → returns the plan-scoped rule.
+        results = lookup_pa_requirements(
+            ["44444"], insurance_company=self.uhc, plan=gold_plan
+        )
+        self.assertEqual([r.pk for r in results], [plan_only.pk])
+
+
+class PayerPriorAuthRequirementCleanTests(TestCase):
+    """Verify the model rejects rows whose plan and payer disagree."""
+
+    def setUp(self):
+        from fighthealthinsurance.models import InsurancePlan
+
+        self.uhc = InsuranceCompany.objects.create(
+            name="UnitedHealthcare",
+            regex=r"united\s*health|uhc",
+            negative_regex=r"$^",
+        )
+        self.aetna = InsuranceCompany.objects.create(
+            name="Aetna",
+            regex=r"aetna",
+            negative_regex=r"$^",
+        )
+        self.aetna_plan = InsurancePlan.objects.create(
+            insurance_company=self.aetna,
+            plan_name="Aetna PPO",
+        )
+        self.uhc_plan = InsurancePlan.objects.create(
+            insurance_company=self.uhc,
+            plan_name="UHC HMO",
+        )
+
+    def test_save_rejects_plan_payer_mismatch(self):
+        from django.core.exceptions import ValidationError
+
+        from fighthealthinsurance.models import PayerPriorAuthRequirement
+
+        with self.assertRaises(ValidationError) as ctx:
+            PayerPriorAuthRequirement.objects.create(
+                insurance_company=self.uhc,
+                plan=self.aetna_plan,
+                cpt_hcpcs_code="55555",
+            )
+        self.assertIn("plan", ctx.exception.message_dict)
+
+    def test_save_accepts_matching_plan_and_payer(self):
+        from fighthealthinsurance.models import PayerPriorAuthRequirement
+
+        req = PayerPriorAuthRequirement.objects.create(
+            insurance_company=self.uhc,
+            plan=self.uhc_plan,
+            cpt_hcpcs_code="55555",
+        )
+        self.assertEqual(req.plan_id, self.uhc_plan.pk)
+
 
 class FormatPaContextTests(TestCase):
     """Verify the prompt block we hand to the LLM."""

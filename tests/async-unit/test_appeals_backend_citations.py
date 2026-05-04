@@ -73,14 +73,20 @@ def _sync_to_async_router(pa_wrapper, make_appeals_wrapper):
     """
     Build a side_effect for the patched ``sync_to_async`` so the PA-context
     lookup and the make_appeals call each route to their own AsyncMock.
-    Falls back to the make_appeals wrapper for unexpected inputs.
+    Unexpected call sites raise so a future production change can't quietly
+    funnel its sync_to_async target through the make_appeals mock.
     """
 
     def route(fn, *args, **kwargs):
         name = getattr(fn, "__name__", "") or repr(fn)
         if "get_pa_context_for_denial" in name:
             return pa_wrapper
-        return make_appeals_wrapper
+        if "make_appeals" in name:
+            return make_appeals_wrapper
+        raise AssertionError(
+            f"Unexpected sync_to_async target in test: {name!r}. "
+            "Update _sync_to_async_router to route this callable explicitly."
+        )
 
     return route
 

@@ -31,6 +31,7 @@ from loguru import logger
 from fighthealthinsurance.models import (
     Denial,
     InsuranceCompany,
+    InsurancePlan,
     LineOfBusiness,
     PayerPriorAuthRequirement,
 )
@@ -154,12 +155,30 @@ def resolve_insurance_company_by_name(
             if alt and (alt == payer_lower or alt in payer_lower):
                 return candidate
 
-    # Last resort: try compiled `regex` field on each company.
-    for candidate in InsuranceCompany.objects.exclude(regex="").iterator():
+    # Last resort: try the compiled ``regex`` field on each company,
+    # excluding any candidate whose ``negative_regex`` matches. Mirrors
+    # the established pattern in
+    # ``common_view_logic.AppealsBackendHelper._match_insurance_company``
+    # so the two resolvers stay consistent.
+    for candidate in InsuranceCompany.objects.iterator():
+        regex = getattr(candidate, "regex", None)
+        if not regex or not getattr(regex, "pattern", ""):
+            continue
         try:
-            if candidate.regex and re.search(candidate.regex, payer_clean):
-                return candidate
-        except re.error:
+            if not regex.search(payer_clean):
+                continue
+            negative = getattr(candidate, "negative_regex", None)
+            if (
+                negative
+                and getattr(negative, "pattern", "")
+                and negative.search(payer_clean)
+            ):
+                continue
+            return candidate
+        except Exception as e:
+            logger.opt(exception=True).debug(
+                f"Error applying regex for company {candidate.id}: {e}"
+            )
             continue
     return None
 
@@ -193,22 +212,28 @@ def lookup_pa_requirements(
     insurance_company: Optional[InsuranceCompany] = None,
     state: Optional[str] = None,
     line_of_business: Optional[str] = None,
+    plan: Optional["InsurancePlan"] = None,
     on_date: Optional[date] = None,
 ) -> List[PayerPriorAuthRequirement]:
     """
     Return ``PayerPriorAuthRequirement`` rows that match any of the given
-    codes for the supplied payer / state / LOB context.
+    codes for the supplied payer / plan / state / LOB context.
 
-    Filtering rules:
+    Scoping rules — the unknown side narrows to *generic* rows so we don't
+    leak rules across scopes when the caller can't tell:
+
+      * ``state`` known → match rules for that state OR national rules
+        (state="").  ``state`` is None/unknown → only national rules.
+      * ``line_of_business`` known → match that LOB OR rules tagged "all".
+        Unknown → only "all"-LOB rules.
+      * ``plan`` known → match rules for that plan OR plan-agnostic
+        (plan IS NULL).  Unknown → only plan-agnostic rules.
       * Codes match either via exact ``cpt_hcpcs_code`` or
         ``code_range_start..code_range_end`` (inclusive, alphanumeric compare).
-      * ``state`` matches the requirement's state OR rules with no state set
-        (national rules apply everywhere).
-      * ``line_of_business`` matches the requirement's LOB OR rules marked
-        as ``"all"``.
+      * ``insurance_company`` None searches across all payers (callers that
+        require payer-attribution must pre-resolve and not pass None).
       * Date filter (defaults to today) excludes expired or not-yet-effective
         rules.
-      * If ``insurance_company`` is None, all payers are searched.
     """
     if not codes:
         return []
@@ -238,12 +263,21 @@ def lookup_pa_requirements(
 
     if state:
         qs = qs.filter(Q(state__iexact=state) | Q(state=""))
+    else:
+        qs = qs.filter(state="")
 
     if line_of_business:
         qs = qs.filter(
             Q(line_of_business=line_of_business)
             | Q(line_of_business=LineOfBusiness.ALL)
         )
+    else:
+        qs = qs.filter(line_of_business=LineOfBusiness.ALL)
+
+    if plan is not None:
+        qs = qs.filter(Q(plan=plan) | Q(plan__isnull=True))
+    else:
+        qs = qs.filter(plan__isnull=True)
 
     qs = qs.filter(Q(effective_date__isnull=True) | Q(effective_date__lte=on_date))
     qs = qs.filter(Q(end_date__isnull=True) | Q(end_date__gte=on_date))
@@ -385,6 +419,7 @@ def _denial_lookup(
 
     line_of_business = infer_line_of_business(denial)
     state = (getattr(denial, "state", "") or "").upper().strip() or None
+    plan = getattr(denial, "insurance_plan_obj", None)
 
     try:
         requirements = lookup_pa_requirements(
@@ -392,6 +427,7 @@ def _denial_lookup(
             insurance_company=insurance_company,
             state=state,
             line_of_business=line_of_business,
+            plan=plan,
         )
     except Exception as e:
         logger.opt(exception=True).debug(f"PA requirement lookup failed: {e}")

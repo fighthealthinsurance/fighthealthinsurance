@@ -108,12 +108,15 @@ class RunLookupTests(TestCase):
         self.assertEqual(block, "")
         self.assertIn("No CPT/HCPCS codes", summary)
 
-    def test_lookup_with_unknown_payer_falls_back_to_global_search(self):
+    def test_lookup_with_unknown_payer_refuses_to_broaden(self):
+        # An unresolved payer must NOT silently broaden to a cross-payer
+        # search — that would surface another carrier's rule as if it
+        # applied to the user's insurer. The lookup short-circuits and
+        # tells the caller why.
         block, summary = _run_lookup({"codes": ["95810"], "payer": "Unknown Plan"})
-        # Unknown payer means we search across all carriers and still find
-        # the seeded UHC rule.
-        self.assertIn("95810", block)
-        self.assertIn("all payers", summary)
+        self.assertEqual(block, "")
+        self.assertIn("Could not resolve", summary)
+        self.assertIn("Unknown Plan", summary)
 
 
 class PaRequirementLookupToolTests(TestCase):

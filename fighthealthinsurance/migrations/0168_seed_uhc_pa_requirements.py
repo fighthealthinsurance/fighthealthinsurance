@@ -7,6 +7,11 @@ conservative (a handful of well-known PA-required code categories) and are
 meant as a foundation that operations staff can expand. Each row includes a
 source pointer so it can be audited and refreshed when UHC publishes updates.
 
+The starter set is sourced from UHC's Commercial *and* Medicare Advantage PA
+lists, so each entry is materialized as two rows — one per LOB. Medicaid /
+exchange / DSNP rules are intentionally not seeded here because they were
+not in the source documents.
+
 The migration is idempotent: it uses get_or_create keyed on
 (insurance_company, line_of_business, cpt_hcpcs_code, code_range_start,
 code_range_end) so re-running it (or running it after operators add their own
@@ -18,13 +23,18 @@ from typing import Any, Dict, List
 
 from django.db import migrations
 
+# Lines of business this starter set was actually sourced for. Each entry
+# in UHC_PA_SEED_ENTRIES is materialized once per LOB so we never present a
+# rule for a product (e.g. Medicaid, exchange, DSNP) it wasn't sourced from.
+SEED_LINES_OF_BUSINESS = ("commercial", "medicare_advantage")
+
 # Seed entries covering common UHC PA categories.
 #
 # The shape mirrors UHC's PA requirement PDFs: each entry pins a specific
-# code (or range), the line of business it applies to, the coverage criteria
-# document (UHC Medical Policy or Coverage Determination Guideline), and the
-# submission channel. Categories chosen here are ones our denial corpus shows
-# most frequently for UHC PA appeals.
+# code (or range), the coverage criteria document (UHC Medical Policy or
+# Coverage Determination Guideline), and the submission channel. Categories
+# chosen here are ones our denial corpus shows most frequently for UHC PA
+# appeals.
 UHC_PA_SEED_ENTRIES: List[Dict[str, Any]] = [
     # --- Genetic and molecular testing (UHC requires PA for most BRCA panels) ---
     {
@@ -136,13 +146,40 @@ SUBMISSION_CHANNEL_DEFAULT = (
     "or 866-889-8054 (UHC commercial); 800-711-4555 (UHC OptumRx for pharmacy J-code review)."
 )
 
+# Exact aliases for the canonical UnitedHealthcare row, in priority order.
+# We deliberately avoid icontains/substring fallbacks so the migration can
+# never silently seed a UHC-affiliated subsidiary (e.g. "UnitedHealthcare
+# Community Plan", which targets Medicaid).
+_UHC_NAME_ALIASES = (
+    "UnitedHealthcare",
+    "United Healthcare",
+    "United Health Care",
+    "UnitedHealth",
+)
+
 
 def _get_uhc(InsuranceCompany):
-    """Return the UnitedHealthcare InsuranceCompany row if present."""
-    return (
-        InsuranceCompany.objects.filter(name__iexact="UnitedHealthcare").first()
-        or InsuranceCompany.objects.filter(name__icontains="UnitedHealth").first()
-    )
+    """Return the canonical UnitedHealthcare ``InsuranceCompany`` row.
+
+    Tries each known alias as an exact (case-insensitive) match. Returns
+    ``None`` if no match is found so the migration can skip cleanly on a
+    fresh test DB. Raises if multiple aliases match different rows — that
+    indicates a data-integrity issue we don't want to paper over.
+    """
+    matched = None
+    for alias in _UHC_NAME_ALIASES:
+        row = InsuranceCompany.objects.filter(name__iexact=alias).first()
+        if row is None:
+            continue
+        if matched is not None and row.pk != matched.pk:
+            raise RuntimeError(
+                f"Ambiguous UnitedHealthcare seed target: aliases match both "
+                f"id={matched.pk!r} ({matched.name!r}) and "
+                f"id={row.pk!r} ({row.name!r}). Resolve the duplicate "
+                "InsuranceCompany rows before re-running this migration."
+            )
+        matched = row
+    return matched
 
 
 def seed_uhc_pa_requirements(apps, schema_editor):
@@ -173,15 +210,20 @@ def seed_uhc_pa_requirements(apps, schema_editor):
             "source_document_date": SOURCE_DOCUMENT_DATE,
             "notes": entry.get("notes", ""),
         }
-        PayerPriorAuthRequirement.objects.get_or_create(
-            insurance_company=uhc,
-            line_of_business=entry.get("line_of_business", "all"),
-            state=entry.get("state", ""),
-            cpt_hcpcs_code=entry.get("cpt_hcpcs_code", ""),
-            code_range_start=entry.get("code_range_start", ""),
-            code_range_end=entry.get("code_range_end", ""),
-            defaults=defaults,
-        )
+        # Materialize one row per LOB the source list actually covered, so
+        # Medicaid / exchange / DSNP lookups don't pick these up.
+        explicit_lob = entry.get("line_of_business")
+        lobs = (explicit_lob,) if explicit_lob else SEED_LINES_OF_BUSINESS
+        for lob in lobs:
+            PayerPriorAuthRequirement.objects.get_or_create(
+                insurance_company=uhc,
+                line_of_business=lob,
+                state=entry.get("state", ""),
+                cpt_hcpcs_code=entry.get("cpt_hcpcs_code", ""),
+                code_range_start=entry.get("code_range_start", ""),
+                code_range_end=entry.get("code_range_end", ""),
+                defaults=defaults,
+            )
 
 
 def remove_uhc_pa_requirements(apps, schema_editor):
