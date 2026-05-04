@@ -14,7 +14,7 @@ for the appeal itself.
 import re
 import urllib.parse
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Any, Optional
 
 # Drugs that are typically inexpensive without insurance (under ~$50/month
 # at retail pharmacies via discount cards). Suitable as a "bridge" while
@@ -192,7 +192,7 @@ class PharmacyOption:
     # OOP credit.
     counts_toward_oop_max: bool = False
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """JSON-serializable view used by REST payloads."""
         return {
             "name": self.name,
@@ -225,7 +225,7 @@ class PharmacyCouponSuggestion:
         "covered through insurance."
     )
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         """
         JSON-serializable view of the suggestion. Shared by every REST
         surface that returns a pharmacy_coupon_suggestion field

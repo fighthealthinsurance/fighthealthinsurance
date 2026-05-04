@@ -136,8 +136,8 @@ class NextStepInfo:
     # they fight the denial.
     pharmacy_coupon_suggestion: Optional["PharmacyCouponSuggestion"] = None
 
-    def convert_to_serializable(self):
-        suggestion_dict = (
+    def convert_to_serializable(self) -> "NextStepInfoSerializable":
+        suggestion_dict: Optional[dict[str, Any]] = (
             self.pharmacy_coupon_suggestion.to_dict()
             if self.pharmacy_coupon_suggestion is not None
             else None
@@ -556,7 +556,7 @@ class NextStepInfoSerializable:
     # PharmacyCouponSuggestion.to_dict() so REST consumers get the same
     # structured pharmacy options as the consumer-flow template, with a
     # shape consistent with DenialResponseInfoSerializer.
-    pharmacy_coupon_suggestion: Optional[dict] = None
+    pharmacy_coupon_suggestion: Optional[dict[str, Any]] = None
 
 
 def schedule_follow_ups(
@@ -994,8 +994,8 @@ class DenialResponseInfo:
     #   * financial_assistance: populated when the search finds at least
     #     one program tied to the patient's drug / diagnosis / state - the
     #     general copay directories alone do not gate this on.
-    pharmacy_coupon_suggestion: Optional[dict] = None
-    financial_assistance: Optional[dict] = None
+    pharmacy_coupon_suggestion: Optional[dict[str, Any]] = None
+    financial_assistance: Optional[dict[str, Any]] = None
 
 
 class PatientNotificationHelper:
@@ -2191,7 +2191,7 @@ class DenialCreatorHelper:
         return cls.format_denial_response_info(denial)
 
     @staticmethod
-    def _build_pharmacy_coupon_payload(denial) -> Optional[dict]:
+    def _build_pharmacy_coupon_payload(denial) -> Optional[dict[str, Any]]:
         """
         Build a JSON-serializable pharmacy coupon suggestion for a denial.
 
@@ -2216,7 +2216,7 @@ class DenialCreatorHelper:
         return suggestion.to_dict()
 
     @staticmethod
-    def _build_financial_assistance_payload(denial) -> Optional[dict]:
+    def _build_financial_assistance_payload(denial) -> Optional[dict[str, Any]]:
         """
         Build a JSON-serializable financial-assistance payload for a denial.
 
