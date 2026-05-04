@@ -37,6 +37,7 @@ from fighthealthinsurance.models import (
     InterestedProfessional,
     PayerPriorAuthRequirement,
     MailingListSubscriber,
+    MedicationContext,
     OngoingChat,
     PayerPolicyEntry,
     PlanDocuments,
@@ -414,6 +415,46 @@ class PayerPolicyEntryAdmin(admin.ModelAdmin):
 
     def has_change_permission(self, request, obj=None):  # type: ignore[override]
         return False
+
+
+@admin.register(MedicationContext)
+class MedicationContextAdmin(admin.ModelAdmin):
+    """Admin configuration for curated drug-class appeal context."""
+
+    list_display = ("id", "drug_class", "active")
+    list_filter = ("active",)
+    search_fields = ("drug_class", "brand_names", "generic_names")
+    ordering = ("drug_class",)
+    fieldsets = (
+        (
+            None,
+            {
+                "fields": (
+                    "drug_class",
+                    "active",
+                    "brand_names",
+                    "generic_names",
+                    "regex",
+                ),
+            },
+        ),
+        (
+            "Curated Appeal Content",
+            {
+                "fields": (
+                    "fda_indications",
+                    "common_denial_reasons",
+                    "appeal_context",
+                    "pubmed_ids",
+                ),
+                "description": (
+                    "Injected verbatim into the appeal generation prompt "
+                    "when the regex matches a denial. Keep concise and "
+                    "factual; do not include unverified citations."
+                ),
+            },
+        ),
+    )
 
 
 @admin.register(InsurancePlan)
