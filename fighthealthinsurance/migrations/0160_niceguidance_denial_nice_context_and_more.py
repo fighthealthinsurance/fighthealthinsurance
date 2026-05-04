@@ -171,7 +171,7 @@ class Migration(migrations.Migration):
                 db_index=True,
                 default=fighthealthinsurance.utils.sekret_gen,
                 max_length=64,
-                unique=True,
+                unique=False,
             ),
         ),
         migrations.CreateModel(
