@@ -1960,20 +1960,17 @@ class CompletePaymentView(View):
                 except (TypeError, ValueError):
                     pass
                 if legacy_id is None or legacy_id <= 0:
-                    return self._json_error_response("Invalid or expired link")
+                    return self._json_error_response("Invalid or expired link", 400)
                 rollout_at = getattr(settings, "SECURE_TOKEN_ROLLOUT_AT", None)
                 if rollout_at is None:
-                    return HttpResponse(
-                        json.dumps({"error": "Invalid or expired link"}),
-                        status=400,
-                        content_type="application/json",
-                    )
-                lost_session = models.LostStripeSession.objects.filter(
+                    return self._json_error_response("Invalid or expired link", 400)
+                lost_session_opt = models.LostStripeSession.objects.filter(
                     id=legacy_id,
                     created_at__lt=rollout_at,
                 ).first()
-                if lost_session is None:
-                    return self._json_error_response("Invalid or expired link")
+                if lost_session_opt is None:
+                    return self._json_error_response("Invalid or expired link", 400)
+                lost_session = lost_session_opt
             else:
                 return self._json_error_response("Missing token", 400)
             continue_url = lost_session.success_url
