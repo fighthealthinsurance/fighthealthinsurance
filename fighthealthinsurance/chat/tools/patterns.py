@@ -40,6 +40,13 @@ FETCH_DOC_REGEX = r"(?:\*\*)?fetch_doc\s*(\{[^}]*\})\s*(?:\*\*)?"
 # Matches: uspstf_lookup {JSON} or **uspstf_lookup {JSON}**
 USPSTF_LOOKUP_REGEX = r"(?:\*\*)?uspstf_lookup\s*(\{[^}]*\})\s*(?:\*\*)?"
 
+# Financial assistance directory tool - captures JSON with drug/diagnosis/state
+# Matches: financial_assistance {JSON} or **financial_assistance {JSON}**
+# Looks up pharmacy discount programs (GoodRx, Cost Plus, Amazon Pharmacy),
+# diagnosis-specific copay foundations, manufacturer programs, safety-net
+# clinics (340B), and state Medicaid pathways.
+FINANCIAL_ASSISTANCE_REGEX = r"(?:\*\*)?financial_assistance\s*(\{[^}]*\})\s*(?:\*\*)?"
+
 # List of all tool patterns for scoring/detection
 ALL_TOOL_PATTERNS = [
     PUBMED_QUERY_REGEX,
@@ -49,4 +56,5 @@ ALL_TOOL_PATTERNS = [
     CREATE_OR_UPDATE_PRIOR_AUTH_REGEX,
     FETCH_DOC_REGEX,
     USPSTF_LOOKUP_REGEX,
+    FINANCIAL_ASSISTANCE_REGEX,
 ]

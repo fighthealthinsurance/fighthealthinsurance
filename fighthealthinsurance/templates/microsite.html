@@ -159,6 +159,133 @@
 </section>
 {% endif %}
 
+<!-- Pharmacy Coupon / Discount Bridge Section -->
+{% with pharmacy_suggestion=microsite.pharmacy_coupon_suggestion %}
+{% if pharmacy_suggestion %}
+<section id="pharmacy-coupons" class="py-5">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto">
+                <h2 class="text-center mb-4">Pharmacy Discount Options</h2>
+                <p class="text-center text-muted mb-4">{{ pharmacy_suggestion.bridge_message }}</p>
+                <div class="pharmacy-coupons-list">
+                    {% for option in pharmacy_suggestion.pharmacy_options %}
+                    <div class="card mb-3 pharmacy-coupon-card">
+                        <div class="card-body">
+                            <h5 class="card-title mb-2">
+                                <a href="{{ option.url }}" target="_blank" rel="noopener noreferrer" class="pharmacy-coupon-link">
+                                    {{ option.name }}
+                                    <i class="text-muted ms-1 icon-external-sm">&#8599;</i>
+                                </a>
+                            </h5>
+                            <p class="card-text text-muted mb-0">{{ option.description }}</p>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                <p class="text-muted small mt-4 mb-0 text-center">
+                    <em>{{ pharmacy_suggestion.oop_max_warning }}</em>
+                </p>
+            </div>
+        </div>
+    </div>
+</section>
+{% endif %}
+{% endwith %}
+
+<!-- Financial Assistance Directory (curated copay foundations, manufacturer programs, safety-net) -->
+{% with financial_assistance=microsite.financial_assistance %}
+{% if financial_assistance %}
+<section id="financial-assistance" class="py-5">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto">
+                <h2 class="text-center mb-4">Financial Assistance Directory</h2>
+                <p class="text-center text-muted mb-4">Curated copay foundations, manufacturer programs, and safety-net clinics that may help with the cost while you appeal.</p>
+
+                {% if financial_assistance.diagnosis_specific %}
+                <h4 class="mt-4">For your condition</h4>
+                {% for program in financial_assistance.diagnosis_specific %}
+                <div class="card mb-3 financial-assistance-card">
+                    <div class="card-body">
+                        <h5 class="card-title mb-2">
+                            <a href="{{ program.url }}" target="_blank" rel="noopener noreferrer">{{ program.name }} <i class="text-muted ms-1 icon-external-sm">&#8599;</i></a>
+                        </h5>
+                        <p class="card-text text-muted mb-1">{{ program.description }}</p>
+                        {% if program.eligibility_note %}<p class="card-text small text-muted mb-0"><em>Eligibility: {{ program.eligibility_note }}</em></p>{% endif %}
+                        {% if program.phone %}<p class="card-text small text-muted mb-0">Phone: {{ program.phone }}</p>{% endif %}
+                    </div>
+                </div>
+                {% endfor %}
+                {% endif %}
+
+                {% if financial_assistance.manufacturer %}
+                <h4 class="mt-4">Manufacturer copay programs</h4>
+                {% for program in financial_assistance.manufacturer %}
+                <div class="card mb-3 financial-assistance-card">
+                    <div class="card-body">
+                        <h5 class="card-title mb-2">
+                            <a href="{{ program.url }}" target="_blank" rel="noopener noreferrer">{{ program.name }} <i class="text-muted ms-1 icon-external-sm">&#8599;</i></a>
+                        </h5>
+                        <p class="card-text text-muted mb-1">{{ program.description }}</p>
+                        {% if program.eligibility_note %}<p class="card-text small text-muted mb-0"><em>Eligibility: {{ program.eligibility_note }}</em></p>{% endif %}
+                    </div>
+                </div>
+                {% endfor %}
+                {% endif %}
+
+                {% if financial_assistance.general %}
+                <h4 class="mt-4">General copay foundations &amp; directories</h4>
+                {% for program in financial_assistance.general %}
+                <div class="card mb-3 financial-assistance-card">
+                    <div class="card-body">
+                        <h5 class="card-title mb-2">
+                            <a href="{{ program.url }}" target="_blank" rel="noopener noreferrer">{{ program.name }} <i class="text-muted ms-1 icon-external-sm">&#8599;</i></a>
+                        </h5>
+                        <p class="card-text text-muted mb-1">{{ program.description }}</p>
+                        {% if program.eligibility_note %}<p class="card-text small text-muted mb-0"><em>Eligibility: {{ program.eligibility_note }}</em></p>{% endif %}
+                        {% if program.phone %}<p class="card-text small text-muted mb-0">Phone: {{ program.phone }}</p>{% endif %}
+                    </div>
+                </div>
+                {% endfor %}
+                {% endif %}
+
+                {% if financial_assistance.safety_net %}
+                <h4 class="mt-4">Safety-net clinics &amp; 340B</h4>
+                {% for program in financial_assistance.safety_net %}
+                <div class="card mb-3 financial-assistance-card">
+                    <div class="card-body">
+                        <h5 class="card-title mb-2">
+                            <a href="{{ program.url }}" target="_blank" rel="noopener noreferrer">{{ program.name }} <i class="text-muted ms-1 icon-external-sm">&#8599;</i></a>
+                        </h5>
+                        <p class="card-text text-muted mb-1">{{ program.description }}</p>
+                    </div>
+                </div>
+                {% endfor %}
+                {% endif %}
+
+                {% if financial_assistance.state_medicaid_name %}
+                <h4 class="mt-4">State Medicaid pathway</h4>
+                <div class="card mb-3 financial-assistance-card">
+                    <div class="card-body">
+                        <h5 class="card-title mb-2">
+                            {% if financial_assistance.state_medicaid_url %}<a href="{{ financial_assistance.state_medicaid_url }}" target="_blank" rel="noopener noreferrer">{{ financial_assistance.state_medicaid_name }} <i class="text-muted ms-1 icon-external-sm">&#8599;</i></a>{% else %}{{ financial_assistance.state_medicaid_name }}{% endif %}
+                        </h5>
+                        {% if financial_assistance.state_medicaid_phone %}<p class="card-text small text-muted mb-0">Phone: {{ financial_assistance.state_medicaid_phone }}</p>{% endif %}
+                    </div>
+                </div>
+                {% endif %}
+
+                <p class="text-muted small mt-4 mb-0 text-center">
+                    <em>Program eligibility, fund availability, and contact info change frequently. Verify with each organization before assuming a program is open.</em>
+                </p>
+            </div>
+        </div>
+    </div>
+</section>
+{% endif %}
+{% endwith %}
+
 <!-- Patient Assistance Programs Section -->
 {% if microsite.assistance_programs %}
 <section id="assistance-programs" class="py-5 bg-light">

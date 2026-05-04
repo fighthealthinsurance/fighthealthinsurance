@@ -19,6 +19,12 @@ from django.contrib.staticfiles.storage import staticfiles_storage
 from loguru import logger
 
 if TYPE_CHECKING:
+    from fighthealthinsurance.financial_assistance_directory import (
+        FinancialAssistanceResults,
+    )
+    from fighthealthinsurance.pharmacy_coupon_detector import (
+        PharmacyCouponSuggestion,
+    )
     from fighthealthinsurance.pubmed_tools import PubMedTools
 
 
@@ -135,6 +141,49 @@ class Microsite:
 
     def __repr__(self) -> str:
         return f"<Microsite: {self.slug}>"
+
+    def pharmacy_coupon_suggestion(self) -> "Optional[PharmacyCouponSuggestion]":
+        """
+        Return a PharmacyCouponSuggestion for this microsite, if its
+        default procedure or condition matches a known prescription drug.
+
+        Returns None when the microsite is not drug-related.
+        """
+        from fighthealthinsurance.pharmacy_coupon_detector import suggest_for_denial
+
+        return suggest_for_denial(
+            procedure=self.default_procedure,
+            diagnosis=self.default_condition,
+        )
+
+    def financial_assistance(
+        self, state_abbreviation: Optional[str] = None
+    ) -> "Optional[FinancialAssistanceResults]":
+        """
+        Return a FinancialAssistanceResults aggregate for this microsite,
+        but only when the search produced at least one result tied to the
+        microsite's specific drug, condition, or state.
+
+        Combines diagnosis-matched copay foundations, drug-matched
+        manufacturer programs, the always-applicable general directory, and
+        safety-net resources. When `state_abbreviation` is supplied, also
+        attaches the state's Medicaid pathway.
+
+        Returns None when nothing specific matches - the general directory
+        and base safety-net entries are always returned by `search()` and
+        on their own are not microsite-specific enough to warrant rendering
+        a dedicated section.
+        """
+        from fighthealthinsurance.financial_assistance_directory import search
+
+        results = search(
+            drug=self.default_procedure,
+            diagnosis=self.default_condition,
+            state_abbreviation=state_abbreviation,
+        )
+        if not results.has_specific_matches():
+            return None
+        return results
 
     async def get_extralink_context(
         self,
