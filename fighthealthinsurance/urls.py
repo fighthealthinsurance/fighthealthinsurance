@@ -337,6 +337,11 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         name="mhmda",
     ),
     path(
+        "find_next_steps_loading",
+        sensitive_post_parameters("email")(views.FindNextStepsLoading.as_view()),
+        name="find_next_steps_loading",
+    ),
+    path(
         "find_next_steps",
         sensitive_post_parameters("email")(views.FindNextSteps.as_view()),
         name="find_next_steps",
