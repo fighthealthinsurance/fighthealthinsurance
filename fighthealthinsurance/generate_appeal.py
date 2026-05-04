@@ -1266,6 +1266,7 @@ class AppealGenerator(object):
         rag_context=None,
         nice_context=None,
         ucr_context=None,
+        medication_context=None,
     ) -> Optional[str]:
         """
         Constructs a prompt for generating a health insurance appeal based on denial details and optional contextual information.
@@ -1281,6 +1282,10 @@ class AppealGenerator(object):
             professional_to_finish: If True, instructs to write from the professional's point of view.
             plan_id: Insurance plan ID to include.
             claim_id: Claim ID to include.
+            medication_context: Pre-rendered drug-class guidance block from
+                ``_collect_medication_context``. When non-empty, appended as a
+                DRUG-CLASS GUIDANCE section to nudge the model toward
+                class-specific argumentation. Pass ``None`` to omit.
 
         Returns:
             A formatted prompt string for appeal generation, or None if denial_text is not provided.
@@ -1368,6 +1373,13 @@ class AppealGenerator(object):
                 "the block.\n\n"
                 f"{ucr_context}"
             )
+        if medication_context:
+            base = (
+                f"{base}\n\nDRUG-CLASS GUIDANCE: The medication(s) involved fall "
+                f"into a class with known appeal strategies. Use the following "
+                f"curated context where relevant. Do not invent citations beyond "
+                f"those listed elsewhere.\n{medication_context}"
+            )
         if (
             insurance_company is not None
             and insurance_company != ""
@@ -1408,6 +1420,57 @@ class AppealGenerator(object):
                 return f"{base}Why is {procedure} is medically necessary?"
         else:
             return None
+
+    @staticmethod
+    def _collect_medication_context(denial) -> Optional[str]:
+        """Find curated MedicationContext entries that match the denial's
+        text/diagnosis/procedure and return a single rendered block to inject
+        into the appeal prompt. Returns None if no matches.
+
+        Designed to be defensive: any DB / import failure returns None so the
+        appeal pipeline keeps working even if the table is empty or absent
+        (e.g. during a partially-applied migration).
+        """
+        try:
+            from fighthealthinsurance.models import MedicationContext
+        except Exception as e:
+            logger.opt(exception=True).debug(f"MedicationContext unavailable: {e}")
+            return None
+
+        haystack_parts = [
+            getattr(denial, "denial_text", None) or "",
+            getattr(denial, "diagnosis", None) or "",
+            getattr(denial, "procedure", None) or "",
+            getattr(denial, "health_history", None) or "",
+            getattr(denial, "qa_context", None) or "",
+        ]
+        haystack = "\n".join(p for p in haystack_parts if p)
+        if not haystack.strip():
+            return None
+
+        matches: list[MedicationContext] = []
+        try:
+            for ctx in MedicationContext.objects.filter(active=True):
+                if ctx.matches(haystack):
+                    matches.append(ctx)
+        except Exception as e:
+            logger.opt(exception=True).debug(f"MedicationContext lookup failed: {e}")
+            return None
+
+        if not matches:
+            return None
+
+        rendered: list[str] = []
+        for ctx in matches:
+            block = [f"--- {ctx.drug_class} ---", ctx.appeal_context.strip()]
+            if ctx.fda_indications:
+                block.append(f"FDA-approved indications: {ctx.fda_indications.strip()}")
+            if ctx.common_denial_reasons:
+                block.append(
+                    f"Common denial reasons to rebut: {ctx.common_denial_reasons.strip()}"
+                )
+            rendered.append("\n".join(block))
+        return "\n\n".join(rendered)
 
     def make_appeals(
         self,
@@ -1460,6 +1523,8 @@ class AppealGenerator(object):
         if isinstance(ucr_ctx, dict):
             ucr_narrative = ucr_ctx.get("narrative") or None
 
+        medication_context = self._collect_medication_context(denial)
+
         open_prompt = self.make_open_prompt(
             denial_text=denial.denial_text,
             procedure=denial.procedure,
@@ -1482,6 +1547,7 @@ class AppealGenerator(object):
             rag_context=rag_context,
             nice_context=nice_context,
             ucr_context=ucr_narrative,
+            medication_context=medication_context,
         )
         open_medically_necessary_prompt = self.make_open_med_prompt(
             procedure=denial.procedure,
