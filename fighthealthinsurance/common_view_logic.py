@@ -137,11 +137,28 @@ class NextStepInfo:
     pharmacy_coupon_suggestion: Optional["PharmacyCouponSuggestion"] = None
 
     def convert_to_serializable(self) -> "NextStepInfoSerializable":
-        suggestion_dict: Optional[dict[str, Any]] = (
-            self.pharmacy_coupon_suggestion.to_dict()
-            if self.pharmacy_coupon_suggestion is not None
-            else None
-        )
+        # Inline the dict shape rather than calling .to_dict() so mypy can
+        # follow the return type without needing to chase the dataclass
+        # method through the django-stubs plugin (which has lost the
+        # return type in CI for `warn_return_any`).
+        suggestion_dict: Optional[dict[str, Any]] = None
+        if self.pharmacy_coupon_suggestion is not None:
+            s = self.pharmacy_coupon_suggestion
+            suggestion_dict = {
+                "drug_name": s.drug_name,
+                "is_likely_cheap": s.is_likely_cheap,
+                "bridge_message": s.bridge_message,
+                "oop_max_warning": s.oop_max_warning,
+                "pharmacy_options": [
+                    {
+                        "name": option.name,
+                        "url": option.url,
+                        "description": option.description,
+                        "counts_toward_oop_max": option.counts_toward_oop_max,
+                    }
+                    for option in s.pharmacy_options
+                ],
+            }
         return NextStepInfoSerializable(
             outside_help_details=self.outside_help_details,
             combined_form=list(
@@ -2213,7 +2230,26 @@ class DenialCreatorHelper:
             return None
         if suggestion is None:
             return None
-        payload: dict[str, Any] = suggestion.to_dict()
+        # Inline the dict construction (instead of suggest.to_dict()) so
+        # mypy's `warn_return_any` can verify the return shape directly
+        # without needing to chase the to_dict() declaration through the
+        # lazy import + django-stubs plugin (which has been intermittently
+        # losing the return type in CI).
+        payload: dict[str, Any] = {
+            "drug_name": suggestion.drug_name,
+            "is_likely_cheap": suggestion.is_likely_cheap,
+            "bridge_message": suggestion.bridge_message,
+            "oop_max_warning": suggestion.oop_max_warning,
+            "pharmacy_options": [
+                {
+                    "name": option.name,
+                    "url": option.url,
+                    "description": option.description,
+                    "counts_toward_oop_max": option.counts_toward_oop_max,
+                }
+                for option in suggestion.pharmacy_options
+            ],
+        }
         return payload
 
     @staticmethod
