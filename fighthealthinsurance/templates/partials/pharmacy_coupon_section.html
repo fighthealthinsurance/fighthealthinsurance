@@ -25,7 +25,8 @@ include it unconditionally.
                             <h5 class="card-title mb-2">
                                 <a href="{{ option.url }}" target="_blank" rel="noopener noreferrer" class="pharmacy-coupon-link">
                                     {{ option.name }}
-                                    <i class="text-muted ms-1 icon-external-sm">&#8599;</i>
+                                    <i class="text-muted ms-1 icon-external-sm" aria-hidden="true">&#8599;</i>
+                                    <span class="visually-hidden">(opens in a new tab)</span>
                                 </a>
                             </h5>
                             <p class="card-text text-muted mb-0">{{ option.description }}</p>

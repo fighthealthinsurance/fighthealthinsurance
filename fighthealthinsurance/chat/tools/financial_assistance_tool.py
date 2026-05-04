@@ -162,7 +162,11 @@ class FinancialAssistanceTool(BaseTool):
                 history_for_llm.append(
                     {"role": "user", "content": current_message_for_llm}
                 )
-                history_for_llm.append({"role": "agent", "content": response_text})
+                # Append the CLEANED response (tool token already stripped)
+                # so the recursive LLM call doesn't see "**financial_
+                # assistance {...}**" in its history. Leaving the raw
+                # token in could prompt the model to re-invoke the tool.
+                history_for_llm.append({"role": "agent", "content": cleaned_response})
 
             (
                 additional_response,
@@ -202,8 +206,12 @@ class FinancialAssistanceTool(BaseTool):
         )
         if results.canonical_drug:
             sections.append(f"Drug: {results.canonical_drug}.")
-        if results.diagnosis_text:
-            sections.append(f"Diagnosis text: {results.diagnosis_text}.")
+        # Prefer the explicit diagnosis if supplied; otherwise show the
+        # bounded haystack snippet so the LLM sees what actually drove
+        # the diagnosis-keyword matches.
+        haystack = results.diagnosis_text or results.diagnosis_search_haystack
+        if haystack:
+            sections.append(f"Diagnosis text: {haystack}.")
 
         def _fmt_program(program) -> str:
             line = f"- {program.name} ({program.url})"

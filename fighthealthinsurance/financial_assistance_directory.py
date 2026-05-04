@@ -28,6 +28,12 @@ from typing import Optional
 
 from fighthealthinsurance.pharmacy_coupon_detector import detect_drug
 
+# Cap on the snippet of denial text we surface in
+# `FinancialAssistanceResults.diagnosis_search_haystack`. Denial letters
+# can be many KB; we want enough characters to hint at why a diagnosis
+# matched without ballooning REST payloads or LLM context windows.
+DIAGNOSIS_HAYSTACK_SNIPPET_LIMIT = 240
+
 
 @dataclass(frozen=True)
 class AssistanceProgram:
@@ -471,7 +477,16 @@ class FinancialAssistanceResults:
     """
 
     canonical_drug: Optional[str] = None
+    # Strictly the diagnosis the caller passed in (or None). Kept narrow
+    # so API consumers can rely on it being a short clinical term, not a
+    # paragraph of denial-letter text.
     diagnosis_text: Optional[str] = None
+    # The text that actually drove the diagnosis-keyword matching - the
+    # diagnosis field if supplied, otherwise a bounded prefix of the
+    # denial text (see DIAGNOSIS_HAYSTACK_SNIPPET_LIMIT). Useful for
+    # debugging / surfacing "why we matched" in the LLM context without
+    # ballooning REST payloads with the full denial.
+    diagnosis_search_haystack: Optional[str] = None
     state_abbreviation: Optional[str] = None
 
     diagnosis_specific: list[AssistanceProgram] = field(default_factory=list)
@@ -574,14 +589,25 @@ def search(
         state_abbreviation.upper() if state_abbreviation else None
     )
 
+    # Build the haystack snippet exposed in the payload: prefer the
+    # explicit (short, clinical) diagnosis, otherwise fall back to a
+    # bounded prefix of the denial text. Keeps the payload semantically
+    # precise without forcing API consumers to swallow a multi-KB denial
+    # letter.
+    if diagnosis:
+        diagnosis_search_haystack: Optional[str] = diagnosis
+    elif denial_text:
+        snippet = denial_text[:DIAGNOSIS_HAYSTACK_SNIPPET_LIMIT]
+        if len(denial_text) > DIAGNOSIS_HAYSTACK_SNIPPET_LIMIT:
+            snippet = snippet.rstrip() + "..."
+        diagnosis_search_haystack = snippet
+    else:
+        diagnosis_search_haystack = None
+
     results = FinancialAssistanceResults(
         canonical_drug=canonical_drug,
-        # Reflect the text that was actually searched. When the caller only
-        # supplied `denial_text`, fall back to it so downstream consumers
-        # (the chat tool's LLM context, the REST payload) can show the
-        # diagnosis keywords that drove the matches rather than a stale
-        # empty value.
-        diagnosis_text=(diagnosis or denial_text or None),
+        diagnosis_text=diagnosis or None,
+        diagnosis_search_haystack=diagnosis_search_haystack,
         state_abbreviation=normalized_state,
     )
 

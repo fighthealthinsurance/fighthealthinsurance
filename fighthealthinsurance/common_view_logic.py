@@ -10,6 +10,7 @@ import uuid
 from dataclasses import dataclass
 from string import Template
 from typing import (
+    TYPE_CHECKING,
     Any,
     AsyncIterator,
     Awaitable,
@@ -20,6 +21,11 @@ from typing import (
     Optional,
     Tuple,
 )
+
+if TYPE_CHECKING:
+    from fighthealthinsurance.pharmacy_coupon_detector import (
+        PharmacyCouponSuggestion,
+    )
 from urllib.parse import urlencode
 
 from django.conf import settings
@@ -128,7 +134,7 @@ class NextStepInfo:
     # otherwise. Surfaced in outside_help.html so users see GoodRx /
     # Cost Plus / Amazon Pharmacy options as a cash-pay bridge while
     # they fight the denial.
-    pharmacy_coupon_suggestion: Optional[Any] = None
+    pharmacy_coupon_suggestion: Optional["PharmacyCouponSuggestion"] = None
 
     def convert_to_serializable(self):
         suggestion_dict = (
@@ -691,7 +697,9 @@ class FollowUpHelper:
 
 class FindNextStepsHelper:
     @classmethod
-    def _build_pharmacy_coupon_suggestion(cls, denial: "Denial") -> Optional[Any]:
+    def _build_pharmacy_coupon_suggestion(
+        cls, denial: "Denial"
+    ) -> Optional["PharmacyCouponSuggestion"]:
         """
         Compute a PharmacyCouponSuggestion for the denial, or None.
 
@@ -2253,6 +2261,7 @@ class DenialCreatorHelper:
         return {
             "canonical_drug": results.canonical_drug,
             "diagnosis_text": results.diagnosis_text,
+            "diagnosis_search_haystack": results.diagnosis_search_haystack,
             "state_abbreviation": results.state_abbreviation,
             "diagnosis_specific": [_serialize(p) for p in results.diagnosis_specific],
             "manufacturer": [_serialize(p) for p in results.manufacturer],

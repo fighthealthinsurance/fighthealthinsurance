@@ -132,24 +132,41 @@ class TestSearchByDiagnosis:
         names = {p.name for p in results.diagnosis_specific}
         assert "National Multiple Sclerosis Society" in names
 
-    def test_diagnosis_text_payload_falls_back_to_denial_text(self):
-        # When only denial_text is supplied (no separate diagnosis field),
-        # results.diagnosis_text must reflect what was actually searched so
-        # downstream consumers (REST payload, LLM context) show the matched
-        # text rather than None.
+    def test_diagnosis_text_only_set_when_diagnosis_supplied(self):
+        # diagnosis_text is the strict diagnosis field. When only
+        # denial_text is supplied, diagnosis_text stays None and the
+        # haystack snippet ends up in diagnosis_search_haystack instead.
         results = search(
             denial_text="Patient diagnosed with multiple sclerosis, denied Tysabri."
         )
-        assert results.diagnosis_text is not None
-        assert "multiple sclerosis" in results.diagnosis_text.lower()
+        assert results.diagnosis_text is None
+        assert results.diagnosis_search_haystack is not None
+        assert "multiple sclerosis" in results.diagnosis_search_haystack.lower()
 
-    def test_diagnosis_field_takes_priority_over_denial_text_in_payload(self):
-        # When both are supplied, the explicit diagnosis is preferred.
+    def test_diagnosis_text_set_when_diagnosis_field_supplied(self):
         results = search(
             diagnosis="multiple sclerosis",
             denial_text="long denial text that mentions other things too",
         )
         assert results.diagnosis_text == "multiple sclerosis"
+        # When the diagnosis field is supplied, the haystack mirrors it
+        # rather than including the long denial text.
+        assert results.diagnosis_search_haystack == "multiple sclerosis"
+
+    def test_diagnosis_search_haystack_bounded_for_long_denial_text(self):
+        from fighthealthinsurance.financial_assistance_directory import (
+            DIAGNOSIS_HAYSTACK_SNIPPET_LIMIT,
+        )
+
+        long_denial = "x" * (DIAGNOSIS_HAYSTACK_SNIPPET_LIMIT + 500)
+        results = search(denial_text=long_denial)
+        # diagnosis_search_haystack must NOT carry the full denial text.
+        assert results.diagnosis_search_haystack is not None
+        assert (
+            len(results.diagnosis_search_haystack)
+            <= DIAGNOSIS_HAYSTACK_SNIPPET_LIMIT + 3  # +3 for trailing "..."
+        )
+        assert results.diagnosis_search_haystack.endswith("...")
 
 
 class TestSearchByDrug:

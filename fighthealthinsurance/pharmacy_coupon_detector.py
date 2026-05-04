@@ -313,22 +313,25 @@ def detect_drug(*texts: Optional[str]) -> Optional[str]:
     for text in texts:
         if not text:
             continue
+        # `normalized` is lowercased; the constant lists below are also
+        # lowercased, so the regex stays case-sensitive and we save the
+        # IGNORECASE work on every match.
         normalized = _normalize(text)
         candidates: list[tuple[int, str]] = []
 
         # Brand names map to a generic; iterate dict in insertion order.
         for brand, generic in BRAND_TO_GENERIC.items():
-            m = re.search(r"\b" + re.escape(brand) + r"\b", normalized, re.IGNORECASE)
+            m = re.search(r"\b" + re.escape(brand) + r"\b", normalized)
             if m is not None:
                 candidates.append((m.start(), generic))
 
         for drug in CHEAP_GENERIC_DRUGS_ORDERED:
-            m = re.search(r"\b" + re.escape(drug) + r"\b", normalized, re.IGNORECASE)
+            m = re.search(r"\b" + re.escape(drug) + r"\b", normalized)
             if m is not None:
                 candidates.append((m.start(), drug))
 
         for drug in EXPENSIVE_DRUGS_ORDERED:
-            m = re.search(r"\b" + re.escape(drug) + r"\b", normalized, re.IGNORECASE)
+            m = re.search(r"\b" + re.escape(drug) + r"\b", normalized)
             if m is not None:
                 candidates.append((m.start(), drug))
 
