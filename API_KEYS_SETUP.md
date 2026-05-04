@@ -30,7 +30,7 @@ guidance**, not as U.S. coverage authority.
 
 ### Sign up
 
-1. Visit https://www.nice.org.uk/reusing-our-content/syndication-api and
+1. Visit https://www.nice.org.uk/reusing-our-content/nice-syndication-api and
    request access.
 2. Once approved, NICE issues a key through their API gateway (Azure APIM).
    The key works under either of these headers — the client sends both:
