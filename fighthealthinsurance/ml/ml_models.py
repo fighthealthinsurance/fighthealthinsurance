@@ -2500,7 +2500,10 @@ class RemoteFullOpenLike(RemoteOpenLike):
                 break
 
             # Skip short standalone headers, but keep informative single-line entries.
-            if line.lower().startswith(("here are", "citations", "references")) and len(line) <= 32:
+            if (
+                line.lower().startswith(("here are", "citations", "references"))
+                and len(line) <= 32
+            ):
                 continue
 
             citations.append(line)
