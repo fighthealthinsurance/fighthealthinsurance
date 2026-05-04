@@ -673,8 +673,10 @@ class PayerPriorAuthRequirement(models.Model):
     plan-specific PA requirement lists).
 
     Used to answer "was PA required for this CPT/HCPCS?" and "what coverage
-    criteria / submission channel applies?" workflows. Rows can target a
-    single code, a CPT/HCPCS range, or a category. Filtering supports
+    criteria / submission channel applies?" workflows. Rows must target a
+    single ``cpt_hcpcs_code`` or a ``code_range_start..code_range_end``
+    range — ``pa_category`` is metadata for grouping/display only and is
+    not used to match codes during lookup. Filtering supports
     line-of-business, state, plan, and effective-date windows so we can
     reason about the right rule at the time the service was rendered.
     """
@@ -783,6 +785,40 @@ class PayerPriorAuthRequirement(models.Model):
                 <= self.code_range_end.upper()
             )
         return False
+
+    def clean(self):
+        """Reject rows whose ``plan`` belongs to a different payer.
+
+        Without this guard a UHC requirement could be paired with an Aetna
+        plan, and the lookup/format path would surface contradictory
+        payer metadata instead of failing fast.
+        """
+        from django.core.exceptions import ValidationError
+
+        super().clean()
+        plan = self.plan
+        if (
+            plan is not None
+            and self.insurance_company_id
+            and plan.insurance_company_id != self.insurance_company_id
+        ):
+            raise ValidationError(
+                {
+                    "plan": (
+                        f"Plan '{plan}' belongs to {plan.insurance_company}, "
+                        f"but this requirement is scoped to "
+                        f"{self.insurance_company}. The plan and "
+                        "insurance_company must match."
+                    )
+                }
+            )
+
+    def save(self, *args, **kwargs):
+        # Run full_clean so the plan/payer guard fires on every save path
+        # (admin saves, fixture loads, programmatic creates), not just the
+        # admin form.
+        self.full_clean()
+        return super().save(*args, **kwargs)
 
     def __str__(self):
         label = self.cpt_hcpcs_code or (

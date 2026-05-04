@@ -29,8 +29,10 @@ class USPSTFLookupTool(JsonFollowupTool):
 
     pattern = USPSTF_LOOKUP_REGEX
     name = "USPSTF Lookup"
-    # Downstream tools (e.g. appeal generation) can reuse the recommendation
-    # text via the running context, so always append it.
+    # Downstream tools (e.g. appeal generation) can reuse the raw
+    # recommendation text via the running context. Only the raw lookup
+    # output is appended — the LLM-targeted instruction text lives in
+    # ``build_followup_prompt`` so it doesn't bloat downstream prompts.
     append_note_to_context: bool = True
 
     async def run(
@@ -48,9 +50,12 @@ class USPSTFLookupTool(JsonFollowupTool):
             or params.get("grade")
             or "USPSTF"
         )
-        note = (
+        return info, f"USPSTF results for {descriptor} ready."
+
+    def build_followup_prompt(self, note: str, current_message_for_llm: str) -> str:
+        return (
             "USPSTF preventive-service recommendations relevant to the user's "
-            f"question (descriptor: {descriptor}):\n\n{info}\n\n"
+            f"question:\n\n{note}\n\n"
             "Use this information to answer their question. When the cited "
             "recommendation is grade A or B, remind the user that under the ACA "
             "non-grandfathered private plans, the marketplace, and Medicaid "
@@ -58,4 +63,3 @@ class USPSTFLookupTool(JsonFollowupTool):
             "cost-sharing. Always link to the USPSTF source URL when citing a "
             "specific recommendation."
         )
-        return note, f"USPSTF results for {descriptor} ready."

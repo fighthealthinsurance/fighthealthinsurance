@@ -2699,13 +2699,43 @@ class AppealsBackendHelper:
                 pubmed_context = denial.pubmed_context
                 ml_citation_context = denial.ml_citation_context
                 nice_context = denial.nice_context
-                # RAG context is not persisted, so we don't try to retrieve it
+                # RAG context is not persisted, so we don't try to retrieve it.
+                # PA context isn't persisted either; re-run the cheap ORM query
+                # so retries don't silently lose payer rules.
+                try:
+                    from fighthealthinsurance.pa_requirements import (
+                        get_pa_context_for_denial,
+                    )
+
+                    pa_context = (
+                        await sync_to_async(get_pa_context_for_denial)(denial) or None
+                    )
+                except Exception as inner:
+                    logger.opt(exception=True).debug(
+                        f"PA context refresh during fallback failed: {inner}"
+                    )
+                    pa_context = None
                 logger.debug("Used saved contexts")
         else:
             logger.debug("Too many retries, skipping ML/pubmed/RAG ctx")
             # Reuse the persisted NICE context; otherwise it'd be dropped on
             # the very retry path that's supposed to use previous results.
             nice_context = denial.nice_context
+            # PA-requirement lookup is a cheap ORM query, not an external
+            # API call, so re-run it on retries instead of dropping it.
+            try:
+                from fighthealthinsurance.pa_requirements import (
+                    get_pa_context_for_denial,
+                )
+
+                pa_context = (
+                    await sync_to_async(get_pa_context_for_denial)(denial) or None
+                )
+            except Exception as e:
+                logger.opt(exception=True).debug(
+                    f"PA context refresh on retry failed: {e}"
+                )
+                pa_context = None
             yield json.dumps(
                 {
                     "type": "status",

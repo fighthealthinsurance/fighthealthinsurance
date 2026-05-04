@@ -458,7 +458,7 @@ class PayerPriorAuthRequirementAdmin(admin.ModelAdmin):
         "insurance_company__name",
         "notes",
     )
-    autocomplete_fields = ["insurance_company"]
+    autocomplete_fields = ["insurance_company", "plan"]
     fieldsets = (
         (
             None,
