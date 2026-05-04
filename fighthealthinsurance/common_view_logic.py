@@ -2525,6 +2525,7 @@ class AppealsBackendHelper:
         rag_context: Optional[str] = None
         nice_context: Optional[str] = None
         imr_context: Optional[str] = None
+        pa_context: Optional[str] = None
 
         # Get PubMed context
         logger.debug("Looking up the pubmed context")
@@ -2634,6 +2635,22 @@ class AppealsBackendHelper:
                 done_msg="Prior IMR decisions lookup complete",
             )
 
+            # Look up the payer's published prior-auth requirements for any
+            # CPT/HCPCS in the denial. Cheap synchronous ORM call, wrapped so
+            # it joins the parallel gather below.
+            from fighthealthinsurance.pa_requirements import (
+                get_pa_context_for_denial,
+            )
+
+            pa_context_awaitable = tracked_awaitable(
+                asyncio.wait_for(
+                    sync_to_async(get_pa_context_for_denial)(denial),
+                    timeout=10,
+                ),
+                substep="pa_requirements",
+                done_msg="Payer PA requirements lookup complete",
+            )
+
             # Skip the NICE task entirely when no key is configured: avoids a
             # misleading "NICE guidance lookup complete" status and the wait_for
             # overhead in environments without syndication access.
@@ -2642,6 +2659,7 @@ class AppealsBackendHelper:
                 ml_citation_context_awaitable,
                 rag_context_awaitable,
                 imr_context_awaitable,
+                pa_context_awaitable,
             ]
             if cls.nice.api_key:
                 gather_awaitables.append(
@@ -2692,8 +2710,11 @@ class AppealsBackendHelper:
                 if isinstance(results[3], str) and results[3]:
                     imr_context = results[3]
                     logger.info("IMR decisions context retrieved")
-                if len(results) > 4 and isinstance(results[4], str):
-                    nice_context = results[4]
+                if isinstance(results[4], str) and results[4]:
+                    pa_context = results[4]
+                    logger.info("Payer PA requirements context retrieved")
+                if len(results) > 5 and isinstance(results[5], str):
+                    nice_context = results[5]
                 else:
                     # No fresh NICE result (skipped task or non-string error). Fall
                     # back to whatever is already persisted on the denial so cached
@@ -2718,13 +2739,43 @@ class AppealsBackendHelper:
                 pubmed_context = denial.pubmed_context
                 ml_citation_context = denial.ml_citation_context
                 nice_context = denial.nice_context
-                # RAG context is not persisted, so we don't try to retrieve it
+                # RAG context is not persisted, so we don't try to retrieve it.
+                # PA context isn't persisted either; re-run the cheap ORM query
+                # so retries don't silently lose payer rules.
+                try:
+                    from fighthealthinsurance.pa_requirements import (
+                        get_pa_context_for_denial,
+                    )
+
+                    pa_context = (
+                        await sync_to_async(get_pa_context_for_denial)(denial) or None
+                    )
+                except Exception as inner:
+                    logger.opt(exception=True).debug(
+                        f"PA context refresh during fallback failed: {inner}"
+                    )
+                    pa_context = None
                 logger.debug("Used saved contexts")
         else:
             logger.debug("Too many retries, skipping ML/pubmed/RAG ctx")
             # Reuse the persisted NICE context; otherwise it'd be dropped on
             # the very retry path that's supposed to use previous results.
             nice_context = denial.nice_context
+            # PA-requirement lookup is a cheap ORM query, not an external
+            # API call, so re-run it on retries instead of dropping it.
+            try:
+                from fighthealthinsurance.pa_requirements import (
+                    get_pa_context_for_denial,
+                )
+
+                pa_context = (
+                    await sync_to_async(get_pa_context_for_denial)(denial) or None
+                )
+            except Exception as e:
+                logger.opt(exception=True).debug(
+                    f"PA context refresh on retry failed: {e}"
+                )
+                pa_context = None
             yield json.dumps(
                 {
                     "type": "status",
@@ -2824,6 +2875,7 @@ class AppealsBackendHelper:
             rag_context=rag_context,
             nice_context=nice_context,
             specialized_templates=specialized_templates,
+            pa_context=pa_context,
         )
         # Only filters out None
         filtered_appeals: Iterator[str] = filter(lambda x: x != None, appeals)

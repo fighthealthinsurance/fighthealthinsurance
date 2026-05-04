@@ -38,9 +38,9 @@ def _get_client_ip_from_scope(scope: Optional[dict] = None) -> Optional[str]:
     headers = cast(dict[bytes, bytes], dict(scope.get("headers", [])))
     if b"x-forwarded-for" in headers:
         forwarded = headers[b"x-forwarded-for"].decode("utf-8", errors="ignore")
-        return forwarded.split(",")[0].strip()
+        return str(forwarded.split(",")[0].strip())
     if b"x-real-ip" in headers:
-        return headers[b"x-real-ip"].decode("utf-8", errors="ignore").strip()
+        return str(headers[b"x-real-ip"].decode("utf-8", errors="ignore").strip())
 
     client = scope.get("client")
     if isinstance(client, (list, tuple)) and client:

@@ -1271,6 +1271,7 @@ class AppealGenerator(object):
         nice_context=None,
         ucr_context=None,
         payer_policy_context=None,
+        pa_context=None,
     ) -> Optional[str]:
         """
         Constructs a prompt for generating a health insurance appeal based on denial details and optional contextual information.
@@ -1334,6 +1335,17 @@ class AppealGenerator(object):
             base = f"{base}. Please include and fill in the professionals info {professional}."
         if plan_id is not None and plan_id != "" and plan_id != "UNKNOWN":
             base = f"{base}. Please include and fill in any references to the plan id as {plan_id}."
+        if pa_context is not None and pa_context.strip():
+            base = (
+                f"{base}\n\nPAYER PRIOR-AUTH RULES: The following entries come from "
+                "the payer's own published prior-authorization requirement list. "
+                "Use them when the denial relies on PA grounds — point out exactly "
+                "which rule (or absence of one) supports approval, cite the "
+                "criteria document by name, and reference the published "
+                "submission channel where relevant. Do not invent rules that "
+                "are not listed below.\n"
+                f"{pa_context}"
+            )
         # Add citation instructions - be explicit about not hallucinating
         has_citations = (
             (ml_context is not None and ml_context != "")
@@ -1437,6 +1449,7 @@ class AppealGenerator(object):
         nice_context=None,
         payer_policy_context=None,
         specialized_templates: Optional[List[type[SpecializedDenialTemplate]]] = None,
+        pa_context=None,
     ) -> Iterator[str]:
         """
         Generates an iterator of appeal texts for a given insurance denial using templates, non-AI sources, and AI models.
@@ -1524,6 +1537,7 @@ class AppealGenerator(object):
             nice_context=nice_context,
             ucr_context=ucr_narrative,
             payer_policy_context=payer_policy_context,
+            pa_context=pa_context,
         )
         open_medically_necessary_prompt = self.make_open_med_prompt(
             procedure=denial.procedure,

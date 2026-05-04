@@ -32,6 +32,7 @@ from fighthealthinsurance.chat.tools import (
     DocFetcherTool,
     MedicaidEligibilityTool,
     MedicaidInfoTool,
+    PaRequirementLookupTool,
     PriorAuthTool,
     PubMedTool,
     USPSTFLookupTool,
@@ -392,6 +393,14 @@ class ChatInterface:
             chat=self.chat,
         )
         response_text, context, _ = await doc_fetcher_tool.handle(
+            response_text, context, **tool_kwargs
+        )
+
+        pa_requirement_tool = PaRequirementLookupTool(
+            self.send_status_message,
+            call_llm_callback=self._call_llm_with_actions,
+        )
+        response_text, context, _ = await pa_requirement_tool.handle(
             response_text, context, **tool_kwargs
         )
 
