@@ -230,12 +230,15 @@ class ClinicalTrialsTools(object):
                     )
                 if not data:
                     return []
+                # Build into a temp list so a mid-loop timeout/ORM error
+                # doesn't leave callers with a truncated, uncached partial.
+                fetched_nct_ids: List[str] = []
                 studies = data.get("studies") or []
                 for study in studies:
                     parsed = _parse_study(study)
                     if not parsed:
                         continue
-                    nct_ids.append(parsed["nct_id"])
+                    fetched_nct_ids.append(parsed["nct_id"])
                     # Upsert cached metadata so get_trials() stays fast.
                     await ClinicalTrial.objects.aupdate_or_create(
                         nct_id=parsed["nct_id"],
@@ -243,13 +246,16 @@ class ClinicalTrialsTools(object):
                     )
                 # Always cache, including empty results, so we don't keep hammering
                 # the registry for queries that legitimately have zero matches.
-                nct_ids_json = json.dumps(nct_ids).replace("\x00", "")
+                nct_ids_json = json.dumps(fetched_nct_ids).replace("\x00", "")
                 await ClinicalTrialQueryData.objects.acreate(
                     query=normalized_query,
                     condition=norm_condition,
                     intervention=norm_intervention,
                     nct_ids=nct_ids_json,
                 )
+                # Only commit fetched IDs to the return value after the full
+                # fetch+persistence path succeeded.
+                nct_ids = fetched_nct_ids
         except asyncio.TimeoutError:
             logger.debug("Timeout in find_trials_for_query")
         except asyncio.exceptions.CancelledError:
@@ -354,11 +360,10 @@ class ClinicalTrialsTools(object):
             page_size=max(max_trials, DEFAULT_PAGE_SIZE),
             timeout=timeout,
         )
-        if not nct_ids:
-            return []
-        # Audit row tying this denial to the NCT IDs we surfaced. Stored
-        # alongside (not in place of) the global cache row so denial-scoped
-        # writes don't shadow future global cache hits.
+        # Audit row tying this denial to the NCT IDs we surfaced (or to the
+        # explicit empty result, so a "we searched and found nothing" answer
+        # is auditable). Stored alongside, not in place of, the global cache
+        # row so denial-scoped writes don't shadow future global cache hits.
         await ClinicalTrialQueryData.objects.acreate(
             denial_id=denial,
             query=query,
@@ -366,6 +371,8 @@ class ClinicalTrialsTools(object):
             intervention=procedure or None,
             nct_ids=json.dumps(nct_ids).replace("\x00", ""),
         )
+        if not nct_ids:
+            return []
         trials = await self.get_trials(nct_ids[:max_trials])
         return trials
 

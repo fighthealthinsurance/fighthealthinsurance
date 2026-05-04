@@ -194,6 +194,30 @@ class TestFindTrialsForQuery:
         assert global_rows == 1
         assert denial_rows == 2
 
+    async def test_find_trials_for_denial_audits_zero_match_search(self):
+        """An auditable denial-scoped row must be written even when the
+        search legitimately returns no matches; otherwise we have no record
+        that the search was actually attempted."""
+        tools = ClinicalTrialsTools()
+        denial = await Denial.objects.acreate(
+            procedure="exotic_unmatched_drug",
+            diagnosis="rare_no_match_condition",
+        )
+        empty_payload: Dict[str, Any] = {"studies": []}
+        session = _mock_session_returning(empty_payload)
+
+        with patch(
+            "fighthealthinsurance.clinicaltrials_tools.aiohttp.ClientSession",
+            return_value=session,
+        ):
+            trials = await tools.find_trials_for_denial(denial, max_trials=1)
+
+        assert trials == []
+        denial_audit = await ClinicalTrialQueryData.objects.filter(
+            denial_id=denial
+        ).aget()
+        assert denial_audit.nct_ids == "[]"
+
     async def test_get_trial_uses_db_cache(self):
         tools = ClinicalTrialsTools()
         await ClinicalTrial.objects.acreate(
