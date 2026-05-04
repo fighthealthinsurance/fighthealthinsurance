@@ -277,6 +277,63 @@ class TestClinicalTrialsTool(TestCase):
         tool = ClinicalTrialsTool(mock_status)
         self.assertEqual(tool._build_trials_context([]), "")
 
+    def _run(self, coro):
+        return asyncio.run(coro)
+
+    def test_execute_appends_trial_context_when_matches(self):
+        """Happy path: matching token -> trials fetched -> context appended."""
+        mock_status = AsyncMock()
+        ct_tools = MagicMock()
+        ct_tools.find_trials_for_query = AsyncMock(return_value=["NCT01234567"])
+
+        trial = MagicMock()
+        trial.nct_id = "NCT01234567"
+        trial.brief_title = "Pembrolizumab in Melanoma"
+        trial.overall_status = "RECRUITING"
+        trial.phases = "PHASE3"
+        trial.study_type = "INTERVENTIONAL"
+        trial.conditions = "Melanoma"
+        trial.interventions = "DRUG: Pembrolizumab"
+        trial.has_results = False
+        trial.start_date = "2023-01-01"
+        trial.completion_date = "2026-01-01"
+        trial.brief_summary = "Eval of pembrolizumab."
+        trial.study_url = "https://clinicaltrials.gov/study/NCT01234567"
+        ct_tools.get_trials = AsyncMock(return_value=[trial])
+        ct_tools.format_trial_short = ClinicalTrialsTool(
+            mock_status
+        ).clinical_trials_tools.format_trial_short
+
+        tool = ClinicalTrialsTool(mock_status, clinical_trials_tools=ct_tools)
+        text = "**clinical_trials_query: pembrolizumab melanoma**"
+        match = tool.detect(text)
+
+        response, context = self._run(tool.execute(match, text, ""))
+
+        self.assertNotIn("clinical_trials_query", response)
+        self.assertIn("NCT01234567", context)
+        self.assertIn("clinicaltrialscontext", context)
+        ct_tools.find_trials_for_query.assert_awaited_once()
+        ct_tools.get_trials.assert_awaited_once()
+
+    def test_execute_returns_unchanged_context_when_no_matches(self):
+        """Empty result: context stays untouched, response is cleaned."""
+        mock_status = AsyncMock()
+        ct_tools = MagicMock()
+        ct_tools.find_trials_for_query = AsyncMock(return_value=[])
+        ct_tools.get_trials = AsyncMock(return_value=[])
+
+        tool = ClinicalTrialsTool(mock_status, clinical_trials_tools=ct_tools)
+        text = "**clinical_trials_query: nonexistent xyz drug**"
+        match = tool.detect(text)
+
+        response, context = self._run(tool.execute(match, text, ""))
+
+        self.assertNotIn("clinical_trials_query", response)
+        self.assertEqual(context, "")
+        ct_tools.find_trials_for_query.assert_awaited_once()
+        ct_tools.get_trials.assert_not_awaited()
+
 
 class TestMedicaidInfoTool(TestCase):
     """Test MedicaidInfoTool functionality."""
