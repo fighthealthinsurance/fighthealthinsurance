@@ -1510,7 +1510,14 @@ class InitialProcessView(generic.FormView):
         if referral_source_details:
             cleaned_data["referral_source_details"] = referral_source_details
 
+        from fhi_users.audit import extract_tracking_info, get_client_ip
+
+        tracking_info = extract_tracking_info(request=self.request, is_professional=False)
+        if str(cleaned_data.get("email", "")).strip().lower() == "testing@example.com":
+            tracking_info.ip_address = get_client_ip(self.request)
+
         denial_response = common_view_logic.DenialCreatorHelper.create_or_update_denial(
+            tracking_info=tracking_info,
             **cleaned_data,
         )
 
