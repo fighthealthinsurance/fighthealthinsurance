@@ -63,16 +63,28 @@ def _run_lookup(params: dict) -> Tuple[str, str]:
         lookup_pa_requirements,
     )
 
+    import re
+
     raw_codes = params.get("codes") or params.get("code") or []
     if isinstance(raw_codes, str):
-        codes = extract_cpt_hcpcs_codes(raw_codes) or [raw_codes.strip().upper()]
+        # First try the strict extractor (handles "(95810)", " J0490 " etc).
+        codes = extract_cpt_hcpcs_codes(raw_codes)
+        if not codes:
+            # Fall back to the bare token only when it actually looks like
+            # a CPT (5 digits) or HCPCS Level II (letter + 4 digits) code.
+            # Otherwise arbitrary user text would become a phantom "code"
+            # and the lookup would emit a misleading "not in our index"
+            # message for it.
+            stripped = raw_codes.strip().upper()
+            if re.fullmatch(r"\d{5}|[A-V]\d{4}", stripped):
+                codes = [stripped]
     elif isinstance(raw_codes, list):
         codes = [str(c).strip().upper() for c in raw_codes if str(c).strip()]
     else:
         codes = []
 
     if not codes:
-        return "", "No CPT/HCPCS codes were provided."
+        return "", "No valid CPT/HCPCS codes were provided."
 
     payer_input = params.get("payer") or params.get("insurer")
     company = _resolve_insurance_company(payer_input)

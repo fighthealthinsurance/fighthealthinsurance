@@ -321,6 +321,53 @@ class PayerPriorAuthRequirementCleanTests(TestCase):
         )
         self.assertEqual(req.plan_id, self.uhc_plan.pk)
 
+    def test_save_rejects_row_with_neither_code_nor_range(self):
+        from django.core.exceptions import ValidationError
+
+        from fighthealthinsurance.models import PayerPriorAuthRequirement
+
+        with self.assertRaises(ValidationError):
+            PayerPriorAuthRequirement.objects.create(
+                insurance_company=self.uhc,
+                pa_category="Some Category",
+            )
+
+    def test_save_rejects_row_with_both_code_and_range(self):
+        from django.core.exceptions import ValidationError
+
+        from fighthealthinsurance.models import PayerPriorAuthRequirement
+
+        with self.assertRaises(ValidationError):
+            PayerPriorAuthRequirement.objects.create(
+                insurance_company=self.uhc,
+                cpt_hcpcs_code="12345",
+                code_range_start="11111",
+                code_range_end="22222",
+            )
+
+    def test_save_rejects_partial_range(self):
+        from django.core.exceptions import ValidationError
+
+        from fighthealthinsurance.models import PayerPriorAuthRequirement
+
+        with self.assertRaises(ValidationError):
+            PayerPriorAuthRequirement.objects.create(
+                insurance_company=self.uhc,
+                code_range_start="11111",
+            )
+
+    def test_save_rejects_inverted_range(self):
+        from django.core.exceptions import ValidationError
+
+        from fighthealthinsurance.models import PayerPriorAuthRequirement
+
+        with self.assertRaises(ValidationError):
+            PayerPriorAuthRequirement.objects.create(
+                insurance_company=self.uhc,
+                code_range_start="99999",
+                code_range_end="11111",
+            )
+
 
 class FormatPaContextTests(TestCase):
     """Verify the prompt block we hand to the LLM."""

@@ -106,7 +106,14 @@ class RunLookupTests(TestCase):
     def test_lookup_handles_missing_codes(self):
         block, summary = _run_lookup({"payer": "UHC"})
         self.assertEqual(block, "")
-        self.assertIn("No CPT/HCPCS codes", summary)
+        self.assertIn("No valid CPT/HCPCS codes", summary)
+
+    def test_lookup_rejects_arbitrary_text_as_code(self):
+        # The string-codes fallback should only honor inputs that actually
+        # look like CPT (5 digits) or HCPCS Level II (letter + 4 digits).
+        block, summary = _run_lookup({"codes": "please lookup my code", "payer": "UHC"})
+        self.assertEqual(block, "")
+        self.assertIn("No valid CPT/HCPCS codes", summary)
 
     def test_lookup_with_unknown_payer_refuses_to_broaden(self):
         # An unresolved payer must NOT silently broaden to a cross-payer

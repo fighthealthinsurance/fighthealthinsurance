@@ -126,13 +126,15 @@ def resolve_insurance_company_by_name(
 ) -> Optional[InsuranceCompany]:
     """
     Resolve a free-form payer name to an ``InsuranceCompany`` row by
-    iexact match on ``name``, then by alt-name match, then by the
-    company's stored ``regex`` pattern. Returns None when the name is
-    empty or no row matches.
+    iexact match on ``name``, then by *exact* (case-insensitive) match
+    against an alt-name, then by the company's stored ``regex`` pattern.
+    Returns None when the name is empty or no row matches.
 
-    Matching deliberately skips substring matches on ``name`` to avoid
-    false positives across closely-named carriers (for example, "United
-    Health Group" vs "UnitedHealthcare Community Plan").
+    Matching is intentionally strict on both the canonical name and the
+    alt-name list — substring matches across either dimension would
+    mis-resolve closely-named carriers (e.g. "UnitedHealthcare Community
+    Plan" should NOT match an alt-name of "UHC" registered against a
+    different carrier just because the substring appears).
     """
     if not payer:
         return None
@@ -152,7 +154,7 @@ def resolve_insurance_company_by_name(
             continue
         for alt in candidate.alt_names.splitlines():
             alt = alt.strip().lower()
-            if alt and (alt == payer_lower or alt in payer_lower):
+            if alt and alt == payer_lower:
                 return candidate
 
     # Last resort: try the compiled ``regex`` field on each company,
@@ -186,8 +188,13 @@ def resolve_insurance_company_by_name(
 def infer_line_of_business(denial: Denial) -> Optional[str]:
     """
     Best-effort inference of line of business from denial text and plan
-    metadata. Returns None when we cannot tell — callers should treat that
-    as 'do not filter by LOB' rather than 'commercial'.
+    metadata. Returns None when we cannot tell.
+
+    Note for callers: ``lookup_pa_requirements`` interprets a None LOB as
+    "narrow to LOB-agnostic rules only" (rules tagged
+    ``LineOfBusiness.ALL``), not "match every LOB". That's deliberate —
+    surfacing a Medicare-Advantage-only rule on an unknown-LOB denial
+    would mis-attribute the rule.
     """
     candidates: List[str] = []
     for value in (
