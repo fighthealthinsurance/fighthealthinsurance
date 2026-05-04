@@ -15,6 +15,10 @@ from fighthealthinsurance.denial_base import DenialBase
 from .exec import executor
 from .ml.ml_models import RemoteFullOpenLike, RemoteModelLike, repetition_penalty
 from .ml.ml_router import ml_router
+from .payer_policy_helper import (
+    get_combined_payer_policy_context,
+    resolve_company_from_text,
+)
 from .process_denial import ProcessDenialRegex
 from .pubmed_tools import PubMedTools
 from .utils import as_available_nested, best_within_timelimit
@@ -1266,6 +1270,7 @@ class AppealGenerator(object):
         rag_context=None,
         nice_context=None,
         ucr_context=None,
+        payer_policy_context=None,
     ) -> Optional[str]:
         """
         Constructs a prompt for generating a health insurance appeal based on denial details and optional contextual information.
@@ -1376,6 +1381,16 @@ class AppealGenerator(object):
             base = f"{base}. Please include and fill in any references to the insurance company to be {insurance_company}."
             if is_tpa:
                 base = f"{base} Note: This insurance company is a Third-Party Administrator (TPA) for self-funded employer plans, which are typically governed by ERISA (Employee Retirement Income Security Act). ERISA plans have specific appeal requirements and timelines. The employer is the plan fiduciary and ultimately responsible for coverage decisions, though the TPA administers claims."
+        if payer_policy_context:
+            base = (
+                f"{base}\n\n{payer_policy_context}\n\n"
+                "When using the comparative payer-policy information above, "
+                "frame it as supporting industry context (other major insurers "
+                "recognize this service as medically necessary under documented "
+                "criteria), and do NOT assert that another payer's policy "
+                "binds the patient's plan. Always defer to the patient's own "
+                "plan documents for what is actually covered."
+            )
         if (
             claim_id is not None
             and claim_id != ""
@@ -1420,6 +1435,7 @@ class AppealGenerator(object):
         plan_context=None,
         rag_context=None,
         nice_context=None,
+        payer_policy_context=None,
         specialized_templates: Optional[List[type[SpecializedDenialTemplate]]] = None,
     ) -> Iterator[str]:
         """
@@ -1460,6 +1476,31 @@ class AppealGenerator(object):
         if isinstance(ucr_ctx, dict):
             ucr_narrative = ucr_ctx.get("narrative") or None
 
+        # Auto-build payer-policy context from the denial when the caller
+        # didn't supply one. Back-fills the structured InsuranceCompany from
+        # the legacy text field so the denying payer is excluded from the
+        # comparative section even on older denials that never linked to a
+        # company row. Payer-policy context is supplementary evidence -- a
+        # transient DB error here must NOT abort appeal generation.
+        if not payer_policy_context:
+            try:
+                resolved_company = denial.insurance_company_obj
+                if resolved_company is None:
+                    resolved_company = resolve_company_from_text(
+                        denial.insurance_company
+                    )
+                payer_policy_context = get_combined_payer_policy_context(
+                    company=resolved_company,
+                    procedure=denial.procedure,
+                    diagnosis=denial.diagnosis,
+                )
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Failed to build payer-policy context; "
+                    "proceeding with appeal generation without it"
+                )
+                payer_policy_context = ""
+
         open_prompt = self.make_open_prompt(
             denial_text=denial.denial_text,
             procedure=denial.procedure,
@@ -1482,6 +1523,7 @@ class AppealGenerator(object):
             rag_context=rag_context,
             nice_context=nice_context,
             ucr_context=ucr_narrative,
+            payer_policy_context=payer_policy_context,
         )
         open_medically_necessary_prompt = self.make_open_med_prompt(
             procedure=denial.procedure,

@@ -510,6 +510,47 @@ class InsuranceCompany(models.Model):
         default=False,
         help_text="True if company primarily offers ACA marketplace/individual plans (95%+ of business)",
     )
+    is_major_commercial_payer = models.BooleanField(
+        default=False,
+        help_text=(
+            "True if this is a major national commercial carrier whose "
+            "public medical policies should be prioritized as comparative "
+            "industry evidence in appeals (Aetna, UnitedHealthcare, Cigna, "
+            "Anthem, Humana, Kaiser, etc.). Used to order the comparative-"
+            "payer section so it surfaces nationally recognized carriers "
+            "ahead of regional BCBS affiliates."
+        ),
+    )
+    # Public medical/coverage policy information.
+    # Many commercial payers publish medical policies (e.g. Aetna's Clinical Policy
+    # Bulletins, Cigna's Coverage Policies, Anthem's Medical Policies, Blue Shield's
+    # Clinical UM Guidelines). These can be cited as comparative evidence in appeals,
+    # but do not bind a specific member's plan.
+    medical_policy_url = models.URLField(
+        blank=True,
+        help_text="URL to the company's public medical/coverage/clinical-policy index",
+    )
+    medical_policy_name = models.CharField(
+        max_length=200,
+        blank=True,
+        help_text="Name the company uses for its medical-policy documents (e.g., 'Clinical Policy Bulletins', 'Coverage Policy', 'Medical Policy', 'Clinical UM Guideline')",
+    )
+    medical_policy_url_is_static_index = models.BooleanField(
+        default=False,
+        help_text=(
+            "True if medical_policy_url points to a static, directly-browsable "
+            "index (an HTML page or PDF that lists policies and links to "
+            "individual policy documents without requiring search or state "
+            "selection). False (the default) means the URL is a search "
+            "portal, requires state/region selection, or otherwise needs "
+            "interactive navigation. Used to distinguish links that could be "
+            "pre-fetched and parsed from links that are pointers only."
+        ),
+    )
+    medical_policy_notes = models.TextField(
+        blank=True,
+        help_text="Short description of how this payer's medical policies are used / what they assert (e.g., medical-necessity criteria, experimental/investigational determinations).",
+    )
 
     class Meta:
         verbose_name_plural = "Insurance Companies"
@@ -517,6 +558,11 @@ class InsuranceCompany(models.Model):
 
     def __str__(self):
         return self.name
+
+    @property
+    def has_public_medical_policy(self) -> bool:
+        """True if this payer publishes a public medical/coverage policy index we can cite."""
+        return bool(self.medical_policy_url) or bool(self.medical_policy_name)
 
     def appeal_destinations(self) -> dict[str, str]:
         """Return a dict of non-empty appeal destination channels for this company.
@@ -536,6 +582,53 @@ class InsuranceCompany(models.Model):
         if self.appeal_phone_number:
             destinations["phone"] = self.appeal_phone_number
         return destinations
+
+
+class PayerPolicyEntry(models.Model):
+    """
+    A single medical-policy document parsed out of a payer's public
+    medical-policy index (e.g. one Cigna Coverage Policy PDF). Populated
+    by the ``ingest_payer_policy_indexes`` management command; one row per
+    (company, url).
+
+    Used by ``payer_policy_helper`` at appeal-generation time: when a denial
+    has a procedure or diagnosis, we keyword-match against ``title`` so the
+    appeal prompt cites real, specific policies (with their URLs) rather
+    than just pointing at the payer's index.
+    """
+
+    id = models.AutoField(primary_key=True)
+    insurance_company = models.ForeignKey(
+        InsuranceCompany,
+        on_delete=models.CASCADE,
+        related_name="policy_entries",
+        help_text="The payer that publishes this policy",
+    )
+    title = models.CharField(
+        max_length=500,
+        help_text="Policy title as listed in the payer's index (e.g., 'Acupuncture')",
+    )
+    url = models.URLField(
+        max_length=2000,
+        help_text="Direct URL to the individual policy document (PDF or HTML)",
+    )
+    payer_policy_id = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text="Payer-internal policy id (e.g. 'mm_0540', '0001'), if extractable",
+    )
+    last_indexed = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Payer Policy Entry"
+        verbose_name_plural = "Payer Policy Entries"
+        unique_together = [("insurance_company", "url")]
+        indexes = [
+            models.Index(fields=["insurance_company", "title"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.insurance_company.name}: {self.title}"
 
 
 class InsurancePlan(models.Model):
