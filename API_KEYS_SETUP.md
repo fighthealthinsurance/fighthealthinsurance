@@ -10,6 +10,7 @@ and in CI.
 | ------------------------------------ | ---------------- | ---------------- | --------------- |
 | `NICE_API_KEY`                       | NICE syndication | Optional         | UK clinical guidance as international evidence in appeals |
 | `NCBI_API_KEY`                       | NCBI / PubMed    | Semi-optional    | Higher PubMed rate limits (3 → 10 req/sec) |
+| _none_                               | RxNav / RxNorm   | Not required     | Drug-name normalization (brand ↔ generic, misspelling correction) |
 | `OCTOAI_TOKEN`                       | OctoAI           | One ML backend required | Cloud ML inference for appeal generation |
 | `HEALTH_BACKEND_HOST` / `_PORT`      | Local LLM        | One ML backend required | Self-hosted ML inference |
 | `PERPLEXITY_API`                     | Perplexity       | Optional         | Sonar models for citation discovery |
@@ -111,6 +112,53 @@ export NCBI_TOOL="fighthealthinsurance"        # optional
 ```
 
 Same GitHub Secrets pattern as above.
+
+---
+
+## RxNav / RxNorm (no key required)
+
+RxNorm is a standardized drug vocabulary published by the U.S. National
+Library of Medicine; RxNav is the public REST front-end at
+`https://rxnav.nlm.nih.gov/REST/`. We use it to normalize whatever the user
+typed (e.g., `"Glucophage"`, `"metformen"`, `"METFORMIN HCL 500mg"`) into a
+canonical drug name, RxCUI, plus brand / ingredient synonyms before searching
+PubMed, DailyMed, or insurer policies.
+
+**No API key, no registration, no headers required.** From the
+[RxNav API documentation](https://lhncbc.nlm.nih.gov/RxNav/APIs/RxNormAPIs.html):
+
+> With one exception, no license is needed to use the RxNorm API. This is
+> because the data returned from the API is from the RxNorm vocabulary, a
+> non-proprietary vocabulary developed by the National Library of Medicine.
+
+You only need an API key for the [RxClass / DrugBank-licensed endpoints](https://lhncbc.nlm.nih.gov/RxNav/APIs/RxClassAPIs.html#license),
+which we do not use.
+
+### Configure
+
+Nothing to configure. The integration runs automatically as long as the
+process can reach `https://rxnav.nlm.nih.gov`.
+
+The client sends a courtesy `User-Agent` with a contact email
+(`FightHealthInsurance/1.0 (mailto:support@fighthealthinsurance.com)`) so
+NIH can reach us if our traffic looks abnormal. No key is associated with
+this — it's just identification.
+
+### Behavior
+
+- Normalized lookups are cached for 30 days in the `RxNormConcept` table per
+  query string, so repeat requests don't hit the API.
+- Cold lookups make 1–3 HTTP calls (`/rxcui.json`, `/rxcui/{id}/properties.json`,
+  optionally `/rxcui/{id}/related.json`); the per-call timeout is 5s.
+- Failures are caught and logged at `debug` level — appeal / chat / prior-auth
+  generation falls back to the original drug name and proceeds.
+
+### Rate limits
+
+RxNav doesn't publish a hard rate limit and doesn't enforce per-key quotas.
+Their terms of service ask clients to be reasonable; the 30-day cache plus
+single-drug-only normalization heuristic keeps our traffic to a few requests
+per appeal.
 
 ---
 

@@ -12,6 +12,7 @@ from typing import Any, Awaitable, Callable, Optional, Tuple, Union
 from loguru import logger
 
 from fighthealthinsurance.pubmed_tools import PubMedTools
+from fighthealthinsurance.rxnorm_tools import RxNormTools, looks_like_single_drug_query
 
 from .base_tool import BaseTool
 from .patterns import PUBMED_QUERY_REGEX
@@ -38,6 +39,7 @@ class PubMedTool(BaseTool):
         call_llm_callback: Optional[
             Callable[..., Awaitable[Tuple[Optional[str], Optional[str]]]]
         ] = None,
+        rxnorm_tools: Optional[RxNormTools] = None,
     ):
         """
         Initialize the PubMed tool.
@@ -46,10 +48,12 @@ class PubMedTool(BaseTool):
             send_status_message: Async function to send status updates
             pubmed_tools: PubMedTools instance (created if not provided)
             call_llm_callback: Callback to call LLM with additional context
+            rxnorm_tools: RxNormTools for normalizing drug-name queries
         """
         super().__init__(send_status_message)
         self.pubmed_tools = pubmed_tools or PubMedTools()
         self.call_llm_callback = call_llm_callback
+        self.rxnorm_tools = rxnorm_tools or RxNormTools()
 
     async def execute(
         self,
@@ -92,10 +96,35 @@ class PubMedTool(BaseTool):
         if len(pubmed_query_terms.strip()) == 0:
             return cleaned_response, context
 
-        await self.send_status_message(f"Searching PubMed for: {pubmed_query_terms}...")
-
-        # Search for both recent and all-time articles in parallel
-        article_ids = await self._search_articles(pubmed_query_terms)
+        # If the query is a single drug-like phrase, normalize it through
+        # RxNorm so we search for the canonical name rather than a brand
+        # variant or misspelling. When normalization rewrites the query we
+        # search for BOTH the canonical name AND the original term and
+        # merge the results, so brand-only searches don't lose evidence
+        # indexed under the brand name.
+        normalized_query = await self._normalize_drug_terms(pubmed_query_terms)
+        if normalized_query != pubmed_query_terms:
+            await self.send_status_message(
+                f"Normalized {pubmed_query_terms!r} to {normalized_query!r} via RxNorm."
+            )
+            await self.send_status_message(
+                f"Searching PubMed for: {normalized_query} and {pubmed_query_terms}..."
+            )
+            canonical_ids = await self._search_articles(normalized_query)
+            original_ids = await self._search_articles(pubmed_query_terms)
+            # Preserve canonical-name results first, then add brand-name
+            # ids that weren't already returned.
+            seen: set[str] = set()
+            article_ids: list[str] = []
+            for pmid in canonical_ids + original_ids:
+                if pmid not in seen:
+                    seen.add(pmid)
+                    article_ids.append(pmid)
+        else:
+            await self.send_status_message(
+                f"Searching PubMed for: {normalized_query}..."
+            )
+            article_ids = await self._search_articles(normalized_query)
 
         if not article_ids:
             await self.send_status_message(
@@ -135,6 +164,32 @@ class PubMedTool(BaseTool):
         updated_context = context + pubmed_context if context else pubmed_context
 
         return cleaned_response, updated_context
+
+    async def _normalize_drug_terms(self, query: str) -> str:
+        """Best-effort drug-name normalization for a PubMed query.
+
+        Only runs for queries that look like a single drug name (see
+        :py:func:`~fighthealthinsurance.rxnorm_tools.looks_like_single_drug_query`)
+        and only rewrites when RxNorm returns a high-confidence match.
+        Multi-concept queries like "metformin kidney disease" fall through
+        unchanged, since rewriting them would drop the non-drug terms.
+        """
+        if not looks_like_single_drug_query(query):
+            return query
+        try:
+            normalized = await self.rxnorm_tools.normalize(query)
+        except Exception as e:
+            logger.opt(exception=True).debug(f"RxNorm normalization failed: {e}")
+            return query
+        if not normalized.matched:
+            return query
+        # Only rewrite for high-confidence matches. Approximate scores below
+        # ~75 often introduce more noise than signal.
+        if normalized.score is not None and normalized.score < 75:
+            return query
+        if normalized.canonical_name.lower() == query.strip().lower():
+            return query
+        return normalized.canonical_name
 
     async def _search_articles(self, query: str) -> list[str]:
         """

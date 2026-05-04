@@ -8,6 +8,7 @@ from microsites and PubMed articles from microsite search terms.
 import asyncio
 import os
 import time
+from typing import List, Set
 
 import ray
 from loguru import logger
@@ -158,7 +159,23 @@ class ExtraLinkPrefetchActor:
                 if not microsite.pubmed_search_terms:
                     continue
 
+                # Expand drug-like microsite search terms so the prefetch
+                # warms the cache for canonical / brand variants too.
+                expanded_terms: List[str] = []
+                seen_terms: Set[str] = set()
                 for search_term in microsite.pubmed_search_terms:
+                    stripped = search_term.strip()
+                    if stripped and stripped.lower() not in seen_terms:
+                        expanded_terms.append(stripped)
+                        seen_terms.add(stripped.lower())
+                    for synonym in await pubmed_tools._expand_drug_term_for_search(
+                        stripped
+                    ):
+                        if synonym.lower() not in seen_terms:
+                            expanded_terms.append(synonym)
+                            seen_terms.add(synonym.lower())
+
+                for search_term in expanded_terms:
                     try:
                         # Find article IDs
                         pmids = await pubmed_tools.find_pubmed_article_ids_for_query(
