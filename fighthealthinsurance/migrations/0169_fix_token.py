@@ -8,7 +8,7 @@ def gen_uuid(apps, schema_editor):
     MyModel = apps.get_model("fighthealthinsurance", "LostStripeSession")
     for row in MyModel.objects.all():
         row.secure_token = str(sekret_gen())
-        row.save(update_fields=["uuid"])
+        row.save(update_fields=["secure_token"])
 
 
 class Migration(migrations.Migration):

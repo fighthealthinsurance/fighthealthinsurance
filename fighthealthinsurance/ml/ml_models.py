@@ -820,6 +820,20 @@ All JSON keys are optional. Use ``query`` for free-text terms (e.g. "colon cance
 
 When the recommendation has a Grade A or B you should remind the user that under the ACA, non-grandfathered private plans, the marketplace, and Medicaid expansion populations generally must cover the service without cost-sharing — this is one of the strongest evidence-based arguments available for preventive denial appeals. Always cite the recommendation title, grade, and source URL the tool returns. Do not invent USPSTF grades or text — only quote what the tool returns."""
 
+        pa_requirement_tool = """**PA Requirement Lookup Tool**: When a user mentions a CPT or HCPCS code (e.g., 95810, J0490, K0553) and a payer (especially UnitedHealthcare / UHC), use this to check the carrier's published prior-authorization requirement list: **lookup_pa_requirement {"codes": ["95810"], "payer": "UHC", "state": "CA", "line_of_business": "commercial"}**
+
+Use this tool when:
+- The user is appealing a prior-authorization (PA) denial and you need to confirm whether PA was even required for that code, or what the published criteria document is.
+- The user is asking "do I need a prior auth for X with UHC?" or "what's the PA process for code Y?".
+- You need to point the user at the right submission channel (portal, phone, fax) for that payer.
+
+Parameter notes:
+- ``codes`` is required and may be a single string or a list of strings.
+- ``payer`` is the carrier name as the user described it (e.g., "UHC", "UnitedHealthcare", "United"); the tool resolves common aliases.
+- ``state`` and ``line_of_business`` are optional but improve match precision. Valid line_of_business values are: ``commercial``, ``medicare_advantage``, ``medicaid``, ``exchange``, ``dsnp``, ``other``, ``all``.
+
+When the tool result lists a rule, quote the criteria document name and submission channel back to the user — they are persuasive in appeals."""
+
         medicaid_eligibility_tool = """**Medicaid Eligibility Check**: To help check if someone is eligible Medicaid or medicare, you MUST ONLY use this tool format: **medicaid_eligibility {"state": "StateName", "married": false, ...}**
 
 ONLY USE THIS TOOL WHEN ASKED IF SOMEONE IS ELIGIBLE FOR MEDICARE/MEDICAID
@@ -886,6 +900,7 @@ We have a selection of tools to help you. You should try and use these tools whe
 {pubmed_tool}
 {uspstf_tool}
 {doc_fetcher_tool}
+{pa_requirement_tool}
 
 For eligibility determinations if you have a tool you must use the tool rather than guessing on your own.
 This means if someone asks if their eligible for medical, medicaid, medicare, or similar you must use the tool.
@@ -903,6 +918,7 @@ We have a selection of tools to help you. You should try and use these tools whe
 {pubmed_tool}
 {uspstf_tool}
 {doc_fetcher_tool}
+{pa_requirement_tool}
 
 If the user asks about Medicaid or Medicare eligibility, let them know you can help with that and ask them to tell you more about their situation. You have specialized tools for Medicaid/Medicare questions that will activate when needed.
 """
@@ -2516,6 +2532,7 @@ class RemoteFullOpenLike(RemoteOpenLike):
 
         # Process the result into a list of citations
         citations: List[str] = []
+        seen_line_counts: dict[str, int] = {}
 
         # Split by newlines and process each line
         for line in text_result.split("\n"):
@@ -2528,8 +2545,26 @@ class RemoteFullOpenLike(RemoteOpenLike):
             # Remove numbering and bullet points at the beginning of the line
             line = re.sub(r"^\s*(?:\d+[.)\-]|\*|\•|\-)\s+", "", line)
 
-            # Skip header lines
-            if line.lower().startswith(("here are", "citations", "references")):
+            normalized_line = re.sub(r"\s+", " ", line.lower()).strip()
+            count = seen_line_counts.get(normalized_line, 0) + 1
+            seen_line_counts[normalized_line] = count
+
+            # Treat 3+ repeats of the same normalized line as a runaway pattern.
+            # When the threshold is hit, trim trailing copies of that line and
+            # stop parsing additional lines.
+            if count >= 3:
+                while citations and (
+                    re.sub(r"\s+", " ", citations[-1].strip().lower())
+                    == normalized_line
+                ):
+                    citations.pop()
+                break
+
+            # Skip short standalone headers, but keep informative single-line entries.
+            if (
+                line.lower().startswith(("here are", "citations", "references"))
+                and len(line) <= 32
+            ):
                 continue
 
             citations.append(line)
