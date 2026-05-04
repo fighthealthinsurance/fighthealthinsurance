@@ -6,9 +6,10 @@ and in CI.
 
 ## Quick reference
 
-| Variable                             | Service          | Required?        | What it unlocks |
-| ------------------------------------ | ---------------- | ---------------- | --------------- |
-| `NICE_API_KEY`                       | NICE syndication | Optional         | UK clinical guidance as international evidence in appeals |
+| Variable                             | Service            | Required?               | What it unlocks |
+| ------------------------------------ | ------------------ | ----------------------- | --------------- |
+| *(none — keyless)*                   | ClinicalTrials.gov | No key needed           | Trial registry for "experimental/investigational" appeals |
+| `NICE_API_KEY`                       | NICE syndication   | Optional                | UK clinical guidance as international evidence in appeals |
 | `NCBI_API_KEY`                       | NCBI / PubMed    | Semi-optional    | Higher PubMed rate limits (3 → 10 req/sec) |
 | `OCTOAI_TOKEN`                       | OctoAI           | One ML backend required | Cloud ML inference for appeal generation |
 | `HEALTH_BACKEND_HOST` / `_PORT`      | Local LLM        | One ML backend required | Self-hosted ML inference |
@@ -111,6 +112,40 @@ export NCBI_TOOL="fighthealthinsurance"        # optional
 ```
 
 Same GitHub Secrets pattern as above.
+
+---
+
+## ClinicalTrials.gov (no key required)
+
+The ClinicalTrials.gov integration uses the public [API v2](https://clinicaltrials.gov/data-api/api)
+(`https://clinicaltrials.gov/api/v2/studies`). **No registration, API key, or
+account is required.** The API is operated by the U.S. National Library of
+Medicine and is freely accessible to any HTTP client.
+
+### What it does
+
+When a chat message contains a `[clinical trials query: ...]` token, the system
+queries the registry and surfaces matching study metadata (NCT ID, phase, status,
+conditions, interventions, brief summary, and a direct study URL). This is useful
+when an insurer denies a treatment as "experimental or investigational" — active
+or completed trials are evidence that a therapy is being actively studied or used
+clinically.
+
+Results are cached in `ClinicalTrial` / `ClinicalTrialQueryData` for 30 days, so
+repeat queries for the same terms hit the database rather than the remote API.
+
+### Rate limits
+
+NLM does not publish a hard rate limit for the v2 API, but they ask that clients
+avoid abusive polling. The integration already caches aggressively, so normal
+usage stays well within acceptable bounds. If you anticipate very high query
+volumes you can set `CLINICAL_TRIALS_API_BASE` to point at a local mirror or
+proxy, but this is not required for normal operation.
+
+```bash
+# Optional override — defaults to https://clinicaltrials.gov/api/v2
+export CLINICAL_TRIALS_API_BASE="https://clinicaltrials.gov/api/v2"
+```
 
 ---
 
