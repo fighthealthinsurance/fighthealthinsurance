@@ -576,7 +576,12 @@ def search(
 
     results = FinancialAssistanceResults(
         canonical_drug=canonical_drug,
-        diagnosis_text=diagnosis or None,
+        # Reflect the text that was actually searched. When the caller only
+        # supplied `denial_text`, fall back to it so downstream consumers
+        # (the chat tool's LLM context, the REST payload) can show the
+        # diagnosis keywords that drove the matches rather than a stale
+        # empty value.
+        diagnosis_text=(diagnosis or denial_text or None),
         state_abbreviation=normalized_state,
     )
 

@@ -19,6 +19,12 @@ from django.contrib.staticfiles.storage import staticfiles_storage
 from loguru import logger
 
 if TYPE_CHECKING:
+    from fighthealthinsurance.financial_assistance_directory import (
+        FinancialAssistanceResults,
+    )
+    from fighthealthinsurance.pharmacy_coupon_detector import (
+        PharmacyCouponSuggestion,
+    )
     from fighthealthinsurance.pubmed_tools import PubMedTools
 
 
@@ -136,7 +142,7 @@ class Microsite:
     def __repr__(self) -> str:
         return f"<Microsite: {self.slug}>"
 
-    def pharmacy_coupon_suggestion(self):
+    def pharmacy_coupon_suggestion(self) -> "Optional[PharmacyCouponSuggestion]":
         """
         Return a PharmacyCouponSuggestion for this microsite, if its
         default procedure or condition matches a known prescription drug.
@@ -150,7 +156,9 @@ class Microsite:
             diagnosis=self.default_condition,
         )
 
-    def financial_assistance(self, state_abbreviation: Optional[str] = None):
+    def financial_assistance(
+        self, state_abbreviation: Optional[str] = None
+    ) -> "Optional[FinancialAssistanceResults]":
         """
         Return a FinancialAssistanceResults aggregate for this microsite,
         but only when the search produced at least one result tied to the
