@@ -80,12 +80,12 @@ def followup_types(db):
 @pytest.mark.django_db
 def test_schedule_followups_includes_1day_when_type_exists(test_denial):
     """A 1-day follow-up is scheduled when followup_1day type exists."""
-    from fighthealthinsurance.common_view_logic import schedule_followup
 
     FollowUpType.objects.create(
         name="followup_1day",
         template_name="followup_1day",
         subject="day1",
+        text="hiii",
         duration=datetime.timedelta(days=1),
     )
 
@@ -175,8 +175,8 @@ class TestFollowUpEmailSender:
         sender = FollowUpEmailSender()
         count = sender.send_all()
 
-        assert count == 3
-        assert mock_send_email.call_count == 3
+        assert count == 4
+        assert mock_send_email.call_count == 4
 
     @patch("fighthealthinsurance.followup_emails.send_fallback_email")
     def test_send_all_respects_count_limit(self, mock_send_email, test_denial):
@@ -353,15 +353,15 @@ class TestFollowUpEmailSender:
 class TestScheduleFollowUps:
     """Test the schedule_follow_ups helper function."""
 
-    def test_creates_three_records_for_new_denial(self, test_denial, followup_types):
-        """Test that schedule_follow_ups creates 3 FollowUpSched records."""
+    def test_creates_multiple_records_for_new_denial(self, test_denial, followup_types):
+        """Test that schedule_follow_ups creates 4 FollowUpSched records."""
         schedule_follow_ups(test_denial.raw_email, test_denial)
 
         scheds = FollowUpSched.objects.filter(denial_id=test_denial)
-        assert scheds.count() == 3
+        assert scheds.count() == 4
 
         type_names = set(s.follow_up_type.name for s in scheds)
-        assert type_names == {"followup_7day", "followup_30day", "followup_90day"}
+        assert type_names == {"followup_1day", "followup_7day", "followup_30day", "followup_90day"}
 
     def test_correct_follow_up_dates(self, test_denial, followup_types):
         """Test that follow-up dates are correctly calculated."""
@@ -377,7 +377,7 @@ class TestScheduleFollowUps:
         schedule_follow_ups(test_denial.raw_email, test_denial)
 
         scheds = FollowUpSched.objects.filter(denial_id=test_denial)
-        assert scheds.count() == 3
+        assert scheds.count() == 4
 
     def test_skips_past_dates_for_old_denials(self, test_denial, followup_types):
         """Test that follow-ups with past dates are skipped for old denials."""
@@ -442,7 +442,7 @@ class TestScheduleFollowUps:
         schedule_follow_ups(new_email, test_denial)
 
         scheds = FollowUpSched.objects.filter(denial_id=test_denial)
-        assert scheds.count() == 3
+        assert scheds.count() == 4
         for sched in scheds:
             assert sched.email == new_email
 
@@ -450,7 +450,7 @@ class TestScheduleFollowUps:
         """Test that nothing is created when the expected FollowUpType records don't exist."""
         # Remove any matching types (may exist from data migration)
         FollowUpType.objects.filter(
-            name__in=["followup_7day", "followup_30day", "followup_90day"]
+            name__in=["followup_1day", "followup_7day", "followup_30day", "followup_90day"]
         ).delete()
 
         schedule_follow_ups(test_denial.raw_email, test_denial)
