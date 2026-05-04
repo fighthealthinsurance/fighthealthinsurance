@@ -338,7 +338,6 @@ class OtherResourcesView(generic.TemplateView):
         # Fetch RSS feeds synchronously to avoid async issues
         try:
             from datetime import datetime
-
             import feedparser
             import requests
 
@@ -1913,11 +1912,6 @@ class StripeWebhookView(View):
 class CompletePaymentView(View):
     """View for completing payment after Stripe checkout redirect."""
 
-    # Row ids issued before the secure_token migration (#763) that we still
-    # honor when passed as ?session_id=<id>; everything above this id was
-    # created with a token so legacy lookups should be denied.
-    LEGACY_SESSION_ID_CUTOFF = 600
-
     def get(self, request):
         try:
             data = {
@@ -1956,22 +1950,30 @@ class CompletePaymentView(View):
             if token:
                 lost_session = models.LostStripeSession.objects.get(secure_token=token)
             elif session_id:
-                # Legacy emails sent before the token rollout used the row id
-                # as ?session_id=<int>. Honor those for ids below the cutoff
-                # only; anything else must come through the secure token, so
-                # that post-cutoff sessions can't be brute-forced or accessed
-                # by passing a Stripe session_id string.
+                # Legacy emails sent before secure_token rollout used the row
+                # id as ?session_id=<int>. Accept those links only for rows
+                # created before SECURE_TOKEN_ROLLOUT_AT; otherwise require
+                # secure_token-based access.
                 legacy_id: typing.Optional[int] = None
                 try:
                     legacy_id = int(session_id)
                 except (TypeError, ValueError):
                     pass
-                if (
-                    legacy_id is None
-                    or not 0 < legacy_id < self.LEGACY_SESSION_ID_CUTOFF
-                ):
-                    return self._json_error_response("Invalid or expired link", 400)
-                lost_session = models.LostStripeSession.objects.get(id=legacy_id)
+                if legacy_id is None or legacy_id <= 0:
+                    return self._json_error_response("Invalid or expired link")
+                rollout_at = getattr(settings, "SECURE_TOKEN_ROLLOUT_AT", None)
+                if rollout_at is None:
+                    return HttpResponse(
+                        json.dumps({"error": "Invalid or expired link"}),
+                        status=400,
+                        content_type="application/json",
+                    )
+                lost_session = models.LostStripeSession.objects.filter(
+                    id=legacy_id,
+                    created_at__lt=rollout_at,
+                ).first()
+                if lost_session is None:
+                    return self._json_error_response("Invalid or expired link")
             else:
                 return self._json_error_response("Missing token", 400)
             continue_url = lost_session.success_url
