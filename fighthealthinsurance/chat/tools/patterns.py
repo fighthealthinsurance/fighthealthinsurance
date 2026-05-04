@@ -58,6 +58,14 @@ RXNORM_LOOKUP_REGEX = (
     r"([^*\[\]\n]+?)\s*(?:[\]\*]{1,4}|$|(?=\n))"
 )
 
+# ClinicalTrials.gov query tool - captures search terms
+# Matches: [clinical_trials_query: terms], **clinical trials query: terms**, etc.
+# Useful when an insurer denies a treatment as "experimental/investigational"
+# and we need to check the public trial registry.
+CLINICAL_TRIALS_QUERY_REGEX = (
+    r"[\[\*]{0,4}clinical[ _]?trials?[ _]?query:?\s*([^*\[\]]+)[\]\*]{0,4}"
+)
+
 # List of all tool patterns for scoring/detection
 ALL_TOOL_PATTERNS = [
     PUBMED_QUERY_REGEX,
@@ -69,4 +77,5 @@ ALL_TOOL_PATTERNS = [
     USPSTF_LOOKUP_REGEX,
     LOOKUP_PA_REQUIREMENT_REGEX,
     RXNORM_LOOKUP_REGEX,
+    CLINICAL_TRIALS_QUERY_REGEX,
 ]

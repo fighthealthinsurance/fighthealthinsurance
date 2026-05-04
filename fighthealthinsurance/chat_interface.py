@@ -29,6 +29,7 @@ from fighthealthinsurance.chat.safety_filters import (
 )
 from fighthealthinsurance.chat.tools import (
     AppealTool,
+    ClinicalTrialsTool,
     DocFetcherTool,
     MedicaidEligibilityTool,
     MedicaidInfoTool,
@@ -55,6 +56,7 @@ from fighthealthinsurance.models import (
 )
 from fighthealthinsurance.microsites import get_microsite
 from fighthealthinsurance.prompt_templates import get_intro_template
+from fighthealthinsurance.clinicaltrials_tools import ClinicalTrialsTools
 from fighthealthinsurance.pubmed_tools import PubMedTools
 from fighthealthinsurance.rxnorm_tools import RxNormTools
 from fighthealthinsurance.utils import (
@@ -96,6 +98,7 @@ class ChatInterface:
         # Single RxNormTools shared across RxNormLookupTool and PubMedTool
         # so they reuse the same client / cache view per chat session.
         self.rxnorm_tools = RxNormTools()
+        self.clinical_trials_tools = ClinicalTrialsTools()
         self.chat: OngoingChat = chat
         self.user: User = user
         self.use_external_models: bool = use_external_models
@@ -400,6 +403,15 @@ class ChatInterface:
             self.send_status_message, self._call_llm_with_actions
         )
         response_text, context, _ = await uspstf_tool.handle(
+            response_text, context, **tool_kwargs
+        )
+
+        clinical_trials_tool = ClinicalTrialsTool(
+            self.send_status_message,
+            clinical_trials_tools=self.clinical_trials_tools,
+            call_llm_callback=self._call_llm_with_actions,
+        )
+        response_text, context, _ = await clinical_trials_tool.handle(
             response_text, context, **tool_kwargs
         )
 
