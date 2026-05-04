@@ -6,6 +6,7 @@ This module provides health checks for the polling actors:
 - FaxPollingActor
 - ChooserRefillActor
 - IMRRefreshActor
+- UCRRefreshActor
 
 It checks if actors are alive and returns their status.
 """
@@ -39,6 +40,7 @@ def check_actor_health() -> Dict[str, Any]:
         ("fax_polling_actor", "fhi"),
         ("chooser_refill_actor", "fhi"),
         ("imr_refresh_actor", "fhi"),
+        ("ucr_refresh_actor", "fhi"),
     ]
 
     details: List[ActorHealthDetail] = []
@@ -122,12 +124,14 @@ def relaunch_actors(force: bool = False) -> Dict[str, Any]:
     from fighthealthinsurance.email_polling_actor_ref import email_polling_actor_ref
     from fighthealthinsurance.fax_polling_actor_ref import fax_polling_actor_ref
     from fighthealthinsurance.imr_refresh_actor_ref import imr_refresh_actor_ref
+    from fighthealthinsurance.ucr_refresh_actor_ref import ucr_refresh_actor_ref
 
     results: Dict[str, Dict[str, Any]] = {
         "email_polling_actor": {"status": "pending"},
         "fax_polling_actor": {"status": "pending"},
         "chooser_refill_actor": {"status": "pending"},
         "imr_refresh_actor": {"status": "pending"},
+        "ucr_refresh_actor": {"status": "pending"},
     }
 
     actors = [
@@ -135,6 +139,7 @@ def relaunch_actors(force: bool = False) -> Dict[str, Any]:
         ("fax_polling_actor", fax_polling_actor_ref),
         ("chooser_refill_actor", chooser_refill_actor_ref),
         ("imr_refresh_actor", imr_refresh_actor_ref),
+        ("ucr_refresh_actor", ucr_refresh_actor_ref),
     ]
 
     for actor_name, actor_ref in actors:

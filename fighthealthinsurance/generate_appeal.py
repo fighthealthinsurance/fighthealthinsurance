@@ -1265,6 +1265,7 @@ class AppealGenerator(object):
         plan_context=None,
         rag_context=None,
         nice_context=None,
+        ucr_context=None,
     ) -> Optional[str]:
         """
         Constructs a prompt for generating a health insurance appeal based on denial details and optional contextual information.
@@ -1351,6 +1352,22 @@ class AppealGenerator(object):
         else:
             # No citations provided - explicitly tell the model not to make any up
             base = f"{base}\n\nIMPORTANT: No specific medical citations have been provided. Do NOT invent or hallucinate any citations, PMIDs, journal names, or study references. You may state general medical knowledge without citations, but do not fabricate specific study references."
+        if ucr_context:
+            # The block carries an independent rate benchmark for this
+            # procedure + area; the model decides whether the evidence is
+            # useful for the argument it's making.
+            base = (
+                f"{base}\n\nUCR PRICING CONTEXT: The denial may involve "
+                "out-of-network under-reimbursement. The [UCR PRICING CONTEXT] "
+                "block below carries an independent rate benchmark for this "
+                "procedure and geographic area. If it strengthens the appeal — "
+                "e.g. arguing the plan's allowable methodology is below typical "
+                "rates — cite the source and effective date verbatim. If it "
+                "isn't relevant to the arguments you're making, you may omit "
+                "it. Do NOT invent rates or percentile values that are not in "
+                "the block.\n\n"
+                f"{ucr_context}"
+            )
         if (
             insurance_company is not None
             and insurance_company != ""
@@ -1438,6 +1455,11 @@ class AppealGenerator(object):
             insurance_company_name = denial.insurance_company_obj.name
             is_tpa = denial.insurance_company_obj.is_tpa
 
+        ucr_narrative = None
+        ucr_ctx = getattr(denial, "ucr_context", None)
+        if isinstance(ucr_ctx, dict):
+            ucr_narrative = ucr_ctx.get("narrative") or None
+
         open_prompt = self.make_open_prompt(
             denial_text=denial.denial_text,
             procedure=denial.procedure,
@@ -1459,6 +1481,7 @@ class AppealGenerator(object):
             plan_context=plan_context,
             rag_context=rag_context,
             nice_context=nice_context,
+            ucr_context=ucr_narrative,
         )
         open_medically_necessary_prompt = self.make_open_med_prompt(
             procedure=denial.procedure,

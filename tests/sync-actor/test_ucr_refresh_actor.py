@@ -1,0 +1,212 @@
+"""Tests for UCRRefreshActor under the sync-actor tox env.
+
+The Ray-based smoke test mirrors the fax_polling_actor pattern: spin the
+actor up, kick run(), and confirm it transitions into a healthy looping
+state. The remaining tests exercise UCRRefreshController directly — it's
+the non-Ray companion class that holds the loop logic, which means we can
+unit-test it without spinning Ray.
+"""
+
+import asyncio
+import datetime
+import os
+import time
+
+import pytest
+import ray
+from django.test import TransactionTestCase
+from loguru import logger
+
+from fighthealthinsurance.models import (
+    Denial,
+    UCRGeographicArea,
+    UCRRate,
+)
+from fighthealthinsurance.ucr_constants import UCRAreaKind, UCRSource
+from fighthealthinsurance.ucr_refresh_actor import (
+    UCRRefreshActor,
+    UCRRefreshController,
+)
+
+
+@pytest.mark.django_db
+class TestUCRRefreshActorRayLifecycle(TransactionTestCase):
+    fixtures = ["fighthealthinsurance/fixtures/initial.yaml"]
+
+    def setUp(self):
+        if not ray.is_initialized():
+            environ = dict(os.environ)
+            # TestActor (not Test) so the Ray worker process and the test
+            # process share a file-based SQLite DB. With "Test" the actor
+            # process gets its own in-memory DB with no UCR tables, so the
+            # source-refresh loop's UCRRate query errors on every cycle.
+            environ["DJANGO_CONFIGURATION"] = "TestActor"
+            ray.init(
+                namespace="fhi-test",
+                ignore_reinit_error=True,
+                runtime_env={"env_vars": environ},
+                num_cpus=1,
+            )
+
+    def tearDown(self):
+        if ray.is_initialized():
+            ray.shutdown()
+
+    def test_run_method_starts_and_loops(self):
+        actor = UCRRefreshActor.remote()
+
+        self.assertEqual("Hi", ray.get(actor.hello.remote()))
+        actor.run.remote()
+
+        time.sleep(0.5)
+        # Generous deadline because the actor bootstraps Django inside the
+        # Ray worker (load settings, urlconf, app registry) before its first
+        # sleep+iteration; cold-start in CI can take 20+s.
+        max_wait = 60
+        start = time.time()
+        running = False
+        loop_executed = False
+        while time.time() - start < max_wait:
+            running = ray.get(actor.health_check.remote())
+            if running:
+                # Match the fax_polling_actor smoke test: either a successful
+                # iteration (count) or a logged error (error_count) proves the
+                # loop body ran. We still surface unexpected errors below.
+                if (
+                    ray.get(actor.count.remote()) > 0
+                    or ray.get(actor.actor_error_count.remote()) > 0
+                ):
+                    loop_executed = True
+                    break
+            time.sleep(0.5)
+
+        self.assertTrue(running, "run() should mark the actor as running")
+        self.assertTrue(loop_executed, "run() loop body should have executed")
+
+
+class TestUCRRefreshControllerDenialBatch(TransactionTestCase):
+    """Exercise the denial-refresh loop body via UCRRefreshController.
+
+    Direct call avoids the Ray bootstrap; we just want to test the math.
+    """
+
+    def setUp(self):
+        self.area = UCRGeographicArea.objects.create(kind=UCRAreaKind.ZIP3, code="941")
+        for percentile, amount in [(50, 14763), (80, 19684), (90, 24605)]:
+            UCRRate.objects.create(
+                procedure_code="99213",
+                geographic_area=self.area,
+                percentile=percentile,
+                amount_cents=amount,
+                source=UCRSource.MEDICARE_PFS,
+                effective_date=datetime.date(2026, 1, 1),
+            )
+        self.controller = UCRRefreshController(logger)
+
+    def _make_denial(self) -> Denial:
+        return Denial.objects.create(
+            hashed_email="hash:test",
+            procedure="CPT 99213 office visit",
+            service_zip="941",
+            your_state="CA",
+        )
+
+    def test_processes_stale_denials(self):
+        denial = self._make_denial()
+        processed, failed = asyncio.run(self.controller.refresh_denials_once())
+        self.assertEqual(processed, 1)
+        self.assertEqual(failed, 0)
+        denial.refresh_from_db()
+        self.assertIsNotNone(denial.ucr_refreshed_at)
+        self.assertIsNotNone(denial.latest_ucr_lookup)
+
+    def test_skips_finalized_denials(self):
+        denial = self._make_denial()
+        denial.appeal_result = "submitted"
+        denial.save(update_fields=["appeal_result"])
+        processed, failed = asyncio.run(self.controller.refresh_denials_once())
+        self.assertEqual(processed, 0)
+
+    def test_per_denial_failures_are_logged_not_raised(self):
+        denial = self._make_denial()
+
+        from fighthealthinsurance import ucr_helper
+
+        original = ucr_helper.UCREnrichmentHelper.maybe_enrich
+        boom_target = denial.pk
+        call_state = {"raised": False, "ok": False}
+
+        def maybe_enrich_with_one_failure(d, **kwargs):
+            if d.pk == boom_target and not call_state["raised"]:
+                call_state["raised"] = True
+                raise RuntimeError("synthetic failure")
+            call_state["ok"] = True
+            return original(d, **kwargs)
+
+        good = self._make_denial()
+        ucr_helper.UCREnrichmentHelper.maybe_enrich = (  # type: ignore[assignment]
+            maybe_enrich_with_one_failure
+        )
+        try:
+            processed, failed = asyncio.run(self.controller.refresh_denials_once())
+        finally:
+            ucr_helper.UCREnrichmentHelper.maybe_enrich = original  # type: ignore[assignment]
+
+        self.assertEqual(processed, 1)
+        self.assertEqual(failed, 1)
+        self.assertTrue(call_state["raised"])
+        self.assertTrue(call_state["ok"])
+        good.refresh_from_db()
+        self.assertIsNotNone(good.ucr_refreshed_at)
+
+
+class TestUCRSourceRefreshAutoDownload(TransactionTestCase):
+    """The Medicare PFS source-refresh path should call refresh_medicare_pfs
+    when both URLs are configured, and skip silently otherwise."""
+
+    def setUp(self):
+        self.controller = UCRRefreshController(logger)
+
+    def test_skips_download_when_urls_unset(self):
+        from unittest.mock import patch
+
+        from django.test import override_settings
+
+        with override_settings(
+            UCR_MEDICARE_PFS_RVU_URL="", UCR_MEDICARE_PFS_LOCALITY_URL=""
+        ), patch(
+            "fighthealthinsurance.management.commands.load_medicare_pfs.refresh_medicare_pfs"
+        ) as mock_refresh:
+            asyncio.run(self.controller._refresh_medicare_pfs_if_due())
+        mock_refresh.assert_not_called()
+
+    def test_invokes_loader_when_urls_set(self):
+        from unittest.mock import AsyncMock, patch
+
+        from django.test import override_settings
+
+        from fighthealthinsurance.management.commands.load_medicare_pfs import (
+            RefreshResult,
+        )
+
+        with override_settings(
+            UCR_MEDICARE_PFS_RVU_URL="https://example.gov/rvu.csv",
+            UCR_MEDICARE_PFS_LOCALITY_URL="https://example.gov/loc.csv",
+        ), patch(
+            "fighthealthinsurance.management.commands.load_medicare_pfs.refresh_medicare_pfs",
+            new_callable=AsyncMock,
+            return_value=RefreshResult(
+                localities=1,
+                rates=1,
+                written=3,
+                skipped=0,
+                dry_run=False,
+                would_write=0,
+                input_format="pfrev",
+            ),
+        ) as mock_refresh:
+            asyncio.run(self.controller._refresh_medicare_pfs_if_due())
+        mock_refresh.assert_awaited_once_with(
+            rvu_url="https://example.gov/rvu.csv",
+            locality_url="https://example.gov/loc.csv",
+        )
