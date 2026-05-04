@@ -2213,7 +2213,8 @@ class DenialCreatorHelper:
             return None
         if suggestion is None:
             return None
-        return suggestion.to_dict()
+        payload: dict[str, Any] = suggestion.to_dict()
+        return payload
 
     @staticmethod
     def _build_financial_assistance_payload(denial) -> Optional[dict[str, Any]]:
