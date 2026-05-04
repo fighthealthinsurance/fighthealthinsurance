@@ -11,6 +11,7 @@ from fighthealthinsurance.rxnorm_tools import (
     RxNormTools,
     _clean_query,
     expand_drug_query_terms,
+    looks_like_single_drug_query,
     normalize_drug_name,
 )
 
@@ -329,35 +330,27 @@ class TestModuleHelpers:
 
 
 class TestPubMedSingleDrugHeuristic:
-    """Cover PubMedTool._looks_like_single_drug_query / _normalize_drug_terms."""
+    """Cover looks_like_single_drug_query / PubMedTool._normalize_drug_terms."""
 
     def test_looks_like_drug_for_short_unitary_query(self):
-        from fighthealthinsurance.chat.tools.pubmed_tool import PubMedTool
-
-        assert PubMedTool._looks_like_single_drug_query("Lipitor")
-        assert PubMedTool._looks_like_single_drug_query("metformin 500mg")
-        assert PubMedTool._looks_like_single_drug_query("co-trimoxazole")
+        assert looks_like_single_drug_query("Lipitor")
+        assert looks_like_single_drug_query("metformin 500mg")
+        assert looks_like_single_drug_query("co-trimoxazole")
 
     def test_rejects_multi_concept_query(self):
-        from fighthealthinsurance.chat.tools.pubmed_tool import PubMedTool
-
         # Multi-concept queries that would lose information if collapsed
         # to a canonical drug name.
-        assert not PubMedTool._looks_like_single_drug_query(
-            "metformin and kidney disease"
-        )
-        assert not PubMedTool._looks_like_single_drug_query("Lipitor vs simvastatin")
-        assert not PubMedTool._looks_like_single_drug_query("metformin, atorvastatin")
+        assert not looks_like_single_drug_query("metformin and kidney disease")
+        assert not looks_like_single_drug_query("Lipitor vs simvastatin")
+        assert not looks_like_single_drug_query("metformin, atorvastatin")
         # Three-or-more-token query — even without a connector, refuse to
         # rewrite, since "metformin kidney disease" looks lexically like a
         # drug+dose pair but means drug+condition.
-        assert not PubMedTool._looks_like_single_drug_query("metformin kidney disease")
+        assert not looks_like_single_drug_query("metformin kidney disease")
 
     def test_rejects_empty(self):
-        from fighthealthinsurance.chat.tools.pubmed_tool import PubMedTool
-
-        assert not PubMedTool._looks_like_single_drug_query("")
-        assert not PubMedTool._looks_like_single_drug_query("   ")
+        assert not looks_like_single_drug_query("")
+        assert not looks_like_single_drug_query("   ")
 
     @pytest.mark.asyncio
     async def test_normalize_drug_terms_skips_multi_concept(self):
@@ -563,25 +556,18 @@ class TestRxNormLookupToolHandle:
 
 
 class TestPubMedToolsDrugExpansion:
-    """Cover PubMedTools._looks_like_single_drug_term and
-    ._expand_drug_term_for_search — used in find_pubmed_articles_for_denial
-    and the extralink prefetch actor."""
+    """Cover looks_like_single_drug_query and PubMedTools._expand_drug_term_for_search
+    — used in find_pubmed_articles_for_denial and the extralink prefetch actor."""
 
     def test_looks_like_single_drug_short(self):
-        from fighthealthinsurance.pubmed_tools import PubMedTools
-
-        assert PubMedTools._looks_like_single_drug_term("Lipitor")
-        assert PubMedTools._looks_like_single_drug_term("metformin 500mg")
+        assert looks_like_single_drug_query("Lipitor")
+        assert looks_like_single_drug_query("metformin 500mg")
 
     def test_rejects_multi_concept(self):
-        from fighthealthinsurance.pubmed_tools import PubMedTools
-
         # Connector words and 3+ tokens are out.
-        assert not PubMedTools._looks_like_single_drug_term("Lipitor and atorvastatin")
-        assert not PubMedTools._looks_like_single_drug_term(
-            "physical therapy arthritis"
-        )
-        assert not PubMedTools._looks_like_single_drug_term("")
+        assert not looks_like_single_drug_query("Lipitor and atorvastatin")
+        assert not looks_like_single_drug_query("physical therapy arthritis")
+        assert not looks_like_single_drug_query("")
 
     @pytest.mark.asyncio
     async def test_expand_drug_term_returns_canonical_and_synonyms(self):
