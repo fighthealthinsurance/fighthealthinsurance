@@ -147,6 +147,64 @@ class TestMLCitationFunctionality:
                 for citation in citations:
                     assert "Here are relevant citations" not in citation
 
+
+    @pytest.mark.asyncio
+    async def test_get_citations_stops_on_repeated_line(self):
+        """Treat repeated identical lines as an implicit stop token."""
+        model = RemoteFullOpenLike("http://test-api.com", "test-token", "test-model")
+
+        mock_response = """
+        1. CDC PrEP Clinical Guidance, 2025, https://www.cdc.gov/hiv/clinicians/prevention/prep.html
+        - Template line that starts repeating unexpectedly
+        - Template line that starts repeating unexpectedly
+        - Template line that starts repeating unexpectedly
+        - USPSTF recommendation should not be parsed because it appears after repeated-line noise
+        """
+
+        with patch.object(model, "get_system_prompts", return_value=["System prompt"]):
+            with patch.object(
+                model,
+                "_infer",
+                new_callable=AsyncMock,
+                return_value=(mock_response, []),
+            ):
+                citations = await model.get_citations(
+                    denial_text="This is a denial",
+                    procedure="Truvada",
+                    diagnosis=None,
+                )
+
+                assert len(citations) == 1
+                assert "CDC PrEP Clinical Guidance" in citations[0]
+                assert all("Template line that starts repeating" not in c for c in citations)
+
+
+    @pytest.mark.asyncio
+    async def test_get_citations_keeps_long_single_line_header_with_citation(self):
+        """Do not drop long lines that begin with a header prefix but contain citation content."""
+        model = RemoteFullOpenLike("http://test-api.com", "test-token", "test-model")
+
+        mock_response = (
+            "Citations: CDC Clinical Guidance for PrEP, 2025, "
+            "https://www.cdc.gov/hiv/clinicians/prevention/prep.html"
+        )
+
+        with patch.object(model, "get_system_prompts", return_value=["System prompt"]):
+            with patch.object(
+                model,
+                "_infer",
+                new_callable=AsyncMock,
+                return_value=(mock_response, []),
+            ):
+                citations = await model.get_citations(
+                    denial_text="This is a denial",
+                    procedure="Truvada",
+                    diagnosis=None,
+                )
+
+                assert len(citations) == 1
+                assert citations[0].startswith("Citations: CDC Clinical Guidance for PrEP")
+
     def test_full_find_citation_backends(self):
         """Test the full_find_citation_backends router method."""
         # Setup mocks
