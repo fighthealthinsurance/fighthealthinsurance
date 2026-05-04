@@ -12,12 +12,14 @@ from fighthealthinsurance.chat.tools import (
     CREATE_OR_UPDATE_APPEAL_REGEX,
     CREATE_OR_UPDATE_PRIOR_AUTH_REGEX,
     FETCH_DOC_REGEX,
+    RXNORM_LOOKUP_REGEX,
     USPSTF_LOOKUP_REGEX,
     BaseTool,
     PubMedTool,
     MedicaidInfoTool,
     MedicaidEligibilityTool,
     DocFetcherTool,
+    RxNormLookupTool,
     USPSTFLookupTool,
 )
 from fighthealthinsurance.chat.tools.doc_fetcher_tool import (
@@ -74,6 +76,39 @@ class TestToolPatterns(TestCase):
         )
         self.assertIsNotNone(match)
         self.assertIn("MRI", match.group(1))
+
+    def test_rxnorm_lookup_pattern(self):
+        """Test rxnorm_lookup pattern matches drug-name forms."""
+        test_cases = [
+            ("rxnorm_lookup: Lipitor", "Lipitor"),
+            ("rxnorm lookup: metformin 500mg", "metformin 500mg"),
+            ("**rxnorm_lookup: glucophage**", "glucophage"),
+            ("[rxnorm lookup: omeprazole]", "omeprazole"),
+        ]
+        for text, expected in test_cases:
+            match = re.search(RXNORM_LOOKUP_REGEX, text, re.IGNORECASE)
+            self.assertIsNotNone(match, f"Failed to match: {text}")
+            self.assertEqual(match.group(1).strip(), expected)
+
+    def test_rxnorm_lookup_pattern_rejects_prose(self):
+        """Pattern should not match natural-language mentions without an
+        explicit ``rxnorm_lookup:`` directive."""
+        # No colon — should not match.
+        self.assertIsNone(
+            re.search(
+                RXNORM_LOOKUP_REGEX,
+                "RxNorm lookup for Lipitor",
+                re.IGNORECASE,
+            )
+        )
+        # Random sentence containing the words but not in tool form.
+        self.assertIsNone(
+            re.search(
+                RXNORM_LOOKUP_REGEX,
+                "I will check rxnorm lookup later",
+                re.IGNORECASE,
+            )
+        )
 
 
 class TestBaseTool(TestCase):

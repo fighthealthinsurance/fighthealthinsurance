@@ -29,6 +29,7 @@ from fighthealthinsurance.pubmed_search import (
     build_structured_query,
     categorize_articles_by_strength,
 )
+from fighthealthinsurance.rxnorm_tools import RxNormTools, looks_like_single_drug_query
 from fighthealthinsurance.utils import pubmed_fetcher
 
 from .exec import pubmed_executor
@@ -89,6 +90,74 @@ async def _ensure_session(
 class PubMedTools(object):
     # Rough bias to "recent" articles
     since_list = ["2024", None]
+
+    # Maximum extra search terms we'll add per drug-like query. Each extra
+    # term costs one PubMed search round-trip, so we cap this aggressively.
+    _MAX_DRUG_EXPANSIONS = 2
+
+    def __init__(self, rxnorm_tools: Optional[RxNormTools] = None) -> None:
+        # Accept an injected RxNormTools so callers can share one instance
+        # across PubMedTools and chat handlers; lazy-create on first use
+        # otherwise so existing call sites keep working unchanged.
+        self._rxnorm_tools = rxnorm_tools
+
+    def _get_rxnorm_tools(self) -> RxNormTools:
+        if self._rxnorm_tools is None:
+            self._rxnorm_tools = RxNormTools()
+        return self._rxnorm_tools
+
+    async def _expand_drug_term_for_search(
+        self, term: str, max_extra: int = _MAX_DRUG_EXPANSIONS
+    ) -> List[str]:
+        """Return up to ``max_extra`` RxNorm-derived synonyms for ``term``.
+
+        Used to broaden PubMed/policy searches when the procedure or a
+        microsite search term is a drug name. Returns ``[]`` when the term
+        doesn't look like a single drug, when RxNorm has no match, or when
+        the match is below the confidence threshold the chat tools use.
+
+        The returned terms are guaranteed to differ from ``term`` (case-
+        insensitive) and from each other; callers can append them to an
+        existing query list without further deduplication of these.
+        """
+        if not looks_like_single_drug_query(term):
+            return []
+        try:
+            normalized = await self._get_rxnorm_tools().normalize(term)
+        except Exception as e:
+            logger.opt(exception=True).debug(
+                f"RxNorm expansion failed for {term!r}: {e}"
+            )
+            return []
+        if not normalized.matched:
+            return []
+        # Same threshold as PubMedTool / RxNormLookupTool: low scores from
+        # approximate matching are too noisy to bias a real search on.
+        if normalized.score is not None and normalized.score < 75:
+            return []
+        out: List[str] = []
+        seen: set[str] = {term.strip().lower()}
+
+        def add(name: str) -> None:
+            cleaned = (name or "").strip()
+            if not cleaned:
+                return
+            key = cleaned.lower()
+            if key in seen or len(out) >= max_extra:
+                return
+            seen.add(key)
+            out.append(cleaned)
+
+        # Canonical name first — this is the highest-signal synonym.
+        add(normalized.canonical_name)
+        # Then plain ingredients (most useful for drug-evidence queries).
+        for ingredient in normalized.related.get("IN", []):
+            add(ingredient.get("name", ""))
+        # Then a couple of brand names, in case PubMed indexes evidence
+        # under the brand name rather than the generic.
+        for brand in normalized.related.get("BN", []):
+            add(brand.get("name", ""))
+        return out
 
     def _url_sources(
         self,
@@ -725,13 +794,27 @@ class PubMedTools(object):
         diagnosis_opt = denial.diagnosis if denial.diagnosis else ""
         query = f"{procedure_opt} {diagnosis_opt}".strip()
         # Build an ordered, deduplicated list of queries: base query first,
-        # then microsite search terms. Order matters for deterministic PER_QUERY
-        # truncation when queries share overlapping PubMed results.
+        # then RxNorm-derived synonyms when the procedure looks like a
+        # drug name, then microsite search terms (also RxNorm-expanded).
+        # Order matters for deterministic PER_QUERY truncation when queries
+        # share overlapping PubMed results.
         queries: List[str] = []
         seen_queries: Set[str] = set()
         if query:
             queries.append(query)
             seen_queries.add(query)
+
+        # If the procedure is a single drug-like term, add searches that
+        # use the canonical name plus a couple of synonyms (e.g. brand
+        # name → generic ingredient). Brand-only or misspelled procedures
+        # would otherwise miss evidence indexed under the canonical name.
+        if procedure_opt:
+            for synonym in await self._expand_drug_term_for_search(procedure_opt):
+                expanded = f"{synonym} {diagnosis_opt}".strip()
+                if expanded and expanded not in seen_queries:
+                    queries.append(expanded)
+                    seen_queries.add(expanded)
+
         if denial.microsite_slug:
             try:
                 microsite = get_microsite(denial.microsite_slug)
@@ -741,6 +824,15 @@ class PubMedTools(object):
                         if stripped and stripped not in seen_queries:
                             queries.append(stripped)
                             seen_queries.add(stripped)
+                        # Microsite search terms are often single drug
+                        # names; expand them too so brand/generic variants
+                        # don't slip past the search.
+                        for synonym in await self._expand_drug_term_for_search(
+                            stripped
+                        ):
+                            if synonym not in seen_queries:
+                                queries.append(synonym)
+                                seen_queries.add(synonym)
                     if microsite.pubmed_search_terms:
                         logger.debug(
                             f"Adding {len(microsite.pubmed_search_terms)} microsite search terms for {denial.microsite_slug}"

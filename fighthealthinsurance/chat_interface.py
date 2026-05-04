@@ -34,6 +34,7 @@ from fighthealthinsurance.chat.tools import (
     MedicaidInfoTool,
     PriorAuthTool,
     PubMedTool,
+    RxNormLookupTool,
     USPSTFLookupTool,
 )
 from fighthealthinsurance.extralink_context_helper import ExtraLinkContextHelper
@@ -54,6 +55,7 @@ from fighthealthinsurance.models import (
 from fighthealthinsurance.microsites import get_microsite
 from fighthealthinsurance.prompt_templates import get_intro_template
 from fighthealthinsurance.pubmed_tools import PubMedTools
+from fighthealthinsurance.rxnorm_tools import RxNormTools
 from fighthealthinsurance.utils import (
     best_within_timelimit,
     fire_and_forget_in_new_threadpool,
@@ -90,6 +92,9 @@ class ChatInterface:
 
         self.send_json_message_func = wrap_send_json_message_func
         self.pubmed_tools = PubMedTools()
+        # Single RxNormTools shared across RxNormLookupTool and PubMedTool
+        # so they reuse the same client / cache view per chat session.
+        self.rxnorm_tools = RxNormTools()
         self.chat: OngoingChat = chat
         self.user: User = user
         self.use_external_models: bool = use_external_models
@@ -369,9 +374,21 @@ class ChatInterface:
             response_text, context, **tool_kwargs
         )
 
+        # Run drug name normalization before PubMed so the LLM can
+        # plug a canonical drug name into a follow-up pubmed_query.
+        rxnorm_tool = RxNormLookupTool(
+            self.send_status_message,
+            rxnorm_tools=self.rxnorm_tools,
+            call_llm_callback=self._call_llm_with_actions,
+        )
+        response_text, context, _ = await rxnorm_tool.handle(
+            response_text, context, **tool_kwargs
+        )
+
         pubmed_tool = PubMedTool(
             self.send_status_message,
             pubmed_tools=self.pubmed_tools,
+            rxnorm_tools=self.rxnorm_tools,
             call_llm_callback=self._call_llm_with_actions,
         )
         response_text, context, _ = await pubmed_tool.handle(

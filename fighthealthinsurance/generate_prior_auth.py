@@ -3,7 +3,7 @@ import datetime
 import random
 import uuid
 from concurrent.futures import Future
-from typing import Any, AsyncIterator, Dict, List
+from typing import Any, AsyncIterator, Dict, List, Optional
 
 from asgiref.sync import async_to_sync, sync_to_async
 from loguru import logger
@@ -13,7 +13,49 @@ from fighthealthinsurance.ml.ml_models import RemoteModelLike
 from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance.models import PriorAuthRequest, ProposedPriorAuth
 from fighthealthinsurance.prior_auth_utils import PriorAuthTextSubstituter
+from fighthealthinsurance.rxnorm_tools import RxNormTools
 from fighthealthinsurance.utils import as_available
+
+
+def _build_rxnorm_context(treatment: str, normalized: Any) -> str:
+    """Format an RxNorm hint to attach to the prior-auth prompt.
+
+    Returns ``""`` when the treatment didn't match a drug — e.g., for a
+    procedure like "MRI" or "physical therapy". The prompt is enriched
+    only when normalization yields a high-confidence drug record.
+    """
+    if not normalized or not normalized.matched:
+        return ""
+    if normalized.score is not None and normalized.score < 75:
+        return ""
+    canonical = (normalized.canonical_name or "").strip()
+    if not canonical or canonical.lower() == treatment.strip().lower():
+        # Already canonical — nothing to add.
+        return ""
+    ingredients = [
+        c.get("name", "").strip()
+        for c in normalized.related.get("IN", [])
+        if c.get("name")
+    ]
+    brand_names = [
+        c.get("name", "").strip()
+        for c in normalized.related.get("BN", [])
+        if c.get("name")
+    ]
+    parts = [
+        f"For reference, RxNorm normalizes {treatment!r} to canonical "
+        f"name {canonical!r} (RxCUI {normalized.rxcui})."
+    ]
+    if ingredients:
+        parts.append(f"Active ingredient(s): {', '.join(ingredients[:3])}.")
+    if brand_names:
+        parts.append(f"Known brand names: {', '.join(brand_names[:3])}.")
+    parts.append(
+        f"Use {treatment!r} consistently in the letter (matching the "
+        f"patient's prescription), but feel free to reference the canonical "
+        f"name and ingredients in clinical justification."
+    )
+    return " ".join(parts)
 
 
 class PriorAuthGenerator:
@@ -21,9 +63,19 @@ class PriorAuthGenerator:
     Generator for prior authorization proposals using ML models.
     """
 
-    def __init__(self):
-        """Initialize the prior auth generator."""
-        pass
+    def __init__(self, rxnorm_tools: Optional[RxNormTools] = None):
+        """Initialize the prior auth generator.
+
+        ``rxnorm_tools`` is optional: when omitted we lazy-create one the
+        first time we need to normalize a drug name. Inject one in tests
+        or in long-running consumers that want to share a session.
+        """
+        self._rxnorm_tools = rxnorm_tools
+
+    def _get_rxnorm_tools(self) -> RxNormTools:
+        if self._rxnorm_tools is None:
+            self._rxnorm_tools = RxNormTools()
+        return self._rxnorm_tools
 
     async def generate_prior_auth_proposals(
         self, prior_auth: PriorAuthRequest
@@ -141,7 +193,7 @@ class PriorAuthGenerator:
             letter = True
             if prior_auth.proposal_type and prior_auth.proposal_type != "letter":
                 letter = False
-            prompt = self._create_prompt(context, letter=letter)
+            prompt = await self._create_prompt(context, letter=letter)
 
             proposal_text = None
             try:
@@ -186,7 +238,7 @@ class PriorAuthGenerator:
                 "error": f"Error generating proposal with model {index+1}: {str(e)}"
             }
 
-    def _create_prompt(self, context: Dict[str, Any], letter: bool) -> str:
+    async def _create_prompt(self, context: Dict[str, Any], letter: bool) -> str:
         """
         Create a prompt for the language model based on the context.
 
@@ -218,6 +270,22 @@ class PriorAuthGenerator:
         Generate a {what_to_gen} for {treatment} to treat {diagnosis}.
         Insurance Company: {insurance_company}
         """
+
+        # If the treatment is a drug name, attach the RxNorm canonical form
+        # as a hint. We deliberately don't rewrite the user-supplied
+        # ``treatment`` value so the letter still uses whatever wording
+        # the patient/provider used in the prescription.
+        if treatment and treatment.strip():
+            try:
+                normalized = await self._get_rxnorm_tools().normalize(treatment)
+            except Exception as e:
+                logger.opt(exception=True).debug(
+                    f"RxNorm normalization failed for treatment {treatment!r}: {e}"
+                )
+                normalized = None
+            rx_hint = _build_rxnorm_context(treatment, normalized)
+            if rx_hint:
+                prompt += f"\n\n{rx_hint}\n"
 
         # Add Q&A information if available
         if qa_pairs:
