@@ -1079,7 +1079,6 @@ class ClinicalTrialQueryData(models.Model):
         ]
 
 
-
 class ExtraLinkDocument(
     ExportModelOperationsMixin("ExtraLinkDocument"), models.Model  # type: ignore
 ):
