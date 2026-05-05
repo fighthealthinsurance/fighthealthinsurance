@@ -587,8 +587,22 @@ function processResponseChunk(chunk: string): void {
           return;
         }
 
+        // Server-side error frames from the REST fallback (and the
+        // escalation WS) use {"type": "error", "message": "..."}.
+        // Without this branch they'd fall through to the appeal-content
+        // handler and push an `undefined` appeal into the UI.
+        if (parsedLine.type === 'error') {
+          console.error('Server reported error:', parsedLine.message);
+          lastRestErrorMessage = String(parsedLine.message || 'server error');
+          return;
+        }
+
         // Handle regular appeal content
         const appealText = parsedLine.content;
+        if (appealText === undefined || appealText === null) {
+          console.warn('Skipping non-appeal frame without content', parsedLine);
+          return;
+        }
 
         if (
           appealsSoFar.some(
