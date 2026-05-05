@@ -24,6 +24,7 @@ from fighthealthinsurance.models import (
     OngoingChat,
     PriorAuthRequest,
     ProfessionalUser,
+    ProposedAppeal,
     ProposedPriorAuth,
 )
 
@@ -54,6 +55,59 @@ def _get_client_ip_from_scope(scope: Optional[dict] = None) -> Optional[str]:
     return None
 
 
+async def log_zero_appeal_diagnostics(
+    denial_id: Optional[object],
+    status_count: int,
+    last_status_phase: Optional[str],
+    transport: str,
+    stream_error: Optional[str] = None,
+) -> None:
+    """Emit a structured ERROR when an appeal session ends with 0 appeals delivered.
+
+    Looks up persisted ProposedAppeal rows for the denial so we can
+    distinguish 'server generated nothing' from 'server generated N
+    appeals but they never made it to the client'. The latter case is
+    invisible to the client-side error report.
+
+    `transport` is "websocket" or "rest" so the same log surfaces both
+    delivery paths in alerting.
+    """
+    persisted_count = -1
+    denial_attempts: Optional[int] = None
+    try:
+        if denial_id is not None:
+            persisted_count = await ProposedAppeal.objects.filter(
+                for_denial__denial_id=denial_id
+            ).acount()
+            denial = await Denial.objects.filter(denial_id=denial_id).afirst()
+            if denial is not None:
+                denial_attempts = denial.gen_attempts
+    except Exception as lookup_error:
+        logger.opt(exception=True).warning(
+            f"Failed to look up persisted appeal count for denial "
+            f"{denial_id}: {lookup_error}"
+        )
+    error_suffix = f" stream_error={stream_error}" if stream_error else ""
+    if persisted_count > 0:
+        logger.error(
+            f"[{transport}] Appeal session sent 0 appeals to client BUT "
+            f"server has {persisted_count} ProposedAppeal row(s) for "
+            f"denial {denial_id}. This is a delivery/wire failure, not "
+            f"a generation failure. status_frames={status_count} "
+            f"last_phase={last_status_phase} gen_attempts={denial_attempts}"
+            f"{error_suffix}"
+        )
+    else:
+        logger.error(
+            f"[{transport}] Appeal session completed with 0 appeals sent "
+            f"AND 0 ProposedAppeal rows persisted for denial {denial_id}. "
+            f"Generation produced nothing. status_frames={status_count} "
+            f"last_phase={last_status_phase} "
+            f"persisted={persisted_count} gen_attempts={denial_attempts}"
+            f"{error_suffix}"
+        )
+
+
 class StreamingAppealsBackend(AsyncWebsocketConsumer):
     """Streaming back the appeals as json :D"""
 
@@ -75,14 +129,17 @@ class StreamingAppealsBackend(AsyncWebsocketConsumer):
             await self.close()
             return
         logger.debug("Starting generation of appeals...")
+        denial_id = data.get("denial_id")
         aitr: AsyncIterator[str] = (
             common_view_logic.AppealsBackendHelper.generate_appeals(data)
         )
         # We do a try/except here to log since the WS framework swallow exceptions sometimes
+        appeal_count = 0
+        status_count = 0
+        last_status_phase: Optional[str] = None
         try:
             await asyncio.sleep(1)
             await self.send("\n")
-            appeal_count = 0
             async for record in aitr:
                 await asyncio.sleep(0)
                 await self.send("\n")
@@ -96,18 +153,41 @@ class StreamingAppealsBackend(AsyncWebsocketConsumer):
                 if stripped:
                     try:
                         parsed = json.loads(stripped)
-                        if isinstance(parsed, dict) and "content" in parsed:
-                            appeal_count += 1
+                        if isinstance(parsed, dict):
+                            if "content" in parsed:
+                                appeal_count += 1
+                            elif parsed.get("type") == "status":
+                                status_count += 1
+                                last_status_phase = parsed.get("phase")
                     except (json.JSONDecodeError, TypeError):
                         pass
             if appeal_count == 0:
-                logger.error(
-                    "WebSocket appeal session completed with 0 appeal payloads sent"
+                # Cross-reference: did the server actually generate appeals
+                # for this denial that just didn't make it down the wire?
+                # This is the key signal that distinguishes a server-side
+                # generation failure from a client-side delivery failure.
+                await log_zero_appeal_diagnostics(
+                    denial_id=denial_id,
+                    status_count=status_count,
+                    last_status_phase=last_status_phase,
+                    transport="websocket",
                 )
             else:
                 logger.debug(f"All appeals sent, {appeal_count} payloads total.")
         except Exception as e:
-            logger.opt(exception=True).error(f"Error sending back appeals: {e}")
+            logger.opt(exception=True).error(
+                f"Error sending back appeals for denial {denial_id} after "
+                f"{appeal_count} appeals and {status_count} status frames "
+                f"(last phase={last_status_phase}): {e}"
+            )
+            if appeal_count == 0:
+                await log_zero_appeal_diagnostics(
+                    denial_id=denial_id,
+                    status_count=status_count,
+                    last_status_phase=last_status_phase,
+                    transport="websocket",
+                    stream_error=str(e),
+                )
             raise
         finally:
             logger.debug("Yielding before closing connection")

@@ -366,6 +366,19 @@ let my_rest_fallback_url = "";
 let usingRestFallback = false;
 let hasAutoScrolledToFirstAppeal = false;
 
+// Diagnostic counters used in the client error report so server logs
+// can distinguish "we never reached the server" from "we reached the
+// server, got status frames, but never saw an appeal payload".
+let statusMessagesReceived = 0;
+let lastPhaseReceived = '';
+let serverReportedTotalAppeals = -1;
+let serverReportedNewAppeals = -1;
+let serverReportedExistingAppeals = -1;
+let lastWsCloseCode = -1;
+let lastWsCloseReason = '';
+let lastWsErrorMessage = '';
+let lastRestErrorMessage = '';
+
 let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
 
 function parseValidDenialId(value: unknown): number | null {
@@ -381,7 +394,22 @@ function reportClientError(error: string): void {
   const denialIdRaw = (my_data as any).denial_id || (my_data as any).get?.('denial_id') || '';
   const denialId = parseValidDenialId(denialIdRaw);
   const csrfToken = (my_data as any).csrfmiddlewaretoken || '';
-  const browserInfo = `${navigator.userAgent} | ${window.location.pathname} | ref=${document.referrer || 'none'}`;
+  // Pack delivery diagnostics into browser_info so the existing
+  // /report_client_error endpoint surfaces them without a schema change.
+  const diagnostics = [
+    `appeals_received=${appealsSoFar.length}`,
+    `retries=${retries}`,
+    `status_msgs=${statusMessagesReceived}`,
+    `last_phase=${lastPhaseReceived || 'none'}`,
+    `server_total=${serverReportedTotalAppeals}`,
+    `server_new=${serverReportedNewAppeals}`,
+    `server_existing=${serverReportedExistingAppeals}`,
+    `ws_close=${lastWsCloseCode}/${lastWsCloseReason || 'none'}`,
+    `ws_err=${lastWsErrorMessage || 'none'}`,
+    `rest_fallback=${usingRestFallback}`,
+    `rest_err=${lastRestErrorMessage || 'none'}`,
+  ].join(' ');
+  const browserInfo = `${navigator.userAgent} | ${window.location.pathname} | ref=${document.referrer || 'none'} | ${diagnostics}`;
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (csrfToken) {
     headers['X-CSRFToken'] = csrfToken;
@@ -412,7 +440,10 @@ function done(): void {
     doQuery(my_backend_url, my_data, my_rest_fallback_url);
   } else {
     if (appealsSoFar.length === 0) {
-      reportClientError(`Client exhausted ${retries} retries with 0 appeals received`);
+      const transport = usingRestFallback ? 'rest-fallback' : 'websocket';
+      reportClientError(
+        `Client exhausted ${retries} retries with 0 appeals received via ${transport}`
+      );
     }
     clearTimeout(timeoutHandle!);
     hideLoading();
@@ -476,6 +507,7 @@ async function fetchFallback(url: string, data: object, csrfToken: string): Prom
     updateStatusIndicator('done', appealsSoFar.length);
   } catch (error) {
     console.error("REST fallback error:", error);
+    lastRestErrorMessage = (error as any)?.message || String(error);
     if (statusMessage) {
       statusMessage.textContent = 'Connection failed. Please try refreshing the page.';
       statusMessage.style.color = '#dc3545';
@@ -504,16 +536,26 @@ function processResponseChunk(chunk: string): void {
         if (parsedLine.type === 'status') {
           const phase = parsedLine.phase;
           const substep = parsedLine.substep;
+          statusMessagesReceived++;
+          if (phase) {
+            lastPhaseReceived = phase;
+          }
 
           if (phase === 'done') {
             // Explicit end-of-stream from server
             const total = parsedLine.total_appeals || 0;
             const newAppeals = parsedLine.new_appeals || 0;
             const existing = parsedLine.existing_appeals || 0;
+            serverReportedTotalAppeals = total;
+            serverReportedNewAppeals = newAppeals;
+            serverReportedExistingAppeals = existing;
             console.log(`Server stream complete: ${total} total appeals (${newAppeals} new, ${existing} existing), client has ${appealsSoFar.length}`);
             if (total > 0 && appealsSoFar.length === 0) {
               console.error(`BUG: Server sent ${total} appeals but client received none!`);
-              reportClientError(`Server sent ${total} appeals but client received 0`);
+              reportClientError(`Server sent ${total} appeals but client received 0 (lost in transit)`);
+            } else if (total > appealsSoFar.length) {
+              console.warn(`Partial delivery: server reported ${total} appeals, client got ${appealsSoFar.length}`);
+              reportClientError(`Partial delivery: server reported ${total} appeals, client got ${appealsSoFar.length}`);
             }
             markAllDone();
             renderChecklist();
@@ -673,7 +715,9 @@ function connectWebSocket(
 
     // Handle connection closure
     ws.onclose = (event) => {
-      console.log("WebSocket connection closed:", event.reason);
+      console.log("WebSocket connection closed:", event.code, event.reason);
+      lastWsCloseCode = event.code;
+      lastWsCloseReason = event.reason || '';
       updateStatusIndicator('done', appealsSoFar.length);
       done();
     };
@@ -681,6 +725,7 @@ function connectWebSocket(
     // Handle errors
     ws.onerror = (error) => {
       console.error("WebSocket error:", error);
+      lastWsErrorMessage = (error as any)?.message || (error as any)?.type || 'unknown';
       updateStatusIndicator('error', appealsSoFar.length);
       if (retries < maxRetries) {
         console.log(

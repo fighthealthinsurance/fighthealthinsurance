@@ -8,7 +8,9 @@ from django.conf import settings
 from django.core.exceptions import SuspiciousFileOperation
 from django.db import IntegrityError, models
 from django.db.models import Count, Q
-from django.http import FileResponse
+from django.http import FileResponse, HttpResponse, StreamingHttpResponse
+from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.http import require_POST
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 
@@ -548,6 +550,108 @@ class ReportClientError(APIView):
             f"denial_id_valid={denial_id_valid} | denial_id_raw={denial_id_raw}"
         )
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+@csrf_exempt
+@require_POST
+async def streaming_appeals_rest_fallback(request):
+    """REST/HTTP fallback for the WebSocket appeal stream.
+
+    Some clients can't hold a WebSocket open long enough to receive
+    appeals: iPhone Safari with strict ITP, corporate proxies that
+    reject WebSocket upgrades, captive portals, browsers behind
+    transparent proxies that buffer streaming responses, etc. After
+    the JS client exhausts its WebSocket retries, it POSTs the same
+    JSON payload here and consumes the same NDJSON stream that
+    `StreamingAppealsBackend` produces.
+
+    Auth model mirrors the WebSocket: the (denial_id, email,
+    semi_sekret) triple inside the body is the only credential, so
+    CSRF is exempted just like the WebSocket isn't checked.
+    """
+    from fighthealthinsurance.websockets import log_zero_appeal_diagnostics
+
+    try:
+        data = json.loads(request.body)
+    except json.JSONDecodeError as e:
+        logger.warning(f"Invalid JSON received in REST appeals fallback: {e}")
+        return HttpResponse(
+            json.dumps({"error": "Invalid JSON format"}),
+            content_type="application/json",
+            status=400,
+        )
+
+    denial_id = data.get("denial_id")
+
+    async def stream():
+        appeal_count = 0
+        status_count = 0
+        last_status_phase: Optional[str] = None
+        try:
+            async for record in common_view_logic.AppealsBackendHelper.generate_appeals(
+                data
+            ):
+                # Mirror the WebSocket framing: each record is already
+                # newline-terminated JSON, but we add an extra "\n"
+                # framing newline so intermediaries that buffer per-line
+                # still flush early, matching the WS keepalive cadence.
+                yield record
+                yield "\n"
+                stripped = record.strip()
+                if stripped:
+                    try:
+                        parsed = json.loads(stripped)
+                        if isinstance(parsed, dict):
+                            if "content" in parsed:
+                                appeal_count += 1
+                            elif parsed.get("type") == "status":
+                                status_count += 1
+                                last_status_phase = parsed.get("phase")
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+            if appeal_count == 0:
+                await log_zero_appeal_diagnostics(
+                    denial_id=denial_id,
+                    status_count=status_count,
+                    last_status_phase=last_status_phase,
+                    transport="rest",
+                )
+        except Exception as e:
+            logger.opt(exception=True).error(
+                f"Error streaming REST fallback appeals for denial "
+                f"{denial_id} after {appeal_count} appeals / "
+                f"{status_count} status frames (last phase="
+                f"{last_status_phase}): {e}"
+            )
+            if appeal_count == 0:
+                await log_zero_appeal_diagnostics(
+                    denial_id=denial_id,
+                    status_count=status_count,
+                    last_status_phase=last_status_phase,
+                    transport="rest",
+                    stream_error=str(e),
+                )
+            # Inform the client rather than terminating silently
+            yield (
+                json.dumps(
+                    {
+                        "type": "error",
+                        "message": "Server error while generating appeals.",
+                    }
+                )
+                + "\n"
+            )
+
+    response = StreamingHttpResponse(
+        streaming_content=stream(),
+        content_type="application/x-ndjson",
+    )
+    # Disable nginx/proxy response buffering so each chunk reaches the
+    # client as it's produced. Without this, intermediaries hold back
+    # the body until generation completes, defeating the fallback.
+    response["Cache-Control"] = "no-cache, no-store"
+    response["X-Accel-Buffering"] = "no"
+    return response
 
 
 class ExternalReviewWizardView(APIView):
