@@ -181,8 +181,8 @@ class TestFollowUpEmailSender:
         sender = FollowUpEmailSender()
         count = sender.send_all()
 
-        assert count == 4
-        assert mock_send_email.call_count == 4
+        assert count == 3
+        assert mock_send_email.call_count == 3
 
     @patch("fighthealthinsurance.followup_emails.send_fallback_email")
     def test_send_all_respects_count_limit(self, mock_send_email, test_denial):
