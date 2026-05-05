@@ -81,18 +81,24 @@ def followup_types(db):
 def test_schedule_followups_includes_1day_when_type_exists(test_denial):
     """A 1-day follow-up is scheduled when followup_1day type exists."""
 
-    FollowUpType.objects.create(
+    FollowUpType.objects.get_or_create(
         name="followup_1day",
-        template_name="followup_1day",
-        subject="day1",
-        text="hiii",
-        duration=datetime.timedelta(days=1),
+        defaults={
+            "template_name": "followup_1day",
+            "subject": "day1",
+            "text": "hiii",
+            "duration": datetime.timedelta(days=1),
+        },
     )
 
-    schedule_followup(email="patient@gmail.com", denial=test_denial)
+    schedule_follow_ups(email="patient@gmail.com", denial=test_denial)
 
-    sched = FollowUpSched.objects.get(denial_id=test_denial, follow_up_type__name="followup_1day")
+    sched = FollowUpSched.objects.get(
+        denial_id=test_denial, follow_up_type__name="followup_1day"
+    )
     assert sched.follow_up_date == test_denial.date + datetime.timedelta(days=1)
+
+
 @pytest.mark.django_db
 class TestFollowUpEmailSender:
     """Test the FollowUpEmailSender class."""
@@ -418,7 +424,7 @@ class TestScheduleFollowUps:
     def test_from_date_reschedules_old_denial_from_today(
         self, test_denial, followup_types
     ):
-        """Test that passing from_date=today for an old denial creates all 3."""
+        """Test that passing from_date=today for an old denial creates all 4."""
         old_date = datetime.date.today() - datetime.timedelta(days=45)
         Denial.objects.filter(pk=test_denial.pk).update(date=old_date)
         test_denial.refresh_from_db()
@@ -427,13 +433,13 @@ class TestScheduleFollowUps:
         schedule_follow_ups(test_denial.raw_email, test_denial)
         assert FollowUpSched.objects.filter(denial_id=test_denial).count() == 1
 
-        # With from_date=today, all 3 should be created
+        # With from_date=today, all 4 should be created
         schedule_follow_ups(
             test_denial.raw_email,
             test_denial,
             from_date=datetime.date.today(),
         )
-        assert FollowUpSched.objects.filter(denial_id=test_denial).count() == 3
+        assert FollowUpSched.objects.filter(denial_id=test_denial).count() == 4
 
     def test_upsert_updates_email_on_second_call(self, test_denial, followup_types):
         """Test that calling with a different email updates existing records."""

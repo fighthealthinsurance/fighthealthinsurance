@@ -69,9 +69,9 @@ class SeleniumFollowUp(BaseCase, StaticLiveServerTestCase):
         self.click("input#id_follow_up_again")
         self.click("button#submit")
         self.assert_title("Thank you!")
-        # Make sure we add follow ups for the next round (7-day, 30-day, 90-day)
+        # Make sure we add follow ups for the next round (1-day, 7-day, 30-day, 90-day)
         follow_up_count = FollowUpSched.objects.filter(email=email).count()
-        assert follow_up_count == 3
+        assert follow_up_count == 4
 
     def test_follow_up_page_loads_fails(self):
         email = "timbit@test.com"
