@@ -930,6 +930,21 @@ class PayerPriorAuthRequirement(models.Model):
                 "cpt_hcpcs_code or a complete code range "
                 "(code_range_start and code_range_end)."
             )
+        if has_range and len(start) != len(end):
+            # Lexicographic compare (used by ``covers_code`` and the lookup
+            # query) silently breaks for mixed-length endpoints — e.g.
+            # "J490" < "J0500" lexicographically even though the numeric
+            # codes 490 and 500 should sort the other way. Ranges must be
+            # same-length so the compare is consistent with code semantics.
+            raise ValidationError(
+                {
+                    "code_range_end": (
+                        f"code_range_start ({start}) and code_range_end "
+                        f"({end}) must be the same length so lexicographic "
+                        "comparison matches numeric ordering."
+                    )
+                }
+            )
         if has_range and start.upper() > end.upper():
             raise ValidationError(
                 {

@@ -41,7 +41,7 @@ mypy --config-file mypy.ini -p fighthealthinsurance -p fhi_users
 # Database migrations
 python manage.py makemigrations
 python manage.py migrate
-python manage.py loaddata initial followup plan_source insurance_companies
+python manage.py loaddata initial followup plan_source insurance_companies pa_requirements
 ```
 
 ## Architecture

@@ -149,3 +149,46 @@ class PaRequirementLookupToolTests(TestCase):
         tool = PaRequirementLookupTool(AsyncMock())
         match = tool.detect("Just a regular message about prior auth")
         self.assertIsNone(match)
+
+
+class NestedJsonAndEmptyLobTests(TestCase):
+    """Regressions for the chat tool's regex and empty-LOB handling."""
+
+    def setUp(self):
+        self.uhc = InsuranceCompany.objects.create(
+            name="UnitedHealthcare",
+            alt_names="UHC",
+            regex=r"united\s*health\s*care|uhc",
+            negative_regex=r"$^",
+        )
+        PayerPriorAuthRequirement.objects.create(
+            insurance_company=self.uhc,
+            cpt_hcpcs_code="95810",
+            line_of_business="commercial",
+            criteria_reference="UHC Sleep Medicine policy",
+        )
+
+    def test_pattern_matches_nested_filters_object(self):
+        text = (
+            'lookup_pa_requirement {"codes": ["95810"], '
+            '"filters": {"lob": "commercial"}, "payer": "UHC"}'
+        )
+        match = re.search(LOOKUP_PA_REQUIREMENT_REGEX, text, re.DOTALL | re.IGNORECASE)
+        self.assertIsNotNone(match)
+        # The captured group must be valid JSON with both keys present.
+        import json
+
+        parsed = json.loads(match.group(1))
+        self.assertEqual(parsed["codes"], ["95810"])
+        self.assertEqual(parsed["filters"], {"lob": "commercial"})
+
+    def test_empty_lob_broadens_to_all_lobs(self):
+        # Without ``broaden_unknown_lob`` an empty LOB silently hid the
+        # commercial-tagged row. The chat tool now passes
+        # broaden_unknown_lob=True so empty/missing LOB surfaces every
+        # applicable rule.
+        block, summary = _run_lookup(
+            {"codes": ["95810"], "payer": "UHC", "line_of_business": ""}
+        )
+        self.assertIn("95810", block)
+        self.assertIn("1 PA requirement", summary)

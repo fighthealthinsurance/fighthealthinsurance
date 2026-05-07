@@ -42,8 +42,11 @@ USPSTF_LOOKUP_REGEX = r"(?:\*\*)?uspstf_lookup\s*(\{[^}]*\})\s*(?:\*\*)?"
 
 # PA requirement lookup tool - captures JSON with codes/payer/state/LOB
 # Matches: lookup_pa_requirement {JSON} or **lookup_pa_requirement {JSON}**
+# The inner {...} alternation allows one level of nesting (e.g. for the
+# `filters: {lob: ...}` shape) without requiring true balanced-brace
+# matching, which Python's `re` can't express.
 LOOKUP_PA_REQUIREMENT_REGEX = (
-    r"(?:\*\*)?lookup_pa_requirement\s*(\{[^}]*\})\s*(?:\*\*)?"
+    r"(?:\*\*)?lookup_pa_requirement\s*" r"(\{(?:[^{}]|\{[^{}]*\})*\})\s*(?:\*\*)?"
 )
 
 # RxNorm drug normalization tool - captures the drug name (free-text).

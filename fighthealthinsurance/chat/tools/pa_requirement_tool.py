@@ -107,6 +107,11 @@ def _run_lookup(params: dict) -> Tuple[str, str]:
         insurance_company=company,
         state=state,
         line_of_business=lob,
+        # Chat lookups treat an unknown LOB as "show me everything that
+        # could apply" rather than "narrow to LOB-agnostic rules only" —
+        # the LLM frequently emits ``"line_of_business": ""``, and
+        # silently hiding commercial/MA rows there was misleading.
+        broaden_unknown_lob=True,
     )
 
     block = format_pa_context(requirements, requested_codes=codes)
