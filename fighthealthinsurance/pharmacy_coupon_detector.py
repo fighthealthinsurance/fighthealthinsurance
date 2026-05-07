@@ -141,8 +141,13 @@ BRAND_TO_GENERIC: dict[str, str] = {
 # Includes combination inhalers/products like Advair (fluticasone+salmeterol)
 # - they're commonly denied for non-formulary reasons and we want to detect
 # them, but the cash-pay "bridge" guidance for cheap generics doesn't apply.
+# PrEP brands (Truvada, Descovy) live here too: although Truvada has been
+# generic in the US since 2020, the brand name is what most patients/denial
+# letters use, and the brand price is still high enough that the appeal is
+# the primary path. ADAP / Ready, Set, PrEP cover the assistance pathway.
 EXPENSIVE_DRUGS_ORDERED: tuple[str, ...] = (
     "advair",
+    "descovy",
     "dupixent",
     "enbrel",
     "humira",
@@ -154,6 +159,7 @@ EXPENSIVE_DRUGS_ORDERED: tuple[str, ...] = (
     "stelara",
     "symbicort",
     "trulicity",
+    "truvada",
     "wegovy",
     "zepbound",
 )

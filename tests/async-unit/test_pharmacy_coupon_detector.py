@@ -42,6 +42,17 @@ class TestDetectDrug:
         # Symbicort is a budesonide+formoterol combo - same reasoning.
         assert detect_drug("Symbicort denied") == "symbicort"
 
+    def test_truvada_detected_as_expensive(self):
+        # Truvada (PrEP) is a brand-name combo. Although generic versions
+        # exist in the US since 2020, denial letters typically reference
+        # the brand and the brand price still triggers expensive guidance.
+        assert detect_drug("Truvada denied as non-formulary") == "truvada"
+        s = build_suggestion("truvada")
+        assert s.is_likely_cheap is False
+
+    def test_descovy_detected_as_expensive(self):
+        assert detect_drug("Descovy denied") == "descovy"
+
     def test_returns_none_when_no_drug_present(self):
         assert detect_drug("Knee MRI denied as not medically necessary") is None
 

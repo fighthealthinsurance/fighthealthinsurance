@@ -147,14 +147,22 @@ class Microsite:
         Return a PharmacyCouponSuggestion for this microsite, if its
         default procedure or condition matches a known prescription drug.
 
-        Returns None when the microsite is not drug-related.
+        Returns None when the microsite is not drug-related. Best-effort:
+        any failure during detection logs and returns None rather than
+        breaking template rendering for the whole microsite page.
         """
         from fighthealthinsurance.pharmacy_coupon_detector import suggest_for_denial
 
-        return suggest_for_denial(
-            procedure=self.default_procedure,
-            diagnosis=self.default_condition,
-        )
+        try:
+            return suggest_for_denial(
+                procedure=self.default_procedure,
+                diagnosis=self.default_condition,
+            )
+        except Exception:
+            logger.opt(exception=True).debug(
+                f"Pharmacy coupon suggestion failed for microsite {self.slug}"
+            )
+            return None
 
     def financial_assistance(
         self, state_abbreviation: Optional[str] = None
@@ -172,15 +180,22 @@ class Microsite:
         Returns None when nothing specific matches - the general directory
         and base safety-net entries are always returned by `search()` and
         on their own are not microsite-specific enough to warrant rendering
-        a dedicated section.
+        a dedicated section. Best-effort: any failure during search logs
+        and returns None rather than breaking template rendering.
         """
         from fighthealthinsurance.financial_assistance_directory import search
 
-        results = search(
-            drug=self.default_procedure,
-            diagnosis=self.default_condition,
-            state_abbreviation=state_abbreviation,
-        )
+        try:
+            results = search(
+                drug=self.default_procedure,
+                diagnosis=self.default_condition,
+                state_abbreviation=state_abbreviation,
+            )
+        except Exception:
+            logger.opt(exception=True).debug(
+                f"Financial assistance search failed for microsite {self.slug}"
+            )
+            return None
         if not results.has_specific_matches():
             return None
         return results

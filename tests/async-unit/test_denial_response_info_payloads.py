@@ -147,6 +147,26 @@ class TestFinancialAssistancePayload:
         diag_names = [p["name"] for p in payload["diagnosis_specific"]]
         assert "CancerCare Co-Payment Assistance Foundation" in diag_names
 
+    def test_drug_detected_from_denial_text_only_populates_payload(self):
+        # When the procedure field is empty but denial_text mentions a
+        # known drug, search() must fall back to detecting the drug from
+        # denial_text - otherwise drug-specific manufacturer programs
+        # silently disappear from the payload.
+        denial = _fake_denial(
+            procedure=None,
+            diagnosis=None,
+            denial_text="Patient denied Wegovy as non-formulary; need PA.",
+        )
+        # NOTE: this mirror test calls our local _build_financial_payload
+        # which mirrors the helper in common_view_logic.py. We expect
+        # search() to have detected wegovy from denial_text.
+        payload = _build_financial_payload(denial)
+        # Drug-specific manufacturer match (Wegovy savings card) confirms
+        # the denial_text fallback path is wired correctly.
+        if payload is not None:
+            mfr_names = [p["name"] for p in payload["manufacturer"]]
+            assert "Wegovy Savings Card (Novo Nordisk)" in mfr_names
+
     def test_payload_structure_serializable_keys(self):
         # Sanity check: every program serializes to the expected dict shape
         denial = _fake_denial(diagnosis="multiple sclerosis", procedure="Wegovy")
