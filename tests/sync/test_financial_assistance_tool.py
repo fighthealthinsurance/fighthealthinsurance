@@ -2,10 +2,10 @@
 Tests for the FinancialAssistanceTool chat handler.
 """
 
-import asyncio
 import re
 from unittest.mock import AsyncMock, MagicMock
 
+from asgiref.sync import async_to_sync
 from django.test import TestCase
 
 from fighthealthinsurance.chat.tools import (
@@ -14,9 +14,18 @@ from fighthealthinsurance.chat.tools import (
 )
 
 
-def _run(coro):
-    """Run an async coroutine in a sync test."""
-    return asyncio.run(coro)
+async def _await(awaitable):
+    return await awaitable
+
+
+def _run(awaitable):
+    """Run an async awaitable in a sync test.
+
+    Project guidelines require asgiref.async_to_sync as the async/sync
+    bridge rather than asyncio.run (see tests/sync/test_prior_auth_api.py
+    and tests/sync/test_insurance_company_plan.py for the same pattern).
+    """
+    return async_to_sync(_await)(awaitable)
 
 
 def _make_tool(call_llm_callback=None):

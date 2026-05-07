@@ -161,11 +161,13 @@ class TestFinancialAssistancePayload:
         # which mirrors the helper in common_view_logic.py. We expect
         # search() to have detected wegovy from denial_text.
         payload = _build_financial_payload(denial)
+        assert (
+            payload is not None
+        ), "Expected payload from denial_text-only drug-detection fallback"
         # Drug-specific manufacturer match (Wegovy savings card) confirms
         # the denial_text fallback path is wired correctly.
-        if payload is not None:
-            mfr_names = [p["name"] for p in payload["manufacturer"]]
-            assert "Wegovy Savings Card (Novo Nordisk)" in mfr_names
+        mfr_names = [p["name"] for p in payload["manufacturer"]]
+        assert "Wegovy Savings Card (Novo Nordisk)" in mfr_names
 
     def test_payload_structure_serializable_keys(self):
         # Sanity check: every program serializes to the expected dict shape

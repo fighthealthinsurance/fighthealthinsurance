@@ -26,6 +26,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Optional
 
+from loguru import logger
+
 from fighthealthinsurance.pharmacy_coupon_detector import detect_drug
 
 # Cap on the snippet of denial text we surface in
@@ -582,12 +584,11 @@ def search(
     diagnosis_haystack_parts = [s for s in (diagnosis, denial_text) if s]
     diagnosis_haystack = " ".join(diagnosis_haystack_parts)
 
-    # Normalize the state once. We use the upper-cased form for both the
-    # payload field and the state_help lookup so callers can pass "ca",
-    # "Ca", or "CA" and get a consistent result.
-    normalized_state: Optional[str] = (
-        state_abbreviation.upper() if state_abbreviation else None
-    )
+    # Normalize the state once. Strip whitespace before uppercasing so
+    # callers can pass "ca", "Ca", "CA", or " CA " and all hit the same
+    # state_help record. Whitespace-only inputs collapse to None.
+    _state_raw = state_abbreviation.strip() if state_abbreviation else ""
+    normalized_state: Optional[str] = _state_raw.upper() if _state_raw else None
 
     # Build the haystack snippet exposed in the payload: prefer the
     # explicit (short, clinical) diagnosis, otherwise fall back to a
@@ -650,7 +651,12 @@ def search(
                 results.state_medicaid_url = state_help.medicaid.agency_url
                 results.state_medicaid_phone = state_help.medicaid.agency_phone
         except Exception:
-            # state_help is best-effort; never break callers if it fails.
-            pass
+            # state_help is best-effort; never break callers if it fails,
+            # but log at debug level so silent regressions stay visible
+            # in production tracing.
+            logger.opt(exception=True).debug(
+                "state_help lookup failed for state_abbreviation={}",
+                normalized_state,
+            )
 
     return results
