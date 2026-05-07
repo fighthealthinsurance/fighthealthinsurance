@@ -72,14 +72,28 @@ async def log_zero_appeal_diagnostics(
     `transport` is "websocket" or "rest" so the same log surfaces both
     delivery paths in alerting.
     """
+    # Coerce arbitrary JSON values to int for the FK/AutoField lookup.
+    # Anything we can't coerce skips the DB cross-reference and just
+    # gets logged as-is so we still surface the failure.
+    denial_id_int: Optional[int] = None
+    if isinstance(denial_id, int):
+        denial_id_int = denial_id
+    elif isinstance(denial_id, str):
+        try:
+            denial_id_int = int(denial_id)
+        except ValueError:
+            denial_id_int = None
+
     persisted_count = -1
     denial_attempts: Optional[int] = None
     try:
-        if denial_id is not None:
+        if denial_id_int is not None:
             persisted_count = await ProposedAppeal.objects.filter(
-                for_denial__denial_id=denial_id
+                for_denial__denial_id=denial_id_int
             ).acount()
-            denial = await Denial.objects.filter(denial_id=denial_id).afirst()
+            denial = await Denial.objects.filter(
+                denial_id=denial_id_int
+            ).afirst()
             if denial is not None:
                 denial_attempts = denial.gen_attempts
     except Exception as lookup_error:
