@@ -480,6 +480,9 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                                 return str(val).strip().lower() not in _UNCLEAR_PHRASES
 
                             updated = False
+                            # Cap to the column max_length to avoid DB
+                            # DataError when models return overly long text.
+                            _MAX_LEN = 2000
                             # Strip boilerplate from denied_item, then
                             # clarity-check the *stripped* result.
                             if denied_item:
@@ -487,7 +490,7 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                                     str(denied_item)
                                 )
                             if is_clear(denied_item):
-                                chat.denied_item = denied_item
+                                chat.denied_item = denied_item[:_MAX_LEN]
                                 updated = True
                                 logger.info(
                                     f"Updated chat {chat_id} with denied item: {denied_item}"
@@ -500,7 +503,7 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                             else:
                                 denied_reason = None
                             if denied_reason:
-                                chat.denied_reason = denied_reason
+                                chat.denied_reason = denied_reason[:_MAX_LEN]
                                 updated = True
                                 logger.info(
                                     f"Updated chat {chat_id} with denied reason: {denied_reason}"
