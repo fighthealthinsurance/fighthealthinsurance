@@ -539,7 +539,7 @@ def schedule_follow_ups(
     denial: "Denial",
     from_date: Optional[datetime.date] = None,
 ) -> None:
-    """Schedule 7-day, 30-day, and 90-day follow-up emails for a denial.
+    """Schedule 1-day, 7-day, 30-day, and 90-day follow-up emails for a denial.
 
     Args:
         email: Recipient email address.
