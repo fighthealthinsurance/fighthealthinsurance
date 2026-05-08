@@ -364,6 +364,10 @@ let my_data: Map<string, string> = new Map<string, string>();
 let my_backend_url = "";
 let my_rest_fallback_url = "";
 let usingRestFallback = false;
+// Set when ws.onerror has decided to delegate to REST, so the
+// concurrent ws.onclose doesn't run done() in parallel and tear
+// down the UI while the REST stream is still in flight.
+let handingOffToRest = false;
 let hasAutoScrolledToFirstAppeal = false;
 
 // Diagnostic counters used in the client error report so server logs
@@ -394,8 +398,8 @@ function reportClientError(error: string): void {
   const denialIdRaw = (my_data as any).denial_id || (my_data as any).get?.('denial_id') || '';
   const denialId = parseValidDenialId(denialIdRaw);
   const csrfToken = (my_data as any).csrfmiddlewaretoken || '';
-  // Pack delivery diagnostics into browser_info so the existing
-  // /report_client_error endpoint surfaces them without a schema change.
+  // Delivery diagnostics live in their own field so a long mobile
+  // user-agent string in browser_info doesn't truncate them.
   const diagnostics = [
     `appeals_received=${appealsSoFar.length}`,
     `retries=${retries}`,
@@ -409,7 +413,7 @@ function reportClientError(error: string): void {
     `rest_fallback=${usingRestFallback}`,
     `rest_err=${lastRestErrorMessage || 'none'}`,
   ].join(' ');
-  const browserInfo = `${navigator.userAgent} | ${window.location.pathname} | ref=${document.referrer || 'none'} | ${diagnostics}`;
+  const browserInfo = `${navigator.userAgent} | ${window.location.pathname} | ref=${document.referrer || 'none'}`;
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (csrfToken) {
     headers['X-CSRFToken'] = csrfToken;
@@ -427,6 +431,7 @@ function reportClientError(error: string): void {
       denial_id: denialId ?? 'invalid',
       error,
       browser_info: browserInfo,
+      diagnostics,
       denial_id_raw: String(denialIdRaw),
     }),
   }).catch(() => {}); // fire-and-forget
@@ -593,7 +598,14 @@ function processResponseChunk(chunk: string): void {
         // handler and push an `undefined` appeal into the UI.
         if (parsedLine.type === 'error') {
           console.error('Server reported error:', parsedLine.message);
-          lastRestErrorMessage = String(parsedLine.message || 'server error');
+          const msg = String(parsedLine.message || 'server error');
+          // Attribute to the active transport so triage doesn't get
+          // pointed at REST when the failure was on the WS path.
+          if (usingRestFallback) {
+            lastRestErrorMessage = msg;
+          } else {
+            lastWsErrorMessage = msg;
+          }
           return;
         }
 
@@ -732,6 +744,12 @@ function connectWebSocket(
       console.log("WebSocket connection closed:", event.code, event.reason);
       lastWsCloseCode = event.code;
       lastWsCloseReason = event.reason || '';
+      // If we've handed off to REST (or it has already finished), don't
+      // race the fallback's own done() — the fetchFallback path will
+      // call done() when its stream ends.
+      if (handingOffToRest) {
+        return;
+      }
       updateStatusIndicator('done', appealsSoFar.length);
       done();
     };
@@ -754,6 +772,7 @@ function connectWebSocket(
       } else if (my_rest_fallback_url && !usingRestFallback) {
         // WebSocket retries exhausted — try REST fallback
         console.log("WebSocket retries exhausted, falling back to REST endpoint");
+        handingOffToRest = true;
         const csrfToken = (data as any).csrfmiddlewaretoken || '';
         fetchFallback(my_rest_fallback_url, data, csrfToken);
       } else {
@@ -776,6 +795,7 @@ export function doQuery(backend_url: string, data: Map<string, string>, rest_fal
   my_data = data;
   my_rest_fallback_url = rest_fallback_url || '';
   usingRestFallback = false;
+  handingOffToRest = false;
   return connectWebSocket(backend_url, data, processResponseChunk, done);
 }
 

@@ -455,6 +455,127 @@ class DenialEndToEnd(APITestCase):
         ), "Appeal should start with 'Dear'"
 
 
+class StreamingAppealsRestFallbackTest(APITestCase):
+    """Test the REST/HTTP fallback for the WebSocket appeals stream.
+
+    Clients that can't hold a WebSocket open (iOS Safari ITP, corporate
+    proxies blocking WS upgrades, captive portals) fall back to this
+    endpoint after exhausting WebSocket retries.
+    """
+
+    fixtures = ["./fighthealthinsurance/fixtures/initial.yaml"]
+
+    def test_invalid_json_returns_400(self):
+        url = reverse("streaming_appeals_fallback")
+        response = self.client.post(
+            url, data="not-json", content_type="application/json"
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Invalid JSON", response.content.decode())
+
+    def test_non_object_json_returns_400(self):
+        url = reverse("streaming_appeals_fallback")
+        # Valid JSON but not an object — must not crash with AttributeError
+        # on data.get(...).
+        response = self.client.post(
+            url, data=json.dumps([1, 2, 3]), content_type="application/json"
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("JSON object", response.content.decode())
+
+    def test_get_method_not_allowed(self):
+        url = reverse("streaming_appeals_fallback")
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, 405)
+
+    def test_streams_ndjson_with_anti_buffering_headers(self):
+        """Mock generate_appeals so we can assert framing without a denial."""
+        url = reverse("streaming_appeals_fallback")
+
+        async def fake_generate_appeals(_data):
+            yield (
+                json.dumps(
+                    {"type": "status", "phase": "init", "message": "starting"}
+                )
+                + "\n"
+            )
+            yield json.dumps({"id": "1", "content": "Dear Insurer,..."}) + "\n"
+            yield (
+                json.dumps(
+                    {
+                        "type": "status",
+                        "phase": "done",
+                        "total_appeals": 1,
+                        "new_appeals": 1,
+                        "existing_appeals": 0,
+                    }
+                )
+                + "\n"
+            )
+
+        from fighthealthinsurance.common_view_logic import AppealsBackendHelper
+
+        # The view is async, so streaming_content is an async iterator.
+        # Drain it to bytes the way a real HTTP client would.
+        async def _drain(stream):
+            chunks = []
+            async for chunk in stream:
+                chunks.append(
+                    chunk.encode() if isinstance(chunk, str) else chunk
+                )
+            return b"".join(chunks)
+
+        # Patch on the class directly. `new=fake_generate_appeals`
+        # replaces the classmethod descriptor with a plain async
+        # generator function — when the view calls
+        # `AppealsBackendHelper.generate_appeals(data)`, Python
+        # invokes our function with just `(data,)`.
+        # IMPORTANT: drain inside the patch context. StreamingHttpResponse
+        # holds a lazy async iterator — body bytes are produced only when
+        # consumed, so unpatching before drain lets the real code run.
+        with patch.object(
+            AppealsBackendHelper,
+            "generate_appeals",
+            new=fake_generate_appeals,
+        ):
+            response = self.client.post(
+                url,
+                data=json.dumps(
+                    {
+                        "denial_id": 42,
+                        "email": "test@example.com",
+                        "semi_sekret": "shhh",
+                    }
+                ),
+                content_type="application/json",
+            )
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(
+                response["Content-Type"], "application/x-ndjson"
+            )
+            # Anti-buffering headers — defeating these proxies is the
+            # whole point of the fallback existing.
+            self.assertEqual(response["X-Accel-Buffering"], "no")
+            self.assertIn("no-cache", response["Cache-Control"])
+
+            body = asyncio.get_event_loop().run_until_complete(
+                _drain(response.streaming_content)
+            ).decode()
+        # Expect at least the appeal frame and the done status frame
+        appeal_lines = [
+            line
+            for line in body.split("\n")
+            if line.strip() and '"content"' in line
+        ]
+        done_lines = [
+            line
+            for line in body.split("\n")
+            if line.strip() and '"phase": "done"' in line
+        ]
+        self.assertEqual(len(appeal_lines), 1)
+        self.assertEqual(len(done_lines), 1)
+
+
 class NotifyPatientTest(APITestCase):
     """Test the notify_patient API endpoint."""
 

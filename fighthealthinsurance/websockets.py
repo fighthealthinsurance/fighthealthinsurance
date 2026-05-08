@@ -109,14 +109,23 @@ async def log_zero_appeal_diagnostics(
             f"last_phase={last_status_phase} gen_attempts={denial_attempts}"
             f"{error_suffix}"
         )
-    else:
+    elif persisted_count == 0:
         logger.error(
             f"[{transport}] Appeal session completed with 0 appeals sent "
             f"AND 0 ProposedAppeal rows persisted for denial {denial_id}. "
             f"Generation produced nothing. status_frames={status_count} "
             f"last_phase={last_status_phase} "
-            f"persisted={persisted_count} gen_attempts={denial_attempts}"
-            f"{error_suffix}"
+            f"gen_attempts={denial_attempts}{error_suffix}"
+        )
+    else:
+        # persisted_count == -1: lookup never ran (no/invalid denial_id)
+        # or DB call raised. Don't pretend we know the persisted total.
+        logger.error(
+            f"[{transport}] Appeal session sent 0 appeals to client; "
+            f"persisted-count lookup unavailable for denial {denial_id} "
+            f"(coerced={denial_id_int!r}). status_frames={status_count} "
+            f"last_phase={last_status_phase} "
+            f"gen_attempts={denial_attempts}{error_suffix}"
         )
 
 

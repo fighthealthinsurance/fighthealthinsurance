@@ -541,11 +541,17 @@ class ReportClientError(APIView):
         denial_id_raw = _sanitize(str(request.data.get("denial_id_raw", "")), 200)
         error_message = _sanitize(str(request.data.get("error", "unknown error")), 500)
         browser_info = _sanitize(str(request.data.get("browser_info", "")), 500)
+        # Delivery diagnostics are client-collected counters (status frames,
+        # ws close code/reason, server-reported totals, etc). They share the
+        # same sanitization rules but get their own field so a long mobile
+        # user-agent string in browser_info doesn't crowd them out.
+        diagnostics = _sanitize(str(request.data.get("diagnostics", "")), 1000)
         session_key = request.session.session_key or "no_session_key"
         denial_id_valid = is_valid_denial_id(denial_id)
         logger.error(
             f"Client-reported appeal error for denial {denial_id}: "
             f"{error_message} | browser: {browser_info} | "
+            f"diagnostics: {diagnostics} | "
             f"session_key={session_key} | remote_ip={request.META.get('REMOTE_ADDR', 'unknown')} | "
             f"denial_id_valid={denial_id_valid} | denial_id_raw={denial_id_raw}"
         )
@@ -577,6 +583,15 @@ async def streaming_appeals_rest_fallback(request):
         logger.warning(f"Invalid JSON received in REST appeals fallback: {e}")
         return HttpResponse(
             json.dumps({"error": "Invalid JSON format"}),
+            content_type="application/json",
+            status=400,
+        )
+    if not isinstance(data, dict):
+        logger.warning(
+            f"REST appeals fallback got non-object JSON: {type(data).__name__}"
+        )
+        return HttpResponse(
+            json.dumps({"error": "Expected a JSON object"}),
             content_type="application/json",
             status=400,
         )
