@@ -2846,13 +2846,13 @@ class OngoingChat(models.Model):
         null=True, blank=True
     )  # JSON List of strings
     denied_item = models.CharField(
-        max_length=500,
+        max_length=2000,
         null=True,
         blank=True,
         help_text="The item that was denied, extracted from chat context",
     )
     denied_reason = models.CharField(
-        max_length=500,
+        max_length=2000,
         null=True,
         blank=True,
         help_text="The reason for denial, extracted from chat context",
