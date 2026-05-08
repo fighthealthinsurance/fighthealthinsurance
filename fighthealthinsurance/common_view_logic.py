@@ -644,9 +644,7 @@ class FollowUpHelper:
         cls._notify_support_of_feedback(follow_up, denial)
 
     @staticmethod
-    def _notify_support_of_feedback(
-        follow_up: "FollowUp", denial: "Denial"
-    ) -> None:
+    def _notify_support_of_feedback(follow_up: "FollowUp", denial: "Denial") -> None:
         admin_path = reverse(
             "admin:fighthealthinsurance_followup_change",
             args=[follow_up.followup_result_id],
