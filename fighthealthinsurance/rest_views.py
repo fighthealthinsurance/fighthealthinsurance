@@ -64,6 +64,7 @@ from fighthealthinsurance.rest_mixins import (
     SerializerMixin,
 )
 from fighthealthinsurance.type_utils import User
+from fighthealthinsurance.websockets import log_zero_appeal_diagnostics
 
 from .common_view_logic import AppealAssemblyHelper
 from .utils import is_convertible_to_int, is_valid_denial_id
@@ -575,8 +576,6 @@ async def streaming_appeals_rest_fallback(request):
     semi_sekret) triple inside the body is the only credential, so
     CSRF is exempted just like the WebSocket isn't checked.
     """
-    from fighthealthinsurance.websockets import log_zero_appeal_diagnostics
-
     try:
         data = json.loads(request.body)
     except json.JSONDecodeError as e:
