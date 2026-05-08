@@ -646,8 +646,8 @@ class FollowUpHelper:
     @staticmethod
     def _notify_support_of_feedback(follow_up: "FollowUp", denial: "Denial") -> None:
         admin_path = reverse(
-            "admin:fighthealthinsurance_followup_change",
-            args=[follow_up.followup_result_id],
+            "admin:fighthealthinsurance_denial_change",
+            args=[denial.denial_id],
         )
         admin_url = f"https://{settings.FIGHT_HEALTH_INSURANCE_DOMAIN}{admin_path}"
         body = (
