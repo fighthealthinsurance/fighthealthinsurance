@@ -22,7 +22,9 @@ from typing import (
 )
 from urllib.parse import urlencode
 
+from django.conf import settings
 from django.core.files import File
+from django.core.mail import send_mail
 from django.core.validators import validate_email
 from django.db.models import Q, QuerySet
 from django.forms import Form
@@ -639,6 +641,35 @@ class FollowUpHelper:
             fd.save()
         denial.appeal_result = appeal_result
         denial.save()
+        cls._notify_support_of_feedback(follow_up, denial, user_comments)
+
+    @staticmethod
+    def _notify_support_of_feedback(
+        follow_up: "FollowUp", denial: "Denial", user_comments: Optional[str]
+    ) -> None:
+        body = (
+            f"New feedback received via the follow-up webform.\n\n"
+            f"Denial ID: {denial.denial_id}\n"
+            f"UUID: {denial.uuid}\n"
+            f"Appeal result: {denial.appeal_result or 'N/A'}\n"
+            f"More follow-up requested: {follow_up.more_follow_up_requested}\n"
+            f"Use quote: {follow_up.use_quote}\n"
+            f"Name for quote: {follow_up.name_for_quote or 'N/A'}\n"
+            f"Quote: {follow_up.quote or 'N/A'}\n"
+            f"User comments: {user_comments or 'N/A'}\n"
+            f"Reply email: {follow_up.email or 'N/A'}\n"
+        )
+        try:
+            send_mail(
+                f"New webform feedback - denial {denial.denial_id}",
+                body,
+                settings.DEFAULT_FROM_EMAIL,
+                ["support42@fighthealthinsurance.com"],
+            )
+        except Exception:
+            logger.opt(exception=True).error(
+                "Error sending feedback notification email"
+            )
 
 
 class FindNextStepsHelper:
