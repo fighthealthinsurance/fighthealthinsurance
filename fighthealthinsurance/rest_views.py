@@ -8,9 +8,8 @@ from django.conf import settings
 from django.core.exceptions import SuspiciousFileOperation
 from django.db import IntegrityError, models
 from django.db.models import Count, Q
-from django.http import FileResponse, HttpResponse, StreamingHttpResponse
+from django.http import FileResponse, StreamingHttpResponse
 from django.views.decorators.csrf import csrf_exempt
-from django.views.decorators.http import require_POST
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 
@@ -21,7 +20,12 @@ from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 from loguru import logger
 from rest_framework import status, viewsets
-from rest_framework.decorators import action
+from rest_framework.decorators import (
+    action,
+    api_view,
+    authentication_classes,
+    permission_classes,
+)
 from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import AllowAny
 from rest_framework.request import Request
@@ -559,40 +563,53 @@ class ReportClientError(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
+@extend_schema(
+    description=(
+        "REST/HTTP fallback for the WebSocket appeal stream used by "
+        "clients that can't hold a WebSocket open long enough (iOS "
+        "Safari ITP, corporate proxies blocking WS upgrades, captive "
+        "portals). Auth model mirrors the WebSocket: the "
+        "(denial_id, email, semi_sekret) triple inside the body is "
+        "the only credential. Response body is NDJSON: one JSON "
+        "object per line — either a status frame "
+        '`{type: "status", phase, message}`, an appeal payload '
+        "`{id, content}`, or an error frame "
+        '`{type: "error", message}`.'
+    ),
+    request=OpenApiTypes.OBJECT,
+    responses={
+        200: OpenApiTypes.STR,
+        400: OpenApiTypes.OBJECT,
+    },
+)
+@api_view(["POST"])
+@authentication_classes([])
+@permission_classes([AllowAny])
 @csrf_exempt
-@require_POST
-async def streaming_appeals_rest_fallback(request):
+def streaming_appeals_rest_fallback(request: Request):
     """REST/HTTP fallback for the WebSocket appeal stream.
 
-    Some clients can't hold a WebSocket open long enough to receive
-    appeals: iPhone Safari with strict ITP, corporate proxies that
-    reject WebSocket upgrades, captive portals, browsers behind
-    transparent proxies that buffer streaming responses, etc. After
-    the JS client exhausts its WebSocket retries, it POSTs the same
-    JSON payload here and consumes the same NDJSON stream that
-    `StreamingAppealsBackend` produces.
-
-    Auth model mirrors the WebSocket: the (denial_id, email,
-    semi_sekret) triple inside the body is the only credential, so
-    CSRF is exempted just like the WebSocket isn't checked.
+    The view is sync but returns a `StreamingHttpResponse` whose
+    `streaming_content` is an async generator. Django 4.2+ on ASGI
+    drives the async iterator directly, preserving true streaming
+    semantics — the client sees each frame as the underlying
+    `AppealsBackendHelper.generate_appeals` async generator yields it.
     """
     try:
-        data = json.loads(request.body)
-    except json.JSONDecodeError as e:
-        logger.warning(f"Invalid JSON received in REST appeals fallback: {e}")
-        return HttpResponse(
-            json.dumps({"error": "Invalid JSON format"}),
-            content_type="application/json",
-            status=400,
+        data = request.data
+    except Exception as e:
+        logger.warning(f"Invalid request body in REST appeals fallback: {e}")
+        return Response(
+            {"error": "Invalid JSON format"},
+            status=status.HTTP_400_BAD_REQUEST,
         )
     if not isinstance(data, dict):
         logger.warning(
             f"REST appeals fallback got non-object JSON: {type(data).__name__}"
         )
-        return HttpResponse(
-            json.dumps({"error": "Expected a JSON object"}),
-            content_type="application/json",
-            status=400,
+        return Response(
+            {"error": "Expected a JSON object"},
+            status=status.HTTP_400_BAD_REQUEST,
         )
 
     denial_id = data.get("denial_id")

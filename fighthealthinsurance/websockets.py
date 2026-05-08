@@ -74,9 +74,14 @@ async def log_zero_appeal_diagnostics(
     """
     # Coerce arbitrary JSON values to int for the FK/AutoField lookup.
     # Anything we can't coerce skips the DB cross-reference and just
-    # gets logged as-is so we still surface the failure.
+    # gets logged as-is so we still surface the failure. bool is a
+    # subclass of int in Python, so a JSON `true`/`false` would
+    # otherwise coerce to 1/0 and point diagnostics at the wrong
+    # denial record.
     denial_id_int: Optional[int] = None
-    if isinstance(denial_id, int):
+    if isinstance(denial_id, bool):
+        denial_id_int = None
+    elif isinstance(denial_id, int):
         denial_id_int = denial_id
     elif isinstance(denial_id, str):
         try:

@@ -724,7 +724,14 @@ function connectWebSocket(
   };
 
   const startWebSocket = () => {
-    // Open the connection and send data
+    // Per-attempt flag: ws.onerror may decide to retry or hand off to
+    // REST. The same socket's ws.onclose then fires on the normal
+    // error->close sequence; without a guard, onclose would also call
+    // done() and trigger ANOTHER reconnect via retry logic, leaving
+    // overlapping streams. retryScheduled lets onerror own the retry
+    // decision exclusively for this attempt.
+    let retryScheduled = false;
+
     const ws = new WebSocket(websocketUrl);
     ws.onopen = () => {
       console.log("WebSocket connection opened");
@@ -744,10 +751,11 @@ function connectWebSocket(
       console.log("WebSocket connection closed:", event.code, event.reason);
       lastWsCloseCode = event.code;
       lastWsCloseReason = event.reason || '';
-      // If we've handed off to REST (or it has already finished), don't
-      // race the fallback's own done() — the fetchFallback path will
-      // call done() when its stream ends.
-      if (handingOffToRest) {
+      // Two reasons to short-circuit done():
+      //   1. handingOffToRest: REST fallback owns the final done() call.
+      //   2. retryScheduled: ws.onerror already queued a reconnect for
+      //      this attempt; calling done() here would stomp on it.
+      if (handingOffToRest || retryScheduled) {
         return;
       }
       updateStatusIndicator('done', appealsSoFar.length);
@@ -764,6 +772,7 @@ function connectWebSocket(
           `Retrying WebSocket connection (${retries + 1}/${maxRetries})...`,
         );
         retries = retries + 1;
+        retryScheduled = true;
         setTimeout(
           () =>
             connectWebSocket(websocketUrl, data, processResponseChunk, done),

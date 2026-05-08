@@ -507,7 +507,13 @@ class StreamingAppealsRestFallbackTest(APITestCase):
             url, data="not-json", content_type="application/json"
         )
         self.assertEqual(response.status_code, 400)
-        self.assertIn("Invalid JSON", response.content.decode())
+        # DRF's JSON parser raises ParseError -> default exception
+        # handler renders {"detail": "JSON parse error - ..."}.
+        body = response.content.decode().lower()
+        self.assertTrue(
+            "json" in body and ("parse" in body or "invalid" in body),
+            f"Expected JSON parse error in body, got {body!r}",
+        )
 
     def test_non_object_json_returns_400(self):
         url = reverse("streaming_appeals_fallback")
