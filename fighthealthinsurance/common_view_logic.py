@@ -641,23 +641,22 @@ class FollowUpHelper:
             fd.save()
         denial.appeal_result = appeal_result
         denial.save()
-        cls._notify_support_of_feedback(follow_up, denial, user_comments)
+        cls._notify_support_of_feedback(follow_up, denial)
 
     @staticmethod
     def _notify_support_of_feedback(
-        follow_up: "FollowUp", denial: "Denial", user_comments: Optional[str]
+        follow_up: "FollowUp", denial: "Denial"
     ) -> None:
+        admin_path = reverse(
+            "admin:fighthealthinsurance_followup_change",
+            args=[follow_up.followup_result_id],
+        )
+        admin_url = f"https://www.fighthealthinsurance.com{admin_path}"
         body = (
             f"New feedback received via the follow-up webform.\n\n"
             f"Denial ID: {denial.denial_id}\n"
-            f"UUID: {denial.uuid}\n"
             f"Appeal result: {denial.appeal_result or 'N/A'}\n"
-            f"More follow-up requested: {follow_up.more_follow_up_requested}\n"
-            f"Use quote: {follow_up.use_quote}\n"
-            f"Name for quote: {follow_up.name_for_quote or 'N/A'}\n"
-            f"Quote: {follow_up.quote or 'N/A'}\n"
-            f"User comments: {user_comments or 'N/A'}\n"
-            f"Reply email: {follow_up.email or 'N/A'}\n"
+            f"Admin: {admin_url}\n"
         )
         try:
             send_mail(
