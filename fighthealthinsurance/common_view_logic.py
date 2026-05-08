@@ -649,7 +649,7 @@ class FollowUpHelper:
             "admin:fighthealthinsurance_followup_change",
             args=[follow_up.followup_result_id],
         )
-        admin_url = f"https://www.fighthealthinsurance.com{admin_path}"
+        admin_url = f"https://{settings.FIGHT_HEALTH_INSURANCE_DOMAIN}{admin_path}"
         body = (
             f"New feedback received via the follow-up webform.\n\n"
             f"Denial ID: {denial.denial_id}\n"
@@ -665,7 +665,9 @@ class FollowUpHelper:
             )
         except Exception:
             logger.opt(exception=True).error(
-                "Error sending feedback notification email"
+                f"Error sending feedback notification email "
+                f"(denial_id={denial.denial_id}, "
+                f"followup_result_id={follow_up.followup_result_id})"
             )
 
 
