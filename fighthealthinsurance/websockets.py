@@ -129,6 +129,14 @@ async def log_zero_appeal_diagnostics(
         )
 
 
+# Test hook: when truthy, StreamingAppealsBackend accepts the
+# connection and closes immediately without yielding any appeal
+# payloads. Lets tests exercise the REST fallback path without
+# injecting a real transport-level failure. Should never be set in
+# production.
+SUPPRESS_APPEAL_WS_DELIVERY = False
+
+
 class StreamingAppealsBackend(AsyncWebsocketConsumer):
     """Streaming back the appeals as json :D"""
 
@@ -147,6 +155,16 @@ class StreamingAppealsBackend(AsyncWebsocketConsumer):
         except json.JSONDecodeError as e:
             logger.warning(f"Invalid JSON received in appeals websocket: {e}")
             await self.send(json.dumps({"error": "Invalid JSON format"}))
+            await self.close()
+            return
+        # Test hook: simulate a silent WS death so the JS client falls
+        # back to REST. We close cleanly with no payload so the client
+        # sees the same shape as a real broken-pipe / proxy-drop.
+        if SUPPRESS_APPEAL_WS_DELIVERY:
+            logger.warning(
+                "WS appeal delivery suppressed by test flag for denial "
+                f"{data.get('denial_id')}"
+            )
             await self.close()
             return
         logger.debug("Starting generation of appeals...")
