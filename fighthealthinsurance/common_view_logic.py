@@ -22,7 +22,9 @@ from typing import (
 )
 from urllib.parse import urlencode
 
+from django.conf import settings
 from django.core.files import File
+from django.core.mail import send_mail
 from django.core.validators import validate_email
 from django.db.models import Q, QuerySet
 from django.forms import Form
@@ -639,6 +641,34 @@ class FollowUpHelper:
             fd.save()
         denial.appeal_result = appeal_result
         denial.save()
+        cls._notify_support_of_feedback(follow_up, denial)
+
+    @staticmethod
+    def _notify_support_of_feedback(follow_up: "FollowUp", denial: "Denial") -> None:
+        admin_path = reverse(
+            "admin:fighthealthinsurance_followup_change",
+            args=[follow_up.followup_result_id],
+        )
+        admin_url = f"https://{settings.FIGHT_HEALTH_INSURANCE_DOMAIN}{admin_path}"
+        body = (
+            f"New feedback received via the follow-up webform.\n\n"
+            f"Denial ID: {denial.denial_id}\n"
+            f"Appeal result: {denial.appeal_result or 'N/A'}\n"
+            f"Admin: {admin_url}\n"
+        )
+        try:
+            send_mail(
+                f"New webform feedback - denial {denial.denial_id}",
+                body,
+                settings.DEFAULT_FROM_EMAIL,
+                ["support42@fighthealthinsurance.com"],
+            )
+        except Exception:
+            logger.opt(exception=True).error(
+                f"Error sending feedback notification email "
+                f"(denial_id={denial.denial_id}, "
+                f"followup_result_id={follow_up.followup_result_id})"
+            )
 
 
 class FindNextStepsHelper:
