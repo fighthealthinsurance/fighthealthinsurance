@@ -91,9 +91,7 @@ async def log_zero_appeal_diagnostics(
             persisted_count = await ProposedAppeal.objects.filter(
                 for_denial__denial_id=denial_id_int
             ).acount()
-            denial = await Denial.objects.filter(
-                denial_id=denial_id_int
-            ).afirst()
+            denial = await Denial.objects.filter(denial_id=denial_id_int).afirst()
             if denial is not None:
                 denial_attempts = denial.gen_attempts
     except Exception as lookup_error:
