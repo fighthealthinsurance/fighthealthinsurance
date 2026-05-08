@@ -124,7 +124,7 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         name="followup-with-a-period",
     ),
     path(
-        "v0/followup/<uuid:uuid>/<slug:hashed_email>/<slug:followup_semi_sekret>/",
+        "v0/followup/<uuid:uuid>/<slug:hashed_email>/<slug:follow_up_semi_sekret>/",
         views.FollowUpView.as_view(),
         name="followup-with-trailing-slash",
     ),

@@ -598,9 +598,9 @@ class FollowUpHelper:
         uuid: str,
         follow_up_semi_sekret: str,
         hashed_email: str,
-        user_comments: str,
-        appeal_result: str,
-        follow_up_again: bool,
+        user_comments: str = "",
+        appeal_result: str = "",
+        follow_up_again: bool = False,
         medicare_someone_to_help: bool = False,
         email: Optional[str] = None,
         quote: Optional[str] = None,
@@ -615,8 +615,6 @@ class FollowUpHelper:
             follow_up_semi_sekret=follow_up_semi_sekret,
             hashed_email=hashed_email,
         )
-        # Store the follow up response returns nothing but may raise
-        denial_id = denial.denial_id
         follow_up = FollowUp.objects.create(
             hashed_email=hashed_email,
             denial_id=denial,
@@ -626,6 +624,8 @@ class FollowUpHelper:
             email=email,
             name_for_quote=name_for_quote,
             quote=quote,
+            user_comments=user_comments,
+            appeal_result=appeal_result,
         )
         # If they asked for additional follow up, schedule from today
         # so they get a fresh round of check-ins rather than re-using
@@ -635,10 +635,11 @@ class FollowUpHelper:
                 denial.raw_email, denial, from_date=datetime.date.today()
             )
         for document in followup_documents:
-            fd = FollowUpDocuments.objects.create(
+            if not document:
+                continue
+            FollowUpDocuments.objects.create(
                 follow_up_document_enc=document, denial=denial, follow_up_id=follow_up
             )
-            fd.save()
         denial.appeal_result = appeal_result
         denial.save()
         cls._notify_support_of_feedback(follow_up, denial)

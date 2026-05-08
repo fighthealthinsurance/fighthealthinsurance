@@ -88,3 +88,48 @@ class SeleniumFollowUp(BaseCase, StaticLiveServerTestCase):
         )
         self.open(f"{self.live_server_url}/{mylink}")
         self.assert_title("Something Went Wrong - Fight Health Insurance")
+
+    def test_follow_up_trailing_slash_link(self):
+        """Email clients sometimes add a trailing slash; the page must load.
+        Regression test for a URL-pattern typo that crashed the view."""
+        email = "timbit@test.com"
+        hashed_email = Denial.get_hashed_email(email)
+        denial = Denial.objects.create(
+            denial_text="I am evil so no health care for you.",
+            hashed_email=hashed_email,
+            use_external=False,
+            raw_email=email,
+            health_history="",
+        )
+        mylink = (
+            f"v0/followup/{denial.uuid}/{denial.hashed_email}/"
+            f"{denial.follow_up_semi_sekret}/"
+        )
+        self.open(f"{self.live_server_url}/{mylink}")
+        self.assert_title("Follow Up On Your Health Insurance Appeal")
+        self.click("button#submit")
+        self.assert_title("Thank you!")
+
+    def test_follow_up_persists_comments_and_appeal_result(self):
+        """Submitting comments + appeal_result must be saved on FollowUp."""
+        email = "timbit@test.com"
+        hashed_email = Denial.get_hashed_email(email)
+        denial = Denial.objects.create(
+            denial_text="I am evil so no health care for you.",
+            hashed_email=hashed_email,
+            use_external=False,
+            raw_email=email,
+            health_history="",
+        )
+        mylink = f"v0/followup/{denial.uuid}/{denial.hashed_email}/{denial.follow_up_semi_sekret}"
+        self.open(f"{self.live_server_url}/{mylink}")
+        self.assert_title("Follow Up On Your Health Insurance Appeal")
+        self.type("textarea#id_user_comments", "Insurer reversed the denial.")
+        self.select_option_by_value("select#id_appeal_result", "Yes")
+        self.click("button#submit")
+        self.assert_title("Thank you!")
+        followup = FollowUp.objects.get(denial_id=denial)
+        assert followup.user_comments == "Insurer reversed the denial."
+        assert followup.appeal_result == "Yes"
+        denial.refresh_from_db()
+        assert denial.appeal_result == "Yes"
