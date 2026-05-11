@@ -640,7 +640,7 @@ class FollowUpHelper:
             FollowUpDocuments.objects.create(
                 follow_up_document_enc=document, denial=denial, follow_up_id=follow_up
             )
-        denial.appeal_result = appeal_result
+        denial.appeal_result = appeal_result or None
         denial.save()
         cls._notify_support_of_feedback(follow_up, denial)
 

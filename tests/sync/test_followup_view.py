@@ -157,23 +157,53 @@ class TestFollowUpViewSubmit(TestCase):
         followup = FollowUp.objects.get(denial_id=self.denial)
         self.assertTrue(followup.more_follow_up_requested)
 
-    def test_invalid_secret_returns_500_error_page(self):
-        """Wrong secret must not allow submission. Currently the helper
-        raises which surfaces the generic error page; the important thing
-        is that no FollowUp row is written."""
+    def test_invalid_secret_does_not_render_form(self):
+        """Wrong secret must NOT render the follow-up form (and must not
+        write a FollowUp row). The view currently lets the DoesNotExist
+        propagate, so the test client either surfaces the exception (when
+        request-exception propagation is on) or renders the custom 500
+        page — never the follow-up form."""
         bad_path = (
             f"/v0/followup/{self.denial.uuid}/"
             f"{self.denial.hashed_email}/not-the-real-sekret"
         )
-        try:
-            response = self.client.get(bad_path)
-        except Exception:
-            response = None
-        # Either a 500 error page is rendered or an exception propagated;
-        # in both cases, no follow-up row is created.
+        self.client.raise_request_exception = False
+        response = self.client.get(bad_path)
+        self.assertEqual(response.status_code, 500)
+        self.assertNotContains(
+            response,
+            "Follow Up On Your Health Insurance Appeal",
+            status_code=500,
+        )
         self.assertEqual(FollowUp.objects.filter(denial_id=self.denial).count(), 0)
-        if response is not None:
-            self.assertIn(response.status_code, (200, 404, 500))
+
+    def test_invalid_secret_post_does_not_persist(self):
+        """A POST with a wrong secret must not create a FollowUp row."""
+        bad_path = (
+            f"/v0/followup/{self.denial.uuid}/"
+            f"{self.denial.hashed_email}/not-the-real-sekret"
+        )
+        self.client.raise_request_exception = False
+        response = self.client.post(bad_path, data=self._payload())
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(FollowUp.objects.filter(denial_id=self.denial).count(), 0)
+
+    def test_blank_appeal_result_leaves_denial_pending(self):
+        """Regression: storing a blank appeal_result must NOT mark the
+        denial as having a result. Code in ucr_refresh_actor filters
+        by ``appeal_result__isnull=True`` to find still-pending denials,
+        so an empty string here would silently exclude them from
+        downstream processing."""
+        self.client.post(self.path, data=self._payload(appeal_result=""))
+        self.denial.refresh_from_db()
+        self.assertIsNone(self.denial.appeal_result)
+        # The denial should still match the "pending" filter used by
+        # ucr_refresh_actor.
+        self.assertTrue(
+            Denial.objects.filter(
+                pk=self.denial.pk, appeal_result__isnull=True
+            ).exists()
+        )
 
     def test_no_documents_does_not_create_empty_document_rows(self):
         """Regression: when the user uploads no files we should not write
