@@ -62,8 +62,14 @@ RXNORM_LOOKUP_REGEX = (
 # Matches: [clinical_trials_query: terms], **clinical trials query: terms**, etc.
 # Useful when an insurer denies a treatment as "experimental/investigational"
 # and we need to check the public trial registry.
+# Mirrors RXNORM_LOOKUP_REGEX: requires a leading `[`/`*` marker or a word
+# boundary, the colon is mandatory, the capture is non-greedy and stops at
+# the closing wrapper, newline, or end-of-string. This way an LLM that
+# tacks prose after the token (e.g. "...melanoma. Also consider...") can't
+# get the trailing prose silently captured and stripped from the reply.
 CLINICAL_TRIALS_QUERY_REGEX = (
-    r"[\[\*]{0,4}clinical[ _]?trials?[ _]?query:?\s*([^*\[\]]+)[\]\*]{0,4}"
+    r"(?:[\[\*]{1,4}|\b)clinical[ _]?trials?[ _]?query\s*:\s*"
+    r"([^*\[\]\n]+?)\s*(?:[\]\*]{1,4}|$|(?=\n))"
 )
 
 # List of all tool patterns for scoring/detection

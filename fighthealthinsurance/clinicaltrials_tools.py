@@ -131,14 +131,13 @@ class ClinicalTrialsTools(object):
         session: aiohttp.ClientSession,
         url: str,
         timeout_secs: float,
-        label: str = "",
     ) -> Optional[Dict[str, Any]]:
         """Fetch JSON from url with timeout. Returns None on any failure.
 
-        Logs are redacted: the label/url contain diagnosis/procedure terms
-        derived from a denial, so we hash them before emitting any log line.
+        Logs are redacted: the url's query string contains diagnosis or
+        procedure terms derived from a denial, so we hash it before
+        emitting any log line. Support can still correlate using the hash.
         """
-        # Stable short hash so support can correlate without reading PHI.
         redacted = "req_" + hashlib.sha256(url.encode("utf-8")).hexdigest()[:10]
         try:
             async with async_timeout(timeout_secs):
@@ -236,9 +235,7 @@ class ClinicalTrialsTools(object):
                     normalized_query, norm_condition, norm_intervention, page_size
                 )
                 async with aiohttp.ClientSession(headers=_FETCH_HEADERS) as session:
-                    data = await self._fetch_json(
-                        session, url, timeout_secs=timeout, label=normalized_query
-                    )
+                    data = await self._fetch_json(session, url, timeout_secs=timeout)
                 if not data:
                     return []
                 # Build into a temp list so a mid-loop timeout/ORM error
@@ -289,9 +286,7 @@ class ClinicalTrialsTools(object):
         """Fetch a single trial from the API and upsert it into the cache."""
         url = f"{self.api_base}/studies/{nct_id}?format=json"
         try:
-            data = await self._fetch_json(
-                session, url, timeout_secs=timeout, label=nct_id
-            )
+            data = await self._fetch_json(session, url, timeout_secs=timeout)
         except Exception as e:
             logger.debug(f"Error fetching trial {nct_id}: {e}")
             return None

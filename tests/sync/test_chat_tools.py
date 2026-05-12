@@ -277,6 +277,24 @@ class TestClinicalTrialsTool(TestCase):
         tool = ClinicalTrialsTool(mock_status)
         self.assertEqual(tool._build_trials_context([]), "")
 
+    def test_regex_stops_at_newline_not_swallowing_trailing_prose(self):
+        """An LLM that puts the token on its own line and then keeps writing
+        must not have the next line silently captured as the query and
+        stripped from the user-visible reply."""
+        mock_status = AsyncMock()
+        tool = ClinicalTrialsTool(mock_status)
+        text = (
+            "Let me search the registry.\n"
+            "clinical_trials_query: pembrolizumab melanoma\n"
+            "Also, here's what I think about the denial..."
+        )
+        match = tool.detect(text)
+        self.assertIsNotNone(match)
+        # Only "pembrolizumab melanoma" -- not the following sentence.
+        self.assertEqual(match.group(1).strip(), "pembrolizumab melanoma")
+        # The narrative after the tool call must survive clean_response.
+        self.assertIn("Also, here's what I think", tool.clean_response(text, match))
+
     def _run(self, coro):
         return asyncio.run(coro)
 
