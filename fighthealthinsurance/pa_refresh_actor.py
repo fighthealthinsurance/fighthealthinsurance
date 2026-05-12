@@ -1,9 +1,9 @@
 """Ray actor that periodically refreshes carrier PA requirement lists.
 
 Runs ``PaRequirementsFetcher.ingest_all()`` on a
-``PA_REFRESH_INTERVAL_HOURS`` cadence (default 168 hours / weekly). Carrier
-PA lists publish quarterly at most so weekly is plenty; tighten the env
-var if a carrier's policies move faster.
+``PA_REFRESH_INTERVAL_HOURS`` cadence (default 168 hours / weekly).
+Carrier PA lists publish quarterly at most so weekly is plenty; tighten
+the env var if a carrier's policies move faster.
 
 The bulk of the run-loop / health-check / backoff scaffolding lives in
 ``BaseRefreshActor`` so each new refresh actor stays minimal.
@@ -26,15 +26,8 @@ class PaRefreshActor(BaseRefreshActor):
 
     async def _refresh_due(self, interval_hours: int) -> bool:
         from fighthealthinsurance.pa_requirements_fetcher import (
-            PA_PARSERS,
             PaRequirementsFetcher,
         )
-
-        if not PA_PARSERS:
-            self._logger.debug(
-                "No PA parsers registered; PaRefreshActor cycle is a no-op"
-            )
-            return False
 
         async with PaRequirementsFetcher() as fetcher:
             stats = await fetcher.ingest_all()

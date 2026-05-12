@@ -25,6 +25,9 @@
     medical_policy_url_is_static_index: false
     medical_policy_name: Medical Policies and Clinical UM Guidelines
     medical_policy_notes: Anthem publishes Medical Policies and Clinical Utilization Management (UM) Guidelines as coverage-decision guidelines. The landing URL requires state selection (e.g. ?cnslocale=en_US_co for Colorado) before showing applicable policies.
+    pa_requirement_list_url: https://www.anthem.com/provider/prior-authorization/
+    pa_requirement_list_url_is_parseable: false
+    pa_requirement_list_notes: Anthem's PA requirement lookup tool requires state selection and interactive navigation. Use the provider portal to obtain state-specific PA lists.
 
 - model: fighthealthinsurance.insurancecompany
   pk: 2
@@ -46,6 +49,9 @@
     medical_policy_url_is_static_index: false
     medical_policy_name: Medical Policies and Coverage Determination Guidelines
     medical_policy_notes: UnitedHealthcare publishes Medical Policies and Coverage Determination Guidelines that state criteria under which services are considered medically necessary or proven/unproven. The provider portal links out to category-specific PDFs.
+    pa_requirement_list_url: https://www.uhcprovider.com/content/dam/provider/docs/public/prior-auth/all-policies/comm-medical-drug-prior-auth-list.pdf
+    pa_requirement_list_url_is_parseable: true
+    pa_requirement_list_notes: UHC publishes a downloadable PDF of commercial prior-authorization requirements covering medical and drug codes. Updated periodically (typically quarterly). The PDF contains tables mapping CPT/HCPCS codes to PA requirements and criteria references. Set is_parseable=true to auto-ingest on deploy.
 
 - model: fighthealthinsurance.insurancecompany
   pk: 3
@@ -71,6 +77,9 @@
     medical_policy_url_is_static_index: false
     medical_policy_name: Clinical Policy Bulletins (CPBs)
     medical_policy_notes: Aetna publishes Clinical Policy Bulletins (CPBs) that express Aetna's view on whether services are medically necessary, experimental/investigational, unproven, or cosmetic. CPBs are accessed via a search portal (no static A-Z index); individual CPBs live at URLs like https://www.aetna.com/cpb/medical/data/<range>/<id>.html.
+    pa_requirement_list_url: https://www.aetna.com/health-care-professionals/prior-authorization/clinical-payment-and-coverage-policies.html
+    pa_requirement_list_url_is_parseable: false
+    pa_requirement_list_notes: Aetna's prior-authorization requirement page is JavaScript-rendered and requires plan/state selection. Downloadable code lists may be available to registered providers via NaviMedix AuthPortal.
 
 - model: fighthealthinsurance.insurancecompany
   pk: 4
@@ -97,6 +106,9 @@
     medical_policy_url_is_static_index: true
     medical_policy_name: Coverage Policies
     medical_policy_notes: Cigna's Coverage Policies help interpret standard health-coverage plan provisions and are publicly available without login. The static A-Z index links directly to individual policy PDFs.
+    pa_requirement_list_url: https://www.cigna.com/healthcare-providers/coverage-information/clinical-coverage-policies/prior-authorization-list
+    pa_requirement_list_url_is_parseable: false
+    pa_requirement_list_notes: Cigna routes most prior authorization through eviCore (evicore.com). Their provider portal has downloadable PA code lists but requires login. eviCore handles specialty PA (oncology, musculoskeletal, cardiology, etc.).
 
 - model: fighthealthinsurance.insurancecompany
   pk: 5

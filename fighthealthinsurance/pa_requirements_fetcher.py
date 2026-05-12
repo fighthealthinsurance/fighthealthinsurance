@@ -1,35 +1,32 @@
 """
-Fetch and re-parse carrier-published prior-authorization requirement lists.
+Fetch + index payer prior-authorization requirement lists.
 
-Where a carrier publishes a structured PA requirement document (CSV, XLSX,
-or HTML table), a parser registered in ``PA_PARSERS`` knows how to fetch
-the document, normalise each row, and yield it in the shape consumed by
-``PaRequirementsFetcher._upsert``. The fetcher upserts via
-``update_or_create`` keyed on the same tuple the lookup queries on, so
-re-running an ingest is idempotent.
+Iterates every ``InsuranceCompany`` with
+``pa_requirement_list_url_is_parseable=True``, downloads each company's PA
+requirement document, picks a parser from ``pa_requirement_parsers``
+keyed on the response Content-Type, applies any per-host enrichment
+(submission channel / default LOB), and upserts rows via
+``update_or_create``.
 
-Rows previously seen for a carrier but absent from this run are
-soft-retired (``end_date`` set to today) rather than deleted, so historical
-denials still resolve to the rule that applied at the time.
+Rows whose ``source_document`` starts with ``"auto:"`` are managed by
+this pipeline: a row that was previously ingested but is absent from a
+fresh fetch is soft-retired (``end_date`` set to today) rather than
+deleted, so historical denials still resolve to the rule that applied
+at the time. Manually-seeded rows (no ``"auto:"`` prefix — e.g. fixture-
+loaded UHC starter set) are never touched.
 
-This module ships the framework + an empty registry. Per-carrier parsers
-land in follow-on PRs (one parser + matching fixture per carrier so the
-parser output can be reviewed against a known-good file).
+Invoked by:
+  * ``ingest_pa_requirements`` management command (deploy / dev)
+  * ``PaRefreshActor`` (periodic refresh)
 """
 
 from __future__ import annotations
 
 import datetime
-from typing import (
-    Any,
-    Callable,
-    Dict,
-    List,
-    Optional,
-    Protocol,
-    Tuple,
-)
+from typing import Dict, List, Optional, Union
+from urllib.parse import urlparse
 
+import aiohttp
 from asgiref.sync import sync_to_async
 from loguru import logger
 
@@ -38,105 +35,79 @@ from fighthealthinsurance.models import (
     LineOfBusiness,
     PayerPriorAuthRequirement,
 )
+from fighthealthinsurance.pa_requirement_parsers import (
+    PARSERS_BY_CONTENT_TYPE,
+    ParsedPARequirement,
+    apply_enrichment,
+    enrichment_for_host,
+)
 
+FETCH_TIMEOUT_SEC = 120
+MAX_BYTES = 50 * 1024 * 1024  # 50 MB — PA lists can be large Excel/PDF files
 
-class PaParser(Protocol):
-    """Protocol every per-carrier parser must satisfy.
-
-    ``carrier_aliases`` is the priority-ordered list of name strings used
-    to look up the canonical ``InsuranceCompany`` row by case-insensitive
-    exact match (mirroring the ``_get_uhc`` selection logic from the
-    historical seed migration). Returning ``None`` from ``parse`` signals
-    a transient fetch failure so the surrounding code can warn but keep
-    going for other parsers.
-    """
-
-    carrier_aliases: Tuple[str, ...]
-
-    async def parse(self) -> Optional[List[Dict[str, Any]]]: ...
-
-
-# Registry of registered parsers. Keys are the canonical alias used by the
-# management command (``ingest_pa_requirements --carrier <key>``). Values
-# are zero-arg callables returning a parser instance — this avoids
-# importing every parser module at process start.
-PA_PARSERS: Dict[str, Callable[[], PaParser]] = {}
-
-
-def register_parser(
-    alias: str,
-) -> Callable[[Callable[[], PaParser]], Callable[[], PaParser]]:
-    def decorator(factory: Callable[[], PaParser]) -> Callable[[], PaParser]:
-        PA_PARSERS[alias] = factory
-        return factory
-
-    return decorator
-
-
-# Source-of-truth lives on the model class
-# (``PayerPriorAuthRequirement.UPSERT_KEY_FIELDS``) so the upsert key
-# stays in lockstep with the lookup-filter schema.
-_UPSERT_KEY_FIELDS = PayerPriorAuthRequirement.UPSERT_KEY_FIELDS
-
-
-def resolve_carrier_by_aliases(
-    aliases: Tuple[str, ...],
-) -> Optional[InsuranceCompany]:
-    """Resolve the canonical ``InsuranceCompany`` row for a parser.
-
-    Lifted from the historical ``_get_uhc`` helper in the now-removed
-    seed migration so per-carrier parsers all use the same selector. We
-    deliberately *only* match exact (case-insensitive) name strings —
-    substring matches across closely-named carriers
-    (e.g. "UnitedHealthcare" vs "UnitedHealthcare Community Plan") would
-    silently mis-attach rows.
-
-    Raises ``RuntimeError`` if multiple aliases match different rows so a
-    data-integrity issue isn't quietly papered over.
-    """
-    matched: Optional[InsuranceCompany] = None
-    for alias in aliases:
-        row = InsuranceCompany.objects.filter(name__iexact=alias).first()
-        if row is None:
-            continue
-        if matched is not None and row.pk != matched.pk:
-            raise RuntimeError(
-                f"Ambiguous carrier resolution: aliases match both "
-                f"id={matched.pk!r} ({matched.name!r}) and "
-                f"id={row.pk!r} ({row.name!r}). Resolve duplicate "
-                "InsuranceCompany rows before re-running ingest."
-            )
-        matched = row
-    return matched
+# Rows whose ``source_document`` starts with this prefix are managed by the
+# auto-ingest pipeline; ``_retire_missing`` only marks those as retired.
+AUTO_SOURCE_PREFIX = "auto:"
 
 
 class PaRequirementsFetcher:
     """Async context manager + ingestion driver.
 
-    Mirrors ``PayerPolicyFetcher``'s shape so the ingest command and
+    Mirrors ``PayerPolicyFetcher``'s shape so the management command and
     refresh actor have the same contract as the existing payer-policy
     pipeline (``ingest_payer_policy_indexes`` / its actor).
     """
 
+    def __init__(
+        self,
+        session: Optional[aiohttp.ClientSession] = None,
+        timeout_sec: int = FETCH_TIMEOUT_SEC,
+        max_bytes: int = MAX_BYTES,
+    ) -> None:
+        self._session = session
+        self._owns_session = session is None
+        self._timeout = aiohttp.ClientTimeout(total=timeout_sec)
+        self._max_bytes = max_bytes
+
     async def __aenter__(self) -> "PaRequirementsFetcher":
+        if self._session is None:
+            self._session = aiohttp.ClientSession(timeout=self._timeout)
         return self
 
     async def __aexit__(self, exc_type, exc, tb) -> None:
-        return None
+        if self._owns_session and self._session is not None:
+            await self._session.close()
+            self._session = None
 
     async def ingest_all(self) -> Dict[str, int]:
-        stats = {"fetched": 0, "failed": 0, "entries": 0, "retired": 0}
-        for alias in list(PA_PARSERS):
-            # Isolate per-carrier failures: an unhandled exception inside
-            # one parser/upsert must not abort the rest of the run, or
-            # operators would have to restart the actor every time a
-            # single carrier endpoint misbehaves.
+        """Fetch + parse + persist for every parseable company."""
+        stats: Dict[str, int] = {
+            "fetched": 0,
+            "failed": 0,
+            "entries": 0,
+            "retired": 0,
+        }
+        companies = await sync_to_async(
+            lambda: list(
+                InsuranceCompany.objects.filter(
+                    pa_requirement_list_url_is_parseable=True,
+                ).exclude(pa_requirement_list_url="")
+            )
+        )()
+
+        if not companies:
+            logger.info("No insurance companies flagged for PA requirement ingestion")
+            return stats
+
+        for company in companies:
+            # Isolate per-company failures so one misbehaving payer
+            # endpoint doesn't abort the rest of the run.
             try:
-                sub = await self.ingest_carrier(alias)
+                sub = await self.ingest_company(company)
             except Exception as e:
                 logger.opt(exception=True).warning(
-                    f"ingest_carrier({alias!r}) raised; recording as a "
-                    f"failed carrier and continuing: {e}"
+                    f"PA ingest failed for {company.name} "
+                    f"({company.pa_requirement_list_url}): {e}"
                 )
                 stats["failed"] += 1
                 continue
@@ -144,90 +115,175 @@ class PaRequirementsFetcher:
             stats["failed"] += sub["failed"]
             stats["entries"] += sub["entries"]
             stats["retired"] += sub["retired"]
+
+        logger.info(
+            f"PA requirement ingest complete: {stats['fetched']} fetched, "
+            f"{stats['failed']} failed, {stats['entries']} rows upserted, "
+            f"{stats['retired']} retired"
+        )
         return stats
 
-    async def ingest_carrier(self, alias: str) -> Dict[str, int]:
+    async def ingest_company(self, company: InsuranceCompany) -> Dict[str, int]:
+        """Fetch, parse, and persist for one company. Returns per-run stats."""
         stats = {"fetched": 0, "failed": 0, "entries": 0, "retired": 0}
-
-        factory = PA_PARSERS.get(alias)
-        if factory is None:
-            logger.warning(f"No PA parser registered for alias '{alias}'")
-            stats["failed"] += 1
-            return stats
-
-        parser = factory()
-
         try:
-            company = await sync_to_async(resolve_carrier_by_aliases)(
-                parser.carrier_aliases
-            )
-        except RuntimeError as e:
-            logger.error(f"Carrier resolution failed for '{alias}': {e}")
+            parsed = await self.parse_company(company)
+        except LookupError as e:
+            logger.warning(str(e))
             stats["failed"] += 1
             return stats
 
-        if company is None:
-            logger.warning(
-                f"No InsuranceCompany matched aliases {parser.carrier_aliases!r} "
-                f"for parser '{alias}'; skipping ingest."
-            )
-            stats["failed"] += 1
-            return stats
-
-        try:
-            rows = await parser.parse()
-        except Exception as e:
-            logger.opt(exception=True).warning(
-                f"PA parser '{alias}' raised while fetching: {e}"
-            )
-            stats["failed"] += 1
-            return stats
-
-        if rows is None:
-            stats["failed"] += 1
+        if not parsed:
+            logger.info(f"No PA requirements parsed for {company.name}")
+            stats["fetched"] += 1
             return stats
 
         stats["fetched"] += 1
-        seen_pks, written = await sync_to_async(self._upsert_rows)(company, rows, alias)
+        source_name = f"{AUTO_SOURCE_PREFIX}{company.pa_requirement_list_url}"
+        seen_pks, written = await sync_to_async(self._upsert_rows)(
+            company, parsed, source_name
+        )
         stats["entries"] += written
         stats["retired"] += await sync_to_async(self._retire_missing)(company, seen_pks)
         return stats
 
+    async def parse_company(
+        self, company: InsuranceCompany
+    ) -> List[ParsedPARequirement]:
+        """Fetch + parse a company's PA list without writing to the DB.
+
+        Used by ``ingest_company`` and the management command's
+        ``--dry-run`` mode so both share the same dispatch / enrichment
+        pipeline. Raises ``LookupError`` when no parser matches the
+        response Content-Type.
+        """
+        url = company.pa_requirement_list_url
+        if not url:
+            return []
+
+        content_type, raw = await self._get_content(url)
+        ct_key = (content_type or "").split(";")[0].strip().lower()
+        parser_spec = PARSERS_BY_CONTENT_TYPE.get(ct_key)
+        if parser_spec is None:
+            raise LookupError(
+                f"No PA parser registered for Content-Type {ct_key!r} "
+                f"(company {company.name}, url {url})"
+            )
+
+        parser_fn, expects_bytes = parser_spec
+        source_name = f"{AUTO_SOURCE_PREFIX}{url}"
+
+        body: Union[str, bytes]
+        if expects_bytes:
+            body = (
+                raw if isinstance(raw, bytes) else raw.encode("utf-8", errors="replace")
+            )
+        else:
+            body = (
+                raw if isinstance(raw, str) else raw.decode("utf-8", errors="replace")
+            )
+
+        def _parse_and_enrich() -> List[ParsedPARequirement]:
+            reqs = parser_fn(body, source_name)
+            apply_enrichment(reqs, enrichment_for_host(urlparse(url).hostname or ""))
+            return reqs
+
+        return await sync_to_async(_parse_and_enrich, thread_sensitive=False)()
+
+    async def _get_content(self, url: str) -> "tuple[str, Union[str, bytes]]":
+        """Download ``url``; return ``(content_type, body)``."""
+        if self._session is None:
+            raise RuntimeError(
+                "PaRequirementsFetcher must be used as 'async with PaRequirementsFetcher()'"
+            )
+        headers = {
+            "User-Agent": "fighthealthinsurance-pa-ingest/1.0",
+            "Accept": (
+                "text/html,application/xhtml+xml,application/pdf,"
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,*/*"
+            ),
+        }
+        async with self._session.get(
+            url, headers=headers, allow_redirects=True
+        ) as resp:
+            resp.raise_for_status()
+            content_type = resp.content_type or ""
+            data = await resp.content.read(self._max_bytes + 1)
+            if len(data) > self._max_bytes:
+                raise ValueError(
+                    f"PA requirement doc at {url} exceeded {self._max_bytes} bytes"
+                )
+
+            if content_type.startswith("text/"):
+                encoding = resp.charset or "utf-8"
+                return content_type, data.decode(encoding, errors="replace")
+            return content_type, data
+
     @staticmethod
     def _upsert_rows(
-        company: InsuranceCompany, rows: List[Dict[str, Any]], alias: str
-    ) -> Tuple[List[int], int]:
-        """Upsert each row; return ``(pks_seen_this_run, count)``.
+        company: InsuranceCompany,
+        parsed: List[ParsedPARequirement],
+        source_name: str,
+    ) -> "tuple[List[int], int]":
+        """Upsert parsed rows; return ``(pks_seen_this_run, written)``.
 
-        Always stamps ``source_document`` with an ``[ingest:<alias>]``
-        marker (appending to whatever string the parser supplied) so
-        ``_retire_missing`` can identify ingestion-owned rows without
-        relying on parser authors to remember the convention.
+        Keys each row on the same tuple ``lookup_pa_requirements`` queries
+        on (see ``PayerPriorAuthRequirement.UPSERT_KEY_FIELDS``) so re-running
+        an ingest produces no duplicates. A re-fetched row that was
+        previously soft-retired has its ``end_date`` cleared so it becomes
+        current again.
+
+        Manual-row protection: if a row with the same scoping key already
+        exists and is NOT auto-ingested (no ``"auto:"`` prefix on
+        ``source_document``), we leave it alone — admin / fixture-seeded
+        rows are authoritative and an auto-ingest must never overwrite
+        them.
         """
+        valid_lobs = {choice[0] for choice in LineOfBusiness.choices}
         seen: List[int] = []
-        marker = f"[ingest:{alias}]"
-        for row in rows:
+
+        for req in parsed:
+            code = (req.cpt_hcpcs_code or "").upper()
+            range_start = (req.code_range_start or "").upper()
+            range_end = (req.code_range_end or "").upper()
+            if not code and not (range_start and range_end):
+                continue
+
+            lob = req.line_of_business or LineOfBusiness.ALL
+            if lob not in valid_lobs:
+                lob = LineOfBusiness.ALL
+
             key = {
                 "insurance_company": company,
-                # The model field uses ``choices`` with no blank-allowed
-                # option; default to ALL so parser output that omits a
-                # LOB still passes ``full_clean()``.
-                "line_of_business": row.get("line_of_business") or LineOfBusiness.ALL,
-                "state": row.get("state", ""),
-                "cpt_hcpcs_code": row.get("cpt_hcpcs_code", ""),
-                "code_range_start": row.get("code_range_start", ""),
-                "code_range_end": row.get("code_range_end", ""),
+                "line_of_business": lob,
+                "state": (req.state or "")[:2].upper(),
+                "cpt_hcpcs_code": code,
+                "code_range_start": range_start,
+                "code_range_end": range_end,
             }
-            defaults = {k: v for k, v in row.items() if k not in _UPSERT_KEY_FIELDS}
-            # A re-fetched row that was previously soft-retired is now
-            # current again; clear end_date unless the parser explicitly
-            # set one.
-            defaults.setdefault("end_date", None)
-            base_source = defaults.get("source_document", "") or ""
-            if marker not in base_source:
-                defaults["source_document"] = (
-                    f"{base_source} {marker}".strip() if base_source else marker
-                )
+
+            # Skip if a manually-curated row already owns this key.
+            manual_row_exists = (
+                PayerPriorAuthRequirement.objects.filter(**key)
+                .exclude(source_document__startswith=AUTO_SOURCE_PREFIX)
+                .exists()
+            )
+            if manual_row_exists:
+                continue
+
+            defaults = {
+                "code_description": req.code_description[:500],
+                "requires_pa": req.requires_pa,
+                "notification_only": req.notification_only,
+                "pa_category": req.pa_category[:200],
+                "criteria_reference": req.criteria_reference[:500],
+                "criteria_url": req.criteria_url[:200],
+                "submission_channel": req.submission_channel[:500],
+                "notes": req.notes[:1000],
+                "source_document": source_name[:300],
+                # Clear any prior end_date — this row is current again.
+                "end_date": None,
+            }
             obj, _ = PayerPriorAuthRequirement.objects.update_or_create(
                 **key, defaults=defaults
             )
@@ -236,17 +292,18 @@ class PaRequirementsFetcher:
 
     @staticmethod
     def _retire_missing(company: InsuranceCompany, seen_pks: List[int]) -> int:
-        """Soft-retire rows for this carrier that weren't seen this run.
+        """Soft-retire ``auto:``-owned rows absent from this run.
 
-        Operates only on rows whose ``source_document`` indicates an
-        ingestion-owned origin (looking for the ``[ingest:...]`` marker
-        the upsert path writes), so manually-curated and fixture-loaded
-        rows are never touched.
+        Operates only on rows whose ``source_document`` starts with
+        ``"auto:"`` so manually-curated and fixture-loaded rows are never
+        touched. Setting ``end_date=today`` rather than deleting preserves
+        historical lookups: a denial with a past ``denial_date`` can still
+        resolve to the rule that applied at the time.
         """
         today = datetime.date.today()
         qs = (
             PayerPriorAuthRequirement.objects.filter(insurance_company=company)
-            .filter(source_document__contains="[ingest:")
+            .filter(source_document__startswith=AUTO_SOURCE_PREFIX)
             .exclude(pk__in=seen_pks)
             .filter(end_date__isnull=True)
         )

@@ -552,6 +552,35 @@ class InsuranceCompany(models.Model):
         help_text="Short description of how this payer's medical policies are used / what they assert (e.g., medical-necessity criteria, experimental/investigational determinations).",
     )
 
+    # Prior authorization requirement list — a separate published document
+    # (often an Excel spreadsheet, PDF, or HTML table) that lists which
+    # CPT/HCPCS codes require prior authorization. Distinct from the
+    # medical-policy index above, which links to coverage-criteria PDFs.
+    pa_requirement_list_url = models.URLField(
+        blank=True,
+        help_text=(
+            "URL to the payer's published prior-authorization requirement list "
+            "(e.g., a downloadable Excel/PDF/HTML table of CPT/HCPCS codes that "
+            "require PA). Leave blank when no public list is available."
+        ),
+    )
+    pa_requirement_list_url_is_parseable = models.BooleanField(
+        default=False,
+        help_text=(
+            "True when a registered parser exists for this URL's host/format and "
+            "the document can be auto-fetched and ingested into "
+            "PayerPriorAuthRequirement rows. Set False for search portals or "
+            "documents that require interactive navigation."
+        ),
+    )
+    pa_requirement_list_notes = models.TextField(
+        blank=True,
+        help_text=(
+            "Human-readable notes about the PA requirement list: what lines of "
+            "business it covers, how often it is updated, known parsing quirks, etc."
+        ),
+    )
+
     class Meta:
         verbose_name_plural = "Insurance Companies"
         ordering = ["name"]
