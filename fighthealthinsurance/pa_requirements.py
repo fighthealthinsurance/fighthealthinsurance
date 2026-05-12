@@ -22,6 +22,7 @@ shows code 95810 requires PA via UHCprovider.com").
 from __future__ import annotations
 
 import re
+import time
 from datetime import date
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
@@ -142,6 +143,17 @@ def resolve_insurance_company_by_name(
     mis-resolve closely-named carriers (e.g. "UnitedHealthcare Community
     Plan" should NOT match an alt-name of "UHC" registered against a
     different carrier just because the substring appears).
+
+    Query strategy: the canonical-name path is a single indexed lookup.
+    The alt-name fallback pushes a substring filter
+    (``alt_names__icontains``) to the database so we don't pull every
+    company into Python just to compare strings; the line-exact check
+    still happens in Python to preserve the strict "one alt-name line
+    must equal the payer string" semantics. The regex fallback excludes
+    rows with an empty ``regex`` column at the database level, then
+    applies each surviving pattern in Python. Fallback paths emit
+    ``logger.debug`` timing so we can observe how often each path is
+    taken in production.
     """
     if not payer:
         return None
@@ -155,24 +167,51 @@ def resolve_insurance_company_by_name(
         return company
 
     payer_lower = payer_clean.lower()
-    candidates = InsuranceCompany.objects.exclude(alt_names="")
-    for candidate in candidates.iterator():
+
+    # ``logger.opt(lazy=True)`` skips the format-string interpolation and
+    # the ``perf_counter`` diff entirely when the DEBUG sink is filtered
+    # out, so the instrumentation costs ~one ``perf_counter`` call per
+    # resolve invocation in production rather than building a formatted
+    # message that's thrown away.
+    alt_start = time.perf_counter()
+    alt_candidates = InsuranceCompany.objects.exclude(alt_names="").filter(
+        alt_names__icontains=payer_clean
+    )
+    for candidate in alt_candidates.iterator():
         if not candidate.alt_names:
             continue
         for alt in candidate.alt_names.splitlines():
-            alt = alt.strip().lower()
-            if alt and alt == payer_lower:
+            alt_norm = alt.strip().lower()
+            if alt_norm and alt_norm == payer_lower:
+                logger.opt(lazy=True).debug(
+                    "resolve_insurance_company_by_name: alt-name fallback hit "
+                    "for {!r} -> company id {} in {:.1f} ms",
+                    lambda p=payer_clean: p,
+                    lambda c=candidate: c.id,
+                    lambda s=alt_start: (time.perf_counter() - s) * 1000,
+                )
                 return candidate
+    logger.opt(lazy=True).debug(
+        "resolve_insurance_company_by_name: alt-name fallback miss for "
+        "{!r} in {:.1f} ms",
+        lambda p=payer_clean: p,
+        lambda s=alt_start: (time.perf_counter() - s) * 1000,
+    )
 
     # Last resort: try the compiled ``regex`` field on each company,
     # excluding any candidate whose ``negative_regex`` matches. Mirrors
     # the established pattern in
     # ``common_view_logic.AppealsBackendHelper._match_insurance_company``
-    # so the two resolvers stay consistent.
-    for candidate in InsuranceCompany.objects.iterator():
+    # so the two resolvers stay consistent. We push the empty-regex
+    # filter to the database so Python only iterates rows that have a
+    # pattern worth running.
+    regex_start = time.perf_counter()
+    regex_scanned = 0
+    for candidate in InsuranceCompany.objects.exclude(regex="").iterator():
         regex = getattr(candidate, "regex", None)
         if not regex or not getattr(regex, "pattern", ""):
             continue
+        regex_scanned += 1
         try:
             if not regex.search(payer_clean):
                 continue
@@ -183,12 +222,27 @@ def resolve_insurance_company_by_name(
                 and negative.search(payer_clean)
             ):
                 continue
+            logger.opt(lazy=True).debug(
+                "resolve_insurance_company_by_name: regex fallback hit for "
+                "{!r} -> company id {} after {} pattern(s) in {:.1f} ms",
+                lambda p=payer_clean: p,
+                lambda c=candidate: c.id,
+                lambda n=regex_scanned: n,
+                lambda s=regex_start: (time.perf_counter() - s) * 1000,
+            )
             return candidate
         except Exception as e:
             logger.opt(exception=True).debug(
                 f"Error applying regex for company {candidate.id}: {e}"
             )
             continue
+    logger.opt(lazy=True).debug(
+        "resolve_insurance_company_by_name: regex fallback miss for "
+        "{!r} after {} pattern(s) in {:.1f} ms",
+        lambda p=payer_clean: p,
+        lambda n=regex_scanned: n,
+        lambda s=regex_start: (time.perf_counter() - s) * 1000,
+    )
     return None
 
 

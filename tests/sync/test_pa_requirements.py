@@ -17,6 +17,7 @@ from fighthealthinsurance.pa_requirements import (
     get_pa_questions_for_denial,
     infer_line_of_business,
     lookup_pa_requirements,
+    resolve_insurance_company_by_name,
 )
 
 
@@ -641,3 +642,172 @@ class GetPaQuestionsForDenialTests(TestCase):
             insurance_company_obj=self.uhc,
         )
         self.assertEqual(get_pa_questions_for_denial(denial), [])
+
+
+class ResolveInsuranceCompanyByNameTests(TestCase):
+    """Parity tests for ``resolve_insurance_company_by_name``.
+
+    The resolver has three stages (exact name, alt-name line, regex with
+    negative-regex guard). After we pushed alt-name and empty-regex filters
+    to the database to avoid full-table iterator scans, these tests pin the
+    matching semantics so future regressions surface immediately.
+    """
+
+    def setUp(self):
+        self.uhc = InsuranceCompany.objects.create(
+            name="UnitedHealthcare",
+            alt_names="UHC\nUnited Healthcare\nUnited Health",
+            regex=r"(united\s*health\s*care|united\s*health|uhc)",
+            negative_regex=r"community\s*plan",
+        )
+        self.anthem = InsuranceCompany.objects.create(
+            name="Anthem Blue Cross Blue Shield",
+            alt_names="Anthem\nBCBS\nElevance Health",
+            regex=r"(anthem|elevance\s*health)",
+            negative_regex=r"empire",
+        )
+        self.kaiser = InsuranceCompany.objects.create(
+            name="Kaiser Permanente",
+            # Intentionally no alt_names and no regex — guards that the
+            # alt-name and regex stages cope with empty fields without
+            # raising and without claiming a spurious match.
+            alt_names="",
+            regex=r"",
+        )
+
+    def test_returns_none_for_empty_input(self):
+        self.assertIsNone(resolve_insurance_company_by_name(None))
+        self.assertIsNone(resolve_insurance_company_by_name(""))
+        self.assertIsNone(resolve_insurance_company_by_name("   "))
+
+    def test_returns_none_when_no_carrier_matches(self):
+        self.assertIsNone(
+            resolve_insurance_company_by_name("Some Unknown Carrier Inc.")
+        )
+
+    def test_exact_name_match_case_insensitive(self):
+        self.assertEqual(
+            resolve_insurance_company_by_name("unitedhealthcare"),
+            self.uhc,
+        )
+        self.assertEqual(
+            resolve_insurance_company_by_name("ANTHEM BLUE CROSS BLUE SHIELD"),
+            self.anthem,
+        )
+
+    def test_exact_name_match_strips_whitespace(self):
+        self.assertEqual(
+            resolve_insurance_company_by_name("  UnitedHealthcare  "),
+            self.uhc,
+        )
+
+    def test_alt_name_exact_line_match(self):
+        # "UHC" is the first line of UnitedHealthcare's alt_names and
+        # "BCBS" is the second line of Anthem's alt_names — both must
+        # resolve via the alt-name stage even though the canonical names
+        # don't iexact-match.
+        self.assertEqual(resolve_insurance_company_by_name("UHC"), self.uhc)
+        self.assertEqual(resolve_insurance_company_by_name("BCBS"), self.anthem)
+
+    def test_alt_name_match_is_case_insensitive(self):
+        self.assertEqual(resolve_insurance_company_by_name("uhc"), self.uhc)
+        self.assertEqual(resolve_insurance_company_by_name("Bcbs"), self.anthem)
+
+    def test_alt_name_substring_does_not_match(self):
+        # The alt-name stage requires full-line equality; substring hits
+        # against an alt-name line must not resolve.
+        #
+        # Add a carrier with a strict alt-name list and no regex so we can
+        # exercise the alt-name stage in isolation — without this guard
+        # ``icontains`` would let a payer string that is merely a substring
+        # of an alt-name line resolve through.
+        InsuranceCompany.objects.create(
+            name="Strict Alt Carrier",
+            alt_names="ALPHA\nBETA",
+            regex=r"",
+        )
+        # "ALPH" is a strict substring of the line "ALPHA" but not equal to
+        # it after strip+lower. Must not resolve.
+        self.assertIsNone(resolve_insurance_company_by_name("ALPH"))
+        # And a payer string that is a *superset* of an alt-name line must
+        # also not resolve via the alt-name stage.
+        self.assertIsNone(resolve_insurance_company_by_name("ALPHAbet"))
+
+    def test_alt_name_lookup_ignores_blank_alt_lines(self):
+        # Carriers with empty alt_names columns must not crash the lookup.
+        # Kaiser has alt_names="" so the DB-side icontains filter excludes it
+        # without raising. This pins the empty-string handling we rely on.
+        self.assertIsNone(resolve_insurance_company_by_name("Random Free Text"))
+
+    def test_regex_fallback_matches_pattern(self):
+        # "United Health Care" doesn't match any exact name or alt-name line,
+        # but it does match the UHC regex pattern.
+        self.assertEqual(
+            resolve_insurance_company_by_name("United Health Care of Texas"),
+            self.uhc,
+        )
+
+    def test_regex_negative_excludes_match(self):
+        # "United Health Community Plan" matches UHC's positive regex but
+        # also matches its negative_regex (``community\s*plan``), so the
+        # resolver must NOT return UHC.
+        self.assertIsNone(
+            resolve_insurance_company_by_name("United Health Community Plan")
+        )
+
+    def test_regex_fallback_skips_empty_regex_rows(self):
+        # Kaiser has no regex pattern — the regex stage must skip it (and
+        # any other empty-regex rows) without raising and without claiming a
+        # match.
+        self.assertIsNone(resolve_insurance_company_by_name("Kaiser Permanente Foo"))
+
+    def test_alt_name_stage_does_not_misroute_to_near_company(self):
+        # Add a closely-named carrier that would tempt a substring-based
+        # alt-name match. Verifying that the resolver still picks the
+        # canonical owner of the alt-name line "UHC" rather than the
+        # near-name carrier guards against the kind of cross-payer bleed
+        # the strict alt-name semantics were designed to prevent.
+        InsuranceCompany.objects.create(
+            name="UHC Community Plan",
+            alt_names="UHC Community\nUHC CP",
+            # Intentionally no regex so we know any match came via the
+            # alt-name stage, not regex.
+            regex=r"",
+        )
+        # Bare "UHC" still belongs to the original UnitedHealthcare carrier
+        # because that's the row whose alt_names line is exactly "UHC".
+        self.assertEqual(resolve_insurance_company_by_name("UHC"), self.uhc)
+
+    def test_alt_name_handles_special_like_chars(self):
+        # LIKE wildcards (``%`` and ``_``) must not be interpreted as
+        # wildcards inside ``__icontains``. If they were, a payer string
+        # containing them would either over-match or fail to round-trip,
+        # so this pins the escape behavior we rely on at the DB layer.
+        InsuranceCompany.objects.create(
+            name="Wildcard Carrier",
+            alt_names="50%_Carrier",
+            regex=r"",
+        )
+        self.assertEqual(
+            resolve_insurance_company_by_name("50%_Carrier").name,
+            "Wildcard Carrier",
+        )
+        self.assertIsNone(resolve_insurance_company_by_name("anything"))
+
+    def test_exact_name_preferred_over_alt_name_collision(self):
+        # If "Anthem" is also some other carrier's canonical name, the
+        # exact-name stage must win over an alt-name line on a different
+        # carrier. This pins the stage ordering required to avoid
+        # mis-resolving when a name happens to collide with an alt-name.
+        other = InsuranceCompany.objects.create(
+            name="Anthem",
+            alt_names="",
+            regex=r"",
+        )
+        self.assertEqual(resolve_insurance_company_by_name("Anthem"), other)
+        # The original "Anthem" alt-name line on Anthem BCBS is still
+        # reachable when the canonical name doesn't iexact-match anything.
+        self.assertEqual(
+            resolve_insurance_company_by_name("BCBS"),
+            self.anthem,
+        )
