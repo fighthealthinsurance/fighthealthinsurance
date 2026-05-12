@@ -94,8 +94,11 @@ async def log_zero_appeal_diagnostics(
     denial_attempts: Optional[int] = None
     try:
         if denial_id_int is not None:
+            # `denial_id` is Denial's PK so `for_denial_id=N` matches
+            # the FK column directly. Using `for_denial__denial_id=`
+            # would add a needless JOIN to the diagnostic path.
             persisted_count = await ProposedAppeal.objects.filter(
-                for_denial__denial_id=denial_id_int
+                for_denial_id=denial_id_int
             ).acount()
             denial = await Denial.objects.filter(denial_id=denial_id_int).afirst()
             if denial is not None:
@@ -160,7 +163,12 @@ class StreamingAppealsBackend(AsyncWebsocketConsumer):
             data = json.loads(text_data)
         except json.JSONDecodeError as e:
             logger.warning(f"Invalid JSON received in appeals websocket: {e}")
-            await self.send(json.dumps({"error": "Invalid JSON format"}))
+            # Match the streaming protocol shape so the client's
+            # type==='error' branch in processResponseChunk fires
+            # instead of treating this as an unrecognized frame.
+            await self.send(
+                json.dumps({"type": "error", "message": "Invalid JSON format"})
+            )
             await self.close()
             return
         # Test hook: simulate a silent WS death so the JS client falls

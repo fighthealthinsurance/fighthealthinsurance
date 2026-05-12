@@ -179,7 +179,7 @@ async def test_int_denial_id_passes_through_to_filter():
             last_status_phase=None,
             transport="websocket",
         )
-    objects.filter.assert_called_once_with(for_denial__denial_id=42)
+    objects.filter.assert_called_once_with(for_denial_id=42)
 
 
 @pytest.mark.asyncio
@@ -196,7 +196,7 @@ async def test_str_denial_id_is_coerced_to_int():
             last_status_phase=None,
             transport="websocket",
         )
-    objects.filter.assert_called_once_with(for_denial__denial_id=42)
+    objects.filter.assert_called_once_with(for_denial_id=42)
 
 
 @pytest.mark.asyncio

@@ -469,9 +469,10 @@ class StreamingAppealsRestFallbackTest(APITestCase):
     def _drain_streaming_response(response) -> str:
         """Drain a StreamingHttpResponse with an async iterator body.
 
-        The view is async, so streaming_content is an async iterator —
-        b"".join() can't consume it directly. Use async_to_sync rather
-        than asyncio.get_event_loop() because the latter raises
+        The view itself is sync but its StreamingHttpResponse wraps an
+        async generator as `streaming_content`, so b"".join() can't
+        consume it directly. Use async_to_sync rather than
+        asyncio.get_event_loop() because the latter raises
         RuntimeError when a prior test in the suite has closed the
         default loop (Python 3.12+ behavior).
         """
