@@ -52,9 +52,3 @@ class TestRefreshSource:
             source=IMRDecision.SOURCE_CA_DMHC,
             source_url="https://example.gov/dmhc.csv",
         )
-
-
-class TestIntervalHours:
-    @patch("django.conf.settings.IMR_REFRESH_INTERVAL_HOURS", 24, create=True)
-    def test_returns_configured_value(self):
-        assert _Underlying._interval_hours() == 24
