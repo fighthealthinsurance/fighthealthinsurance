@@ -126,8 +126,12 @@ def relaunch_actors(force: bool = False) -> Dict[str, Any]:
     from fighthealthinsurance.email_polling_actor_ref import email_polling_actor_ref
     from fighthealthinsurance.fax_polling_actor_ref import fax_polling_actor_ref
     from fighthealthinsurance.imr_refresh_actor_ref import imr_refresh_actor_ref
-    from fighthealthinsurance.pa_requirement_refresh_actor_ref import pa_requirement_refresh_actor_ref
-    from fighthealthinsurance.payer_policy_refresh_actor_ref import payer_policy_refresh_actor_ref
+    from fighthealthinsurance.pa_requirement_refresh_actor_ref import (
+        pa_requirement_refresh_actor_ref,
+    )
+    from fighthealthinsurance.payer_policy_refresh_actor_ref import (
+        payer_policy_refresh_actor_ref,
+    )
     from fighthealthinsurance.ucr_refresh_actor_ref import ucr_refresh_actor_ref
 
     results: Dict[str, Dict[str, Any]] = {

@@ -102,7 +102,9 @@ class Command(BaseCommand):
             self.stdout.write(self.style.ERROR(f"Parse failed for {company.name}: {e}"))
             return {"fetched": 0, "failed": 1, "entries": 0}
 
-        self.stdout.write(f"[dry-run] {company.name}: parsed {len(reqs)} requirement(s)")
+        self.stdout.write(
+            f"[dry-run] {company.name}: parsed {len(reqs)} requirement(s)"
+        )
         for r in reqs[:5]:
             label = r.cpt_hcpcs_code or f"{r.code_range_start}-{r.code_range_end}"
             self.stdout.write(f"  {label}: {r.code_description[:60]}")

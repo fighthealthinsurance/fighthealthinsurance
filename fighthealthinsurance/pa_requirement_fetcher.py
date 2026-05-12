@@ -124,12 +124,18 @@ class PARequirementFetcher:
         source_name = f"{AUTO_SOURCE_PREFIX}{url}"
 
         if expects_bytes:
-            body = raw if isinstance(raw, bytes) else raw.encode("utf-8", errors="replace")
+            body = (
+                raw if isinstance(raw, bytes) else raw.encode("utf-8", errors="replace")
+            )
         else:
-            body = raw if isinstance(raw, str) else raw.decode("utf-8", errors="replace")
+            body = (
+                raw if isinstance(raw, str) else raw.decode("utf-8", errors="replace")
+            )
 
         requirements = parser_fn(body, source_name)
-        apply_enrichment(requirements, enrichment_for_host(urlparse(url).hostname or ""))
+        apply_enrichment(
+            requirements, enrichment_for_host(urlparse(url).hostname or "")
+        )
         return requirements
 
     async def ingest_company(self, company: InsuranceCompany) -> int:
@@ -153,12 +159,16 @@ class PARequirementFetcher:
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,*/*"
             ),
         }
-        async with self._session.get(url, headers=headers, allow_redirects=True) as resp:
+        async with self._session.get(
+            url, headers=headers, allow_redirects=True
+        ) as resp:
             resp.raise_for_status()
             content_type = resp.content_type or ""
             data = await resp.content.read(self._max_bytes + 1)
             if len(data) > self._max_bytes:
-                raise ValueError(f"PA requirement doc at {url} exceeded {self._max_bytes} bytes")
+                raise ValueError(
+                    f"PA requirement doc at {url} exceeded {self._max_bytes} bytes"
+                )
 
             if content_type.startswith("text/"):
                 encoding = resp.charset or "utf-8"
@@ -190,7 +200,9 @@ class PARequirementFetcher:
             to_create: List[PayerPriorAuthRequirement] = []
             for req in parsed:
                 code = req.cpt_hcpcs_code.upper() if req.cpt_hcpcs_code else ""
-                range_start = req.code_range_start.upper() if req.code_range_start else ""
+                range_start = (
+                    req.code_range_start.upper() if req.code_range_start else ""
+                )
                 range_end = req.code_range_end.upper() if req.code_range_end else ""
                 if not code and not (range_start and range_end):
                     continue

@@ -277,7 +277,10 @@ def parse_html_pa_table(html: str, source_name: str = "") -> List[ParsedPARequir
         if thead:
             header_row = thead.find("tr")
             if header_row:
-                headers = [th.get_text(" ", strip=True) for th in header_row.find_all(["th", "td"])]
+                headers = [
+                    th.get_text(" ", strip=True)
+                    for th in header_row.find_all(["th", "td"])
+                ]
 
         tbody = table.find("tbody") or table
         for tr in tbody.find_all("tr"):
@@ -294,7 +297,9 @@ def parse_html_pa_table(html: str, source_name: str = "") -> List[ParsedPARequir
         if not headers or not rows_data:
             continue
         col_map = _map_columns(headers)
-        out.extend(_rows_to_requirements(col_map, rows_data, source_document=source_name))
+        out.extend(
+            _rows_to_requirements(col_map, rows_data, source_document=source_name)
+        )
 
     return out
 
@@ -304,7 +309,9 @@ def parse_html_pa_table(html: str, source_name: str = "") -> List[ParsedPARequir
 # ---------------------------------------------------------------------------
 
 
-def parse_pdf_pa_list(pdf_bytes: bytes, source_name: str = "") -> List[ParsedPARequirement]:
+def parse_pdf_pa_list(
+    pdf_bytes: bytes, source_name: str = ""
+) -> List[ParsedPARequirement]:
     """
     Extract PA requirements from a PDF document.
 
@@ -333,7 +340,9 @@ def parse_pdf_pa_list(pdf_bytes: bytes, source_name: str = "") -> List[ParsedPAR
                         col_map = _map_columns(headers)
                         if any(v == "code" for v in col_map.values()):
                             data_rows = [[str(c or "") for c in r] for r in rows[1:]]
-                            out.extend(_rows_to_requirements(col_map, data_rows, source_name))
+                            out.extend(
+                                _rows_to_requirements(col_map, data_rows, source_name)
+                            )
                             continue
                 text = page.get_text()
                 # Dedupe per-page so a 100-page PDF doesn't accumulate
@@ -341,7 +350,9 @@ def parse_pdf_pa_list(pdf_bytes: bytes, source_name: str = "") -> List[ParsedPAR
                 # the final dedup at the bottom.
                 out.extend(_dedupe(_scan_text_for_codes(text, source_name)))
     except Exception:
-        logger.opt(exception=True).warning(f"Failed to parse PDF PA list: {source_name!r}")
+        logger.opt(exception=True).warning(
+            f"Failed to parse PDF PA list: {source_name!r}"
+        )
 
     return _dedupe(out)
 
@@ -362,7 +373,10 @@ def _scan_text_for_codes(
             ctx_lower = context.lower()
             requires_pa = True
             notification_only = False
-            if any(neg in ctx_lower for neg in ("not required", "no pa", "excluded", "does not require")):
+            if any(
+                neg in ctx_lower
+                for neg in ("not required", "no pa", "excluded", "does not require")
+            ):
                 requires_pa = False
             elif "notification" in ctx_lower and "authorization" not in ctx_lower:
                 notification_only = True
@@ -400,7 +414,9 @@ def parse_excel_pa_list(
 
     out: List[ParsedPARequirement] = []
     try:
-        wb = openpyxl.load_workbook(io.BytesIO(excel_bytes), read_only=True, data_only=True)
+        wb = openpyxl.load_workbook(
+            io.BytesIO(excel_bytes), read_only=True, data_only=True
+        )
         for sheet in wb.worksheets:
             rows = list(sheet.iter_rows(values_only=True))
             if not rows:
@@ -409,9 +425,10 @@ def parse_excel_pa_list(
             header_row_idx = None
             for ri, row in enumerate(rows[:10]):
                 row_texts = [str(c or "").strip() for c in row]
-                if sum(
-                    1 for t in row_texts if _normalize_header(t) in _COLUMN_ALIASES
-                ) >= 1:
+                if (
+                    sum(1 for t in row_texts if _normalize_header(t) in _COLUMN_ALIASES)
+                    >= 1
+                ):
                     header_row_idx = ri
                     break
             if header_row_idx is None:
@@ -432,11 +449,15 @@ def parse_excel_pa_list(
     return _dedupe(out)
 
 
-def _parse_excel_pandas(excel_bytes: bytes, source_name: str = "") -> List[ParsedPARequirement]:
+def _parse_excel_pandas(
+    excel_bytes: bytes, source_name: str = ""
+) -> List[ParsedPARequirement]:
     try:
         import pandas as pd  # type: ignore[import]
     except ImportError:
-        logger.warning("Neither openpyxl nor pandas is available; cannot parse Excel PA list")
+        logger.warning(
+            "Neither openpyxl nor pandas is available; cannot parse Excel PA list"
+        )
         return []
     out: List[ParsedPARequirement] = []
     try:
@@ -451,11 +472,15 @@ def _parse_excel_pandas(excel_bytes: bytes, source_name: str = "") -> List[Parse
             rows_str = [[str(c) for c in row] for row in rows]
             out.extend(_rows_to_requirements(col_map, rows_str, source_name))
     except Exception:
-        logger.opt(exception=True).warning(f"pandas Excel parse failed for {source_name!r}")
+        logger.opt(exception=True).warning(
+            f"pandas Excel parse failed for {source_name!r}"
+        )
     return _dedupe(out)
 
 
-def parse_csv_pa_list(csv_bytes: bytes, source_name: str = "") -> List[ParsedPARequirement]:
+def parse_csv_pa_list(
+    csv_bytes: bytes, source_name: str = ""
+) -> List[ParsedPARequirement]:
     """Parse a CSV file with a header row containing CPT/HCPCS code columns."""
     import csv
 

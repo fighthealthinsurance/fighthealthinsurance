@@ -55,7 +55,9 @@ class IMRRefreshActor:
                 continue
 
             secs = seconds_until_next_1am_pacific()
-            self._logger.info(f"IMRRefreshActor sleeping {secs:.0f}s until next 1 AM Pacific")
+            self._logger.info(
+                f"IMRRefreshActor sleeping {secs:.0f}s until next 1 AM Pacific"
+            )
             await asyncio.sleep(secs)
 
         self._logger.warning("IMRRefreshActor stopped running")

@@ -7,8 +7,12 @@ from fighthealthinsurance.chooser_refill_actor_ref import chooser_refill_actor_r
 from fighthealthinsurance.email_polling_actor_ref import email_polling_actor_ref
 from fighthealthinsurance.fax_polling_actor_ref import fax_polling_actor_ref
 from fighthealthinsurance.imr_refresh_actor_ref import imr_refresh_actor_ref
-from fighthealthinsurance.pa_requirement_refresh_actor_ref import pa_requirement_refresh_actor_ref
-from fighthealthinsurance.payer_policy_refresh_actor_ref import payer_policy_refresh_actor_ref
+from fighthealthinsurance.pa_requirement_refresh_actor_ref import (
+    pa_requirement_refresh_actor_ref,
+)
+from fighthealthinsurance.payer_policy_refresh_actor_ref import (
+    payer_policy_refresh_actor_ref,
+)
 from fighthealthinsurance.ucr_refresh_actor_ref import ucr_refresh_actor_ref
 
 logger.info("Waiting for ray to (probably) launch.")
@@ -44,7 +48,9 @@ while not success and attempt < 10:
         logger.info(f"Launched payer policy refresh actor {pprar}")
         logger.info("Checking that polling tasks are still running")
         time.sleep(10)
-        ready, wait = ray.wait([etask, ftask, ctask, itask, utask, ptask, pptask], timeout=10)
+        ready, wait = ray.wait(
+            [etask, ftask, ctask, itask, utask, ptask, pptask], timeout=10
+        )
         logger.info(f"Finished {ready}")
         result = ray.get(ready)
         logger.info(f"Results: {result}")
