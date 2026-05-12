@@ -864,7 +864,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
             request.session.create()
         session_key = request.session.session_key if request.session else None
 
-        logger.debug(f"Creating professional user (session={session_key})")
+        logger.debug(f"Creating professional user (has_session={bool(session_key)})")
 
         if not validate_password(user_signup_info["password"]):
             return Response(

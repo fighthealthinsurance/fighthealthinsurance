@@ -644,7 +644,9 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                             if updated:
                                 await chat.asave()
                                 logger.info(
-                                    f"Chat {chat_id}: stored denied_item={denied_item!r} denied_reason={denied_reason!r}"
+                                    f"Chat {chat_id}: stored denied item/reason "
+                                    f"(item_len={len(denied_item) if denied_item else 0}, "
+                                    f"reason_len={len(denied_reason) if denied_reason else 0})"
                                 )
                             else:
                                 logger.info(

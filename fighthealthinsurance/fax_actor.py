@@ -172,7 +172,7 @@ class FaxActor:
         fax.save()
         send_fax_status_notification(fax, fax_success, missing_destination)
         self._logger.debug(
-            f"Fax {fax} sent (success={fax_success}); checking user notification"
+            f"Fax uuid={fax.uuid} sent (success={fax_success}); checking user notification"
         )
         if fax.professional:
             appeal = fax.for_appeal
@@ -239,7 +239,7 @@ class FaxActor:
         if fax.name is not None and len(fax.name) > 2:
             extra += f"This fax is sent on behalf of {fax.name}."
         self._update_fax_for_sending(fax)
-        self._logger.debug(f"Kicking off fax sending for {fax}")
+        self._logger.debug(f"Kicking off fax sending for uuid={fax.uuid}")
         fax_sent = False
         try:
             fax_sent = asyncio.run(

@@ -301,7 +301,10 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
         serializer = self.deserialize(data=request.data)
         serializer.is_valid(raise_exception=True)
         serializer_data = serializer.validated_data
-        logger.debug(f"perform_create with data {serializer_data}")
+        logger.debug(
+            f"perform_create payload: keys={sorted(serializer_data.keys())} "
+            f"has_denial_id={bool(serializer_data.get('denial_id'))}"
+        )
         session_key = request.session.session_key or "no_session_key"
         if (
             "primary_professional" in serializer_data
