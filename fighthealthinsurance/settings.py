@@ -159,8 +159,6 @@ class Base(Configuration):
     EXTERNAL_STORAGE_LOCATION = "/external_data"
     EXTERNAL_STORAGE_LOCATION_B = "external_data_b"
 
-    NEWSLETTER_THUMBNAIL = "sorl-thumbnail"
-
     ALLOWED_HOSTS: list[str] = ["*"]
     USE_X_FORWARDED_HOST = True
 
@@ -200,7 +198,6 @@ class Base(Configuration):
         "fighthealthinsurance",
         "fhi_users",
         "charts",
-        "sorl.thumbnail",
         "easy_thumbnails",
         "cookie_consent",
         "compressor",
