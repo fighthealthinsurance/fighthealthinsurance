@@ -105,6 +105,7 @@ async def retry_llm_with_fallback(
     timeout: float = 35.0,
     status_callback: Optional[Callable[[str], Awaitable[None]]] = None,
     chat_history: Optional[List[Dict[str, str]]] = None,
+    user_message_for_scoring: Optional[str] = None,
 ) -> Tuple[Optional[str], Optional[str]]:
     """
     Retry LLM call with shortened context and fallback backends.
@@ -125,6 +126,10 @@ async def retry_llm_with_fallback(
         timeout: Timeout in seconds for retry attempts
         status_callback: Optional async callback for status messages
         chat_history: Current chat history for context-aware scoring
+        user_message_for_scoring: Raw user message used by repetition-penalty
+            scoring. Distinct from current_message, which may be wrapped with
+            intro-template content or the delete-data instruction. Defaults to
+            current_message when not provided.
 
     Returns:
         Tuple of (response_text, context_part) or (None, None) on failure
@@ -133,6 +138,12 @@ async def retry_llm_with_fallback(
         await status_callback("Retrying with optimized context...")
 
     logger.info("Primary attempt failed, retrying with compacted context")
+
+    scoring_message = (
+        user_message_for_scoring
+        if user_message_for_scoring is not None
+        else current_message
+    )
 
     # Build retry calls with shortened history and fallbacks
     retry_calls, retry_scores = build_retry_calls(
@@ -147,7 +158,7 @@ async def retry_llm_with_fallback(
 
     # Create simplified scorer for retries
     retry_scorer = create_simple_retry_scorer(
-        retry_scores, chat_history=chat_history, current_message=current_message
+        retry_scores, chat_history=chat_history, current_message=scoring_message
     )
 
     try:
