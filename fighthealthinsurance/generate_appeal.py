@@ -1657,17 +1657,15 @@ class AppealGenerator(object):
             ml_citations_context: Optional[List[str]] = None,
             prof_pov: bool = False,
         ) -> List[Future[Tuple[str, Optional[str]]]]:
-            logger.debug(f"Looking up on {model_name}")
             if model_name not in ml_router.models_by_name:
-                logger.debug(f"No backend for {model_name}")
+                logger.debug(f"get_model_result: no backend for {model_name}")
                 return []
             model_backends = ml_router.models_by_name[model_name]
             if prompt is None:
-                logger.debug(f"No prompt for {model_name} skipping")
+                logger.debug(f"get_model_result: no prompt for {model_name}, skipping")
                 return []
             for model in model_backends:
                 try:
-                    logger.debug(f"Getting result on {model} backend for {model_name}")
                     result = _get_model_result(
                         model=model,
                         prompt=prompt,
@@ -1682,8 +1680,8 @@ class AppealGenerator(object):
                     if result is not None:
                         return result
                 except Exception as e:
-                    logger.debug(f"Backend {model} failed {e}")
-            logger.debug(f"All backends for {model_name} failed")
+                    logger.debug(f"get_model_result: backend {model} failed: {e}")
+            logger.debug(f"get_model_result: all backends for {model_name} failed")
             return []
 
         def _get_model_result(
@@ -1850,9 +1848,8 @@ class AppealGenerator(object):
                     for model_name in model_names
                 ]
             )
-            logger.debug(f"Looking at provided medical reasons {medical_reasons}.")
+            logger.debug(f"Processing {len(medical_reasons)} medical necessity reasons")
             for reason in medical_reasons:
-                logger.debug(f"Using medical necessity reason {reason}")
                 appeal = template_generator.generate(reason)
                 initial_appeals.append(appeal)
         else:
@@ -1896,13 +1893,10 @@ class AppealGenerator(object):
         )
 
         appeals: Iterator[str] = as_available_nested(generated_text_futures)
-        logger.debug("Appeals iterator created")
         # Check and make sure we have some AI powered results
         try:
-            logger.debug("Getting first appeal from iterator")
             first = appeals.__next__()
             appeals = itertools.chain([first], appeals)
-            logger.debug("First appeal retrieved")
         except StopIteration:
             if backup_calls:
                 logger.warning("First group not successful, adding backup calls")
@@ -1912,9 +1906,7 @@ class AppealGenerator(object):
                     "First group not successful and no backup calls available"
                 )
                 appeals = iter([])
-        logger.debug("Appending initial appeals to iterator")
         appeals = itertools.chain(appeals, initial_appeals)
-        logger.debug("Returning appeals iterator")
         return appeals
 
     async def synthesize_appeals(

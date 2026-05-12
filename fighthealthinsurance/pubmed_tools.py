@@ -491,11 +491,12 @@ class PubMedTools(object):
                     break
 
                 # If no cache or cache error, fetch from PubMed API
-                logger.debug(f"Querying pubmed for query {query}")
                 pmids = await sync_to_async(pubmed_fetcher.pmids_for_query)(
                     query, since=since
                 )
-                logger.debug(f"Got back initial pmids {pmids}")
+                logger.debug(
+                    f"Pubmed query {query!r} returned {len(pmids) if pmids else 0} pmids"
+                )
                 # Reaching this line means metapub returned without raising:
                 # safe to persist whatever it returned (including []) so the
                 # next caller gets a cheap negative-cache hit for a couple of
@@ -876,7 +877,6 @@ class PubMedTools(object):
         """
         pmids: List[str] = []
         articles: List[PubMedMiniArticle] = []
-        logger.debug(f"Looking up pubmed articles...")
 
         # Re-fetch denial to ensure procedure/diagnosis/microsite_slug are current,
         # since this method may run in a fire-and-forget after the caller has moved on.
@@ -1106,9 +1106,6 @@ class PubMedTools(object):
                         )
                 # If we still don't have any articles (no selected PMIDs or couldn't find them), search for some
                 if not selected_pmids or len(selected_pmids) == 0:
-                    logger.debug(
-                        f"No pre-selected articles found, searching for PubMed articles"
-                    )
                     if not query or query.strip() == "":
                         return ""  # Return empty string if no query available
 
@@ -1121,7 +1118,6 @@ class PubMedTools(object):
 
                     selected_pmids = list(map(lambda x: x.pmid, possible_articles))
 
-                logger.debug(f"Updating denial to have some context selected...")
                 # Use aupdate instead of asave to avoid race conditions
                 await Denial.objects.filter(denial_id=denial.denial_id).aupdate(
                     pubmed_ids_json=selected_pmids
@@ -1134,7 +1130,8 @@ class PubMedTools(object):
                     )
                 ]
                 logger.debug(
-                    f"Found {len(articles)} pre-selected articles in the database"
+                    f"PubMed context for denial {denial.denial_id}: "
+                    f"{len(selected_pmids)} selected, {len(articles)} found in DB"
                 )
 
                 # If we couldn't find all the articles in the database, try to fetch them

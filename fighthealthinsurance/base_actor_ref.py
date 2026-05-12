@@ -4,6 +4,7 @@ from functools import cached_property
 from typing import Any, Optional, Tuple
 
 import ray
+from loguru import logger
 
 
 class BaseActorRef:
@@ -41,7 +42,7 @@ class BaseActorRef:
         if self.has_run_method:
             # Kick off the remote task
             remote_result = self._actor_instance.run.remote()
-            print(f"Remote run of {self.actor_name} actor {remote_result}")
+            logger.info(f"Remote run of {self.actor_name} actor {remote_result}")
             return (self._actor_instance, remote_result)
 
         return self._actor_instance

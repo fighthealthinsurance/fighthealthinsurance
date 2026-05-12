@@ -4,6 +4,8 @@ Payer-Policy Pre-fetch Actor Reference.
 Provides a cached reference to the payer-policy pre-fetch actor.
 """
 
+from loguru import logger
+
 from fighthealthinsurance.base_actor_ref import BaseActorRef
 from fighthealthinsurance.payer_policy_prefetch_actor import PayerPolicyPrefetchActor
 
@@ -24,7 +26,7 @@ class PayerPolicyPrefetchActorRef(BaseActorRef):
         """
         actor = self.get
         task = actor.prefetch_all.remote()
-        print(f"Started payer-policy pre-fetch task: {task}")
+        logger.info(f"Started payer-policy pre-fetch task: {task}")
 
         return (actor, task)
 

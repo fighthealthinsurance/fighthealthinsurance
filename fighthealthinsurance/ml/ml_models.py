@@ -954,10 +954,10 @@ Remember in the last three sentences GLP-1 is just an _example_ check what the u
         )
         # Just get the text response.
         if _is_verbose_logging():
-            logger.debug(f"Entity result: {result}")
+            logger.debug(f"Entity ({entity_type}) result: {result}")
         else:
             logger.debug(
-                f"Entity result length: {len(str(result)) if result else 0} chars"
+                f"Entity ({entity_type}) result: {len(str(result)) if result else 0} chars"
             )
         if result:
             if result[0]:
@@ -1131,17 +1131,16 @@ class RemoteModel(RemoteModelLike):
         """
         Check if the result is a valid response based on the type of inference.
         """
-        logger.debug(f"Checking if result is ok for {infer_type}")
         if self.bad_result(result, infer_type):
+            logger.debug(f"check_is_ok({infer_type}): bad_result")
             return False
         if prof_pov and not self.is_professional_tone(result):
-            logger.debug("Not professional")
+            logger.debug(f"check_is_ok({infer_type}): not professional tone")
             return False
         elif infer_type == "prior_auth" and not self.is_prior_auth(result):
-            logger.debug("Not prior auth")
+            logger.debug(f"check_is_ok({infer_type}): not prior auth")
             return False
-        else:
-            return True
+        return True
 
     def is_prior_auth(self, result: Optional[str]) -> bool:
         """
@@ -1332,9 +1331,7 @@ class RemoteOpenLike(RemoteModel):
                 "Letters written from the healthcare professional's perspective and not the patient's are most likely to succeed and will be highly valued."
             )
         if _is_verbose_logging():
-            logger.debug(f"GET SYS PROMPTS > {prompt}")
-        else:
-            logger.debug(f"GET SYS PROMPTS ({len(prompt)} chars)")
+            logger.debug(f"get_system_prompts({prompt_type}): {prompt}")
         return self.system_prompts_map.get(
             key,
             [prompt],
@@ -1545,9 +1542,11 @@ class RemoteOpenLike(RemoteModel):
             ml_citations_context=ml_citations_context,
         )
         if _is_verbose_logging():
-            logger.debug(f"Got result {result} from {self}")
+            logger.debug(f"Got result from {self}: {result}")
         else:
-            logger.debug(f"Got result ({len(result) if result else 0} chars) on {self}")
+            logger.debug(
+                f"Got result ({len(result) if result else 0} chars) from {self}"
+            )
         # One retry
         if self.bad_result(result, infer_type):
             result = await self._infer_no_context(
@@ -1565,12 +1564,10 @@ class RemoteOpenLike(RemoteModel):
 
         # If professional_to_finish then check if the result is a professional response | One retry
         if prof_pov or pa:
-            logger.debug(f"Checking if professional")
             c = 0
             last_okish = result
             while not self.check_is_ok(result, infer_type, prof_pov) and c < 5:
                 c = c + 1
-                logger.debug(f"Result {result} is not professional or not PA")
                 result = await self._infer_no_context(
                     prompt=prompt,
                     patient_context=patient_context,
@@ -1582,16 +1579,11 @@ class RemoteOpenLike(RemoteModel):
                 )
                 if self.bad_result(result, infer_type):
                     result = last_okish
-                if c == 4:
-                    logger.debug(
-                        f"Result {result} is not professional and we are out of retries"
-                    )
-            else:
-                logger.debug(f"Result {result} is professional")
-        else:
-            logger.debug(
-                f"Result {result} is for patient voice so no need to check professional."
-            )
+            if c > 0:
+                logger.debug(
+                    f"Professional/PA check: {c} retries, "
+                    f"{'succeeded' if c < 5 else 'gave up'}"
+                )
 
         after_cleaners = CleanerUtils.note_remover(
             CleanerUtils.url_fixer(
@@ -1759,7 +1751,9 @@ class RemoteOpenLike(RemoteModel):
             system_prompts=self.get_system_prompts("procedure"), prompt=prompt
         )
         if model_response is None or "Diagnosis" not in model_response:
-            logger.debug("Retrying query.")
+            logger.debug(
+                "Retrying procedure/diagnosis query (no Diagnosis in response)"
+            )
             model_response = await self._infer_no_context(
                 system_prompts=self.get_system_prompts("procedure"), prompt=prompt
             )
@@ -1940,15 +1934,15 @@ class RemoteOpenLike(RemoteModel):
         if api_base is None:
             api_base = self.api_base
         logger.debug(
-            f"Looking up model {model} using {api_base} (prompt_len={len(prompt) if prompt else 0}, "
+            f"Calling {model} at {api_base} (prompt_len={len(prompt) if prompt else 0}, "
             f"system_prompt_len={len(system_prompt) if system_prompt else 0})"
         )
         if self.api_base is None:
             return None
         if self.token is None:
-            logger.debug(f"Error no Token provided for {model}.")
+            logger.warning(f"No token provided for {model}")
         if prompt is None:
-            logger.debug(f"Error: must supply a prompt.")
+            logger.debug("No prompt supplied; skipping inference")
             return None
         url = f"{api_base}/chat/completions"
         combined_content = None
@@ -2029,7 +2023,6 @@ class RemoteOpenLike(RemoteModel):
                         "temperature": temperature,
                     },
                 ) as response:
-                    logger.debug(f"Got response {response}...")
                     # Raise ClientResponseError for HTTP error status codes (4xx, 5xx)
                     # This allows subclasses to catch and handle specific errors like 429
                     try:
@@ -2048,9 +2041,7 @@ class RemoteOpenLike(RemoteModel):
                         )
                         raise
                     json_result = await response.json()
-                    if "object" in json_result and json_result["object"] != "error":
-                        logger.debug(f"Response from {self} looks ok")
-                    else:
+                    if json_result.get("object") == "error":
                         logger.warning(f"Bad response from {self} with {model}")
         except aiohttp.ClientResponseError as e:
             # Re-raise HTTP errors to allow subclasses (e.g., RemoteGroq) to handle

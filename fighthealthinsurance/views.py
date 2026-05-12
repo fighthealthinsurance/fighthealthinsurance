@@ -2037,17 +2037,13 @@ def chat_interface_view(request):
 
     If the user hasn't accepted the terms of service yet, redirect to the consent form.
     """
-    logger.debug("Chat interface view called")
-
     # Check if the user completed the consent process by looking for session data
     consent_completed = request.session.get("consent_completed", False)
     email = request.session.get("email", None)
 
     # If the user hasn't completed the consent process, redirect to the consent form
     if not consent_completed:
-        logger.debug(
-            "User has not completed consent process, redirecting to consent form."
-        )
+        logger.debug("Chat interface: redirecting to consent form (not yet completed)")
         return redirect("chat_consent")
 
     # Check for default_procedure and default_condition from microsite URL params

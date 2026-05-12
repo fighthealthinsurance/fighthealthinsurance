@@ -340,14 +340,13 @@ class HylaFaxClient(FaxSenderBase):
 
     async def _run_command(self, command: list[str]) -> Tuple[int, str]:
         """Return the command and it's output"""
-        logger.debug(f"Sending command {command}")
         proc = await asyncio.create_subprocess_exec(
             *command,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
         stdout, stderr = await proc.communicate()
-        logger.debug(f"Exit code {proc.returncode}")
+        logger.debug(f"Command {command} exited with code {proc.returncode}")
         result_text = f"STDOUT: {stdout.decode()} STDERR: {stderr.decode()}"
         if proc.returncode is None:
             return (254, result_text)
@@ -475,14 +474,14 @@ class SshHylaFaxClient(HylaFaxClient):
     async def _run_command(self, command: list[str]) -> Tuple[int, str]:
         try:
             async with self._create_async_ssh_client() as conn:
-                logger.debug(f"Sending remote command {command}")
                 process = conn.run(" ".join(shlex.quote(c) for c in command))
                 result = await process
-                logger.debug("Sent command")
                 exit_code: int = result.exit_status
                 result_text = f"STDOUT: {result.stdout} STDERR: {result.stderr}"
                 if exit_code != 0:
-                    logger.warning(f"Command failed: {result}")
+                    logger.warning(f"Remote command {command} failed: {result}")
+                else:
+                    logger.debug(f"Remote command {command} succeeded")
                 return (exit_code, result_text)
         except Exception as e:
             logger.error(f"Error sending command {command} -- {e}")
@@ -662,14 +661,12 @@ class FlexibleFaxMagic(object):
                 key=lambda backend: backend.estimate_cost(destination, page_count),
             )
         for backend in backends_by_cost:
-            logger.debug("Entering timeout ctx")
             with Timeout(1300.0) as _timeout_ctx:
                 for attempt in range(2):
                     try:
-                        if attempt == 0:
-                            logger.debug(f"Calling backend {backend}")
-                        else:
-                            logger.debug(f"Retrying backend {backend}")
+                        logger.debug(
+                            f"Calling backend {backend} (attempt {attempt + 1})"
+                        )
                         if await self._try_send(backend, destination, path, blocking):
                             return True
                     except Exception as e:
