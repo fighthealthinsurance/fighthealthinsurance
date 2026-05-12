@@ -56,16 +56,10 @@ class InterestedProfessionalForm(forms.ModelForm):
             }
         ),
     )
-    clicked_for_paid = forms.BooleanField(
-        initial=True,
-        required=False,
-        label="Optional: Pay $10 now to get 3 months of the beta when we launch the new updated professional version, while we figure out what/if folks will pay for it.",
-        widget=forms.CheckboxInput(),
-    )
 
     class Meta:
         model = InterestedProfessional
-        exclude = ["paid", "signup_date"]
+        exclude = ["paid", "clicked_for_paid", "signup_date"]
 
 
 class DeleteDataForm(forms.Form):

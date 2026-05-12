@@ -17,6 +17,9 @@ class ProVersionSignupTest(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "New Updated Professional Version Coming Soon")
         self.assertContains(response, 'method="post"')
+        # Pay-to-express-interest has been dropped.
+        self.assertNotContains(response, "Pay $10")
+        self.assertNotContains(response, "clicked_for_paid")
 
     def test_post_creates_interested_professional_and_sends_emails(self):
         response = self.client.post(
@@ -38,6 +41,8 @@ class ProVersionSignupTest(TestCase):
         self.assertEqual(pro.name, "Jane Doe")
         # ThankyouEmailSender.dosend() flips this on a successful send.
         self.assertTrue(pro.thankyou_email_sent)
+        # Pay-to-express-interest is no longer collected.
+        self.assertFalse(pro.clicked_for_paid)
 
         subjects = [m.subject for m in mail.outbox]
         # Team notification to support42@

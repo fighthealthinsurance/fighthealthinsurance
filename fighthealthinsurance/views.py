@@ -264,7 +264,12 @@ class ProVersionView(generic.FormView):
         return reverse("pro_version_thankyou")
 
     def form_valid(self, form):
-        interested_pro = form.save()
+        # The pay-to-express-interest checkbox is no longer collected; explicitly
+        # mark new records as not clicked so the (legacy default=True) model
+        # field reflects reality.
+        interested_pro = form.save(commit=False)
+        interested_pro.clicked_for_paid = False
+        interested_pro.save()
         self._notify_support_of_signup(interested_pro)
         # Send the thank-you email synchronously so the signer gets it right
         # away. The batched ThankyouEmailSender will skip records where

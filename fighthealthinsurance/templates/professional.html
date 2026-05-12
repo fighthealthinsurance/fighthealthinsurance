@@ -20,11 +20,6 @@ Fight Health Insurance Professional Version
       <a href="{% url 'scan' %}">You can try the regular appeal generator here.</a>
       </p>
       <p>
-	If you'd like early access, you have the option to pay $10 to get 3 months of the new updated professional beta once it launches.
-      If you change your mind at any time before or during the beta, we're happy to refund it.
-      Honestly the $10 is to show that folks are willing to pay for it so we can secure more resources to keep building.
-      </p>
-      <p>
 	<div class="main-form">
 	<form method="post">
 	  {% csrf_token %}
@@ -66,10 +61,6 @@ Fight Health Insurance Professional Version
           <div class="form-group">
             <label for="id_comments">Comments:</label>
             {{ form.comments}}
-            <label for="clicked_for_paid">
-            {{ form.clicked_for_paid }}
-            {{ form.clicked_for_paid.label }}
-            </label>
           </div>
 
           <div class="form-group">
