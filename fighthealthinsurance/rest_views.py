@@ -1573,6 +1573,16 @@ class PriorAuthViewSet(viewsets.ViewSet, SerializerMixin):
                     logger.error(f"Error parsing date of birth: {e}")
                     # Keep the original string if date parsing fails
 
+            # Compute per-field confidence notes so the UI can flag uncertain
+            # values for user review rather than silently prefilling them.
+            from fighthealthinsurance.field_confidence import score_extracted_field
+
+            confidence_notes = {
+                field: score_extracted_field(field, value, text)
+                for field, value in extracted_fields.items()
+            }
+            extracted_fields["confidence_notes"] = confidence_notes
+
             # Create a response serializer to validate the data
             response_serializer = serializers.ExtractPatientFieldsResponseSerializer(
                 extracted_fields

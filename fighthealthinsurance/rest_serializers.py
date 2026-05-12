@@ -805,6 +805,12 @@ class ExtractPatientFieldsResponseSerializer(serializers.Serializer):
     insurance_company = serializers.CharField(
         required=False, allow_blank=True, default=""
     )
+    # Per-field confidence notes, e.g. {"patient_name": "high", "dob": "low"}.
+    # Values are "high" | "medium" | "low"; missing keys mean no extraction
+    # was attempted or the field was empty.
+    confidence_notes = serializers.DictField(
+        child=serializers.CharField(), required=False, default=dict
+    )
 
 
 # Chooser Serializers
