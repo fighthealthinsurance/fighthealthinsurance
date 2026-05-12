@@ -1,6 +1,15 @@
-from unittest.mock import MagicMock, AsyncMock
+from unittest.mock import MagicMock, AsyncMock, patch
 import pytest
 from fighthealthinsurance.ml.ml_models import RemoteFullOpenLike
+from fighthealthinsurance.generate_appeal import (
+    AppealGenerator,
+    AppealTemplateGenerator,
+    _shed_context,
+    _SHEDDABLE_TIER1,
+    _SHEDDABLE_TIER2,
+    _TIER3_PLAN_CAP,
+    _TIER3_PATIENT_CAP,
+)
 
 
 class TestAppealQuestionsGeneration:
@@ -184,3 +193,276 @@ class TestAppealQuestionsGeneration:
         assert result[0][1] == "J84.112"
         assert result[1][0] == "Is this treatment FDA approved?"
         assert result[1][1] == "Yes it is"
+
+
+def _make_call(**overrides):
+    """Build a `calls`-shape dict matching make_appeals' call schema."""
+    base = {
+        "model_name": "fhi-internal",
+        "prompt": "Please write an appeal.",
+        "patient_context": "patient medical history",
+        "plan_context": "plan documents summary",
+        "infer_type": "full",
+        "pubmed_context": "pubmed citations",
+        "ml_citations_context": ["citation-1", "citation-2"],
+        "prof_pov": False,
+        "nice_context": "nice guidelines",
+        "rag_context": "rag context",
+        "pa_context": "pa context",
+        "uspstf_context": "uspstf context",
+    }
+    base.update(overrides)
+    return base
+
+
+class TestShedContext:
+    """Direct unit tests for the _shed_context helper used by make_appeals
+    retry path when zero-result failures may stem from oversized prompts."""
+
+    def test_tier1_drops_enrichments_only(self):
+        calls = [_make_call()]
+        new_calls, changed = _shed_context(calls, tier=1)
+        assert len(new_calls) == 1
+        new = new_calls[0]
+        # Tier 1 keys are nulled
+        for key in _SHEDDABLE_TIER1:
+            assert new[key] is None
+        # Tier 2 keys are untouched
+        for key in _SHEDDABLE_TIER2:
+            assert new[key] == calls[0][key]
+        # Core context untouched
+        assert new["plan_context"] == "plan documents summary"
+        assert new["patient_context"] == "patient medical history"
+        # Reports what changed
+        assert set(changed) == set(_SHEDDABLE_TIER1)
+
+    def test_tier2_drops_pubmed_and_citations(self):
+        calls = [_make_call()]
+        new_calls, changed = _shed_context(calls, tier=2)
+        new = new_calls[0]
+        # Tier 1 + Tier 2 keys all nulled
+        for key in (*_SHEDDABLE_TIER1, *_SHEDDABLE_TIER2):
+            assert new[key] is None
+        # Core context untouched
+        assert new["plan_context"] == "plan documents summary"
+        assert new["patient_context"] == "patient medical history"
+        assert set(changed) == set(_SHEDDABLE_TIER1) | set(_SHEDDABLE_TIER2)
+
+    def test_tier3_truncates_core(self):
+        big_plan = "A" * (_TIER3_PLAN_CAP + 100)
+        big_patient = "B" * (_TIER3_PATIENT_CAP + 100)
+        calls = [_make_call(plan_context=big_plan, patient_context=big_patient)]
+        new_calls, changed = _shed_context(calls, tier=3)
+        new = new_calls[0]
+        assert len(new["plan_context"]) == _TIER3_PLAN_CAP
+        assert len(new["patient_context"]) == _TIER3_PATIENT_CAP
+        assert "plan_context(truncated)" in changed
+        assert "patient_context(truncated)" in changed
+
+    def test_tier3_no_truncation_when_under_cap(self):
+        calls = [_make_call(plan_context="short", patient_context="also short")]
+        new_calls, changed = _shed_context(calls, tier=3)
+        new = new_calls[0]
+        assert new["plan_context"] == "short"
+        assert new["patient_context"] == "also short"
+        # Not in changed because nothing was truncated
+        assert "plan_context(truncated)" not in changed
+        assert "patient_context(truncated)" not in changed
+
+    def test_does_not_mutate_input(self):
+        original = _make_call()
+        calls = [original]
+        _shed_context(calls, tier=3)
+        # Original dict object unchanged
+        assert original["uspstf_context"] == "uspstf context"
+        assert original["pubmed_context"] == "pubmed citations"
+
+    def test_handles_none_inputs_gracefully(self):
+        calls = [_make_call(pubmed_context=None, plan_context=None)]
+        new_calls, changed = _shed_context(calls, tier=3)
+        new = new_calls[0]
+        assert new["pubmed_context"] is None
+        # None values don't get reported as "changed" since they were already None
+        assert "pubmed_context" not in changed
+
+
+class TestMakeAppealsRouterCallPattern:
+    """Regression tests for Step 1 (dedupe model_names) and Step 2 (opt-out
+    invariant: never call router with use_external=True when denial.use_external=False).
+
+    These tests force the full failure path (primary + backup + retry all
+    empty) by mocking ml_router.models_by_name to be empty and verify the
+    router call pattern.
+    """
+
+    def _build_denial_mock(self, use_external: bool):
+        denial = MagicMock()
+        denial.denial_id = 999
+        denial.use_external = use_external
+        denial.qa_context = None
+        denial.health_history = None
+        denial.plan_context = None
+        denial.plan_documents_summary = None
+        denial.professional_to_finish = False
+        denial.candidate_procedure = None
+        denial.candidate_diagnosis = None
+        denial.your_state = None
+        denial.diagnosis = "test diagnosis"
+        denial.procedure = "test procedure"
+        denial.denial_text = "test denial text"
+        denial.insurance_company = "Test Insurance"
+        denial.claim_id = None
+        denial.appeal_fax_number = None
+        denial.your_state = None
+        denial.employer_name = None
+        denial.plan_id = None
+        return denial
+
+    def test_opt_out_never_calls_router_with_use_external_true(self):
+        """Privacy regression guard: when denial.use_external=False, the
+        router must NEVER be called with use_external=True — even when
+        primary, backup, and retry all fail."""
+        denial = self._build_denial_mock(use_external=False)
+        template_gen = AppealTemplateGenerator(
+            prefaces=["Preface"], main=["Main body"], footer=["Footer"]
+        )
+
+        gen = AppealGenerator()
+        external_calls: list[bool] = []
+
+        def spy_generate_text_backend_names(use_external=False):
+            external_calls.append(use_external)
+            # Return an internal-only model name so calls list is non-empty
+            # but models_by_name lookup will return [] -> get_model_result
+            # returns [] -> as_available_nested yields nothing
+            return ["nonexistent-internal-model"]
+
+        with patch(
+            "fighthealthinsurance.generate_appeal.ml_router.generate_text_backend_names",
+            side_effect=spy_generate_text_backend_names,
+        ), patch(
+            "fighthealthinsurance.generate_appeal.ml_router.models_by_name",
+            new={},  # Empty -> get_model_result returns [] for every name
+        ), patch(
+            "fighthealthinsurance.generate_appeal.time.sleep"
+        ):  # Skip the 1s backoff in tests
+            try:
+                appeals = gen.make_appeals(
+                    denial,
+                    template_gen,
+                    medical_reasons=[],
+                    non_ai_appeals=[],
+                    pubmed_context=None,
+                    ml_citations_context=None,
+                    plan_context=None,
+                )
+                # Drain the iterator — initial_appeals may include the static
+                # template; we don't care about the count, only the spy.
+                list(appeals)
+            except Exception:
+                # If something unrelated fails, the spy assertions below
+                # still catch the privacy violation.
+                pass
+
+        # The KEY assertion: no call passed use_external=True
+        assert all(external is False for external in external_calls), (
+            f"Privacy violation: router was called with use_external=True "
+            f"when denial.use_external=False. Calls: {external_calls}"
+        )
+
+    def test_opt_in_includes_external_in_backup(self):
+        """Step 1 regression: when use_external=True, backup_calls must
+        include external models (router called once with True)."""
+        denial = self._build_denial_mock(use_external=True)
+        template_gen = AppealTemplateGenerator(
+            prefaces=["Preface"], main=["Main body"], footer=["Footer"]
+        )
+
+        gen = AppealGenerator()
+        external_calls: list[bool] = []
+
+        def spy(use_external=False):
+            external_calls.append(use_external)
+            return ["nonexistent-model"]
+
+        with patch(
+            "fighthealthinsurance.generate_appeal.ml_router.generate_text_backend_names",
+            side_effect=spy,
+        ), patch(
+            "fighthealthinsurance.generate_appeal.ml_router.models_by_name",
+            new={},
+        ), patch(
+            "fighthealthinsurance.generate_appeal.time.sleep"
+        ):
+            try:
+                appeals = gen.make_appeals(
+                    denial,
+                    template_gen,
+                    medical_reasons=[],
+                    non_ai_appeals=[],
+                    pubmed_context=None,
+                    ml_citations_context=None,
+                    plan_context=None,
+                )
+                list(appeals)
+            except Exception:
+                pass
+
+        # At least one call should be use_external=True (the backup_calls path)
+        assert any(external is True for external in external_calls), (
+            f"Step 1 regression: backup_calls should include external models "
+            f"when denial.use_external=True. Calls: {external_calls}"
+        )
+
+    def test_primary_calls_router_once_per_role(self):
+        """Step 1 regression: the duplicate `generate_text_backend_names() +
+        generate_text_backend_names()` pattern has been removed. Primary and
+        backup each call the router once (not twice each)."""
+        denial = self._build_denial_mock(use_external=False)
+        template_gen = AppealTemplateGenerator(prefaces=["P"], main=["M"], footer=["F"])
+
+        gen = AppealGenerator()
+        external_calls: list[bool] = []
+
+        def spy(use_external=False):
+            external_calls.append(use_external)
+            # Return empty -> empty calls/backup_calls -> short-circuits before retry
+            return []
+
+        with patch(
+            "fighthealthinsurance.generate_appeal.ml_router.generate_text_backend_names",
+            side_effect=spy,
+        ), patch(
+            "fighthealthinsurance.generate_appeal.ml_router.models_by_name",
+            new={},
+        ), patch(
+            "fighthealthinsurance.generate_appeal.time.sleep"
+        ):
+            try:
+                appeals = gen.make_appeals(
+                    denial,
+                    template_gen,
+                    medical_reasons=[],
+                    non_ai_appeals=[],
+                    pubmed_context=None,
+                    ml_citations_context=None,
+                    plan_context=None,
+                )
+                list(appeals)
+            except Exception:
+                pass
+
+        # Each role (primary, backup) calls router exactly once during the
+        # call-list-construction phase. There may be additional calls during
+        # the retry path, but the build phase before any execution should
+        # show exactly 2 calls (primary use_external=False + backup with
+        # denial.use_external=False).
+        # We assert <= 2 calls happened during build phase: the test setup
+        # makes models_by_name empty so the spy is called when
+        # generate_text_backend_names is invoked during make_appeals setup.
+        # The exact count depends on whether the retry path engages (it does
+        # not call router again — it reuses `calls`).
+        assert len(external_calls) == 2, (
+            f"Step 1 regression: expected exactly 2 router calls (one for "
+            f"primary, one for backup). Got {len(external_calls)}: {external_calls}"
+        )

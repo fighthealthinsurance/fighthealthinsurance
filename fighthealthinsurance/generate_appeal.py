@@ -639,6 +639,54 @@ def identifier_found_in_text(identifier: str, text: str) -> bool:
     return False
 
 
+# Context keys that can be shed on retry, ordered by drop priority (lowest
+# value first = drop first). These names match the dict keys used in the
+# `calls` lists built by AppealGenerator.make_appeals.
+_SHEDDABLE_TIER1 = ("uspstf_context", "pa_context", "nice_context", "rag_context")
+_SHEDDABLE_TIER2 = ("pubmed_context", "ml_citations_context")
+_TIER3_PLAN_CAP = 4000  # chars
+_TIER3_PATIENT_CAP = 6000  # chars
+
+
+def _shed_context(calls: list[dict], tier: int) -> tuple[list[dict], list[str]]:
+    """Return (new_calls, dropped_or_truncated_names) with context reduced.
+
+    Used by AppealGenerator.make_appeals to retry with smaller prompts when
+    the suspected cause of zero-result failures is context-window overflow.
+
+    Tier 1: drop uspstf/pa/nice/rag enrichments (set to None).
+    Tier 2: also drop pubmed and ml_citations (set to None).
+    Tier 3: also truncate plan_context and patient_context to documented caps.
+
+    Higher tiers always include the drops of lower tiers.
+    """
+    drop_keys: list[str] = []
+    if tier >= 1:
+        drop_keys.extend(_SHEDDABLE_TIER1)
+    if tier >= 2:
+        drop_keys.extend(_SHEDDABLE_TIER2)
+
+    new_calls: list[dict] = []
+    changed: set[str] = set()
+    for call in calls:
+        new = dict(call)
+        for key in drop_keys:
+            if new.get(key) is not None:
+                new[key] = None
+                changed.add(key)
+        if tier >= 3:
+            plan = new.get("plan_context")
+            if isinstance(plan, str) and len(plan) > _TIER3_PLAN_CAP:
+                new["plan_context"] = plan[:_TIER3_PLAN_CAP]
+                changed.add("plan_context(truncated)")
+            patient = new.get("patient_context")
+            if isinstance(patient, str) and len(patient) > _TIER3_PATIENT_CAP:
+                new["patient_context"] = patient[:_TIER3_PATIENT_CAP]
+                changed.add("patient_context(truncated)")
+        new_calls.append(new)
+    return new_calls, sorted(changed)
+
+
 class AppealGenerator(object):
     QUALITY_KEYWORDS = (
         "evidence",
@@ -1761,10 +1809,16 @@ class AppealGenerator(object):
                 f"Summary of relevant plan document sections:\n{denial.plan_documents_summary}"
             )
         plan_context = "\n\n".join(plan_context_parts) if plan_context_parts else None
-        # Primary: Always internal models only (fast, local)
-        model_names = ml_router.generate_text_backend_names(
-            use_external=False
-        ) + ml_router.generate_text_backend_names(use_external=False)
+        # Primary: Always internal models only (fast, local).
+        # Router already dedupes via its internal `seen` set, so a single
+        # call is sufficient — earlier code concatenated the same call twice
+        # which collapsed back to the same set with no added diversity.
+        model_names = ml_router.generate_text_backend_names(use_external=False)
+        if not model_names:
+            logger.error(
+                f"make_appeals: zero internal model names available for denial "
+                f"{denial.denial_id} — primary call list will be empty"
+            )
 
         # Build calls using model names (preserves multi-backend lookup)
         calls = [
@@ -1781,11 +1835,12 @@ class AppealGenerator(object):
             for model_name in model_names
         ]
 
-        # Backup: Only if user opted in to external, use internal+external together
-        backup_calls = []
+        # Backup: include external models only if user opted in. When
+        # use_external=False this returns internal-only (same as primary) —
+        # the privacy boundary is enforced here at call-list construction.
         backup_model_names = ml_router.generate_text_backend_names(
             use_external=denial.use_external
-        ) + ml_router.generate_text_backend_names(use_external=False)
+        )
         backup_calls = [
             {
                 "model_name": model_name,
@@ -1893,17 +1948,82 @@ class AppealGenerator(object):
         )
 
         appeals: Iterator[str] = as_available_nested(generated_text_futures)
-        # Check and make sure we have some AI powered results
+        # Check and make sure we have some AI powered results.
+        # Tiered fallback: primary -> backup -> retry primary.
+        # Privacy invariant: external models only enter the call set when
+        # `use_external=True`, enforced at call-list construction above.
+        first: Optional[str] = None
         try:
-            first = appeals.__next__()
+            first = next(appeals)
             appeals = itertools.chain([first], appeals)
         except StopIteration:
-            if backup_calls:
-                logger.warning("First group not successful, adding backup calls")
-                appeals = as_available_nested(make_async_model_calls(backup_calls))
+            first = None
+
+        if first is None and backup_calls:
+            logger.warning(
+                f"Primary empty for denial {denial.denial_id}; trying "
+                f"backup_calls (n={len(backup_calls)}, "
+                f"use_external={denial.use_external})"
+            )
+            appeals = as_available_nested(make_async_model_calls(backup_calls))
+            try:
+                first = next(appeals)
+                appeals = itertools.chain([first], appeals)
+            except StopIteration:
+                first = None
+
+        if first is None:
+            # Primary + backup both empty. Retry primary once (NEVER
+            # external), regardless of use_external. `calls` is built from
+            # internal-only `model_names`, so retry is always opt-out-safe.
+            if denial.use_external:
+                logger.error(
+                    f"make_appeals: primary+backup both produced 0 results "
+                    f"for denial {denial.denial_id} (use_external=True, "
+                    f"external models WERE included in backup_calls); "
+                    f"retrying primary internal-only"
+                )
             else:
+                logger.error(
+                    f"make_appeals: primary+backup both produced 0 results "
+                    f"for denial {denial.denial_id}. use_external=False — "
+                    f"NO EXTERNAL FALLBACK PERMITTED (user opted out of "
+                    f"external models). Retrying internal primary only."
+                )
+            time.sleep(1.0)  # brief backoff before retry
+            # Retry primary across context-shedding tiers. One likely cause
+            # of zero-result failures is context-window overflow; each tier
+            # drops more enrichment until tier 3 truncates the core inputs.
+            for tier in (1, 2, 3):
+                shed_calls, changed = _shed_context(calls, tier=tier)
                 logger.warning(
-                    "First group not successful and no backup calls available"
+                    f"make_appeals: retrying primary for denial "
+                    f"{denial.denial_id} with context shed "
+                    f"(tier={tier}, changed={changed})"
+                )
+                retry_futures = make_async_model_calls(shed_calls)
+                appeals = as_available_nested(retry_futures)
+                try:
+                    first = next(appeals)
+                    appeals = itertools.chain([first], appeals)
+                    logger.warning(
+                        f"make_appeals: tier {tier} retry succeeded for "
+                        f"denial {denial.denial_id}"
+                    )
+                    break
+                except StopIteration:
+                    first = None
+            if first is None:
+                external_status = (
+                    "use_external=True; all external+internal exhausted"
+                    if denial.use_external
+                    else "use_external=False; external fallback NOT "
+                    "attempted (user opt-out respected)"
+                )
+                logger.error(
+                    f"make_appeals: primary retry across all context-shed "
+                    f"tiers (1-3) also produced 0 for denial "
+                    f"{denial.denial_id}; giving up. {external_status}"
                 )
                 appeals = iter([])
         appeals = itertools.chain(appeals, initial_appeals)
