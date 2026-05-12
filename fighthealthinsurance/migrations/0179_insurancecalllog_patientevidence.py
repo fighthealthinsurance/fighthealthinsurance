@@ -9,7 +9,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("fighthealthinsurance", "0159_chatdocument"),
+        ("fighthealthinsurance", "0178_clinicaltrial_clinicaltrialquerydata"),
         ("fhi_users", "0001_initial"),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
