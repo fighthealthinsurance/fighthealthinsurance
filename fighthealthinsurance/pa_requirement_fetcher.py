@@ -123,6 +123,7 @@ class PARequirementFetcher:
         parser_fn, expects_bytes = parser_spec
         source_name = f"{AUTO_SOURCE_PREFIX}{url}"
 
+        body: Union[str, bytes]
         if expects_bytes:
             body = (
                 raw if isinstance(raw, bytes) else raw.encode("utf-8", errors="replace")
