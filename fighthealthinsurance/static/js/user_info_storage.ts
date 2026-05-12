@@ -70,7 +70,11 @@ export function saveExternalModelsPreference(useExternalModels: boolean): void {
 export function getExternalModelsPreference(): boolean {
   try {
     const stored = localStorage.getItem(EXTERNAL_MODELS_KEY);
-    return stored !== "false";
+    if (stored === null) {
+      localStorage.setItem(EXTERNAL_MODELS_KEY, "true");
+      return true;
+    }
+    return stored === "true";
   } catch (e) {
     console.error("Error getting external models preference from localStorage:", e);
   }
