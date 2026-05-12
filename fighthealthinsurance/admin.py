@@ -384,6 +384,23 @@ class InsuranceCompanyAdmin(admin.ModelAdmin):
             },
         ),
         (
+            "Prior Authorization Requirement List",
+            {
+                "fields": (
+                    "pa_requirement_list_url",
+                    "pa_requirement_list_url_is_parseable",
+                    "pa_requirement_list_notes",
+                ),
+                "description": (
+                    "URL to the payer's published PA requirement list (Excel/PDF/HTML). "
+                    "Set 'is parseable' true when a registered parser exists for this "
+                    "URL's hostname (see pa_requirement_parsers.PARSERS_BY_HOST). "
+                    "Run 'manage.py ingest_pa_requirements' to auto-import rows into "
+                    "PayerPriorAuthRequirement."
+                ),
+            },
+        ),
+        (
             "Pattern Matching",
             {
                 "fields": ("regex", "negative_regex"),
