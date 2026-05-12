@@ -819,13 +819,23 @@ class PubMedE2EAppealFlowTest(TransactionTestCase):
                 summary_count, 0, "Empty results should not create summary row"
             )
 
-            # No per-query cache rows either (empty results aren't cached)
-            cache_count = await sync_to_async(
-                PubMedQueryData.objects.filter(denial_id__isnull=True).count
+            # Empty results from a successful NCBI call ARE negative-cached
+            # so repeated empty-query lookups don't hammer NCBI. (Errors and
+            # timeouts still aren't persisted; see negative-cache tests.)
+            cache_rows = await sync_to_async(
+                lambda: list(PubMedQueryData.objects.filter(denial_id__isnull=True))
             )()
-            self.assertEqual(
-                cache_count, 0, "Empty results should not create cache rows"
+            self.assertGreater(
+                len(cache_rows),
+                0,
+                "Successful empty results should be negative-cached",
             )
+            for row in cache_rows:
+                self.assertEqual(
+                    json.loads(row.articles or "[]"),
+                    [],
+                    "Negative-cache rows should hold an empty article list",
+                )
 
         async_to_sync(run_test)()
 
@@ -895,5 +905,132 @@ class PubMedE2EAppealFlowTest(TransactionTestCase):
             await sync_to_async(denial.refresh_from_db)()
             self.assertEqual(denial.procedure, "")
             self.assertEqual(denial.diagnosis, "")
+
+        async_to_sync(run_test)()
+
+
+class PubMedNegativeCachingTest(TransactionTestCase):
+    """find_pubmed_article_ids_for_query negative-caching behavior.
+
+    Empty results from a *successful* NCBI call are persisted so repeated
+    no-result queries don't keep hitting NCBI. The window is shorter than
+    the positive cache because absence is more volatile than presence.
+    Errors and timeouts must not be persisted.
+    """
+
+    @mock.patch("fighthealthinsurance.utils.pubmed_fetcher.pmids_for_query")
+    def test_empty_result_creates_negative_cache_row(self, mock_pmids):
+        mock_pmids.return_value = []
+
+        async def run_test():
+            tools = PubMedTools()
+            result = await tools.find_pubmed_article_ids_for_query("no hits query")
+            self.assertEqual(result, [])
+
+            rows = await sync_to_async(
+                lambda: list(
+                    PubMedQueryData.objects.filter(
+                        query="no hits query", denial_id__isnull=True
+                    )
+                )
+            )()
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(json.loads(rows[0].articles), [])
+
+        async_to_sync(run_test)()
+
+    @mock.patch("fighthealthinsurance.utils.pubmed_fetcher.pmids_for_query")
+    def test_recent_negative_cache_short_circuits_api(self, mock_pmids):
+        """Inside the 2-day window, a cached empty row is served without
+        calling NCBI again."""
+        # Pre-seed an empty cache row created "now".
+        PubMedQueryData.objects.create(
+            query="recently empty query",
+            articles=json.dumps([]),
+            created=timezone.now(),
+        )
+        mock_pmids.return_value = ["should", "not", "be", "returned"]
+
+        async def run_test():
+            tools = PubMedTools()
+            result = await tools.find_pubmed_article_ids_for_query(
+                "recently empty query"
+            )
+            self.assertEqual(result, [])
+            mock_pmids.assert_not_called()
+
+        async_to_sync(run_test)()
+
+    @mock.patch("fighthealthinsurance.utils.pubmed_fetcher.pmids_for_query")
+    def test_stale_negative_cache_falls_through_to_api(self, mock_pmids):
+        """Outside the 2-day window (but still inside the 30-day positive
+        window), an empty cached row is treated as a miss so NCBI gets a
+        retry. New articles might have been indexed since."""
+        stale_created = timezone.now() - timedelta(days=5)
+        row = PubMedQueryData.objects.create(
+            query="stale empty query",
+            articles=json.dumps([]),
+        )
+        # Bypass auto_now_add by updating after create.
+        PubMedQueryData.objects.filter(pk=row.pk).update(created=stale_created)
+
+        mock_pmids.return_value = ["11111111"]
+
+        async def run_test():
+            tools = PubMedTools()
+            result = await tools.find_pubmed_article_ids_for_query("stale empty query")
+            mock_pmids.assert_called_once()
+            self.assertEqual(result, ["11111111"])
+
+        async_to_sync(run_test)()
+
+    @mock.patch("fighthealthinsurance.utils.pubmed_fetcher.pmids_for_query")
+    def test_errors_are_not_negative_cached(self, mock_pmids):
+        """If metapub raises, no cache row should be written."""
+        mock_pmids.side_effect = RuntimeError("simulated NCBI failure")
+
+        async def run_test():
+            tools = PubMedTools()
+            with self.assertRaises(RuntimeError):
+                await tools.find_pubmed_article_ids_for_query("failing query")
+
+            rows = await sync_to_async(
+                lambda: list(PubMedQueryData.objects.filter(query="failing query"))
+            )()
+            self.assertEqual(rows, [], "Errors must not produce negative-cache rows")
+
+        async_to_sync(run_test)()
+
+    @mock.patch("fighthealthinsurance.utils.pubmed_fetcher.pmids_for_query")
+    def test_stale_empty_supersedes_older_non_empty(self, mock_pmids):
+        """A stale empty row is *newer* information than an older non-empty
+        row, so the older non-empty PMIDs must not be served. The function
+        should re-query NCBI instead."""
+        query = "supersession query"
+        # Older row (20 days ago): non-empty.
+        older = PubMedQueryData.objects.create(
+            query=query, articles=json.dumps(["aaaaa", "bbbbb"])
+        )
+        PubMedQueryData.objects.filter(pk=older.pk).update(
+            created=timezone.now() - timedelta(days=20)
+        )
+        # Newer row (5 days ago): empty but past the 2-day negative-cache
+        # window. This is the most recent signal and it says "no hits".
+        newer = PubMedQueryData.objects.create(query=query, articles=json.dumps([]))
+        PubMedQueryData.objects.filter(pk=newer.pk).update(
+            created=timezone.now() - timedelta(days=5)
+        )
+
+        mock_pmids.return_value = ["fresh"]
+
+        async def run_test():
+            tools = PubMedTools()
+            result = await tools.find_pubmed_article_ids_for_query(query)
+            mock_pmids.assert_called_once()
+            self.assertEqual(
+                result,
+                ["fresh"],
+                "Must re-fetch from NCBI, not serve older non-empty cached PMIDs",
+            )
 
         async_to_sync(run_test)()

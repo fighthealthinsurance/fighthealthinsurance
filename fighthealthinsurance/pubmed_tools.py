@@ -1,19 +1,21 @@
 import asyncio
 import io
 import json
+import os
 import re
 import sys
 import tempfile
 import xml.etree.ElementTree as ET
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Any, AsyncIterator, Dict, List, Optional, Set, Tuple
 from urllib.parse import quote, urlencode, urljoin
 
 import aiohttp
-import eutils
 import PyPDF2
 from asgiref.sync import async_to_sync, sync_to_async
+from django.core.cache import cache
+from django.utils import timezone
 from loguru import logger
 from metapub import FindIt
 
@@ -61,14 +63,33 @@ _FETCH_HEADERS = {
 # efetch (MeSH terms / publication types). NCBI requests that ``tool`` and
 # ``email`` be supplied per their usage guidelines.
 _EUTILS_BASE = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
-_EUTILS_PARAMS = {
+# When NCBI_API_KEY is set, NCBI raises per-IP limits from 3 -> 10 req/s for
+# both metapub and direct E-utilities calls.
+_NCBI_API_KEY = os.environ.get("NCBI_API_KEY") or None
+_EUTILS_PARAMS: Dict[str, str] = {
     "tool": _TOOL_NAME,
     "email": _CONTACT_EMAIL,
 }
+if _NCBI_API_KEY:
+    _EUTILS_PARAMS["api_key"] = _NCBI_API_KEY
 
 # NCBI documents 200 IDs as the practical limit for an efetch GET; chunk to
 # stay well under URL-length caps regardless of caller-supplied list size.
 _EFETCH_BATCH_SIZE = 200
+
+# MeSH terms and publication types are effectively immutable once an article
+# is indexed; elink "related" sets drift only as new articles are published.
+# A 7-day TTL keeps NCBI off the hot path without staying out of date for
+# the appeal use-case.
+_EFETCH_CACHE_TTL_SECONDS = 7 * 24 * 60 * 60
+_ELINK_CACHE_TTL_SECONDS = 7 * 24 * 60 * 60
+_EFETCH_CACHE_PREFIX = "pubmed:efetch:meshpub:"
+_ELINK_CACHE_PREFIX = "pubmed:elink:related:"
+
+# Negative-cache window for queries that legitimately return no PMIDs. Kept
+# shorter than the 30-day positive cache because absence is more volatile
+# than presence (new articles get indexed).
+_EMPTY_QUERY_NEGCACHE_DAYS = 2
 
 
 @asynccontextmanager
@@ -429,8 +450,11 @@ class PubMedTools(object):
 
         try:
             async with async_timeout(timeout):
-                # Check if we already have query results from the last month
-                month_ago = datetime.now() - timedelta(days=30)
+                # Use timezone-aware "now" so comparisons against the DB's
+                # tz-aware ``created`` field work without raising.
+                now = timezone.now()
+                month_ago = now - timedelta(days=30)
+                neg_cache_cutoff = now - timedelta(days=_EMPTY_QUERY_NEGCACHE_DAYS)
                 existing_queries = PubMedQueryData.objects.filter(
                     query=query,
                     created__gte=month_ago,
@@ -438,20 +462,33 @@ class PubMedTools(object):
                     denial_id__isnull=True,
                 ).order_by("-created")
 
-                if await existing_queries.aexists():
-                    # Use cached query results
-                    async for query_data in existing_queries:
-                        if query_data.articles:
-                            try:
-                                article_ids: list[str] = json.loads(
-                                    query_data.articles.replace("\x00", "")
-                                )
-                                if article_ids:
-                                    return article_ids
-                            except json.JSONDecodeError:
-                                logger.error(
-                                    f"Error parsing cached articles JSON for {query}"
-                                )
+                async for query_data in existing_queries:
+                    if not query_data.articles:
+                        # Legacy row with NULL/empty payload: treat as miss
+                        # rather than risk an unbounded negative cache.
+                        continue
+                    try:
+                        article_ids: list[str] = json.loads(
+                            query_data.articles.replace("\x00", "")
+                        )
+                    except json.JSONDecodeError:
+                        logger.error(f"Error parsing cached articles JSON for {query}")
+                        continue
+                    if article_ids:
+                        return article_ids
+                    # The most recent informative row is an empty result.
+                    # Honor it as a cache hit inside the shorter negative-
+                    # cache window.
+                    if (
+                        query_data.created is not None
+                        and query_data.created >= neg_cache_cutoff
+                    ):
+                        return []
+                    # Stale empty: the newest signal says "no hits", but it
+                    # is past the negative-cache window. Don't fall back to
+                    # an even-older non-empty row — that would serve PMIDs
+                    # we already know are no longer matching. Re-query NCBI.
+                    break
 
                 # If no cache or cache error, fetch from PubMed API
                 logger.debug(f"Querying pubmed for query {query}")
@@ -459,15 +496,18 @@ class PubMedTools(object):
                     query, since=since
                 )
                 logger.debug(f"Got back initial pmids {pmids}")
-                if pmids and len(pmids) > 0:
-                    # Sometimes we get nulls...
-                    articles_json = json.dumps(pmids).replace("\x00", "")
-                    await PubMedQueryData.objects.acreate(
-                        query=query,
-                        since=since,
-                        articles=articles_json,
-                    )
-                    return pmids
+                # Reaching this line means metapub returned without raising:
+                # safe to persist whatever it returned (including []) so the
+                # next caller gets a cheap negative-cache hit for a couple of
+                # days. We only skip the write on timeout/cancel/error below.
+                pmids = pmids or []
+                articles_json = json.dumps(pmids).replace("\x00", "")
+                await PubMedQueryData.objects.acreate(
+                    query=query,
+                    since=since,
+                    articles=articles_json,
+                )
+                return pmids
         except asyncio.TimeoutError as e:
             # We might timeout
             logger.opt(exception=True).debug(
@@ -505,12 +545,31 @@ class PubMedTools(object):
             return {}
 
         result: Dict[str, Dict[str, List[str]]] = {}
+
+        # Per-PMID cache lookup; only the misses go to NCBI.
+        cache_keys = {p: f"{_EFETCH_CACHE_PREFIX}{p}" for p in pmids}
+        try:
+            cached = await cache.aget_many(list(cache_keys.values()))
+        except Exception as e:
+            logger.opt(exception=True).debug(f"efetch cache read failed: {e}")
+            cached = {}
+        misses: List[str] = []
+        for pmid in pmids:
+            hit = cached.get(cache_keys[pmid])
+            if hit is not None:
+                result[pmid] = hit
+            else:
+                misses.append(pmid)
+        if not misses:
+            return result
+
+        fresh: Dict[str, Dict[str, List[str]]] = {}
         url = f"{_EUTILS_BASE}/efetch.fcgi"
         try:
             async with _ensure_session(session) as s:
                 async with async_timeout(timeout):
-                    for i in range(0, len(pmids), batch_size):
-                        batch = pmids[i : i + batch_size]
+                    for i in range(0, len(misses), batch_size):
+                        batch = misses[i : i + batch_size]
                         params = {
                             **_EUTILS_PARAMS,
                             "db": "pubmed",
@@ -525,13 +584,23 @@ class PubMedTools(object):
                                 )
                                 continue
                             body = await resp.text()
-                        self._merge_efetch_xml_into(body, result)
+                        self._merge_efetch_xml_into(body, fresh)
         except asyncio.CancelledError:
             raise
         except asyncio.TimeoutError as e:
             logger.debug(f"Timeout in fetch_mesh_and_pub_types: {e}")
         except Exception as e:
             logger.opt(exception=True).debug(f"Error in fetch_mesh_and_pub_types: {e}")
+
+        result.update(fresh)
+        if fresh:
+            try:
+                await cache.aset_many(
+                    {_EFETCH_CACHE_PREFIX + p: row for p, row in fresh.items()},
+                    timeout=_EFETCH_CACHE_TTL_SECONDS,
+                )
+            except Exception as e:
+                logger.opt(exception=True).debug(f"efetch cache write failed: {e}")
         return result
 
     @staticmethod
@@ -579,6 +648,15 @@ class PubMedTools(object):
         if not pmid:
             return []
 
+        cache_key = f"{_ELINK_CACHE_PREFIX}{pmid}:{max_results}"
+        try:
+            cached = await cache.aget(cache_key)
+        except Exception as e:
+            logger.opt(exception=True).debug(f"elink cache read failed: {e}")
+            cached = None
+        if cached is not None:
+            return list(cached)
+
         related: List[str] = []
         params = {
             **_EUTILS_PARAMS,
@@ -589,6 +667,9 @@ class PubMedTools(object):
             "retmode": "json",
         }
         url = f"{_EUTILS_BASE}/elink.fcgi"
+        # Only cache when the call completed without error; on timeout/network
+        # failure we want the next caller to retry rather than serve stale "[]".
+        successful = False
         try:
             async with _ensure_session(session) as s:
                 async with async_timeout(timeout):
@@ -605,7 +686,12 @@ class PubMedTools(object):
                         if related_id_str != pmid and related_id_str not in related:
                             related.append(related_id_str)
                         if len(related) >= max_results:
-                            return related
+                            break
+                    if len(related) >= max_results:
+                        break
+                if len(related) >= max_results:
+                    break
+            successful = True
         except asyncio.CancelledError:
             raise
         except asyncio.TimeoutError as e:
@@ -614,6 +700,12 @@ class PubMedTools(object):
             logger.opt(exception=True).debug(
                 f"Error in find_related_pmids({pmid}): {e}"
             )
+
+        if successful:
+            try:
+                await cache.aset(cache_key, related, timeout=_ELINK_CACHE_TTL_SECONDS)
+            except Exception as e:
+                logger.opt(exception=True).debug(f"elink cache write failed: {e}")
         return related
 
     async def structured_search(
