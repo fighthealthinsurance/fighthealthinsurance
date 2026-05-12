@@ -223,12 +223,15 @@ export LOG_ANALYTICS_LOG_TYPE="FightHealthInsurance"
 
 ### Behavior
 
-- **With both env vars set:** a logging handler is attached to loguru and the
-  root stdlib logger in `asgi.py`; INFO+ records are POSTed to the workspace
-  table given by `LOG_ANALYTICS_LOG_TYPE`.
+- **With both env vars set:** a loguru sink is installed in `asgi.py`;
+  INFO+ records (including stdlib `logging` calls intercepted by loguru)
+  are POSTed to the workspace table given by `LOG_ANALYTICS_LOG_TYPE`.
+  Delivery happens on a background daemon thread with a shared
+  `requests.Session`, so the request path never blocks on log shipment.
 - **Without them:** the handler short-circuits at `is_log_analytics_enabled()`
   and no network calls are made.
 - Shipment errors are swallowed so logging cannot break the request path.
+  Records are dropped if the in-memory send queue overflows.
 
 ---
 
