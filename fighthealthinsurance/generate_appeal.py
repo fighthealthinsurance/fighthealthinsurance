@@ -1706,7 +1706,11 @@ class AppealGenerator(object):
             prof_pov: bool = False,
         ) -> List[Future[Tuple[str, Optional[str]]]]:
             if model_name not in ml_router.models_by_name:
-                logger.debug(f"get_model_result: no backend for {model_name}")
+                logger.warning(
+                    f"get_model_result: requested model {model_name!r} "
+                    f"not in ml_router.models_by_name "
+                    f"(available sample: {list(ml_router.models_by_name.keys())[:10]})"
+                )
                 return []
             model_backends = ml_router.models_by_name[model_name]
             if prompt is None:
@@ -1728,8 +1732,14 @@ class AppealGenerator(object):
                     if result is not None:
                         return result
                 except Exception as e:
-                    logger.debug(f"get_model_result: backend {model} failed: {e}")
-            logger.debug(f"get_model_result: all backends for {model_name} failed")
+                    logger.opt(exception=True).warning(
+                        f"get_model_result: backend {model} "
+                        f"(for model_name={model_name}) failed: {e}"
+                    )
+            logger.warning(
+                f"get_model_result: all {len(model_backends)} backend(s) "
+                f"for model_name={model_name} failed"
+            )
             return []
 
         def _get_model_result(

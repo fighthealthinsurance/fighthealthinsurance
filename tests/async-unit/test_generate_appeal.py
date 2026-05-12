@@ -466,3 +466,141 @@ class TestMakeAppealsRouterCallPattern:
             f"Step 1 regression: expected exactly 2 router calls (one for "
             f"primary, one for backup). Got {len(external_calls)}: {external_calls}"
         )
+
+
+class TestGetModelResultLogging:
+    """Step 3 regression: backend failures must surface at WARNING (was
+    DEBUG, which is filtered out in production)."""
+
+    def test_missing_model_logs_warning(self, caplog):
+        """When a requested model_name isn't in models_by_name, log at WARNING
+        with available-names sample so the misconfiguration is visible."""
+        # get_model_result is a closure inside make_appeals; the most
+        # reliable way to exercise it is through make_appeals itself.
+        denial = MagicMock()
+        denial.denial_id = 42
+        denial.use_external = False
+        denial.qa_context = None
+        denial.health_history = None
+        denial.plan_context = None
+        denial.plan_documents_summary = None
+        denial.professional_to_finish = False
+        denial.diagnosis = "dx"
+        denial.procedure = "px"
+        denial.denial_text = "denial"
+        denial.insurance_company = "ins"
+        denial.claim_id = None
+
+        template_gen = AppealTemplateGenerator(prefaces=["P"], main=["M"], footer=["F"])
+        gen = AppealGenerator()
+
+        # The router returns a name; models_by_name lookup yields nothing.
+        from loguru import logger as loguru_logger
+        import io
+
+        sink = io.StringIO()
+        handler_id = loguru_logger.add(sink, level="WARNING")
+        try:
+            with patch(
+                "fighthealthinsurance.generate_appeal.ml_router.generate_text_backend_names",
+                return_value=["model-that-does-not-exist"],
+            ), patch(
+                "fighthealthinsurance.generate_appeal.ml_router.models_by_name",
+                new={"other-model": []},
+            ), patch(
+                "fighthealthinsurance.generate_appeal.time.sleep"
+            ):
+                try:
+                    list(
+                        gen.make_appeals(
+                            denial,
+                            template_gen,
+                            medical_reasons=[],
+                            non_ai_appeals=[],
+                            pubmed_context=None,
+                            ml_citations_context=None,
+                            plan_context=None,
+                        )
+                    )
+                except Exception:
+                    pass
+
+            output = sink.getvalue()
+            assert "not in ml_router.models_by_name" in output, (
+                f"Step 3 regression: expected WARNING about missing model. "
+                f"Got:\n{output}"
+            )
+            assert "model-that-does-not-exist" in output, (
+                f"WARNING should include the requested model name. " f"Got:\n{output}"
+            )
+        finally:
+            loguru_logger.remove(handler_id)
+
+    def test_all_backends_failed_logs_warning_with_count(self):
+        """When all backends fail, log at WARNING with the backend count
+        so we can correlate with deploys (e.g. degraded cluster sizes)."""
+        denial = MagicMock()
+        denial.denial_id = 43
+        denial.use_external = False
+        denial.qa_context = None
+        denial.health_history = None
+        denial.plan_context = None
+        denial.plan_documents_summary = None
+        denial.professional_to_finish = False
+        denial.diagnosis = "dx"
+        denial.procedure = "px"
+        denial.denial_text = "denial"
+        denial.insurance_company = "ins"
+        denial.claim_id = None
+
+        template_gen = AppealTemplateGenerator(prefaces=["P"], main=["M"], footer=["F"])
+        gen = AppealGenerator()
+
+        # Configure 3 backends that return None from parallel_infer.
+        # _get_model_result returns None (no fallback Future is produced
+        # since parallel_infer didn't raise — it just returned None), so
+        # get_model_result's loop iterates past all backends and emits the
+        # "All N backend(s) failed" WARNING at the end.
+        from loguru import logger as loguru_logger
+        import io
+
+        failing_backend = MagicMock(spec=RemoteFullOpenLike)
+        failing_backend.parallel_infer = MagicMock(return_value=None)
+        failing_backend.infer = MagicMock(return_value=None)
+
+        sink = io.StringIO()
+        handler_id = loguru_logger.add(sink, level="WARNING")
+        try:
+            with patch(
+                "fighthealthinsurance.generate_appeal.ml_router.generate_text_backend_names",
+                return_value=["broken-model"],
+            ), patch(
+                "fighthealthinsurance.generate_appeal.ml_router.models_by_name",
+                new={
+                    "broken-model": [failing_backend, failing_backend, failing_backend]
+                },
+            ), patch(
+                "fighthealthinsurance.generate_appeal.time.sleep"
+            ):
+                try:
+                    list(
+                        gen.make_appeals(
+                            denial,
+                            template_gen,
+                            medical_reasons=[],
+                            non_ai_appeals=[],
+                            pubmed_context=None,
+                            ml_citations_context=None,
+                            plan_context=None,
+                        )
+                    )
+                except Exception:
+                    pass
+
+            output = sink.getvalue()
+            assert "All 3 backend(s) for model_name=broken-model failed" in output, (
+                f"Step 3 regression: expected WARNING with backend count. "
+                f"Got:\n{output}"
+            )
+        finally:
+            loguru_logger.remove(handler_id)
