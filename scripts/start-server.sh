@@ -22,10 +22,9 @@ elif [ -n "$POLLING_ACTORS" ]; then
   sleep 10
   exit 0
 elif [ -n "$PREFETCH_EXTRALINKS" ]; then
-  # Launch extralink pre-fetch (one-time job, non-blocking)
+  # Launch extralink + payer-policy pre-fetch actors (one-time job, non-blocking).
+  # Both run as Ray actors so neither blocks the deploy on slow upstream payers.
   python manage.py launch_prefetch_actor || echo "Pre-fetch failed (non-blocking)"
-  # Refresh payer medical-policy indexes (used by payer_policy_helper).
-  python manage.py ingest_payer_policy_indexes || echo "Payer-policy ingest failed (non-blocking)"
   sleep 10
   exit 0
 fi

@@ -2,10 +2,11 @@
 Fetch and re-parse every static payer medical-policy index.
 
 Idempotent: replaces each company's :class:`PayerPolicyEntry` rows with the
-freshly-parsed entries from the live URL. Intended to be run at deploy
-time (alongside ``launch_prefetch_actor``) and on a periodic cron so that
-``payer_policy_helper`` keeps surfacing live, working URLs in appeal
-prompts.
+freshly-parsed entries from the live URL. Deploys run the ingest via the
+``PayerPolicyPrefetchActor`` Ray actor (kicked off by ``launch_prefetch_actor``);
+this synchronous management command stays around for periodic cron and
+manual invocations so ``payer_policy_helper`` keeps surfacing live, working
+URLs in appeal prompts.
 """
 
 import asyncio
