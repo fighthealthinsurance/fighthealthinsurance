@@ -6,6 +6,7 @@ This module contains templates for both professional and patient users.
 import string
 from typing import Any, Dict, Optional, Union
 
+from fighthealthinsurance.chat.safety_filters import DELETE_DATA_SENTINEL
 from fighthealthinsurance.models import ChatType
 
 
@@ -24,11 +25,27 @@ class PromptTemplate:
             raise ValueError(f"Missing required key: {missing_key} for prompt template")
 
 
+# Instruction appended to every intro template so the LLM can hand off
+# data-deletion requests to the self-service flow. The sentinel must match
+# DELETE_DATA_SENTINEL in fighthealthinsurance/chat/safety_filters.py; the
+# server detects it and substitutes the canned response (DELETE_DATA_RESPONSE).
+DELETE_DATA_INSTRUCTION = (
+    "IMPORTANT: If the user asks you to delete, erase, remove, wipe, or "
+    "forget their data, account, profile, or records — or otherwise invokes "
+    "deletion, right-to-be-forgotten, or GDPR erasure — do NOT attempt to "
+    "delete anything and do NOT reassure them that you have. Reply with "
+    "ONLY the exact token " + DELETE_DATA_SENTINEL + " on its own line and "
+    "nothing else; the system will substitute the correct self-service "
+    "instructions."
+)
+
 # Templates for different user types
 NEW_CHAT_PROFESSIONAL_TEMPLATE = PromptTemplate(
     "You are a helpful assistant talking with {user_info}. "
     "You are helping them with their ongoing chat. You likely do not need to immediately generate a prior auth or appeal; "
-    "instead, you'll have a chat with {user_info} about their needs. Now, here is what they said to start the conversation:\n{message}"
+    "instead, you'll have a chat with {user_info} about their needs. "
+    + DELETE_DATA_INSTRUCTION
+    + " Now, here is what they said to start the conversation:\n{message}"
 )
 
 NEW_CHAT_PATIENT_TEMPLATE = PromptTemplate(
@@ -36,7 +53,8 @@ NEW_CHAT_PATIENT_TEMPLATE = PromptTemplate(
     "This is a patient who may need help understanding or appealing a health insurance denial. "
     "Be compassionate, clear, and avoid medical jargon when possible. Explain concepts in simple terms. "
     "Never recommend specific treatments - focus on helping them understand and navigate the insurance process. "
-    "Here is what they said to start the conversation:\n{message}"
+    + DELETE_DATA_INSTRUCTION
+    + " Here is what they said to start the conversation:\n{message}"
 )
 
 
