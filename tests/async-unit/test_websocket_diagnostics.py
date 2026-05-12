@@ -200,6 +200,28 @@ async def test_str_denial_id_is_coerced_to_int():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("denial_id", [True, False])
+async def test_bool_denial_id_does_not_coerce_to_int(denial_id):
+    """`isinstance(True, int)` is True in Python -- without the bool
+    guard, a JSON `true`/`false` would coerce to 1/0 and point
+    diagnostics at the wrong denial record. Lock the bool exclusion in."""
+    objects = _make_count_mock(return_value=0)
+    p1, p2 = _patch_models(objects)
+    log_cm, captured = _captured_logger()
+    with p1, p2, log_cm:
+        await log_zero_appeal_diagnostics(
+            denial_id=denial_id,
+            status_count=0,
+            last_status_phase=None,
+            transport="websocket",
+        )
+    # No DB lookup attempted, and the log message indicates lookup
+    # unavailable -- not "Generation produced nothing".
+    objects.filter.return_value.acount.assert_not_called()
+    assert "lookup unavailable" in captured[-1]
+
+
+@pytest.mark.asyncio
 async def test_stream_error_appended_to_log():
     """When stream_error is set, it must appear in the log so the
     triggering exception is visible alongside the diagnostic."""
