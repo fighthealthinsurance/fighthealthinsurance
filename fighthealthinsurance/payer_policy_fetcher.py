@@ -7,9 +7,10 @@ page over HTTP, dispatches it to the parser registered for the URL's host
 in :mod:`fighthealthinsurance.payer_policy_parsers`, and replaces that
 company's :class:`PayerPolicyEntry` rows with the parsed entries.
 
-This is invoked by the ``ingest_payer_policy_indexes`` management command,
-which can run at deploy time alongside the existing extralink prefetch
-actor.
+At deploy time this is driven by the ``PayerPolicyPrefetchActor`` Ray actor
+(launched by ``launch_prefetch_actor`` alongside the extralink prefetch
+actor); the ``ingest_payer_policy_indexes`` management command wraps the
+same fetcher for cron / manual invocations.
 """
 
 from typing import Optional
