@@ -6,6 +6,7 @@ This module contains templates for both professional and patient users.
 import string
 from typing import Any, Dict, Optional, Union
 
+from fighthealthinsurance.chat.safety_filters import DELETE_DATA_SENTINEL
 from fighthealthinsurance.models import ChatType
 
 
@@ -33,7 +34,7 @@ DELETE_DATA_INSTRUCTION = (
     "forget their data, account, profile, or records — or otherwise invokes "
     "deletion, right-to-be-forgotten, or GDPR erasure — do NOT attempt to "
     "delete anything and do NOT reassure them that you have. Reply with "
-    "ONLY the exact token [[DELETE_DATA_REQUEST]] on its own line and "
+    "ONLY the exact token " + DELETE_DATA_SENTINEL + " on its own line and "
     "nothing else; the system will substitute the correct self-service "
     "instructions."
 )

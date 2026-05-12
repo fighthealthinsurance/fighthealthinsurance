@@ -300,6 +300,17 @@ class TestDeleteDataDetection(TestCase):
                 f"Incorrectly flagged unrelated message: {message}",
             )
 
+    def test_known_overmatches_are_documented(self):
+        """Document known false positives so reviewers see them in failing diffs.
+
+        "Delete my profile picture" matches `delete my profile` and triggers
+        the deletion handoff. This is intentional — directing such users at the
+        deletion flow is a reasonable response to a non-existent feature
+        request — but if we ever narrow the pattern, this test should fail and
+        force a deliberate decision.
+        """
+        self.assertTrue(detect_delete_data_request("Please delete my profile picture"))
+
     def test_does_not_flag_normal_health_messages(self):
         """Normal insurance-appeal questions should never trigger."""
         normal_messages = [
@@ -376,3 +387,25 @@ class TestDeleteDataPhraseList(TestCase):
             len(set(_DELETE_DATA_PHRASES)),
             "Delete-data phrases list contains duplicates",
         )
+
+
+class TestPromptTemplateSentinelCoupling(TestCase):
+    """Guard against drift between the LLM-facing instruction and the sentinel."""
+
+    def test_intro_templates_reference_the_sentinel(self):
+        """If the sentinel changes, both intro templates must update with it."""
+        from fighthealthinsurance.prompt_templates import (
+            DELETE_DATA_INSTRUCTION,
+            NEW_CHAT_PATIENT_TEMPLATE,
+            NEW_CHAT_PROFESSIONAL_TEMPLATE,
+        )
+
+        self.assertIn(DELETE_DATA_SENTINEL, DELETE_DATA_INSTRUCTION)
+        self.assertIn(DELETE_DATA_SENTINEL, NEW_CHAT_PATIENT_TEMPLATE.template)
+        self.assertIn(DELETE_DATA_SENTINEL, NEW_CHAT_PROFESSIONAL_TEMPLATE.template)
+
+    def test_sentinel_in_template_is_detected(self):
+        """The exact sentinel embedded in the template must round-trip through the detector."""
+        from fighthealthinsurance.prompt_templates import DELETE_DATA_INSTRUCTION
+
+        self.assertTrue(llm_requested_delete_handoff(DELETE_DATA_INSTRUCTION))
