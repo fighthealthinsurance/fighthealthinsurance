@@ -34,6 +34,7 @@ class PARequirementRefreshActor:
 
         self._logger = logger
         self.running = False
+        self._stop_event: asyncio.Event = asyncio.Event()
         self._logger.info("PARequirementRefreshActor initialized")
 
     async def health_check(self) -> bool:
@@ -42,6 +43,7 @@ class PARequirementRefreshActor:
     async def run(self) -> None:
         self._logger.info("Starting PARequirementRefreshActor run")
         self.running = True
+        self._stop_event.clear()
 
         while self.running:
             try:
@@ -50,19 +52,28 @@ class PARequirementRefreshActor:
                 self._logger.opt(exception=True).error(
                     "Error in PARequirementRefreshActor refresh cycle"
                 )
-                await asyncio.sleep(ERROR_BACKOFF_SECONDS)
+                try:
+                    await asyncio.wait_for(
+                        self._stop_event.wait(), timeout=ERROR_BACKOFF_SECONDS
+                    )
+                except asyncio.TimeoutError:
+                    pass
                 continue
 
             secs = seconds_until_next_1am_pacific()
             self._logger.info(
                 f"PARequirementRefreshActor sleeping {secs:.0f}s until next 1 AM Pacific"
             )
-            await asyncio.sleep(secs)
+            try:
+                await asyncio.wait_for(self._stop_event.wait(), timeout=secs)
+            except asyncio.TimeoutError:
+                pass
 
         self._logger.warning("PARequirementRefreshActor stopped running")
 
     def stop(self) -> None:
         self.running = False
+        self._stop_event.set()
 
     # --- Implementation ---------------------------------------------------
 

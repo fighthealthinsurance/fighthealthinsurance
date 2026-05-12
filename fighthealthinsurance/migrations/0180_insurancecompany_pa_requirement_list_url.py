@@ -6,7 +6,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("fighthealthinsurance", "0178_clinicaltrial_clinicaltrialquerydata"),
+        ("fighthealthinsurance", "0179_denial_use_external_default_true"),
     ]
 
     operations = [

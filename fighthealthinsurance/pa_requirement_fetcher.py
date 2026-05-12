@@ -133,11 +133,12 @@ class PARequirementFetcher:
                 raw if isinstance(raw, str) else raw.decode("utf-8", errors="replace")
             )
 
-        requirements = parser_fn(body, source_name)
-        apply_enrichment(
-            requirements, enrichment_for_host(urlparse(url).hostname or "")
-        )
-        return requirements
+        def _parse_and_enrich() -> List[ParsedPARequirement]:
+            reqs = parser_fn(body, source_name)
+            apply_enrichment(reqs, enrichment_for_host(urlparse(url).hostname or ""))
+            return reqs
+
+        return await sync_to_async(_parse_and_enrich, thread_sensitive=False)()
 
     async def ingest_company(self, company: InsuranceCompany) -> int:
         """Fetch, parse, and persist; returns count of rows written."""
@@ -152,7 +153,10 @@ class PARequirementFetcher:
 
     async def _get_content(self, url: str) -> "tuple[str, Union[str, bytes]]":
         """Download ``url``; return ``(content_type, body)`` (str for text MIME)."""
-        assert self._session is not None, "use 'async with PARequirementFetcher()'"
+        if self._session is None:
+            raise RuntimeError(
+                "PARequirementFetcher must be used as 'async with PARequirementFetcher()'"
+            )
         headers = {
             "User-Agent": "fighthealthinsurance-pa-ingest/1.0",
             "Accept": (

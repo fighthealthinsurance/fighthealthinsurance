@@ -208,7 +208,12 @@ def _rows_to_requirements(
             elif canonical == "lob":
                 lob = cell.lower() if cell else "all"
             elif canonical == "state":
-                state = cell.upper()[:2] if cell else ""
+                if cell:
+                    upper = cell.strip().upper()
+                    # Keep as-is if already a 2-letter code; blank out full names
+                    state = upper if len(upper) == 2 and upper.isalpha() else ""
+                else:
+                    state = ""
 
         if not code_raw:
             continue
