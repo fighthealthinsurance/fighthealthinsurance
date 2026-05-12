@@ -509,6 +509,8 @@ class SeleniumChatStatusMessagesTest(FHISeleniumBase, StaticLiveServerTestCase):
         # The toggle may not be present on the chat page, but the preference in
         # localStorage must remain "false" — we already asserted that above.
         print("✓ External models disabled preference is saved and persists")
+
+    def test_external_models_preference_persists_across_page_loads(self):
         """Test that external models preference persists across page loads."""
         # Set up chat session
         self.open(f"{self.live_server_url}/chat-consent")
