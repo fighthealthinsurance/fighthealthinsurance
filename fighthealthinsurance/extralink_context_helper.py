@@ -9,6 +9,7 @@ from typing import List
 
 from loguru import logger
 
+from fighthealthinsurance.context_utils import truncate_at_boundary
 from fighthealthinsurance.models import MicrositeExtraLink
 
 
@@ -76,9 +77,7 @@ class ExtraLinkContextHelper:
                 content = doc.summary or doc.raw_text
 
                 if content:
-                    # Truncate if needed
-                    if len(content) > max_chars_per_doc:
-                        content = content[:max_chars_per_doc] + "..."
+                    content = truncate_at_boundary(content, max_chars_per_doc)
 
                     title = link.title or f"Document {i}"
 
