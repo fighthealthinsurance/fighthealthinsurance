@@ -486,6 +486,10 @@ class ChatInterface:
             await self.send_message_to_client(DELETE_DATA_RESPONSE)
             self._append_to_history(chat, "user", user_message)
             self._append_to_history(chat, "assistant", DELETE_DATA_RESPONSE)
+            # Merge any background-task updates from the DB before saving so
+            # we don't clobber summary_for_next_call or microsite context that
+            # was written while this request was in flight.
+            await self._merge_summary_from_db(chat)
             await chat.asave()
             return
 

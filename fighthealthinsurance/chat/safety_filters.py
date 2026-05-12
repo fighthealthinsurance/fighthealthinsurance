@@ -6,7 +6,7 @@ Extracted from chat_interface.py for better organization and testability.
 """
 
 import re
-from typing import Pattern
+from typing import Optional, Pattern
 
 # Crisis/self-harm detection - phrases indicating the user may need immediate help
 # IMPORTANT: These must be specific enough to NOT block legitimate mental health
@@ -145,7 +145,7 @@ def detect_false_promises(text: str) -> bool:
     return bool(_FALSE_PROMISE_REGEX.search(text))
 
 
-def detect_delete_data_request(text: str) -> bool:
+def detect_delete_data_request(text: Optional[str]) -> bool:
     """
     Check if a user message is asking us to delete their data or account.
 
@@ -158,13 +158,16 @@ def detect_delete_data_request(text: str) -> bool:
     return bool(_DELETE_DATA_REGEX.search(text))
 
 
-def llm_requested_delete_handoff(text: str) -> bool:
+def llm_requested_delete_handoff(text: Optional[str]) -> bool:
     """
     Check if an LLM response contains the delete-data sentinel token.
 
     The system prompt instructs the model to emit this sentinel when it
     recognizes a deletion request the regex missed. We swap the entire
     response for the canned text when the sentinel is present.
+
+    Accepts Optional[str] because the LLM-output cleaning helpers
+    (remove_repeated_blocks / remove_repeated_sentences) can return None.
     """
     if not text:
         return False
