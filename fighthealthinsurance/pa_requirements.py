@@ -22,6 +22,7 @@ shows code 95810 requires PA via UHCprovider.com").
 from __future__ import annotations
 
 import re
+import time
 from datetime import date
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
@@ -150,18 +151,36 @@ def resolve_insurance_company_by_name(
     if not payer_clean:
         return None
 
-    company = InsuranceCompany.objects.filter(name__iexact=payer_clean).first()
+    start = time.perf_counter()
+
+    company = InsuranceCompany.objects.filter(name__iexact=payer_clean).only(
+        "id", "name"
+    ).first()
     if company is not None:
+        logger.debug(
+            "resolve_insurance_company_by_name: canonical_exact_match payer={!r} company_id={} duration_ms={:.2f}",
+            payer_clean,
+            company.id,
+            (time.perf_counter() - start) * 1000,
+        )
         return company
 
     payer_lower = payer_clean.lower()
-    candidates = InsuranceCompany.objects.exclude(alt_names="")
-    for candidate in candidates.iterator():
+    alt_candidates = InsuranceCompany.objects.exclude(alt_names="").filter(
+        alt_names__icontains=payer_clean
+    )
+    for candidate in alt_candidates.only("id", "alt_names").iterator(chunk_size=200):
         if not candidate.alt_names:
             continue
         for alt in candidate.alt_names.splitlines():
             alt = alt.strip().lower()
             if alt and alt == payer_lower:
+                logger.debug(
+                    "resolve_insurance_company_by_name: alt_exact_match payer={!r} company_id={} duration_ms={:.2f}",
+                    payer_clean,
+                    candidate.id,
+                    (time.perf_counter() - start) * 1000,
+                )
                 return candidate
 
     # Last resort: try the compiled ``regex`` field on each company,
@@ -169,10 +188,23 @@ def resolve_insurance_company_by_name(
     # the established pattern in
     # ``common_view_logic.AppealsBackendHelper._match_insurance_company``
     # so the two resolvers stay consistent.
-    for candidate in InsuranceCompany.objects.iterator():
+    token = next((part for part in re.split(r"\W+", payer_lower) if len(part) >= 3), "")
+    regex_candidates = InsuranceCompany.objects.exclude(regex="")
+    if token:
+        narrowed = regex_candidates.filter(
+            Q(name__icontains=token) | Q(alt_names__icontains=token)
+        )
+        if narrowed.exists():
+            regex_candidates = narrowed
+
+    regex_attempts = 0
+    for candidate in regex_candidates.only(
+        "id", "name", "regex", "negative_regex"
+    ).iterator(chunk_size=200):
         regex = getattr(candidate, "regex", None)
         if not regex or not getattr(regex, "pattern", ""):
             continue
+        regex_attempts += 1
         try:
             if not regex.search(payer_clean):
                 continue
@@ -183,12 +215,25 @@ def resolve_insurance_company_by_name(
                 and negative.search(payer_clean)
             ):
                 continue
+            logger.debug(
+                "resolve_insurance_company_by_name: regex_match payer={!r} company_id={} regex_attempts={} duration_ms={:.2f}",
+                payer_clean,
+                candidate.id,
+                regex_attempts,
+                (time.perf_counter() - start) * 1000,
+            )
             return candidate
         except Exception as e:
             logger.opt(exception=True).debug(
                 f"Error applying regex for company {candidate.id}: {e}"
             )
             continue
+    logger.debug(
+        "resolve_insurance_company_by_name: no_match payer={!r} regex_attempts={} duration_ms={:.2f}",
+        payer_clean,
+        regex_attempts,
+        (time.perf_counter() - start) * 1000,
+    )
     return None
 
 

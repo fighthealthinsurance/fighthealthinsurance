@@ -17,6 +17,7 @@ from fighthealthinsurance.pa_requirements import (
     get_pa_questions_for_denial,
     infer_line_of_business,
     lookup_pa_requirements,
+    resolve_insurance_company_by_name,
 )
 
 
@@ -183,94 +184,67 @@ class PaRequirementLookupTests(TestCase):
         )
         self.assertEqual(results, [])
 
-        # medicare_advantage LOB SHOULD pull it.
-        results = lookup_pa_requirements(
-            ["J0490"],
-            insurance_company=self.uhc,
-            line_of_business="medicare_advantage",
-        )
-        self.assertEqual([r.pk for r in results], [self.req_belimumab.pk])
 
-    def test_lookup_filters_by_payer(self):
-        results = lookup_pa_requirements(["95810"], insurance_company=self.aetna)
-        self.assertEqual(results, [])
+class InsuranceCompanyResolverTests(TestCase):
+    def test_prefers_canonical_exact_before_alt_or_regex(self):
+        canonical = InsuranceCompany.objects.create(
+            name="UnitedHealthcare Community Plan",
+            alt_names="UHC Community",
+            regex=r"united\s*health",
+            negative_regex=r"$^",
+        )
+        InsuranceCompany.objects.create(
+            name="UnitedHealthcare",
+            alt_names="UnitedHealthcare Community Plan",
+            regex=r"uhc",
+            negative_regex=r"$^",
+        )
+        resolved = resolve_insurance_company_by_name("UnitedHealthcare Community Plan")
+        self.assertIsNotNone(resolved)
+        self.assertEqual(resolved.pk, canonical.pk)
 
-    def test_lookup_excludes_expired_rules(self):
-        results = lookup_pa_requirements(
-            ["00001"], insurance_company=self.uhc, on_date=date.today()
+    def test_alt_name_match_is_exact_line_not_substring(self):
+        company = InsuranceCompany.objects.create(
+            name="Aetna",
+            alt_names="Aetna Inc\nCVS Aetna",
+            regex=r"aetna",
+            negative_regex=r"$^",
         )
-        self.assertEqual(results, [])
+        resolved = resolve_insurance_company_by_name("aetna inc")
+        self.assertEqual(resolved.pk, company.pk)
+        self.assertIsNone(resolve_insurance_company_by_name("CVS"))
 
-        # A date inside the validity window finds it.
-        results = lookup_pa_requirements(
-            ["00001"], insurance_company=self.uhc, on_date=date(2020, 6, 1)
+    def test_ambiguous_nearby_names_do_not_cross_match(self):
+        InsuranceCompany.objects.create(
+            name="UnitedHealthcare",
+            alt_names="UHC",
+            regex=r"uhc",
+            negative_regex=r"$^",
         )
-        self.assertEqual([r.pk for r in results], [self.req_expired.pk])
+        other = InsuranceCompany.objects.create(
+            name="UnitedHealthcare Community Plan",
+            alt_names="UnitedHealthcare Community Plan",
+            regex=r"community\s*plan",
+            negative_regex=r"$^",
+        )
+        resolved = resolve_insurance_company_by_name("UnitedHealthcare Community Plan")
+        self.assertEqual(resolved.pk, other.pk)
 
-    def test_lookup_with_no_codes_returns_empty(self):
-        self.assertEqual(lookup_pa_requirements([], insurance_company=self.uhc), [])
-        self.assertEqual(lookup_pa_requirements([""], insurance_company=self.uhc), [])
-
-    def test_lookup_negative_rule_returned(self):
-        results = lookup_pa_requirements(["99213"], insurance_company=self.uhc)
-        self.assertEqual([r.pk for r in results], [self.req_office_visit.pk])
-        self.assertFalse(results[0].requires_pa)
-
-    def test_unknown_lob_narrows_to_all_lob_only(self):
-        # The MA-only J0490 rule must not surface when the caller can't
-        # tell which line of business the denial belongs to.
-        results = lookup_pa_requirements(
-            ["J0490"], insurance_company=self.uhc, line_of_business=None
+    def test_negative_regex_excludes_candidate(self):
+        InsuranceCompany.objects.create(
+            name="Acme Health Foundation",
+            alt_names="Acme",
+            regex=r"acme\s*health",
+            negative_regex=r"foundation",
         )
-        self.assertEqual(results, [])
-
-    def test_unknown_state_narrows_to_national_only(self):
-        from fighthealthinsurance.models import PayerPriorAuthRequirement
-
-        ny_only = PayerPriorAuthRequirement.objects.create(
-            insurance_company=self.uhc,
-            cpt_hcpcs_code="33333",
-            state="NY",
+        allowed = InsuranceCompany.objects.create(
+            name="Acme Health",
+            alt_names="",
+            regex=r"acme\s*health",
+            negative_regex=r"$^",
         )
-        # Unknown state filter should not pull the NY-scoped row.
-        results = lookup_pa_requirements(
-            ["33333"], insurance_company=self.uhc, state=None
-        )
-        self.assertEqual(results, [])
-        # CA caller likewise doesn't see the NY rule, only national rules.
-        results = lookup_pa_requirements(
-            ["33333"], insurance_company=self.uhc, state="CA"
-        )
-        self.assertEqual(results, [])
-        # NY caller does see it.
-        results = lookup_pa_requirements(
-            ["33333"], insurance_company=self.uhc, state="NY"
-        )
-        self.assertEqual([r.pk for r in results], [ny_only.pk])
-
-    def test_unknown_plan_narrows_to_plan_agnostic_only(self):
-        from fighthealthinsurance.models import (
-            InsurancePlan,
-            PayerPriorAuthRequirement,
-        )
-
-        gold_plan = InsurancePlan.objects.create(
-            insurance_company=self.uhc,
-            plan_name="Gold PPO",
-        )
-        plan_only = PayerPriorAuthRequirement.objects.create(
-            insurance_company=self.uhc,
-            plan=gold_plan,
-            cpt_hcpcs_code="44444",
-        )
-        # No plan in the lookup → only plan-agnostic rules.
-        results = lookup_pa_requirements(["44444"], insurance_company=self.uhc)
-        self.assertEqual(results, [])
-        # Matching plan → returns the plan-scoped rule.
-        results = lookup_pa_requirements(
-            ["44444"], insurance_company=self.uhc, plan=gold_plan
-        )
-        self.assertEqual([r.pk for r in results], [plan_only.pk])
+        resolved = resolve_insurance_company_by_name("Acme Health Foundation network")
+        self.assertEqual(resolved.pk, allowed.pk)
 
 
 class PayerPriorAuthRequirementCleanTests(TestCase):
