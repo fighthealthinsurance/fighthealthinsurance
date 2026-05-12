@@ -385,3 +385,59 @@ class TestFollowUpForm(TestCase):
         self.assertIn("uuid", form.errors)
         self.assertIn("follow_up_semi_sekret", form.errors)
         self.assertIn("hashed_email", form.errors)
+
+    def test_appeal_result_optional(self):
+        """appeal_result is optional and an empty value should be accepted."""
+        import uuid
+
+        form = FollowUpForm(
+            data={
+                "uuid": str(uuid.uuid4()),
+                "follow_up_semi_sekret": "sekret123",
+                "hashed_email": "hashed123",
+            }
+        )
+        self.assertTrue(form.is_valid(), form.errors)
+        self.assertEqual(form.cleaned_data["appeal_result"], "")
+
+    def test_invalid_appeal_result_choice_rejected(self):
+        """Values not in the choice list must be rejected."""
+        import uuid
+
+        form = FollowUpForm(
+            data={
+                "uuid": str(uuid.uuid4()),
+                "follow_up_semi_sekret": "sekret123",
+                "hashed_email": "hashed123",
+                "appeal_result": "TotallyMadeUpOption",
+            }
+        )
+        self.assertFalse(form.is_valid())
+        self.assertIn("appeal_result", form.errors)
+
+    def test_full_payload_with_quote_and_comments(self):
+        """A submission with all optional text fields should validate."""
+        import uuid
+
+        form = FollowUpForm(
+            data={
+                "uuid": str(uuid.uuid4()),
+                "follow_up_semi_sekret": "sekret123",
+                "hashed_email": "hashed123",
+                "appeal_result": "Partial",
+                "user_comments": "It worked but only partially.",
+                "quote": "FHI helped me push back.",
+                "use_quote": "on",
+                "name_for_quote": "Jane Doe",
+                "email": "follow@example.com",
+                "follow_up_again": "on",
+                "medicare_someone_to_help": "on",
+            }
+        )
+        self.assertTrue(form.is_valid(), form.errors)
+        cleaned = form.cleaned_data
+        self.assertEqual(cleaned["user_comments"], "It worked but only partially.")
+        self.assertEqual(cleaned["appeal_result"], "Partial")
+        self.assertTrue(cleaned["use_quote"])
+        self.assertTrue(cleaned["follow_up_again"])
+        self.assertTrue(cleaned["medicare_someone_to_help"])
