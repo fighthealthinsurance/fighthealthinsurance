@@ -106,7 +106,10 @@ class FinancialAssistanceTool(BaseTool):
         await self.send_status_message("Looking up financial assistance options...")
 
         from fighthealthinsurance.financial_assistance_directory import search
-        from fighthealthinsurance.pharmacy_coupon_detector import suggest_for_denial
+        from fighthealthinsurance.pharmacy_coupon_detector import (
+            detect_drug,
+            suggest_for_denial,
+        )
 
         try:
             results = search(
@@ -125,13 +128,23 @@ class FinancialAssistanceTool(BaseTool):
             )
             return cleaned_response, context
 
-        # Pharmacy discount options (GoodRx / Cost Plus / Amazon Pharmacy)
+        # Pharmacy discount options (GoodRx / Cost Plus / Amazon Search)
         # are sourced from the pharmacy_coupon_detector, not the directory -
         # combine both into a single LLM-facing context block so the model
         # can recommend whichever path is most relevant.
+        #
+        # Only forward the LLM-supplied `drug` parameter when our detector
+        # recognizes it as an actual medication. Otherwise the LLM might
+        # populate `drug` with arbitrary text (e.g. "MRI of knee") and
+        # suggest_for_denial's explicit-drug branch would build pharmacy
+        # URLs around that bogus token. With drug=None we still get a real
+        # match if denial_text or diagnosis mentions a known drug, or the
+        # generic prescription-cue suggestion otherwise.
+        raw_drug = params.get("drug")
+        validated_drug = detect_drug(raw_drug) if raw_drug else None
         try:
             pharmacy_suggestion = suggest_for_denial(
-                drug=params.get("drug"),
+                drug=validated_drug,
                 denial_text=params.get("denial_text"),
                 diagnosis=params.get("diagnosis"),
             )

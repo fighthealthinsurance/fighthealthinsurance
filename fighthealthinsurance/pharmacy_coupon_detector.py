@@ -251,8 +251,19 @@ def _normalize(text: str) -> str:
     return text.lower()
 
 
+def _slug_for_url(drug_name: str) -> str:
+    """URL-encode a drug name for use in pharmacy URLs.
+
+    Uses ``safe=""`` so reserved characters - notably ``/`` in combo
+    drug names like "emtricitabine/tenofovir" - get percent-encoded
+    rather than slipping through as raw path separators that GoodRx /
+    CostPlus / Amazon would mishandle.
+    """
+    return urllib.parse.quote(drug_name.lower(), safe="")
+
+
 def _build_goodrx_option(drug_name: str) -> PharmacyOption:
-    slug = urllib.parse.quote(drug_name.lower())
+    slug = _slug_for_url(drug_name)
     return PharmacyOption(
         name="GoodRx",
         url=f"https://www.goodrx.com/{slug}",
@@ -264,7 +275,7 @@ def _build_goodrx_option(drug_name: str) -> PharmacyOption:
 
 
 def _build_costplus_option(drug_name: str) -> PharmacyOption:
-    slug = urllib.parse.quote(drug_name.lower())
+    slug = _slug_for_url(drug_name)
     return PharmacyOption(
         name="Mark Cuban Cost Plus Drugs",
         url=f"https://costplusdrugs.com/medications/?search={slug}",
@@ -297,7 +308,7 @@ _AMAZON_AFFILIATE_URL_TEMPLATE = (
 
 
 def _build_amazon_option(drug_name: str) -> PharmacyOption:
-    slug = urllib.parse.quote(drug_name.lower())
+    slug = _slug_for_url(drug_name)
     return PharmacyOption(
         name="Amazon Search",
         url=_AMAZON_AFFILIATE_URL_TEMPLATE.format(slug=slug),

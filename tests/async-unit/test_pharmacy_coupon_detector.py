@@ -155,6 +155,22 @@ class TestBuildSuggestion:
         for opt in suggestion.pharmacy_options:
             assert opt.counts_toward_oop_max is False
 
+    def test_slash_in_drug_name_is_url_encoded(self):
+        # Combo drug names like Truvada's generic ("emtricitabine/tenofovir")
+        # contain a literal slash. urllib.parse.quote() with the default
+        # `safe="/"` would leave it raw, breaking GoodRx (treats as a path
+        # segment), Cost Plus's ?search= (truncates), and Amazon (mishandles).
+        # Force percent-encoding via _slug_for_url's safe="" so all three
+        # links remain well-formed.
+        suggestion = build_suggestion("emtricitabine/tenofovir")
+        for opt in suggestion.pharmacy_options:
+            assert "/" not in opt.url.split("emtricitabine", 1)[-1].split(
+                "tenofovir", 1
+            )[0], f"slash in drug slug not encoded for {opt.name}: {opt.url}"
+            assert "%2F" in opt.url or "/" not in "emtricitabine/tenofovir", (
+                f"expected percent-encoded slash in {opt.name} URL: {opt.url}"
+            )
+
     def test_url_encodes_special_characters(self):
         # Drug names with spaces or punctuation should be URL-encoded so the
         # generated links remain valid.

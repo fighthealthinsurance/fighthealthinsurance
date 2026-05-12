@@ -264,3 +264,29 @@ class TestPharmacyDiscountInclusion(TestCase):
         self.assertIn("GoodRx", info_text)
         self.assertIn("Mark Cuban Cost Plus Drugs", info_text)
         self.assertIn("Amazon Search", info_text)
+
+    def test_handle_does_not_treat_non_drug_as_drug(self):
+        """If the LLM populates `drug` with arbitrary text that isn't a
+        recognized medication (e.g. "MRI of knee"), the chat tool must
+        NOT build pharmacy URLs around that token. We only forward
+        `drug=` to suggest_for_denial when detect_drug() recognizes it,
+        otherwise let detection fall back to denial_text/diagnosis."""
+        callback = AsyncMock(return_value=("ok", None))
+        tool = _make_tool(call_llm_callback=callback)
+        text = '**financial_assistance {"drug": "MRI of knee"}**'
+        _run(
+            tool.handle(
+                text,
+                "",
+                model_backends=MagicMock(),
+                current_message_for_llm="how do I get my MRI covered?",
+                history_for_llm=[],
+            )
+        )
+        callback.assert_awaited_once()
+        info_text = callback.call_args[0][1]
+        # The pharmacy block, if present at all, must not embed "MRI" or
+        # "knee" into a fake drug-specific GoodRx/Amazon link. Easiest
+        # invariant: the bogus drug name never appears as a URL slug.
+        self.assertNotIn("goodrx.com/mri", info_text.lower())
+        self.assertNotIn("amazon.com/s?k=mri", info_text.lower())
