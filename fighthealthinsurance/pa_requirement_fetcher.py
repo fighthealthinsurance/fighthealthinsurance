@@ -12,7 +12,7 @@ Manually seeded rows (no ``"auto:"`` prefix on ``source_document``) are
 left untouched so handcrafted seed data is never clobbered.
 
 Invoked by the ``ingest_pa_requirements`` management command at deploy time
-and by ``PARequirementRefreshActor`` on a weekly cadence.
+and by ``PARequirementRefreshActor`` daily at 1 AM Pacific time.
 """
 
 from __future__ import annotations

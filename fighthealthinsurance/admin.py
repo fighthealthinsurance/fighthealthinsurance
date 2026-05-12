@@ -393,8 +393,8 @@ class InsuranceCompanyAdmin(admin.ModelAdmin):
                 ),
                 "description": (
                     "URL to the payer's published PA requirement list (Excel/PDF/HTML). "
-                    "Set 'is parseable' true when a registered parser exists for this "
-                    "URL's hostname (see pa_requirement_parsers.PARSERS_BY_HOST). "
+                    "Set 'is parseable' true once the response Content-Type is covered by "
+                    "pa_requirement_parsers.PARSERS_BY_CONTENT_TYPE. "
                     "Run 'manage.py ingest_pa_requirements' to auto-import rows into "
                     "PayerPriorAuthRequirement."
                 ),

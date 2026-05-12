@@ -11,11 +11,11 @@ Adding support for a new payer means:
   2. Set ``pa_requirement_list_url`` and ``pa_requirement_list_url_is_parseable=True``
      on the InsuranceCompany fixture/admin row.
   3. Write a parser here returning ``ParsedPARequirement`` records.
-  4. Register it in ``PARSERS_BY_HOST`` keyed on the URL hostname, or add a
-     content-sniffing entry to ``PARSERS_BY_CONTENT_TYPE``.
+  4. Register it in ``PARSERS_BY_CONTENT_TYPE`` keyed on the response Content-Type,
+     or add an entry to ``HOST_ENRICHMENTS`` for payer-specific defaults.
 
 Content-type dispatch:
-  - HTML  → ``parse_html_pa_table`` (generic) or a host-specific parser
+  - HTML  → ``parse_html_pa_table`` (generic)
   - PDF   → ``parse_pdf_pa_list`` (generic text extraction + code scanning)
   - Excel → ``parse_excel_pa_list`` (generic column-mapping heuristic)
   - CSV   → ``parse_csv_pa_list`` (same heuristic as Excel)
@@ -258,7 +258,7 @@ def _rows_to_requirements(
 # ---------------------------------------------------------------------------
 
 
-def parse_html_pa_table(html: str) -> List[ParsedPARequirement]:
+def parse_html_pa_table(html: str, source_name: str = "") -> List[ParsedPARequirement]:
     """
     Extract PA requirements from an HTML page that contains one or more
     ``<table>`` elements with CPT/HCPCS code columns. JS-rendered content
@@ -294,7 +294,7 @@ def parse_html_pa_table(html: str) -> List[ParsedPARequirement]:
         if not headers or not rows_data:
             continue
         col_map = _map_columns(headers)
-        out.extend(_rows_to_requirements(col_map, rows_data))
+        out.extend(_rows_to_requirements(col_map, rows_data, source_document=source_name))
 
     return out
 
@@ -476,11 +476,17 @@ def parse_csv_pa_list(csv_bytes: bytes, source_name: str = "") -> List[ParsedPAR
 
 
 def _dedupe(requirements: List[ParsedPARequirement]) -> List[ParsedPARequirement]:
-    """Remove duplicate codes (same code + LOB + state)."""
+    """Remove duplicate records (same code/range + LOB + state)."""
     seen: set = set()
     out: List[ParsedPARequirement] = []
     for req in requirements:
-        key = (req.cpt_hcpcs_code, req.line_of_business, req.state)
+        key = (
+            req.cpt_hcpcs_code,
+            req.code_range_start,
+            req.code_range_end,
+            req.line_of_business,
+            req.state,
+        )
         if key in seen:
             continue
         seen.add(key)
@@ -508,7 +514,7 @@ PARSERS_BY_CONTENT_TYPE: Dict[str, ParserSpec] = {
         True,
     ),
     "application/vnd.ms-excel": (parse_excel_pa_list, True),
-    "text/csv": (parse_csv_pa_list, False),
+    "text/csv": (parse_csv_pa_list, True),
 }
 
 

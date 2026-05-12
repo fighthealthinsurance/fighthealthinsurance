@@ -3,11 +3,11 @@ Tests for pa_requirement_parsers — the HTML/PDF/CSV/Excel parsing layer that
 converts payer-published prior-authorization lists into ParsedPARequirement
 records.
 
-These tests do not touch the database; django.test.TestCase is used only for
-test discovery compatibility — no DB fixtures are loaded.
+These tests do not touch the database; SimpleTestCase is used for test
+discovery compatibility with no DB setup overhead.
 """
 
-from django.test import TestCase
+from django.test import SimpleTestCase as TestCase
 
 from fighthealthinsurance.pa_requirement_parsers import (
     ParsedPARequirement,

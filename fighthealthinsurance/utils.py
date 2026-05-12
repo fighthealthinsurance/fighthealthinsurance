@@ -961,7 +961,11 @@ def extract_file_text(path: str) -> str:
             return ""
 
 
-_PACIFIC = ZoneInfo("America/Los_Angeles")
+try:
+    _PACIFIC: datetime.tzinfo = ZoneInfo("America/Los_Angeles")
+except Exception:
+    # tzdata package absent — fall back to UTC so actors still run.
+    _PACIFIC = datetime.timezone.utc
 
 
 def seconds_until_next_1am_pacific() -> float:
