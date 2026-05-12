@@ -5,11 +5,7 @@ persists PayerPriorAuthRequirement rows from payer-published PA lists.
 
 from __future__ import annotations
 
-from typing import Tuple
-from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
-import pytest_asyncio
+from unittest.mock import AsyncMock, patch
 
 from django.test import TestCase
 
@@ -19,31 +15,6 @@ from fighthealthinsurance.pa_requirement_fetcher import (
     PARequirementFetcher,
 )
 from fighthealthinsurance.pa_requirement_parsers import ParsedPARequirement
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _make_company(name="Test Payer", url="https://www.uhcprovider.com/pa-list.html"):
-    return InsuranceCompany.objects.create(
-        name=name,
-        pa_requirement_list_url=url,
-        pa_requirement_list_url_is_parseable=True,
-    )
-
-
-def _make_requirements(codes, company):
-    return [
-        PayerPriorAuthRequirement(
-            insurance_company=company,
-            cpt_hcpcs_code=code,
-            requires_pa=True,
-            line_of_business="all",
-            source_document=f"{AUTO_SOURCE_PREFIX}https://example.com/list",
-        )
-        for code in codes
-    ]
 
 
 # ---------------------------------------------------------------------------
@@ -144,7 +115,13 @@ class PARequirementFetcherReplaceTests(TestCase):
     def test_range_code_stored_as_range(self):
         from asgiref.sync import async_to_sync
 
-        parsed = [self._parsed("RANGE:99201-99215", code_description="E&M visits")]
+        parsed = [
+            ParsedPARequirement(
+                code_range_start="99201",
+                code_range_end="99215",
+                code_description="E&M visits",
+            )
+        ]
         async_to_sync(PARequirementFetcher._replace_requirements)(
             self.company, parsed, self._source()
         )
@@ -233,16 +210,14 @@ class PARequirementFetcherIngestCompanyTests(TestCase):
         count = async_to_sync(run)()
         self.assertEqual(count, 0)
 
-    def test_ingest_company_unknown_host_raises(self):
+    def test_ingest_company_unknown_content_type_raises(self):
+        """A Content-Type that has no registered parser must raise LookupError."""
         from asgiref.sync import async_to_sync
-
-        self.company.pa_requirement_list_url = "https://unknown-payer.example.com/pa.html"
-        self.company.save()
 
         async def run():
             async with PARequirementFetcher() as fetcher:
                 with patch.object(fetcher, "_get_content", new=AsyncMock(
-                    return_value=("text/html", "<html/>")
+                    return_value=("application/octet-stream", b"\x00\x01")
                 )):
                     return await fetcher.ingest_company(self.company)
 
@@ -250,32 +225,51 @@ class PARequirementFetcherIngestCompanyTests(TestCase):
             async_to_sync(run)()
 
     def test_ingest_company_pdf_content_type(self):
-        """Content-type PDF should dispatch to the generic PDF parser."""
+        """A PDF Content-Type dispatches to the generic PDF parser."""
         from asgiref.sync import async_to_sync
 
-        dummy_pdf = b"%PDF-1.4"
-        self.company.pa_requirement_list_url = "https://unknown-host.example.com/list.pdf"
+        self.company.pa_requirement_list_url = "https://example.com/list.pdf"
         self.company.save()
 
         with patch(
-            "fighthealthinsurance.pa_requirement_fetcher.PARSERS_BY_HOST", {}
-        ), patch(
             "fighthealthinsurance.pa_requirement_fetcher.PARSERS_BY_CONTENT_TYPE",
             {
-                "application/pdf": lambda data, name: [
-                    ParsedPARequirement(cpt_hcpcs_code="95810")
-                ]
+                "application/pdf": (
+                    lambda data, name: [ParsedPARequirement(cpt_hcpcs_code="95810")],
+                    True,
+                )
             },
         ):
             async def run():
                 async with PARequirementFetcher() as fetcher:
                     with patch.object(fetcher, "_get_content", new=AsyncMock(
-                        return_value=("application/pdf", dummy_pdf)
+                        return_value=("application/pdf", b"%PDF-1.4")
                     )):
                         return await fetcher.ingest_company(self.company)
 
             count = async_to_sync(run)()
             self.assertEqual(count, 1)
+
+    def test_host_enrichment_applied(self):
+        """Records returned by parse_company should pick up host-specific defaults."""
+        from asgiref.sync import async_to_sync
+
+        html = (
+            "<table><thead><tr><th>CPT</th><th>PA Required</th></tr></thead>"
+            "<tbody><tr><td>95810</td><td>Yes</td></tr></tbody></table>"
+        )
+
+        async def run():
+            async with PARequirementFetcher() as fetcher:
+                with patch.object(fetcher, "_get_content", new=AsyncMock(
+                    return_value=("text/html", html)
+                )):
+                    return await fetcher.parse_company(self.company)
+
+        reqs = async_to_sync(run)()
+        self.assertEqual(len(reqs), 1)
+        self.assertIn("UHCprovider", reqs[0].submission_channel)
+        self.assertEqual(reqs[0].line_of_business, "commercial")
 
 
 class PARequirementFetcherIngestAllTests(TestCase):

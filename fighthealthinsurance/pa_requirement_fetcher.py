@@ -3,24 +3,21 @@ Fetch and index payer prior-authorization requirement lists.
 
 Iterates ``InsuranceCompany`` rows with
 ``pa_requirement_list_url_is_parseable=True``, downloads each company's PA
-requirement document over HTTP, dispatches it to the parser registered for the
-URL's host in :mod:`fighthealthinsurance.pa_requirement_parsers`, and replaces
-that company's :class:`PayerPriorAuthRequirement` rows that came from
-auto-ingestion (``source_document`` prefix ``"auto:"``) with the freshly
-parsed entries.
+requirement document, picks a parser by Content-Type, applies any per-host
+payer enrichment (submission channel / default LOB), and replaces that
+company's :class:`PayerPriorAuthRequirement` rows marked ``"auto:"`` with
+the freshly parsed entries.
 
-Rows loaded by the fixture seed or entered manually (no ``"auto:"`` prefix on
-``source_document``) are left untouched so handcrafted seed data is never
-clobbered.
+Manually seeded rows (no ``"auto:"`` prefix on ``source_document``) are
+left untouched so handcrafted seed data is never clobbered.
 
-This is invoked by the ``ingest_pa_requirements`` management command, which
-can run at deploy time alongside the existing payer-policy ingest command.
+Invoked by the ``ingest_pa_requirements`` management command at deploy time
+and by ``PARequirementRefreshActor`` on a weekly cadence.
 """
 
 from __future__ import annotations
 
-import re
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Union
 from urllib.parse import urlparse
 
 import aiohttp
@@ -31,15 +28,17 @@ from loguru import logger
 from fighthealthinsurance.models import InsuranceCompany, PayerPriorAuthRequirement
 from fighthealthinsurance.pa_requirement_parsers import (
     PARSERS_BY_CONTENT_TYPE,
-    PARSERS_BY_HOST,
     ParsedPARequirement,
+    apply_enrichment,
+    enrichment_for_host,
 )
 
 FETCH_TIMEOUT_SEC = 120
 MAX_BYTES = 50 * 1024 * 1024  # 50 MB — PA lists can be large Excel/PDF files
+BULK_CREATE_BATCH = 500
 
-# Source-document prefix that marks auto-ingested rows so we can replace them
-# on re-runs without touching manually seeded rows.
+# Rows whose source_document starts with this prefix are managed by the
+# auto-ingest pipeline; ``_replace_requirements`` only ever deletes those.
 AUTO_SOURCE_PREFIX = "auto:"
 
 
@@ -68,10 +67,7 @@ class PARequirementFetcher:
             self._session = None
 
     async def ingest_all(self) -> Dict[str, int]:
-        """Fetch + parse + persist for every company flagged as parseable.
-
-        Returns a ``{fetched, failed, entries}`` summary dict.
-        """
+        """Fetch + parse + persist for every company flagged as parseable."""
         stats: Dict[str, int] = {"fetched": 0, "failed": 0, "entries": 0}
         companies = await sync_to_async(
             lambda: list(
@@ -102,62 +98,60 @@ class PARequirementFetcher:
         )
         return stats
 
-    async def ingest_company(self, company: InsuranceCompany) -> int:
-        """Fetch ``company``'s PA requirement document, parse, and replace auto rows.
+    async def parse_company(
+        self, company: InsuranceCompany
+    ) -> List[ParsedPARequirement]:
+        """Fetch + parse a company's PA list without writing to the DB.
 
-        Returns the number of ``PayerPriorAuthRequirement`` rows written.
-        Raises ``LookupError`` when no parser is registered for the URL.
+        Used by ``ingest_company`` and the management command's ``--dry-run``
+        mode so both share the same dispatch / enrichment pipeline.
+        Raises ``LookupError`` when no parser matches the response Content-Type.
         """
         url = company.pa_requirement_list_url
         if not url:
-            return 0
+            return []
 
-        host = (urlparse(url).hostname or "").lower()
-        parser_spec = PARSERS_BY_HOST.get(host)
-
-        # Fetch content; content-type sniffing may override the parser
         content_type, raw = await self._get_content(url)
+        ct_key = (content_type or "").split(";")[0].strip().lower()
+        parser_spec = PARSERS_BY_CONTENT_TYPE.get(ct_key)
+        if parser_spec is None:
+            raise LookupError(
+                f"No PA parser registered for Content-Type {ct_key!r} "
+                f"(company {company.name}, url {url})"
+            )
 
-        # Host-registered parser takes priority; fall back to content-type
-        if parser_spec is not None:
-            parser_fn, is_binary = parser_spec
-        else:
-            ct_key = (content_type or "").split(";")[0].strip().lower()
-            fallback = PARSERS_BY_CONTENT_TYPE.get(ct_key)
-            if fallback is None:
-                raise LookupError(
-                    f"No PA parser for host {host!r} (content-type {ct_key!r}); "
-                    f"company {company.name}, url {url}"
-                )
-            parser_fn = fallback
-            is_binary = True  # content-type parsers all expect bytes
-
+        parser_fn, expects_bytes = parser_spec
         source_name = f"{AUTO_SOURCE_PREFIX}{url}"
 
-        if is_binary:
-            assert isinstance(raw, bytes)
-            requirements = parser_fn(raw, source_name)
+        if expects_bytes:
+            body = raw if isinstance(raw, bytes) else raw.encode("utf-8", errors="replace")
         else:
-            text = raw if isinstance(raw, str) else raw.decode("utf-8", errors="replace")
-            requirements = parser_fn(text, source_name)
+            body = raw if isinstance(raw, str) else raw.decode("utf-8", errors="replace")
 
+        requirements = parser_fn(body, source_name)
+        apply_enrichment(requirements, enrichment_for_host(urlparse(url).hostname or ""))
+        return requirements
+
+    async def ingest_company(self, company: InsuranceCompany) -> int:
+        """Fetch, parse, and persist; returns count of rows written."""
+        requirements = await self.parse_company(company)
         if not requirements:
-            logger.info(f"No PA requirements parsed from {url}")
+            logger.info(f"No PA requirements parsed for {company.name}")
             return 0
-
+        source_name = f"{AUTO_SOURCE_PREFIX}{company.pa_requirement_list_url}"
         count = await self._replace_requirements(company, requirements, source_name)
         logger.info(f"Ingested {count} PA requirements for {company.name}")
         return count
 
-    async def _get_content(self, url: str):
-        """Download ``url`` and return ``(content_type, body)``.
-
-        ``body`` is ``bytes`` for non-text MIME types and ``str`` for HTML/text.
-        """
+    async def _get_content(self, url: str) -> "tuple[str, Union[str, bytes]]":
+        """Download ``url``; return ``(content_type, body)`` (str for text MIME)."""
         assert self._session is not None, "use 'async with PARequirementFetcher()'"
         headers = {
             "User-Agent": "fighthealthinsurance-pa-ingest/1.0",
-            "Accept": "text/html,application/xhtml+xml,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,*/*",
+            "Accept": (
+                "text/html,application/xhtml+xml,application/pdf,"
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,*/*"
+            ),
         }
         async with self._session.get(url, headers=headers, allow_redirects=True) as resp:
             resp.raise_for_status()
@@ -166,7 +160,6 @@ class PARequirementFetcher:
             if len(data) > self._max_bytes:
                 raise ValueError(f"PA requirement doc at {url} exceeded {self._max_bytes} bytes")
 
-            # Return as str for text types, bytes for binary
             if content_type.startswith("text/"):
                 encoding = resp.charset or "utf-8"
                 return content_type, data.decode(encoding, errors="replace")
@@ -179,14 +172,14 @@ class PARequirementFetcher:
         parsed: List[ParsedPARequirement],
         source_name: str,
     ) -> int:
-        """
-        Atomically replace auto-ingested rows for ``company`` with newly
-        parsed entries. Manual/seeded rows (no ``AUTO_SOURCE_PREFIX``) are
-        left untouched.
+        """Atomically replace this company's ``auto:`` rows.
 
-        Returns the count of rows written.
+        Manually seeded rows (without the ``auto:`` source prefix) are
+        preserved so handcrafted entries survive re-ingestion.
         """
         from fighthealthinsurance.models import LineOfBusiness
+
+        valid_lobs = {choice[0] for choice in LineOfBusiness.choices}
 
         with transaction.atomic():
             PayerPriorAuthRequirement.objects.filter(
@@ -196,26 +189,15 @@ class PARequirementFetcher:
 
             to_create: List[PayerPriorAuthRequirement] = []
             for req in parsed:
-                code = req.cpt_hcpcs_code or ""
-                range_start = ""
-                range_end = ""
-
-                # Handle the RANGE: sentinel emitted by _rows_to_requirements
-                if code.startswith("RANGE:"):
-                    range_part = code[len("RANGE:"):]
-                    parts = re.split(r"[-–]", range_part, maxsplit=1)
-                    if len(parts) == 2:
-                        range_start, range_end = parts[0].upper(), parts[1].upper()
-                    code = ""
+                code = req.cpt_hcpcs_code.upper() if req.cpt_hcpcs_code else ""
+                range_start = req.code_range_start.upper() if req.code_range_start else ""
+                range_end = req.code_range_end.upper() if req.code_range_end else ""
+                if not code and not (range_start and range_end):
+                    continue
 
                 lob = req.line_of_business or LineOfBusiness.ALL
-                # Validate against known LOB choices; fall back to ALL
-                valid_lobs = {choice[0] for choice in LineOfBusiness.choices}
                 if lob not in valid_lobs:
                     lob = LineOfBusiness.ALL
-
-                if not code and not (range_start and range_end):
-                    continue  # Skip rows with no usable code
 
                 to_create.append(
                     PayerPriorAuthRequirement(
@@ -223,19 +205,20 @@ class PARequirementFetcher:
                         cpt_hcpcs_code=code,
                         code_range_start=range_start,
                         code_range_end=range_end,
-                        code_description=req.code_description[:500] if req.code_description else "",
+                        code_description=req.code_description[:500],
                         requires_pa=req.requires_pa,
                         notification_only=req.notification_only,
-                        pa_category=req.pa_category[:200] if req.pa_category else "",
-                        criteria_reference=req.criteria_reference[:500] if req.criteria_reference else "",
-                        criteria_url="",
-                        submission_channel=req.submission_channel[:500] if req.submission_channel else "",
+                        pa_category=req.pa_category[:200],
+                        criteria_reference=req.criteria_reference[:500],
+                        submission_channel=req.submission_channel[:500],
                         line_of_business=lob,
-                        state=(req.state or "")[:2].upper(),
-                        notes=req.notes[:1000] if req.notes else "",
+                        state=req.state[:2].upper(),
+                        notes=req.notes[:1000],
                         source_document=source_name[:300],
                     )
                 )
 
-            PayerPriorAuthRequirement.objects.bulk_create(to_create)
+            PayerPriorAuthRequirement.objects.bulk_create(
+                to_create, batch_size=BULK_CREATE_BATCH
+            )
             return len(to_create)

@@ -15,11 +15,10 @@ from fighthealthinsurance.pa_requirement_parsers import (
     _dedupe,
     _map_columns,
     _rows_to_requirements,
+    apply_enrichment,
+    enrichment_for_host,
     parse_csv_pa_list,
     parse_html_pa_table,
-    parse_uhc_pa_html,
-    parse_aetna_pa_html,
-    parse_cigna_pa_html,
 )
 
 
@@ -133,9 +132,9 @@ class RowsToRequirementsTests(TestCase):
         rows = [["99201-99215", "E&M office visits", ""]]
         reqs = _rows_to_requirements(col_map, rows)
         self.assertEqual(len(reqs), 1)
-        self.assertTrue(reqs[0].cpt_hcpcs_code.startswith("RANGE:"))
-        self.assertIn("99201", reqs[0].cpt_hcpcs_code)
-        self.assertIn("99215", reqs[0].cpt_hcpcs_code)
+        self.assertEqual(reqs[0].cpt_hcpcs_code, "")
+        self.assertEqual(reqs[0].code_range_start, "99201")
+        self.assertEqual(reqs[0].code_range_end, "99215")
 
     def test_no_code_column_returns_empty(self):
         col_map = {0: "description", 1: "requires_pa"}
@@ -205,20 +204,37 @@ class HTMLParserTests(TestCase):
         reqs = parse_html_pa_table(html)
         self.assertEqual(reqs, [])
 
-    def test_uhc_wrapper_adds_submission_channel(self):
-        reqs = parse_uhc_pa_html(self._TABLE_HTML)
+    def test_uhc_enrichment_adds_submission_channel(self):
+        reqs = parse_html_pa_table(self._TABLE_HTML)
+        apply_enrichment(reqs, enrichment_for_host("www.uhcprovider.com"))
         for req in reqs:
             self.assertIn("UHCprovider", req.submission_channel)
+            self.assertEqual(req.line_of_business, "commercial")
 
-    def test_aetna_wrapper_adds_submission_channel(self):
-        reqs = parse_aetna_pa_html(self._TABLE_HTML)
+    def test_aetna_enrichment(self):
+        reqs = parse_html_pa_table(self._TABLE_HTML)
+        apply_enrichment(reqs, enrichment_for_host("www.aetna.com"))
         for req in reqs:
             self.assertIn("Aetna", req.submission_channel)
 
-    def test_cigna_wrapper_adds_submission_channel(self):
-        reqs = parse_cigna_pa_html(self._TABLE_HTML)
+    def test_cigna_enrichment(self):
+        reqs = parse_html_pa_table(self._TABLE_HTML)
+        apply_enrichment(reqs, enrichment_for_host("www.cigna.com"))
         for req in reqs:
             self.assertIn("eviCore", req.submission_channel)
+
+    def test_unknown_host_is_noop(self):
+        reqs = parse_html_pa_table(self._TABLE_HTML)
+        before = [(r.submission_channel, r.line_of_business) for r in reqs]
+        apply_enrichment(reqs, enrichment_for_host("example.com"))
+        after = [(r.submission_channel, r.line_of_business) for r in reqs]
+        self.assertEqual(before, after)
+
+    def test_enrichment_does_not_overwrite_existing_channel(self):
+        reqs = parse_html_pa_table(self._TABLE_HTML)
+        reqs[0].submission_channel = "Custom channel"
+        apply_enrichment(reqs, enrichment_for_host("www.uhcprovider.com"))
+        self.assertEqual(reqs[0].submission_channel, "Custom channel")
 
 
 class CSVParserTests(TestCase):
