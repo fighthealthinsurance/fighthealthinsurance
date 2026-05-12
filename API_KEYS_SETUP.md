@@ -17,6 +17,7 @@ and in CI.
 | `PERPLEXITY_API`                     | Perplexity       | Optional         | Sonar models for citation discovery |
 | `GROQ_API_KEY`                       | Groq             | Optional         | Fallback chat / inference |
 | `DEEPINFRA_API`                      | DeepInfra        | Optional         | Additional inference backend |
+| `LOG_ANALYTICS_WORKSPACE_ID` / `_KEY` | Azure Log Analytics | Optional      | Ship app logs to a Microsoft Log Analytics workspace |
 
 You need **at least one** ML backend (OctoAI, a local LLM, Perplexity, Groq, or
 DeepInfra) for appeal generation to work. Everything else degrades gracefully.
@@ -231,6 +232,41 @@ router falls back through them in cost order.
   `export GROQ_API_KEY="..."`.
 - **DeepInfra** — sign up at https://deepinfra.com/dash/api_keys, then
   `export DEEPINFRA_API="..."`.
+
+---
+
+## Microsoft Azure Log Analytics (`LOG_ANALYTICS_WORKSPACE_ID` / `_KEY`)
+
+Optional: ship application logs to an Azure Log Analytics workspace via the
+[HTTP Data Collector API](https://learn.microsoft.com/en-us/azure/azure-monitor/logs/data-collector-api).
+The integration is fully optional — when the env vars are unset, no logs are
+shipped and there is no extra runtime cost.
+
+### Sign up
+
+1. In the Azure portal, open (or create) a **Log Analytics workspace**.
+2. Under **Settings → Agents**, copy the **Workspace ID** and **Primary key**.
+
+### Configure
+
+```bash
+export LOG_ANALYTICS_WORKSPACE_ID="00000000-0000-0000-0000-000000000000"
+export LOG_ANALYTICS_WORKSPACE_KEY="base64-shared-key=="
+# Optional: override the destination custom-log table name.
+export LOG_ANALYTICS_LOG_TYPE="FightHealthInsurance"
+```
+
+### Behavior
+
+- **With both env vars set:** a loguru sink is installed in `asgi.py`;
+  INFO+ records (including stdlib `logging` calls intercepted by loguru)
+  are POSTed to the workspace table given by `LOG_ANALYTICS_LOG_TYPE`.
+  Delivery happens on a background daemon thread with a shared
+  `requests.Session`, so the request path never blocks on log shipment.
+- **Without them:** the handler short-circuits at `is_log_analytics_enabled()`
+  and no network calls are made.
+- Shipment errors are swallowed so logging cannot break the request path.
+  Records are dropped if the in-memory send queue overflows.
 
 ---
 

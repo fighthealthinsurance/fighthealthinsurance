@@ -66,6 +66,13 @@ class Base(Configuration):
     # Audit logging - disabled by default, enable via environment variable
     ENABLE_AUDIT_LOGGING = os.getenv("ENABLE_AUDIT_LOGGING", "false").lower() == "true"
 
+    # Microsoft Azure Log Analytics - optional log shipping. Disabled unless
+    # both workspace ID and shared key are set; LOG_TYPE is the destination
+    # custom-log table name and defaults to "FightHealthInsurance".
+    LOG_ANALYTICS_WORKSPACE_ID = os.getenv("LOG_ANALYTICS_WORKSPACE_ID", "")
+    LOG_ANALYTICS_WORKSPACE_KEY = os.getenv("LOG_ANALYTICS_WORKSPACE_KEY", "")
+    LOG_ANALYTICS_LOG_TYPE = os.getenv("LOG_ANALYTICS_LOG_TYPE", "FightHealthInsurance")
+
     # IMR / external-appeal corpus refresh. URLs are optional; the actor skips
     # any source whose URL is unset. Interval defaults to weekly (168 hours).
     IMR_DMHC_CSV_URL = os.getenv("IMR_DMHC_CSV_URL", "")
