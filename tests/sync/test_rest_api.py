@@ -531,8 +531,11 @@ class StreamingAppealsRestFallbackTest(APITestCase):
         self.assertEqual(response.status_code, 405)
 
     def test_streams_ndjson_with_anti_buffering_headers(self):
-        """Mock generate_appeals so we can assert framing without a denial."""
+        """Mock generate_appeals so we can assert framing without
+        invoking the real ML pipeline. A real denial is created so the
+        upfront magic-key auth gate passes."""
         url = reverse("streaming_appeals_fallback")
+        denial = self._make_real_denial(email="framing@example.com")
 
         async def fake_generate_appeals(_data):
             yield (
@@ -574,9 +577,9 @@ class StreamingAppealsRestFallbackTest(APITestCase):
                 url,
                 data=json.dumps(
                     {
-                        "denial_id": 42,
-                        "email": "test@example.com",
-                        "semi_sekret": "shhh",
+                        "denial_id": denial.denial_id,
+                        "email": "framing@example.com",
+                        "semi_sekret": denial.semi_sekret,
                     }
                 ),
                 content_type="application/json",
@@ -606,10 +609,10 @@ class StreamingAppealsRestFallbackTest(APITestCase):
     # ------------------------------------------------------------------
     # The PR explicitly mandates that appeals never release on denial_id
     # alone — the (denial_id, email, semi_sekret) triple is the
-    # canonical credential. These tests drive the *real* generate_appeals
-    # (no mocking) to assert that a wrong / missing key produces zero
-    # "content" frames in the streamed response, regardless of what
-    # status / error frames the server emits along the way.
+    # canonical credential. The view validates the triple upfront and
+    # returns 404 before invoking generation, so these tests assert
+    # both the status code AND that the response body (which is now a
+    # short JSON error rather than a stream) contains no appeal text.
 
     def _make_real_denial(self, email: str = "owner@example.com") -> Denial:
         """Create a Denial directly via ORM, mirroring how the denial
@@ -620,6 +623,14 @@ class StreamingAppealsRestFallbackTest(APITestCase):
             hashed_email=Denial.get_hashed_email(email),
         )
 
+    def _assert_auth_failure(self, response) -> None:
+        """Auth gate must produce a 4xx response with no appeal content
+        in the body. Uniform 404 means we don't leak which field was
+        wrong."""
+        self.assertEqual(response.status_code, 404)
+        body = response.content.decode()
+        self.assertNotIn('"content"', body)
+
     def test_rejects_wrong_semi_sekret(self):
         denial = self._make_real_denial()
         response = self._post_fallback(
@@ -629,9 +640,7 @@ class StreamingAppealsRestFallbackTest(APITestCase):
                 "semi_sekret": "wrong-sekret-not-the-real-one",
             }
         )
-        body = self._drain_streaming_response(response)
-        # Must never leak appeal text when the credential triple is bad
-        self.assertEqual(self._content_lines(body), [])
+        self._assert_auth_failure(response)
 
     def test_rejects_wrong_email(self):
         denial = self._make_real_denial()
@@ -642,14 +651,12 @@ class StreamingAppealsRestFallbackTest(APITestCase):
                 "semi_sekret": denial.semi_sekret,
             }
         )
-        body = self._drain_streaming_response(response)
-        self.assertEqual(self._content_lines(body), [])
+        self._assert_auth_failure(response)
 
     def test_rejects_missing_credentials(self):
         denial = self._make_real_denial()
         response = self._post_fallback({"denial_id": denial.denial_id})
-        body = self._drain_streaming_response(response)
-        self.assertEqual(self._content_lines(body), [])
+        self._assert_auth_failure(response)
 
     def test_cross_session_isolation(self):
         """Denial A's id with Denial B's credentials must not leak A's
@@ -663,8 +670,19 @@ class StreamingAppealsRestFallbackTest(APITestCase):
                 "semi_sekret": denial_b.semi_sekret,
             }
         )
-        body = self._drain_streaming_response(response)
-        self.assertEqual(self._content_lines(body), [])
+        self._assert_auth_failure(response)
+
+    def test_rejects_bogus_denial_id(self):
+        """Unknown denial_id with any credentials must 404 — and not
+        invoke backend generation."""
+        response = self._post_fallback(
+            {
+                "denial_id": 999999,
+                "email": "x@example.com",
+                "semi_sekret": "anything",
+            }
+        )
+        self._assert_auth_failure(response)
 
     # ------------------------------------------------------------------
     # WS -> REST handoff dedup
@@ -719,6 +737,10 @@ class StreamingAppealsRestFallbackTest(APITestCase):
         appeal twice in the UI."""
         from fighthealthinsurance.common_view_logic import AppealsBackendHelper
 
+        # Real denial so the upfront auth gate passes; generation is
+        # then mocked to keep the test deterministic.
+        denial = self._make_real_denial(email="handoff@example.com")
+
         async def fake_three_appeals(_data):
             for i in (1, 2, 3):
                 yield (
@@ -745,9 +767,9 @@ class StreamingAppealsRestFallbackTest(APITestCase):
         ):
             response = self._post_fallback(
                 {
-                    "denial_id": 1,
-                    "email": "x@example.com",
-                    "semi_sekret": "x",
+                    "denial_id": denial.denial_id,
+                    "email": "handoff@example.com",
+                    "semi_sekret": denial.semi_sekret,
                 }
             )
             self.assertEqual(response.status_code, 200)

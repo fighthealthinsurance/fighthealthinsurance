@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 import re
 import uuid
 from typing import AsyncIterator, Callable, Optional, Tuple, cast
@@ -165,7 +166,12 @@ class StreamingAppealsBackend(AsyncWebsocketConsumer):
         # Test hook: simulate a silent WS death so the JS client falls
         # back to REST. We close cleanly with no payload so the client
         # sees the same shape as a real broken-pipe / proxy-drop.
-        if SUPPRESS_APPEAL_WS_DELIVERY:
+        # Double-gate: the module flag alone isn't enough — also
+        # require os.environ["TESTING"] == "True" (set only by the
+        # TestSync settings class) so a misconfigured production
+        # process that somehow toggled the flag still serves real
+        # users.
+        if SUPPRESS_APPEAL_WS_DELIVERY and os.environ.get("TESTING") == "True":
             logger.warning(
                 "WS appeal delivery suppressed by test flag for denial "
                 f"{data.get('denial_id')}"

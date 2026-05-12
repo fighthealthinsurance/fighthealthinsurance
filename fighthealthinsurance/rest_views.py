@@ -613,6 +613,24 @@ def streaming_appeals_rest_fallback(request: Request):
         )
 
     denial_id = data.get("denial_id")
+    # Magic-key auth gate: verify (denial_id, email, semi_sekret)
+    # triple resolves to a real Denial BEFORE starting the stream.
+    # Without this, malformed/wrong credentials would burn ML
+    # generation cycles and return 200 + an in-band error frame,
+    # which is harder for clients to handle deterministically.
+    # Uniform 404 for any auth failure so we don't leak which field
+    # was wrong.
+    denial = common_view_logic.get_denial_for_action(
+        denial_id=denial_id,
+        email=data.get("email") or "",
+        semi_sekret=data.get("semi_sekret") or "",
+    )
+    if denial is None:
+        logger.warning(f"REST appeals fallback auth failure for denial {denial_id!r}")
+        return Response(
+            {"error": "Not found"},
+            status=status.HTTP_404_NOT_FOUND,
+        )
 
     async def stream():
         appeal_count = 0
