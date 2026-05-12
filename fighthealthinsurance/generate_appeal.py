@@ -639,35 +639,23 @@ def identifier_found_in_text(identifier: str, text: str) -> bool:
     return False
 
 
-# Context keys that can be shed on retry, ordered by drop priority (lowest
-# value first = drop first). These names match the dict keys used in the
-# `calls` lists built by AppealGenerator.make_appeals.
+# Context keys shed on retry when zero-result failures may stem from
+# context-window overflow. Higher tier = more aggressive reduction.
 _SHEDDABLE_TIER1 = ("uspstf_context", "pa_context", "nice_context", "rag_context")
 _SHEDDABLE_TIER2 = ("pubmed_context", "ml_citations_context")
-_TIER3_PLAN_CAP = 4000  # chars
-_TIER3_PATIENT_CAP = 6000  # chars
+_TIER3_TRUNCATIONS = (("plan_context", 4000), ("patient_context", 6000))
 
 
 def _shed_context(calls: list[dict], tier: int) -> tuple[list[dict], list[str]]:
-    """Return (new_calls, dropped_or_truncated_names) with context reduced.
+    """Return (new_calls, changed_names) with context reduced by tier.
 
-    Used by AppealGenerator.make_appeals to retry with smaller prompts when
-    the suspected cause of zero-result failures is context-window overflow.
-
-    Tier 1: drop uspstf/pa/nice/rag enrichments (set to None).
-    Tier 2: also drop pubmed and ml_citations (set to None).
-    Tier 3: also truncate plan_context and patient_context to documented caps.
-
-    Higher tiers always include the drops of lower tiers.
+    Tier 1 drops enrichments; tier 2 also drops pubmed/citations; tier 3
+    also truncates plan_context and patient_context. Higher tiers include
+    all lower-tier reductions.
     """
-    drop_keys: list[str] = []
-    if tier >= 1:
-        drop_keys.extend(_SHEDDABLE_TIER1)
-    if tier >= 2:
-        drop_keys.extend(_SHEDDABLE_TIER2)
-
-    new_calls: list[dict] = []
+    drop_keys = (*_SHEDDABLE_TIER1, *(_SHEDDABLE_TIER2 if tier >= 2 else ()))
     changed: set[str] = set()
+    new_calls = []
     for call in calls:
         new = dict(call)
         for key in drop_keys:
@@ -675,16 +663,23 @@ def _shed_context(calls: list[dict], tier: int) -> tuple[list[dict], list[str]]:
                 new[key] = None
                 changed.add(key)
         if tier >= 3:
-            plan = new.get("plan_context")
-            if isinstance(plan, str) and len(plan) > _TIER3_PLAN_CAP:
-                new["plan_context"] = plan[:_TIER3_PLAN_CAP]
-                changed.add("plan_context(truncated)")
-            patient = new.get("patient_context")
-            if isinstance(patient, str) and len(patient) > _TIER3_PATIENT_CAP:
-                new["patient_context"] = patient[:_TIER3_PATIENT_CAP]
-                changed.add("patient_context(truncated)")
+            for key, cap in _TIER3_TRUNCATIONS:
+                val = new.get(key)
+                if isinstance(val, str) and len(val) > cap:
+                    new[key] = val[:cap]
+                    changed.add(f"{key}(truncated)")
         new_calls.append(new)
     return new_calls, sorted(changed)
+
+
+def _peek_or_none(it: Iterator[str]) -> Tuple[Optional[str], Iterator[str]]:
+    """Pull one item or return (None, empty). Chains the pulled item back
+    so callers can use the returned iterator without losing the head."""
+    try:
+        first = next(it)
+        return first, itertools.chain([first], it)
+    except StopIteration:
+        return None, iter([])
 
 
 class AppealGenerator(object):
@@ -1819,18 +1814,16 @@ class AppealGenerator(object):
                 f"Summary of relevant plan document sections:\n{denial.plan_documents_summary}"
             )
         plan_context = "\n\n".join(plan_context_parts) if plan_context_parts else None
-        # Primary: Always internal models only (fast, local).
-        # Router already dedupes via its internal `seen` set, so a single
-        # call is sufficient — earlier code concatenated the same call twice
-        # which collapsed back to the same set with no added diversity.
+        # Primary is internal-only (fast, local); backup picks up external
+        # models only if the user opted in. The privacy boundary lives here:
+        # use_external=False means no external model name ever reaches a call.
         model_names = ml_router.generate_text_backend_names(use_external=False)
         if not model_names:
             logger.error(
-                f"make_appeals: zero internal model names available for denial "
-                f"{denial.denial_id} — primary call list will be empty"
+                f"make_appeals: zero internal model names available for "
+                f"denial {denial.denial_id}"
             )
 
-        # Build calls using model names (preserves multi-backend lookup)
         calls = [
             {
                 "model_name": model_name,
@@ -1845,9 +1838,6 @@ class AppealGenerator(object):
             for model_name in model_names
         ]
 
-        # Backup: include external models only if user opted in. When
-        # use_external=False this returns internal-only (same as primary) —
-        # the privacy boundary is enforced here at call-list construction.
         backup_model_names = ml_router.generate_text_backend_names(
             use_external=denial.use_external
         )
@@ -1957,83 +1947,54 @@ class AppealGenerator(object):
             calls
         )
 
-        appeals: Iterator[str] = as_available_nested(generated_text_futures)
-        # Check and make sure we have some AI powered results.
-        # Tiered fallback: primary -> backup -> retry primary.
-        # Privacy invariant: external models only enter the call set when
-        # `use_external=True`, enforced at call-list construction above.
-        first: Optional[str] = None
-        try:
-            first = next(appeals)
-            appeals = itertools.chain([first], appeals)
-        except StopIteration:
-            first = None
+        # Tiered fallback: primary -> backup -> retry primary with shed
+        # context. The privacy invariant (external models only when
+        # use_external=True) is enforced at call-list construction; the
+        # retry path reuses `calls` (internal-only), so it's opt-out-safe.
+        denial_id = denial.denial_id
+        use_ext = denial.use_external
+        appeals = as_available_nested(generated_text_futures)
+        first, appeals = _peek_or_none(appeals)
 
         if first is None and backup_calls:
             logger.warning(
-                f"Primary empty for denial {denial.denial_id}; trying "
-                f"backup_calls (n={len(backup_calls)}, "
-                f"use_external={denial.use_external})"
+                f"Primary empty for denial {denial_id}; trying backup_calls "
+                f"(n={len(backup_calls)}, use_external={use_ext})"
             )
             appeals = as_available_nested(make_async_model_calls(backup_calls))
-            try:
-                first = next(appeals)
-                appeals = itertools.chain([first], appeals)
-            except StopIteration:
-                first = None
+            first, appeals = _peek_or_none(appeals)
 
         if first is None:
-            # Primary + backup both empty. Retry primary once (NEVER
-            # external), regardless of use_external. `calls` is built from
-            # internal-only `model_names`, so retry is always opt-out-safe.
-            if denial.use_external:
-                logger.error(
-                    f"make_appeals: primary+backup both produced 0 results "
-                    f"for denial {denial.denial_id} (use_external=True, "
-                    f"external models WERE included in backup_calls); "
-                    f"retrying primary internal-only"
-                )
-            else:
-                logger.error(
-                    f"make_appeals: primary+backup both produced 0 results "
-                    f"for denial {denial.denial_id}. use_external=False — "
-                    f"NO EXTERNAL FALLBACK PERMITTED (user opted out of "
-                    f"external models). Retrying internal primary only."
-                )
-            time.sleep(1.0)  # brief backoff before retry
-            # Retry primary across context-shedding tiers. One likely cause
-            # of zero-result failures is context-window overflow; each tier
-            # drops more enrichment until tier 3 truncates the core inputs.
+            ext_note = (
+                "external models WERE included in backup_calls"
+                if use_ext
+                else "use_external=False — NO EXTERNAL FALLBACK PERMITTED "
+                "(user opt-out respected)"
+            )
+            logger.error(
+                f"make_appeals: primary+backup both produced 0 for denial "
+                f"{denial_id} ({ext_note}); retrying primary internal-only"
+            )
+            time.sleep(1.0)
             for tier in (1, 2, 3):
                 shed_calls, changed = _shed_context(calls, tier=tier)
                 logger.warning(
-                    f"make_appeals: retrying primary for denial "
-                    f"{denial.denial_id} with context shed "
-                    f"(tier={tier}, changed={changed})"
+                    f"make_appeals: retrying primary for denial {denial_id} "
+                    f"with context shed (tier={tier}, changed={changed})"
                 )
-                retry_futures = make_async_model_calls(shed_calls)
-                appeals = as_available_nested(retry_futures)
-                try:
-                    first = next(appeals)
-                    appeals = itertools.chain([first], appeals)
+                appeals = as_available_nested(make_async_model_calls(shed_calls))
+                first, appeals = _peek_or_none(appeals)
+                if first is not None:
                     logger.warning(
                         f"make_appeals: tier {tier} retry succeeded for "
-                        f"denial {denial.denial_id}"
+                        f"denial {denial_id}"
                     )
                     break
-                except StopIteration:
-                    first = None
             if first is None:
-                external_status = (
-                    "use_external=True; all external+internal exhausted"
-                    if denial.use_external
-                    else "use_external=False; external fallback NOT "
-                    "attempted (user opt-out respected)"
-                )
                 logger.error(
-                    f"make_appeals: primary retry across all context-shed "
-                    f"tiers (1-3) also produced 0 for denial "
-                    f"{denial.denial_id}; giving up. {external_status}"
+                    f"make_appeals: all context-shed retries (tiers 1-3) "
+                    f"produced 0 for denial {denial_id}; giving up. "
+                    f"({ext_note})"
                 )
                 appeals = iter([])
         appeals = itertools.chain(appeals, initial_appeals)
