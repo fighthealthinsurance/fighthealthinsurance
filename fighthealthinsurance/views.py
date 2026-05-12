@@ -31,6 +31,7 @@ from django.views.decorators.http import require_http_methods
 from django.views.generic.base import TemplateView
 from django.utils import timezone
 from django.views.generic.edit import FormView
+from django.core.mail import send_mail
 
 import stripe
 from django_encrypted_filefield.crypt import Cryptographer
@@ -39,6 +40,7 @@ from PIL import Image
 
 from fighthealthinsurance import common_view_logic, forms as core_forms, models
 from fighthealthinsurance.chat_forms import UnderstandPolicyForm, UserConsentForm
+from fighthealthinsurance.followup_emails import ThankyouEmailSender
 from fighthealthinsurance.helpers.data_helpers import RemoveDataHelper
 from fighthealthinsurance.helpers.stripe_helpers import StripeWebhookHelper
 from fighthealthinsurance.models import (
@@ -262,8 +264,47 @@ class ProVersionView(generic.FormView):
         return reverse("pro_version_thankyou")
 
     def form_valid(self, form):
-        form.save()
+        interested_pro = form.save()
+        self._notify_support_of_signup(interested_pro)
+        # Send the thank-you email synchronously so the signer gets it right
+        # away. The batched ThankyouEmailSender will skip records where
+        # thankyou_email_sent=True, which dosend() sets on success.
+        try:
+            ThankyouEmailSender().dosend(interested_pro=interested_pro)
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"Error sending immediate pro signup thank-you "
+                f"(interested_professional_id={interested_pro.id})"
+            )
         return super().form_valid(form)
+
+    @staticmethod
+    def _notify_support_of_signup(
+        interested_pro: "models.InterestedProfessional",
+    ) -> None:
+        admin_path = reverse(
+            "admin:fighthealthinsurance_interestedprofessional_change",
+            args=[interested_pro.id],
+        )
+        admin_url = f"https://{settings.FIGHT_HEALTH_INSURANCE_DOMAIN}{admin_path}"
+        body = (
+            f"A new professional signed up via /pro_version.\n\n"
+            f"Name: {interested_pro.name or 'N/A'}\n"
+            f"Email: {interested_pro.email}\n"
+            f"Admin: {admin_url}\n"
+        )
+        try:
+            send_mail(
+                f"New pro version signup #{interested_pro.id}",
+                body,
+                settings.DEFAULT_FROM_EMAIL,
+                ["support42@fighthealthinsurance.com"],
+            )
+        except Exception:
+            logger.opt(exception=True).error(
+                f"Error sending pro signup notification email "
+                f"(interested_professional_id={interested_pro.id})"
+            )
 
 
 class PatientAccessView(generic.TemplateView):
