@@ -3048,7 +3048,7 @@ class AppealsBackendHelper:
             async for pa in ProposedAppeal.objects.filter(for_denial=denial)
             if pa.appeal_text
         ]
-        if len(saved_appeal_texts) >= 2:
+        if len(saved_appeal_texts) >= 1:
             yield json.dumps(
                 {
                     "type": "status",
