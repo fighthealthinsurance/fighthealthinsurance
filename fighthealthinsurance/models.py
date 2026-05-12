@@ -2814,6 +2814,27 @@ class PatientEvidence(PatientOwnedModelMixin, models.Model):
         ordering = ["-created_at"]
 
 
+@receiver(post_delete, sender=PatientEvidence)
+def _delete_patient_evidence_file(
+    sender: type, instance: "PatientEvidence", **kwargs: typing.Any
+) -> None:
+    """Remove the encrypted evidence file after the row delete commits."""
+    if not instance.file:
+        return
+    file_field = instance.file
+    using = kwargs.get("using")
+
+    def _delete_file() -> None:
+        try:
+            file_field.delete(save=False)
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"Failed to delete PatientEvidence file for {instance.pk}"
+            )
+
+    transaction.on_commit(_delete_file, using=using)
+
+
 class StripeRecoveryInfo(models.Model):
     """Stores recovery information for failed Stripe transactions."""
 

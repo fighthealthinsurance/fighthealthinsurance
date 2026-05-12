@@ -58,10 +58,6 @@ class RemoveDataHelper:
         DemoRequests.objects.filter(email__iexact=email).delete()
         # Patient dashboard data — linked via PatientUser, not hashed_email
         User = get_user_model()
-        try:
-            user = User.objects.get(email__iexact=email)
-            patient_user = PatientUser.objects.get(user=user)
-            InsuranceCallLog.objects.filter(patient_user=patient_user).delete()
-            PatientEvidence.objects.filter(patient_user=patient_user).delete()
-        except (User.DoesNotExist, PatientUser.DoesNotExist):
-            pass
+        patient_users = PatientUser.objects.filter(user__email__iexact=email)
+        InsuranceCallLog.objects.filter(patient_user__in=patient_users).delete()
+        PatientEvidence.objects.filter(patient_user__in=patient_users).delete()

@@ -96,7 +96,7 @@ async function apiFetch<T>(url: string, options?: RequestInit): Promise<T> {
     ...options,
     headers: { ...defaultHeaders, ...(options?.headers as Record<string, string>) },
   });
-  if (response.status === 403 || response.status === 401) {
+  if (response.status === 401) {
     window.location.href = "/v0/auth/login";
     throw new Error("Not authenticated");
   }
@@ -684,13 +684,19 @@ function EvidenceTab({ appeals }: { appeals: AppealSummary[] }) {
         },
         body: formData,
       });
-      if (response.status === 403 || response.status === 401) {
+      if (response.status === 401) {
         window.location.href = "/v0/auth/login";
         throw new Error("Not authenticated");
       }
       if (!response.ok) {
-        const errData = await response.json();
-        throw new Error(errData.error || `Upload failed: ${response.status}`);
+        let message = `Upload failed: ${response.status}`;
+        try {
+          const errData = await response.json();
+          if (errData.error) message = errData.error;
+        } catch {
+          // response body wasn't JSON
+        }
+        throw new Error(message);
       }
       setTitle("");
       setDescription("");
