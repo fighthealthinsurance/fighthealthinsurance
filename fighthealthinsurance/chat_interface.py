@@ -58,7 +58,10 @@ from fighthealthinsurance.models import (
     PriorAuthRequest,
 )
 from fighthealthinsurance.microsites import get_microsite
-from fighthealthinsurance.prompt_templates import get_intro_template
+from fighthealthinsurance.prompt_templates import (
+    DELETE_DATA_INSTRUCTION,
+    get_intro_template,
+)
 from fighthealthinsurance.clinicaltrials_tools import ClinicalTrialsTools
 from fighthealthinsurance.pubmed_tools import PubMedTools
 from fighthealthinsurance.rxnorm_tools import RxNormTools
@@ -786,6 +789,12 @@ class ChatInterface:
             llm_input_message = template.format(
                 user_info=user_info_str, message=user_message
             )
+        else:
+            # Re-inject the delete-data handoff instruction on every ongoing
+            # turn. The intro template (which contains it) only fires for new
+            # chats, so without this the sentinel fallback would silently stop
+            # working past the first message.
+            llm_input_message = f"{DELETE_DATA_INSTRUCTION}\n\n{user_message}"
 
         # Prepare history for LLM using the context manager
         # This handles truncation, summarization, and full history preservation
