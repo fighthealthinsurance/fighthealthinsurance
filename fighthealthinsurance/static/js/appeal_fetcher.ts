@@ -741,40 +741,51 @@ function connectWebSocket(
   processResponseChunk: (chunk: string) => void,
   done: () => void,
 ) {
-  const resetTimeout = () => {
-    if (timeoutHandle) clearTimeout(timeoutHandle);
-    timeoutHandle = setTimeout(() => {
-      console.error("No messages received in 240 seconds. Reconnecting...");
-      if (retries < maxRetries) {
-        retries++;
-        // Inactivity timeout ended the current attempt; record duration.
-        endCurrentAttempt();
-        setTimeout(
-          () =>
-            connectWebSocket(websocketUrl, data, processResponseChunk, done),
-          1000,
-        );
-      } else {
-        console.error("Max retries reached. Closing connection.");
-        endCurrentAttempt();
-        done();
-      }
-    }, 240000); // 240 seconds timeout
-  };
-
   const startWebSocket = () => {
     // Start the per-attempt wait timer. connectWebSocket is called
     // recursively for retries, so each invocation gets its own start.
     beginAttempt();
-    // Per-attempt flag: ws.onerror may decide to retry or hand off to
-    // REST. The same socket's ws.onclose then fires on the normal
-    // error->close sequence; without a guard, onclose would also call
-    // done() and trigger ANOTHER reconnect via retry logic, leaving
-    // overlapping streams. retryScheduled lets onerror own the retry
-    // decision exclusively for this attempt.
+    // Per-attempt flag: ws.onerror or the inactivity-timeout path may
+    // decide to retry or hand off to REST. The same socket's
+    // ws.onclose then fires on the normal error->close (or
+    // close-after-explicit-close) sequence; without this guard,
+    // onclose would also call done() and call endCurrentAttempt()
+    // again, mangling the NEW attempt's duration and potentially
+    // spawning overlapping retries via doQuery recursion.
     let retryScheduled = false;
 
     const ws = new WebSocket(websocketUrl);
+
+    // Defined inside startWebSocket so it can close `ws` and mark
+    // `retryScheduled` on the right per-attempt closure.
+    const resetTimeout = () => {
+      if (timeoutHandle) clearTimeout(timeoutHandle);
+      timeoutHandle = setTimeout(() => {
+        console.error("No messages received in 240 seconds. Reconnecting...");
+        // Mark this socket stale, end its attempt timer, and explicitly
+        // close it. ws.onclose will short-circuit on retryScheduled,
+        // so it can't double-call done() or stomp on the next attempt.
+        retryScheduled = true;
+        endCurrentAttempt();
+        try {
+          ws.close();
+        } catch (e) {
+          /* ignore */
+        }
+        if (retries < maxRetries) {
+          retries++;
+          setTimeout(
+            () =>
+              connectWebSocket(websocketUrl, data, processResponseChunk, done),
+            1000,
+          );
+        } else {
+          console.error("Max retries reached. Closing connection.");
+          done();
+        }
+      }, 240000); // 240 seconds timeout
+    };
+
     ws.onopen = () => {
       console.log("WebSocket connection opened");
       updateStatusIndicator('connected', appealsSoFar.length);
@@ -796,9 +807,10 @@ function connectWebSocket(
       // Two reasons to short-circuit done():
       //   1. handingOffToRest: REST fallback owns the final done() call
       //      and will record its own attempt duration.
-      //   2. retryScheduled: ws.onerror already queued a reconnect for
-      //      this attempt and recorded its duration; calling done()
-      //      here would stomp on it.
+      //   2. retryScheduled: ws.onerror or the inactivity-timeout path
+      //      already queued a reconnect for this attempt and recorded
+      //      its duration; calling done()/endCurrentAttempt() here
+      //      would stomp on it.
       if (handingOffToRest || retryScheduled) {
         return;
       }
