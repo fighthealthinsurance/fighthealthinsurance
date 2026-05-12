@@ -84,6 +84,11 @@ class Base(Configuration):
         IMR_REFRESH_INTERVAL_HOURS = 168
     ENABLE_VOICE_INTAKE = os.getenv("ENABLE_VOICE_INTAKE", "false").lower() == "true"
     ENABLE_LOCAL_STT = os.getenv("ENABLE_LOCAL_STT", "true").lower() == "true"
+    # When true, /pro_version shows a "professional version is here" page with
+    # trial / learn-more CTAs instead of the "coming soon" interest form.
+    PRO_VERSION_AVAILABLE = (
+        os.getenv("PRO_VERSION_AVAILABLE", "false").lower() == "true"
+    )
     LOGIN_URL = "login"
     LOGIN_REDIRECT_URL = "/"
     THUMBNAIL_DEBUG = True

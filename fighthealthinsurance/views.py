@@ -243,10 +243,20 @@ def mark_session_consent(session, email: str) -> None:
 
 
 class ProVersionView(generic.FormView):
-    """Coming-soon landing page for the new updated professional version."""
+    """Landing page for the professional version.
+
+    When settings.PRO_VERSION_AVAILABLE is True, renders an "available now"
+    page with trial / learn-more CTAs. Otherwise (the default), renders the
+    "new updated professional version coming soon" interest form.
+    """
 
     template_name = "professional.html"
     form_class = core_forms.InterestedProfessionalForm
+
+    def dispatch(self, request, *args, **kwargs):
+        if getattr(settings, "PRO_VERSION_AVAILABLE", False):
+            return render(request, "professional_available.html")
+        return super().dispatch(request, *args, **kwargs)
 
     def get_success_url(self):
         return reverse("pro_version_thankyou")
