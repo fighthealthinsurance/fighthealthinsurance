@@ -17,12 +17,21 @@ combined, LLM-readable context from two sources:
 
 import json
 import re
-from typing import Any, Awaitable, Callable, List, Optional, Tuple
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 from loguru import logger
 
 from .base_tool import BaseTool
 from .patterns import FINANCIAL_ASSISTANCE_REGEX
+
+# Trailing markdown bold token after a tool-call JSON body; eaten during
+# cleanup so we don't leave stray `**` behind in the user-facing response.
+_TRAILING_BOLD_RE = re.compile(r"\s*\*\*")
+
+# Fallback span terminator when JSON parsing fails: strip up to the next
+# `**` or newline so a malformed call doesn't dump the broken token at the
+# user. Matched against the substring after the opening `{`.
+_MALFORMED_PAYLOAD_TERMINATOR_RE = re.compile(r"\*\*|\n")
 
 
 class FinancialAssistanceTool(BaseTool):
@@ -51,6 +60,70 @@ class FinancialAssistanceTool(BaseTool):
         super().__init__(send_status_message)
         self.call_llm_callback = call_llm_callback
 
+    @staticmethod
+    def _parse_payload(text: str, match: re.Match[str]) -> Optional[Dict[str, Any]]:
+        """Parse the JSON object that follows the matched tool prefix.
+
+        The regex only matches up to the opening `{` (via lookahead), so the
+        body itself is parsed here with ``json.JSONDecoder().raw_decode``.
+        That correctly bounds payloads with nested objects or string values
+        containing `}` - the previous ``\\{[^}]*\\}`` regex truncated at the
+        first `}` and silently broke otherwise-valid tool calls.
+
+        Returns the parsed dict on success, or None when the body is missing,
+        unparseable, or not a JSON object.
+        """
+        brace_pos = match.end()
+        if brace_pos >= len(text) or text[brace_pos] != "{":
+            return None
+        try:
+            parsed, _ = json.JSONDecoder().raw_decode(text[brace_pos:])
+        except json.JSONDecodeError:
+            return None
+        return parsed if isinstance(parsed, dict) else None
+
+    @staticmethod
+    def _find_call_end(text: str, match: re.Match[str]) -> int:
+        """Return the index just past the end of a financial_assistance call.
+
+        Bounds the JSON body via ``raw_decode`` and eats an optional trailing
+        ``**``. When JSON parsing fails (malformed call), falls back to
+        scanning forward for the next ``**`` or newline so a broken token
+        doesn't survive in the cleaned response.
+        """
+        brace_pos = match.end()
+        if brace_pos < len(text) and text[brace_pos] == "{":
+            try:
+                _, consumed = json.JSONDecoder().raw_decode(text[brace_pos:])
+                end = brace_pos + consumed
+            except json.JSONDecodeError:
+                fallback = _MALFORMED_PAYLOAD_TERMINATOR_RE.search(text, brace_pos)
+                end = fallback.end() if fallback else len(text)
+        else:
+            end = match.end()
+        trailing = _TRAILING_BOLD_RE.match(text, end)
+        if trailing:
+            end = trailing.end()
+        return end
+
+    def clean_all_matches(self, text: str, matches: List[re.Match[str]]) -> str:
+        """Strip each `financial_assistance` invocation along with its JSON body.
+
+        Overrides the base implementation because the regex only matches the
+        leading token (up to `{`); the JSON itself extends past ``match.end()``
+        and the base ``text.replace(match.group(0), "")`` would leave the
+        payload behind. We use ``_find_call_end`` to compute the real span.
+        """
+        if not matches:
+            return text.strip()
+        spans = [(m.start(), self._find_call_end(text, m)) for m in matches]
+        # Remove from later positions first so earlier indices stay valid.
+        spans.sort(key=lambda s: -s[0])
+        cleaned = text
+        for start, end in spans:
+            cleaned = cleaned[:start] + cleaned[end:]
+        return cleaned.strip()
+
     async def execute(
         self,
         match: re.Match[str],
@@ -73,21 +146,15 @@ class FinancialAssistanceTool(BaseTool):
                 "processing only the first"
             )
 
-        json_data = match.group(1).strip()
+        params = self._parse_payload(response_text, match)
         # Log only metadata about the payload - the JSON values may include
         # user-typed clinical text (denial_text, diagnosis) that should not
         # appear in plaintext logs. Mirrors USPSTFLookupTool.
         logger.debug(
-            f"Financial assistance tool call payload (length={len(json_data)})"
+            f"Financial assistance tool call payload (parsed_ok={params is not None})"
         )
-
-        try:
-            params = json.loads(json_data)
-        except json.JSONDecodeError as e:
-            logger.warning(
-                f"Invalid JSON in financial_assistance token "
-                f"(length={len(json_data)}): {e}"
-            )
+        if params is None:
+            logger.warning("Invalid or non-object JSON in financial_assistance token")
             await self.send_status_message(
                 "Error processing financial assistance lookup: invalid JSON."
             )
@@ -96,12 +163,6 @@ class FinancialAssistanceTool(BaseTool):
                 "Please try again.",
                 context,
             )
-
-        if not isinstance(params, dict):
-            await self.send_status_message(
-                "Financial assistance lookup needs a JSON object."
-            )
-            return cleaned_response, context
 
         await self.send_status_message("Looking up financial assistance options...")
 

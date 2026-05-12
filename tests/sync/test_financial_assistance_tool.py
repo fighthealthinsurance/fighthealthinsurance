@@ -36,13 +36,21 @@ def _make_tool(call_llm_callback=None):
 
 
 class TestFinancialAssistancePattern(TestCase):
-    """Regex pattern detection."""
+    """Regex pattern detection.
+
+    The pattern is now a lookahead at the opening `{`; the JSON body is
+    parsed at runtime via ``FinancialAssistanceTool._parse_payload`` so
+    payloads with nested objects / `}` inside strings stay intact.
+    """
 
     def test_pattern_matches_basic_invocation(self):
         text = 'Some text **financial_assistance {"drug": "Wegovy"}** more text'
         match = re.search(FINANCIAL_ASSISTANCE_REGEX, text, re.IGNORECASE)
         self.assertIsNotNone(match)
-        self.assertEqual(match.group(1), '{"drug": "Wegovy"}')
+        assert match is not None  # narrow for type-checkers below
+        # Lookahead means match.end() lands on the opening `{` and the
+        # regex captures nothing past that point.
+        self.assertEqual(text[match.end()], "{")
 
     def test_pattern_matches_without_asterisks(self):
         text = 'financial_assistance {"diagnosis": "cancer"}'
@@ -90,6 +98,64 @@ class TestFinancialAssistanceToolHandling(TestCase):
             "Error processing financial assistance lookup: invalid JSON."
         )
         self.assertIn("couldn't parse", out_text.lower())
+
+    def test_handle_parses_payload_with_closing_brace_in_string(self):
+        """Regression: payloads whose string values contain ``}`` must parse.
+
+        The previous ``\\{[^}]*\\}`` regex truncated at the first ``}`` and
+        broke valid tool calls — fixed by switching the pattern to a
+        lookahead and using ``json.JSONDecoder().raw_decode`` to bound the
+        actual JSON object.
+        """
+        callback = AsyncMock(return_value=("ok", None))
+        tool = _make_tool(call_llm_callback=callback)
+        text = (
+            "Sure, looking up help.\n"
+            "**financial_assistance "
+            '{"drug": "Wegovy", '
+            '"denial_text": "Step 1) Plan says: } not on formulary"}**'
+            " trailing prose after"
+        )
+        out_text, _ctx, handled = _run(
+            tool.handle(
+                text,
+                "",
+                model_backends=MagicMock(),
+                current_message_for_llm="how do I afford this?",
+                history_for_llm=[],
+            )
+        )
+        self.assertTrue(handled)
+        # The LLM callback fires only when JSON parse succeeded.
+        callback.assert_awaited_once()
+        # The cleaned response strips the whole tool call (including the
+        # closing ``}**``) but preserves prose before and after.
+        self.assertNotIn("financial_assistance", out_text)
+        self.assertNotIn("Step 1)", out_text)
+        self.assertIn("Sure, looking up help.", out_text)
+        self.assertIn("trailing prose after", out_text)
+
+    def test_handle_parses_payload_with_nested_object(self):
+        """Nested JSON objects (e.g. structured `state` info) must not be
+        truncated by the regex — same root cause as the closing-brace-in-
+        string regression."""
+        callback = AsyncMock(return_value=("ok", None))
+        tool = _make_tool(call_llm_callback=callback)
+        text = (
+            "**financial_assistance "
+            '{"drug": "Wegovy", "meta": {"locale": "en-US", "src": "chat"}}**'
+        )
+        _out_text, _ctx, handled = _run(
+            tool.handle(
+                text,
+                "",
+                model_backends=MagicMock(),
+                current_message_for_llm="cost help?",
+                history_for_llm=[],
+            )
+        )
+        self.assertTrue(handled)
+        callback.assert_awaited_once()
 
     def test_calls_llm_callback_with_directory_context(self):
         callback = AsyncMock(return_value=("LLM follow-up reply", "extra context"))
