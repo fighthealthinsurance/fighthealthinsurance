@@ -806,10 +806,12 @@ class ExtractPatientFieldsResponseSerializer(serializers.Serializer):
         required=False, allow_blank=True, default=""
     )
     # Per-field confidence notes, e.g. {"patient_name": "high", "dob": "low"}.
-    # Values are "high" | "medium" | "low"; missing keys mean no extraction
-    # was attempted or the field was empty.
+    # The dict has one entry per expected field; the choices enforce that
+    # only "high" | "medium" | "low" can leak to clients.
     confidence_notes = serializers.DictField(
-        child=serializers.CharField(), required=False, default=dict
+        child=serializers.ChoiceField(choices=["high", "medium", "low"]),
+        required=False,
+        default=dict,
     )
 
 

@@ -75,11 +75,20 @@ def _score_identifier(value: str, source_text: str) -> str:
 
 
 def _score_dob(value, source_text: str) -> str:
-    """``value`` may be a ``datetime.date`` (parsed in the view) or a raw str."""
+    """``value`` may be a ``datetime.date`` (parsed in the view) or a raw str.
+
+    "high" requires both parseability AND evidence that the date appears in
+    ``source_text`` — either as the raw string the LLM returned, or as one
+    of a few common renderings of the parsed date (ISO, US slash, US dash).
+    A plausible but hallucinated date that doesn't appear in the document
+    drops to "medium".
+    """
     parsed: Optional[datetime.date] = None
+    raw_str: Optional[str] = None
     if isinstance(value, datetime.date):
         parsed = value
     elif isinstance(value, str) and value.strip():
+        raw_str = value
         try:
             from dateutil import parser as _parser
 
@@ -90,25 +99,49 @@ def _score_dob(value, source_text: str) -> str:
     if parsed is None:
         return "low"
     today = datetime.date.today()
-    if datetime.date(1900, 1, 1) <= parsed <= today:
+    if not (datetime.date(1900, 1, 1) <= parsed <= today):
+        return "medium"
+
+    # High tier: require source-text evidence. Check the raw LLM string
+    # first, then a small set of common renderings so OCR variants like
+    # "1/15/1980" vs "01/15/1980" still match.
+    candidates = []
+    if raw_str:
+        candidates.append(raw_str)
+    candidates.extend(
+        [
+            parsed.isoformat(),
+            parsed.strftime("%m/%d/%Y"),
+            parsed.strftime("%m-%d-%Y"),
+            f"{parsed.month}/{parsed.day}/{parsed.year}",
+        ]
+    )
+    if any(_appears_in_source(c, source_text) for c in candidates):
         return "high"
     return "medium"
 
 
-def _score_insurance_company(value: str) -> str:
-    """High when the value resolves to a known InsuranceCompany row."""
+def _score_insurance_company(value: str, source_text: str) -> str:
+    """High when the value both resolves to a known InsuranceCompany row
+    AND appears in the source document. Resolution without source presence
+    is downgraded to "medium" because the extractor could have hallucinated
+    a real-but-unrelated carrier name.
+    """
     if not value or not value.strip():
         return "low"
+    in_source = _appears_in_source(value, source_text)
+    resolved = False
     try:
         from fighthealthinsurance.pa_requirements import (
             resolve_insurance_company_by_name,
         )
 
-        if resolve_insurance_company_by_name(value) is not None:
-            return "high"
+        resolved = resolve_insurance_company_by_name(value) is not None
     except Exception:
         # DB lookup must never break extraction; fall through to "medium".
         pass
+    if resolved and in_source:
+        return "high"
     return "medium"
 
 
@@ -131,7 +164,7 @@ def score_extracted_field(field_name: str, value, source_text: str) -> str:
     if field_name == "dob":
         return _score_dob(value, source_text)
     if field_name == "insurance_company":
-        return _score_insurance_company(str(value))
+        return _score_insurance_company(str(value), source_text)
 
     # Unknown field: degrade gracefully.
     return "high" if _appears_in_source(str(value), source_text) else "medium"

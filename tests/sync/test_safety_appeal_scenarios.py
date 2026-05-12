@@ -301,15 +301,22 @@ class FallbackOnTimeoutTests(TestCase):
     """
 
     def test_router_returns_empty_fallback_when_external_disabled(self):
-        from fighthealthinsurance.ml.ml_router import MLRouter
+        # Patch out the backend discovery list before constructing the
+        # router so the test never reaches out to e.g. Tailscale DNS or any
+        # other slow/flaky probe during MLRouter.__init__.
+        with patch("fighthealthinsurance.ml.ml_router.candidate_model_backends", []):
+            from fighthealthinsurance.ml.ml_router import MLRouter
 
-        router = MLRouter()
-        primary, fallback = router.get_chat_backends_with_fallback(use_external=False)
-        self.assertIsInstance(primary, list)
-        self.assertIsInstance(fallback, list)
-        # When external models are not opted-in, the fallback list MUST be
-        # empty so we never silently route PII through an external provider.
-        self.assertEqual(fallback, [])
+            router = MLRouter()
+            primary, fallback = router.get_chat_backends_with_fallback(
+                use_external=False
+            )
+            self.assertIsInstance(primary, list)
+            self.assertIsInstance(fallback, list)
+            # When external models are not opted-in, the fallback list MUST
+            # be empty so we never silently route PII through an external
+            # provider.
+            self.assertEqual(fallback, [])
 
     def test_timeout_on_primary_invokes_fallback_and_returns_stable_output(self):
         # Simulate the consumer-level pattern: primary backend raises
@@ -443,24 +450,55 @@ class OcrDataExtractionTests(TestCase):
         self.assertEqual(score_extracted_field("patient_name", "", source), "low")
         self.assertEqual(score_extracted_field("dob", None, source), "low")
 
-    def test_insurance_company_confidence_uses_known_payer_table(self):
-        # Insurance-company scoring delegates to ``resolve_insurance_company_by_name``
-        # so the "high" tier means we recognized the payer in our DB.
+    def test_insurance_company_confidence_requires_db_match_and_source_evidence(self):
+        # Insurance-company scoring must require BOTH database resolution
+        # AND source-text evidence to reach "high". This prevents a
+        # hallucinated-but-real carrier name from being labeled trustworthy.
         InsuranceCompany.objects.create(
             name="Blue Cross Blue Shield",
             alt_names="BCBS",
             regex=r"blue\s*cross|bcbs",
             negative_regex=r"$^",
         )
+        source_with_payer = "Insurance: Blue Cross Blue Shield   Member ID: ABC123"
+        # Resolved + in source → high.
         self.assertEqual(
-            score_extracted_field("insurance_company", "Blue Cross Blue Shield", ""),
+            score_extracted_field(
+                "insurance_company", "Blue Cross Blue Shield", source_with_payer
+            ),
             "high",
         )
+        # Resolved but NOT in source (hallucination case) → medium.
+        self.assertEqual(
+            score_extracted_field("insurance_company", "Blue Cross Blue Shield", ""),
+            "medium",
+        )
+        # Unknown carrier (not in DB) → medium regardless of source.
         self.assertEqual(
             score_extracted_field("insurance_company", "Random Carrier Co.", ""),
             "medium",
         )
+        # Empty value → low.
         self.assertEqual(score_extracted_field("insurance_company", "", ""), "low")
+
+    def test_dob_confidence_requires_source_evidence(self):
+        # A plausible DOB that doesn't appear in the source text must drop
+        # to "medium" so the UI doesn't trust hallucinated dates.
+        source_with_dob = "Patient: Jane   Date of Birth: 03/04/1985"
+        # Same date, present in source → high.
+        self.assertEqual(
+            score_extracted_field("dob", "03/04/1985", source_with_dob), "high"
+        )
+        # Same date, absent from source → medium (parseable but not evidenced).
+        self.assertEqual(
+            score_extracted_field("dob", "03/04/1985", "No date here at all."),
+            "medium",
+        )
+        # Common rendering variant (ISO) still counts as evidence.
+        self.assertEqual(
+            score_extracted_field("dob", "03/04/1985", "DOB 1985-03-04"),
+            "high",
+        )
 
 
 # ---------------------------------------------------------------------------
