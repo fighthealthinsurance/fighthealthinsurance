@@ -847,3 +847,144 @@ class StructuredSearchE2ETest(TransactionTestCase):
             # Both the seed and the related PMID should appear.
             assert "11111111" in all_pmids
             assert "22222222" in all_pmids
+
+
+# ---------------------------------------------------------------------------
+# Django-cache layer on efetch / elink
+#
+# The test config defaults to DummyCache (so test responses retain their
+# context), so cache assertions are scoped to a LocMemCache override per
+# test below.
+# ---------------------------------------------------------------------------
+
+
+_LOCMEM_CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+        "LOCATION": "pubmed-test",
+    }
+}
+
+
+@pytest.mark.asyncio
+async def test_fetch_mesh_and_pub_types_serves_second_call_from_cache():
+    from django.core.cache import cache
+    from django.test.utils import override_settings
+
+    with override_settings(CACHES=_LOCMEM_CACHES):
+        # LocMemCache is keyed on backend instance, so we re-resolve it via
+        # the proxy to pick up the override.
+        await cache.aclear()
+        tools = PubMedTools()
+        session = _make_aiohttp_session(
+            _make_aiohttp_response(text=_EFETCH_XML_FIXTURE)
+        )
+        first = await tools.fetch_mesh_and_pub_types(
+            ["11111111", "22222222"], session=session, timeout=5.0
+        )
+        assert "11111111" in first
+        assert session.get.call_count == 1
+
+        # Second call with the same PMIDs must not hit the network.
+        session2 = _make_aiohttp_session(_make_aiohttp_response(text=""))
+        second = await tools.fetch_mesh_and_pub_types(
+            ["11111111", "22222222"], session=session2, timeout=5.0
+        )
+        assert second["11111111"]["pub_types"] == ["Journal Article", "Meta-Analysis"]
+        assert session2.get.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_fetch_mesh_and_pub_types_only_fetches_cache_misses():
+    """A mix of cached and uncached PMIDs should send only the misses to NCBI."""
+    from django.core.cache import cache
+    from django.test.utils import override_settings
+
+    with override_settings(CACHES=_LOCMEM_CACHES):
+        await cache.aclear()
+        tools = PubMedTools()
+        # Prime the cache with PMID 11111111.
+        seed_xml = (
+            "<PubmedArticleSet>"
+            "<PubmedArticle><MedlineCitation><PMID>11111111</PMID>"
+            "<Article><PublicationTypeList>"
+            "<PublicationType>Review</PublicationType>"
+            "</PublicationTypeList></Article></MedlineCitation></PubmedArticle>"
+            "</PubmedArticleSet>"
+        )
+        seed_session = _make_aiohttp_session(_make_aiohttp_response(text=seed_xml))
+        await tools.fetch_mesh_and_pub_types(
+            ["11111111"], session=seed_session, timeout=5.0
+        )
+
+        # Now ask for both 11111111 (cached) and 22222222 (miss).
+        miss_xml = (
+            "<PubmedArticleSet>"
+            "<PubmedArticle><MedlineCitation><PMID>22222222</PMID>"
+            "<Article><PublicationTypeList>"
+            "<PublicationType>Meta-Analysis</PublicationType>"
+            "</PublicationTypeList></Article></MedlineCitation></PubmedArticle>"
+            "</PubmedArticleSet>"
+        )
+        miss_session = _make_aiohttp_session(_make_aiohttp_response(text=miss_xml))
+        result = await tools.fetch_mesh_and_pub_types(
+            ["11111111", "22222222"], session=miss_session, timeout=5.0
+        )
+        # One GET, and its `id` param should only contain the miss.
+        assert miss_session.get.call_count == 1
+        assert miss_session.get.call_args.kwargs["params"]["id"] == "22222222"
+        assert result["11111111"]["pub_types"] == ["Review"]
+        assert result["22222222"]["pub_types"] == ["Meta-Analysis"]
+
+
+@pytest.mark.asyncio
+async def test_find_related_pmids_caches_successful_results():
+    from django.core.cache import cache
+    from django.test.utils import override_settings
+
+    with override_settings(CACHES=_LOCMEM_CACHES):
+        await cache.aclear()
+        tools = PubMedTools()
+        session = _make_aiohttp_session(
+            _make_aiohttp_response(json_data=_ELINK_JSON_FIXTURE)
+        )
+        first = await tools.find_related_pmids(
+            "11111111", session=session, max_results=10
+        )
+        assert first == ["33333333", "44444444", "55555555"]
+        assert session.get.call_count == 1
+
+        # Second call should not hit the network.
+        session2 = _make_aiohttp_session(_make_aiohttp_response(json_data={}))
+        second = await tools.find_related_pmids(
+            "11111111", session=session2, max_results=10
+        )
+        assert second == first
+        assert session2.get.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_find_related_pmids_does_not_cache_on_timeout():
+    """A timed-out elink call must not leave a stale empty-list in the cache."""
+    from django.core.cache import cache
+    from django.test.utils import override_settings
+
+    with override_settings(CACHES=_LOCMEM_CACHES):
+        await cache.aclear()
+        tools = PubMedTools()
+        timeout_session = AsyncMock()
+        timeout_session.get = MagicMock(side_effect=asyncio.TimeoutError())
+        result = await tools.find_related_pmids(
+            "11111111", session=timeout_session, max_results=10
+        )
+        assert result == []
+
+        # A subsequent call with a real fixture must actually hit the network.
+        session2 = _make_aiohttp_session(
+            _make_aiohttp_response(json_data=_ELINK_JSON_FIXTURE)
+        )
+        second = await tools.find_related_pmids(
+            "11111111", session=session2, max_results=10
+        )
+        assert session2.get.call_count == 1
+        assert "33333333" in second

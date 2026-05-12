@@ -45,7 +45,13 @@ from requests.exceptions import RequestException
 from fighthealthinsurance.email_utils import is_blocked_email
 from fighthealthinsurance.env_utils import *
 
-pubmed_fetcher = PubMedFetcher()
+# NCBI raises the rate limit from 3 -> 10 requests/second when an API key
+# is supplied. metapub also reads this env var on its own, but pass it
+# explicitly so the source of truth is visible.
+_NCBI_API_KEY = os.environ.get("NCBI_API_KEY") or None
+pubmed_fetcher = (
+    PubMedFetcher(api_key=_NCBI_API_KEY) if _NCBI_API_KEY else PubMedFetcher()
+)
 
 
 class RateLimiter:
