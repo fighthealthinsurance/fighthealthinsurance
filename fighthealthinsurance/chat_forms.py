@@ -254,7 +254,7 @@ class UserConsentForm(BaseConsentForm):
 
     use_external_models = forms.BooleanField(
         required=False,
-        initial=False,
+        initial=True,
         widget=forms.CheckboxInput(
             attrs={"class": "form-check-input", "id": "use_external_models"}
         ),

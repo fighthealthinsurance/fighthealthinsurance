@@ -1074,7 +1074,7 @@ class DenialCreatorHelper:
         pii=False,
         tos=False,
         privacy=False,
-        use_external_models=False,
+        use_external_models=True,
         store_raw_email=False,
         plan_documents=None,
         patient_id=None,

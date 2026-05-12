@@ -126,7 +126,7 @@ class BaseDenialForm(forms.Form):
     tos = forms.BooleanField(required=True)
     privacy = forms.BooleanField(required=True)
     store_raw_email = forms.BooleanField(required=False)
-    use_external_models = forms.BooleanField(required=False)
+    use_external_models = forms.BooleanField(required=False, initial=True)
     denial_text = forms.CharField(required=True)
     email = forms.EmailField(required=True)
     subscribe = forms.BooleanField(required=False, initial=True)
