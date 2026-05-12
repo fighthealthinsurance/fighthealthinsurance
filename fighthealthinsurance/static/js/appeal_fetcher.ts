@@ -383,6 +383,26 @@ let lastWsCloseReason = '';
 let lastWsErrorMessage = '';
 let lastRestErrorMessage = '';
 
+// Wait-time tracking so Sentry shows how long the user waited
+// before we gave up. `doQueryStartedAtMs` is the moment doQuery()
+// was first called (page load -> appeals page); attemptDurationsMs
+// collects each WS attempt + the REST fallback in order, so triage
+// can see whether one attempt timed out vs many failed quickly.
+let doQueryStartedAtMs = 0;
+let currentAttemptStartedAtMs = 0;
+const attemptDurationsMs: number[] = [];
+
+function endCurrentAttempt(): void {
+  if (currentAttemptStartedAtMs > 0) {
+    attemptDurationsMs.push(Date.now() - currentAttemptStartedAtMs);
+    currentAttemptStartedAtMs = 0;
+  }
+}
+
+function beginAttempt(): void {
+  currentAttemptStartedAtMs = Date.now();
+}
+
 let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
 
 function parseValidDenialId(value: unknown): number | null {
@@ -398,6 +418,14 @@ function reportClientError(error: string): void {
   const denialIdRaw = (my_data as any).denial_id || (my_data as any).get?.('denial_id') || '';
   const denialId = parseValidDenialId(denialIdRaw);
   const csrfToken = (my_data as any).csrfmiddlewaretoken || '';
+  // Wait times: aggregate is page-time-since-doQuery. Per-attempt is
+  // each completed WS attempt + the REST fallback. If we're still
+  // inside an attempt when reporting, surface that too so we can tell
+  // "stuck forever on attempt 1" apart from "many quick failures".
+  const aggregateWaitMs = doQueryStartedAtMs > 0
+    ? Date.now() - doQueryStartedAtMs : -1;
+  const inflightWaitMs = currentAttemptStartedAtMs > 0
+    ? Date.now() - currentAttemptStartedAtMs : -1;
   // Delivery diagnostics live in their own field so a long mobile
   // user-agent string in browser_info doesn't truncate them.
   const diagnostics = [
@@ -412,6 +440,9 @@ function reportClientError(error: string): void {
     `ws_err=${lastWsErrorMessage || 'none'}`,
     `rest_fallback=${usingRestFallback}`,
     `rest_err=${lastRestErrorMessage || 'none'}`,
+    `wait_total_ms=${aggregateWaitMs}`,
+    `wait_attempts_ms=${attemptDurationsMs.join(',') || 'none'}`,
+    `wait_inflight_ms=${inflightWaitMs}`,
   ].join(' ');
   const browserInfo = `${navigator.userAgent} | ${window.location.pathname} | ref=${document.referrer || 'none'}`;
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -459,6 +490,9 @@ function done(): void {
 async function fetchFallback(url: string, data: object, csrfToken: string): Promise<void> {
   console.log("Using REST fallback for appeal generation");
   usingRestFallback = true;
+  // ws.onerror already called endCurrentAttempt() before handoff, so
+  // start a fresh attempt timer for the REST leg.
+  beginAttempt();
   const statusMessage = document.getElementById('status-message');
   if (statusMessage) {
     statusMessage.textContent = 'Using alternative connection method...';
@@ -518,6 +552,8 @@ async function fetchFallback(url: string, data: object, csrfToken: string): Prom
       statusMessage.style.color = '#dc3545';
     }
   }
+  // Record REST attempt duration before reporting / hiding UI.
+  endCurrentAttempt();
   done();
 }
 
@@ -711,6 +747,8 @@ function connectWebSocket(
       console.error("No messages received in 240 seconds. Reconnecting...");
       if (retries < maxRetries) {
         retries++;
+        // Inactivity timeout ended the current attempt; record duration.
+        endCurrentAttempt();
         setTimeout(
           () =>
             connectWebSocket(websocketUrl, data, processResponseChunk, done),
@@ -718,12 +756,16 @@ function connectWebSocket(
         );
       } else {
         console.error("Max retries reached. Closing connection.");
+        endCurrentAttempt();
         done();
       }
     }, 240000); // 240 seconds timeout
   };
 
   const startWebSocket = () => {
+    // Start the per-attempt wait timer. connectWebSocket is called
+    // recursively for retries, so each invocation gets its own start.
+    beginAttempt();
     // Per-attempt flag: ws.onerror may decide to retry or hand off to
     // REST. The same socket's ws.onclose then fires on the normal
     // error->close sequence; without a guard, onclose would also call
@@ -752,12 +794,16 @@ function connectWebSocket(
       lastWsCloseCode = event.code;
       lastWsCloseReason = event.reason || '';
       // Two reasons to short-circuit done():
-      //   1. handingOffToRest: REST fallback owns the final done() call.
+      //   1. handingOffToRest: REST fallback owns the final done() call
+      //      and will record its own attempt duration.
       //   2. retryScheduled: ws.onerror already queued a reconnect for
-      //      this attempt; calling done() here would stomp on it.
+      //      this attempt and recorded its duration; calling done()
+      //      here would stomp on it.
       if (handingOffToRest || retryScheduled) {
         return;
       }
+      // Normal close path: record the attempt duration before done().
+      endCurrentAttempt();
       updateStatusIndicator('done', appealsSoFar.length);
       done();
     };
@@ -767,6 +813,9 @@ function connectWebSocket(
       console.error("WebSocket error:", error);
       lastWsErrorMessage = (error as any)?.message || (error as any)?.type || 'unknown';
       updateStatusIndicator('error', appealsSoFar.length);
+      // Record this attempt's duration regardless of which branch we
+      // take next (retry / fallback / give up).
+      endCurrentAttempt();
       if (retries < maxRetries) {
         console.log(
           `Retrying WebSocket connection (${retries + 1}/${maxRetries})...`,
@@ -805,6 +854,12 @@ export function doQuery(backend_url: string, data: Map<string, string>, rest_fal
   my_rest_fallback_url = rest_fallback_url || '';
   usingRestFallback = false;
   handingOffToRest = false;
+  // Start the aggregate wait clock only on the first call. doQuery
+  // recurses on retry via done(), and we want the total to span the
+  // entire user-visible wait, not just the latest retry.
+  if (doQueryStartedAtMs === 0) {
+    doQueryStartedAtMs = Date.now();
+  }
   return connectWebSocket(backend_url, data, processResponseChunk, done);
 }
 
