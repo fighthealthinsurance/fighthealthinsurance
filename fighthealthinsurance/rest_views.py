@@ -637,6 +637,11 @@ def streaming_appeals_rest_fallback(request: Request):
         status_count = 0
         last_status_phase: Optional[str] = None
         try:
+            # Flush a leading newline before awaiting generate_appeals
+            # so anti-buffering headers and intermediary heuristics
+            # engage immediately. Otherwise a slow first ML call can
+            # make the fallback look hung even when it's working.
+            yield "\n"
             async for record in common_view_logic.AppealsBackendHelper.generate_appeals(
                 data
             ):

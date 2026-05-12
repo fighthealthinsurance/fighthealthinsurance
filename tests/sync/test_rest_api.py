@@ -675,15 +675,23 @@ class StreamingAppealsRestFallbackTest(APITestCase):
 
     def test_rejects_bogus_denial_id(self):
         """Unknown denial_id with any credentials must 404 — and not
-        invoke backend generation."""
-        response = self._post_fallback(
-            {
-                "denial_id": 999999,
-                "email": "x@example.com",
-                "semi_sekret": "anything",
-            }
-        )
+        invoke backend generation. Patching generate_appeals makes
+        the 'no generation' guarantee executable: a regression that
+        triggered generation before the 404 would fail this assert."""
+        from fighthealthinsurance.common_view_logic import AppealsBackendHelper
+
+        with patch.object(
+            AppealsBackendHelper, "generate_appeals"
+        ) as generate_appeals:
+            response = self._post_fallback(
+                {
+                    "denial_id": 999999,
+                    "email": "x@example.com",
+                    "semi_sekret": "anything",
+                }
+            )
         self._assert_auth_failure(response)
+        generate_appeals.assert_not_called()
 
     # ------------------------------------------------------------------
     # WS -> REST handoff dedup

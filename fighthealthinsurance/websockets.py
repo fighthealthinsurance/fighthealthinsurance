@@ -171,6 +171,19 @@ class StreamingAppealsBackend(AsyncWebsocketConsumer):
             )
             await self.close()
             return
+        if not isinstance(data, dict):
+            # Valid JSON but not an object (e.g. `[]`, `"x"`, `123`).
+            # Without this guard, data.get(...) below would raise and
+            # the client would just see a server-side close.
+            logger.warning(
+                "Non-object JSON received in appeals websocket: "
+                f"{type(data).__name__}"
+            )
+            await self.send(
+                json.dumps({"type": "error", "message": "Expected a JSON object"})
+            )
+            await self.close()
+            return
         # Test hook: simulate a silent WS death so the JS client falls
         # back to REST. We close cleanly with no payload so the client
         # sees the same shape as a real broken-pipe / proxy-drop.
