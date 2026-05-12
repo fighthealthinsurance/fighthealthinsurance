@@ -24,21 +24,18 @@ class MLRouter(object):
         self.internal_models_by_cost = []
         self.all_models_by_cost = []
         self.external_models_by_cost = []
-        logger.debug(f"Starting model 'router'")
+        logger.debug("MLRouter: starting model registration")
         building_internal_models_by_cost = []
         building_external_models_by_cost = []
         building_all_models_by_cost = []
         building_models_by_name: dict[str, List[ModelDescription]] = {}
         for backend in candidate_model_backends:
-            logger.debug(f"Considering {backend}")
             try:
                 models = backend.models()
-                logger.debug(f"{backend} gave us {models}")
+                logger.debug(f"MLRouter: {backend} provided {len(models)} models")
                 for m in models:
-                    logger.debug(f"Adding {m} from {backend}")
                     if m.model is None:
                         m.model = backend(model=m.internal_name)
-                        logger.debug(f"Built {m.model}")
                     if not m.model.external:
                         building_internal_models_by_cost.append(m)
                     else:
@@ -49,7 +46,6 @@ class MLRouter(object):
                         same_models = building_models_by_name[m.name]
                     same_models.append(m)
                     building_models_by_name[m.name] = same_models
-                    logger.debug(f"Added {m}")
             except Exception as e:
                 logger.warning(f"Skipping {backend} due to {e} of {type(e)}")
         for k, v in building_models_by_name.items():
@@ -110,9 +106,9 @@ class MLRouter(object):
         if not forced_model:
             return None
 
-        logger.info(f"FORCE_MODEL is set to: {forced_model} {task_description}")
         logger.info(
-            f"Available models to choose from: {[type(m).__name__ for m in self.all_models_by_cost]}"
+            f"FORCE_MODEL={forced_model} {task_description}; "
+            f"available: {[type(m).__name__ for m in self.all_models_by_cost]}"
         )
 
         if forced_model == "groq":
@@ -403,20 +399,14 @@ class MLRouter(object):
         ]
         if fhi_models:
             models += self.models_by_name[fhi_models[0]] * 2
-            logger.debug(
-                f"get_chat_backends: Added FHI model {fhi_models[0]} (tried twice)"
-            )
         if use_external:
             external_to_add = self._keep_single_groq(self.external_models_by_cost[:2])
             models += external_to_add
-            logger.debug(
-                f"get_chat_backends: Added external models {external_to_add} (use_external=True)"
-            )
         internal_to_add = self.internal_models_by_cost[:6]
         models += internal_to_add
-        logger.debug(f"get_chat_backends: Added internal models {internal_to_add}")
         logger.debug(
-            f"get_chat_backends: Final model list ({len(models)} models): {[str(m) for m in models]}"
+            f"get_chat_backends(use_external={use_external}): {len(models)} models: "
+            f"{[str(m) for m in models]}"
         )
         return models
 

@@ -408,7 +408,7 @@ class AppealAssemblyHelper:
                     cover_context
                 )
                 logger.debug(
-                    f"Rendering cover letter from string {cover_template_string} and got {cover_content[0:10]}..."
+                    f"Rendered cover letter from string ({len(cover_content)} chars)"
                 )
             else:
                 cover_content = render_to_string(
@@ -416,16 +416,15 @@ class AppealAssemblyHelper:
                     context=cover_context,
                 )
                 logger.debug(
-                    f"Rendering cover letter from path {cover_template_path} and got {cover_content[0:10]}..."
+                    f"Rendered cover letter from {cover_template_path} ({len(cover_content)} chars)"
                 )
             cover_letter_file = tempfile.NamedTemporaryFile(
                 suffix=".html", prefix="info_cover", mode="w+t", delete=False
             )
-            logger.debug(f"Writing cover letter to {cover_letter_file.name}")
             cover_letter_file.write(cover_content)
             cover_letter_file.flush()
             files_for_fax.append(cover_letter_file.name)
-            logger.debug(f"Added cover letter as {cover_letter_file.name}")
+            logger.debug(f"Added cover letter {cover_letter_file.name}")
 
         # Appeal text
         appeal_text_file = tempfile.NamedTemporaryFile(
@@ -434,7 +433,7 @@ class AppealAssemblyHelper:
         appeal_text_file.write(completed_appeal_text)
         appeal_text_file.flush()
         files_for_fax.append(appeal_text_file.name)
-        logger.debug(f"Added appeal text as {appeal_text_file.name}")
+        logger.debug(f"Added appeal text {appeal_text_file.name}")
 
         # Health history
         # Make the file scope up here so it lasts until after we've got the single output
@@ -447,16 +446,15 @@ class AppealAssemblyHelper:
             health_history_file.write(health_history)
             files_for_fax.append(health_history_file.name)
             health_history_file.flush()
-            logger.debug(f"Added health history as {health_history_file.name}")
+            logger.debug(f"Added health history {health_history_file.name}")
 
         # PubMed articles
         if pubmed_ids_parsed is not None and len(pubmed_ids_parsed) > 0:
-            logger.debug(f"Processing PubMed articles: {pubmed_ids_parsed}")
             pmt = PubMedTools()
             pubmed_docs: list[PubMedArticleSummarized] = async_to_sync(
                 pmt.get_articles
             )(pubmed_ids_parsed)
-            logger.debug(f"Retrieved {len(pubmed_docs)} PubMed articles")
+            pdf_count = 0
             if pubmed_docs:
                 pubmed_docs_paths = [
                     x
@@ -464,7 +462,12 @@ class AppealAssemblyHelper:
                     if x is not None
                 ]
                 files_for_fax.extend(pubmed_docs_paths)
-                logger.debug(f"Added {len(pubmed_docs_paths)} PubMed PDFs to fax")
+                pdf_count = len(pubmed_docs_paths)
+            logger.debug(
+                f"PubMed: requested {len(pubmed_ids_parsed)} articles "
+                f"({pubmed_ids_parsed}), retrieved {len(pubmed_docs)}, "
+                f"added {pdf_count} PDFs"
+            )
         # TODO: Add more generic DOI handler.
 
         # Combine and return path
@@ -1267,16 +1270,13 @@ class DenialCreatorHelper:
         Perform entity extraction on a given denial id
         """
 
-        logger.debug(f"Starting entity extraction for denial {denial_id}")
         denial = await Denial.objects.filter(denial_id=denial_id).aget()
         if (
             denial.diagnosis
             or denial.extract_procedure_diagnosis_finished
             or denial.procedure
         ):
-            logger.debug(
-                f"Skipping entity extraction for denial {denial_id} as it is already done."
-            )
+            logger.debug(f"extract_entity({denial_id}): skipping, already done")
             return
 
         # Define a wrapper function that returns both the name and result
@@ -1313,7 +1313,8 @@ class DenialCreatorHelper:
         ]
 
         logger.debug(
-            f"Collecting tasks for {denial_id} with {len(optional_awaitables)} optional and {len(required_awaitables)} required tasks."
+            f"extract_entity({denial_id}): {len(optional_awaitables)} optional + "
+            f"{len(required_awaitables)} required tasks"
         )
         try:
             async for item in execute_critical_optional_fireandforget(
@@ -1447,13 +1448,14 @@ class DenialCreatorHelper:
                         )
 
                 # Fire and forget the PubMed search task
-                logger.debug("Starting pubmed search & building speculative context.")
                 await fire_and_forget_in_new_threadpool(find_pubmed_articles())
                 # Fire and forget the building the speculative context
                 await fire_and_forget_in_new_threadpool(
                     cls.build_speculative_context(denial_id)
                 )
-                logger.debug("Fire and forgets fired.")
+                logger.debug(
+                    f"Fired pubmed search & speculative context for denial {denial_id}"
+                )
 
         except Exception as e:
             logger.opt(exception=True).warning(
@@ -2054,7 +2056,6 @@ class DenialCreatorHelper:
 
     @classmethod
     async def extract_set_denialtype(cls, denial_id):
-        logger.debug(f"Extracting and setting denial types....")
         # Try and guess at the denial types
         denial = await Denial.objects.filter(denial_id=denial_id).aget()
         denial_types = await cls.regex_denial_processor.get_denialtype(
@@ -2062,7 +2063,9 @@ class DenialCreatorHelper:
             procedure=denial.procedure,
             diagnosis=denial.diagnosis,
         )
-        logger.debug(f"Processing {len(denial_types)} denial types")
+        logger.debug(
+            f"extract_set_denialtype({denial_id}): processing {len(denial_types)} types"
+        )
         for dt in denial_types:
             try:
                 await DenialTypesRelation.objects.acreate(
@@ -2071,7 +2074,6 @@ class DenialCreatorHelper:
             except Exception as e:
                 # Can fail if relation already exists (duplicate)
                 logger.opt(exception=True).debug(f"Failed setting denial type: {e}")
-        logger.debug(f"Done setting denial types")
 
     @classmethod
     def update_denial(

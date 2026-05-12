@@ -143,7 +143,7 @@ class ChatInterface:
 
     async def send_status_message(self, message: str):
         """Sends a status message to the client."""
-        logger.debug(f"Updating status message.")
+        logger.debug(f"Chat {self.chat.id} status: {message}")
         await self.send_json_message_func(
             {"status": message, "chat_id": str(self.chat.id)}
         )
@@ -1001,14 +1001,13 @@ class ChatInterface:
                     ).afirst()
 
             if not policy_doc and session_key:
-                logger.debug("Fallback to session_key lookup for policy doc")
                 policy_doc = (
                     await PolicyDocument.objects.filter(session_key=session_key)
                     .order_by("-created_at")
                     .afirst()
                 )
                 logger.debug(
-                    f"Session_key fallback result: doc_id={policy_doc.id if policy_doc else None}"
+                    f"Policy doc session_key fallback: doc_id={policy_doc.id if policy_doc else None}"
                 )
 
             if not policy_doc:
@@ -1019,7 +1018,7 @@ class ChatInterface:
                 )
                 return
 
-            logger.info(f"Found policy document {policy_doc.id} for analysis")
+            logger.info(f"Analyzing policy document {policy_doc.id}")
             await self.send_status_message(
                 f"Analyzing your {policy_doc.get_document_type_display()} document..."
             )
@@ -1097,8 +1096,6 @@ class ChatInterface:
 
                 await self.send_status_message("Policy analysis complete!")
                 await self.send_message_to_client(formatted_analysis)
-
-                logger.info(f"Policy analysis completed for chat {chat.id}")
             else:
                 await self.send_error_message(
                     "Could not analyze the policy document. Please try again or contact support."

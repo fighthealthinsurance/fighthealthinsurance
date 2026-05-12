@@ -4,6 +4,8 @@ ExtraLink Pre-fetch Actor Reference.
 Provides a cached reference to the extralink pre-fetch actor.
 """
 
+from loguru import logger
+
 from fighthealthinsurance.base_actor_ref import BaseActorRef
 from fighthealthinsurance.extralink_prefetch_actor import ExtraLinkPrefetchActor
 
@@ -25,7 +27,7 @@ class ExtraLinkPrefetchActorRef(BaseActorRef):
         # ``BaseActorRef.get`` is a ``cached_property``; access without parens.
         actor = self.get
         task = actor.prefetch_all.remote()
-        print(f"Started extralink pre-fetch task: {task}")
+        logger.info(f"Started extralink pre-fetch task: {task}")
 
         return (actor, task)
 

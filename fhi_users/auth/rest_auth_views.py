@@ -860,14 +860,11 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
         new_domain: bool = bool(data["make_new_domain"])  # type: ignore
         user_domain_opt: Optional[UserDomain] = None
         email: str = user_signup_info["email"]  # type: ignore
-        if not request.session:
-            logger.debug("No session?")
-        elif not request.session.session_key:
-            logger.debug("Making session")
+        if request.session and not request.session.session_key:
             request.session.create()
-        session_key = request.session.session_key
+        session_key = request.session.session_key if request.session else None
 
-        logger.debug(f"Performing create for session: {session_key}")
+        logger.debug(f"Creating professional user (has_session={bool(session_key)})")
 
         if not validate_password(user_signup_info["password"]):
             return Response(
@@ -939,8 +936,6 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                     f"Error cleaning up existing data for {mask_email_for_logging(email)}: {e}"
                 )
                 raise e
-        else:
-            logger.debug("No existing checkout")
 
         # Ok now back to the regular flow
         # Here we check if the user is joining an existing domain

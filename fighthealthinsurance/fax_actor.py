@@ -162,20 +162,19 @@ class FaxActor:
         return self.do_send_fax_object(fax)
 
     def _update_fax_for_sending(self, fax):
-        self._logger.debug("Recording attempt to send time")
         fax.attempting_to_send_as_of = timezone.now()
         fax.save()
 
     def _update_fax_for_sent(self, fax, fax_success, missing_destination):
-        self._logger.debug("Fax send command returned")
         email = fax.email
         fax.sent = True
         fax.fax_success = fax_success
         fax.save()
         send_fax_status_notification(fax, fax_success, missing_destination)
-        self._logger.debug(f"Checking if we should notify user of result {fax_success}")
+        self._logger.debug(
+            f"Fax uuid={fax.uuid} sent (success={fax_success}); checking user notification"
+        )
         if fax.professional:
-            self._logger.debug("Professional fax, updating appeal")
             appeal = fax.for_appeal
             if appeal is not None:
                 appeal.sent = fax_success
@@ -240,7 +239,7 @@ class FaxActor:
         if fax.name is not None and len(fax.name) > 2:
             extra += f"This fax is sent on behalf of {fax.name}."
         self._update_fax_for_sending(fax)
-        self._logger.debug("Kicking off fax sending")
+        self._logger.debug(f"Kicking off fax sending for uuid={fax.uuid}")
         fax_sent = False
         try:
             fax_sent = asyncio.run(

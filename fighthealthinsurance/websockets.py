@@ -150,15 +150,13 @@ class StreamingAppealsBackend(AsyncWebsocketConsumer):
     """Streaming back the appeals as json :D"""
 
     async def connect(self):
-        logger.debug("Accepting connection for appeals")
+        logger.debug("appeals ws: connect")
         await self.accept()
 
     async def disconnect(self, close_code):
-        logger.debug("Disconnecting appeals")
-        pass
+        logger.debug(f"appeals ws: disconnect code={close_code}")
 
     async def receive(self, text_data):
-        logger.debug("Waiting for message....")
         try:
             data = json.loads(text_data)
         except json.JSONDecodeError as e:
@@ -199,8 +197,8 @@ class StreamingAppealsBackend(AsyncWebsocketConsumer):
             )
             await self.close()
             return
-        logger.debug("Starting generation of appeals...")
         denial_id = data.get("denial_id")
+        logger.debug(f"appeals ws: starting generation for denial {denial_id}")
         aitr: AsyncIterator[str] = (
             common_view_logic.AppealsBackendHelper.generate_appeals(data)
         )
@@ -215,7 +213,6 @@ class StreamingAppealsBackend(AsyncWebsocketConsumer):
                 await asyncio.sleep(0)
                 await self.send("\n")
                 await asyncio.sleep(0)
-                logger.debug(f"Sending record {record}")
                 await self.send(record)
                 await asyncio.sleep(0)
                 await self.send("\n")
@@ -244,7 +241,9 @@ class StreamingAppealsBackend(AsyncWebsocketConsumer):
                     transport="websocket",
                 )
             else:
-                logger.debug(f"All appeals sent, {appeal_count} payloads total.")
+                logger.debug(
+                    f"appeals ws: sent {appeal_count} payloads for denial {denial_id}"
+                )
         except Exception as e:
             logger.opt(exception=True).error(
                 f"Error sending back appeals for denial {denial_id} after "
@@ -261,15 +260,11 @@ class StreamingAppealsBackend(AsyncWebsocketConsumer):
                 )
             raise
         finally:
-            logger.debug("Yielding before closing connection")
             await asyncio.sleep(0.1)
             try:
-                logger.debug("Closing connection...")
                 await self.close()
-                logger.debug("Closed")
             except Exception:
-                logger.debug("Error closing connection")
-        logger.debug("All sent")
+                logger.debug("appeals ws: error closing connection")
 
 
 class StreamingEscalationBackend(AsyncWebsocketConsumer):
@@ -281,12 +276,11 @@ class StreamingEscalationBackend(AsyncWebsocketConsumer):
     """
 
     async def connect(self):
-        logger.debug("Accepting connection for escalation packet")
+        logger.debug("escalation ws: connect")
         await self.accept()
 
     async def disconnect(self, close_code):
-        logger.debug("Disconnecting escalation packet")
-        pass
+        logger.debug(f"escalation ws: disconnect code={close_code}")
 
     async def receive(self, text_data):
         try:
@@ -337,12 +331,11 @@ class StreamingEntityBackend(AsyncWebsocketConsumer):
     """Streaming Entity Extraction"""
 
     async def connect(self):
-        logger.debug("Accepting connection for entity extraction")
+        logger.debug("entity ws: connect")
         await self.accept()
 
     async def disconnect(self, close_code):
-        logger.debug("Disconnecting entity extraction")
-        pass
+        logger.debug(f"entity ws: disconnect code={close_code}")
 
     async def receive(self, text_data):
         try:
@@ -361,24 +354,19 @@ class StreamingEntityBackend(AsyncWebsocketConsumer):
 
         try:
             async for record in aitr:
-                logger.debug(f"Sending record {record}")
                 await self.send(record)
                 await asyncio.sleep(0)
                 await self.send("\n")
             await asyncio.sleep(1)
-            logger.debug(f"Sent all records")
         except Exception as e:
             logger.opt(exception=True).debug(f"Error sending back entity: {e}")
             raise e
         finally:
-            logger.debug("Yielding before closing connection")
             await asyncio.sleep(0.1)
             try:
-                logger.debug("Preparing to close connection")
                 await self.close()
-                logger.debug("Closed connection")
             except Exception:
-                logger.debug("Error closing connection")
+                logger.debug("entity ws: error closing connection")
 
 
 class PriorAuthConsumer(AsyncWebsocketConsumer):
@@ -390,12 +378,11 @@ class PriorAuthConsumer(AsyncWebsocketConsumer):
         self.groups = []
 
     async def connect(self):
-        logger.debug("Accepting connection for prior auth streaming")
+        logger.debug("prior-auth ws: connect")
         await self.accept()
 
     async def disconnect(self, close_code):
-        logger.debug(f"Disconnecting prior auth streaming with code {close_code}")
-        pass
+        logger.debug(f"prior-auth ws: disconnect code={close_code}")
 
     async def receive(self, text_data):
         try:
@@ -405,7 +392,7 @@ class PriorAuthConsumer(AsyncWebsocketConsumer):
             await self.send(json.dumps({"error": "Invalid JSON format"}))
             await self.close()
             return
-        logger.debug("Starting generation of prior auth proposals...")
+        logger.debug("prior-auth ws: starting generation")
 
         # Validate the token and ID
         token = data.get("token")
@@ -447,13 +434,14 @@ class PriorAuthConsumer(AsyncWebsocketConsumer):
                 async for proposal in generator:
                     await asyncio.sleep(0)  # Allow other tasks to run
                     if "proposed_id" in proposal:
-                        logger.debug(f"Sending proposal {proposal['proposed_id']}")
+                        logger.debug(
+                            f"prior-auth ws: sending proposal {proposal['proposed_id']}"
+                        )
                         await self.send(json.dumps(proposal))
-                        logger.debug(f"Sent!")
                     elif "error" in proposal:
                         logger.error(f"Error in proposal: {proposal['error']}")
                     else:
-                        logger.debug(f"Malformed proposal {proposal}")
+                        logger.debug(f"prior-auth ws: malformed proposal {proposal}")
                     await asyncio.sleep(0)
             except Exception as e:
                 logger.opt(exception=True).debug(
@@ -463,8 +451,6 @@ class PriorAuthConsumer(AsyncWebsocketConsumer):
             finally:
                 await asyncio.sleep(1)
                 await self.close()
-
-            logger.debug("All prior auth proposals sent")
         except Exception as e:
             logger.opt(exception=True).debug(f"Error in prior auth consumer: {e}")
             await self.send(json.dumps({"error": f"Server error: {str(e)}"}))
@@ -515,7 +501,7 @@ async def resolve_chat_type(
                 .afirst()
             )
             if lead and not lead.drug:
-                logger.info(f"Trial professional chat for session {session_key}")
+                logger.debug(f"Trial professional chat for session {session_key}")
                 return ChatType.TRIAL_PROFESSIONAL, None
             # lead with drug or no lead → patient
         return ChatType.PATIENT, None
@@ -525,7 +511,9 @@ async def resolve_chat_type(
     if professional_user:
         return ChatType.PROFESSIONAL, professional_user
 
-    logger.info(f"User {user.username} is not a professional user, treating as patient")
+    logger.debug(
+        f"User {user.username} is not a professional user, treating as patient"
+    )
     return ChatType.PATIENT, None
 
 
@@ -536,7 +524,7 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
     chat_id: Optional[str] = None
 
     async def connect(self):
-        logger.debug("Accepting connection for ongoing chat")
+        logger.debug("chat ws: connect")
         await self.accept()
 
     async def send_json_message(self, data: dict):
@@ -544,7 +532,7 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
         await self.send(text_data=json.dumps(data))
 
     async def disconnect(self, close_code):
-        logger.debug(f"Disconnecting ongoing chat with code {close_code}")
+        logger.debug(f"chat ws: disconnect code={close_code}")
         # If a chat was active, trigger analysis of denied items
         if self.chat_interface and self.chat_id:
             await self._analyze_denied_items(self.chat_id)
@@ -586,7 +574,7 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                 )
 
                 full_prompt = f"{history_text}\n{analysis_prompt}"
-                logger.info(
+                logger.debug(
                     f"Prompt for denied item extraction (chat {chat_id}):\n{full_prompt}"
                 )
 
@@ -606,8 +594,8 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                             denied_item = analysis_data.get("denied_item")
                             denied_reason = analysis_data.get("denied_reason")
 
-                            logger.info(
-                                f"[DEBUG] chat_id={chat_id} denied_item={denied_item!r} denied_reason={denied_reason!r} (raw analysis_data={analysis_data!r})"
+                            logger.debug(
+                                f"Analysis for chat {chat_id}: denied_item={denied_item!r} denied_reason={denied_reason!r} raw={analysis_data!r}"
                             )
 
                             # Guardrails: Only store if non-empty, not null, and not generic/unclear
@@ -643,9 +631,6 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                             if is_clear(denied_item):
                                 chat.denied_item = denied_item[:_MAX_LEN]
                                 updated = True
-                                logger.info(
-                                    f"Updated chat {chat_id} with denied item: {denied_item}"
-                                )
                             # denied_reason: boilerplate phrases like
                             # "not medically necessary" are valid reasons,
                             # so no stripping — just the clarity check.
@@ -656,14 +641,16 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                             if denied_reason:
                                 chat.denied_reason = denied_reason[:_MAX_LEN]
                                 updated = True
-                                logger.info(
-                                    f"Updated chat {chat_id} with denied reason: {denied_reason}"
-                                )
                             if updated:
                                 await chat.asave()
+                                logger.info(
+                                    f"Chat {chat_id}: stored denied item/reason "
+                                    f"(item_len={len(denied_item) if denied_item else 0}, "
+                                    f"reason_len={len(denied_reason) if denied_reason else 0})"
+                                )
                             else:
                                 logger.info(
-                                    f"Did not store denied item or reason for chat {chat_id} due to unclear or missing values."
+                                    f"Chat {chat_id}: skipped storing denied item/reason (unclear or missing)"
                                 )
                         except json.JSONDecodeError:
                             logger.warning(
@@ -690,11 +677,6 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
             await self.send(json.dumps({"error": "Invalid JSON format"}))
             await self.close()
             return
-        log_meta = {k: v for k, v in data.items() if k not in ("content", "message")}
-        content = data.get("message", data.get("content", ""))
-        log_meta["content_length"] = len(content) if isinstance(content, str) else 0
-        logger.debug(f"Received message for ongoing chat {log_meta}")
-
         # Get the required data -- note the message should be sent as "content"
         # but we also accept "message" for backward compatibility.
         message = data.get("message", data.get("content", None))
@@ -726,10 +708,11 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                 microsite_slug = None
 
         logger.debug(
-            f"Message: {message} replay {replay_requested} chat_id {chat_id} "
-            f"iterate_on_appeal {iterate_on_appeal} iterate_on_prior_auth {iterate_on_prior_auth} "
-            f"is_patient {is_patient} session_key {session_key} microsite_slug {microsite_slug} "
-            f"use_external_models {use_external_models}"
+            f"chat ws: msg_len={len(message) if isinstance(message, str) else 0} "
+            f"replay={replay_requested} chat_id={chat_id} "
+            f"iterate_on_appeal={iterate_on_appeal} iterate_on_prior_auth={iterate_on_prior_auth} "
+            f"is_patient={is_patient} session_key={session_key} microsite_slug={microsite_slug} "
+            f"use_external_models={use_external_models}"
         )
 
         # Validate we have the required data
@@ -812,8 +795,6 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
             elif use_external_models != self.chat_interface.use_external_models:
                 # User changed their preference for external models mid-chat
                 self.chat_interface.use_external_models = use_external_models
-
-            logger.debug(f"Chat: {chat.id}")
 
             if not replay_requested:
                 # Allow empty message when linking an appeal or prior auth

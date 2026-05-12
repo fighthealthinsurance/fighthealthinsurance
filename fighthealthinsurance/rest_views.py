@@ -276,7 +276,6 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
     @extend_schema(responses=serializers.DenialResponseInfoSerializer)
     def create(self, request: Request) -> Response:
         """Create a new denial record or update an existing one."""
-        logger.debug("Routing create through parent...")
         return super().create(request)
 
     @extend_schema(responses=serializers.DenialResponseInfoSerializer)
@@ -302,7 +301,10 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
         serializer = self.deserialize(data=request.data)
         serializer.is_valid(raise_exception=True)
         serializer_data = serializer.validated_data
-        logger.debug(f"Using data {serializer_data}")
+        logger.debug(
+            f"perform_create payload: keys={sorted(serializer_data.keys())} "
+            f"has_denial_id={bool(serializer_data.get('denial_id'))}"
+        )
         session_key = request.session.session_key or "no_session_key"
         if (
             "primary_professional" in serializer_data
@@ -317,7 +319,6 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
         if "denial_id" in serializer_data:
             denial_id = serializer_data.pop("denial_id")
             if denial_id and is_valid_denial_id(denial_id):
-                logger.debug(f"Looking up existing denial {denial_id}")
                 denial_id = int(denial_id)
                 denial = Denial.filter_to_allowed_denials(current_user).get(
                     denial_id=denial_id
@@ -329,11 +330,6 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
                     f"remote_ip={request.META.get('REMOTE_ADDR', 'unknown')} "
                     f"denial_id={denial_id}"
                 )
-            else:
-                # Denial ID provided but is None
-                pass
-        else:
-            logger.debug("No denial id present, will make new one.")
         if "patient_id" in serializer_data and is_convertible_to_int(
             serializer_data["patient_id"]
         ):

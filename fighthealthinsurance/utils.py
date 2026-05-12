@@ -405,11 +405,10 @@ async def cancel_tasks(tasks: List[asyncio.Task]) -> None:
     for task in tasks:
         if not task.done():
             task.get_loop().call_soon_threadsafe(task.cancel)
-    logger.debug("All tasks cancelled")
 
 
 async def check_call(cmd, max_retries=0, **kwargs):
-    logger.debug(f"Running: {cmd}")
+    logger.debug(f"check_call: {cmd}")
     process = await asyncio.create_subprocess_exec(
         *cmd, **kwargs, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
     )
@@ -418,10 +417,8 @@ async def check_call(cmd, max_retries=0, **kwargs):
         if max_retries < 1:
             raise CalledProcessError(return_code, cmd)
         else:
-            logger.debug(f"Retrying {cmd}")
+            logger.debug(f"check_call retrying: {cmd}")
             return await check_call(cmd, max_retries=max_retries - 1, **kwargs)
-    else:
-        logger.debug(f"Success {cmd}")
 
 
 def markdown_escape(string: Optional[str]) -> str:
@@ -594,7 +591,6 @@ async def fire_and_forget_in_new_threadpool(task: Coroutine) -> None:
     The coroutine is executed in a fire-and-forget manner; any exceptions are logged,
     and the function does not wait for completion or return a result.
     """
-    logger.debug(f"Starting fire and forget task {task}")
 
     def run_async_task() -> None:
         loop = asyncio.new_event_loop()
@@ -607,13 +603,13 @@ async def fire_and_forget_in_new_threadpool(task: Coroutine) -> None:
             )
         finally:
             loop.close()
-            logger.debug(f"Task {task} finished")
+            logger.debug(f"fire_and_forget task {task} finished")
 
     # Create and start a thread that will run the task in its own loop
     thread = threading.Thread(target=run_async_task)
     thread.daemon = True  # Thread will exit when main thread exits
     thread.start()
-    logger.debug(f"Task {task} started in background thread")
+    logger.debug(f"fire_and_forget task {task} started")
     return
 
 
@@ -833,10 +829,10 @@ async def execute_critical_optional_fireandforget(
     fire_and_forget = fire_and_forget or []
 
     # Start fire and forget tasks
-    logger.debug("Launching fire and forget")
     for fftask in fire_and_forget:
         await fire_and_forget_in_new_threadpool(fftask)
-    logger.debug("Launched")
+    if fire_and_forget:
+        logger.debug(f"Launched {len(fire_and_forget)} fire-and-forget tasks")
 
     # We create both sets of tasks at the same time since they're mostly independent and having
     # the optional ones running at the same time gives us a chance to get more done.
@@ -895,15 +891,11 @@ async def execute_critical_optional_fireandforget(
             # Yield each result immediately for streaming
             yield optional_result
     except asyncio.TimeoutError as e:
-        logger.debug(f"Timed out waiting for optional tasks?")
+        logger.debug("Timed out waiting for optional tasks")
     except asyncio.exceptions.CancelledError:
-        logger.debug("Cancellation waiting for optional tasks")
+        logger.debug("Cancelled waiting for optional tasks")
     finally:
-        logger.debug(
-            "Required tasks finished, fire and forget canceling optional tasks"
-        )
         asyncio.create_task(cancel_tasks(optional_tasks))
-        logger.debug("Optional tasks scheduled for cancelation")
 
     if done_record:
         yield done_record
