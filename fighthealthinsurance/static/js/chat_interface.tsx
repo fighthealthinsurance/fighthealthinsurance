@@ -782,7 +782,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
 
     console.log("Resetting the chat state");
     // Reset the chat state but preserve useExternalModels setting
-    const useExternalModels = localStorage.getItem("fhi_use_external_models") === "true";
+    const useExternalModels = localStorage.getItem("fhi_use_external_models") !== "false";
     setState({
       messages: [],
       isLoading: false,

@@ -532,7 +532,7 @@ class SeleniumExistingChatTest(FHISeleniumBase, StaticLiveServerTestCase):
         external_pref = self.execute_script(
             "return localStorage.getItem('fhi_use_external_models');"
         )
-        assert external_pref != "false", "External models preference should be enabled"
+        assert external_pref == "true", "External models preference should be saved as true"
 
         # Now visit explain denial - preference should persist
         self.open(f"{self.live_server_url}/explain-denial")
