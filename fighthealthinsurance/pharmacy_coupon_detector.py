@@ -280,10 +280,14 @@ def _build_costplus_option(drug_name: str) -> PharmacyOption:
 # remaining query parameters carry our Amazon Associates tag and the
 # tracking IDs Amazon emitted when the link was generated; they are
 # stable per-session metadata and not specific to any one drug.
+#
+# Note: this URL points at amazon.com/s (general product search), not at
+# pharmacy.amazon.com - the affiliate program lives on the main retail
+# site. The user-facing label/description below makes that explicit so
+# patients aren't surprised when they don't land on the Rx pharmacy UI.
 _AMAZON_AFFILIATE_URL_TEMPLATE = (
     "https://www.amazon.com/s?k={slug}"
     "&crid=1J6F94S3OCOFT"
-    "&sprefix=estradiol%2Caps%2C238"
     "&linkCode=ll2"
     "&tag=totallylegitco-20"
     "&linkId=46a113ee5e72dc2ee64c699b22cf364d"
@@ -295,11 +299,13 @@ _AMAZON_AFFILIATE_URL_TEMPLATE = (
 def _build_amazon_option(drug_name: str) -> PharmacyOption:
     slug = urllib.parse.quote(drug_name.lower())
     return PharmacyOption(
-        name="Amazon Pharmacy",
+        name="Amazon Search",
         url=_AMAZON_AFFILIATE_URL_TEMPLATE.format(slug=slug),
         description=(
-            "Search Amazon for over-the-counter or mail-order formulations "
-            "of this medication. Prime members may see discounted prices."
+            "Search Amazon's main retail site for over-the-counter "
+            "formulations or supplies related to this medication. (This is "
+            "Amazon's general product search, not the prescription Amazon "
+            "Pharmacy storefront; Prime members may see discounted prices.)"
         ),
     )
 

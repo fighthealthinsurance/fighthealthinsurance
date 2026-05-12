@@ -222,10 +222,12 @@ class TestFormatResultsForLLM(TestCase):
         results = search(drug="Wegovy")
         suggestion = suggest_for_denial(drug="Wegovy")
         formatted = FinancialAssistanceTool._format_results_for_llm(results, suggestion)
-        # GoodRx / Cost Plus / Amazon Pharmacy must all be in the LLM context
+        # GoodRx / Cost Plus / Amazon must all be in the LLM context
+        # ("Amazon Search" because the drug-detected affiliate URL points
+        # at amazon.com/s rather than pharmacy.amazon.com).
         self.assertIn("GoodRx", formatted)
         self.assertIn("Mark Cuban Cost Plus Drugs", formatted)
-        self.assertIn("Amazon Pharmacy", formatted)
+        self.assertIn("Amazon Search", formatted)
         # OOP-max caveat surfaces too
         self.assertIn("out-of-pocket maximum", formatted.lower())
 
@@ -261,4 +263,4 @@ class TestPharmacyDiscountInclusion(TestCase):
         # programs, since the prompt promises pharmacy discount options.
         self.assertIn("GoodRx", info_text)
         self.assertIn("Mark Cuban Cost Plus Drugs", info_text)
-        self.assertIn("Amazon Pharmacy", info_text)
+        self.assertIn("Amazon Search", info_text)

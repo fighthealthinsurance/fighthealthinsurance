@@ -58,10 +58,12 @@ class SeleniumTestPharmacyCouponSection(FHISeleniumBase, StaticLiveServerTestCas
         self.assert_element("section#pharmacy-coupons")
         self.assert_text("Pharmacy Discount Options", "section#pharmacy-coupons")
 
-        # All three discount pharmacies surfaced.
+        # All three discount pharmacies surfaced. The Amazon option is
+        # labeled "Amazon Search" because the affiliate URL points at
+        # amazon.com/s rather than the prescription pharmacy.amazon.com.
         self.assert_text("GoodRx", "section#pharmacy-coupons")
         self.assert_text("Mark Cuban Cost Plus Drugs", "section#pharmacy-coupons")
-        self.assert_text("Amazon Pharmacy", "section#pharmacy-coupons")
+        self.assert_text("Amazon Search", "section#pharmacy-coupons")
 
         # The Wegovy-specific bridge message warns the user not to rely on
         # discounts (it's an expensive specialty drug).
@@ -129,7 +131,7 @@ class SeleniumTestPharmacyCouponSection(FHISeleniumBase, StaticLiveServerTestCas
         body = self.get_text("section#pharmacy-coupons")
         assert "GoodRx" in body
         assert "Mark Cuban Cost Plus Drugs" in body
-        assert "Amazon Pharmacy" in body
+        assert "Amazon Search" in body
         # Truvada is flagged expensive (combo brand), so the bridge message
         # warns the appeal is the primary path.
         assert "expensive" in body.lower(), (

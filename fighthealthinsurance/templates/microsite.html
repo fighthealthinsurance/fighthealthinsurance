@@ -178,7 +178,7 @@
                 <div class="card mb-3 financial-assistance-card">
                     <div class="card-body">
                         <h5 class="card-title mb-2">
-                            <a href="{{ program.url }}" target="_blank" rel="noopener noreferrer">{{ program.name }} <i class="text-muted ms-1 icon-external-sm">&#8599;</i></a>
+                            <a href="{{ program.url }}" target="_blank" rel="noopener noreferrer">{{ program.name }} <i class="text-muted ms-1 icon-external-sm" aria-hidden="true">&#8599;</i><span class="visually-hidden">(opens in a new tab)</span></a>
                         </h5>
                         <p class="card-text text-muted mb-1">{{ program.description }}</p>
                         {% if program.eligibility_note %}<p class="card-text small text-muted mb-0"><em>Eligibility: {{ program.eligibility_note }}</em></p>{% endif %}
@@ -194,7 +194,7 @@
                 <div class="card mb-3 financial-assistance-card">
                     <div class="card-body">
                         <h5 class="card-title mb-2">
-                            <a href="{{ program.url }}" target="_blank" rel="noopener noreferrer">{{ program.name }} <i class="text-muted ms-1 icon-external-sm">&#8599;</i></a>
+                            <a href="{{ program.url }}" target="_blank" rel="noopener noreferrer">{{ program.name }} <i class="text-muted ms-1 icon-external-sm" aria-hidden="true">&#8599;</i><span class="visually-hidden">(opens in a new tab)</span></a>
                         </h5>
                         <p class="card-text text-muted mb-1">{{ program.description }}</p>
                         {% if program.eligibility_note %}<p class="card-text small text-muted mb-0"><em>Eligibility: {{ program.eligibility_note }}</em></p>{% endif %}
@@ -209,7 +209,7 @@
                 <div class="card mb-3 financial-assistance-card">
                     <div class="card-body">
                         <h5 class="card-title mb-2">
-                            <a href="{{ program.url }}" target="_blank" rel="noopener noreferrer">{{ program.name }} <i class="text-muted ms-1 icon-external-sm">&#8599;</i></a>
+                            <a href="{{ program.url }}" target="_blank" rel="noopener noreferrer">{{ program.name }} <i class="text-muted ms-1 icon-external-sm" aria-hidden="true">&#8599;</i><span class="visually-hidden">(opens in a new tab)</span></a>
                         </h5>
                         <p class="card-text text-muted mb-1">{{ program.description }}</p>
                         {% if program.eligibility_note %}<p class="card-text small text-muted mb-0"><em>Eligibility: {{ program.eligibility_note }}</em></p>{% endif %}
@@ -225,7 +225,7 @@
                 <div class="card mb-3 financial-assistance-card">
                     <div class="card-body">
                         <h5 class="card-title mb-2">
-                            <a href="{{ program.url }}" target="_blank" rel="noopener noreferrer">{{ program.name }} <i class="text-muted ms-1 icon-external-sm">&#8599;</i></a>
+                            <a href="{{ program.url }}" target="_blank" rel="noopener noreferrer">{{ program.name }} <i class="text-muted ms-1 icon-external-sm" aria-hidden="true">&#8599;</i><span class="visually-hidden">(opens in a new tab)</span></a>
                         </h5>
                         <p class="card-text text-muted mb-1">{{ program.description }}</p>
                     </div>
@@ -238,7 +238,7 @@
                 <div class="card mb-3 financial-assistance-card">
                     <div class="card-body">
                         <h5 class="card-title mb-2">
-                            {% if financial_assistance.state_medicaid_url %}<a href="{{ financial_assistance.state_medicaid_url }}" target="_blank" rel="noopener noreferrer">{{ financial_assistance.state_medicaid_name }} <i class="text-muted ms-1 icon-external-sm">&#8599;</i></a>{% else %}{{ financial_assistance.state_medicaid_name }}{% endif %}
+                            {% if financial_assistance.state_medicaid_url %}<a href="{{ financial_assistance.state_medicaid_url }}" target="_blank" rel="noopener noreferrer">{{ financial_assistance.state_medicaid_name }} <i class="text-muted ms-1 icon-external-sm" aria-hidden="true">&#8599;</i><span class="visually-hidden">(opens in a new tab)</span></a>{% else %}{{ financial_assistance.state_medicaid_name }}{% endif %}
                         </h5>
                         {% if financial_assistance.state_medicaid_phone %}<p class="card-text small text-muted mb-0">Phone: {{ financial_assistance.state_medicaid_phone }}</p>{% endif %}
                     </div>

@@ -121,7 +121,10 @@ class TestBuildSuggestion:
         names = {opt.name for opt in suggestion.pharmacy_options}
         assert "GoodRx" in names
         assert "Mark Cuban Cost Plus Drugs" in names
-        assert "Amazon Pharmacy" in names
+        # When a specific drug is detected the Amazon option is labeled
+        # "Amazon Search" because the affiliate URL points to amazon.com/s
+        # (general retail) rather than pharmacy.amazon.com.
+        assert "Amazon Search" in names
 
     def test_pharmacy_urls_include_drug_name(self):
         suggestion = build_suggestion("metformin")
@@ -134,9 +137,13 @@ class TestBuildSuggestion:
         # the appeal-generation service.
         suggestion = build_suggestion("metformin")
         amazon = next(
-            opt for opt in suggestion.pharmacy_options if opt.name == "Amazon Pharmacy"
+            opt for opt in suggestion.pharmacy_options if opt.name == "Amazon Search"
         )
         assert amazon.url.startswith("https://www.amazon.com/s?k=metformin")
+        # sprefix is intentionally absent: the previous template carried a
+        # hardcoded estradiol-flavored prefix that would mislead Amazon's
+        # search ranking for any other drug.
+        assert "sprefix=" not in amazon.url
         assert "tag=totallylegitco-20" in amazon.url
         assert "linkCode=ll2" in amazon.url
 
