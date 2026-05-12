@@ -100,7 +100,11 @@ Fight Your Health Insurance Denial: Choose an Appeal
 <script>
   // Call the typescript on load
   document.addEventListener('DOMContentLoaded', () => {
-      const backendUrl = `wss://${window.location.host}/ws/streaming-appeals-backend/`;
+      const wsScheme = window.location.protocol === 'https:' ? 'wss' : 'ws';
+      const backendUrl = `${wsScheme}://${window.location.host}/ws/streaming-appeals-backend/`;
+      // REST fallback for clients that can't hold a WebSocket open
+      // (iOS Safari ITP, corporate proxies that block WS upgrades, etc).
+      const restFallbackUrl = `${window.location.protocol}//${window.location.host}{% url 'streaming_appeals_fallback' %}`;
       const data = {
 	  {% autoescape off %}
           ...{{form_context}},
@@ -110,7 +114,7 @@ Fight Your Health Insurance Denial: Choose an Appeal
               'timbit': 'is most awesomex2'}}
 
       // Call the doQuery function
-      doQuery(backendUrl, data);
+      doQuery(backendUrl, data, restFallbackUrl);
   });
 </script>
 {% endblock content %}

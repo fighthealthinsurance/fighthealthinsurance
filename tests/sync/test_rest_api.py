@@ -1,6 +1,6 @@
 """Test the rest API functionality"""
 
-from asgiref.sync import sync_to_async
+from asgiref.sync import async_to_sync, sync_to_async
 from unittest.mock import patch
 
 import asyncio
@@ -453,6 +453,349 @@ class DenialEndToEnd(APITestCase):
         assert (
             appeal_contents[0].lstrip().startswith("Dear")
         ), "Appeal should start with 'Dear'"
+
+
+class StreamingAppealsRestFallbackTest(APITestCase):
+    """Test the REST/HTTP fallback for the WebSocket appeals stream.
+
+    Clients that can't hold a WebSocket open (iOS Safari ITP, corporate
+    proxies blocking WS upgrades, captive portals) fall back to this
+    endpoint after exhausting WebSocket retries.
+    """
+
+    fixtures = ["./fighthealthinsurance/fixtures/initial.yaml"]
+
+    @staticmethod
+    def _drain_streaming_response(response) -> str:
+        """Drain a StreamingHttpResponse with an async iterator body.
+
+        The view itself is sync but its StreamingHttpResponse wraps an
+        async generator as `streaming_content`, so b"".join() can't
+        consume it directly. Use async_to_sync rather than
+        asyncio.get_event_loop() because the latter raises
+        RuntimeError when a prior test in the suite has closed the
+        default loop (Python 3.12+ behavior).
+        """
+
+        async def _drain(stream):
+            chunks = []
+            async for chunk in stream:
+                chunks.append(
+                    chunk.encode() if isinstance(chunk, str) else chunk
+                )
+            return b"".join(chunks)
+
+        return async_to_sync(_drain)(response.streaming_content).decode()
+
+    @staticmethod
+    def _content_lines(body: str) -> list:
+        return [
+            line
+            for line in body.split("\n")
+            if line.strip() and '"content"' in line
+        ]
+
+    def _post_fallback(self, payload: dict):
+        return self.client.post(
+            reverse("streaming_appeals_fallback"),
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+    def test_invalid_json_returns_400(self):
+        url = reverse("streaming_appeals_fallback")
+        response = self.client.post(
+            url, data="not-json", content_type="application/json"
+        )
+        self.assertEqual(response.status_code, 400)
+        # DRF's JSON parser raises ParseError -> default exception
+        # handler renders {"detail": "JSON parse error - ..."}.
+        body = response.content.decode().lower()
+        self.assertTrue(
+            "json" in body and ("parse" in body or "invalid" in body),
+            f"Expected JSON parse error in body, got {body!r}",
+        )
+
+    def test_non_object_json_returns_400(self):
+        url = reverse("streaming_appeals_fallback")
+        # Valid JSON but not an object — must not crash with AttributeError
+        # on data.get(...).
+        response = self.client.post(
+            url, data=json.dumps([1, 2, 3]), content_type="application/json"
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("JSON object", response.content.decode())
+
+    def test_get_method_not_allowed(self):
+        url = reverse("streaming_appeals_fallback")
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, 405)
+
+    def test_streams_ndjson_with_anti_buffering_headers(self):
+        """Mock generate_appeals so we can assert framing without
+        invoking the real ML pipeline. A real denial is created so the
+        upfront magic-key auth gate passes."""
+        url = reverse("streaming_appeals_fallback")
+        denial = self._make_real_denial(email="framing@example.com")
+
+        async def fake_generate_appeals(_data):
+            yield (
+                json.dumps(
+                    {"type": "status", "phase": "init", "message": "starting"}
+                )
+                + "\n"
+            )
+            yield json.dumps({"id": "1", "content": "Dear Insurer,..."}) + "\n"
+            yield (
+                json.dumps(
+                    {
+                        "type": "status",
+                        "phase": "done",
+                        "total_appeals": 1,
+                        "new_appeals": 1,
+                        "existing_appeals": 0,
+                    }
+                )
+                + "\n"
+            )
+
+        from fighthealthinsurance.common_view_logic import AppealsBackendHelper
+
+        # Patch on the class directly. `new=fake_generate_appeals`
+        # replaces the classmethod descriptor with a plain async
+        # generator function — when the view calls
+        # `AppealsBackendHelper.generate_appeals(data)`, Python
+        # invokes our function with just `(data,)`.
+        # IMPORTANT: drain inside the patch context. StreamingHttpResponse
+        # holds a lazy async iterator — body bytes are produced only when
+        # consumed, so unpatching before drain lets the real code run.
+        with patch.object(
+            AppealsBackendHelper,
+            "generate_appeals",
+            new=fake_generate_appeals,
+        ):
+            response = self.client.post(
+                url,
+                data=json.dumps(
+                    {
+                        "denial_id": denial.denial_id,
+                        "email": "framing@example.com",
+                        "semi_sekret": denial.semi_sekret,
+                    }
+                ),
+                content_type="application/json",
+            )
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(
+                response["Content-Type"], "application/x-ndjson"
+            )
+            # Anti-buffering headers — defeating these proxies is the
+            # whole point of the fallback existing.
+            self.assertEqual(response["X-Accel-Buffering"], "no")
+            self.assertIn("no-cache", response["Cache-Control"])
+
+            body = self._drain_streaming_response(response)
+        # Expect at least the appeal frame and the done status frame
+        appeal_lines = self._content_lines(body)
+        done_lines = [
+            line
+            for line in body.split("\n")
+            if line.strip() and '"phase": "done"' in line
+        ]
+        self.assertEqual(len(appeal_lines), 1)
+        self.assertEqual(len(done_lines), 1)
+
+    # ------------------------------------------------------------------
+    # Magic-key auth tests
+    # ------------------------------------------------------------------
+    # The PR explicitly mandates that appeals never release on denial_id
+    # alone — the (denial_id, email, semi_sekret) triple is the
+    # canonical credential. The view validates the triple upfront and
+    # returns 404 before invoking generation, so these tests assert
+    # both the status code AND that the response body (which is now a
+    # short JSON error rather than a stream) contains no appeal text.
+
+    def _make_real_denial(self, email: str = "owner@example.com") -> Denial:
+        """Create a Denial directly via ORM, mirroring how the denial
+        creation API ultimately persists one. Tests use this so we can
+        exercise auth paths without the full denial-creation flow."""
+        return Denial.objects.create(
+            denial_text="Test denial body",
+            hashed_email=Denial.get_hashed_email(email),
+        )
+
+    def _assert_auth_failure(self, response) -> None:
+        """Auth gate must produce a 4xx response with no appeal content
+        in the body. Uniform 404 means we don't leak which field was
+        wrong."""
+        self.assertEqual(response.status_code, 404)
+        body = response.content.decode()
+        self.assertNotIn('"content"', body)
+
+    def test_rejects_wrong_semi_sekret(self):
+        denial = self._make_real_denial()
+        response = self._post_fallback(
+            {
+                "denial_id": denial.denial_id,
+                "email": "owner@example.com",
+                "semi_sekret": "wrong-sekret-not-the-real-one",
+            }
+        )
+        self._assert_auth_failure(response)
+
+    def test_rejects_wrong_email(self):
+        denial = self._make_real_denial()
+        response = self._post_fallback(
+            {
+                "denial_id": denial.denial_id,
+                "email": "different-user@example.com",
+                "semi_sekret": denial.semi_sekret,
+            }
+        )
+        self._assert_auth_failure(response)
+
+    def test_rejects_missing_credentials(self):
+        denial = self._make_real_denial()
+        response = self._post_fallback({"denial_id": denial.denial_id})
+        self._assert_auth_failure(response)
+
+    def test_cross_session_isolation(self):
+        """Denial A's id with Denial B's credentials must not leak A's
+        appeals (or any appeals at all)."""
+        denial_a = self._make_real_denial(email="alice@example.com")
+        denial_b = self._make_real_denial(email="bob@example.com")
+        response = self._post_fallback(
+            {
+                "denial_id": denial_a.denial_id,
+                "email": "bob@example.com",
+                "semi_sekret": denial_b.semi_sekret,
+            }
+        )
+        self._assert_auth_failure(response)
+
+    def test_rejects_bogus_denial_id(self):
+        """Unknown denial_id with any credentials must 404 — and not
+        invoke backend generation. Patching generate_appeals makes
+        the 'no generation' guarantee executable: a regression that
+        triggered generation before the 404 would fail this assert."""
+        from fighthealthinsurance.common_view_logic import AppealsBackendHelper
+
+        with patch.object(
+            AppealsBackendHelper, "generate_appeals"
+        ) as generate_appeals:
+            response = self._post_fallback(
+                {
+                    "denial_id": 999999,
+                    "email": "x@example.com",
+                    "semi_sekret": "anything",
+                }
+            )
+        self._assert_auth_failure(response)
+        generate_appeals.assert_not_called()
+
+    # ------------------------------------------------------------------
+    # WS -> REST handoff dedup
+    # ------------------------------------------------------------------
+    @pytest.mark.asyncio
+    async def test_ws_suppression_flag_yields_no_appeals(self):
+        """With SUPPRESS_APPEAL_WS_DELIVERY=True, the WS must accept
+        the connection and close without yielding any appeal payloads.
+        This is the seam we use to drive the JS client's REST fallback
+        path in tests without real WS failure injection."""
+        from fighthealthinsurance import websockets
+
+        denial = await sync_to_async(self._make_real_denial)()
+
+        original = websockets.SUPPRESS_APPEAL_WS_DELIVERY
+        websockets.SUPPRESS_APPEAL_WS_DELIVERY = True
+        try:
+            communicator = WebsocketCommunicator(
+                StreamingAppealsBackend.as_asgi(), "/testws/"
+            )
+            connected, _ = await communicator.connect()
+            assert connected
+            await communicator.send_json_to(
+                {
+                    "denial_id": denial.denial_id,
+                    "email": "owner@example.com",
+                    "semi_sekret": denial.semi_sekret,
+                }
+            )
+            # Consume frames until close. With suppression on, no
+            # content frames should ever arrive.
+            content_frames = 0
+            try:
+                while True:
+                    frame = await communicator.receive_from(timeout=5)
+                    if frame and '"content"' in frame:
+                        content_frames += 1
+            except (asyncio.TimeoutError, AssertionError):
+                # AssertionError: server-side close
+                pass
+            finally:
+                await communicator.disconnect()
+        finally:
+            websockets.SUPPRESS_APPEAL_WS_DELIVERY = original
+
+        self.assertEqual(content_frames, 0)
+
+    def test_handoff_emits_unique_appeal_ids(self):
+        """After a suppressed WS attempt, the REST fallback must
+        emit each appeal with a unique id. The client's dedup logic
+        relies on this contract — duplicate ids would render the same
+        appeal twice in the UI."""
+        from fighthealthinsurance.common_view_logic import AppealsBackendHelper
+
+        # Real denial so the upfront auth gate passes; generation is
+        # then mocked to keep the test deterministic.
+        denial = self._make_real_denial(email="handoff@example.com")
+
+        async def fake_three_appeals(_data):
+            for i in (1, 2, 3):
+                yield (
+                    json.dumps({"id": f"appeal-{i}", "content": f"Body {i}"})
+                    + "\n"
+                )
+            yield (
+                json.dumps(
+                    {
+                        "type": "status",
+                        "phase": "done",
+                        "total_appeals": 3,
+                        "new_appeals": 3,
+                        "existing_appeals": 0,
+                    }
+                )
+                + "\n"
+            )
+
+        with patch.object(
+            AppealsBackendHelper,
+            "generate_appeals",
+            new=fake_three_appeals,
+        ):
+            response = self._post_fallback(
+                {
+                    "denial_id": denial.denial_id,
+                    "email": "handoff@example.com",
+                    "semi_sekret": denial.semi_sekret,
+                }
+            )
+            self.assertEqual(response.status_code, 200)
+            body = self._drain_streaming_response(response)
+
+        # Collect ids from every content-bearing frame
+        ids = []
+        for line in body.split("\n"):
+            stripped = line.strip()
+            if not stripped or '"content"' not in stripped:
+                continue
+            parsed = json.loads(stripped)
+            ids.append(parsed["id"])
+
+        self.assertEqual(len(ids), 3)
+        # Dedup contract: every id is unique within a single stream
+        self.assertEqual(len(set(ids)), len(ids))
 
 
 class NotifyPatientTest(APITestCase):

@@ -58,6 +58,11 @@ urlpatterns = [
         rest_views.ReportClientError.as_view(),
         name="report_client_error",
     ),
+    path(
+        "streaming_appeals_fallback",
+        rest_views.streaming_appeals_rest_fallback,
+        name="streaming_appeals_fallback",
+    ),
     path("check_storage", rest_views.CheckStorage.as_view(), name="check_storage"),
     path(
         "external_review_wizard",

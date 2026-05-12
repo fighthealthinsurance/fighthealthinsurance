@@ -364,7 +364,44 @@ let my_data: Map<string, string> = new Map<string, string>();
 let my_backend_url = "";
 let my_rest_fallback_url = "";
 let usingRestFallback = false;
+// Set when ws.onerror has decided to delegate to REST, so the
+// concurrent ws.onclose doesn't run done() in parallel and tear
+// down the UI while the REST stream is still in flight.
+let handingOffToRest = false;
 let hasAutoScrolledToFirstAppeal = false;
+
+// Diagnostic counters used in the client error report so server logs
+// can distinguish "we never reached the server" from "we reached the
+// server, got status frames, but never saw an appeal payload".
+let statusMessagesReceived = 0;
+let lastPhaseReceived = '';
+let serverReportedTotalAppeals = -1;
+let serverReportedNewAppeals = -1;
+let serverReportedExistingAppeals = -1;
+let lastWsCloseCode = -1;
+let lastWsCloseReason = '';
+let lastWsErrorMessage = '';
+let lastRestErrorMessage = '';
+
+// Wait-time tracking so Sentry shows how long the user waited
+// before we gave up. `doQueryStartedAtMs` is the moment doQuery()
+// was first called (page load -> appeals page); attemptDurationsMs
+// collects each WS attempt + the REST fallback in order, so triage
+// can see whether one attempt timed out vs many failed quickly.
+let doQueryStartedAtMs = 0;
+let currentAttemptStartedAtMs = 0;
+const attemptDurationsMs: number[] = [];
+
+function endCurrentAttempt(): void {
+  if (currentAttemptStartedAtMs > 0) {
+    attemptDurationsMs.push(Date.now() - currentAttemptStartedAtMs);
+    currentAttemptStartedAtMs = 0;
+  }
+}
+
+function beginAttempt(): void {
+  currentAttemptStartedAtMs = Date.now();
+}
 
 let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
 
@@ -381,6 +418,32 @@ function reportClientError(error: string): void {
   const denialIdRaw = (my_data as any).denial_id || (my_data as any).get?.('denial_id') || '';
   const denialId = parseValidDenialId(denialIdRaw);
   const csrfToken = (my_data as any).csrfmiddlewaretoken || '';
+  // Wait times: aggregate is page-time-since-doQuery. Per-attempt is
+  // each completed WS attempt + the REST fallback. If we're still
+  // inside an attempt when reporting, surface that too so we can tell
+  // "stuck forever on attempt 1" apart from "many quick failures".
+  const aggregateWaitMs = doQueryStartedAtMs > 0
+    ? Date.now() - doQueryStartedAtMs : -1;
+  const inflightWaitMs = currentAttemptStartedAtMs > 0
+    ? Date.now() - currentAttemptStartedAtMs : -1;
+  // Delivery diagnostics live in their own field so a long mobile
+  // user-agent string in browser_info doesn't truncate them.
+  const diagnostics = [
+    `appeals_received=${appealsSoFar.length}`,
+    `retries=${retries}`,
+    `status_msgs=${statusMessagesReceived}`,
+    `last_phase=${lastPhaseReceived || 'none'}`,
+    `server_total=${serverReportedTotalAppeals}`,
+    `server_new=${serverReportedNewAppeals}`,
+    `server_existing=${serverReportedExistingAppeals}`,
+    `ws_close=${lastWsCloseCode}/${lastWsCloseReason || 'none'}`,
+    `ws_err=${lastWsErrorMessage || 'none'}`,
+    `rest_fallback=${usingRestFallback}`,
+    `rest_err=${lastRestErrorMessage || 'none'}`,
+    `wait_total_ms=${aggregateWaitMs}`,
+    `wait_attempts_ms=${attemptDurationsMs.join(',') || 'none'}`,
+    `wait_inflight_ms=${inflightWaitMs}`,
+  ].join(' ');
   const browserInfo = `${navigator.userAgent} | ${window.location.pathname} | ref=${document.referrer || 'none'}`;
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (csrfToken) {
@@ -399,6 +462,7 @@ function reportClientError(error: string): void {
       denial_id: denialId ?? 'invalid',
       error,
       browser_info: browserInfo,
+      diagnostics,
       denial_id_raw: String(denialIdRaw),
     }),
   }).catch(() => {}); // fire-and-forget
@@ -412,7 +476,10 @@ function done(): void {
     doQuery(my_backend_url, my_data, my_rest_fallback_url);
   } else {
     if (appealsSoFar.length === 0) {
-      reportClientError(`Client exhausted ${retries} retries with 0 appeals received`);
+      const transport = usingRestFallback ? 'rest-fallback' : 'websocket';
+      reportClientError(
+        `Client exhausted ${retries} retries with 0 appeals received via ${transport}`
+      );
     }
     clearTimeout(timeoutHandle!);
     hideLoading();
@@ -423,6 +490,9 @@ function done(): void {
 async function fetchFallback(url: string, data: object, csrfToken: string): Promise<void> {
   console.log("Using REST fallback for appeal generation");
   usingRestFallback = true;
+  // ws.onerror already called endCurrentAttempt() before handoff, so
+  // start a fresh attempt timer for the REST leg.
+  beginAttempt();
   const statusMessage = document.getElementById('status-message');
   if (statusMessage) {
     statusMessage.textContent = 'Using alternative connection method...';
@@ -476,11 +546,14 @@ async function fetchFallback(url: string, data: object, csrfToken: string): Prom
     updateStatusIndicator('done', appealsSoFar.length);
   } catch (error) {
     console.error("REST fallback error:", error);
+    lastRestErrorMessage = (error as any)?.message || String(error);
     if (statusMessage) {
       statusMessage.textContent = 'Connection failed. Please try refreshing the page.';
       statusMessage.style.color = '#dc3545';
     }
   }
+  // Record REST attempt duration before reporting / hiding UI.
+  endCurrentAttempt();
   done();
 }
 
@@ -504,16 +577,26 @@ function processResponseChunk(chunk: string): void {
         if (parsedLine.type === 'status') {
           const phase = parsedLine.phase;
           const substep = parsedLine.substep;
+          statusMessagesReceived++;
+          if (phase) {
+            lastPhaseReceived = phase;
+          }
 
           if (phase === 'done') {
             // Explicit end-of-stream from server
             const total = parsedLine.total_appeals || 0;
             const newAppeals = parsedLine.new_appeals || 0;
             const existing = parsedLine.existing_appeals || 0;
+            serverReportedTotalAppeals = total;
+            serverReportedNewAppeals = newAppeals;
+            serverReportedExistingAppeals = existing;
             console.log(`Server stream complete: ${total} total appeals (${newAppeals} new, ${existing} existing), client has ${appealsSoFar.length}`);
             if (total > 0 && appealsSoFar.length === 0) {
               console.error(`BUG: Server sent ${total} appeals but client received none!`);
-              reportClientError(`Server sent ${total} appeals but client received 0`);
+              reportClientError(`Server sent ${total} appeals but client received 0 (lost in transit)`);
+            } else if (total > appealsSoFar.length) {
+              console.warn(`Partial delivery: server reported ${total} appeals, client got ${appealsSoFar.length}`);
+              reportClientError(`Partial delivery: server reported ${total} appeals, client got ${appealsSoFar.length}`);
             }
             markAllDone();
             renderChecklist();
@@ -545,8 +628,29 @@ function processResponseChunk(chunk: string): void {
           return;
         }
 
+        // Server-side error frames from the REST fallback (and the
+        // escalation WS) use {"type": "error", "message": "..."}.
+        // Without this branch they'd fall through to the appeal-content
+        // handler and push an `undefined` appeal into the UI.
+        if (parsedLine.type === 'error') {
+          console.error('Server reported error:', parsedLine.message);
+          const msg = String(parsedLine.message || 'server error');
+          // Attribute to the active transport so triage doesn't get
+          // pointed at REST when the failure was on the WS path.
+          if (usingRestFallback) {
+            lastRestErrorMessage = msg;
+          } else {
+            lastWsErrorMessage = msg;
+          }
+          return;
+        }
+
         // Handle regular appeal content
         const appealText = parsedLine.content;
+        if (appealText === undefined || appealText === null) {
+          console.warn('Skipping non-appeal frame without content', parsedLine);
+          return;
+        }
 
         if (
           appealsSoFar.some(
@@ -637,27 +741,51 @@ function connectWebSocket(
   processResponseChunk: (chunk: string) => void,
   done: () => void,
 ) {
-  const resetTimeout = () => {
-    if (timeoutHandle) clearTimeout(timeoutHandle);
-    timeoutHandle = setTimeout(() => {
-      console.error("No messages received in 240 seconds. Reconnecting...");
-      if (retries < maxRetries) {
-        retries++;
-        setTimeout(
-          () =>
-            connectWebSocket(websocketUrl, data, processResponseChunk, done),
-          1000,
-        );
-      } else {
-        console.error("Max retries reached. Closing connection.");
-        done();
-      }
-    }, 240000); // 240 seconds timeout
-  };
-
   const startWebSocket = () => {
-    // Open the connection and send data
+    // Start the per-attempt wait timer. connectWebSocket is called
+    // recursively for retries, so each invocation gets its own start.
+    beginAttempt();
+    // Per-attempt flag: ws.onerror or the inactivity-timeout path may
+    // decide to retry or hand off to REST. The same socket's
+    // ws.onclose then fires on the normal error->close (or
+    // close-after-explicit-close) sequence; without this guard,
+    // onclose would also call done() and call endCurrentAttempt()
+    // again, mangling the NEW attempt's duration and potentially
+    // spawning overlapping retries via doQuery recursion.
+    let retryScheduled = false;
+
     const ws = new WebSocket(websocketUrl);
+
+    // Defined inside startWebSocket so it can close `ws` and mark
+    // `retryScheduled` on the right per-attempt closure.
+    const resetTimeout = () => {
+      if (timeoutHandle) clearTimeout(timeoutHandle);
+      timeoutHandle = setTimeout(() => {
+        console.error("No messages received in 240 seconds. Reconnecting...");
+        // Mark this socket stale, end its attempt timer, and explicitly
+        // close it. ws.onclose will short-circuit on retryScheduled,
+        // so it can't double-call done() or stomp on the next attempt.
+        retryScheduled = true;
+        endCurrentAttempt();
+        try {
+          ws.close();
+        } catch (e) {
+          /* ignore */
+        }
+        if (retries < maxRetries) {
+          retries++;
+          setTimeout(
+            () =>
+              connectWebSocket(websocketUrl, data, processResponseChunk, done),
+            1000,
+          );
+        } else {
+          console.error("Max retries reached. Closing connection.");
+          done();
+        }
+      }, 240000); // 240 seconds timeout
+    };
+
     ws.onopen = () => {
       console.log("WebSocket connection opened");
       updateStatusIndicator('connected', appealsSoFar.length);
@@ -673,7 +801,21 @@ function connectWebSocket(
 
     // Handle connection closure
     ws.onclose = (event) => {
-      console.log("WebSocket connection closed:", event.reason);
+      console.log("WebSocket connection closed:", event.code, event.reason);
+      lastWsCloseCode = event.code;
+      lastWsCloseReason = event.reason || '';
+      // Two reasons to short-circuit done():
+      //   1. handingOffToRest: REST fallback owns the final done() call
+      //      and will record its own attempt duration.
+      //   2. retryScheduled: ws.onerror or the inactivity-timeout path
+      //      already queued a reconnect for this attempt and recorded
+      //      its duration; calling done()/endCurrentAttempt() here
+      //      would stomp on it.
+      if (handingOffToRest || retryScheduled) {
+        return;
+      }
+      // Normal close path: record the attempt duration before done().
+      endCurrentAttempt();
       updateStatusIndicator('done', appealsSoFar.length);
       done();
     };
@@ -681,12 +823,17 @@ function connectWebSocket(
     // Handle errors
     ws.onerror = (error) => {
       console.error("WebSocket error:", error);
+      lastWsErrorMessage = (error as any)?.message || (error as any)?.type || 'unknown';
       updateStatusIndicator('error', appealsSoFar.length);
+      // Record this attempt's duration regardless of which branch we
+      // take next (retry / fallback / give up).
+      endCurrentAttempt();
       if (retries < maxRetries) {
         console.log(
           `Retrying WebSocket connection (${retries + 1}/${maxRetries})...`,
         );
         retries = retries + 1;
+        retryScheduled = true;
         setTimeout(
           () =>
             connectWebSocket(websocketUrl, data, processResponseChunk, done),
@@ -695,6 +842,7 @@ function connectWebSocket(
       } else if (my_rest_fallback_url && !usingRestFallback) {
         // WebSocket retries exhausted — try REST fallback
         console.log("WebSocket retries exhausted, falling back to REST endpoint");
+        handingOffToRest = true;
         const csrfToken = (data as any).csrfmiddlewaretoken || '';
         fetchFallback(my_rest_fallback_url, data, csrfToken);
       } else {
@@ -717,6 +865,13 @@ export function doQuery(backend_url: string, data: Map<string, string>, rest_fal
   my_data = data;
   my_rest_fallback_url = rest_fallback_url || '';
   usingRestFallback = false;
+  handingOffToRest = false;
+  // Start the aggregate wait clock only on the first call. doQuery
+  // recurses on retry via done(), and we want the total to span the
+  // entire user-visible wait, not just the latest retry.
+  if (doQueryStartedAtMs === 0) {
+    doQueryStartedAtMs = Date.now();
+  }
   return connectWebSocket(backend_url, data, processResponseChunk, done);
 }
 

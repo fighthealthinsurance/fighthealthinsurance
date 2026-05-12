@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 import re
 import uuid
 from typing import AsyncIterator, Callable, Optional, Tuple, cast
@@ -24,6 +25,7 @@ from fighthealthinsurance.models import (
     OngoingChat,
     PriorAuthRequest,
     ProfessionalUser,
+    ProposedAppeal,
     ProposedPriorAuth,
 )
 
@@ -54,6 +56,96 @@ def _get_client_ip_from_scope(scope: Optional[dict] = None) -> Optional[str]:
     return None
 
 
+async def log_zero_appeal_diagnostics(
+    denial_id: Optional[object],
+    status_count: int,
+    last_status_phase: Optional[str],
+    transport: str,
+    stream_error: Optional[str] = None,
+) -> None:
+    """Emit a structured ERROR when an appeal session ends with 0 appeals delivered.
+
+    Looks up persisted ProposedAppeal rows for the denial so we can
+    distinguish 'server generated nothing' from 'server generated N
+    appeals but they never made it to the client'. The latter case is
+    invisible to the client-side error report.
+
+    `transport` is "websocket" or "rest" so the same log surfaces both
+    delivery paths in alerting.
+    """
+    # Coerce arbitrary JSON values to int for the FK/AutoField lookup.
+    # Anything we can't coerce skips the DB cross-reference and just
+    # gets logged as-is so we still surface the failure. bool is a
+    # subclass of int in Python, so a JSON `true`/`false` would
+    # otherwise coerce to 1/0 and point diagnostics at the wrong
+    # denial record.
+    denial_id_int: Optional[int] = None
+    if isinstance(denial_id, bool):
+        denial_id_int = None
+    elif isinstance(denial_id, int):
+        denial_id_int = denial_id
+    elif isinstance(denial_id, str):
+        try:
+            denial_id_int = int(denial_id)
+        except ValueError:
+            denial_id_int = None
+
+    persisted_count = -1
+    denial_attempts: Optional[int] = None
+    try:
+        if denial_id_int is not None:
+            # `denial_id` is Denial's PK so `for_denial_id=N` matches
+            # the FK column directly. Using `for_denial__denial_id=`
+            # would add a needless JOIN to the diagnostic path.
+            persisted_count = await ProposedAppeal.objects.filter(
+                for_denial_id=denial_id_int
+            ).acount()
+            denial = await Denial.objects.filter(denial_id=denial_id_int).afirst()
+            if denial is not None:
+                denial_attempts = denial.gen_attempts
+    except Exception as lookup_error:
+        logger.opt(exception=True).warning(
+            f"Failed to look up persisted appeal count for denial "
+            f"{denial_id}: {lookup_error}"
+        )
+    error_suffix = f" stream_error={stream_error}" if stream_error else ""
+    if persisted_count > 0:
+        logger.error(
+            f"[{transport}] Appeal session sent 0 appeals to client BUT "
+            f"server has {persisted_count} ProposedAppeal row(s) for "
+            f"denial {denial_id}. This is a delivery/wire failure, not "
+            f"a generation failure. status_frames={status_count} "
+            f"last_phase={last_status_phase} gen_attempts={denial_attempts}"
+            f"{error_suffix}"
+        )
+    elif persisted_count == 0:
+        logger.error(
+            f"[{transport}] Appeal session completed with 0 appeals sent "
+            f"AND 0 ProposedAppeal rows persisted for denial {denial_id}. "
+            f"Generation produced nothing. status_frames={status_count} "
+            f"last_phase={last_status_phase} "
+            f"gen_attempts={denial_attempts}{error_suffix}"
+        )
+    else:
+        # persisted_count == -1: lookup never ran (no/invalid denial_id)
+        # or DB call raised. Don't pretend we know the persisted total.
+        logger.error(
+            f"[{transport}] Appeal session sent 0 appeals to client; "
+            f"persisted-count lookup unavailable for denial {denial_id} "
+            f"(coerced={denial_id_int!r}). status_frames={status_count} "
+            f"last_phase={last_status_phase} "
+            f"gen_attempts={denial_attempts}{error_suffix}"
+        )
+
+
+# Test hook: when truthy, StreamingAppealsBackend accepts the
+# connection and closes immediately without yielding any appeal
+# payloads. Lets tests exercise the REST fallback path without
+# injecting a real transport-level failure. Should never be set in
+# production.
+SUPPRESS_APPEAL_WS_DELIVERY = False
+
+
 class StreamingAppealsBackend(AsyncWebsocketConsumer):
     """Streaming back the appeals as json :D"""
 
@@ -71,18 +163,54 @@ class StreamingAppealsBackend(AsyncWebsocketConsumer):
             data = json.loads(text_data)
         except json.JSONDecodeError as e:
             logger.warning(f"Invalid JSON received in appeals websocket: {e}")
-            await self.send(json.dumps({"error": "Invalid JSON format"}))
+            # Match the streaming protocol shape so the client's
+            # type==='error' branch in processResponseChunk fires
+            # instead of treating this as an unrecognized frame.
+            await self.send(
+                json.dumps({"type": "error", "message": "Invalid JSON format"})
+            )
+            await self.close()
+            return
+        if not isinstance(data, dict):
+            # Valid JSON but not an object (e.g. `[]`, `"x"`, `123`).
+            # Without this guard, data.get(...) below would raise and
+            # the client would just see a server-side close.
+            logger.warning(
+                "Non-object JSON received in appeals websocket: "
+                f"{type(data).__name__}"
+            )
+            await self.send(
+                json.dumps({"type": "error", "message": "Expected a JSON object"})
+            )
+            await self.close()
+            return
+        # Test hook: simulate a silent WS death so the JS client falls
+        # back to REST. We close cleanly with no payload so the client
+        # sees the same shape as a real broken-pipe / proxy-drop.
+        # Double-gate: the module flag alone isn't enough — also
+        # require os.environ["TESTING"] == "True" (set only by the
+        # TestSync settings class) so a misconfigured production
+        # process that somehow toggled the flag still serves real
+        # users.
+        if SUPPRESS_APPEAL_WS_DELIVERY and os.environ.get("TESTING") == "True":
+            logger.warning(
+                "WS appeal delivery suppressed by test flag for denial "
+                f"{data.get('denial_id')}"
+            )
             await self.close()
             return
         logger.debug("Starting generation of appeals...")
+        denial_id = data.get("denial_id")
         aitr: AsyncIterator[str] = (
             common_view_logic.AppealsBackendHelper.generate_appeals(data)
         )
         # We do a try/except here to log since the WS framework swallow exceptions sometimes
+        appeal_count = 0
+        status_count = 0
+        last_status_phase: Optional[str] = None
         try:
             await asyncio.sleep(1)
             await self.send("\n")
-            appeal_count = 0
             async for record in aitr:
                 await asyncio.sleep(0)
                 await self.send("\n")
@@ -96,18 +224,41 @@ class StreamingAppealsBackend(AsyncWebsocketConsumer):
                 if stripped:
                     try:
                         parsed = json.loads(stripped)
-                        if isinstance(parsed, dict) and "content" in parsed:
-                            appeal_count += 1
+                        if isinstance(parsed, dict):
+                            if "content" in parsed:
+                                appeal_count += 1
+                            elif parsed.get("type") == "status":
+                                status_count += 1
+                                last_status_phase = parsed.get("phase")
                     except (json.JSONDecodeError, TypeError):
                         pass
             if appeal_count == 0:
-                logger.error(
-                    "WebSocket appeal session completed with 0 appeal payloads sent"
+                # Cross-reference: did the server actually generate appeals
+                # for this denial that just didn't make it down the wire?
+                # This is the key signal that distinguishes a server-side
+                # generation failure from a client-side delivery failure.
+                await log_zero_appeal_diagnostics(
+                    denial_id=denial_id,
+                    status_count=status_count,
+                    last_status_phase=last_status_phase,
+                    transport="websocket",
                 )
             else:
                 logger.debug(f"All appeals sent, {appeal_count} payloads total.")
         except Exception as e:
-            logger.opt(exception=True).error(f"Error sending back appeals: {e}")
+            logger.opt(exception=True).error(
+                f"Error sending back appeals for denial {denial_id} after "
+                f"{appeal_count} appeals and {status_count} status frames "
+                f"(last phase={last_status_phase}): {e}"
+            )
+            if appeal_count == 0:
+                await log_zero_appeal_diagnostics(
+                    denial_id=denial_id,
+                    status_count=status_count,
+                    last_status_phase=last_status_phase,
+                    transport="websocket",
+                    stream_error=str(e),
+                )
             raise
         finally:
             logger.debug("Yielding before closing connection")
