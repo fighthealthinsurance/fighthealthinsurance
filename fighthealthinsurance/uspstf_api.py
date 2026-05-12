@@ -730,12 +730,78 @@ def get_uspstf_info(query: Dict[str, Any]) -> str:
     return intro + "\n\n".join(blocks)
 
 
+# Header used on the formatted USPSTF context block injected into appeal
+# prompts. Kept as a module-level constant so the appeal-prompt builder and
+# tests can reference the exact text without duplicating it.
+USPSTF_APPEAL_CONTEXT_HEADER = (
+    "USPSTF preventive-service recommendations relevant to this denial. "
+    "Under the ACA, non-grandfathered private plans, the marketplace, and "
+    "Medicaid expansion populations generally must cover Grade A or B "
+    "preventive services without cost-sharing. Cite the specific "
+    "recommendation (title, grade, source URL) when arguing this point; "
+    "do not assert ACA coverage for non-A/B services."
+)
+
+
+def get_uspstf_context_for_denial(denial: Any) -> str:
+    """Compute a USPSTF preventive-services context block for a denial.
+
+    Extracts CPT/HCPCS and ICD-10 codes from the denial's text fields, maps
+    them to USPSTF topics via :func:`find_recommendations_for_codes`, and
+    returns a formatted context string suitable for inclusion in an appeal
+    prompt. Returns an empty string when no preventive codes are present
+    or no matching recommendations are found.
+
+    This is the appeal-generation counterpart to :func:`get_uspstf_info`,
+    which is wired into the chat surface. It runs as a cheap synchronous
+    ORM lookup wrapped via ``sync_to_async`` in the gather block.
+    """
+    from fighthealthinsurance.medical_code_extractor import (
+        extract_icd10_codes,
+        extract_procedure_codes,
+    )
+
+    sources: List[str] = []
+    for value in (
+        getattr(denial, "denial_text", None),
+        getattr(denial, "procedure", None),
+        getattr(denial, "diagnosis", None),
+        getattr(denial, "candidate_procedure", None),
+        getattr(denial, "verified_procedure", None),
+        getattr(denial, "candidate_diagnosis", None),
+        getattr(denial, "verified_diagnosis", None),
+    ):
+        if value:
+            sources.append(str(value))
+    if not sources:
+        return ""
+
+    combined = "\n".join(sources)
+    codes = extract_procedure_codes(combined) | extract_icd10_codes(combined)
+    if not codes:
+        return ""
+
+    try:
+        recs = find_recommendations_for_codes(codes, limit=5)
+    except Exception as e:
+        logger.opt(exception=True).debug(f"USPSTF context lookup failed: {e}")
+        return ""
+
+    if not recs:
+        return ""
+
+    blocks = [format_recommendation(r) for r in recs]
+    return USPSTF_APPEAL_CONTEXT_HEADER + "\n\n" + "\n\n".join(blocks)
+
+
 __all__ = [
     "DEFAULT_API_URL",
     "FALLBACK_RECOMMENDATIONS",
     "USPSTFClient",
+    "USPSTF_APPEAL_CONTEXT_HEADER",
     "find_recommendations_for_codes",
     "format_recommendation",
+    "get_uspstf_context_for_denial",
     "get_uspstf_info",
     "search_recommendations",
 ]

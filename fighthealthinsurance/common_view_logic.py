@@ -2557,6 +2557,7 @@ class AppealsBackendHelper:
         nice_context: Optional[str] = None
         imr_context: Optional[str] = None
         pa_context: Optional[str] = None
+        uspstf_context: Optional[str] = None
 
         # Get PubMed context
         logger.debug("Looking up the pubmed context")
@@ -2682,6 +2683,24 @@ class AppealsBackendHelper:
                 done_msg="Payer PA requirements lookup complete",
             )
 
+            # Look up USPSTF preventive-services recommendations for any
+            # preventive-care codes (e.g., screening colonoscopy, mammogram,
+            # vaccines) referenced in the denial. A/B graded services trigger
+            # ACA cost-sharing protections, which is the appeal angle. Cheap
+            # synchronous ORM call against the cached recommendation table.
+            from fighthealthinsurance.uspstf_api import (
+                get_uspstf_context_for_denial,
+            )
+
+            uspstf_context_awaitable = tracked_awaitable(
+                asyncio.wait_for(
+                    sync_to_async(get_uspstf_context_for_denial)(denial),
+                    timeout=10,
+                ),
+                substep="uspstf",
+                done_msg="USPSTF preventive-services lookup complete",
+            )
+
             # Skip the NICE task entirely when no key is configured: avoids a
             # misleading "NICE guidance lookup complete" status and the wait_for
             # overhead in environments without syndication access.
@@ -2691,6 +2710,7 @@ class AppealsBackendHelper:
                 rag_context_awaitable,
                 imr_context_awaitable,
                 pa_context_awaitable,
+                uspstf_context_awaitable,
             ]
             if cls.nice.api_key:
                 gather_awaitables.append(
@@ -2744,8 +2764,11 @@ class AppealsBackendHelper:
                 if isinstance(results[4], str) and results[4]:
                     pa_context = results[4]
                     logger.info("Payer PA requirements context retrieved")
-                if len(results) > 5 and isinstance(results[5], str):
-                    nice_context = results[5]
+                if isinstance(results[5], str) and results[5]:
+                    uspstf_context = results[5]
+                    logger.info("USPSTF preventive-services context retrieved")
+                if len(results) > 6 and isinstance(results[6], str):
+                    nice_context = results[6]
                 else:
                     # No fresh NICE result (skipped task or non-string error). Fall
                     # back to whatever is already persisted on the denial so cached
@@ -2786,6 +2809,22 @@ class AppealsBackendHelper:
                         f"PA context refresh during fallback failed: {inner}"
                     )
                     pa_context = None
+                # USPSTF context isn't persisted; re-run the cheap ORM query so
+                # retries don't drop preventive-services recommendations either.
+                try:
+                    from fighthealthinsurance.uspstf_api import (
+                        get_uspstf_context_for_denial,
+                    )
+
+                    uspstf_context = (
+                        await sync_to_async(get_uspstf_context_for_denial)(denial)
+                        or None
+                    )
+                except Exception as inner:
+                    logger.opt(exception=True).debug(
+                        f"USPSTF context refresh during fallback failed: {inner}"
+                    )
+                    uspstf_context = None
                 logger.debug("Used saved contexts")
         else:
             logger.debug("Too many retries, skipping ML/pubmed/RAG ctx")
@@ -2807,6 +2846,21 @@ class AppealsBackendHelper:
                     f"PA context refresh on retry failed: {e}"
                 )
                 pa_context = None
+            # USPSTF lookup is the same shape — cheap ORM against the cached
+            # recommendation table — so re-run it on retries too.
+            try:
+                from fighthealthinsurance.uspstf_api import (
+                    get_uspstf_context_for_denial,
+                )
+
+                uspstf_context = (
+                    await sync_to_async(get_uspstf_context_for_denial)(denial) or None
+                )
+            except Exception as e:
+                logger.opt(exception=True).debug(
+                    f"USPSTF context refresh on retry failed: {e}"
+                )
+                uspstf_context = None
             yield json.dumps(
                 {
                     "type": "status",
@@ -2907,6 +2961,7 @@ class AppealsBackendHelper:
             nice_context=nice_context,
             specialized_templates=specialized_templates,
             pa_context=pa_context,
+            uspstf_context=uspstf_context,
         )
         # Only filters out None
         filtered_appeals: Iterator[str] = filter(lambda x: x != None, appeals)

@@ -1272,6 +1272,7 @@ class AppealGenerator(object):
         ucr_context=None,
         payer_policy_context=None,
         pa_context=None,
+        uspstf_context=None,
         medication_context=None,
     ) -> Optional[str]:
         """
@@ -1351,6 +1352,12 @@ class AppealGenerator(object):
                 "are not listed below.\n"
                 f"{pa_context}"
             )
+        if uspstf_context is not None and uspstf_context.strip():
+            # USPSTF context is preventive-services guidance. A/B-graded
+            # services trigger the ACA cost-sharing mandate, which is the
+            # primary appeal angle for preventive-care denials. The header
+            # block already carries the "only cite A/B for ACA" caveat.
+            base = f"{base}\n\n{uspstf_context}"
         # Add citation instructions - be explicit about not hallucinating
         has_citations = (
             (ml_context is not None and ml_context != "")
@@ -1513,6 +1520,7 @@ class AppealGenerator(object):
         payer_policy_context=None,
         specialized_templates: Optional[List[type[SpecializedDenialTemplate]]] = None,
         pa_context=None,
+        uspstf_context=None,
     ) -> Iterator[str]:
         """
         Generates an iterator of appeal texts for a given insurance denial using templates, non-AI sources, and AI models.
@@ -1603,6 +1611,7 @@ class AppealGenerator(object):
             ucr_context=ucr_narrative,
             payer_policy_context=payer_policy_context,
             pa_context=pa_context,
+            uspstf_context=uspstf_context,
             medication_context=medication_context,
         )
         open_medically_necessary_prompt = self.make_open_med_prompt(

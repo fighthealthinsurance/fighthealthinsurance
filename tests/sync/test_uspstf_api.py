@@ -7,11 +7,13 @@ from django.test import TestCase
 from fighthealthinsurance.models import USPSTFRecommendation
 from fighthealthinsurance.uspstf_api import (
     FALLBACK_RECOMMENDATIONS,
+    USPSTF_APPEAL_CONTEXT_HEADER,
     _coerce_record,
     _extract_records,
     _normalize_grade,
     find_recommendations_for_codes,
     format_recommendation,
+    get_uspstf_context_for_denial,
     get_uspstf_info,
     search_recommendations,
 )
@@ -281,3 +283,98 @@ class SyncRecommendationsTests(TestCase):
 
         self.assertEqual(count, len(FALLBACK_RECOMMENDATIONS))
         self.assertGreater(USPSTFRecommendation.objects.count(), 0)
+
+
+class _StubDenial:
+    """Minimal duck-typed stand-in for a Denial used in helper tests."""
+
+    def __init__(self, **kwargs):
+        # Default every field the helper inspects to None so tests only
+        # populate the ones they care about.
+        for field in (
+            "denial_text",
+            "procedure",
+            "diagnosis",
+            "candidate_procedure",
+            "verified_procedure",
+            "candidate_diagnosis",
+            "verified_diagnosis",
+        ):
+            setattr(self, field, None)
+        for k, v in kwargs.items():
+            setattr(self, k, v)
+
+
+class GetUSPSTFContextForDenialTests(TestCase):
+    """``get_uspstf_context_for_denial`` is the appeal-flow entry point."""
+
+    def test_returns_empty_when_no_text_fields(self):
+        self.assertEqual(get_uspstf_context_for_denial(_StubDenial()), "")
+
+    def test_returns_empty_when_no_codes_in_text(self):
+        denial = _StubDenial(denial_text="generic denial with no codes whatsoever")
+        self.assertEqual(get_uspstf_context_for_denial(denial), "")
+
+    def test_returns_context_for_screening_colonoscopy_cpt(self):
+        """A CPT for screening colonoscopy should pull in the colorectal rec."""
+        denial = _StubDenial(
+            denial_text="Claim for CPT 45378 denied as not medically necessary."
+        )
+        result = get_uspstf_context_for_denial(denial)
+        self.assertIn(USPSTF_APPEAL_CONTEXT_HEADER, result)
+        self.assertIn("colorectal", result.lower())
+
+    def test_returns_context_for_icd10_screening_diagnosis(self):
+        """A dotted ICD-10 screening code in the diagnosis field also triggers."""
+        denial = _StubDenial(
+            denial_text="Routine screening claim denied.",
+            diagnosis="Z12.11",
+        )
+        result = get_uspstf_context_for_denial(denial)
+        self.assertIn(USPSTF_APPEAL_CONTEXT_HEADER, result)
+        self.assertIn("colorectal", result.lower())
+
+    def test_returns_empty_when_code_unrelated_to_preventive_services(self):
+        """A non-preventive procedure code yields no USPSTF context."""
+        denial = _StubDenial(denial_text="CPT 27447 (knee arthroplasty) denied.")
+        self.assertEqual(get_uspstf_context_for_denial(denial), "")
+
+
+class MakeOpenPromptIncludesUSPSTFContextTests(TestCase):
+    """Verify the appeal-generation prompt picks up uspstf_context.
+
+    Mirrors the PA-context coverage in test_pa_requirements.py — the
+    parallel case for the preventive-services lookup.
+    """
+
+    def test_make_open_prompt_includes_uspstf_context_block(self):
+        from fighthealthinsurance.generate_appeal import AppealGenerator
+
+        generator = AppealGenerator()
+        prompt = generator.make_open_prompt(
+            denial_text="Insurer denied screening colonoscopy.",
+            procedure="Screening colonoscopy",
+            diagnosis="Z12.11",
+            insurance_company="ExamplePayer",
+            uspstf_context=(
+                f"{USPSTF_APPEAL_CONTEXT_HEADER}\n\n"
+                "Colorectal Cancer: Screening (Grade A)"
+            ),
+        )
+        self.assertIsNotNone(prompt)
+        assert prompt is not None
+        self.assertIn("USPSTF preventive-service recommendations", prompt)
+        self.assertIn("Colorectal Cancer: Screening (Grade A)", prompt)
+
+    def test_make_open_prompt_omits_uspstf_block_when_empty(self):
+        from fighthealthinsurance.generate_appeal import AppealGenerator
+
+        generator = AppealGenerator()
+        prompt = generator.make_open_prompt(
+            denial_text="Insurer denied screening colonoscopy.",
+            insurance_company="ExamplePayer",
+            uspstf_context="",
+        )
+        self.assertIsNotNone(prompt)
+        assert prompt is not None
+        self.assertNotIn("USPSTF preventive-service recommendations", prompt)
