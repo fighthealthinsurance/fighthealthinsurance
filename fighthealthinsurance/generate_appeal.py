@@ -1272,6 +1272,7 @@ class AppealGenerator(object):
         ucr_context=None,
         payer_policy_context=None,
         pa_context=None,
+        uspstf_context=None,
         medication_context=None,
     ) -> Optional[str]:
         """
@@ -1351,12 +1352,17 @@ class AppealGenerator(object):
                 "are not listed below.\n"
                 f"{pa_context}"
             )
-        # Add citation instructions - be explicit about not hallucinating
+        # Add citation instructions - be explicit about not hallucinating.
+        # USPSTF is included in the citation set because its header explicitly
+        # asks the model to cite the recommendation/URL; placing it below the
+        # "may ONLY cite references provided below" instruction keeps that
+        # guidance consistent.
         has_citations = (
             (ml_context is not None and ml_context != "")
             or (pubmed_context is not None and pubmed_context != "")
             or (rag_context is not None and rag_context != "")
             or (nice_context is not None and nice_context != "")
+            or (uspstf_context is not None and uspstf_context != "")
         )
         if has_citations:
             base = f"{base}\n\nCITATION INSTRUCTIONS: You may ONLY cite medical literature, studies, or references that are explicitly provided below. Do NOT invent, fabricate, or hallucinate any citations, PMIDs, journal names, author names, or study details. If you want to make a medical claim, either cite from the provided references or state it as general medical knowledge without a specific citation."
@@ -1371,6 +1377,11 @@ class AppealGenerator(object):
                 # (see INTERNATIONAL_GUIDANCE_CAVEAT in nice_tools); the header
                 # here is just a section label.
                 base = f"{base}\n\nNICE (UK) guidance:\n{nice_context}"
+            if uspstf_context is not None and uspstf_context != "":
+                # The header inside ``uspstf_context`` already explains the
+                # ACA cost-sharing angle and the A/B-only caveat, so no extra
+                # section label is needed here.
+                base = f"{base}\n\n{uspstf_context}"
         else:
             # No citations provided - explicitly tell the model not to make any up
             base = f"{base}\n\nIMPORTANT: No specific medical citations have been provided. Do NOT invent or hallucinate any citations, PMIDs, journal names, or study references. You may state general medical knowledge without citations, but do not fabricate specific study references."
@@ -1513,6 +1524,7 @@ class AppealGenerator(object):
         payer_policy_context=None,
         specialized_templates: Optional[List[type[SpecializedDenialTemplate]]] = None,
         pa_context=None,
+        uspstf_context=None,
     ) -> Iterator[str]:
         """
         Generates an iterator of appeal texts for a given insurance denial using templates, non-AI sources, and AI models.
@@ -1603,6 +1615,7 @@ class AppealGenerator(object):
             ucr_context=ucr_narrative,
             payer_policy_context=payer_policy_context,
             pa_context=pa_context,
+            uspstf_context=uspstf_context,
             medication_context=medication_context,
         )
         open_medically_necessary_prompt = self.make_open_med_prompt(

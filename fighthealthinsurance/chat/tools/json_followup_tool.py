@@ -38,10 +38,13 @@ class JsonFollowupTool(BaseTool):
       * ``build_followup_prompt`` — customize the prompt sent back to the LLM
       * ``append_note_to_context`` — when True, the raw note is also appended
         to the running context so downstream tools can reuse it.
+      * ``followup_context_summary`` — value passed as ``previous_context_summary``
+        to ``call_llm_callback`` when re-invoking the LLM. Defaults to empty.
     """
 
     detect_flags: int = re.DOTALL | re.IGNORECASE
     append_note_to_context: bool = False
+    followup_context_summary: str = ""
 
     def __init__(
         self,
@@ -141,7 +144,7 @@ class JsonFollowupTool(BaseTool):
             ) = await self.call_llm_callback(
                 model_backends,
                 self.build_followup_prompt(note, current_message_for_llm),
-                "",
+                self.followup_context_summary,
                 history_for_llm,
                 depth=depth + 1,
                 is_logged_in=is_logged_in,

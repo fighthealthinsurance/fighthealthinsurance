@@ -827,3 +827,7 @@ class TestUSPSTFLookupTool(TestCase):
         self.assertIn("LLM expanded reply", response)
         # Raw lookup is also included in the context.
         self.assertIn("Diabetes", context)
+        # ``previous_context_summary`` (3rd positional arg) must identify the
+        # lookup so the LLM follow-up call gets the correct provenance label.
+        call_args = callback.call_args
+        self.assertEqual(call_args.args[2], "USPSTF preventive-services lookup")

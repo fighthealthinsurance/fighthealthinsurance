@@ -34,6 +34,7 @@ class USPSTFLookupTool(JsonFollowupTool):
     # output is appended — the LLM-targeted instruction text lives in
     # ``build_followup_prompt`` so it doesn't bloat downstream prompts.
     append_note_to_context: bool = True
+    followup_context_summary: str = "USPSTF preventive-services lookup"
 
     async def run(
         self, params: dict, *, current_message_for_llm: str = ""

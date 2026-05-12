@@ -69,18 +69,26 @@ def _make_empty_proposed_appeal_query():
     return mock_queryset
 
 
-def _sync_to_async_router(pa_wrapper, make_appeals_wrapper):
+def _sync_to_async_router(pa_wrapper, make_appeals_wrapper, uspstf_wrapper=None):
     """
-    Build a side_effect for the patched ``sync_to_async`` so the PA-context
-    lookup and the make_appeals call each route to their own AsyncMock.
+    Build a side_effect for the patched ``sync_to_async`` so the PA-context,
+    USPSTF-context, and make_appeals calls each route to their own AsyncMock.
     Unexpected call sites raise so a future production change can't quietly
     funnel its sync_to_async target through the make_appeals mock.
+
+    ``uspstf_wrapper`` defaults to an AsyncMock returning ``""`` (no
+    matching preventive recommendations) so tests that don't care about
+    the USPSTF integration don't have to wire it up.
     """
+    if uspstf_wrapper is None:
+        uspstf_wrapper = AsyncMock(return_value="")
 
     def route(fn, *args, **kwargs):
         name = getattr(fn, "__name__", "") or repr(fn)
         if "get_pa_context_for_denial" in name:
             return pa_wrapper
+        if "get_uspstf_context_for_denial" in name:
+            return uspstf_wrapper
         if "make_appeals" in name:
             return make_appeals_wrapper
         raise AssertionError(
@@ -355,3 +363,87 @@ class TestAppealsBackendHelperWithCitations:
             call_kwargs = mock_make_appeals_wrapper.call_args[1]
             assert call_kwargs["pubmed_context"] == "PubMed context data"
             assert call_kwargs["ml_citations_context"] == "ML Citation 1"
+
+    @pytest.mark.asyncio
+    async def test_uspstf_context_passed_to_make_appeals(self):
+        """USPSTF context from the gather block is threaded into make_appeals.
+
+        Mirrors the PA-context routing pattern: a stub
+        ``get_uspstf_context_for_denial`` returns a known string and we
+        verify it shows up as the ``uspstf_context`` kwarg on make_appeals.
+        """
+        mock_denial = _make_mock_denial()
+        mock_denial_query = _make_mock_denial_query(mock_denial)
+
+        parameters = {
+            "denial_id": "12345",
+            "email": "test@example.com",
+            "semi_sekret": "test-secret",
+        }
+
+        uspstf_payload = (
+            "USPSTF preventive-service recommendations relevant to this denial."
+        )
+
+        with (
+            patch(
+                "fighthealthinsurance.common_view_logic.Denial.objects.filter",
+                return_value=mock_denial_query,
+            ),
+            patch(
+                "fighthealthinsurance.common_view_logic.Denial.get_hashed_email",
+                return_value="hashed",
+            ),
+            patch.object(
+                AppealsBackendHelper,
+                "regex_denial_processor",
+            ) as mock_regex_processor,
+            patch(
+                "fighthealthinsurance.common_view_logic.MLCitationsHelper.generate_citations_for_denial",
+                new_callable=AsyncMock,
+                return_value="ML Citation 1",
+            ),
+            patch.object(
+                AppealsBackendHelper.pmt,
+                "find_context_for_denial",
+                new_callable=AsyncMock,
+                return_value="PubMed context data",
+            ),
+            patch(
+                "fighthealthinsurance.common_view_logic.sync_to_async",
+            ) as mock_sync_to_async,
+            patch(
+                "fighthealthinsurance.common_view_logic.interleave_iterator_for_keep_alive",
+            ) as mock_interleave,
+            patch(
+                "fighthealthinsurance.common_view_logic.ProposedAppeal",
+            ) as mock_proposed_appeal_cls,
+        ):
+            mock_regex_processor.get_appeal_templates = AsyncMock(return_value=[])
+
+            mock_make_appeals_wrapper = AsyncMock(
+                return_value=["Appeal with USPSTF context"]
+            )
+            mock_pa_wrapper = AsyncMock(return_value="")
+            mock_uspstf_wrapper = AsyncMock(return_value=uspstf_payload)
+            mock_sync_to_async.side_effect = _sync_to_async_router(
+                mock_pa_wrapper, mock_make_appeals_wrapper, mock_uspstf_wrapper
+            )
+
+            mock_pa_instance = MagicMock()
+            mock_pa_instance.id = 1
+            mock_pa_instance.asave = AsyncMock()
+            mock_proposed_appeal_cls.return_value = mock_pa_instance
+
+            mock_proposed_appeal_cls.objects.filter.return_value = (
+                _make_empty_proposed_appeal_query()
+            )
+
+            mock_interleave.side_effect = passthrough_interleave
+
+            async for _ in AppealsBackendHelper.generate_appeals(parameters):
+                pass
+
+            mock_make_appeals_wrapper.assert_called_once()
+            call_kwargs = mock_make_appeals_wrapper.call_args[1]
+            assert call_kwargs["uspstf_context"] == uspstf_payload
