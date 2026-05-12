@@ -702,9 +702,10 @@ class ResolveInsuranceCompanyByNameTests(TestCase):
         )
 
     def test_alt_name_exact_line_match(self):
-        # "UHC" is the second line of UnitedHealthcare's alt_names — it must
-        # resolve via the alt-name stage even though the canonical name
-        # doesn't iexact-match.
+        # "UHC" is the first line of UnitedHealthcare's alt_names and
+        # "BCBS" is the second line of Anthem's alt_names — both must
+        # resolve via the alt-name stage even though the canonical names
+        # don't iexact-match.
         self.assertEqual(resolve_insurance_company_by_name("UHC"), self.uhc)
         self.assertEqual(resolve_insurance_company_by_name("BCBS"), self.anthem)
 

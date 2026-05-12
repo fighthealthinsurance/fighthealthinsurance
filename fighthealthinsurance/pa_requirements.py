@@ -168,6 +168,11 @@ def resolve_insurance_company_by_name(
 
     payer_lower = payer_clean.lower()
 
+    # ``logger.opt(lazy=True)`` skips the format-string interpolation and
+    # the ``perf_counter`` diff entirely when the DEBUG sink is filtered
+    # out, so the instrumentation costs ~one ``perf_counter`` call per
+    # resolve invocation in production rather than building a formatted
+    # message that's thrown away.
     alt_start = time.perf_counter()
     alt_candidates = InsuranceCompany.objects.exclude(alt_names="").filter(
         alt_names__icontains=payer_clean
@@ -178,15 +183,19 @@ def resolve_insurance_company_by_name(
         for alt in candidate.alt_names.splitlines():
             alt_norm = alt.strip().lower()
             if alt_norm and alt_norm == payer_lower:
-                logger.debug(
+                logger.opt(lazy=True).debug(
                     "resolve_insurance_company_by_name: alt-name fallback hit "
-                    f"for {payer_clean!r} -> company id {candidate.id} "
-                    f"in {(time.perf_counter() - alt_start) * 1000:.1f} ms"
+                    "for {!r} -> company id {} in {:.1f} ms",
+                    lambda p=payer_clean: p,
+                    lambda c=candidate: c.id,
+                    lambda s=alt_start: (time.perf_counter() - s) * 1000,
                 )
                 return candidate
-    logger.debug(
+    logger.opt(lazy=True).debug(
         "resolve_insurance_company_by_name: alt-name fallback miss for "
-        f"{payer_clean!r} in {(time.perf_counter() - alt_start) * 1000:.1f} ms"
+        "{!r} in {:.1f} ms",
+        lambda p=payer_clean: p,
+        lambda s=alt_start: (time.perf_counter() - s) * 1000,
     )
 
     # Last resort: try the compiled ``regex`` field on each company,
@@ -213,11 +222,13 @@ def resolve_insurance_company_by_name(
                 and negative.search(payer_clean)
             ):
                 continue
-            logger.debug(
+            logger.opt(lazy=True).debug(
                 "resolve_insurance_company_by_name: regex fallback hit for "
-                f"{payer_clean!r} -> company id {candidate.id} after "
-                f"{regex_scanned} pattern(s) in "
-                f"{(time.perf_counter() - regex_start) * 1000:.1f} ms"
+                "{!r} -> company id {} after {} pattern(s) in {:.1f} ms",
+                lambda p=payer_clean: p,
+                lambda c=candidate: c.id,
+                lambda n=regex_scanned: n,
+                lambda s=regex_start: (time.perf_counter() - s) * 1000,
             )
             return candidate
         except Exception as e:
@@ -225,10 +236,12 @@ def resolve_insurance_company_by_name(
                 f"Error applying regex for company {candidate.id}: {e}"
             )
             continue
-    logger.debug(
+    logger.opt(lazy=True).debug(
         "resolve_insurance_company_by_name: regex fallback miss for "
-        f"{payer_clean!r} after {regex_scanned} pattern(s) in "
-        f"{(time.perf_counter() - regex_start) * 1000:.1f} ms"
+        "{!r} after {} pattern(s) in {:.1f} ms",
+        lambda p=payer_clean: p,
+        lambda n=regex_scanned: n,
+        lambda s=regex_start: (time.perf_counter() - s) * 1000,
     )
     return None
 

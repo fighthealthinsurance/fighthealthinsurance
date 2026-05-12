@@ -1494,10 +1494,15 @@ class AppealGenerator(object):
             logger.opt(exception=True).debug(f"MedicationContext lookup failed: {e}")
             return None
 
-        logger.debug(
-            "_collect_medication_context: "
-            f"{len(matches)} match(es) of {scanned} candidate(s) in "
-            f"{(time.perf_counter() - start) * 1000:.1f} ms"
+        # ``logger.opt(lazy=True)`` avoids paying the perf_counter diff +
+        # format-string cost on every appeal generation when the DEBUG
+        # sink is filtered out in production.
+        logger.opt(lazy=True).debug(
+            "_collect_medication_context: {} match(es) of {} candidate(s) "
+            "in {:.1f} ms",
+            lambda: len(matches),
+            lambda n=scanned: n,
+            lambda s=start: (time.perf_counter() - s) * 1000,
         )
 
         if not matches:
