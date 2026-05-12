@@ -58,7 +58,10 @@ from fighthealthinsurance.models import (
     PriorAuthRequest,
 )
 from fighthealthinsurance.microsites import get_microsite
-from fighthealthinsurance.prompt_templates import get_intro_template
+from fighthealthinsurance.prompt_templates import (
+    DELETE_DATA_INSTRUCTION,
+    get_intro_template,
+)
 from fighthealthinsurance.clinicaltrials_tools import ClinicalTrialsTools
 from fighthealthinsurance.pubmed_tools import PubMedTools
 from fighthealthinsurance.rxnorm_tools import RxNormTools
@@ -259,6 +262,7 @@ class ChatInterface:
         is_professional: bool = True,
         fallback_backends: Optional[List[RemoteModelLike]] = None,
         full_history: Optional[List[Dict[str, str]]] = None,
+        user_message_for_scoring: Optional[str] = None,
     ) -> Tuple[Optional[str], Optional[str]]:
         """
         Calls the LLM, handles PubMed query requests if present and returns the response.
@@ -275,11 +279,24 @@ class ChatInterface:
             fallback_backends: Backup models to try if primary fails
             full_history: Full untruncated history (optional) - will also try with this
                          if provided and model context allows it
+            user_message_for_scoring: The raw user message used by repetition-penalty
+                scoring. Distinct from current_message_for_llm, which may be wrapped
+                with intro-template content or the delete-data instruction. Defaults
+                to current_message_for_llm when not provided.
         """
         if depth > 3:
             return None, None
         chat = self.chat
         history = history_for_llm
+
+        # Fall back to the model-facing string for scoring when no raw user
+        # message was supplied (e.g. recursive tool calls that already carry
+        # the wrapped message and don't have access to the original).
+        scoring_message = (
+            user_message_for_scoring
+            if user_message_for_scoring is not None
+            else current_message_for_llm
+        )
 
         # Build LLM calls using the extracted module
         calls, call_scores = build_llm_calls(
@@ -297,7 +314,7 @@ class ChatInterface:
             call_scores,
             primary_calls=calls,
             chat_history=chat.chat_history,
-            current_message=current_message_for_llm,
+            current_message=scoring_message,
         )
 
         try:
@@ -326,6 +343,7 @@ class ChatInterface:
                 timeout=35.0,
                 status_callback=self.send_status_message,
                 chat_history=chat.chat_history,
+                user_message_for_scoring=scoring_message,
             )
             if retry_response and len(retry_response.strip()) > 5:
                 response_text = retry_response
@@ -351,6 +369,7 @@ class ChatInterface:
             is_professional=is_professional,
             fallback_backends=fallback_backends,
             full_history=full_history,
+            user_message_for_scoring=scoring_message,
         )
 
         # Non-recursive tools: appeal, prior auth
@@ -786,6 +805,12 @@ class ChatInterface:
             llm_input_message = template.format(
                 user_info=user_info_str, message=user_message
             )
+        else:
+            # Re-inject the delete-data handoff instruction on every ongoing
+            # turn. The intro template (which contains it) only fires for new
+            # chats, so without this the sentinel fallback would silently stop
+            # working past the first message.
+            llm_input_message = f"{DELETE_DATA_INSTRUCTION}\n\n{user_message}"
 
         # Prepare history for LLM using the context manager
         # This handles truncation, summarization, and full history preservation
@@ -837,6 +862,7 @@ class ChatInterface:
                 is_professional=self.is_professional or self.is_trial_professional,
                 fallback_backends=fallback_models if fallback_models else None,
                 full_history=full_history_for_llm,  # Also try with full history if model supports it
+                user_message_for_scoring=user_message,
             )
 
             if response_text and response_text.strip():
