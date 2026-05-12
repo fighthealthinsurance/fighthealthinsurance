@@ -262,7 +262,9 @@ def _resolver_cache_bucket() -> int:
 
 
 @lru_cache(maxsize=4)
-def _regex_candidates(bucket: int):
+def _regex_candidates(
+    bucket: int,
+) -> Tuple[Tuple[int, "re.Pattern[str]", Optional["re.Pattern[str]"]], ...]:
     """Return ``[(id, regex, negative_regex)]`` tuples for the resolver.
 
     Caching the compiled regex objects per 5-minute bucket avoids both the
@@ -270,7 +272,7 @@ def _regex_candidates(bucket: int):
     Admin edits become visible within one bucket-rollover.
     """
     del bucket  # value embedded for cache invalidation only
-    out = []
+    out: List[Tuple[int, "re.Pattern[str]", Optional["re.Pattern[str]"]]] = []
     # Push the empty-regex filter to the database so we don't pull every
     # InsuranceCompany row just to discard the ones without a pattern.
     for candidate in InsuranceCompany.objects.exclude(regex="").iterator():

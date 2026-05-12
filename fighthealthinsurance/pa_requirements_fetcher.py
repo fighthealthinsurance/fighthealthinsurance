@@ -188,7 +188,10 @@ class PaRequirementsFetcher:
             apply_enrichment(reqs, enrichment_for_host(urlparse(url).hostname or ""))
             return reqs
 
-        return await sync_to_async(_parse_and_enrich, thread_sensitive=False)()
+        result: List[ParsedPARequirement] = await sync_to_async(
+            _parse_and_enrich, thread_sensitive=False
+        )()
+        return result
 
     async def _get_content(self, url: str) -> "tuple[str, Union[str, bytes]]":
         """Download ``url``; return ``(content_type, body)``."""
@@ -307,4 +310,5 @@ class PaRequirementsFetcher:
             .exclude(pk__in=seen_pks)
             .filter(end_date__isnull=True)
         )
-        return qs.update(end_date=today)
+        retired: int = qs.update(end_date=today)
+        return retired
