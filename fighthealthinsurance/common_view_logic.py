@@ -118,6 +118,23 @@ states_with_caps = {
 }
 
 
+# Minimum character count for a string to be considered a "real" appeal.
+# Shared between the generation-side filter (drops empty/whitespace/runt
+# outputs before save) and the streaming-side counter (so generation
+# rejection and delivery counting can never disagree).
+MIN_APPEAL_CHARS = 10
+
+
+def _is_real_appeal(x: Optional[str]) -> bool:
+    """True if `x` is a string with more than MIN_APPEAL_CHARS visible chars.
+
+    Used to filter out None, empty strings, whitespace-only strings, and
+    model outputs too short to be useful appeals (which would silently
+    inflate ProposedAppeal counts without delivering anything to the user).
+    """
+    return x is not None and isinstance(x, str) and len(x.strip()) > MIN_APPEAL_CHARS
+
+
 @dataclass
 class NextStepInfo:
     outside_help_details: list[Tuple[str, str]]
@@ -2965,8 +2982,21 @@ class AppealsBackendHelper:
             pa_context=pa_context,
             uspstf_context=uspstf_context,
         )
-        # Only filters out None
-        filtered_appeals: Iterator[str] = filter(lambda x: x != None, appeals)
+        # Filter out None, empty strings, whitespace-only, and runt outputs
+        # too short to be useful (would inflate ProposedAppeal counts without
+        # delivering anything). Uses MIN_APPEAL_CHARS shared with the
+        # streaming counter below.
+        runt_count = [0]  # mutable so the closure can update from within filter
+
+        def _filter_with_runt_count(x: Optional[str]) -> bool:
+            if _is_real_appeal(x):
+                return True
+            if x is not None and isinstance(x, str) and x.strip():
+                # Non-empty but too short — count for diagnostics
+                runt_count[0] += 1
+            return False
+
+        filtered_appeals: Iterator[str] = filter(_filter_with_runt_count, appeals)
 
         # Convert the blocking sync iterator to async so next() calls
         # run in a thread executor and don't block the event loop.
@@ -2988,14 +3018,18 @@ class AppealsBackendHelper:
 
         new = 0
         async for i in interleaved:
-            # Hack our interleave messages are just newlines
-            if i and len(i) > 10:
+            # Interleave messages are just newlines for keep-alive; real
+            # appeals exceed MIN_APPEAL_CHARS (kept in sync with the
+            # generation-side filter so both ends agree on what counts).
+            if i and len(i) > MIN_APPEAL_CHARS:
                 new = new + 1
                 logger.debug(f"Sending appeal count: {new+old}...")
             else:
                 logger.debug("Sending keep alive....")
             yield i
-        logger.debug(f"Normal appeals sent {new} and {old}")
+        logger.debug(
+            f"Normal appeals sent {new} and {old} (runt_count={runt_count[0]})"
+        )
         yield json.dumps(
             {
                 "type": "status",
@@ -3071,17 +3105,22 @@ class AppealsBackendHelper:
             except Exception:
                 logger.opt(exception=True).warning("Final appeal synthesis failed")
 
-        # Log when appeal generation produces no results for Sentry visibility
+        # Log when appeal generation produces no results for Sentry visibility.
+        # runt_count distinguishes "models silent" (runt_count=0) from
+        # "models producing only short/empty strings" (runt_count>0), which
+        # point at different root causes in incident review.
         if new + old == 0:
             logger.error(
                 f"Zero appeals generated for denial {denial_id}, "
-                f"gen_attempts={denial.gen_attempts}"
+                f"gen_attempts={denial.gen_attempts}, "
+                f"runt_count={runt_count[0]}"
             )
         elif new == 0 and old > 0:
             logger.warning(
                 f"No new appeals generated for denial {denial_id} "
                 f"(but {old} existing appeals found), "
-                f"gen_attempts={denial.gen_attempts}"
+                f"gen_attempts={denial.gen_attempts}, "
+                f"runt_count={runt_count[0]}"
             )
 
         # Explicit end-of-stream so the client knows exactly what was sent
