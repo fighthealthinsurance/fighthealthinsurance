@@ -74,7 +74,7 @@ export function getExternalModelsPreference(): boolean {
   } catch (e) {
     console.error("Error getting external models preference from localStorage:", e);
   }
-  return false;
+  return true;
 }
 
 /**

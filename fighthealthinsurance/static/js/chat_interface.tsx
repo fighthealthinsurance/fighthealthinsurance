@@ -229,7 +229,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
     messageCount: 0,
     statusMessage: null,
     requestStartTime: null,
-    useExternalModels: localStorage.getItem("fhi_use_external_models") === "true",
+    useExternalModels: localStorage.getItem("fhi_use_external_models") !== "false",
     showVoiceIntake: Boolean(enableVoiceIntake),
   });
 
@@ -334,7 +334,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
         // If we have a chat ID, request the chat history we explicitily refresh from local storage
         // so reconnect does not capture the old state.
         let chatId = localStorage.getItem("fhi_chat_id");
-        const useExternalModels = localStorage.getItem("fhi_use_external_models") === "true";
+        const useExternalModels = localStorage.getItem("fhi_use_external_models") !== "false";
 
         // If we have an initial message (e.g., from explain denial page), start a NEW chat
         // even if there's an existing one - the user explicitly started a new denial explanation

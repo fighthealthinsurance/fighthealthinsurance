@@ -435,22 +435,25 @@ class SeleniumChatStatusMessagesTest(FHISeleniumBase, StaticLiveServerTestCase):
         else:
             print("Note: Could not click external models toggle")
 
-    def test_external_models_toggle_default_off(self):
-        """Test that external models toggle defaults to off in consent form."""
+    def test_external_models_toggle_default_on(self):
+        """Test that external models toggle defaults to on in consent form."""
         # Clear localStorage first
         self.open(f"{self.live_server_url}/chat-consent")
         self.execute_script("""
             localStorage.removeItem('fhi_use_external_models');
         """)
 
-        # Check if the toggle is unchecked by default in the consent form
+        # Reload so user_info_storage.ts re-runs with cleared localStorage
+        self.open(f"{self.live_server_url}/chat-consent")
+
+        # Check if the toggle is checked by default in the consent form
         is_checked = self.execute_script("""
             const toggle = document.getElementById('use_external_models');
             return toggle ? toggle.checked : null;
         """)
 
-        assert is_checked is False, "External models toggle should default to off"
-        print("✓ External models toggle defaults to off in consent form")
+        assert is_checked is True, "External models toggle should default to on"
+        print("✓ External models toggle defaults to on in consent form")
 
     def test_external_models_toggle_persists_across_page_loads(self):
         """Test that external models preference persists across page loads."""

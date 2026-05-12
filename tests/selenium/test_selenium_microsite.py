@@ -310,7 +310,7 @@ class SeleniumTestMicrositeExistingUser(FHISeleniumBase, StaticLiveServerTestCas
         self.type("input#email", email)
         self.click("input#tos")
         self.click("input#privacy")
-        self.click("input#use_external_models")  # Enable external models
+        # External models defaults to on; no need to click
         self.click("button[type='submit']")
         self.wait_for_clickable("#chat-interface-root")
 
