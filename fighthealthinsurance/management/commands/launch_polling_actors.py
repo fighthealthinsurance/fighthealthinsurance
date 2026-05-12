@@ -34,7 +34,7 @@ class Command(BaseCommand):
                         )
                     )
         else:
-            from fighthealthinsurance.polling_actor_setup import cpar, epar, fpar, ipar, ppar
+            from fighthealthinsurance.polling_actor_setup import cpar, epar, fpar, ipar, ppar, pprar
 
-            self.stdout.write(f"Loaded actors: {epar} {fpar} {cpar} {ipar} {ppar}")
+            self.stdout.write(f"Loaded actors: {epar} {fpar} {cpar} {ipar} {ppar} {pprar}")
             self.stdout.write(self.style.SUCCESS("Polling actors loaded successfully"))

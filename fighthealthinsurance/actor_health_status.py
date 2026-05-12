@@ -42,6 +42,7 @@ def check_actor_health() -> Dict[str, Any]:
         ("imr_refresh_actor", "fhi"),
         ("ucr_refresh_actor", "fhi"),
         ("pa_requirement_refresh_actor", "fhi"),
+        ("payer_policy_refresh_actor", "fhi"),
     ]
 
     details: List[ActorHealthDetail] = []
@@ -126,6 +127,7 @@ def relaunch_actors(force: bool = False) -> Dict[str, Any]:
     from fighthealthinsurance.fax_polling_actor_ref import fax_polling_actor_ref
     from fighthealthinsurance.imr_refresh_actor_ref import imr_refresh_actor_ref
     from fighthealthinsurance.pa_requirement_refresh_actor_ref import pa_requirement_refresh_actor_ref
+    from fighthealthinsurance.payer_policy_refresh_actor_ref import payer_policy_refresh_actor_ref
     from fighthealthinsurance.ucr_refresh_actor_ref import ucr_refresh_actor_ref
 
     results: Dict[str, Dict[str, Any]] = {
@@ -135,6 +137,7 @@ def relaunch_actors(force: bool = False) -> Dict[str, Any]:
         "imr_refresh_actor": {"status": "pending"},
         "ucr_refresh_actor": {"status": "pending"},
         "pa_requirement_refresh_actor": {"status": "pending"},
+        "payer_policy_refresh_actor": {"status": "pending"},
     }
 
     actors = [
@@ -144,6 +147,7 @@ def relaunch_actors(force: bool = False) -> Dict[str, Any]:
         ("imr_refresh_actor", imr_refresh_actor_ref),
         ("ucr_refresh_actor", ucr_refresh_actor_ref),
         ("pa_requirement_refresh_actor", pa_requirement_refresh_actor_ref),
+        ("payer_policy_refresh_actor", payer_policy_refresh_actor_ref),
     ]
 
     for actor_name, actor_ref in actors:

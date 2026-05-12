@@ -1,5 +1,6 @@
 import asyncio
 import concurrent
+import datetime
 import os
 import random
 import re
@@ -8,6 +9,7 @@ import threading
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from functools import reduce
+from zoneinfo import ZoneInfo
 from inspect import isabstract
 from subprocess import CalledProcessError
 from typing import (
@@ -957,3 +959,15 @@ def extract_file_text(path: str) -> str:
         except Exception as e:
             logger.warning(f"Could not read {path} as text: {e}")
             return ""
+
+
+_PACIFIC = ZoneInfo("America/Los_Angeles")
+
+
+def seconds_until_next_1am_pacific() -> float:
+    """Return the number of seconds until the next 1:00 AM Pacific time."""
+    now = datetime.datetime.now(_PACIFIC)
+    target = now.replace(hour=1, minute=0, second=0, microsecond=0)
+    if now >= target:
+        target += datetime.timedelta(days=1)
+    return (target - now).total_seconds()
