@@ -520,7 +520,7 @@ class SeleniumExistingChatTest(FHISeleniumBase, StaticLiveServerTestCase):
         self.type("input#email", email)
         self.click("input#tos")
         self.click("input#privacy")
-        self.click("input#use_external_models")  # Enable external models
+        # External models defaults to on; no need to click
         self.click("button[type='submit']")
 
         # Wait for chat
@@ -532,7 +532,7 @@ class SeleniumExistingChatTest(FHISeleniumBase, StaticLiveServerTestCase):
         external_pref = self.execute_script(
             "return localStorage.getItem('fhi_use_external_models');"
         )
-        assert external_pref == "true", "External models preference should be saved"
+        assert external_pref == "true", "External models preference should be saved as true"
 
         # Now visit explain denial - preference should persist
         self.open(f"{self.live_server_url}/explain-denial")
@@ -610,7 +610,7 @@ class SeleniumExistingChatTest(FHISeleniumBase, StaticLiveServerTestCase):
         self.type("input#email", email)
         self.click("input#tos")
         self.click("input#privacy")
-        self.click("input#use_external_models")  # Enable external models
+        # External models defaults to on; no need to click
 
         # Add denial text
         denial_text = "My MRI was denied as not medically necessary."

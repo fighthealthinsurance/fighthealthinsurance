@@ -435,24 +435,82 @@ class SeleniumChatStatusMessagesTest(FHISeleniumBase, StaticLiveServerTestCase):
         else:
             print("Note: Could not click external models toggle")
 
-    def test_external_models_toggle_default_off(self):
-        """Test that external models toggle defaults to off in consent form."""
+    def test_external_models_toggle_default_on(self):
+        """Test that external models toggle defaults to on in consent form."""
         # Clear localStorage first
         self.open(f"{self.live_server_url}/chat-consent")
         self.execute_script("""
             localStorage.removeItem('fhi_use_external_models');
         """)
 
-        # Check if the toggle is unchecked by default in the consent form
+        # Reload so user_info_storage.ts re-runs with cleared localStorage
+        self.open(f"{self.live_server_url}/chat-consent")
+
+        # Check if the toggle is checked by default in the consent form
         is_checked = self.execute_script("""
             const toggle = document.getElementById('use_external_models');
             return toggle ? toggle.checked : null;
         """)
 
-        assert is_checked is False, "External models toggle should default to off"
-        print("✓ External models toggle defaults to off in consent form")
+        assert is_checked is True, "External models toggle should default to on"
+        print("✓ External models toggle defaults to on in consent form")
 
-    def test_external_models_toggle_persists_across_page_loads(self):
+    def test_external_models_toggled_off_is_respected(self):
+        """Test that explicitly disabling external models is saved and respected."""
+        # Clear any prior preference so we start from the default-on state
+        self.open(f"{self.live_server_url}/chat-consent")
+        self.execute_script("localStorage.removeItem('fhi_use_external_models');")
+        self.open(f"{self.live_server_url}/chat-consent")
+
+        # Confirm the toggle starts on, then click it off
+        is_on = self.execute_script("""
+            const toggle = document.getElementById('use_external_models');
+            return toggle ? toggle.checked : null;
+        """)
+        assert is_on is True, "Toggle should start on before we disable it"
+
+        self.click("input#use_external_models")  # turn off
+        time.sleep(0.5)
+
+        is_off = self.execute_script("""
+            const toggle = document.getElementById('use_external_models');
+            return toggle ? toggle.checked : false;
+        """)
+        assert is_off is False, "Toggle should be unchecked after clicking"
+
+        # Submit the consent form so the preference is saved to localStorage
+        self.fill_consent_form()
+        self.click("button[type='submit']")
+        self.wait_for_element("#chat-interface-root", timeout=10)
+        self.wait_for_page_ready(localstorage_key="fhi_user_info")
+        time.sleep(1)
+
+        # Preference should be explicitly stored as "false"
+        saved = self.execute_script(
+            "return localStorage.getItem('fhi_use_external_models');"
+        )
+        assert saved == "false", f"External models pref should be 'false', got: {saved}"
+
+        # Reload and confirm the "false" value persists
+        self.refresh()
+        self.wait_for_page_ready()
+        time.sleep(1)
+        persisted = self.execute_script(
+            "return localStorage.getItem('fhi_use_external_models');"
+        )
+        assert persisted == "false", "Disabled preference should persist after reload"
+
+        # Confirm the chat interface reads the stored value correctly:
+        # useExternalModels state should be false
+        use_external_in_ui = self.execute_script("""
+            const toggle = document.getElementById('use_external_models');
+            return toggle ? toggle.checked : null;
+        """)
+        # The toggle may not be present on the chat page, but the preference in
+        # localStorage must remain "false" — we already asserted that above.
+        print("✓ External models disabled preference is saved and persists")
+
+    def test_external_models_preference_persists_across_page_loads(self):
         """Test that external models preference persists across page loads."""
         # Set up chat session
         self.open(f"{self.live_server_url}/chat-consent")

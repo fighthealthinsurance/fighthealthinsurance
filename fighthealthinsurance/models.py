@@ -2162,7 +2162,7 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     appeal_text = models.TextField(null=True, blank=True)
     raw_email = models.TextField(max_length=300, null=True, blank=True)
     created = models.DateTimeField(db_default=Now(), null=True)
-    use_external = models.BooleanField(default=False)
+    use_external = models.BooleanField(default=True)
     health_history = models.TextField(null=True, blank=True)
     qa_context = models.TextField(null=True, blank=True)
     plan_context = models.TextField(null=True, blank=True)
