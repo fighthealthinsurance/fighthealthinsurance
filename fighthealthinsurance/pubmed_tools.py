@@ -476,14 +476,19 @@ class PubMedTools(object):
                         continue
                     if article_ids:
                         return article_ids
-                    # Empty result -> only honor as a cache hit inside the
-                    # shorter negative-cache window. Past that, fall through
-                    # and re-query NCBI in case new articles were indexed.
+                    # The most recent informative row is an empty result.
+                    # Honor it as a cache hit inside the shorter negative-
+                    # cache window.
                     if (
                         query_data.created is not None
                         and query_data.created >= neg_cache_cutoff
                     ):
                         return []
+                    # Stale empty: the newest signal says "no hits", but it
+                    # is past the negative-cache window. Don't fall back to
+                    # an even-older non-empty row — that would serve PMIDs
+                    # we already know are no longer matching. Re-query NCBI.
+                    break
 
                 # If no cache or cache error, fetch from PubMed API
                 logger.debug(f"Querying pubmed for query {query}")

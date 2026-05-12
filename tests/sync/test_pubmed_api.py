@@ -1000,3 +1000,37 @@ class PubMedNegativeCachingTest(TransactionTestCase):
             self.assertEqual(rows, [], "Errors must not produce negative-cache rows")
 
         async_to_sync(run_test)()
+
+    @mock.patch("fighthealthinsurance.utils.pubmed_fetcher.pmids_for_query")
+    def test_stale_empty_supersedes_older_non_empty(self, mock_pmids):
+        """A stale empty row is *newer* information than an older non-empty
+        row, so the older non-empty PMIDs must not be served. The function
+        should re-query NCBI instead."""
+        query = "supersession query"
+        # Older row (20 days ago): non-empty.
+        older = PubMedQueryData.objects.create(
+            query=query, articles=json.dumps(["aaaaa", "bbbbb"])
+        )
+        PubMedQueryData.objects.filter(pk=older.pk).update(
+            created=timezone.now() - timedelta(days=20)
+        )
+        # Newer row (5 days ago): empty but past the 2-day negative-cache
+        # window. This is the most recent signal and it says "no hits".
+        newer = PubMedQueryData.objects.create(query=query, articles=json.dumps([]))
+        PubMedQueryData.objects.filter(pk=newer.pk).update(
+            created=timezone.now() - timedelta(days=5)
+        )
+
+        mock_pmids.return_value = ["fresh"]
+
+        async def run_test():
+            tools = PubMedTools()
+            result = await tools.find_pubmed_article_ids_for_query(query)
+            mock_pmids.assert_called_once()
+            self.assertEqual(
+                result,
+                ["fresh"],
+                "Must re-fetch from NCBI, not serve older non-empty cached PMIDs",
+            )
+
+        async_to_sync(run_test)()
