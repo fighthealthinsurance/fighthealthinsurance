@@ -25,7 +25,10 @@ from fighthealthinsurance.chat.retry_handler import (
 )
 from fighthealthinsurance.chat.safety_filters import (
     CRISIS_RESOURCES,
+    DELETE_DATA_RESPONSE,
     detect_crisis_keywords,
+    detect_delete_data_request,
+    llm_requested_delete_handoff,
 )
 from fighthealthinsurance.chat.tools import (
     AppealTool,
@@ -471,6 +474,21 @@ class ChatInterface:
             # Don't continue with normal processing - let the user respond
             return
 
+        # SAFETY: Check for data-deletion requests in user-authored messages.
+        # We can't (and shouldn't) delete data from chat — direct the user to
+        # the self-service /remove_data flow which verifies email ownership.
+        # Skip for document uploads since OCR'd text often contains the word
+        # "delete" out of context.
+        if not is_document and detect_delete_data_request(user_message):
+            logger.info(
+                f"Delete-data request detected in chat {chat.id}, providing self-service link"
+            )
+            await self.send_message_to_client(DELETE_DATA_RESPONSE)
+            self._append_to_history(chat, "user", user_message)
+            self._append_to_history(chat, "assistant", DELETE_DATA_RESPONSE)
+            await chat.asave()
+            return
+
         # Handle document uploads: store separately and replace with marker in chat
         if is_document and user_message:
             doc_name = document_name or "uploaded_document"
@@ -820,6 +838,11 @@ class ChatInterface:
             if response_text and response_text.strip():
                 cleaned = remove_repeated_blocks(response_text.strip())
                 cleaned = remove_repeated_sentences(cleaned) or cleaned
+                if llm_requested_delete_handoff(cleaned):
+                    logger.info(
+                        f"LLM emitted delete-data sentinel in chat {chat.id}, swapping in canned response"
+                    )
+                    cleaned = DELETE_DATA_RESPONSE
                 final_response_text = cleaned
                 final_context_part = context_part
         except Exception as e:

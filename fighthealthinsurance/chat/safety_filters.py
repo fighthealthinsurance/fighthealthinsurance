@@ -76,6 +76,48 @@ _FALSE_PROMISE_REGEX: Pattern[str] = re.compile(
     re.IGNORECASE,
 )
 
+# Delete-data request detection - phrases where the user is asking us to
+# delete their account or data. We do NOT delete data from chat; instead we
+# point them at the self-service flow at /remove_data which verifies email
+# ownership before deleting anything.
+#
+# Patterns are narrow enough to avoid matching things like "delete this
+# paragraph from my appeal" or "remove the diagnosis from the record".
+_DELETE_DATA_PHRASES = [
+    r"delete my (?:data|account|info(?:rmation)?|profile|records?)",
+    r"remove my (?:data|account|info(?:rmation)?|profile|records?)",
+    r"erase my (?:data|account|info(?:rmation)?|profile|records?)",
+    r"wipe my (?:data|account|info(?:rmation)?|profile|records?)",
+    r"close my account",
+    r"cancel my account",
+    r"deactivate my account",
+    r"delete everything (?:about|on) me",
+    r"forget (?:me|my data|my account)",
+    r"gdpr (?:delete|deletion|erasure|request)",
+    r"right to (?:be forgotten|erasure)",
+    r"opt out of (?:data|having my data)",
+]
+
+_DELETE_DATA_REGEX: Pattern[str] = re.compile(
+    r"|".join(rf"(?:\b{phrase}\b)" for phrase in _DELETE_DATA_PHRASES),
+    re.IGNORECASE,
+)
+
+# Sentinel the LLM can emit (per system-prompt instructions) to hand off to
+# the canned response when the user's phrasing is too oblique for the regex.
+DELETE_DATA_SENTINEL = "[[DELETE_DATA_REQUEST]]"
+_DELETE_DATA_SENTINEL_REGEX: Pattern[str] = re.compile(
+    re.escape(DELETE_DATA_SENTINEL), re.IGNORECASE
+)
+
+DELETE_DATA_RESPONSE = """It looks like you're asking us to delete your data. I can't do that from chat, but you can request deletion yourself:
+
+**[Go to the Remove My Data page](/remove_data)**
+
+Enter your email there and we'll send you a confirmation link. After you click it, your data will be deleted. This two-step flow exists so we can verify you actually own the email before removing anything.
+
+If you have other questions about your appeal or denial, I'm happy to keep helping."""
+
 
 def detect_crisis_keywords(text: str) -> bool:
     """
@@ -101,3 +143,29 @@ def detect_false_promises(text: str) -> bool:
     if text is None:
         return False
     return bool(_FALSE_PROMISE_REGEX.search(text))
+
+
+def detect_delete_data_request(text: str) -> bool:
+    """
+    Check if a user message is asking us to delete their data or account.
+
+    Returns True when the message matches a known data-deletion phrasing.
+    Used to short-circuit the chat and direct the user to the self-service
+    /remove_data flow instead of asking the LLM to handle it.
+    """
+    if not text:
+        return False
+    return bool(_DELETE_DATA_REGEX.search(text))
+
+
+def llm_requested_delete_handoff(text: str) -> bool:
+    """
+    Check if an LLM response contains the delete-data sentinel token.
+
+    The system prompt instructs the model to emit this sentinel when it
+    recognizes a deletion request the regex missed. We swap the entire
+    response for the canned text when the sentinel is present.
+    """
+    if not text:
+        return False
+    return bool(_DELETE_DATA_SENTINEL_REGEX.search(text))

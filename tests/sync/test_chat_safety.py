@@ -4,13 +4,18 @@ from django.test import TestCase
 
 from fighthealthinsurance.chat.safety_filters import (
     detect_crisis_keywords,
+    detect_delete_data_request,
     detect_false_promises,
+    llm_requested_delete_handoff,
     CRISIS_RESOURCES,
+    DELETE_DATA_RESPONSE,
+    DELETE_DATA_SENTINEL,
 )
 
 # Import internal variables for testing
 from fighthealthinsurance.chat.safety_filters import (
     _CRISIS_PHRASES,
+    _DELETE_DATA_PHRASES,
     _FALSE_PROMISE_PATTERNS,
 )
 
@@ -241,4 +246,133 @@ class TestFalsePromisePatternList(TestCase):
             len(_FALSE_PROMISE_PATTERNS),
             len(set(_FALSE_PROMISE_PATTERNS)),
             "False promise patterns list contains duplicates",
+        )
+
+
+class TestDeleteDataDetection(TestCase):
+    """Tests for detection of user requests to delete their data."""
+
+    def test_detects_explicit_delete_data_requests(self):
+        """Direct deletion phrasings should be detected."""
+        delete_messages = [
+            "Please delete my data",
+            "I want you to delete my account",
+            "Remove my information from your system",
+            "Erase my profile",
+            "Wipe my records",
+            "Please close my account",
+            "I'd like to cancel my account",
+            "Can you deactivate my account?",
+            "Delete everything about me",
+            "Please forget me",
+            "I want you to forget my data",
+            "I am submitting a GDPR deletion request",
+            "I want to invoke my right to be forgotten",
+            "I want to opt out of having my data stored",
+        ]
+        for message in delete_messages:
+            self.assertTrue(
+                detect_delete_data_request(message),
+                f"Failed to detect delete-data request in: {message}",
+            )
+
+    def test_case_insensitive_detection(self):
+        """Detection should be case-insensitive."""
+        self.assertTrue(detect_delete_data_request("DELETE MY ACCOUNT"))
+        self.assertTrue(detect_delete_data_request("Erase My Data"))
+        self.assertTrue(detect_delete_data_request("close my account"))
+
+    def test_does_not_flag_unrelated_delete_phrases(self):
+        """Deleting parts of a document or unrelated content should not trigger."""
+        unrelated_messages = [
+            "Please delete this paragraph from my appeal",
+            "Remove the diagnosis from the record I uploaded",
+            "Can you delete the wrong date in my submission?",
+            "I'd like to close my claim with the insurer",
+            "Please cancel my appointment with the doctor",
+            "Forget that I mentioned the deductible earlier",
+            "Erase the second sentence of the letter",
+            "Wipe the formatting from the pasted text",
+        ]
+        for message in unrelated_messages:
+            self.assertFalse(
+                detect_delete_data_request(message),
+                f"Incorrectly flagged unrelated message: {message}",
+            )
+
+    def test_does_not_flag_normal_health_messages(self):
+        """Normal insurance-appeal questions should never trigger."""
+        normal_messages = [
+            "My insurance denied my MRI claim",
+            "Can you help me write an appeal letter?",
+            "How do I appeal a prior authorization denial?",
+            "What information do you need from me?",
+        ]
+        for message in normal_messages:
+            self.assertFalse(
+                detect_delete_data_request(message),
+                f"Incorrectly flagged normal message: {message}",
+            )
+
+    def test_handles_empty_or_none(self):
+        """Empty/None input should return False without error."""
+        self.assertFalse(detect_delete_data_request(""))
+        self.assertFalse(detect_delete_data_request(None))  # type: ignore[arg-type]
+
+    def test_canned_response_links_to_self_service_page(self):
+        """Canned response must point users at /remove_data."""
+        self.assertIn("/remove_data", DELETE_DATA_RESPONSE)
+
+
+class TestLLMDeleteHandoff(TestCase):
+    """Tests for detecting the LLM-emitted delete-data sentinel."""
+
+    def test_detects_sentinel_alone(self):
+        self.assertTrue(llm_requested_delete_handoff(DELETE_DATA_SENTINEL))
+
+    def test_detects_sentinel_case_insensitive(self):
+        self.assertTrue(llm_requested_delete_handoff("[[delete_data_request]]"))
+        self.assertTrue(llm_requested_delete_handoff("[[Delete_Data_Request]]"))
+
+    def test_detects_sentinel_embedded_in_text(self):
+        """Even if the model adds stray whitespace or text, the sentinel triggers."""
+        self.assertTrue(llm_requested_delete_handoff(f"\n{DELETE_DATA_SENTINEL}\n"))
+        self.assertTrue(llm_requested_delete_handoff(f"Sure. {DELETE_DATA_SENTINEL}"))
+
+    def test_does_not_trigger_on_plain_text(self):
+        plain_responses = [
+            "Sure, I can help you with that appeal.",
+            "Please share more details about the denial.",
+            "Here is a draft of your appeal letter.",
+            "delete data request",  # bare phrase without brackets
+        ]
+        for response in plain_responses:
+            self.assertFalse(
+                llm_requested_delete_handoff(response),
+                f"Incorrectly triggered on: {response}",
+            )
+
+    def test_handles_empty_or_none(self):
+        self.assertFalse(llm_requested_delete_handoff(""))
+        self.assertFalse(llm_requested_delete_handoff(None))  # type: ignore[arg-type]
+
+
+class TestDeleteDataPhraseList(TestCase):
+    """Sanity checks on the delete-data phrase list."""
+
+    def test_patterns_compile(self):
+        """All phrases should be valid regex fragments."""
+        import re
+
+        for phrase in _DELETE_DATA_PHRASES:
+            try:
+                re.compile(phrase)
+            except re.error as e:
+                self.fail(f"Phrase '{phrase}' failed to compile: {e}")
+
+    def test_phrases_are_unique(self):
+        self.assertEqual(
+            len(_DELETE_DATA_PHRASES),
+            len(set(_DELETE_DATA_PHRASES)),
+            "Delete-data phrases list contains duplicates",
         )
