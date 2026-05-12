@@ -119,6 +119,8 @@ if _log_analytics.is_log_analytics_enabled():
 
     from loguru import logger as _loguru_logger
 
+    # Attach only to loguru: dj_easy_log's load_loguru() installs an
+    # InterceptHandler on the root stdlib logger that forwards stdlib records
+    # into loguru, so registering the handler on both sinks would double-ship.
     _la_handler = _log_analytics.LogAnalyticsHandler(level=_logging.INFO)
     _loguru_logger.add(_la_handler, level="INFO")
-    _logging.getLogger().addHandler(_la_handler)
