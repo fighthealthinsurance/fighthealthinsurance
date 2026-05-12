@@ -150,6 +150,31 @@ class CollectMedicationContextTests(TestCase):
         denial = Denial.objects.create(denial_text="", hashed_email="x@example.com")
         self.assertIsNone(AppealGenerator._collect_medication_context(denial))
 
+    def test_empty_regex_row_is_skipped(self):
+        # The collector pushes an ``exclude(regex="")`` filter to the
+        # database so Python only iterates patterns that could actually
+        # match. A row with an empty regex must not appear in the rendered
+        # output even when the haystack contains text that would otherwise
+        # be a tempting partial match against the drug_class label.
+        MedicationContext.objects.create(
+            drug_class="Empty Regex Class",
+            regex=r"",
+            appeal_context="Should never appear in output.",
+        )
+        denial = Denial.objects.create(
+            denial_text="Patient is on Ozempic; mention Empty Regex Class verbatim.",
+            hashed_email="x@example.com",
+        )
+        result = AppealGenerator._collect_medication_context(denial)
+        self.assertIsNotNone(result)
+        # The well-formed GLP-1 row still matches via its regex.
+        self.assertIn("GLP-1 receptor agonist", result)
+        # The empty-regex row's curated context block must NOT have been
+        # rendered — it has no pattern to match against and the new DB
+        # filter should have excluded it before iteration.
+        self.assertNotIn("Empty Regex Class", result)
+        self.assertNotIn("Should never appear in output.", result)
+
 
 class MedicationContextPromptInjectionTests(TestCase):
     """Test that medication_context flows through make_open_prompt."""

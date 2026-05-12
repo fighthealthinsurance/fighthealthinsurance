@@ -1457,6 +1457,12 @@ class AppealGenerator(object):
         Designed to be defensive: any DB / import failure returns None so the
         appeal pipeline keeps working even if the table is empty or absent
         (e.g. during a partially-applied migration).
+
+        Query strategy: skips inactive rows and rows with an empty ``regex``
+        at the database level so Python only iterates patterns that could
+        actually match. Each invocation emits ``logger.debug`` with the
+        scanned-count and elapsed time so we can monitor how the per-denial
+        cost grows as new drug classes are seeded.
         """
         try:
             from fighthealthinsurance.models import MedicationContext
@@ -1476,13 +1482,23 @@ class AppealGenerator(object):
             return None
 
         matches: list[MedicationContext] = []
+        start = time.perf_counter()
+        scanned = 0
         try:
-            for ctx in MedicationContext.objects.filter(active=True):
+            candidates = MedicationContext.objects.filter(active=True).exclude(regex="")
+            for ctx in candidates:
+                scanned += 1
                 if ctx.matches(haystack):
                     matches.append(ctx)
         except Exception as e:
             logger.opt(exception=True).debug(f"MedicationContext lookup failed: {e}")
             return None
+
+        logger.debug(
+            "_collect_medication_context: "
+            f"{len(matches)} match(es) of {scanned} candidate(s) in "
+            f"{(time.perf_counter() - start) * 1000:.1f} ms"
+        )
 
         if not matches:
             return None
