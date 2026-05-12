@@ -109,3 +109,16 @@ if settings.SENTRY_ENDPOINT and not settings.DEBUG:
             "continuous_profiling_auto_start": True,
         },
     )
+
+# Optional Azure Log Analytics shipping. Activates only when both workspace
+# ID and shared key are configured; safe to leave installed otherwise.
+from fighthealthinsurance import log_analytics as _log_analytics
+
+if _log_analytics.is_log_analytics_enabled():
+    import logging as _logging
+
+    from loguru import logger as _loguru_logger
+
+    _la_handler = _log_analytics.LogAnalyticsHandler(level=_logging.INFO)
+    _loguru_logger.add(_la_handler, level="INFO")
+    _logging.getLogger().addHandler(_la_handler)
