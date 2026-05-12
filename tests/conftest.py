@@ -51,3 +51,24 @@ skip_if_no_nice_api_key = pytest.mark.skipif(
     not os.environ.get("NICE_API_KEY"),
     reason="NICE_API_KEY environment variable is not set",
 )
+
+
+@pytest.fixture(autouse=True)
+def _clear_pa_resolver_cache():
+    """Reset the PA-requirement regex-resolver cache between tests.
+
+    ``fighthealthinsurance.pa_requirements._regex_candidates`` is an
+    ``lru_cache``d helper keyed on a 5-minute time bucket. Without this
+    fixture, candidates that were registered as ``InsuranceCompany`` rows
+    by test A leak into test B (because both run inside the same bucket),
+    causing flaky resolver hits. The import is local so test runs that
+    never touch the PA module don't pay an import cost.
+    """
+    try:
+        from fighthealthinsurance.pa_requirements import _regex_candidates
+    except Exception:
+        yield
+        return
+    _regex_candidates.cache_clear()
+    yield
+    _regex_candidates.cache_clear()

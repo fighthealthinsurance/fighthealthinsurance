@@ -776,6 +776,20 @@ class PayerPriorAuthRequirement(models.Model):
     reason about the right rule at the time the service was rendered.
     """
 
+    # Columns that together identify "the same rule" — used by the
+    # ingestion fetcher to key ``update_or_create`` and (conceptually) by
+    # ``lookup_pa_requirements`` as the scoping schema. Living on the
+    # model keeps the two call sites change-once when a new scoping
+    # dimension (e.g. a clinical trial flag) is added.
+    UPSERT_KEY_FIELDS = (
+        "insurance_company",
+        "line_of_business",
+        "state",
+        "cpt_hcpcs_code",
+        "code_range_start",
+        "code_range_end",
+    )
+
     id = models.AutoField(primary_key=True)
     insurance_company = models.ForeignKey(
         InsuranceCompany,

@@ -40,13 +40,16 @@ FETCH_DOC_REGEX = r"(?:\*\*)?fetch_doc\s*(\{[^}]*\})\s*(?:\*\*)?"
 # Matches: uspstf_lookup {JSON} or **uspstf_lookup {JSON}**
 USPSTF_LOOKUP_REGEX = r"(?:\*\*)?uspstf_lookup\s*(\{[^}]*\})\s*(?:\*\*)?"
 
-# PA requirement lookup tool - captures JSON with codes/payer/state/LOB
+# PA requirement lookup tool - captures JSON with codes/payer/state/LOB.
 # Matches: lookup_pa_requirement {JSON} or **lookup_pa_requirement {JSON}**
-# The inner {...} alternation allows one level of nesting (e.g. for the
-# `filters: {lob: ...}` shape) without requiring true balanced-brace
-# matching, which Python's `re` can't express.
+#
+# The regex only matches up to the first ``}``; balanced-brace extraction
+# for nested-object payloads (``{"filters": {"lob": ...}}``) happens in
+# ``pa_requirement_tool._run_lookup`` via the message-walking helper.
+# Keeping the pattern simple avoids the nested-quantifier ReDoS risk that
+# a true balanced-brace regex would carry.
 LOOKUP_PA_REQUIREMENT_REGEX = (
-    r"(?:\*\*)?lookup_pa_requirement\s*" r"(\{(?:[^{}]|\{[^{}]*\})*\})\s*(?:\*\*)?"
+    r"(?:\*\*)?lookup_pa_requirement\s*(\{[^}]*\})\s*(?:\*\*)?"
 )
 
 # RxNorm drug normalization tool - captures the drug name (free-text).

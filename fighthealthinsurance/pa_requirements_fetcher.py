@@ -35,6 +35,7 @@ from loguru import logger
 
 from fighthealthinsurance.models import (
     InsuranceCompany,
+    LineOfBusiness,
     PayerPriorAuthRequirement,
 )
 
@@ -72,16 +73,10 @@ def register_parser(
     return decorator
 
 
-# Same key shape lookup_pa_requirements queries on. A row is "the same row"
-# when these fields all match; everything else is overwritten on upsert.
-_UPSERT_KEY_FIELDS = (
-    "insurance_company",
-    "line_of_business",
-    "state",
-    "cpt_hcpcs_code",
-    "code_range_start",
-    "code_range_end",
-)
+# Source-of-truth lives on the model class
+# (``PayerPriorAuthRequirement.UPSERT_KEY_FIELDS``) so the upsert key
+# stays in lockstep with the lookup-filter schema.
+_UPSERT_KEY_FIELDS = PayerPriorAuthRequirement.UPSERT_KEY_FIELDS
 
 
 def resolve_carrier_by_aliases(
@@ -132,7 +127,19 @@ class PaRequirementsFetcher:
     async def ingest_all(self) -> Dict[str, int]:
         stats = {"fetched": 0, "failed": 0, "entries": 0, "retired": 0}
         for alias in list(PA_PARSERS):
-            sub = await self.ingest_carrier(alias)
+            # Isolate per-carrier failures: an unhandled exception inside
+            # one parser/upsert must not abort the rest of the run, or
+            # operators would have to restart the actor every time a
+            # single carrier endpoint misbehaves.
+            try:
+                sub = await self.ingest_carrier(alias)
+            except Exception as e:
+                logger.opt(exception=True).warning(
+                    f"ingest_carrier({alias!r}) raised; recording as a "
+                    f"failed carrier and continuing: {e}"
+                )
+                stats["failed"] += 1
+                continue
             stats["fetched"] += sub["fetched"]
             stats["failed"] += sub["failed"]
             stats["entries"] += sub["entries"]
@@ -181,21 +188,31 @@ class PaRequirementsFetcher:
             return stats
 
         stats["fetched"] += 1
-        seen_pks, written = await sync_to_async(self._upsert_rows)(company, rows)
+        seen_pks, written = await sync_to_async(self._upsert_rows)(company, rows, alias)
         stats["entries"] += written
         stats["retired"] += await sync_to_async(self._retire_missing)(company, seen_pks)
         return stats
 
     @staticmethod
     def _upsert_rows(
-        company: InsuranceCompany, rows: List[Dict[str, Any]]
+        company: InsuranceCompany, rows: List[Dict[str, Any]], alias: str
     ) -> Tuple[List[int], int]:
-        """Upsert each row; return ``(pks_seen_this_run, count)``."""
+        """Upsert each row; return ``(pks_seen_this_run, count)``.
+
+        Always stamps ``source_document`` with an ``[ingest:<alias>]``
+        marker (appending to whatever string the parser supplied) so
+        ``_retire_missing`` can identify ingestion-owned rows without
+        relying on parser authors to remember the convention.
+        """
         seen: List[int] = []
+        marker = f"[ingest:{alias}]"
         for row in rows:
             key = {
                 "insurance_company": company,
-                "line_of_business": row.get("line_of_business", ""),
+                # The model field uses ``choices`` with no blank-allowed
+                # option; default to ALL so parser output that omits a
+                # LOB still passes ``full_clean()``.
+                "line_of_business": row.get("line_of_business") or LineOfBusiness.ALL,
                 "state": row.get("state", ""),
                 "cpt_hcpcs_code": row.get("cpt_hcpcs_code", ""),
                 "code_range_start": row.get("code_range_start", ""),
@@ -206,6 +223,11 @@ class PaRequirementsFetcher:
             # current again; clear end_date unless the parser explicitly
             # set one.
             defaults.setdefault("end_date", None)
+            base_source = defaults.get("source_document", "") or ""
+            if marker not in base_source:
+                defaults["source_document"] = (
+                    f"{base_source} {marker}".strip() if base_source else marker
+                )
             obj, _ = PayerPriorAuthRequirement.objects.update_or_create(
                 **key, defaults=defaults
             )

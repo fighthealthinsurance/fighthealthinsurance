@@ -168,17 +168,24 @@ class NestedJsonAndEmptyLobTests(TestCase):
             criteria_reference="UHC Sleep Medicine policy",
         )
 
-    def test_pattern_matches_nested_filters_object(self):
+    def test_extract_json_payload_handles_nested_filters_object(self):
+        from unittest.mock import AsyncMock
+
         text = (
             'lookup_pa_requirement {"codes": ["95810"], '
             '"filters": {"lob": "commercial"}, "payer": "UHC"}'
         )
+        # The simple regex only captures up to the first ``}`` so the
+        # raw capture group is truncated; ``extract_json_payload`` walks
+        # brace depth in the original text to recover the full payload.
         match = re.search(LOOKUP_PA_REQUIREMENT_REGEX, text, re.DOTALL | re.IGNORECASE)
         self.assertIsNotNone(match)
-        # The captured group must be valid JSON with both keys present.
+
+        tool = PaRequirementLookupTool(AsyncMock())
+        payload = tool.extract_json_payload(match, text)
         import json
 
-        parsed = json.loads(match.group(1))
+        parsed = json.loads(payload)
         self.assertEqual(parsed["codes"], ["95810"])
         self.assertEqual(parsed["filters"], {"lob": "commercial"})
 
