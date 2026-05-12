@@ -482,173 +482,78 @@ class TestAppealsBackendHelperWithCitations:
             assert call_kwargs["uspstf_context"] == uspstf_payload
 
 
-class TestSynthesisThreshold:
-    """Step 5 regression: synthesis must trigger when there is >=1 saved
-    appeal (not >=2). When primary yields exactly one appeal, synthesis
-    acts as a polish/expand pass that produces a second deliverable —
-    previously this case skipped synthesis entirely."""
+@pytest.mark.parametrize(
+    "saved_texts,synthesis_should_run",
+    [
+        (["single saved appeal text"], True),  # Step 5: >=1 triggers synthesis
+        ([], False),  # 0 saved appeals -> synthesis skipped
+    ],
+    ids=["one_saved_appeal", "zero_saved_appeals"],
+)
+@pytest.mark.asyncio
+async def test_synthesis_threshold(saved_texts, synthesis_should_run):
+    """Step 5: synthesis runs when >=1 saved appeal exists (was >=2)."""
+    mock_denial = _make_mock_denial()
+    parameters = {
+        "denial_id": "12345",
+        "email": "test@example.com",
+        "semi_sekret": "test-secret",
+    }
 
-    @pytest.mark.asyncio
-    async def test_synthesis_runs_with_single_saved_appeal(self):
-        """When ProposedAppeal has exactly 1 entry, synthesize_appeals
-        must be invoked (was previously gated at >=2)."""
-        mock_denial = _make_mock_denial()
-        mock_denial_query = _make_mock_denial_query(mock_denial)
+    with (
+        patch(
+            "fighthealthinsurance.common_view_logic.Denial.objects.filter",
+            return_value=_make_mock_denial_query(mock_denial),
+        ),
+        patch(
+            "fighthealthinsurance.common_view_logic.Denial.get_hashed_email",
+            return_value="hashed",
+        ),
+        patch.object(AppealsBackendHelper, "regex_denial_processor") as mock_regex,
+        patch(
+            "fighthealthinsurance.common_view_logic.MLCitationsHelper.generate_citations_for_denial",
+            new_callable=AsyncMock,
+            return_value="",
+        ),
+        patch.object(
+            AppealsBackendHelper.pmt,
+            "find_context_for_denial",
+            new_callable=AsyncMock,
+            return_value="",
+        ),
+        patch(
+            "fighthealthinsurance.common_view_logic.sync_to_async",
+        ) as mock_sync_to_async,
+        patch(
+            "fighthealthinsurance.common_view_logic.interleave_iterator_for_keep_alive",
+            side_effect=passthrough_interleave,
+        ),
+        patch(
+            "fighthealthinsurance.common_view_logic.ProposedAppeal",
+        ) as mock_pa_cls,
+        patch(
+            "fighthealthinsurance.common_view_logic.appealGenerator"
+        ) as mock_appeal_gen,
+    ):
+        mock_regex.get_appeal_templates = AsyncMock(return_value=[])
+        mock_sync_to_async.side_effect = _sync_to_async_router(
+            AsyncMock(return_value=""),  # pa_wrapper
+            AsyncMock(return_value=saved_texts),  # make_appeals_wrapper
+        )
+        mock_pa_cls.return_value = MagicMock(id=1, asave=AsyncMock())
+        mock_pa_cls.objects.filter.return_value = (
+            _make_proposed_appeal_query_with_texts(saved_texts)
+        )
+        mock_appeal_gen.synthesize_appeals = AsyncMock(return_value="synthesized")
 
-        parameters = {
-            "denial_id": "12345",
-            "email": "test@example.com",
-            "semi_sekret": "test-secret",
-        }
+        async for _ in AppealsBackendHelper.generate_appeals(parameters):
+            pass
 
-        with (
-            patch(
-                "fighthealthinsurance.common_view_logic.Denial.objects.filter",
-                return_value=mock_denial_query,
-            ),
-            patch(
-                "fighthealthinsurance.common_view_logic.Denial.get_hashed_email",
-                return_value="hashed",
-            ),
-            patch.object(
-                AppealsBackendHelper,
-                "regex_denial_processor",
-            ) as mock_regex_processor,
-            patch(
-                "fighthealthinsurance.common_view_logic.MLCitationsHelper.generate_citations_for_denial",
-                new_callable=AsyncMock,
-                return_value="",
-            ),
-            patch.object(
-                AppealsBackendHelper.pmt,
-                "find_context_for_denial",
-                new_callable=AsyncMock,
-                return_value="",
-            ),
-            patch(
-                "fighthealthinsurance.common_view_logic.sync_to_async",
-            ) as mock_sync_to_async,
-            patch(
-                "fighthealthinsurance.common_view_logic.interleave_iterator_for_keep_alive",
-            ) as mock_interleave,
-            patch(
-                "fighthealthinsurance.common_view_logic.ProposedAppeal",
-            ) as mock_proposed_appeal_cls,
-            patch(
-                "fighthealthinsurance.common_view_logic.appealGenerator"
-            ) as mock_appeal_gen,
-        ):
-            mock_regex_processor.get_appeal_templates = AsyncMock(return_value=[])
-
-            mock_make_appeals_wrapper = AsyncMock(
-                return_value=["Saved appeal text long enough to be real"]
-            )
-            mock_pa_wrapper = AsyncMock(return_value="")
-            mock_sync_to_async.side_effect = _sync_to_async_router(
-                mock_pa_wrapper, mock_make_appeals_wrapper
-            )
-
-            mock_pa_instance = MagicMock()
-            mock_pa_instance.id = 1
-            mock_pa_instance.asave = AsyncMock()
-            mock_proposed_appeal_cls.return_value = mock_pa_instance
-
-            # KEY: filter returns exactly one ProposedAppeal-like item
-            mock_proposed_appeal_cls.objects.filter.return_value = (
-                _make_proposed_appeal_query_with_texts(["single saved appeal text"])
-            )
-
-            mock_interleave.side_effect = passthrough_interleave
-
-            # synthesize_appeals is the method we want to verify is called
-            mock_appeal_gen.synthesize_appeals = AsyncMock(
-                return_value="Synthesized appeal output"
-            )
-
-            async for _ in AppealsBackendHelper.generate_appeals(parameters):
-                pass
-
-            # The critical assertion: synthesize_appeals was invoked
-            # because saved_appeal_texts had >= 1 entry.
+        if synthesis_should_run:
             mock_appeal_gen.synthesize_appeals.assert_called_once()
-            call_kwargs = mock_appeal_gen.synthesize_appeals.call_args[1]
-            assert call_kwargs["appeal_texts"] == ["single saved appeal text"]
-
-    @pytest.mark.asyncio
-    async def test_synthesis_does_not_run_with_zero_saved_appeals(self):
-        """When ProposedAppeal has 0 entries, synthesize_appeals must NOT
-        be invoked (sanity check that the lower bound is still respected)."""
-        mock_denial = _make_mock_denial()
-        mock_denial_query = _make_mock_denial_query(mock_denial)
-
-        parameters = {
-            "denial_id": "12345",
-            "email": "test@example.com",
-            "semi_sekret": "test-secret",
-        }
-
-        with (
-            patch(
-                "fighthealthinsurance.common_view_logic.Denial.objects.filter",
-                return_value=mock_denial_query,
-            ),
-            patch(
-                "fighthealthinsurance.common_view_logic.Denial.get_hashed_email",
-                return_value="hashed",
-            ),
-            patch.object(
-                AppealsBackendHelper,
-                "regex_denial_processor",
-            ) as mock_regex_processor,
-            patch(
-                "fighthealthinsurance.common_view_logic.MLCitationsHelper.generate_citations_for_denial",
-                new_callable=AsyncMock,
-                return_value="",
-            ),
-            patch.object(
-                AppealsBackendHelper.pmt,
-                "find_context_for_denial",
-                new_callable=AsyncMock,
-                return_value="",
-            ),
-            patch(
-                "fighthealthinsurance.common_view_logic.sync_to_async",
-            ) as mock_sync_to_async,
-            patch(
-                "fighthealthinsurance.common_view_logic.interleave_iterator_for_keep_alive",
-            ) as mock_interleave,
-            patch(
-                "fighthealthinsurance.common_view_logic.ProposedAppeal",
-            ) as mock_proposed_appeal_cls,
-            patch(
-                "fighthealthinsurance.common_view_logic.appealGenerator"
-            ) as mock_appeal_gen,
-        ):
-            mock_regex_processor.get_appeal_templates = AsyncMock(return_value=[])
-
-            mock_make_appeals_wrapper = AsyncMock(return_value=[])
-            mock_pa_wrapper = AsyncMock(return_value="")
-            mock_sync_to_async.side_effect = _sync_to_async_router(
-                mock_pa_wrapper, mock_make_appeals_wrapper
+            assert (
+                mock_appeal_gen.synthesize_appeals.call_args[1]["appeal_texts"]
+                == saved_texts
             )
-
-            mock_pa_instance = MagicMock()
-            mock_pa_instance.id = 1
-            mock_pa_instance.asave = AsyncMock()
-            mock_proposed_appeal_cls.return_value = mock_pa_instance
-
-            # filter returns no items → saved_appeal_texts is empty
-            mock_proposed_appeal_cls.objects.filter.return_value = (
-                _make_proposed_appeal_query_with_texts([])
-            )
-
-            mock_interleave.side_effect = passthrough_interleave
-
-            mock_appeal_gen.synthesize_appeals = AsyncMock(
-                return_value="Should not be reached"
-            )
-
-            async for _ in AppealsBackendHelper.generate_appeals(parameters):
-                pass
-
+        else:
             mock_appeal_gen.synthesize_appeals.assert_not_called()

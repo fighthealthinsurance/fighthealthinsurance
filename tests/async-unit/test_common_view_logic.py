@@ -461,37 +461,20 @@ class TestCommonViewLogic(TestCase):
         async_to_sync(test)()
 
 
-class TestIsRealAppeal:
-    """Step 4 regression: _is_real_appeal filters out None, empty strings,
-    whitespace-only strings, and runt outputs that would silently inflate
-    ProposedAppeal counts without delivering anything to the user."""
-
-    def test_rejects_none(self):
-        assert _is_real_appeal(None) is False
-
-    def test_rejects_empty_string(self):
-        assert _is_real_appeal("") is False
-
-    def test_rejects_whitespace_only(self):
-        assert _is_real_appeal("   \t\n  ") is False
-
-    def test_rejects_short_strings(self):
-        # MIN_APPEAL_CHARS is 10, so anything <= 10 visible chars is rejected
-        assert _is_real_appeal("ok") is False
-        assert _is_real_appeal("a" * MIN_APPEAL_CHARS) is False
-
-    def test_rejects_non_string(self):
-        assert _is_real_appeal(123) is False  # type: ignore[arg-type]
-        assert _is_real_appeal(["a"] * 100) is False  # type: ignore[arg-type]
-
-    def test_accepts_real_appeal(self):
-        assert _is_real_appeal("this is a long enough appeal text for delivery") is True
-
-    def test_accepts_just_over_threshold(self):
-        # MIN_APPEAL_CHARS=10, so 11 chars passes
-        assert _is_real_appeal("a" * (MIN_APPEAL_CHARS + 1)) is True
-
-    def test_strips_before_counting(self):
-        # Surrounding whitespace shouldn't count toward the threshold
-        text = "          short          "  # "short" = 5 chars after strip
-        assert _is_real_appeal(text) is False
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        (None, False),
+        ("", False),
+        ("   \t\n  ", False),  # whitespace-only
+        ("ok", False),  # below threshold
+        ("a" * MIN_APPEAL_CHARS, False),  # at threshold (strict >)
+        (123, False),  # non-string
+        (["a"] * 100, False),  # non-string
+        ("          short          ", False),  # strip-then-measure
+        ("a" * (MIN_APPEAL_CHARS + 1), True),  # just over threshold
+        ("this is a long enough appeal text for delivery", True),
+    ],
+)
+def test_is_real_appeal(value, expected):
+    assert _is_real_appeal(value) is expected
