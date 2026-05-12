@@ -242,10 +242,18 @@ def mark_session_consent(session, email: str) -> None:
     session.save()
 
 
-class ProVersionView(generic.RedirectView):
-    """Redirect to the professional version site."""
+class ProVersionView(generic.FormView):
+    """Coming-soon landing page for the new updated professional version."""
 
-    url = "https://www.fightpaperwork.com"
+    template_name = "professional.html"
+    form_class = core_forms.InterestedProfessionalForm
+
+    def get_success_url(self):
+        return reverse("pro_version_thankyou")
+
+    def form_valid(self, form):
+        form.save()
+        return super().form_valid(form)
 
 
 class PatientAccessView(generic.TemplateView):

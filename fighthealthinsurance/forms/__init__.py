@@ -59,7 +59,7 @@ class InterestedProfessionalForm(forms.ModelForm):
     clicked_for_paid = forms.BooleanField(
         initial=True,
         required=False,
-        label="Optional: Pay $10 now to get 3-months of the beta when we launch the professional version while we figure out what/if folks will pay for it.",
+        label="Optional: Pay $10 now to get 3 months of the beta when we launch the new updated professional version, while we figure out what/if folks will pay for it.",
         widget=forms.CheckboxInput(),
     )
 
