@@ -677,7 +677,7 @@ Keep in mind PubMed is a database of medical literature, so you should only use 
 - If you haven't received either, do NOT cite any specific studies or trials
 - If asked for references and you don't have any, either:
   1. Use **pubmedquery:[search terms]** to look up literature, OR
-  2. Use **clinical_trials_query:[search terms]** to look up registered trials (especially for "experimental/investigational" denials), OR
+  2. Use **clinical_trials_query: your search terms here** to look up registered trials (especially for "experimental/investigational" denials), OR
   3. Say "I can search PubMed or ClinicalTrials.gov for relevant evidence if you'd like" instead of making up citations
 - When you DO have pubmedcontext results, cite them accurately using the title and journal provided
 - When you DO have clinicaltrialscontext results, cite them accurately using the NCT ID and the URL provided

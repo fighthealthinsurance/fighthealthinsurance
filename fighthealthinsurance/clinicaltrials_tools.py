@@ -17,6 +17,7 @@ the therapy exists, but whether it is medically appropriate for this patient."
 import asyncio
 import hashlib
 import json
+import os
 import sys
 from datetime import timedelta
 from typing import Any, Dict, List, Optional
@@ -112,8 +113,18 @@ def _parse_study(study: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 class ClinicalTrialsTools(object):
     """Async client + cache for ClinicalTrials.gov API v2."""
 
-    def __init__(self, api_base: str = CLINICAL_TRIALS_API_BASE) -> None:
-        self.api_base = api_base.rstrip("/")
+    def __init__(self, api_base: Optional[str] = None) -> None:
+        # Resolution order: explicit arg > CLINICAL_TRIALS_API_BASE env >
+        # public default. The env override lets deployments point at a
+        # proxy and lets CI point at an unroutable host so accidental
+        # external calls during test runs fail fast instead of hitting
+        # the live registry.
+        resolved = (
+            api_base
+            or os.environ.get("CLINICAL_TRIALS_API_BASE")
+            or CLINICAL_TRIALS_API_BASE
+        )
+        self.api_base = resolved.rstrip("/")
 
     async def _fetch_json(
         self,
@@ -308,8 +319,17 @@ class ClinicalTrialsTools(object):
         async with aiohttp.ClientSession(headers=_FETCH_HEADERS) as session:
             return await self._fetch_trial(nct_id, session, timeout=timeout)
 
-    async def get_trials(self, nct_ids: List[str]) -> List[ClinicalTrial]:
-        """Bulk fetch trials, preserving input order and skipping unknown IDs."""
+    async def get_trials(
+        self, nct_ids: List[str], timeout: float = 30.0
+    ) -> List[ClinicalTrial]:
+        """Bulk fetch trials, preserving input order and skipping unknown IDs.
+
+        Bounded by `timeout`: if the cache lookup or any parallel detail
+        fetch wedges (e.g., DB hung in `_fetch_trial`'s `aupdate_or_create`
+        which is outside the per-fetch `async_timeout`), we give up and
+        return whatever subset we already loaded -- possibly an empty list.
+        Callers should treat empty as "nothing usable", not "no trials exist".
+        """
         seen: set[str] = set()
         ordered: List[str] = []
         for nct_id in nct_ids:
@@ -322,19 +342,31 @@ class ClinicalTrialsTools(object):
         if not ordered:
             return []
 
-        by_id: Dict[str, ClinicalTrial] = {
-            t.nct_id: t async for t in ClinicalTrial.objects.filter(nct_id__in=ordered)
-        }
-        missing = [n for n in ordered if n not in by_id]
-        if missing:
-            async with aiohttp.ClientSession(headers=_FETCH_HEADERS) as session:
-                fetched = await asyncio.gather(
-                    *[self._fetch_trial(n, session) for n in missing],
-                    return_exceptions=True,
-                )
-            for nct_id, result in zip(missing, fetched):
-                if isinstance(result, ClinicalTrial):
-                    by_id[nct_id] = result
+        by_id: Dict[str, ClinicalTrial] = {}
+        try:
+            async with async_timeout(timeout):
+                by_id = {
+                    t.nct_id: t
+                    async for t in ClinicalTrial.objects.filter(nct_id__in=ordered)
+                }
+                missing = [n for n in ordered if n not in by_id]
+                if missing:
+                    async with aiohttp.ClientSession(headers=_FETCH_HEADERS) as session:
+                        fetched = await asyncio.gather(
+                            *[self._fetch_trial(n, session) for n in missing],
+                            return_exceptions=True,
+                        )
+                    for nct_id, result in zip(missing, fetched):
+                        if isinstance(result, ClinicalTrial):
+                            by_id[nct_id] = result
+        except asyncio.TimeoutError:
+            logger.debug("Timeout in get_trials")
+        except asyncio.exceptions.CancelledError:
+            logger.debug("Cancelled in get_trials")
+        except Exception as e:
+            logger.opt(exception=True).debug(
+                f"Unexpected error in get_trials: {type(e).__name__}"
+            )
 
         return [by_id[n] for n in ordered if n in by_id]
 
@@ -345,36 +377,64 @@ class ClinicalTrialsTools(object):
         timeout: float = 40.0,
     ) -> List[ClinicalTrial]:
         """Search the registry using denial.procedure as intervention and
-        denial.diagnosis as condition; return at most max_trials trials."""
-        denial = await Denial.objects.aget(pk=denial.denial_id)
-        procedure = (denial.procedure or "").strip()
-        diagnosis = (denial.diagnosis or "").strip()
-        if not (procedure or diagnosis):
-            return []
+        denial.diagnosis as condition; return at most max_trials trials.
 
-        query = " ".join(p for p in (procedure, diagnosis) if p)
-        nct_ids = await self.find_trials_for_query(
-            query=query,
-            condition=diagnosis or None,
-            intervention=procedure or None,
-            page_size=max(max_trials, DEFAULT_PAGE_SIZE),
-            timeout=timeout,
-        )
-        # Audit row tying this denial to the NCT IDs we surfaced (or to the
-        # explicit empty result, so a "we searched and found nothing" answer
-        # is auditable). Stored alongside, not in place of, the global cache
-        # row so denial-scoped writes don't shadow future global cache hits.
-        await ClinicalTrialQueryData.objects.acreate(
-            denial_id=denial,
-            query=query,
-            condition=diagnosis or None,
-            intervention=procedure or None,
-            nct_ids=json.dumps(nct_ids).replace("\x00", ""),
-        )
-        if not nct_ids:
-            return []
-        trials = await self.get_trials(nct_ids[:max_trials])
-        return trials
+        Bounded by `timeout` end-to-end: the registry query, the audit
+        row write, and the detail fetches all share that budget. Anything
+        that wedges past it returns whatever was assembled so far (often
+        an empty list) so this never blocks the appeal-generation flow.
+        """
+        try:
+            async with async_timeout(timeout):
+                denial = await Denial.objects.aget(pk=denial.denial_id)
+                procedure = (denial.procedure or "").strip()
+                diagnosis = (denial.diagnosis or "").strip()
+                if not (procedure or diagnosis):
+                    return []
+
+                query = " ".join(p for p in (procedure, diagnosis) if p)
+                # Reserve ~25% of the budget for the detail fetches + audit row.
+                query_budget = max(timeout * 0.75, 5.0)
+                nct_ids = await self.find_trials_for_query(
+                    query=query,
+                    condition=diagnosis or None,
+                    intervention=procedure or None,
+                    page_size=max(max_trials, DEFAULT_PAGE_SIZE),
+                    timeout=query_budget,
+                )
+                # Audit row tying this denial to the NCT IDs we surfaced
+                # (or to the explicit empty result, so a "we searched and
+                # found nothing" answer is auditable). Stored alongside,
+                # not in place of, the global cache row so denial-scoped
+                # writes don't shadow future global cache hits.
+                try:
+                    await ClinicalTrialQueryData.objects.acreate(
+                        denial_id=denial,
+                        query=query,
+                        condition=diagnosis or None,
+                        intervention=procedure or None,
+                        nct_ids=json.dumps(nct_ids).replace("\x00", ""),
+                    )
+                except Exception as e:
+                    # Audit-row write should never block the result.
+                    logger.debug(
+                        f"Could not write denial-scoped audit row: {type(e).__name__}"
+                    )
+                if not nct_ids:
+                    return []
+                detail_budget = max(timeout * 0.25, 5.0)
+                return await self.get_trials(
+                    nct_ids[:max_trials], timeout=detail_budget
+                )
+        except asyncio.TimeoutError:
+            logger.debug("Overall timeout in find_trials_for_denial")
+        except asyncio.exceptions.CancelledError:
+            logger.debug("Cancelled in find_trials_for_denial")
+        except Exception as e:
+            logger.opt(exception=True).debug(
+                f"Unexpected error in find_trials_for_denial: {type(e).__name__}"
+            )
+        return []
 
     @staticmethod
     def format_trial_short(trial: ClinicalTrial) -> str:

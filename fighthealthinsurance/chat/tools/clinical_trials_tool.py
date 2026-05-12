@@ -21,6 +21,14 @@ from fighthealthinsurance.clinicaltrials_tools import (
 from .base_tool import BaseTool
 from .patterns import CLINICAL_TRIALS_QUERY_REGEX
 
+# Per-step budgets in the chat flow. We split a ~25s wall-clock budget
+# across the registry query and the detail fetches so a slow upstream
+# never makes the chat itself feel stuck. BaseTool.handle() wraps execute()
+# in a try/except that falls back to the original response on errors, so
+# anything past these timeouts degrades to "no trial context this turn".
+_QUERY_TIMEOUT = 15.0
+_DETAIL_TIMEOUT = 10.0
+
 
 class ClinicalTrialsTool(BaseTool):
     """
@@ -79,6 +87,7 @@ class ClinicalTrialsTool(BaseTool):
         nct_ids = await self.clinical_trials_tools.find_trials_for_query(
             query=query_terms,
             page_size=max(self.max_trials, 10),
+            timeout=_QUERY_TIMEOUT,
         )
         if not nct_ids:
             await self.send_status_message(
@@ -86,7 +95,9 @@ class ClinicalTrialsTool(BaseTool):
             )
             return cleaned_response, context
 
-        trials = await self.clinical_trials_tools.get_trials(nct_ids[: self.max_trials])
+        trials = await self.clinical_trials_tools.get_trials(
+            nct_ids[: self.max_trials], timeout=_DETAIL_TIMEOUT
+        )
         if not trials:
             await self.send_status_message(
                 "ClinicalTrials.gov returned IDs but no detail records were available."

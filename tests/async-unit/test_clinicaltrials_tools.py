@@ -199,10 +199,23 @@ class TestFormatTrialShort:
 
 
 class TestApiBase:
-    def test_default_base(self):
+    def test_default_base(self, monkeypatch):
+        monkeypatch.delenv("CLINICAL_TRIALS_API_BASE", raising=False)
         tools = ClinicalTrialsTools()
         assert tools.api_base == CLINICAL_TRIALS_API_BASE
 
     def test_strips_trailing_slash(self):
         tools = ClinicalTrialsTools(api_base="https://example.com/api/v2/")
         assert tools.api_base == "https://example.com/api/v2"
+
+    def test_env_var_override(self, monkeypatch):
+        monkeypatch.setenv(
+            "CLINICAL_TRIALS_API_BASE", "https://blackhole.invalid/v2/"
+        )
+        tools = ClinicalTrialsTools()
+        assert tools.api_base == "https://blackhole.invalid/v2"
+
+    def test_explicit_arg_wins_over_env_var(self, monkeypatch):
+        monkeypatch.setenv("CLINICAL_TRIALS_API_BASE", "https://from-env.invalid")
+        tools = ClinicalTrialsTools(api_base="https://from-arg.invalid")
+        assert tools.api_base == "https://from-arg.invalid"
