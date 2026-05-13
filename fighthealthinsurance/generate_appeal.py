@@ -21,7 +21,7 @@ from .payer_policy_helper import (
 )
 from .process_denial import ProcessDenialRegex
 from .pubmed_tools import PubMedTools
-from .utils import as_available_nested, best_within_timelimit
+from .utils import as_available_nested, best_within_timelimit, is_real_appeal
 
 
 class AppealTemplateGenerator(object):
@@ -637,6 +637,69 @@ def identifier_found_in_text(identifier: str, text: str) -> bool:
         return True
 
     return False
+
+
+# Context shed on retry when zero-result failures may stem from
+# context-window overflow. Only the call-dict keys can be shed here —
+# uspstf/pa/nice/rag contexts are already baked into the prompt string
+# by make_open_prompt, so they're out of reach without re-rendering.
+# TODO: a future improvement could re-call make_open_prompt with those
+# contexts nulled to get true tier-1-style enrichment shedding.
+_SHEDDABLE_TIER1 = ("pubmed_context", "ml_citations_context")
+_TIER2_TRUNCATIONS = (("plan_context", 4000), ("patient_context", 6000))
+
+
+def _shed_context(calls: list[dict], tier: int) -> tuple[list[dict], list[str]]:
+    """Return (new_calls, changed_names) with context reduced by tier.
+
+    Tier 1 nulls pubmed/citations context. Tier 2 also truncates
+    plan_context and patient_context. Higher tiers include all lower-tier
+    reductions.
+    """
+    changed: set[str] = set()
+    new_calls = []
+    for call in calls:
+        new = dict(call)
+        for key in _SHEDDABLE_TIER1:
+            if new.get(key) is not None:
+                new[key] = None
+                changed.add(key)
+        if tier >= 2:
+            for key, cap in _TIER2_TRUNCATIONS:
+                val = new.get(key)
+                if isinstance(val, str) and len(val) > cap:
+                    new[key] = val[:cap]
+                    changed.add(f"{key}(truncated)")
+        new_calls.append(new)
+    return new_calls, sorted(changed)
+
+
+def _peek_or_none(it: Iterator[str]) -> Tuple[Optional[str], Iterator[str]]:
+    """Pull one item or return (None, empty). Chains the pulled item back
+    so callers can use the returned iterator without losing the head."""
+    try:
+        first = next(it)
+        return first, itertools.chain([first], it)
+    except StopIteration:
+        return None, iter([])
+
+
+def _peek_real_or_none(
+    it: Iterator[str], denial_id: Any, stage: str
+) -> Tuple[Optional[str], Iterator[str]]:
+    """Like _peek_or_none, but returns (None, _) when the first item is
+    non-None but fails is_real_appeal. Without this, a runt first item
+    would suppress the fallback path even though downstream filtering
+    drops it — leading to zero deliverable appeals."""
+    first, it = _peek_or_none(it)
+    if first is not None and not is_real_appeal(first):
+        first_len = len(first.strip()) if isinstance(first, str) else 0
+        logger.warning(
+            f"make_appeals: {stage} first item is a runt (len={first_len}) "
+            f"for denial {denial_id}; treating as empty to trigger fallback"
+        )
+        return None, it
+    return first, it
 
 
 class AppealGenerator(object):
@@ -1658,7 +1721,12 @@ class AppealGenerator(object):
             prof_pov: bool = False,
         ) -> List[Future[Tuple[str, Optional[str]]]]:
             if model_name not in ml_router.models_by_name:
-                logger.debug(f"get_model_result: no backend for {model_name}")
+                sample = list(itertools.islice(ml_router.models_by_name.keys(), 10))
+                logger.warning(
+                    f"get_model_result: requested model {model_name!r} "
+                    f"not in ml_router.models_by_name "
+                    f"(available sample: {sample})"
+                )
                 return []
             model_backends = ml_router.models_by_name[model_name]
             if prompt is None:
@@ -1680,8 +1748,14 @@ class AppealGenerator(object):
                     if result is not None:
                         return result
                 except Exception as e:
-                    logger.debug(f"get_model_result: backend {model} failed: {e}")
-            logger.debug(f"get_model_result: all backends for {model_name} failed")
+                    logger.opt(exception=True).warning(
+                        f"get_model_result: backend {model} "
+                        f"(for model_name={model_name}) failed: {e}"
+                    )
+            logger.warning(
+                f"get_model_result: all {len(model_backends)} backend(s) "
+                f"for model_name={model_name} failed"
+            )
             return []
 
         def _get_model_result(
@@ -1761,12 +1835,16 @@ class AppealGenerator(object):
                 f"Summary of relevant plan document sections:\n{denial.plan_documents_summary}"
             )
         plan_context = "\n\n".join(plan_context_parts) if plan_context_parts else None
-        # Primary: Always internal models only (fast, local)
-        model_names = ml_router.generate_text_backend_names(
-            use_external=False
-        ) + ml_router.generate_text_backend_names(use_external=False)
+        # Primary is internal-only (fast, local); backup picks up external
+        # models only if the user opted in. The privacy boundary lives here:
+        # use_external=False means no external model name ever reaches a call.
+        model_names = ml_router.generate_text_backend_names(use_external=False)
+        if not model_names:
+            logger.error(
+                f"make_appeals: zero internal model names available for "
+                f"denial {denial.denial_id}"
+            )
 
-        # Build calls using model names (preserves multi-backend lookup)
         calls = [
             {
                 "model_name": model_name,
@@ -1781,11 +1859,9 @@ class AppealGenerator(object):
             for model_name in model_names
         ]
 
-        # Backup: Only if user opted in to external, use internal+external together
-        backup_calls = []
         backup_model_names = ml_router.generate_text_backend_names(
             use_external=denial.use_external
-        ) + ml_router.generate_text_backend_names(use_external=False)
+        )
         backup_calls = [
             {
                 "model_name": model_name,
@@ -1892,18 +1968,56 @@ class AppealGenerator(object):
             calls
         )
 
-        appeals: Iterator[str] = as_available_nested(generated_text_futures)
-        # Check and make sure we have some AI powered results
-        try:
-            first = appeals.__next__()
-            appeals = itertools.chain([first], appeals)
-        except StopIteration:
-            if backup_calls:
-                logger.warning("First group not successful, adding backup calls")
-                appeals = as_available_nested(make_async_model_calls(backup_calls))
-            else:
+        # Tiered fallback: primary -> backup -> retry primary with shed
+        # context. The privacy invariant (external models only when
+        # use_external=True) is enforced at call-list construction; the
+        # retry path reuses `calls` (internal-only), so it's opt-out-safe.
+        denial_id = denial.denial_id
+        use_ext = denial.use_external
+        appeals = as_available_nested(generated_text_futures)
+        first, appeals = _peek_real_or_none(appeals, denial_id, "primary")
+
+        if first is None and backup_calls:
+            logger.warning(
+                f"Primary empty for denial {denial_id}; trying backup_calls "
+                f"(n={len(backup_calls)}, use_external={use_ext})"
+            )
+            appeals = as_available_nested(make_async_model_calls(backup_calls))
+            first, appeals = _peek_real_or_none(appeals, denial_id, "backup")
+
+        if first is None:
+            ext_note = (
+                "external models WERE included in backup_calls"
+                if use_ext
+                else "use_external=False — NO EXTERNAL FALLBACK PERMITTED "
+                "(user opt-out respected)"
+            )
+            logger.error(
+                f"make_appeals: primary+backup both produced 0 for denial "
+                f"{denial_id} ({ext_note}); retrying primary internal-only"
+            )
+            time.sleep(1.0)
+            for tier in (1, 2):
+                shed_calls, changed = _shed_context(calls, tier=tier)
                 logger.warning(
-                    "First group not successful and no backup calls available"
+                    f"make_appeals: retrying primary for denial {denial_id} "
+                    f"with context shed (tier={tier}, changed={changed})"
+                )
+                appeals = as_available_nested(make_async_model_calls(shed_calls))
+                first, appeals = _peek_real_or_none(
+                    appeals, denial_id, f"retry_tier_{tier}"
+                )
+                if first is not None:
+                    logger.warning(
+                        f"make_appeals: tier {tier} retry succeeded for "
+                        f"denial {denial_id}"
+                    )
+                    break
+            if first is None:
+                logger.error(
+                    f"make_appeals: all context-shed retries (tiers 1-2) "
+                    f"produced 0 for denial {denial_id}; giving up. "
+                    f"({ext_note})"
                 )
                 appeals = iter([])
         appeals = itertools.chain(appeals, initial_appeals)

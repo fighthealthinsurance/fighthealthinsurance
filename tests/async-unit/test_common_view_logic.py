@@ -10,6 +10,7 @@ from fighthealthinsurance.common_view_logic import (
     NextStepInfo,
     DenialCreatorHelper,
 )
+from fighthealthinsurance.utils import MIN_APPEAL_CHARS, is_real_appeal
 from fighthealthinsurance.helpers import SendFaxHelper, RemoveDataHelper
 from fighthealthinsurance.models import Denial, DenialTypes, Appeal, FaxesToSend
 import pytest
@@ -548,3 +549,22 @@ class TestCommonViewLogic(TestCase):
                 await Denial.objects.filter(denial_id=14).adelete()
 
         async_to_sync(test)()
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        (None, False),
+        ("", False),
+        ("   \t\n  ", False),  # whitespace-only
+        ("ok", False),  # below threshold
+        ("a" * MIN_APPEAL_CHARS, False),  # at threshold (strict >)
+        (123, False),  # non-string
+        (["a"] * 100, False),  # non-string
+        ("          short          ", False),  # strip-then-measure
+        ("a" * (MIN_APPEAL_CHARS + 1), True),  # just over threshold
+        ("this is a long enough appeal text for delivery", True),
+    ],
+)
+def test_is_real_appeal(value, expected):
+    assert is_real_appeal(value) is expected

@@ -74,6 +74,8 @@ from fighthealthinsurance.rag_client import get_rag_context_for_denial
 from fighthealthinsurance.utils import (
     extract_file_text,
     interleave_iterator_for_keep_alive,
+    is_real_appeal,
+    MIN_APPEAL_CHARS,
     sync_iterator_to_async,
 )
 from .pubmed_tools import PubMedTools
@@ -3080,8 +3082,20 @@ class AppealsBackendHelper:
             pa_context=pa_context,
             uspstf_context=uspstf_context,
         )
-        # Only filters out None
-        filtered_appeals: Iterator[str] = filter(lambda x: x != None, appeals)
+        # Drop None / empty / whitespace / runt outputs. Track runts so the
+        # zero-appeal diagnostic can distinguish "models silent" from
+        # "models producing only short strings".
+        runts = 0
+
+        def keep(x: Optional[str]) -> bool:
+            nonlocal runts
+            if is_real_appeal(x):
+                return True
+            if isinstance(x, str) and x.strip():
+                runts += 1
+            return False
+
+        filtered_appeals: Iterator[str] = filter(keep, appeals)
 
         # Convert the blocking sync iterator to async so next() calls
         # run in a thread executor and don't block the event loop.
@@ -3103,14 +3117,15 @@ class AppealsBackendHelper:
 
         new = 0
         async for i in interleaved:
-            # Hack our interleave messages are just newlines
-            if i and len(i) > 10:
+            # Interleave keep-alives are bare newlines; real appeals exceed
+            # MIN_APPEAL_CHARS (same threshold as the generation-side filter).
+            if i and len(i) > MIN_APPEAL_CHARS:
                 new = new + 1
                 logger.debug(f"Sending appeal count: {new+old}...")
             else:
                 logger.debug("Sending keep alive....")
             yield i
-        logger.debug(f"Normal appeals sent {new} and {old}")
+        logger.debug(f"Normal appeals sent {new} and {old} (runt_count={runts})")
         yield json.dumps(
             {
                 "type": "status",
@@ -3127,9 +3142,9 @@ class AppealsBackendHelper:
         saved_appeal_texts: list[str] = [
             str(pa.appeal_text)
             async for pa in ProposedAppeal.objects.filter(for_denial=denial)
-            if pa.appeal_text
+            if is_real_appeal(pa.appeal_text)
         ]
-        if len(saved_appeal_texts) >= 2:
+        if len(saved_appeal_texts) >= 1:
             yield json.dumps(
                 {
                     "type": "status",
@@ -3186,17 +3201,20 @@ class AppealsBackendHelper:
             except Exception:
                 logger.opt(exception=True).warning("Final appeal synthesis failed")
 
-        # Log when appeal generation produces no results for Sentry visibility
+        # runt_count=0 means models were silent; >0 means models produced
+        # only too-short outputs — different root causes for incident review.
         if new + old == 0:
             logger.error(
                 f"Zero appeals generated for denial {denial_id}, "
-                f"gen_attempts={denial.gen_attempts}"
+                f"gen_attempts={denial.gen_attempts}, "
+                f"runt_count={runts}"
             )
         elif new == 0 and old > 0:
             logger.warning(
                 f"No new appeals generated for denial {denial_id} "
                 f"(but {old} existing appeals found), "
-                f"gen_attempts={denial.gen_attempts}"
+                f"gen_attempts={denial.gen_attempts}, "
+                f"runt_count={runts}"
             )
 
         # Explicit end-of-stream so the client knows exactly what was sent

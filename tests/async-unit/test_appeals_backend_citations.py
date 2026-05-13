@@ -69,6 +69,39 @@ def _make_empty_proposed_appeal_query():
     return mock_queryset
 
 
+def _make_proposed_appeal_query_with_texts(texts):
+    """Create a queryset-like object that yields ProposedAppeal-like mocks
+    each carrying one of the given appeal texts. Supports both:
+      - `qs.all()` (used at common_view_logic.py:~2410)
+      - `async for pa in qs` (used in the synthesis branch)
+    """
+    pa_mocks = []
+    for text in texts:
+        pa = MagicMock()
+        pa.appeal_text = text
+        pa_mocks.append(pa)
+
+    class _Queryset:
+        def __init__(self, items):
+            self._items = items
+
+        def all(self):
+            async def gen():
+                for item in self._items:
+                    yield item
+
+            return gen()
+
+        def __aiter__(self):
+            async def gen():
+                for item in self._items:
+                    yield item
+
+            return gen()
+
+    return _Queryset(pa_mocks)
+
+
 def _sync_to_async_router(pa_wrapper, make_appeals_wrapper, uspstf_wrapper=None):
     """
     Build a side_effect for the patched ``sync_to_async`` so the PA-context,
@@ -447,3 +480,80 @@ class TestAppealsBackendHelperWithCitations:
             mock_make_appeals_wrapper.assert_called_once()
             call_kwargs = mock_make_appeals_wrapper.call_args[1]
             assert call_kwargs["uspstf_context"] == uspstf_payload
+
+
+@pytest.mark.parametrize(
+    "saved_texts,synthesis_should_run",
+    [
+        (["single saved appeal text"], True),  # Step 5: >=1 triggers synthesis
+        ([], False),  # 0 saved appeals -> synthesis skipped
+    ],
+    ids=["one_saved_appeal", "zero_saved_appeals"],
+)
+@pytest.mark.asyncio
+async def test_synthesis_threshold(saved_texts, synthesis_should_run):
+    """Step 5: synthesis runs when >=1 saved appeal exists (was >=2)."""
+    mock_denial = _make_mock_denial()
+    parameters = {
+        "denial_id": "12345",
+        "email": "test@example.com",
+        "semi_sekret": "test-secret",
+    }
+
+    with (
+        patch(
+            "fighthealthinsurance.common_view_logic.Denial.objects.filter",
+            return_value=_make_mock_denial_query(mock_denial),
+        ),
+        patch(
+            "fighthealthinsurance.common_view_logic.Denial.get_hashed_email",
+            return_value="hashed",
+        ),
+        patch.object(AppealsBackendHelper, "regex_denial_processor") as mock_regex,
+        patch(
+            "fighthealthinsurance.common_view_logic.MLCitationsHelper.generate_citations_for_denial",
+            new_callable=AsyncMock,
+            return_value="",
+        ),
+        patch.object(
+            AppealsBackendHelper.pmt,
+            "find_context_for_denial",
+            new_callable=AsyncMock,
+            return_value="",
+        ),
+        patch(
+            "fighthealthinsurance.common_view_logic.sync_to_async",
+        ) as mock_sync_to_async,
+        patch(
+            "fighthealthinsurance.common_view_logic.interleave_iterator_for_keep_alive",
+            side_effect=passthrough_interleave,
+        ),
+        patch(
+            "fighthealthinsurance.common_view_logic.ProposedAppeal",
+        ) as mock_pa_cls,
+        patch(
+            "fighthealthinsurance.common_view_logic.appealGenerator"
+        ) as mock_appeal_gen,
+    ):
+        mock_regex.get_appeal_templates = AsyncMock(return_value=[])
+        mock_sync_to_async.side_effect = _sync_to_async_router(
+            AsyncMock(return_value=""),  # pa_wrapper
+            AsyncMock(return_value=saved_texts),  # make_appeals_wrapper
+        )
+        mock_pa_cls.return_value = MagicMock(id=1, asave=AsyncMock())
+        mock_pa_cls.objects.filter.return_value = (
+            _make_proposed_appeal_query_with_texts(saved_texts)
+        )
+        mock_appeal_gen.synthesize_appeals = AsyncMock(return_value="synthesized")
+
+        async for _ in AppealsBackendHelper.generate_appeals(parameters):
+            pass
+
+        if synthesis_should_run:
+            mock_appeal_gen.synthesize_appeals.assert_called_once()
+            assert (
+                mock_appeal_gen.synthesize_appeals.call_args[1]["appeal_texts"]
+                == saved_texts
+            )
+        else:
+            mock_appeal_gen.synthesize_appeals.assert_not_called()
