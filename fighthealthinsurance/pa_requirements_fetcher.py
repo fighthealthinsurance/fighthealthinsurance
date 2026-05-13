@@ -23,7 +23,7 @@ Invoked by:
 from __future__ import annotations
 
 import datetime
-from typing import Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 from urllib.parse import urlparse
 
 import aiohttp
@@ -157,7 +157,10 @@ class PaRequirementsFetcher:
         pipeline. Raises ``LookupError`` when no parser matches the
         response Content-Type.
         """
-        url = company.pa_requirement_list_url
+        # Bind to a plain str — django-stubs types URLField access as
+        # ``str | Combinable``, which mypy won't accept where ``str`` is
+        # expected (``_get_content``, ``urlparse``).
+        url: str = str(company.pa_requirement_list_url or "")
         if not url:
             return []
 
