@@ -296,6 +296,12 @@ class ProVersionView(generic.FormView):
             f"A new professional signed up via /pro_version.\n\n"
             f"Name: {interested_pro.name or 'N/A'}\n"
             f"Email: {interested_pro.email}\n"
+            f"Job title / provider type: {interested_pro.job_title_or_provider_type or 'N/A'}\n"
+            f"Business: {interested_pro.business_name or 'N/A'}\n"
+            f"Phone: {interested_pro.phone_number or 'N/A'}\n"
+            f"Address: {interested_pro.address or 'N/A'}\n"
+            f"Most common denial: {interested_pro.most_common_denial or 'N/A'}\n"
+            f"Comments: {interested_pro.comments or 'N/A'}\n"
             f"Admin: {admin_url}\n"
         )
         try:

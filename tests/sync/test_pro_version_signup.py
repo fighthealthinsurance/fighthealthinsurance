@@ -3,7 +3,7 @@
 from unittest.mock import patch
 
 from django.core import mail
-from django.test import TestCase, override_settings
+from django.test import Client, TestCase, override_settings
 from django.urls import reverse
 
 from fighthealthinsurance.models import InterestedProfessional
@@ -45,19 +45,25 @@ class ProVersionSignupTest(TestCase):
         self.assertFalse(pro.clicked_for_paid)
 
         subjects = [m.subject for m in mail.outbox]
-        # Team notification to support42@
+        # Team notification to support42@ — includes all captured fields so the
+        # team can act without clicking into admin.
         self.assertIn(f"New pro version signup #{pro.id}", subjects)
         team_email = next(
             m for m in mail.outbox if m.subject == f"New pro version signup #{pro.id}"
         )
         self.assertEqual(team_email.to, ["support42@fighthealthinsurance.com"])
-        self.assertIn("jane@clinic.example", team_email.body)
         self.assertIn("Jane Doe", team_email.body)
+        self.assertIn("jane@clinic.example", team_email.body)
+        self.assertIn("Appeal specialist", team_email.body)
+        self.assertIn("Example Clinic", team_email.body)
+        self.assertIn("555-0100", team_email.body)
+        self.assertIn("Not medically necessary", team_email.body)
+        self.assertIn("Looking forward to it!", team_email.body)
 
         # Immediate thank-you email to the signer
         self.assertTrue(
             any(
-                "Thank you for signing up" in m.subject
+                "Thanks for your interest" in m.subject
                 and "jane@clinic.example" in m.to
                 for m in mail.outbox
             )
@@ -75,6 +81,38 @@ class ProVersionSignupTest(TestCase):
         self.assertTrue(
             InterestedProfessional.objects.filter(
                 email="resilient@clinic.example"
+            ).exists()
+        )
+
+    def test_post_rejects_mass_assignment_of_internal_fields(self):
+        """Public submitters can't preset thankyou_email_sent/paid via POST."""
+        self.client.post(
+            reverse("pro_version"),
+            {
+                "name": "Hacky",
+                "email": "hacky@clinic.example",
+                "thankyou_email_sent": "true",
+                "paid": "true",
+            },
+        )
+        pro = InterestedProfessional.objects.get(email="hacky@clinic.example")
+        # The values must come from the save path, not the POST body. The
+        # thank-you sender flips thankyou_email_sent after a successful send,
+        # so that's True; paid must remain False since it's not on a payment
+        # webhook path.
+        self.assertFalse(pro.paid)
+
+    def test_post_enforces_csrf(self):
+        """The POST endpoint must enforce CSRF — it now writes to the DB."""
+        csrf_client = Client(enforce_csrf_checks=True)
+        response = csrf_client.post(
+            reverse("pro_version"),
+            {"name": "CSRFless", "email": "csrfless@clinic.example"},
+        )
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(
+            InterestedProfessional.objects.filter(
+                email="csrfless@clinic.example"
             ).exists()
         )
 

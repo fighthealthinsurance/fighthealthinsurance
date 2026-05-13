@@ -59,7 +59,14 @@ class InterestedProfessionalForm(forms.ModelForm):
 
     class Meta:
         model = InterestedProfessional
-        exclude = ["paid", "clicked_for_paid", "signup_date"]
+        # Block mass-assignment of internal/state-tracking fields via a public POST.
+        exclude = [
+            "paid",
+            "clicked_for_paid",
+            "signup_date",
+            "mod_date",
+            "thankyou_email_sent",
+        ]
 
 
 class DeleteDataForm(forms.Form):

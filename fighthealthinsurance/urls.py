@@ -292,9 +292,7 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         ),
         name="state_help",
     ),
-    path(
-        "pro_version", csrf_exempt(views.ProVersionView.as_view()), name="pro_version"
-    ),
+    path("pro_version", views.ProVersionView.as_view(), name="pro_version"),
     path(
         "professionals/patient-access",
         cache_control(public=True)(
