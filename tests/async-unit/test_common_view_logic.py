@@ -98,6 +98,97 @@ class TestCommonViewLogic(TestCase):
         denial.delete()
 
     @pytest.mark.django_db
+    def test_find_next_steps_populates_pharmacy_suggestion_for_drug_denial(self):
+        """For a denial whose procedure is a known drug (Wegovy), the
+        next-steps payload should carry a PharmacyCouponSuggestion so the
+        consumer flow can surface GoodRx / Cost Plus / Amazon Pharmacy."""
+        from fighthealthinsurance.pharmacy_coupon_detector import (
+            PharmacyCouponSuggestion,
+        )
+
+        email = "drug-denial@example.com"
+        denial = Denial.objects.create(
+            denial_id=2001,
+            semi_sekret="sekret-drug",
+            hashed_email=Denial.get_hashed_email(email),
+            procedure="Wegovy",
+            diagnosis="Obesity",
+            denial_text="Wegovy denied as non-formulary.",
+        )
+        try:
+            next_steps = FindNextStepsHelper.find_next_steps_for_denial(denial, email)
+            assert isinstance(
+                next_steps.pharmacy_coupon_suggestion, PharmacyCouponSuggestion
+            )
+            assert next_steps.pharmacy_coupon_suggestion.drug_name == "wegovy"
+            assert len(next_steps.pharmacy_coupon_suggestion.pharmacy_options) == 3
+        finally:
+            denial.delete()
+
+    @pytest.mark.django_db
+    def test_find_next_steps_no_pharmacy_suggestion_for_non_drug_denial(self):
+        """For a non-drug denial (MRI of knee), no pharmacy suggestion is
+        produced and the field stays None - the partial template renders
+        nothing in that case."""
+        email = "mri-denial@example.com"
+        denial = Denial.objects.create(
+            denial_id=2002,
+            semi_sekret="sekret-mri",
+            hashed_email=Denial.get_hashed_email(email),
+            procedure="MRI of knee",
+            diagnosis="Knee pain",
+            denial_text="MRI denied as not medically necessary.",
+        )
+        try:
+            next_steps = FindNextStepsHelper.find_next_steps_for_denial(denial, email)
+            assert next_steps.pharmacy_coupon_suggestion is None
+            # MRI denials shouldn't surface a financial-assistance section
+            # either - has_specific_matches() gates on diagnosis/drug/state
+            # matches, and "Knee pain" doesn't match any catalog entry.
+            assert next_steps.financial_assistance is None
+        finally:
+            denial.delete()
+
+    @pytest.mark.django_db
+    def test_find_next_steps_populates_financial_assistance_for_hiv_truvada(self):
+        """A Truvada (PrEP) denial with an HIV-related diagnosis must
+        surface the financial-assistance directory on the consumer flow:
+        ADAP / Ryan White matches via the diagnosis keyword, the state
+        Medicaid pathway attaches when ``your_state`` is set, and the
+        general copay-foundation catalog rides along."""
+        from fighthealthinsurance.financial_assistance_directory import (
+            FinancialAssistanceResults,
+        )
+
+        email = "truvada-prep@example.com"
+        denial = Denial.objects.create(
+            denial_id=2003,
+            semi_sekret="sekret-truvada",
+            hashed_email=Denial.get_hashed_email(email),
+            procedure="Truvada",
+            diagnosis="HIV pre-exposure prophylaxis",
+            denial_text="Truvada denied as non-formulary.",
+            your_state="CA",
+        )
+        try:
+            next_steps = FindNextStepsHelper.find_next_steps_for_denial(denial, email)
+            assert isinstance(
+                next_steps.financial_assistance, FinancialAssistanceResults
+            )
+            diagnosis_names = [
+                p.name for p in next_steps.financial_assistance.diagnosis_specific
+            ]
+            assert any("ADAP" in n for n in diagnosis_names), diagnosis_names
+            safety_net_names = [
+                p.name for p in next_steps.financial_assistance.safety_net
+            ]
+            assert any("Ryan White" in n for n in safety_net_names), safety_net_names
+            # State pathway attached for CA via state_help.
+            assert next_steps.financial_assistance.state_medicaid_name is not None
+        finally:
+            denial.delete()
+
+    @pytest.mark.django_db
     @patch("fighthealthinsurance.common_view_logic.appealGenerator")
     def test_generate_appeals(self, mock_appeal_generator):
         email = "test@example.com"

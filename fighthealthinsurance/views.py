@@ -974,6 +974,8 @@ class FindNextSteps(View):
                 "outside_help_details": next_step_info.outside_help_details,
                 "combined": next_step_info.combined_form,
                 "denial_form": denial_ref_form,
+                "pharmacy_suggestion": next_step_info.pharmacy_coupon_suggestion,
+                "financial_assistance": next_step_info.financial_assistance,
                 "current_step": 6,
                 "back_url": build_back_url(
                     "categorize_review", denial_id, email, semi_sekret
@@ -1005,6 +1007,7 @@ class FindNextSteps(View):
                     "outside_help_details": next_step_info.outside_help_details,
                     "combined": next_step_info.combined_form,
                     "denial_form": denial_ref_form,
+                    "pharmacy_suggestion": next_step_info.pharmacy_coupon_suggestion,
                     "current_step": 6,
                     "back_url": build_back_url(
                         "categorize_review",

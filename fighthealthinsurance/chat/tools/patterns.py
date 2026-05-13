@@ -72,6 +72,24 @@ CLINICAL_TRIALS_QUERY_REGEX = (
     r"([^*\[\]\n]+?)\s*(?:[\]\*]{1,4}|$|(?=\n))"
 )
 
+# Financial assistance directory tool - detects the call prefix only.
+# Matches: financial_assistance {JSON} or **financial_assistance {JSON}**
+# Looks up pharmacy discount programs (GoodRx, Cost Plus, Amazon Pharmacy),
+# diagnosis-specific copay foundations, manufacturer programs, safety-net
+# clinics (340B), and state Medicaid pathways.
+#
+# The other JSON-payload tools above bound their body with `\{[^}]*\}`, which
+# stops at the first `}`. That's fine for their tightly-schemaed payloads,
+# but this tool accepts a free-form `denial_text` field whose value can
+# contain `}` characters (and the LLM occasionally emits nested objects),
+# so a `[^}]*` cap would truncate valid calls and break `json.loads`.
+# Instead the pattern only matches the prefix up to the opening `{` (via
+# lookahead) and FinancialAssistanceTool uses `json.JSONDecoder().raw_decode`
+# to find the real end of the JSON object at runtime. There is no capture
+# group; FinancialAssistanceTool reads the payload via _parse_payload(),
+# not via match.group(1).
+FINANCIAL_ASSISTANCE_REGEX = r"(?:\*\*)?financial_assistance\s*(?=\{)"
+
 # List of all tool patterns for scoring/detection
 ALL_TOOL_PATTERNS = [
     PUBMED_QUERY_REGEX,
@@ -84,4 +102,5 @@ ALL_TOOL_PATTERNS = [
     LOOKUP_PA_REQUIREMENT_REGEX,
     RXNORM_LOOKUP_REGEX,
     CLINICAL_TRIALS_QUERY_REGEX,
+    FINANCIAL_ASSISTANCE_REGEX,
 ]

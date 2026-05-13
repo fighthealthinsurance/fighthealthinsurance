@@ -10,6 +10,7 @@ import uuid
 from dataclasses import dataclass
 from string import Template
 from typing import (
+    TYPE_CHECKING,
     Any,
     AsyncIterator,
     Awaitable,
@@ -20,6 +21,14 @@ from typing import (
     Optional,
     Tuple,
 )
+
+if TYPE_CHECKING:
+    from fighthealthinsurance.financial_assistance_directory import (
+        FinancialAssistanceResults,
+    )
+    from fighthealthinsurance.pharmacy_coupon_detector import (
+        PharmacyCouponSuggestion,
+    )
 from urllib.parse import urlencode
 
 from django.conf import settings
@@ -123,8 +132,20 @@ class NextStepInfo:
     outside_help_details: list[Tuple[str, str]]
     combined_form: Form
     semi_sekret: str
+    # PharmacyCouponSuggestion when the denial concerns a recognizable
+    # prescription drug or contains generic prescription cues; None
+    # otherwise. Surfaced in outside_help.html so users see GoodRx /
+    # Cost Plus / Amazon Pharmacy options as a cash-pay bridge while
+    # they fight the denial. Server-rendered only - not part of the
+    # REST serialization.
+    pharmacy_coupon_suggestion: Optional["PharmacyCouponSuggestion"] = None
+    # FinancialAssistanceResults aggregate (copay foundations, manufacturer
+    # programs, safety-net clinics, state Medicaid) when the denial has at
+    # least one specific match; None otherwise. Same gating as the pharmacy
+    # field: server-rendered into outside_help.html, not REST-serialized.
+    financial_assistance: Optional["FinancialAssistanceResults"] = None
 
-    def convert_to_serializable(self):
+    def convert_to_serializable(self) -> "NextStepInfoSerializable":
         return NextStepInfoSerializable(
             outside_help_details=self.outside_help_details,
             combined_form=list(
@@ -537,6 +558,13 @@ class NextStepInfoSerializable:
     outside_help_details: list[Tuple[str, str]]
     combined_form: list[Any]
     semi_sekret: str
+    # Mirror of NextStepInfo.pharmacy_coupon_suggestion. The dict shape
+    # is built inline by NextStepInfo.convert_to_serializable (mirroring
+    # PharmacyCouponSuggestion.to_dict but without the indirection so
+    # mypy's `warn_return_any` can verify the return shape directly).
+    # Either way the wire shape is consistent with DenialResponseInfo
+    # Serializer so the React frontend renders both with one component.
+    pharmacy_coupon_suggestion: Optional[dict[str, Any]] = None
 
 
 def schedule_follow_ups(
@@ -676,6 +704,85 @@ class FollowUpHelper:
 
 
 class FindNextStepsHelper:
+    @classmethod
+    def _build_pharmacy_coupon_suggestion(
+        cls, denial: "Denial"
+    ) -> Optional["PharmacyCouponSuggestion"]:
+        """
+        Compute a PharmacyCouponSuggestion for the denial, or None.
+
+        Surfaced on the consumer flow's "next steps" page so users with a
+        denied medication can see GoodRx / Cost Plus / Amazon Pharmacy
+        options as a short-term cash-pay bridge while they fight the
+        denial. Lazy-imports to avoid circular-import pain at module load.
+
+        Best-effort: any failure returns None rather than blocking the
+        flow - the rest of the page is still useful without coupons.
+        """
+        from fighthealthinsurance.pharmacy_coupon_detector import (
+            PharmacyCouponSuggestion as _PharmacyCouponSuggestion,
+            suggest_for_denial,
+        )
+
+        try:
+            # Funnel through a typed local so mypy `warn_return_any`
+            # doesn't lose the return type across the lazy import +
+            # django-stubs plugin combination CI uses.
+            suggestion: Optional[_PharmacyCouponSuggestion] = suggest_for_denial(
+                denial_text=denial.denial_text,
+                procedure=denial.procedure,
+                diagnosis=denial.diagnosis,
+            )
+            return suggestion
+        except Exception:
+            logger.opt(exception=True).debug(
+                "Pharmacy coupon suggestion failed for next-steps; returning None"
+            )
+            return None
+
+    @classmethod
+    def _build_financial_assistance(
+        cls, denial: "Denial"
+    ) -> Optional["FinancialAssistanceResults"]:
+        """
+        Look up a FinancialAssistanceResults aggregate for the denial.
+
+        Surfaced on the consumer "next steps" page alongside the pharmacy
+        coupon section so users denied a medication see condition-specific
+        copay foundations (ADAP for HIV, LLS for blood cancers, etc.),
+        manufacturer copay cards, the general directory, 340B safety-net
+        clinics, and their state Medicaid pathway.
+
+        Returns None unless the search produced at least one entry tied to
+        the patient's specific drug, diagnosis, or state - i.e. there's
+        something targeted enough to render a dedicated section. The
+        general copay directories alone are not specific enough to gate on
+        (they're always returned by `search()`).
+
+        Best-effort: any failure returns None rather than blocking the
+        flow - the rest of the page is still useful without the directory.
+        """
+        from fighthealthinsurance.financial_assistance_directory import (
+            FinancialAssistanceResults as _FinancialAssistanceResults,
+            search,
+        )
+
+        try:
+            results: _FinancialAssistanceResults = search(
+                drug=denial.procedure,
+                diagnosis=denial.diagnosis,
+                denial_text=denial.denial_text,
+                state_abbreviation=denial.your_state,
+            )
+        except Exception:
+            logger.opt(exception=True).debug(
+                "Financial assistance lookup failed for next-steps; returning None"
+            )
+            return None
+        if not results.has_specific_matches():
+            return None
+        return results
+
     @classmethod
     def _get_outside_help_details(
         cls, denial: "Denial", state: Optional[str] = None
@@ -881,12 +988,16 @@ class FindNextStepsHelper:
         question_forms = cls._build_question_forms(denial, existing_answers)
 
         # Combine all forms
+        pharmacy_coupon_suggestion = cls._build_pharmacy_coupon_suggestion(denial)
+        financial_assistance = cls._build_financial_assistance(denial)
         try:
             combined_form = magic_combined_form(question_forms, existing_answers)
             return NextStepInfo(
                 outside_help_details=outside_help_details,
                 combined_form=combined_form,
                 semi_sekret=semi_sekret,
+                pharmacy_coupon_suggestion=pharmacy_coupon_suggestion,
+                financial_assistance=financial_assistance,
             )
         except Exception as e:
             logger.opt(exception=True).error(
@@ -897,6 +1008,8 @@ class FindNextStepsHelper:
                 outside_help_details=outside_help_details,
                 combined_form=combined_form,
                 semi_sekret=semi_sekret,
+                pharmacy_coupon_suggestion=pharmacy_coupon_suggestion,
+                financial_assistance=financial_assistance,
             )
 
     @classmethod
@@ -913,6 +1026,8 @@ class FindNextStepsHelper:
             outside_help_details=outside_help_details,
             combined_form=combined_form,
             semi_sekret=denial.semi_sekret,
+            pharmacy_coupon_suggestion=cls._build_pharmacy_coupon_suggestion(denial),
+            financial_assistance=cls._build_financial_assistance(denial),
         )
 
 

@@ -159,6 +159,12 @@
 </section>
 {% endif %}
 
+<!-- Pharmacy Coupon / Discount Bridge Section -->
+{% include 'partials/pharmacy_coupon_section.html' with pharmacy_suggestion=microsite.pharmacy_coupon_suggestion %}
+
+<!-- Financial Assistance Directory (curated copay foundations, manufacturer programs, safety-net) -->
+{% include 'partials/financial_assistance_section.html' with financial_assistance=microsite.financial_assistance %}
+
 <!-- Patient Assistance Programs Section -->
 {% if microsite.assistance_programs %}
 <section id="assistance-programs" class="py-5 bg-light">

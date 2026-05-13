@@ -34,6 +34,7 @@ from fighthealthinsurance.chat.tools import (
     AppealTool,
     ClinicalTrialsTool,
     DocFetcherTool,
+    FinancialAssistanceTool,
     MedicaidEligibilityTool,
     MedicaidInfoTool,
     PaRequirementLookupTool,
@@ -452,6 +453,14 @@ class ChatInterface:
             call_llm_callback=self._call_llm_with_actions,
         )
         response_text, context, _ = await pa_requirement_tool.handle(
+            response_text, context, **tool_kwargs
+        )
+
+        financial_assistance_tool = FinancialAssistanceTool(
+            self.send_status_message,
+            call_llm_callback=self._call_llm_with_actions,
+        )
+        response_text, context, _ = await financial_assistance_tool.handle(
             response_text, context, **tool_kwargs
         )
 
