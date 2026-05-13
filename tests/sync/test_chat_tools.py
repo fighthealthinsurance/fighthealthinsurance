@@ -205,6 +205,40 @@ class TestPubMedTool(TestCase):
 
         self.assertIsNone(match)
 
+    def test_recent_search_uses_dynamic_year(self):
+        """Recent search should use a rolling lower-bound year string."""
+        mock_status = AsyncMock()
+        mock_pubmed_tools = MagicMock()
+        mock_pubmed_tools.find_pubmed_article_ids_for_query = AsyncMock(
+            side_effect=[["1", "2"], ["2", "3"]]
+        )
+        tool = PubMedTool(mock_status, pubmed_tools=mock_pubmed_tools)
+
+        with patch.object(tool, "_recent_since_year", return_value="2024"):
+            article_ids = asyncio.run(tool._search_articles("test query"))
+
+        self.assertTrue(set(article_ids).issuperset({"1", "2", "3"}))
+        recent_call = mock_pubmed_tools.find_pubmed_article_ids_for_query.call_args_list[
+            0
+        ]
+        self.assertEqual(recent_call.kwargs["since"], "2024")
+
+    def test_recent_since_year_uses_configurable_window(self):
+        mock_status = AsyncMock()
+        tool = PubMedTool(mock_status)
+
+        with patch("fighthealthinsurance.chat.tools.pubmed_tool.datetime") as mock_dt:
+            mock_now = MagicMock()
+            mock_now.year = 2030
+            mock_dt.now.return_value = mock_now
+
+            with patch.dict(
+                "os.environ",
+                {"PUBMED_RECENT_WINDOW_YEARS": "3"},
+                clear=False,
+            ):
+                self.assertEqual(tool._recent_since_year(), "2027")
+
 
 class TestClinicalTrialsTool(TestCase):
     """Test ClinicalTrialsTool detection and helper rendering."""
