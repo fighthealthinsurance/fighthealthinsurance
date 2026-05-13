@@ -78,10 +78,16 @@ def resolve_company_from_text(name_text: Optional[str]) -> Optional[InsuranceCom
     leak into the comparative-evidence block.
     """
     # Local import to avoid an import-time dependency cycle between the two
-    # sibling helper modules.
-    from fighthealthinsurance.pa_requirements import resolve_insurance_company_by_name
-
+    # sibling helper modules. The import sits inside the ``try`` so an
+    # ``ImportError`` (e.g. a future refactor reintroducing a cycle) flows
+    # through the same best-effort ``None`` fallback as a DB-level failure
+    # rather than propagating out of a function the callers expect to be
+    # safe to call from appeal-generation paths.
     try:
+        from fighthealthinsurance.pa_requirements import (
+            resolve_insurance_company_by_name,
+        )
+
         return resolve_insurance_company_by_name(name_text)
     except Exception:
         logger.exception("Error resolving InsuranceCompany from text")
