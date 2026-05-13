@@ -11,6 +11,7 @@ from typing import Optional
 import httpx
 from loguru import logger
 
+from fighthealthinsurance.context_utils import truncate_at_boundary
 from fighthealthinsurance.env_utils import get_env_variable
 
 
@@ -226,8 +227,9 @@ async def get_rag_context_for_denial(
         logger.info("RAG service not available, skipping context enrichment")
         return None
 
-    # Use first 500 chars as the denial reason query
-    denial_reason = denial_text[:500] if denial_text else ""
+    # Use first ~500 chars as the denial reason query, but cut at a
+    # sentence/word boundary so the RAG search isn't fed half a word.
+    denial_reason = truncate_at_boundary(denial_text, 500, ellipsis="")
     if not denial_reason:
         return None
 

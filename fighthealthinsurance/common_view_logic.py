@@ -52,6 +52,7 @@ from fhi_users import emails as fhi_emails
 from fhi_users.audit import TrackingInfo
 from fhi_users.models import ProfessionalUser, UserDomain
 from fighthealthinsurance import stripe_utils
+from fighthealthinsurance.context_utils import attach_supplemental_to_citations
 from fighthealthinsurance.denials.algorithmic_review_detector import (
     detect_algorithmic_review_terms,
     render_template_blocks,
@@ -3003,33 +3004,18 @@ class AppealsBackendHelper:
                     max_extralink_docs=3,
                     max_extralink_chars=1500,
                 )
-                if microsite_context:
-                    # Append to ml_citation_context or pubmed_context
-                    if ml_citation_context:
-                        if isinstance(ml_citation_context, list):
-                            ml_citation_context = "\n".join(
-                                str(c) for c in ml_citation_context if c
-                            )
-                        ml_citation_context = (
-                            f"{ml_citation_context}\n\n{microsite_context}"
-                        )
-                    elif pubmed_context:
-                        pubmed_context = f"{pubmed_context}\n\n{microsite_context}"
-                    else:
-                        # Use microsite context as standalone context
-                        ml_citation_context = microsite_context
 
-        if imr_context:
-            if ml_citation_context:
-                if isinstance(ml_citation_context, list):
-                    ml_citation_context = "\n".join(
-                        str(c) for c in ml_citation_context if c
-                    )
-                ml_citation_context = f"{ml_citation_context}\n\n{imr_context}"
-            elif pubmed_context:
-                pubmed_context = f"{pubmed_context}\n\n{imr_context}"
-            else:
-                ml_citation_context = imr_context
+        # Merge supplemental contexts into the citation pipeline. Both
+        # microsite and IMR context follow the same pattern: append to
+        # ml_citation_context if present, else pubmed_context, else use
+        # standalone. attach_supplemental_to_citations also dedupes against
+        # the existing block so a retry doesn't re-append the same content.
+        ml_citation_context, pubmed_context = attach_supplemental_to_citations(
+            ml_citation_context, pubmed_context, microsite_context
+        )
+        ml_citation_context, pubmed_context = attach_supplemental_to_citations(
+            ml_citation_context, pubmed_context, imr_context
+        )
 
         async def save_appeal(appeal_text: str) -> dict[str, str]:
             # Save all of the proposed appeals, so we can use RL later.

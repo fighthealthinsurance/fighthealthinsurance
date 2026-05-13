@@ -13,6 +13,7 @@ from typing import List, Optional, Set
 
 from loguru import logger
 
+from fighthealthinsurance.context_utils import truncate_at_boundary
 from fighthealthinsurance.ml.ml_document_extraction import extract_text_from_pdf_path
 from fighthealthinsurance.ml.ml_inference import infer_with_fallback
 from fighthealthinsurance.models import Denial, PlanDocuments
@@ -50,8 +51,11 @@ class MLPlanDocHelper:
         # Build context for the model
         context_parts = []
         if denial_text:
-            # Truncate denial text if too long
-            context_parts.append(f"Denial letter excerpt: {denial_text[:2000]}")
+            # Truncate denial text if too long, preferring a sentence
+            # boundary so the model isn't fed a half-finished sentence.
+            context_parts.append(
+                f"Denial letter excerpt: {truncate_at_boundary(denial_text, 2000)}"
+            )
         if procedure:
             context_parts.append(f"Denied procedure: {procedure}")
         if diagnosis:
@@ -240,7 +244,7 @@ Focus on:
 5. Relevant definitions
 
 Plan document excerpts:
-{relevant_text[:cls.MAX_CONTEXT_LENGTH]}
+{truncate_at_boundary(relevant_text, cls.MAX_CONTEXT_LENGTH)}
 
 Provide a concise summary (max 500 words) that would help craft an effective appeal.
 Include specific page references where helpful."""

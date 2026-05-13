@@ -10,6 +10,7 @@ from typing import Any, Callable, Coroutine, Iterator, List, Optional, Tuple
 
 from loguru import logger
 
+from fighthealthinsurance.context_utils import truncate_at_boundary
 from fighthealthinsurance.denial_base import DenialBase
 
 from .exec import executor
@@ -2068,8 +2069,12 @@ class AppealGenerator(object):
         )
         context_parts = []
         if denial_text:
-            # Truncate very long denial text to leave room for drafts
-            context_parts.append(f"ORIGINAL DENIAL LETTER:\n{denial_text[:3000]}")
+            # Truncate very long denial text to leave room for drafts;
+            # prefer a paragraph/sentence boundary so the model gets a
+            # coherent excerpt rather than a half-finished sentence.
+            context_parts.append(
+                f"ORIGINAL DENIAL LETTER:\n{truncate_at_boundary(denial_text, 3000)}"
+            )
         if procedure:
             context_parts.append(f"PROCEDURE: {procedure}")
         if diagnosis:

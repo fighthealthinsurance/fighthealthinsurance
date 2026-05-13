@@ -211,8 +211,12 @@ class TestSynthesizeAppeals(unittest.TestCase):
         )
 
         prompt = mock_model._infer_no_context.call_args.kwargs["prompt"]
-        # Should contain the truncated version (3000 chars), not the full 5000
-        self.assertIn("X" * 3000, prompt)
+        # Boundary-aware truncation keeps total length <= 3000 and marks
+        # truncation with an ellipsis. For an input with no sentence/word
+        # boundaries (all X's), the helper hard-cuts and appends "...",
+        # so the prompt contains 2997 X's followed by "..." rather than
+        # the full 5000-char input.
+        self.assertIn("X" * 2997 + "...", prompt)
         self.assertNotIn("X" * 3001, prompt)
 
     @patch("fighthealthinsurance.generate_appeal.best_within_timelimit")

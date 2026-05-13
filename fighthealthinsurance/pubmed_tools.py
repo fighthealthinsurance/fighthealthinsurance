@@ -19,6 +19,7 @@ from django.utils import timezone
 from loguru import logger
 from metapub import FindIt
 
+from fighthealthinsurance.context_utils import truncate_at_boundary
 from fighthealthinsurance.microsites import get_microsite
 from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance.models import (
@@ -1197,7 +1198,7 @@ class PubMedTools(object):
         if article.basic_summary:
             summary = article.basic_summary
         elif article.abstract:
-            summary = article.abstract[0:500]
+            summary = truncate_at_boundary(article.abstract, 500)
 
         parts = []
         if article.authors:
