@@ -2520,12 +2520,7 @@ class PatientEvidenceViewSet(viewsets.ViewSet, SerializerMixin):
         input_serializer.is_valid(raise_exception=True)
         validated = input_serializer.validated_data
 
-        file = request.FILES.get("file")
-        if not file:
-            return Response(
-                serializers.ErrorSerializer({"error": "No file provided"}).data,
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        file = validated["file"]
 
         if file.size is not None and file.size > MAX_EVIDENCE_FILE_SIZE:
             return Response(
