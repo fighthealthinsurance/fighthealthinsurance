@@ -48,13 +48,21 @@ def truncate_at_boundary(
     budget rather than e.g. cutting after the first sentence in a long
     document. Returns the input unchanged when it already fits, and an
     empty string when ``text`` is empty/None or ``max_chars`` <= 0.
+
+    Output length is guaranteed to be ``<= max_chars``. When
+    ``max_chars`` is smaller than ``len(ellipsis)`` there is no room to
+    signal truncation, so the function hard-cuts at ``max_chars`` and
+    omits the ellipsis entirely.
     """
     if not text or max_chars <= 0:
         return ""
     if len(text) <= max_chars:
         return text
 
-    budget = max(max_chars - len(ellipsis), 1)
+    if max_chars <= len(ellipsis):
+        return text[:max_chars]
+
+    budget = max_chars - len(ellipsis)
     window = text[:budget]
     min_cut = int(budget * min_keep_ratio)
 
@@ -68,11 +76,11 @@ def truncate_at_boundary(
         if end >= min_cut:
             last_sentence = end
     if last_sentence > 0:
-        return window[:last_sentence].rstrip() + " " + ellipsis
+        return window[:last_sentence].rstrip() + ellipsis
 
     space = window.rfind(" ")
     if space >= min_cut:
-        return window[:space].rstrip() + " " + ellipsis
+        return window[:space].rstrip() + ellipsis
 
     return window + ellipsis
 
@@ -146,17 +154,50 @@ def merge_context_blocks(
     return separator.join(parts)
 
 
+def _supplemental_already_present(existing: str, supplemental: str) -> bool:
+    """Whether ``supplemental`` already appears as a block in ``existing``.
+
+    Both strings are split on paragraph breaks (``\\n\\n``) and the
+    supplemental's normalized blocks must appear as a contiguous
+    subsequence within the existing blocks. This is stricter than a
+    naive substring check on the normalized text: a short supplemental
+    that coincidentally appears inside an unrelated longer block is not
+    treated as a duplicate.
+    """
+    if not existing or not supplemental:
+        return False
+
+    existing_blocks = [
+        _normalize_for_dedup(b) for b in existing.split("\n\n") if b.strip()
+    ]
+    supp_blocks = [
+        _normalize_for_dedup(b) for b in supplemental.split("\n\n") if b.strip()
+    ]
+    if not existing_blocks or not supp_blocks:
+        return False
+    n, m = len(existing_blocks), len(supp_blocks)
+    if m > n:
+        return False
+    for i in range(n - m + 1):
+        if existing_blocks[i : i + m] == supp_blocks:
+            return True
+    return False
+
+
 def flatten_citation_context(value: CitationContext) -> str:
     """Render a list-or-string citation context as a single string.
 
     ML citation helpers sometimes return ``list[str]`` and other times a
     pre-joined ``str``; downstream prompt construction needs a single
-    string regardless. Returns the empty string for None/empty inputs.
+    string regardless. Whitespace-only list entries are filtered out so
+    they don't render as blank lines. Returns the empty string for
+    None/empty inputs.
     """
     if value is None:
         return ""
     if isinstance(value, list):
-        return "\n".join(str(c).strip() for c in value if c)
+        cleaned = [str(c).strip() for c in value if c is not None]
+        return "\n".join(c for c in cleaned if c)
     return str(value).strip()
 
 
@@ -184,17 +225,16 @@ def attach_supplemental_to_citations(
         return ml_citation_context, pubmed_context
 
     supp = supplemental.strip()
-    supp_key = _normalize_for_dedup(supp)
 
     flat_ml = flatten_citation_context(ml_citation_context)
     if flat_ml:
-        if supp_key and supp_key in _normalize_for_dedup(flat_ml):
+        if _supplemental_already_present(flat_ml, supp):
             return flat_ml, pubmed_context
         return f"{flat_ml}\n\n{supp}", pubmed_context
 
     if pubmed_context and pubmed_context.strip():
         existing = pubmed_context.strip()
-        if supp_key and supp_key in _normalize_for_dedup(existing):
+        if _supplemental_already_present(existing, supp):
             return ml_citation_context, existing
         return ml_citation_context, f"{existing}\n\n{supp}"
 

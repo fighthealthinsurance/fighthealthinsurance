@@ -56,9 +56,10 @@ class TestTruncateAtBoundary(unittest.TestCase):
         text = "alpha beta gamma delta epsilon zeta eta theta iota"
         result = truncate_at_boundary(text, 20)
         self.assertTrue(result.endswith("..."))
-        # No partial word at the end.
-        body = result.rsplit(" ", 1)[0]
-        self.assertIn(body, text)
+        # No partial word: the part before the ellipsis must be a prefix
+        # of the source text.
+        body = result[: -len("...")].rstrip()
+        self.assertTrue(text.startswith(body))
 
     def test_hard_cut_when_no_boundary_in_window(self):
         text = "x" * 100
@@ -75,6 +76,46 @@ class TestTruncateAtBoundary(unittest.TestCase):
         text = "x" * 100
         result = truncate_at_boundary(text, 50, ellipsis="")
         self.assertEqual(len(result), 50)
+
+    def test_empty_ellipsis_no_trailing_space_on_sentence_cut(self):
+        # Regression: trailing " " was previously appended on the
+        # sentence/word boundary paths even when ellipsis="", giving the
+        # RAG query a stray trailing space.
+        text = "First sentence. Second sentence. Third sentence keeps going."
+        result = truncate_at_boundary(text, 40, ellipsis="")
+        self.assertFalse(result.endswith(" "))
+
+    def test_output_never_exceeds_max_chars(self):
+        # Regression: previous implementation could exceed max_chars by 1
+        # because " " + ellipsis was appended after only len(ellipsis)
+        # was reserved in the budget.
+        cases = [
+            ("First sentence. Second sentence. Third sentence.", 25, "..."),
+            ("alpha beta gamma delta epsilon zeta eta theta", 20, "..."),
+            ("paragraph one ends.\n\nparagraph two continues here.", 25, "..."),
+            ("x" * 200, 50, "..."),
+            ("First sentence. Second.", 22, " [more]"),
+            ("words " * 50, 40, ""),
+        ]
+        for text, max_chars, ellipsis in cases:
+            with self.subTest(text=text[:20], max_chars=max_chars):
+                result = truncate_at_boundary(text, max_chars, ellipsis=ellipsis)
+                self.assertLessEqual(
+                    len(result),
+                    max_chars,
+                    f"Output {len(result)} > max_chars {max_chars}: {result!r}",
+                )
+
+    def test_max_chars_smaller_than_ellipsis_falls_back_to_hard_cut(self):
+        # Regression: when max_chars < len(ellipsis) the previous code
+        # still appended the ellipsis, exceeding the budget. Now the
+        # function hard-cuts without an ellipsis.
+        text = "hello world"
+        for max_chars in (1, 2, 3):
+            with self.subTest(max_chars=max_chars):
+                result = truncate_at_boundary(text, max_chars, ellipsis="...")
+                self.assertEqual(result, text[:max_chars])
+                self.assertEqual(len(result), max_chars)
 
 
 class TestDedupeBlocks(unittest.TestCase):
@@ -138,6 +179,12 @@ class TestFlattenCitationContext(unittest.TestCase):
         result = flatten_citation_context(["a", "", None, "b"])
         self.assertEqual(result, "a\nb")
 
+    def test_list_skips_whitespace_only_entries(self):
+        # Regression: whitespace-only entries are truthy but strip to
+        # empty, previously rendering as blank lines.
+        result = flatten_citation_context(["a", "   ", "\t\n", "b"])
+        self.assertEqual(result, "a\nb")
+
 
 class TestAttachSupplementalToCitations(unittest.TestCase):
     def test_no_supplemental_returns_inputs_unchanged(self):
@@ -177,21 +224,43 @@ class TestAttachSupplementalToCitations(unittest.TestCase):
         self.assertEqual(pm, "")
 
     def test_dedupes_when_supplemental_already_present_in_ml(self):
-        existing = "Some background info. Microsite link: https://example.com/x"
-        ml, pm = attach_supplemental_to_citations(
-            existing, None, "microsite link: https://example.com/x"
+        # Realistic shape: existing already has the supplemental block
+        # appended via \n\n from a prior call.
+        microsite_block = (
+            "## Additional Medical Evidence\n\n"
+            "Microsite link: https://example.com/x"
         )
+        existing = f"original ml citations\n\n{microsite_block}"
+        ml, pm = attach_supplemental_to_citations(existing, None, microsite_block)
         # Already contained — must not re-append.
         self.assertEqual(ml, existing)
         self.assertIsNone(pm)
 
     def test_dedupes_when_supplemental_already_present_in_pubmed(self):
-        existing = "PubMed: something. Extra block content here."
-        ml, pm = attach_supplemental_to_citations(
-            None, existing, "Extra block content here."
-        )
+        imr_block = "Prior IMR decision: case 12345 reversed."
+        existing = f"PubMed reference list ...\n\n{imr_block}"
+        ml, pm = attach_supplemental_to_citations(None, existing, imr_block)
         self.assertIsNone(ml)
         self.assertEqual(pm, existing)
+
+    def test_dedupe_does_not_match_substring_inside_unrelated_block(self):
+        # Regression: previous implementation used substring containment
+        # on normalized text, so a short supplemental could be silently
+        # dropped if it happened to appear inside an unrelated block.
+        existing = "Lorem ipsum dolor sit amet. Background context here."
+        supp = "ipsum"
+        ml, pm = attach_supplemental_to_citations(existing, None, supp)
+        self.assertEqual(ml, f"{existing}\n\n{supp}")
+        self.assertIsNone(pm)
+
+    def test_dedupes_multi_paragraph_supplemental_appearing_in_middle(self):
+        # The supplemental can be multi-paragraph and may be sandwiched
+        # between other context. Block-sequence match should detect it.
+        supp = "## Heading\n\nFirst para of supp.\n\nSecond para of supp."
+        existing = f"head context\n\n{supp}\n\ntail context"
+        ml, pm = attach_supplemental_to_citations(existing, None, supp)
+        self.assertEqual(ml, existing)
+        self.assertIsNone(pm)
 
 
 if __name__ == "__main__":
