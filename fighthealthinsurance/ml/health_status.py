@@ -84,6 +84,9 @@ class _HealthStatus:
         Used during initialization when we already hold the lock.
         """
         alive_count = 0
+        internal_total = 0
+        internal_alive = 0
+        internal_failures: List[BackendHealthDetail] = []
 
         # Choose a small, representative set of backends
         candidates = []
@@ -94,6 +97,9 @@ class _HealthStatus:
         except Exception as e:
             logger.warning(f"Could not get all_models_by_cost: {e}")
             candidates = []
+        for m in candidates:
+            if not getattr(m, "external", True):
+                internal_total += 1
         # Run health checks in parallel with per-model timeouts
         details: List[BackendHealthDetail] = []
         timeout_seconds = 10
@@ -112,6 +118,7 @@ class _HealthStatus:
                             or getattr(m, "__class__", type(m)).__name__
                         )
                         name = str(name)
+                        is_internal = not getattr(m, "external", True)
                         ok = False
                         err: Optional[str] = None
                         try:
@@ -122,6 +129,14 @@ class _HealthStatus:
                             logger.debug(f"Health check error for {name}: {e}")
                         if ok:
                             alive_count += 1
+                            if is_internal:
+                                internal_alive += 1
+                        elif is_internal:
+                            internal_failures.append(
+                                BackendHealthDetail(
+                                    name=name, ok=False, error=err or "not ok"
+                                )
+                            )
                 except concurrent.futures.TimeoutError:
                     logger.debug(
                         "Timed out checking backends, remaining marked as dead."
@@ -135,11 +150,16 @@ class _HealthStatus:
                             or getattr(m, "__class__", type(m)).__name__
                         )
                         name = str(name)
+                        timeout_err = f"timeout>{timeout_seconds}s"
                         details.append(
-                            BackendHealthDetail(
-                                name=name, ok=False, error=f"timeout>{timeout_seconds}s"
-                            )
+                            BackendHealthDetail(name=name, ok=False, error=timeout_err)
                         )
+                        if not getattr(m, "external", True):
+                            internal_failures.append(
+                                BackendHealthDetail(
+                                    name=name, ok=False, error=timeout_err
+                                )
+                            )
 
         snapshot = HealthSnapshot(
             alive_models=alive_count,
@@ -148,6 +168,45 @@ class _HealthStatus:
         )
 
         self._snapshot = snapshot
+
+        self._alert_if_all_internal_dead(
+            internal_total, internal_alive, internal_failures
+        )
+
+    def _alert_if_all_internal_dead(
+        self,
+        internal_total: int,
+        internal_alive: int,
+        internal_failures: List[BackendHealthDetail],
+    ) -> None:
+        """Log an error and email support when zero internal models are alive."""
+        if internal_alive > 0:
+            return
+        detail = (
+            ", ".join(f"{f.name}: {f.error or 'not ok'}" for f in internal_failures)
+            or "no internal backends registered"
+        )
+        message = (
+            f"All internal models are dead "
+            f"(internal_total={internal_total}, internal_alive=0). "
+            f"Failures: {detail}"
+        )
+        logger.error(message)
+        try:
+            from django.conf import settings
+            from django.core.mail import send_mail
+
+            send_mail(
+                "[FHI] All internal models are dead",
+                message,
+                settings.DEFAULT_FROM_EMAIL,
+                ["support42@fighthealthinsurance.com"],
+                fail_silently=False,
+            )
+        except Exception:
+            logger.opt(exception=True).error(
+                "Failed to send internal-models-dead alert email"
+            )
 
     def _refresh(self):
         """
