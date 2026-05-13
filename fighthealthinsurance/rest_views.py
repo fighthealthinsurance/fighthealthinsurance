@@ -559,6 +559,39 @@ class ReportClientError(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
+class EnableExternalModels(APIView):
+    """Opt a denial into external models so a re-run of appeal generation
+    can call out to higher-capability cloud LLMs.
+
+    Patients see a button on the appeals page offering this when the
+    initial generation produced few or no appeals from internal models;
+    this endpoint flips `Denial.use_external` so the next generation
+    request includes the external backends. Auth mirrors the appeal
+    stream: the (denial_id, email, semi_sekret) triple is the only
+    credential.
+    """
+
+    permission_classes = [AllowAny]
+    authentication_classes = []  # Magic-key auth via the triple
+
+    def post(self, request: Request) -> Response:
+        denial_id = request.data.get("denial_id")
+        email = request.data.get("email") or ""
+        semi_sekret = request.data.get("semi_sekret") or ""
+        denial = common_view_logic.get_denial_for_action(
+            denial_id=denial_id, email=email, semi_sekret=semi_sekret
+        )
+        if denial is None:
+            return Response({"error": "Not found"}, status=status.HTTP_404_NOT_FOUND)
+        if not denial.use_external:
+            denial.use_external = True
+            denial.save(update_fields=["use_external"])
+            logger.info(
+                f"Enabled external models for denial {denial.denial_id} on user request"
+            )
+        return Response({"use_external": True}, status=status.HTTP_200_OK)
+
+
 @extend_schema(
     description=(
         "REST/HTTP fallback for the WebSocket appeal stream used by "

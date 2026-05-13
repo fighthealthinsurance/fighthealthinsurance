@@ -59,6 +59,11 @@ urlpatterns = [
         name="report_client_error",
     ),
     path(
+        "enable_external_models",
+        rest_views.EnableExternalModels.as_view(),
+        name="enable_external_models",
+    ),
+    path(
         "streaming_appeals_fallback",
         rest_views.streaming_appeals_rest_fallback,
         name="streaming_appeals_fallback",
