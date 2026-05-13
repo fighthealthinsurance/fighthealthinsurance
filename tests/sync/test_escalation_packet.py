@@ -276,6 +276,24 @@ class EscalationPacketViewTest(TestCase):
         # Medical director recipient is always present.
         self.assertContains(response, "Medical Director")
 
+    def test_appeals_generation_page_exposes_escalation_button(self):
+        """The appeals.html page (where users choose between drafts) must
+        link to the regulator escalation flow. Without this, the only entry
+        point is the final review page, which many users never reach.
+        """
+        response = self.client.get(
+            reverse("generate_appeal"),
+            {
+                "denial_id": self.denial.denial_id,
+                "email": self.email,
+                "semi_sekret": self.denial.semi_sekret,
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "appeals.html")
+        self.assertContains(response, 'id="generate_escalation_packet"')
+        self.assertContains(response, reverse("escalation_packet"))
+
     def test_choose_escalation_letter_rejects_invalid_form(self):
         url = reverse("choose_escalation_letter")
         response = self.client.post(url, {"letter_text": "x"})
