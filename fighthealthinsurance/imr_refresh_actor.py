@@ -5,7 +5,7 @@ Pulls the CA DMHC and (optionally) NY DFS CSV exports on the
 ``load_csv_text`` loader. Sources whose URL setting is unset are skipped.
 
 The run-loop / health-check / backoff scaffolding lives in
-``BaseRefreshActor``.
+``BaseRefreshActor`` so this module only owns the IMR-specific work.
 """
 
 from typing import Tuple
@@ -36,13 +36,6 @@ class IMRRefreshActor(BaseRefreshActor):
         ]
         return [(src, url) for src, url in candidates if url]
 
-    @staticmethod
-    def _refresh_source(source: str, url: str) -> Tuple[int, int, int, int]:
-        from fighthealthinsurance.imr_ingest import fetch_csv, load_csv_text
-
-        csv_text = fetch_csv(url)
-        return load_csv_text(csv_text, source=source, source_url=url)
-
     async def _refresh_due(self, interval_hours: int) -> bool:
         sources = self._configured_sources()
         if not sources:
@@ -65,4 +58,12 @@ class IMRRefreshActor(BaseRefreshActor):
                 self._logger.opt(exception=True).warning(
                     f"IMR refresh failed for source {source}: {e}"
                 )
+
         return any_success
+
+    @staticmethod
+    def _refresh_source(source: str, url: str) -> Tuple[int, int, int, int]:
+        from fighthealthinsurance.imr_ingest import fetch_csv, load_csv_text
+
+        csv_text = fetch_csv(url)
+        return load_csv_text(csv_text, source=source, source_url=url)
