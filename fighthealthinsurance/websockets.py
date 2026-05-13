@@ -138,6 +138,50 @@ async def log_zero_appeal_diagnostics(
         )
 
 
+async def _parse_json_or_close(
+    consumer: AsyncWebsocketConsumer,
+    text_data: str,
+    *,
+    consumer_name: str,
+    streaming_protocol: bool = False,
+    require_object: bool = True,
+) -> Optional[dict]:
+    """Parse a single WebSocket text frame as JSON, closing on bad input.
+
+    Returns the decoded dict on success, or ``None`` when the frame was
+    malformed (in which case an error frame has already been sent and the
+    socket closed). ``streaming_protocol=True`` selects the
+    ``{"type": "error", "message": ...}`` envelope expected by the
+    appeals/escalation streaming clients; otherwise the simpler
+    ``{"error": ...}`` shape used by entity/prior-auth/chat consumers.
+    When ``require_object`` is True (default), non-object JSON
+    (``[]``, ``"x"``, ``123``) is rejected so callers can ``.get()``
+    safely without an AttributeError.
+    """
+
+    def _err_frame(message: str) -> str:
+        if streaming_protocol:
+            return json.dumps({"type": "error", "message": message})
+        return json.dumps({"error": message})
+
+    try:
+        data = json.loads(text_data)
+    except json.JSONDecodeError as e:
+        logger.warning(f"Invalid JSON received in {consumer_name} websocket: {e}")
+        await consumer.send(_err_frame("Invalid JSON format"))
+        await consumer.close()
+        return None
+    if require_object and not isinstance(data, dict):
+        logger.warning(
+            f"Non-object JSON received in {consumer_name} websocket: "
+            f"{type(data).__name__}"
+        )
+        await consumer.send(_err_frame("Expected a JSON object"))
+        await consumer.close()
+        return None
+    return data
+
+
 # Test hook: when truthy, StreamingAppealsBackend accepts the
 # connection and closes immediately without yielding any appeal
 # payloads. Lets tests exercise the REST fallback path without
@@ -157,30 +201,17 @@ class StreamingAppealsBackend(AsyncWebsocketConsumer):
         logger.debug(f"appeals ws: disconnect code={close_code}")
 
     async def receive(self, text_data):
-        try:
-            data = json.loads(text_data)
-        except json.JSONDecodeError as e:
-            logger.warning(f"Invalid JSON received in appeals websocket: {e}")
-            # Match the streaming protocol shape so the client's
-            # type==='error' branch in processResponseChunk fires
-            # instead of treating this as an unrecognized frame.
-            await self.send(
-                json.dumps({"type": "error", "message": "Invalid JSON format"})
-            )
-            await self.close()
-            return
-        if not isinstance(data, dict):
-            # Valid JSON but not an object (e.g. `[]`, `"x"`, `123`).
-            # Without this guard, data.get(...) below would raise and
-            # the client would just see a server-side close.
-            logger.warning(
-                "Non-object JSON received in appeals websocket: "
-                f"{type(data).__name__}"
-            )
-            await self.send(
-                json.dumps({"type": "error", "message": "Expected a JSON object"})
-            )
-            await self.close()
+        # streaming_protocol=True so the client's type==='error' branch
+        # in processResponseChunk fires instead of treating this as an
+        # unrecognized frame. require_object=True so the .get(...) calls
+        # below can't raise AttributeError on `[]` / `"x"` / `123`.
+        data = await _parse_json_or_close(
+            self,
+            text_data,
+            consumer_name="appeals",
+            streaming_protocol=True,
+        )
+        if data is None:
             return
         # Test hook: simulate a silent WS death so the JS client falls
         # back to REST. We close cleanly with no payload so the client
@@ -283,14 +314,13 @@ class StreamingEscalationBackend(AsyncWebsocketConsumer):
         logger.debug(f"escalation ws: disconnect code={close_code}")
 
     async def receive(self, text_data):
-        try:
-            data = json.loads(text_data)
-        except json.JSONDecodeError as e:
-            logger.warning(f"Invalid JSON received in escalation websocket: {e}")
-            await self.send(
-                json.dumps({"type": "error", "message": "Invalid JSON format"})
-            )
-            await self.close()
+        data = await _parse_json_or_close(
+            self,
+            text_data,
+            consumer_name="escalation",
+            streaming_protocol=True,
+        )
+        if data is None:
             return
         aitr: AsyncIterator[str] = (
             common_view_logic.EscalationPacketHelper.generate_escalation_letters(data)
@@ -338,12 +368,12 @@ class StreamingEntityBackend(AsyncWebsocketConsumer):
         logger.debug(f"entity ws: disconnect code={close_code}")
 
     async def receive(self, text_data):
-        try:
-            data = json.loads(text_data)
-        except json.JSONDecodeError as e:
-            logger.warning(f"Invalid JSON received in entity extraction websocket: {e}")
-            await self.send(json.dumps({"error": "Invalid JSON format"}))
-            await self.close()
+        data = await _parse_json_or_close(
+            self,
+            text_data,
+            consumer_name="entity extraction",
+        )
+        if data is None:
             return
         if "denial_id" not in data:
             logger.warning("Missing denial_id in entity extraction request")
@@ -385,12 +415,12 @@ class PriorAuthConsumer(AsyncWebsocketConsumer):
         logger.debug(f"prior-auth ws: disconnect code={close_code}")
 
     async def receive(self, text_data):
-        try:
-            data = json.loads(text_data)
-        except json.JSONDecodeError as e:
-            logger.warning(f"Invalid JSON received in prior auth websocket: {e}")
-            await self.send(json.dumps({"error": "Invalid JSON format"}))
-            await self.close()
+        data = await _parse_json_or_close(
+            self,
+            text_data,
+            consumer_name="prior auth",
+        )
+        if data is None:
             return
         logger.debug("prior-auth ws: starting generation")
 
@@ -670,12 +700,12 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
             )
 
     async def receive(self, text_data):
-        try:
-            data = json.loads(text_data)
-        except json.JSONDecodeError as e:
-            logger.warning(f"Invalid JSON received in ongoing chat websocket: {e}")
-            await self.send(json.dumps({"error": "Invalid JSON format"}))
-            await self.close()
+        data = await _parse_json_or_close(
+            self,
+            text_data,
+            consumer_name="ongoing chat",
+        )
+        if data is None:
             return
         # Get the required data -- note the message should be sent as "content"
         # but we also accept "message" for backward compatibility.
