@@ -561,13 +561,6 @@ class NextStepInfoSerializable:
     outside_help_details: list[Tuple[str, str]]
     combined_form: list[Any]
     semi_sekret: str
-    # Mirror of NextStepInfo.pharmacy_coupon_suggestion. The dict shape
-    # is built inline by NextStepInfo.convert_to_serializable (mirroring
-    # PharmacyCouponSuggestion.to_dict but without the indirection so
-    # mypy's `warn_return_any` can verify the return shape directly).
-    # Either way the wire shape is consistent with DenialResponseInfo
-    # Serializer so the React frontend renders both with one component.
-    pharmacy_coupon_suggestion: Optional[dict[str, Any]] = None
 
 
 def schedule_follow_ups(

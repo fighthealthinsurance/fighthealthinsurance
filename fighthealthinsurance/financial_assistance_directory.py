@@ -455,9 +455,11 @@ def _diagnosis_matches(program: AssistanceProgram, diagnosis_text: str) -> bool:
         return False
     haystack = _normalize(diagnosis_text)
     for needle in program.diagnoses:
-        # Match whole-word or prefix to handle e.g. "crohn" matching
-        # "Crohn's disease".
-        pattern = r"\b" + re.escape(needle)
+        # Match the needle as a whole word, optionally followed by an "s"
+        # or "'s" possessive/plural so e.g. "crohn" still hits "Crohn's
+        # disease" / "crohns disease" but short abbreviations like "als",
+        # "cf", "ms" don't match substrings ("also", "cfp", "msg").
+        pattern = r"\b" + re.escape(needle) + r"(?:'?s)?\b"
         if re.search(pattern, haystack):
             return True
     return False
