@@ -852,7 +852,12 @@ class DateOfServiceFilterTests(TestCase):
             denial_date=date(2024, 1, 1),
             insurance_company_obj=self.uhc,
         )
-        self.assertEqual(get_pa_context_for_denial(old_denial), "")
+        # ``format_pa_context`` still emits an "unmatched codes" note when
+        # the rule is filtered out by date — verify the rule's contents
+        # do NOT surface (no "REQUIRES" verb, no criteria-reference text).
+        context = get_pa_context_for_denial(old_denial)
+        self.assertNotIn("REQUIRES prior authorization", context)
+        self.assertNotIn("Effective 2024-06-01", context)
 
     def test_rule_effective_for_recent_denial(self):
         recent_denial = Denial.objects.create(
@@ -935,7 +940,7 @@ class BroadenUnknownLobTests(TestCase):
 class FixtureRoundTripTests(TestCase):
     """``loaddata pa_requirements`` should produce valid, complete rows."""
 
-    fixtures = ["insurance_companies", "pa_requirements"]
+    fixtures = ["plan_source", "insurance_companies", "pa_requirements"]
 
     def test_all_loaded_rows_pass_full_clean(self):
         rows = list(PayerPriorAuthRequirement.objects.all())

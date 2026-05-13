@@ -4,7 +4,7 @@ import asyncio
 from datetime import date
 from unittest.mock import patch
 
-from django.test import TestCase
+from django.test import TransactionTestCase
 
 from fighthealthinsurance.models import (
     InsuranceCompany,
@@ -17,7 +17,7 @@ from fighthealthinsurance.pa_requirements_fetcher import (
 )
 
 
-class FetcherContractTests(TestCase):
+class FetcherContractTests(TransactionTestCase):
     """Verify upsert keys + soft-retire behaviour using ``parse_company`` stubs."""
 
     def setUp(self):
@@ -148,7 +148,7 @@ class FetcherContractTests(TestCase):
         self.assertIsNone(row.end_date)
 
 
-class IngestAllSelectionTests(TestCase):
+class IngestAllSelectionTests(TransactionTestCase):
     """Only companies flagged ``pa_requirement_list_url_is_parseable`` are fetched."""
 
     def setUp(self):
