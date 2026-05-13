@@ -3284,9 +3284,11 @@ class EscalationPacketHelper:
         # "insurance_company_obj")`` here: those tables hold ``RegexField``
         # columns whose ``from_db_value`` raises ``ValidationError`` on NULL,
         # so a LEFT JOIN against an un-matched denial blows up the whole
-        # stream. Related access happens inside ``sync_to_async`` below.
+        # stream. ``prefetch_related("plan_source")`` is safe (separate
+        # query, no JOIN) and avoids an extra round-trip when
+        # ``get_recipients_for_denial`` checks ERISA likelihood.
         try:
-            denial = await Denial.objects.aget(
+            denial = await Denial.objects.prefetch_related("plan_source").aget(
                 denial_id=denial_id,
                 semi_sekret=semi_sekret,
                 hashed_email=hashed_email,
@@ -3306,12 +3308,19 @@ class EscalationPacketHelper:
         # navigating back to the page (e.g. via the "Back to all regulator
         # letters" button on the review screen, or a browser refresh) doesn't
         # burn fresh ML calls and accumulate duplicate draft rows.
+        recipient_types = [r.recipient_type for r in recipients]
         existing_by_type: dict[str, RegulatorEscalation] = {}
         async for esc in RegulatorEscalation.objects.filter(
-            for_denial=denial, hashed_email=hashed_email
+            for_denial=denial,
+            hashed_email=hashed_email,
+            recipient_type__in=recipient_types,
         ).order_by("-created"):
-            # Keep only the most recent draft per recipient type.
+            # Keep only the most recent draft per recipient type. Stop
+            # as soon as every relevant type has been covered so we don't
+            # scan unbounded history.
             existing_by_type.setdefault(esc.recipient_type, esc)
+            if len(existing_by_type) == len(recipient_types):
+                break
 
         needing_generation = [
             r for r in recipients if r.recipient_type not in existing_by_type
