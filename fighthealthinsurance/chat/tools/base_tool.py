@@ -89,6 +89,24 @@ class BaseTool(ABC):
             cleaned = cleaned.replace(match.group(0), "")
         return cleaned.strip()
 
+    @staticmethod
+    def merge_strings(existing: Optional[str], addition: Optional[str]) -> str:
+        """Concatenate two strings with a blank-line separator.
+
+        Returns ``""`` if both are empty/None. Used to glue an LLM follow-up
+        response onto the original response (or follow-up context onto the
+        original context) so adjacent paragraphs don't run together.
+
+        Only newline characters are stripped at the join — leading spaces /
+        tabs are preserved so markdown indentation, nested-list alignment,
+        and code-block leading whitespace aren't accidentally clobbered.
+        """
+        if not existing:
+            return (addition or "").lstrip("\n")
+        if not addition:
+            return existing
+        return existing.rstrip("\n") + "\n\n" + addition.lstrip("\n")
+
     @abstractmethod
     async def execute(
         self, match: re.Match[str], response_text: str, context: str, **kwargs

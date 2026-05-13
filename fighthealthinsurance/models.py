@@ -1440,7 +1440,9 @@ class ClinicalTrialQueryData(models.Model):
     """
 
     internal_id = models.AutoField(primary_key=True)
-    query = models.TextField(null=False, max_length=300)
+    # TextField (not CharField) because procedure and diagnosis are each up to
+    # 300 chars on Denial, so the combined query can exceed 300.
+    query = models.TextField(null=False)
     condition = models.TextField(null=True, blank=True)
     intervention = models.TextField(null=True, blank=True)
     nct_ids = models.TextField(null=True)  # JSON array

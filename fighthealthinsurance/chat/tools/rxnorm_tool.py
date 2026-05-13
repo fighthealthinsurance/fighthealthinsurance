@@ -78,24 +78,11 @@ class RxNormLookupTool(BaseTool):
                 is_professional=is_professional,
             )
 
-            cleaned_response = self._merge(cleaned_response, additional_response)
-            context = self._merge(context, additional_context)
+            cleaned_response = self.merge_strings(cleaned_response, additional_response)
+            context = self.merge_strings(context, additional_context)
 
-        updated_context = self._merge(context, rx_context)
+        updated_context = self.merge_strings(context, rx_context)
         return cleaned_response, updated_context
-
-    @staticmethod
-    def _merge(existing: Optional[str], addition: Optional[str]) -> str:
-        """Concatenate two strings with a blank-line separator.
-
-        Returns ``""`` if both are empty/None. Avoids running text
-        together when the recursive callback returns plain prose.
-        """
-        if not existing:
-            return (addition or "").lstrip()
-        if not addition:
-            return existing
-        return f"{existing.rstrip()}\n\n{addition.lstrip()}"
 
     @classmethod
     def _format_context(cls, query: str, info: dict[str, Any]) -> str:
