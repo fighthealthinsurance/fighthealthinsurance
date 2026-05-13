@@ -161,3 +161,27 @@ class TestHealthStatus(TestCase):
             m for m in mail.outbox if "internal models are dead" in m.subject.lower()
         ]
         assert alerts == []
+
+    def test_router_enumeration_failure_sends_distinct_alert(self):
+        """Router enumeration failure must not masquerade as 'all internal dead'."""
+
+        class BrokenRouter:
+            @property
+            def all_models_by_cost(self):
+                raise RuntimeError("router not ready")
+
+        from fighthealthinsurance.ml.health_status import _HealthStatus
+
+        with mock.patch("fighthealthinsurance.ml.ml_router.ml_router", BrokenRouter()):
+            _HealthStatus._refresh(health_status)
+
+        enum_alerts = [
+            m for m in mail.outbox if "could not enumerate" in m.subject.lower()
+        ]
+        dead_alerts = [
+            m for m in mail.outbox if "internal models are dead" in m.subject.lower()
+        ]
+        assert len(enum_alerts) == 1
+        assert dead_alerts == []
+        assert "router not ready" in enum_alerts[0].body
+        assert "RuntimeError" in enum_alerts[0].body

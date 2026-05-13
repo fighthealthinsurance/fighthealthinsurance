@@ -90,11 +90,13 @@ class _HealthStatus:
 
         # Choose a small, representative set of backends
         candidates = []
+        enumeration_error: Optional[str] = None
         try:
             logger.debug("Starting to look up the models")
             candidates = ml_router_module.ml_router.all_models_by_cost
             logger.debug(f"Considering candidates {candidates}")
         except Exception as e:
+            enumeration_error = f"{type(e).__name__}: {e}"
             logger.warning(f"Could not get all_models_by_cost: {e}")
             candidates = []
         for m in candidates:
@@ -170,7 +172,7 @@ class _HealthStatus:
         self._snapshot = snapshot
 
         self._alert_if_all_internal_dead(
-            internal_total, internal_alive, internal_failures
+            internal_total, internal_alive, internal_failures, enumeration_error
         )
 
     def _alert_if_all_internal_dead(
@@ -178,26 +180,41 @@ class _HealthStatus:
         internal_total: int,
         internal_alive: int,
         internal_failures: List[BackendHealthDetail],
+        enumeration_error: Optional[str] = None,
     ) -> None:
-        """Log an error and email support when zero internal models are alive."""
+        """Log an error and email support when zero internal models are alive.
+
+        If ``enumeration_error`` is set, the router itself failed and we have
+        no real measurement; surface that distinctly so on-call doesn't chase
+        a backend outage that's actually a router/init bug.
+        """
         if internal_alive > 0:
             return
-        detail = (
-            ", ".join(f"{f.name}: {f.error or 'not ok'}" for f in internal_failures)
-            or "no internal backends registered"
-        )
-        message = (
-            f"All internal models are dead "
-            f"(internal_total={internal_total}, internal_alive=0). "
-            f"Failures: {detail}"
-        )
+        if enumeration_error is not None:
+            subject = "[FHI] Could not enumerate model backends"
+            message = (
+                "Model liveliness check could not enumerate backends "
+                f"(ml_router.all_models_by_cost raised: {enumeration_error}). "
+                "Internal model health is unknown."
+            )
+        else:
+            detail = (
+                ", ".join(f"{f.name}: {f.error or 'not ok'}" for f in internal_failures)
+                or "no internal backends registered"
+            )
+            subject = "[FHI] All internal models are dead"
+            message = (
+                f"All internal models are dead "
+                f"(internal_total={internal_total}, internal_alive=0). "
+                f"Failures: {detail}"
+            )
         logger.error(message)
         try:
             from django.conf import settings
             from django.core.mail import send_mail
 
             send_mail(
-                "[FHI] All internal models are dead",
+                subject,
                 message,
                 settings.DEFAULT_FROM_EMAIL,
                 ["support42@fighthealthinsurance.com"],
