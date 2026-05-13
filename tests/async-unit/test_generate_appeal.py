@@ -9,6 +9,8 @@ from fighthealthinsurance.generate_appeal import (
     AppealTemplateGenerator,
     _peek_real_or_none,
     _shed_context,
+    _PROMPT_TIER1_NULLS,
+    _PROMPT_TIER2_TRUNCATIONS,
     _SHEDDABLE_TIER1,
     _TIER2_TRUNCATIONS,
 )
@@ -339,6 +341,133 @@ class TestShedContext:
             [_make_call(pubmed_context=None, plan_context=None)], tier=2
         )
         assert "pubmed_context" not in changed
+
+
+# --- _shed_context prompt-rebuild tests -------------------------------------
+
+
+def _prompt_kwargs(**overrides):
+    """Build an ``open_prompt_kwargs`` shape matching make_appeals' actual
+    call to make_open_prompt. Enrichment fields default to non-empty so
+    tier-1 nulling has something to drop."""
+    base = {
+        "denial_text": "denial body",
+        "procedure": "px",
+        "diagnosis": "dx",
+        "patient": None,
+        "professional": None,
+        "qa_context": None,
+        "professional_to_finish": False,
+        "plan_id": None,
+        "claim_id": None,
+        "insurance_company": "ins",
+        "is_tpa": False,
+        "ml_context": "ml ctx",
+        "pubmed_context": "pubmed ctx",
+        "plan_context": "patient plan body",
+        "rag_context": "rag ctx",
+        "nice_context": "nice ctx",
+        "ucr_context": "ucr ctx",
+        "payer_policy_context": "payer policy ctx",
+        "pa_context": "pa ctx",
+        "uspstf_context": "uspstf ctx",
+        "medication_context": "med ctx",
+    }
+    base.update(overrides)
+    return base
+
+
+class TestShedContextPromptRebuild:
+    """Tier shedding must re-render the prompt with enrichment stripped.
+
+    Without this, pubmed/citations/rag/nice/uspstf/etc. stay baked into
+    ``open_prompt`` even after the call-dict copies are nulled, so the
+    retry token count doesn't actually drop. Regression cover for
+    PR #811 follow-up."""
+
+    def test_tier1_rebuilds_prompt_with_enrichment_nulled(self):
+        kwargs = _prompt_kwargs()
+        seen_kwargs: dict = {}
+
+        def rebuild(**rk):
+            seen_kwargs.update(rk)
+            return "REBUILT-PROMPT"
+
+        new_calls, changed = _shed_context(
+            [_make_call(prompt="ORIGINAL")],
+            tier=1,
+            open_prompt_kwargs=kwargs,
+            rebuild_prompt=rebuild,
+            original_open_prompt="ORIGINAL",
+        )
+        # Every enrichment kwarg listed in _PROMPT_TIER1_NULLS gets nulled.
+        for key in _PROMPT_TIER1_NULLS:
+            assert seen_kwargs[key] is None, f"{key} not nulled in rebuild kwargs"
+        # Non-enrichment kwargs survive.
+        assert seen_kwargs["denial_text"] == "denial body"
+        assert seen_kwargs["plan_context"] == "patient plan body"
+        # Each nulled kwarg shows up in the changed list as prompt.<name>.
+        for key in _PROMPT_TIER1_NULLS:
+            assert f"prompt.{key}" in changed
+        # Call's prompt was swapped to the rebuilt one.
+        assert new_calls[0]["prompt"] == "REBUILT-PROMPT"
+
+    def test_tier1_preserves_specialized_hint_suffix(self):
+        # Specialized calls use `open_prompt + "\n\n--- ... ---\n" + hint`.
+        # The shed pass must swap the prefix while keeping the suffix so the
+        # specialized template hint isn't lost on retry.
+        suffix = "\n\n--- Denial-type guidance ---\nMHPAEA hint"
+        new_calls, _ = _shed_context(
+            [_make_call(prompt="ORIGINAL" + suffix)],
+            tier=1,
+            open_prompt_kwargs=_prompt_kwargs(),
+            rebuild_prompt=lambda **_: "SHED",
+            original_open_prompt="ORIGINAL",
+        )
+        assert new_calls[0]["prompt"] == "SHED" + suffix
+
+    def test_tier1_leaves_unrelated_prompts_alone(self):
+        # The medically-necessary prompt is a separate string and must not
+        # be touched by the prefix swap.
+        new_calls, _ = _shed_context(
+            [_make_call(prompt="totally different med-necessary prompt")],
+            tier=1,
+            open_prompt_kwargs=_prompt_kwargs(),
+            rebuild_prompt=lambda **_: "SHED",
+            original_open_prompt="ORIGINAL",
+        )
+        assert new_calls[0]["prompt"] == "totally different med-necessary prompt"
+
+    def test_tier2_truncates_in_prompt_plan_context_via_boundary(self):
+        # Tier 2 truncates plan_context in the rebuilt prompt's kwargs as
+        # well as in the call dict. Use a value past the cap so truncation
+        # actually fires.
+        (key, cap), *_ = _PROMPT_TIER2_TRUNCATIONS
+        oversized = "para. " * (cap // 5)  # well past the cap
+        kwargs = _prompt_kwargs(**{key: oversized})
+        seen_kwargs: dict = {}
+
+        def rebuild(**rk):
+            seen_kwargs.update(rk)
+            return "OUT"
+
+        _, changed = _shed_context(
+            [_make_call(prompt="ORIGINAL")],
+            tier=2,
+            open_prompt_kwargs=kwargs,
+            rebuild_prompt=rebuild,
+            original_open_prompt="ORIGINAL",
+        )
+        assert isinstance(seen_kwargs[key], str)
+        assert len(seen_kwargs[key]) <= cap
+        assert f"prompt.{key}(truncated)" in changed
+
+    def test_omitted_rebuild_args_falls_back_to_call_dict_only(self):
+        # When the caller doesn't pass rebuild args, _shed_context is a
+        # pure call-dict shedder — same shape as the legacy tests above.
+        new_calls, changed = _shed_context([_make_call()], tier=1)
+        assert new_calls[0]["prompt"] == "Please write an appeal."  # unchanged
+        assert not any(c.startswith("prompt.") for c in changed)
 
 
 # --- make_appeals router-call-pattern tests --------------------------------
