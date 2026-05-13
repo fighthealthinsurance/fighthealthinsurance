@@ -322,11 +322,23 @@ class PayerPolicyContextTests(TestCase):
 
 class ResolveCompanyFromTextTests(TestCase):
     def setUp(self):
+        # Clear the resolver cache so a regex registered by a prior test
+        # (run inside the same 5-minute bucket) can't leak in and resolve
+        # an unrelated payer string.
+        from fighthealthinsurance.pa_requirements import _regex_candidates
+
+        _regex_candidates.cache_clear()
+
         self.aetna = InsuranceCompany.objects.create(
             name="Aetna",
             alt_names="Aetna Inc\nCVS Health Aetna",
             regex=r"aetna",
         )
+
+    def tearDown(self):
+        from fighthealthinsurance.pa_requirements import _regex_candidates
+
+        _regex_candidates.cache_clear()
 
     def test_returns_none_for_blank(self):
         self.assertIsNone(resolve_company_from_text(None))
@@ -343,6 +355,15 @@ class ResolveCompanyFromTextTests(TestCase):
 
     def test_no_match_returns_none(self):
         self.assertIsNone(resolve_company_from_text("Some Made-up Insurer"))
+
+    def test_resolves_via_regex_fallback(self):
+        # Regression after consolidating onto ``resolve_insurance_company_by_name``:
+        # a denial's free-text insurer field that misses iexact/alt-name
+        # but matches the carrier's regex must resolve, so the denying
+        # payer is correctly excluded from the comparative-evidence block.
+        # Without this, free-text variations like "Aetna of California"
+        # would leave the denying payer in the comparative section.
+        self.assertEqual(resolve_company_from_text("Aetna of California"), self.aetna)
 
 
 class FetcherIngestTests(TransactionTestCase):

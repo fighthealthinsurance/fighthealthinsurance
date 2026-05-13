@@ -552,8 +552,13 @@ def _denial_lookup(
             on_date=on_date,
         )
     except Exception as e:
+        # Return empty codes too so the caller emits no context block at all.
+        # Keeping ``codes`` here would make ``format_pa_context`` emit the
+        # "no published PA rule found in this payer's indexed list" line,
+        # which implies the DB was queried and returned nothing — but the
+        # query failed, so we don't actually know.
         logger.opt(exception=True).debug(f"PA requirement lookup failed: {e}")
-        return [], codes
+        return [], []
 
     return requirements, codes
 

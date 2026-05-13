@@ -83,6 +83,21 @@ class ColumnMappingTests(TestCase):
         mapping = _map_columns(["Claim Number", "Member ID", "Date of Service"])
         self.assertEqual(mapping, {})
 
+    def test_collapses_multiple_whitespace_runs(self):
+        # PDF-extracted headers often carry runs of 3+ spaces or interleaved
+        # tabs / newlines. The normaliser must collapse them all to a single
+        # space so the alias map still matches.
+        mapping = _map_columns(
+            [
+                "Procedure   Code",  # 3-space run
+                "Procedure\tDescription",  # tab
+                "Prior  Authorization\n  Required",  # mixed run
+            ]
+        )
+        self.assertEqual(mapping.get(0), "code")
+        self.assertEqual(mapping.get(1), "description")
+        self.assertEqual(mapping.get(2), "requires_pa")
+
 
 class RowsToRequirementsTests(TestCase):
     def _make_col_map(self):

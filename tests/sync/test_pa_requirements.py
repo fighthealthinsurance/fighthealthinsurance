@@ -476,6 +476,26 @@ class GetPaContextForDenialTests(TestCase):
         context = get_pa_context_for_denial(denial)
         self.assertIn("95810", context)
 
+    def test_returns_empty_string_when_lookup_raises(self):
+        # If the DB query itself fails, ``format_pa_context`` would otherwise
+        # emit "no published PA rule was found in this payer's indexed list"
+        # — which implies the DB was queried and returned nothing. The real
+        # state is unknown, so the context block must be suppressed entirely
+        # rather than misleading the LLM.
+        from unittest.mock import patch
+
+        denial = Denial.objects.create(
+            hashed_email="x" * 64,
+            denial_text="UnitedHealthcare denied 95810 polysomnography.",
+            insurance_company_obj=self.uhc,
+        )
+        with patch(
+            "fighthealthinsurance.pa_requirements.lookup_pa_requirements",
+            side_effect=RuntimeError("simulated DB error"),
+        ):
+            context = get_pa_context_for_denial(denial)
+        self.assertEqual(context, "")
+
 
 class MakeOpenPromptIncludesPaContextTests(TestCase):
     """Verify the appeal-generation prompt picks up pa_context."""
