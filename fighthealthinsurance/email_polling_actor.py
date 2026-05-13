@@ -1,15 +1,13 @@
 import asyncio
 import datetime
-import os
 import random
-import time
 
 from django.utils import timezone
 
 import ray
 from asgiref.sync import sync_to_async
 
-from fighthealthinsurance.utils import get_env_variable
+from fighthealthinsurance.base_refresh_actor import bootstrap_django_for_actor
 
 name = "EmailPollingActor"
 
@@ -17,16 +15,7 @@ name = "EmailPollingActor"
 @ray.remote(max_restarts=-1, max_task_retries=-1)
 class EmailPollingActor:
     def __init__(self):
-        time.sleep(1)
-
-        os.environ.setdefault(
-            "DJANGO_SETTINGS_MODULE",
-            get_env_variable("DJANGO_SETTINGS_MODULE", "fighthealthinsurance.settings"),
-        )
-
-        from configurations.wsgi import get_wsgi_application
-
-        _application = get_wsgi_application()
+        bootstrap_django_for_actor()
         from loguru import logger
 
         self._logger = logger

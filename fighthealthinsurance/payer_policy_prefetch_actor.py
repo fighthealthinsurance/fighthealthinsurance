@@ -11,11 +11,12 @@ job kick this off alongside the existing extralink pre-fetch instead of
 blocking the job on a synchronous ``asyncio.run`` over every payer index.
 """
 
-import os
 import time
 
 import ray
 from loguru import logger
+
+from fighthealthinsurance.base_refresh_actor import bootstrap_django_for_actor
 
 
 @ray.remote(max_restarts=-1, max_task_retries=-1)
@@ -33,12 +34,7 @@ class PayerPolicyPrefetchActor:
     def __init__(self):
         """Initialize the actor and Django application."""
         logger.info("Starting Payer-Policy Pre-fetch Actor")
-
-        # Initialize Django WSGI application inside the actor
-        os.environ.setdefault("DJANGO_SETTINGS_MODULE", "fighthealthinsurance.settings")
-        from configurations.wsgi import get_wsgi_application
-
-        _application = get_wsgi_application()
+        bootstrap_django_for_actor(settle_seconds=0)
 
         self.fetched = 0
         self.failed = 0

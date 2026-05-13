@@ -1,12 +1,10 @@
-import os
 import smtplib
-import time
 from typing import Optional, Tuple
 
 import ray
 from loguru import logger
 
-from fighthealthinsurance.utils import get_env_variable
+from fighthealthinsurance.base_refresh_actor import bootstrap_django_for_actor
 
 name = "MailingListActor"
 
@@ -17,16 +15,7 @@ class MailingListActor:
 
     def __init__(self) -> None:
         logger.info("Starting MailingListActor")
-        time.sleep(1)
-
-        os.environ.setdefault(
-            "DJANGO_SETTINGS_MODULE",
-            get_env_variable("DJANGO_SETTINGS_MODULE", "fighthealthinsurance.settings"),
-        )
-
-        from configurations.wsgi import get_wsgi_application
-
-        get_wsgi_application()
+        bootstrap_django_for_actor()
         logger.info("MailingListActor wsgi started")
 
     def hi(self) -> str:

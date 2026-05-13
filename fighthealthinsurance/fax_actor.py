@@ -1,5 +1,4 @@
 import asyncio
-import time
 import uuid
 from datetime import timedelta
 from typing import Tuple, Union
@@ -14,6 +13,7 @@ import ray
 
 from loguru import logger
 
+from fighthealthinsurance.base_refresh_actor import bootstrap_django_for_actor
 from fighthealthinsurance.fax_utils import *
 from fighthealthinsurance.utils import get_env_variable
 
@@ -53,15 +53,7 @@ def send_fax_status_notification(
 @ray.remote(max_restarts=-1, max_task_retries=-1)
 class FaxActor:
     def __init__(self):
-        time.sleep(1)
-        # This is a bit of a hack but we do this so we have the app configured
-        from configurations.wsgi import get_wsgi_application
-
-        os.environ.setdefault(
-            "DJANGO_SETTINGS_MODULE",
-            get_env_variable("DJANGO_SETTINGS_MODULE", "fighthealthinsurance.settings"),
-        )
-        get_wsgi_application()
+        bootstrap_django_for_actor()
         from loguru import logger
 
         self._logger = logger

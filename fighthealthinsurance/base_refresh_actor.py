@@ -15,6 +15,10 @@ attribute holding the cadence in hours) and override ``_refresh_due()``
 with the actual work. The ``@ray.remote`` decoration must be applied to
 the subclass, not this base class — Ray inheritance works when the
 parent is a plain Python class.
+
+The :func:`bootstrap_django_for_actor` helper is exported separately so
+non-refresh actors (polling actors, prefetch actors) can share the same
+Django bootstrap without inheriting the refresh-loop scaffolding.
 """
 
 from __future__ import annotations
@@ -43,6 +47,26 @@ def _now_utc() -> datetime.datetime:
     return datetime.datetime.now(datetime.timezone.utc)
 
 
+def bootstrap_django_for_actor(settle_seconds: float = 1.0) -> None:
+    """Initialize Django + WSGI inside a Ray actor process.
+
+    Ray spawns each actor in its own process; Django settings have not been
+    loaded yet there. The short pre-sleep mirrors what every existing actor
+    does — it gives Ray a moment to finish setting up the actor handle
+    before we start importing Django. Pass ``settle_seconds=0`` from
+    contexts that don't need it (e.g. unit tests).
+    """
+    if settle_seconds:
+        time.sleep(settle_seconds)
+    os.environ.setdefault(
+        "DJANGO_SETTINGS_MODULE",
+        get_env_variable("DJANGO_SETTINGS_MODULE", "fighthealthinsurance.settings"),
+    )
+    from configurations.wsgi import get_wsgi_application
+
+    get_wsgi_application()
+
+
 class BaseRefreshActor:
     """Plain-Python base for ``@ray.remote``-decorated refresh actors.
 
@@ -66,17 +90,7 @@ class BaseRefreshActor:
     error_backoff_seconds: int = ERROR_BACKOFF_SECONDS
 
     def __init__(self) -> None:
-        # The 1-second sleep mirrors the existing refresh actors — gives
-        # Ray a moment to finish setting up the actor handle before we
-        # start importing Django.
-        time.sleep(1)
-        os.environ.setdefault(
-            "DJANGO_SETTINGS_MODULE",
-            get_env_variable("DJANGO_SETTINGS_MODULE", "fighthealthinsurance.settings"),
-        )
-        from configurations.wsgi import get_wsgi_application
-
-        _application = get_wsgi_application()
+        bootstrap_django_for_actor()
         from loguru import logger
 
         self._logger = logger
