@@ -24,6 +24,7 @@ from __future__ import annotations
 import re
 import time
 from datetime import date
+from functools import lru_cache
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from django.db.models import Q
@@ -202,38 +203,46 @@ def resolve_insurance_company_by_name(
     # excluding any candidate whose ``negative_regex`` matches. Mirrors
     # the established pattern in
     # ``common_view_logic.AppealsBackendHelper._match_insurance_company``
-    # so the two resolvers stay consistent. We push the empty-regex
-    # filter to the database so Python only iterates rows that have a
-    # pattern worth running.
+    # so the two resolvers stay consistent. The candidate list itself is
+    # cached behind a 5-minute bucket (see ``_regex_candidates``) so we
+    # avoid both the full-table scan and the per-row regex re-compile on
+    # every call.
     regex_start = time.perf_counter()
     regex_scanned = 0
-    for candidate in InsuranceCompany.objects.exclude(regex="").iterator():
-        regex = getattr(candidate, "regex", None)
-        if not regex or not getattr(regex, "pattern", ""):
+    for candidate_id, regex, negative in _regex_candidates(_resolver_cache_bucket()):
+        if regex is None:
             continue
         regex_scanned += 1
         try:
             if not regex.search(payer_clean):
                 continue
-            negative = getattr(candidate, "negative_regex", None)
             if (
-                negative
-                and getattr(negative, "pattern", "")
+                negative is not None
+                and negative.pattern
                 and negative.search(payer_clean)
             ):
+                continue
+            # The cache snapshot can outlive a row that was deleted in
+            # between cache-build and now. Skip stale IDs rather than
+            # silently returning ``None`` as if it were a successful
+            # match. Bind to a fresh name so mypy doesn't compare the
+            # ``InsuranceCompany | None`` type here against the
+            # alt-name loop's ``InsuranceCompany``-typed ``candidate``.
+            resolved = InsuranceCompany.objects.filter(pk=candidate_id).first()
+            if resolved is None:
                 continue
             logger.opt(lazy=True).debug(
                 "resolve_insurance_company_by_name: regex fallback hit for "
                 "{!r} -> company id {} after {} pattern(s) in {:.1f} ms",
                 lambda p=payer_clean: p,
-                lambda c=candidate: c.id,
+                lambda c=resolved: c.id,
                 lambda n=regex_scanned: n,
                 lambda s=regex_start: (time.perf_counter() - s) * 1000,
             )
-            return candidate
+            return resolved
         except Exception as e:
             logger.opt(exception=True).debug(
-                f"Error applying regex for company {candidate.id}: {e}"
+                f"Error applying regex for company {candidate_id}: {e}"
             )
             continue
     logger.opt(lazy=True).debug(
@@ -244,6 +253,36 @@ def resolve_insurance_company_by_name(
         lambda s=regex_start: (time.perf_counter() - s) * 1000,
     )
     return None
+
+
+_RESOLVER_CACHE_TTL_SECONDS = 300
+
+
+def _resolver_cache_bucket() -> int:
+    """Coarse time bucket so admin edits become visible within ~5 minutes."""
+    return int(time.time()) // _RESOLVER_CACHE_TTL_SECONDS
+
+
+@lru_cache(maxsize=4)
+def _regex_candidates(
+    bucket: int,
+) -> Tuple[Tuple[int, "re.Pattern[str]", Optional["re.Pattern[str]"]], ...]:
+    """Return ``[(id, regex, negative_regex)]`` tuples for the resolver.
+
+    Caching the compiled regex objects per 5-minute bucket avoids both the
+    full table scan and the per-row regex recompile on every chat-tool call.
+    Admin edits become visible within one bucket-rollover.
+    """
+    del bucket  # value embedded for cache invalidation only
+    out: List[Tuple[int, "re.Pattern[str]", Optional["re.Pattern[str]"]]] = []
+    # Push the empty-regex filter to the database so we don't pull every
+    # InsuranceCompany row just to discard the ones without a pattern.
+    for candidate in InsuranceCompany.objects.exclude(regex="").iterator():
+        regex = getattr(candidate, "regex", None)
+        if not regex or not getattr(regex, "pattern", ""):
+            continue
+        out.append((candidate.id, regex, getattr(candidate, "negative_regex", None)))
+    return tuple(out)
 
 
 def infer_line_of_business(denial: Denial) -> Optional[str]:
@@ -282,6 +321,7 @@ def lookup_pa_requirements(
     line_of_business: Optional[str] = None,
     plan: Optional["InsurancePlan"] = None,
     on_date: Optional[date] = None,
+    broaden_unknown_lob: bool = False,
 ) -> List[PayerPriorAuthRequirement]:
     """
     Return ``PayerPriorAuthRequirement`` rows that match any of the given
@@ -293,7 +333,8 @@ def lookup_pa_requirements(
       * ``state`` known → match rules for that state OR national rules
         (state="").  ``state`` is None/unknown → only national rules.
       * ``line_of_business`` known → match that LOB OR rules tagged "all".
-        Unknown → only "all"-LOB rules.
+        Unknown → only "all"-LOB rules, unless ``broaden_unknown_lob=True``
+        in which case the LOB filter is dropped entirely.
       * ``plan`` known → match rules for that plan OR plan-agnostic
         (plan IS NULL).  Unknown → only plan-agnostic rules.
       * Codes match either via exact ``cpt_hcpcs_code`` or
@@ -339,8 +380,13 @@ def lookup_pa_requirements(
             Q(line_of_business=line_of_business)
             | Q(line_of_business=LineOfBusiness.ALL)
         )
-    else:
+    elif not broaden_unknown_lob:
         qs = qs.filter(line_of_business=LineOfBusiness.ALL)
+    # When broaden_unknown_lob is True and the caller couldn't infer a LOB,
+    # don't filter on it at all — surface every applicable rule and let
+    # the caller (typically the chat tool) disambiguate. The denial-driven
+    # path keeps the conservative default so PA context isn't mis-attributed
+    # in appeal-letter prompts.
 
     if plan is not None:
         qs = qs.filter(Q(plan=plan) | Q(plan__isnull=True))
@@ -492,6 +538,9 @@ def _denial_lookup(
     line_of_business = infer_line_of_business(denial)
     state = (getattr(denial, "state", "") or "").upper().strip() or None
     plan = getattr(denial, "insurance_plan_obj", None)
+    # ``Denial.denial_date`` is a real DateField; ``date_of_service`` is a
+    # free-form CharField, so we don't try to parse it here.
+    on_date = getattr(denial, "denial_date", None)
 
     try:
         requirements = lookup_pa_requirements(
@@ -500,6 +549,7 @@ def _denial_lookup(
             state=state,
             line_of_business=line_of_business,
             plan=plan,
+            on_date=on_date,
         )
     except Exception as e:
         logger.opt(exception=True).debug(f"PA requirement lookup failed: {e}")

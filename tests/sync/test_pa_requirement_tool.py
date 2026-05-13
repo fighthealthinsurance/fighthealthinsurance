@@ -149,3 +149,53 @@ class PaRequirementLookupToolTests(TestCase):
         tool = PaRequirementLookupTool(AsyncMock())
         match = tool.detect("Just a regular message about prior auth")
         self.assertIsNone(match)
+
+
+class NestedJsonAndEmptyLobTests(TestCase):
+    """Regressions for the chat tool's regex and empty-LOB handling."""
+
+    def setUp(self):
+        self.uhc = InsuranceCompany.objects.create(
+            name="UnitedHealthcare",
+            alt_names="UHC",
+            regex=r"united\s*health\s*care|uhc",
+            negative_regex=r"$^",
+        )
+        PayerPriorAuthRequirement.objects.create(
+            insurance_company=self.uhc,
+            cpt_hcpcs_code="95810",
+            line_of_business="commercial",
+            criteria_reference="UHC Sleep Medicine policy",
+        )
+
+    def test_extract_json_payload_handles_nested_filters_object(self):
+        from unittest.mock import AsyncMock
+
+        text = (
+            'lookup_pa_requirement {"codes": ["95810"], '
+            '"filters": {"lob": "commercial"}, "payer": "UHC"}'
+        )
+        # The simple regex only captures up to the first ``}`` so the
+        # raw capture group is truncated; ``extract_json_payload`` walks
+        # brace depth in the original text to recover the full payload.
+        match = re.search(LOOKUP_PA_REQUIREMENT_REGEX, text, re.DOTALL | re.IGNORECASE)
+        self.assertIsNotNone(match)
+
+        tool = PaRequirementLookupTool(AsyncMock())
+        payload = tool.extract_json_payload(match, text)
+        import json
+
+        parsed = json.loads(payload)
+        self.assertEqual(parsed["codes"], ["95810"])
+        self.assertEqual(parsed["filters"], {"lob": "commercial"})
+
+    def test_empty_lob_broadens_to_all_lobs(self):
+        # Without ``broaden_unknown_lob`` an empty LOB silently hid the
+        # commercial-tagged row. The chat tool now passes
+        # broaden_unknown_lob=True so empty/missing LOB surfaces every
+        # applicable rule.
+        block, summary = _run_lookup(
+            {"codes": ["95810"], "payer": "UHC", "line_of_business": ""}
+        )
+        self.assertIn("95810", block)
+        self.assertIn("1 PA requirement", summary)

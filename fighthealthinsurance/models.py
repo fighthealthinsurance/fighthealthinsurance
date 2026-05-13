@@ -552,6 +552,35 @@ class InsuranceCompany(models.Model):
         help_text="Short description of how this payer's medical policies are used / what they assert (e.g., medical-necessity criteria, experimental/investigational determinations).",
     )
 
+    # Prior authorization requirement list — a separate published document
+    # (often an Excel spreadsheet, PDF, or HTML table) that lists which
+    # CPT/HCPCS codes require prior authorization. Distinct from the
+    # medical-policy index above, which links to coverage-criteria PDFs.
+    pa_requirement_list_url = models.URLField(
+        blank=True,
+        help_text=(
+            "URL to the payer's published prior-authorization requirement list "
+            "(e.g., a downloadable Excel/PDF/HTML table of CPT/HCPCS codes that "
+            "require PA). Leave blank when no public list is available."
+        ),
+    )
+    pa_requirement_list_url_is_parseable = models.BooleanField(
+        default=False,
+        help_text=(
+            "True when a registered parser exists for this URL's host/format and "
+            "the document can be auto-fetched and ingested into "
+            "PayerPriorAuthRequirement rows. Set False for search portals or "
+            "documents that require interactive navigation."
+        ),
+    )
+    pa_requirement_list_notes = models.TextField(
+        blank=True,
+        help_text=(
+            "Human-readable notes about the PA requirement list: what lines of "
+            "business it covers, how often it is updated, known parsing quirks, etc."
+        ),
+    )
+
     class Meta:
         verbose_name_plural = "Insurance Companies"
         ordering = ["name"]
@@ -776,6 +805,20 @@ class PayerPriorAuthRequirement(models.Model):
     reason about the right rule at the time the service was rendered.
     """
 
+    # Columns that together identify "the same rule" — used by the
+    # ingestion fetcher to key ``update_or_create`` and (conceptually) by
+    # ``lookup_pa_requirements`` as the scoping schema. Living on the
+    # model keeps the two call sites change-once when a new scoping
+    # dimension (e.g. a clinical trial flag) is added.
+    UPSERT_KEY_FIELDS = (
+        "insurance_company",
+        "line_of_business",
+        "state",
+        "cpt_hcpcs_code",
+        "code_range_start",
+        "code_range_end",
+    )
+
     id = models.AutoField(primary_key=True)
     insurance_company = models.ForeignKey(
         InsuranceCompany,
@@ -929,6 +972,21 @@ class PayerPriorAuthRequirement(models.Model):
                 "A PA requirement must target either a single "
                 "cpt_hcpcs_code or a complete code range "
                 "(code_range_start and code_range_end)."
+            )
+        if has_range and len(start) != len(end):
+            # Lexicographic compare (used by ``covers_code`` and the lookup
+            # query) silently breaks for mixed-length endpoints — e.g.
+            # "J490" < "J0500" lexicographically even though the numeric
+            # codes 490 and 500 should sort the other way. Ranges must be
+            # same-length so the compare is consistent with code semantics.
+            raise ValidationError(
+                {
+                    "code_range_end": (
+                        f"code_range_start ({start}) and code_range_end "
+                        f"({end}) must be the same length so lexicographic "
+                        "comparison matches numeric ordering."
+                    )
+                }
             )
         if has_range and start.upper() > end.upper():
             raise ValidationError(

@@ -13,11 +13,12 @@ Example call shape the model is expected to emit::
                            "line_of_business": "commercial"}
 """
 
+import re
 from typing import Optional, Tuple
 
 from asgiref.sync import sync_to_async
 
-from .json_followup_tool import JsonFollowupTool
+from .json_followup_tool import JsonFollowupTool, extract_balanced_json
 from .patterns import LOOKUP_PA_REQUIREMENT_REGEX
 
 
@@ -26,6 +27,21 @@ class PaRequirementLookupTool(JsonFollowupTool):
 
     pattern = LOOKUP_PA_REQUIREMENT_REGEX
     name = "PA Requirement Lookup"
+
+    def extract_json_payload(self, match: re.Match[str], response_text: str) -> str:
+        """Re-extract the JSON payload with brace-depth awareness.
+
+        The shared ``LOOKUP_PA_REQUIREMENT_REGEX`` only matches up to the
+        first ``}``, so payloads with nested objects
+        (e.g. ``{"filters": {"lob": "commercial"}}``) capture as a
+        truncated string. We re-scan from the start of the match to
+        recover the full balanced ``{...}`` block. Falls back to the
+        captured group if balancing fails so behavior degrades gracefully.
+        """
+        extracted = extract_balanced_json(response_text, match.start())
+        if extracted:
+            return extracted
+        return match.group(1).strip()
 
     async def run(
         self, params: dict, *, current_message_for_llm: str = ""
@@ -107,6 +123,11 @@ def _run_lookup(params: dict) -> Tuple[str, str]:
         insurance_company=company,
         state=state,
         line_of_business=lob,
+        # Chat lookups treat an unknown LOB as "show me everything that
+        # could apply" rather than "narrow to LOB-agnostic rules only" —
+        # the LLM frequently emits ``"line_of_business": ""``, and
+        # silently hiding commercial/MA rows there was misleading.
+        broaden_unknown_lob=True,
     )
 
     block = format_pa_context(requirements, requested_codes=codes)

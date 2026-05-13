@@ -25,6 +25,50 @@ from loguru import logger
 from .base_tool import BaseTool
 
 
+def extract_balanced_json(response_text: str, start_idx: int) -> str:
+    """Return the balanced ``{...}`` block in ``response_text`` starting near ``start_idx``.
+
+    Walks forward from ``start_idx`` to the first ``{``, then advances a
+    brace-depth counter through the rest of the string until depth returns
+    to zero. Tracks string state so a ``}`` inside a JSON string literal
+    doesn't terminate early. Returns the substring covering the matched
+    block, or an empty string if balancing fails.
+
+    This is the ReDoS-safe alternative to a recursive regex: linear time
+    in the length of the JSON token, no backtracking. Used by chat tools
+    whose payloads can contain nested objects (e.g. ``"filters": {...}``).
+    """
+    # Locate the opening brace at or after start_idx.
+    open_idx = response_text.find("{", start_idx)
+    if open_idx == -1:
+        return ""
+
+    depth = 0
+    in_string = False
+    escape_next = False
+    for i in range(open_idx, len(response_text)):
+        ch = response_text[i]
+        if escape_next:
+            escape_next = False
+            continue
+        if in_string:
+            if ch == "\\":
+                escape_next = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return response_text[open_idx : i + 1]
+    return ""
+
+
 class JsonFollowupTool(BaseTool):
     """Base class for JSON-payload tools that re-invoke the LLM with a result.
 
@@ -70,6 +114,17 @@ class JsonFollowupTool(BaseTool):
         """Override to customize the prompt sent to the LLM after lookup."""
         return f"{note}\n\n -- use this when answering: {current_message_for_llm}"
 
+    def extract_json_payload(self, match: re.Match[str], response_text: str) -> str:
+        """Extract the raw JSON string the LLM emitted.
+
+        Default behavior: return ``match.group(1)`` — the regex-captured
+        JSON blob. Subclasses whose payloads may contain nested objects
+        override this and call ``extract_balanced_json`` so a simple,
+        ReDoS-safe ``{[^}]*}`` regex can still match the *start* of the
+        token while the actual extraction walks brace depth.
+        """
+        return match.group(1).strip()
+
     async def execute(
         self,
         match: re.Match[str],
@@ -92,7 +147,7 @@ class JsonFollowupTool(BaseTool):
                 "processing only the first one."
             )
 
-        json_data = match.group(1).strip()
+        json_data = self.extract_json_payload(match, response_text)
         try:
             params = json.loads(json_data)
         except json.JSONDecodeError as e:

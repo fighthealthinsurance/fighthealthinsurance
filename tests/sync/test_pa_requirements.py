@@ -654,6 +654,13 @@ class ResolveInsuranceCompanyByNameTests(TestCase):
     """
 
     def setUp(self):
+        # The resolver caches the regex-candidate list per 5-minute time
+        # bucket; tests share that bucket, so candidates registered by a
+        # previous test would otherwise leak into this one.
+        from fighthealthinsurance.pa_requirements import _regex_candidates
+
+        _regex_candidates.cache_clear()
+
         self.uhc = InsuranceCompany.objects.create(
             name="UnitedHealthcare",
             alt_names="UHC\nUnited Healthcare\nUnited Health",
@@ -674,6 +681,14 @@ class ResolveInsuranceCompanyByNameTests(TestCase):
             alt_names="",
             regex=r"",
         )
+
+    def tearDown(self):
+        # Don't let this test's InsuranceCompany rows linger in the
+        # resolver cache after teardown — they're about to be deleted
+        # from the database.
+        from fighthealthinsurance.pa_requirements import _regex_candidates
+
+        _regex_candidates.cache_clear()
 
     def test_returns_none_for_empty_input(self):
         self.assertIsNone(resolve_insurance_company_by_name(None))
@@ -811,3 +826,171 @@ class ResolveInsuranceCompanyByNameTests(TestCase):
             resolve_insurance_company_by_name("BCBS"),
             self.anthem,
         )
+
+
+class DateOfServiceFilterTests(TestCase):
+    """Regression: PA lookup must filter by denial_date, not today()."""
+
+    def setUp(self):
+        self.uhc = InsuranceCompany.objects.create(
+            name="UnitedHealthcare",
+            regex=r"united\s*health|uhc",
+            negative_regex=r"$^",
+        )
+        # Rule that only became effective in mid-2024.
+        PayerPriorAuthRequirement.objects.create(
+            insurance_company=self.uhc,
+            cpt_hcpcs_code="95810",
+            criteria_reference="Effective 2024-06-01 onwards",
+            effective_date=date(2024, 6, 1),
+        )
+
+    def test_rule_not_yet_effective_for_old_denial(self):
+        old_denial = Denial.objects.create(
+            hashed_email="x" * 64,
+            denial_text="UHC denied authorization for polysomnography (95810).",
+            denial_date=date(2024, 1, 1),
+            insurance_company_obj=self.uhc,
+        )
+        # ``format_pa_context`` still emits an "unmatched codes" note when
+        # the rule is filtered out by date — verify the rule's contents
+        # do NOT surface (no "REQUIRES" verb, no criteria-reference text).
+        context = get_pa_context_for_denial(old_denial)
+        self.assertNotIn("REQUIRES prior authorization", context)
+        self.assertNotIn("Effective 2024-06-01", context)
+
+    def test_rule_effective_for_recent_denial(self):
+        recent_denial = Denial.objects.create(
+            hashed_email="x" * 64,
+            denial_text="UHC denied authorization for polysomnography (95810).",
+            denial_date=date(2024, 9, 1),
+            insurance_company_obj=self.uhc,
+        )
+        self.assertIn("95810", get_pa_context_for_denial(recent_denial))
+
+
+class CodeRangeLengthInvariantTests(TestCase):
+    """Regression: mixed-length code ranges must be rejected."""
+
+    def setUp(self):
+        self.uhc = InsuranceCompany.objects.create(
+            name="UnitedHealthcare",
+            regex=r"united\s*health|uhc",
+            negative_regex=r"$^",
+        )
+
+    def test_mixed_length_range_rejected(self):
+        from django.core.exceptions import ValidationError
+
+        rule = PayerPriorAuthRequirement(
+            insurance_company=self.uhc,
+            code_range_start="J490",
+            code_range_end="J0500",
+        )
+        with self.assertRaises(ValidationError):
+            rule.full_clean()
+
+    def test_same_length_range_accepted(self):
+        rule = PayerPriorAuthRequirement(
+            insurance_company=self.uhc,
+            code_range_start="22510",
+            code_range_end="22515",
+        )
+        # full_clean() should succeed; covers_code uses lexicographic
+        # compare, which is correct only for same-length endpoints.
+        rule.full_clean()
+        self.assertTrue(rule.covers_code("22512"))
+
+
+class BroadenUnknownLobTests(TestCase):
+    """``broaden_unknown_lob=True`` should drop the LOB filter entirely."""
+
+    def setUp(self):
+        self.uhc = InsuranceCompany.objects.create(
+            name="UnitedHealthcare",
+            regex=r"united\s*health|uhc",
+            negative_regex=r"$^",
+        )
+        # Only commercial-tagged — would be hidden under the conservative
+        # default when LOB is unknown.
+        PayerPriorAuthRequirement.objects.create(
+            insurance_company=self.uhc,
+            cpt_hcpcs_code="95810",
+            line_of_business="commercial",
+        )
+
+    def test_unknown_lob_default_hides_lob_specific_rule(self):
+        results = lookup_pa_requirements(
+            codes=["95810"],
+            insurance_company=self.uhc,
+            line_of_business=None,
+        )
+        self.assertEqual(results, [])
+
+    def test_unknown_lob_with_broaden_surfaces_lob_specific_rule(self):
+        results = lookup_pa_requirements(
+            codes=["95810"],
+            insurance_company=self.uhc,
+            line_of_business=None,
+            broaden_unknown_lob=True,
+        )
+        self.assertEqual(len(results), 1)
+
+
+class FixtureRoundTripTests(TestCase):
+    """``loaddata pa_requirements`` should produce valid, complete rows."""
+
+    fixtures = ["plan_source", "insurance_companies", "pa_requirements"]
+
+    def test_all_loaded_rows_pass_full_clean(self):
+        rows = list(PayerPriorAuthRequirement.objects.all())
+        self.assertGreater(len(rows), 0)
+        for row in rows:
+            row.full_clean()
+
+    def test_every_pa_category_has_registered_questions(self):
+        from fighthealthinsurance.pa_requirements import _PA_CATEGORY_QUESTIONS
+
+        categories = set(
+            PayerPriorAuthRequirement.objects.exclude(pa_category="")
+            .values_list("pa_category", flat=True)
+            .distinct()
+        )
+        missing = categories - set(_PA_CATEGORY_QUESTIONS)
+        self.assertFalse(
+            missing,
+            f"Fixture introduces pa_category values without registered "
+            f"clarifying questions in _PA_CATEGORY_QUESTIONS: {missing}",
+        )
+
+
+class ResolverCacheTests(TestCase):
+    """Regex-resolver candidates should come from the cached helper."""
+
+    def setUp(self):
+        from fighthealthinsurance.pa_requirements import _regex_candidates
+
+        _regex_candidates.cache_clear()
+
+    def tearDown(self):
+        from fighthealthinsurance.pa_requirements import _regex_candidates
+
+        _regex_candidates.cache_clear()
+
+    def test_cache_returns_compiled_regex_tuples(self):
+        from fighthealthinsurance.pa_requirements import (
+            _regex_candidates,
+            _resolver_cache_bucket,
+        )
+
+        InsuranceCompany.objects.create(
+            name="Cached Co",
+            regex=r"cached\s*co",
+            negative_regex=r"$^",
+        )
+
+        bucket = _resolver_cache_bucket()
+        first = _regex_candidates(bucket)
+        second = _regex_candidates(bucket)
+        self.assertIs(first, second)  # cached, same identity
+        self.assertTrue(any(getattr(r, "search", None) for _, r, _ in first))
