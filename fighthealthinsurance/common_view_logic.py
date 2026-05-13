@@ -52,6 +52,7 @@ from fhi_users import emails as fhi_emails
 from fhi_users.audit import TrackingInfo
 from fhi_users.models import ProfessionalUser, UserDomain
 from fighthealthinsurance import stripe_utils
+from fighthealthinsurance.context_barrier import with_warm_cache
 from fighthealthinsurance.context_utils import attach_supplemental_to_citations
 from fighthealthinsurance.denial_context import merge_plan_context, merge_qa
 from fighthealthinsurance.denials.algorithmic_review_detector import (
@@ -2863,21 +2864,53 @@ class AppealsBackendHelper:
                     )
                     return None
 
-            pubmed_context_awaitable = tracked_awaitable(
-                asyncio.wait_for(cls.pmt.find_context_for_denial(denial), timeout=40),
-                substep="pubmed",
-                done_msg="PubMed search complete",
+            # Brief bounded wait for any in-flight fire-and-forget PubMed /
+            # citation tasks (launched during entity extraction) before
+            # falling through to the inline 40s fetch.  Keeps first-attempt
+            # appeals from being under-contextualized when the background
+            # cache warmer is almost done, while still capping the wait so
+            # we never block forever.  Tunable via settings.
+            from django.conf import settings as django_settings
+
+            barrier_timeout = float(
+                getattr(django_settings, "FHI_CONTEXT_BARRIER_TIMEOUT_S", 10)
             )
 
-            ml_citation_context_awaitable = tracked_awaitable(
-                asyncio.wait_for(
-                    MLCitationsHelper.generate_citations_for_denial(
-                        denial, speculative=False
+            pubmed_context_awaitable = with_warm_cache(
+                denial_id=denial_id,
+                field_name="pubmed_context",
+                barrier_timeout=barrier_timeout,
+                poll_interval=0.5,
+                status_queue=status_queue,
+                substep="pubmed",
+                ready_msg="Background PubMed search ready",
+                fallback_factory=lambda: tracked_awaitable(
+                    asyncio.wait_for(
+                        cls.pmt.find_context_for_denial(denial), timeout=40
                     ),
-                    timeout=40,
+                    substep="pubmed",
+                    done_msg="PubMed search complete",
                 ),
+            )
+
+            ml_citation_context_awaitable = with_warm_cache(
+                denial_id=denial_id,
+                field_name="ml_citation_context",
+                barrier_timeout=barrier_timeout,
+                poll_interval=0.5,
+                status_queue=status_queue,
                 substep="citations",
-                done_msg="Citations generated",
+                ready_msg="Background citations ready",
+                fallback_factory=lambda: tracked_awaitable(
+                    asyncio.wait_for(
+                        MLCitationsHelper.generate_citations_for_denial(
+                            denial, speculative=False
+                        ),
+                        timeout=40,
+                    ),
+                    substep="citations",
+                    done_msg="Citations generated",
+                ),
             )
 
             # Extract procedure (CPT + HCPCS) and ICD-10 codes from the
