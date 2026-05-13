@@ -323,7 +323,11 @@ class EscalationPacketViewTest(TestCase):
 
 
 def _collect_stream(parameters: dict):
-    """Drive the async generator to completion and return parsed JSON records."""
+    """Drive the async generator to completion and return parsed JSON records.
+
+    Fails the caller's test if any chunk is non-empty but not valid JSON —
+    we never want a malformed stream record to be silently dropped.
+    """
 
     async def _consume():
         results = []
@@ -333,10 +337,7 @@ def _collect_stream(parameters: dict):
             line = chunk.strip()
             if not line:
                 continue
-            try:
-                results.append(json.loads(line))
-            except json.JSONDecodeError:
-                pass
+            results.append(json.loads(line))
         return results
 
     return async_to_sync(_consume)()
