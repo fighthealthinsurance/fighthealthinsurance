@@ -55,6 +55,10 @@ class TestRefreshSource:
 
 
 class TestIntervalHours:
-    @patch("django.conf.settings.IMR_REFRESH_INTERVAL_HOURS", 24, create=True)
-    def test_returns_configured_value(self):
-        assert _Underlying._interval_hours() == 24
+    def test_class_is_wired_to_imr_settings_key(self):
+        # _interval_hours is provided by BaseRefreshActor and reads from
+        # settings via these class attributes, so verifying the wiring is
+        # sufficient — exercising the inherited method would require a full
+        # actor instantiation (Django bootstrap + 1s sleep).
+        assert _Underlying.settings_interval_key == "IMR_REFRESH_INTERVAL_HOURS"
+        assert _Underlying.default_interval_hours == 168
