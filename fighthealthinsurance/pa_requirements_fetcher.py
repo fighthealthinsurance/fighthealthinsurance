@@ -256,18 +256,18 @@ class PaRequirementsFetcher:
             if lob not in valid_lobs:
                 lob = LineOfBusiness.ALL
 
-            key: Dict[str, Any] = {
-                "insurance_company": company,
-                "line_of_business": lob,
-                "state": (req.state or "")[:2].upper(),
-                "cpt_hcpcs_code": code,
-                "code_range_start": range_start,
-                "code_range_end": range_end,
-            }
+            state = (req.state or "")[:2].upper()
 
             # Skip if a manually-curated row already owns this key.
             manual_row_exists = (
-                PayerPriorAuthRequirement.objects.filter(**key)
+                PayerPriorAuthRequirement.objects.filter(
+                    insurance_company=company,
+                    line_of_business=lob,
+                    state=state,
+                    cpt_hcpcs_code=code,
+                    code_range_start=range_start,
+                    code_range_end=range_end,
+                )
                 .exclude(source_document__startswith=AUTO_SOURCE_PREFIX)
                 .exists()
             )
@@ -288,7 +288,13 @@ class PaRequirementsFetcher:
                 "end_date": None,
             }
             obj, _ = PayerPriorAuthRequirement.objects.update_or_create(
-                **key, defaults=defaults
+                insurance_company=company,
+                line_of_business=lob,
+                state=state,
+                cpt_hcpcs_code=code,
+                code_range_start=range_start,
+                code_range_end=range_end,
+                defaults=defaults,
             )
             seen.append(obj.pk)
         return seen, len(seen)
