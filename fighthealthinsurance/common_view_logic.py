@@ -53,6 +53,7 @@ from fhi_users.audit import TrackingInfo
 from fhi_users.models import ProfessionalUser, UserDomain
 from fighthealthinsurance import stripe_utils
 from fighthealthinsurance.context_utils import attach_supplemental_to_citations
+from fighthealthinsurance.denial_context import merge_plan_context, merge_qa
 from fighthealthinsurance.denials.algorithmic_review_detector import (
     detect_algorithmic_review_terms,
     render_template_blocks,
@@ -2652,15 +2653,17 @@ class AppealsBackendHelper:
                     if dt.appeal_text is not None:
                         main.append(dt.appeal_text)
 
-        # Add the context to the denial
-        if medical_context is not None:
-            qa_context = {}
-            if denial.qa_context is not None:
-                qa_context = json.loads(denial.qa_context)
-            qa_context["medical_context"] = " ".join(medical_context)
-            denial.qa_context = json.dumps(qa_context)
-        if plan_context is not None and denial.plan_context is None:
-            denial.plan_context = " ".join(set(plan_context))
+        # Add the context to the denial — merge, never overwrite. Previously
+        # this rebuilt qa_context with json.dumps and gated plan_context on
+        # `is None`, dropping any plan info on subsequent calls.
+        if medical_context:
+            merge_qa(
+                denial,
+                {"medical_context": " ".join(medical_context)},
+                source="appeal_gen_form",
+            )
+        if plan_context:
+            merge_plan_context(denial, plan_context)
         # Update the denial object with the received parameter if it differs
         if denial.professional_to_finish != professional_to_finish:
             logger.info(
