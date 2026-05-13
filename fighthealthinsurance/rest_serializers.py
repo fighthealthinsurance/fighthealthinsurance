@@ -805,6 +805,14 @@ class ExtractPatientFieldsResponseSerializer(serializers.Serializer):
     insurance_company = serializers.CharField(
         required=False, allow_blank=True, default=""
     )
+    # Per-field confidence notes, e.g. {"patient_name": "high", "dob": "low"}.
+    # The dict has one entry per expected field; the choices enforce that
+    # only "high" | "medium" | "low" can leak to clients.
+    confidence_notes = serializers.DictField(
+        child=serializers.ChoiceField(choices=["high", "medium", "low"]),
+        required=False,
+        default=dict,
+    )
 
 
 # Chooser Serializers

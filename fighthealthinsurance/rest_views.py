@@ -1714,6 +1714,25 @@ class PriorAuthViewSet(viewsets.ViewSet, SerializerMixin):
         try:
             extracted_fields = async_to_sync(extract_fields)()
 
+            # Compute confidence notes BEFORE parsing the DOB so the raw
+            # string the LLM emitted can be checked against the source text.
+            # Always emit a note per expected field (defaulting to "low" when
+            # the extractor returned nothing) so callers never have to
+            # special-case missing keys.
+            from fighthealthinsurance.field_confidence import score_extracted_field
+
+            expected_fields = (
+                "patient_name",
+                "member_id",
+                "dob",
+                "plan_id",
+                "insurance_company",
+            )
+            confidence_notes = {
+                field: score_extracted_field(field, extracted_fields.get(field), text)
+                for field in expected_fields
+            }
+
             # Process date of birth if present
             if "dob" in extracted_fields:
                 try:
@@ -1726,6 +1745,8 @@ class PriorAuthViewSet(viewsets.ViewSet, SerializerMixin):
                 except Exception as e:
                     logger.error(f"Error parsing date of birth: {e}")
                     # Keep the original string if date parsing fails
+
+            extracted_fields["confidence_notes"] = confidence_notes
 
             # Create a response serializer to validate the data
             response_serializer = serializers.ExtractPatientFieldsResponseSerializer(

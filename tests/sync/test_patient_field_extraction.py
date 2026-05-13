@@ -122,6 +122,21 @@ class PatientFieldExtractionTest(APITestCase):
         # Check for ISO format or the format defined in Django's settings
         self.assertTrue(isinstance(patient_fields["dob"], str))
 
+        # Each extracted field must carry a confidence note so the UI can
+        # surface uncertainty rather than silently prefilling values.
+        self.assertIn("confidence_notes", patient_fields)
+        for field in (
+            "patient_name",
+            "member_id",
+            "dob",
+            "plan_id",
+            "insurance_company",
+        ):
+            self.assertIn(field, patient_fields["confidence_notes"])
+            self.assertIn(
+                patient_fields["confidence_notes"][field], {"high", "medium", "low"}
+            )
+
         # Verify the model was called with expected parameters
         mock_extract_backends.assert_called_once_with(use_external=False)
 
