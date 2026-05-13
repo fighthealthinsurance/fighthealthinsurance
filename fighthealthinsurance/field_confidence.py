@@ -145,6 +145,45 @@ def _score_insurance_company(value: str, source_text: str) -> str:
     return "medium"
 
 
+# Phrases that historically signaled junk extraction in the appeal
+# generator — the model dropped these silently with no log line. Keeping
+# the list module-level so tests can reference it.
+_JUNK_FREETEXT_PHRASES = ("independent medical review",)
+_JUNK_FREETEXT_EXACT = {"false"}
+_JUNK_FREETEXT_CONTAINS = ("unknown",)
+
+
+def score_freetext_extraction(value: Optional[str], source_text: str) -> str:
+    """Score a free-text extraction (procedure, diagnosis, similar) for
+    inclusion in the appeal prompt.
+
+    Returns ``"low"`` for empty values and the historical junk filters
+    (``"unknown"`` substring, exact ``"false"``, ``"independent medical
+    review"`` substring) so callers can ``logger.info`` the drop and skip
+    it.  ``"high"`` requires the value to appear verbatim in
+    ``source_text``; otherwise ``"medium"``.
+
+    Source ``generate_appeal.attempt_model`` used to drop low-confidence
+    extractions silently; the score keeps the same rejection set but lets
+    the caller decide what to log.
+    """
+    if not value:
+        return "low"
+    cleaned = value.strip()
+    if not cleaned:
+        return "low"
+    lowered = cleaned.lower()
+    if lowered in _JUNK_FREETEXT_EXACT:
+        return "low"
+    if any(phrase in lowered for phrase in _JUNK_FREETEXT_PHRASES):
+        return "low"
+    if any(token in lowered for token in _JUNK_FREETEXT_CONTAINS):
+        return "low"
+    if _appears_in_source(cleaned, source_text):
+        return "high"
+    return "medium"
+
+
 def score_extracted_field(field_name: str, value, source_text: str) -> str:
     """Return a ``"high"``/``"medium"``/``"low"`` confidence label.
 

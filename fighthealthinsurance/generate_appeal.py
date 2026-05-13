@@ -846,6 +846,12 @@ class AppealGenerator(object):
 
         denial_lowered = denial_text.lower()
 
+        # Local import avoids the generate_appeal <-> field_confidence
+        # circular dependency at module load time.
+        from fighthealthinsurance.field_confidence import (
+            score_freetext_extraction,
+        )
+
         async def attempt_model(model: DenialBase) -> Optional[str]:
             method = getattr(model, model_method_name)
             # Retry up to 3 times gently
@@ -860,16 +866,18 @@ class AppealGenerator(object):
                 if extracted is None:
                     await asyncio.sleep(1)
                     continue
-                lowered = extracted.lower().strip()
-                # Filter junky values
-                if (
-                    not lowered
-                    or "unknown" in lowered
-                    or lowered == "false"
-                    or "independent medical review" in lowered
-                ):
+                score = score_freetext_extraction(extracted, denial_text)
+                if score == "low":
+                    # Previously dropped silently. Log at INFO so the
+                    # rejection is traceable for triage.
+                    logger.info(
+                        f"Dropped low-confidence extraction: "
+                        f"method={model_method_name} model={type(model).__name__} "
+                        f"value={extracted!r}"
+                    )
                     await asyncio.sleep(1)
                     continue
+                lowered = extracted.lower().strip()
                 if find_in_denial and lowered not in denial_lowered:
                     # Require presence in original text unless flag disabled
                     await asyncio.sleep(1)
