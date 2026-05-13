@@ -218,24 +218,14 @@ class PubMedTools(object):
         per_source_timeout: float = 10.0,
     ) -> Optional[str]:
         """Try multiple sources in order to find a PDF/full-text URL for an article."""
-        owns_session = session is None
-        if owns_session:
-            session = aiohttp.ClientSession(headers=_FETCH_HEADERS)
-        assert session is not None
-
-        try:
-            for name, make_coro in self._url_sources(
-                pmid, doi, session, per_source_timeout
-            ):
+        async with _ensure_session(session) as s:
+            for name, make_coro in self._url_sources(pmid, doi, s, per_source_timeout):
                 url: Optional[str] = await make_coro()
                 if url:
                     logger.debug(f"[{pmid}] Found URL via {name}: {url}")
                     return url
-            logger.debug(f"[{pmid}] No PDF URL found from any source")
-            return None
-        finally:
-            if owns_session and session:
-                await session.close()
+        logger.debug(f"[{pmid}] No PDF URL found from any source")
+        return None
 
     async def _try_findit(self, pmid: str, timeout_secs: float) -> Optional[str]:
         """Try metapub's FindIt to locate article URL."""
@@ -342,7 +332,7 @@ class PubMedTools(object):
         last = results[-1]
         if endpoint == "details":
             jatsxml = last.get("jatsxml")
-            if jatsxml:
+            if jatsxml and ".source.xml" in str(jatsxml):
                 return str(jatsxml).replace(".source.xml", ".full.pdf")
             doi_val = last.get("doi") or ""
         else:
