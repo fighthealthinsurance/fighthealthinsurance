@@ -218,7 +218,7 @@ def resolve_insurance_company_by_name(
                 continue
             if (
                 negative is not None
-                and getattr(negative, "pattern", "")
+                and negative.pattern
                 and negative.search(payer_clean)
             ):
                 continue
