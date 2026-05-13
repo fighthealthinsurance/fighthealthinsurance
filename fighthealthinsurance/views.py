@@ -1554,20 +1554,7 @@ class InitialProcessView(generic.FormView):
             }
             if len(name) > 2:
                 defaults["name"] = name
-            # Use get_or_create to avoid duplicate subscriptions
-            try:
-                models.MailingListSubscriber.objects.get_or_create(
-                    email=email,
-                    defaults=defaults,
-                )
-            except Exception as e:
-                logger.debug(f"Error subscribing {email} to mailing list: {e}")
-                try:
-                    models.MailingListSubscriber.objects.filter(email=email).update(
-                        **defaults
-                    )
-                except Exception as e2:
-                    logger.warning(f"Error updating subscriber? {email}!?!")
+            models.MailingListSubscriber.safe_subscribe(email, **defaults)
 
         # Get microsite slug from request if available and validate it
         microsite_slug = self.request.POST.get(

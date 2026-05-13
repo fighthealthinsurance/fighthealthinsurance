@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.contrib.auth.tokens import default_token_generator
 from django.contrib.sites.shortcuts import get_current_site
 from typing import TYPE_CHECKING, Optional
@@ -13,6 +14,14 @@ if TYPE_CHECKING:
     from django.contrib.auth.models import User
 
 
+def _frontend_url(path: str, params: Optional[dict] = None) -> str:
+    """Build a URL on the Fight Paperwork frontend, honoring the configured domain."""
+    base = f"https://{settings.FIGHT_PAPERWORK_DOMAIN}{path}"
+    if params:
+        return f"{base}?{urlencode(params)}"
+    return base
+
+
 def send_provider_started_appeal_email(patient_email, context):
     """Send email for provider started appeal."""
     send_fallback_email(
@@ -26,10 +35,7 @@ def send_provider_started_appeal_email(patient_email, context):
 def send_password_reset_email(user_email: str, token: str) -> None:
     """Send password reset email with secure URL construction."""
     subject = "Reset your password"
-    params = urlencode({"token": token})
-    reset_link = (
-        f"https://www.fightpaperwork.com/auth/reset-password/new-password?{params}"
-    )
+    reset_link = _frontend_url("/auth/reset-password/new-password", {"token": token})
     send_fallback_email(
         subject,
         "password_reset",
@@ -84,8 +90,10 @@ def send_verification_email(request, user: "User", first_only: bool = False) -> 
     mail_subject = "Activate your account."
     verification_token = default_token_generator.make_token(user)
     VerificationToken.objects.create(user=user, token=verification_token)
-    params = urlencode({"token": verification_token, "uid": user.pk})
-    activation_link = f"https://www.fightpaperwork.com/activate-account/?{params}"
+    activation_link = _frontend_url(
+        "/activate-account/",
+        {"token": verification_token, "uid": user.pk},
+    )
     send_fallback_email(
         mail_subject,
         "acc_active_email",

@@ -40,6 +40,7 @@ from fighthealthinsurance.serializers.common import (
 
 # Import common field types from serializers package
 from fighthealthinsurance.serializers.fields import (
+    DenialIdField,
     DenialTypesListField,
     DenialTypesSerializer,
     DictionaryListField,
@@ -57,12 +58,7 @@ class ChooseAppealRequestSerializer(serializers.Serializer):
 
     generated_appeal_text = serializers.CharField()
     editted_appeal_text = serializers.CharField()
-    denial_id = serializers.CharField()
-
-    def validate_denial_id(self, value: str) -> str:
-        if not is_valid_denial_id(value):
-            raise serializers.ValidationError("Invalid denial_id format")
-        return value
+    denial_id = DenialIdField()
 
 
 class DenialResponseInfoSerializer(serializers.Serializer):
@@ -70,7 +66,7 @@ class DenialResponseInfoSerializer(serializers.Serializer):
 
     selected_denial_type = DenialTypesListField()
     all_denial_types = DenialTypesListField()
-    denial_id = serializers.CharField()
+    denial_id = DenialIdField()
     appeal_id = serializers.IntegerField(required=False)
     your_state = serializers.CharField(required=False)
     procedure = serializers.CharField()
@@ -78,11 +74,6 @@ class DenialResponseInfoSerializer(serializers.Serializer):
     semi_sekret = serializers.CharField()
     fax_number = serializers.CharField(required=False)
     date_of_service = serializers.CharField(required=False)
-
-    def validate_denial_id(self, value: str) -> str:
-        if not is_valid_denial_id(value):
-            raise serializers.ValidationError("Invalid denial_id format in response")
-        return value
 
     plan_id = serializers.CharField(required=False)
     claim_id = serializers.CharField(required=False)
@@ -144,13 +135,8 @@ class FollowUpFormSerializer(FormSerializer):
 class QAResponsesSerializer(serializers.Serializer):
     """Serializer for question-and-answer responses related to a denial."""
 
-    denial_id = serializers.CharField()
+    denial_id = DenialIdField()
     qa = serializers.DictField(child=serializers.CharField())
-
-    def validate_denial_id(self, value: str) -> str:
-        if not is_valid_denial_id(value):
-            raise serializers.ValidationError("Invalid denial_id format")
-        return value
 
 
 # Model serializers
