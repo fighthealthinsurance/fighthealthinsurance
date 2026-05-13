@@ -2277,6 +2277,27 @@ class DenialCreatorHelper:
         return r
 
 
+async def _refresh_sync_denial_context(
+    denial: Any,
+    getter: typing.Callable[[Any], Optional[str]],
+    label: str,
+) -> Optional[str]:
+    """Re-run a synchronous denial-context getter off the event loop.
+
+    Used by the appeal-generation gather block's fallback and retry paths to
+    re-fetch cheap ORM-only context (PA rules, USPSTF preventive recs) that
+    isn't persisted on the denial. Empty strings collapse to ``None`` so the
+    downstream "has citations?" checks in ``make_open_prompt`` treat absent
+    and empty results the same way. Exceptions are swallowed to debug-level
+    logs so a transient DB error here can't abort the appeal pipeline.
+    """
+    try:
+        return await sync_to_async(getter)(denial) or None
+    except Exception as e:
+        logger.opt(exception=True).debug(f"{label} context refresh failed: {e}")
+        return None
+
+
 class AppealsBackendHelper:
     regex_denial_processor = ProcessDenialRegex()
     pmt = PubMedTools()
@@ -2914,73 +2935,43 @@ class AppealsBackendHelper:
                 ml_citation_context = denial.ml_citation_context
                 nice_context = denial.nice_context
                 # RAG context is not persisted, so we don't try to retrieve it.
-                # PA context isn't persisted either; re-run the cheap ORM query
-                # so retries don't silently lose payer rules.
-                try:
-                    from fighthealthinsurance.pa_requirements import (
-                        get_pa_context_for_denial,
-                    )
+                # PA and USPSTF contexts aren't persisted either; re-run the
+                # cheap ORM queries so retries don't silently lose payer rules
+                # or preventive-services recommendations.
+                from fighthealthinsurance.pa_requirements import (
+                    get_pa_context_for_denial,
+                )
+                from fighthealthinsurance.uspstf_api import (
+                    get_uspstf_context_for_denial,
+                )
 
-                    pa_context = (
-                        await sync_to_async(get_pa_context_for_denial)(denial) or None
-                    )
-                except Exception as inner:
-                    logger.opt(exception=True).debug(
-                        f"PA context refresh during fallback failed: {inner}"
-                    )
-                    pa_context = None
-                # USPSTF context isn't persisted; re-run the cheap ORM query so
-                # retries don't drop preventive-services recommendations either.
-                try:
-                    from fighthealthinsurance.uspstf_api import (
-                        get_uspstf_context_for_denial,
-                    )
-
-                    uspstf_context = (
-                        await sync_to_async(get_uspstf_context_for_denial)(denial)
-                        or None
-                    )
-                except Exception as inner:
-                    logger.opt(exception=True).debug(
-                        f"USPSTF context refresh during fallback failed: {inner}"
-                    )
-                    uspstf_context = None
+                pa_context = await _refresh_sync_denial_context(
+                    denial, get_pa_context_for_denial, "PA"
+                )
+                uspstf_context = await _refresh_sync_denial_context(
+                    denial, get_uspstf_context_for_denial, "USPSTF"
+                )
                 logger.debug("Used saved contexts")
         else:
             logger.debug("Too many retries, skipping ML/pubmed/RAG ctx")
             # Reuse the persisted NICE context; otherwise it'd be dropped on
             # the very retry path that's supposed to use previous results.
             nice_context = denial.nice_context
-            # PA-requirement lookup is a cheap ORM query, not an external
-            # API call, so re-run it on retries instead of dropping it.
-            try:
-                from fighthealthinsurance.pa_requirements import (
-                    get_pa_context_for_denial,
-                )
+            # PA and USPSTF lookups are cheap ORM queries against cached
+            # tables, so re-run them on retries instead of dropping them.
+            from fighthealthinsurance.pa_requirements import (
+                get_pa_context_for_denial,
+            )
+            from fighthealthinsurance.uspstf_api import (
+                get_uspstf_context_for_denial,
+            )
 
-                pa_context = (
-                    await sync_to_async(get_pa_context_for_denial)(denial) or None
-                )
-            except Exception as e:
-                logger.opt(exception=True).debug(
-                    f"PA context refresh on retry failed: {e}"
-                )
-                pa_context = None
-            # USPSTF lookup is the same shape — cheap ORM against the cached
-            # recommendation table — so re-run it on retries too.
-            try:
-                from fighthealthinsurance.uspstf_api import (
-                    get_uspstf_context_for_denial,
-                )
-
-                uspstf_context = (
-                    await sync_to_async(get_uspstf_context_for_denial)(denial) or None
-                )
-            except Exception as e:
-                logger.opt(exception=True).debug(
-                    f"USPSTF context refresh on retry failed: {e}"
-                )
-                uspstf_context = None
+            pa_context = await _refresh_sync_denial_context(
+                denial, get_pa_context_for_denial, "PA"
+            )
+            uspstf_context = await _refresh_sync_denial_context(
+                denial, get_uspstf_context_for_denial, "USPSTF"
+            )
             yield json.dumps(
                 {
                     "type": "status",

@@ -189,6 +189,13 @@ class FindRecommendationsForCodesTests(TestCase):
         """A/B-only is the default — C-graded matches should be excluded."""
         from fighthealthinsurance.models import USPSTFRecommendation
 
+        # Seed the bundled fallback first so the cache contains an A-graded
+        # colorectal record. Without this, ``_ensure_cache_loaded`` would
+        # no-op once the C-grade row below is inserted, leaving the cache
+        # with only a C-grade record — the A/B filter would then return an
+        # empty list and the per-row grade assertion would pass vacuously.
+        search_recommendations(limit=1)
+
         # Inject a C-graded record whose topic would match a colorectal lookup.
         USPSTFRecommendation.objects.update_or_create(
             uspstf_id="test-c-grade-colorectal",
@@ -201,6 +208,12 @@ class FindRecommendationsForCodesTests(TestCase):
             },
         )
         recs = find_recommendations_for_codes(["Z12.11"], limit=10)
+        self.assertGreater(
+            len(recs),
+            0,
+            "Expected at least one A/B-graded match so the grade assertion "
+            "below is not vacuous.",
+        )
         self.assertNotIn("test-c-grade-colorectal", [r["id"] for r in recs])
         for rec in recs:
             self.assertIn(rec["grade"], ("A", "B"))
