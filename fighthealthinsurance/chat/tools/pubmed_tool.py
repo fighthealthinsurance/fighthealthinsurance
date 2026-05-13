@@ -150,18 +150,11 @@ class PubMedTool(BaseTool):
                 is_professional=is_professional,
             )
 
-            if cleaned_response and additional_response:
-                cleaned_response += additional_response
-            elif additional_response:
-                cleaned_response = additional_response
-
-            if context and additional_context:
-                context = context + additional_context
-            elif additional_context:
-                context = additional_context
+            cleaned_response = self.merge_strings(cleaned_response, additional_response)
+            context = self.merge_strings(context, additional_context)
 
         # Append PubMed context
-        updated_context = context + pubmed_context if context else pubmed_context
+        updated_context = self.merge_strings(context, pubmed_context)
 
         return cleaned_response, updated_context
 
