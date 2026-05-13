@@ -21,7 +21,7 @@ from .payer_policy_helper import (
 )
 from .process_denial import ProcessDenialRegex
 from .pubmed_tools import PubMedTools
-from .utils import as_available_nested, best_within_timelimit
+from .utils import as_available_nested, best_within_timelimit, is_real_appeal
 
 
 class AppealTemplateGenerator(object):
@@ -680,6 +680,24 @@ def _peek_or_none(it: Iterator[str]) -> Tuple[Optional[str], Iterator[str]]:
         return first, itertools.chain([first], it)
     except StopIteration:
         return None, iter([])
+
+
+def _peek_real_or_none(
+    it: Iterator[str], denial_id: Any, stage: str
+) -> Tuple[Optional[str], Iterator[str]]:
+    """Like _peek_or_none, but returns (None, _) when the first item is
+    non-None but fails is_real_appeal. Without this, a runt first item
+    would suppress the fallback path even though downstream filtering
+    drops it — leading to zero deliverable appeals."""
+    first, it = _peek_or_none(it)
+    if first is not None and not is_real_appeal(first):
+        first_len = len(first.strip()) if isinstance(first, str) else 0
+        logger.warning(
+            f"make_appeals: {stage} first item is a runt (len={first_len}) "
+            f"for denial {denial_id}; treating as empty to trigger fallback"
+        )
+        return None, it
+    return first, it
 
 
 class AppealGenerator(object):
@@ -1954,7 +1972,7 @@ class AppealGenerator(object):
         denial_id = denial.denial_id
         use_ext = denial.use_external
         appeals = as_available_nested(generated_text_futures)
-        first, appeals = _peek_or_none(appeals)
+        first, appeals = _peek_real_or_none(appeals, denial_id, "primary")
 
         if first is None and backup_calls:
             logger.warning(
@@ -1962,7 +1980,7 @@ class AppealGenerator(object):
                 f"(n={len(backup_calls)}, use_external={use_ext})"
             )
             appeals = as_available_nested(make_async_model_calls(backup_calls))
-            first, appeals = _peek_or_none(appeals)
+            first, appeals = _peek_real_or_none(appeals, denial_id, "backup")
 
         if first is None:
             ext_note = (
@@ -1983,7 +2001,9 @@ class AppealGenerator(object):
                     f"with context shed (tier={tier}, changed={changed})"
                 )
                 appeals = as_available_nested(make_async_model_calls(shed_calls))
-                first, appeals = _peek_or_none(appeals)
+                first, appeals = _peek_real_or_none(
+                    appeals, denial_id, f"retry_tier_{tier}"
+                )
                 if first is not None:
                     logger.warning(
                         f"make_appeals: tier {tier} retry succeeded for "

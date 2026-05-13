@@ -35,6 +35,17 @@ from django.conf import settings
 from django.core.mail import EmailMultiAlternatives
 from django.template.loader import render_to_string
 
+# Shared by the generation-side filter (drop runt outputs before save) and
+# the streaming-side counter (so generation rejection and delivery counting
+# agree). Also used by make_appeals to decide when to trigger the fallback
+# path — a runt first item means the user gets nothing, so fall back.
+MIN_APPEAL_CHARS = 10
+
+
+def is_real_appeal(x: Optional[str]) -> bool:
+    return isinstance(x, str) and len(x.strip()) > MIN_APPEAL_CHARS
+
+
 import asyncstdlib
 import requests
 from loguru import logger

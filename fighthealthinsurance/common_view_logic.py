@@ -65,6 +65,8 @@ from fighthealthinsurance.rag_client import get_rag_context_for_denial
 from fighthealthinsurance.utils import (
     extract_file_text,
     interleave_iterator_for_keep_alive,
+    is_real_appeal,
+    MIN_APPEAL_CHARS,
     sync_iterator_to_async,
 )
 from .pubmed_tools import PubMedTools
@@ -116,15 +118,6 @@ states_with_caps = {
     "VI",
     "WV",
 }
-
-
-# Shared by the generation-side filter and the streaming-side counter so
-# they agree on what counts as a real (deliverable) appeal.
-MIN_APPEAL_CHARS = 10
-
-
-def _is_real_appeal(x: Optional[str]) -> bool:
-    return isinstance(x, str) and len(x.strip()) > MIN_APPEAL_CHARS
 
 
 @dataclass
@@ -2981,7 +2974,7 @@ class AppealsBackendHelper:
 
         def keep(x: Optional[str]) -> bool:
             nonlocal runts
-            if _is_real_appeal(x):
+            if is_real_appeal(x):
                 return True
             if isinstance(x, str) and x.strip():
                 runts += 1

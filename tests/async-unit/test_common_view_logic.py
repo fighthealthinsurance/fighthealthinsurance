@@ -9,9 +9,8 @@ from fighthealthinsurance.common_view_logic import (
     AppealsBackendHelper,
     NextStepInfo,
     DenialCreatorHelper,
-    MIN_APPEAL_CHARS,
-    _is_real_appeal,
 )
+from fighthealthinsurance.utils import MIN_APPEAL_CHARS, is_real_appeal
 from fighthealthinsurance.helpers import SendFaxHelper, RemoveDataHelper
 from fighthealthinsurance.models import Denial, DenialTypes, Appeal, FaxesToSend
 import pytest
@@ -477,4 +476,4 @@ class TestCommonViewLogic(TestCase):
     ],
 )
 def test_is_real_appeal(value, expected):
-    assert _is_real_appeal(value) is expected
+    assert is_real_appeal(value) is expected

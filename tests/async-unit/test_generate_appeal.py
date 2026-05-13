@@ -7,6 +7,7 @@ from fighthealthinsurance.ml.ml_models import RemoteFullOpenLike
 from fighthealthinsurance.generate_appeal import (
     AppealGenerator,
     AppealTemplateGenerator,
+    _peek_real_or_none,
     _shed_context,
     _SHEDDABLE_TIER1,
     _SHEDDABLE_TIER2,
@@ -413,3 +414,43 @@ class TestGetModelResultLogging:
             "get_model_result: all 3 backend(s) for model_name=broken-model failed"
             in sink.getvalue()
         )
+
+
+# --- _peek_real_or_none: runt-first fallback regression -------------------
+
+
+class TestPeekRealOrNone:
+    """Regression: a runt first item must trigger fallback. Without this,
+    downstream filtering (is_real_appeal) drops the runt and the user gets
+    zero appeals — even though backup/retry paths might have produced
+    valid drafts."""
+
+    def test_runt_first_returns_none(self):
+        first, _ = _peek_real_or_none(iter(["x"]), denial_id=1, stage="primary")
+        assert first is None
+
+    def test_empty_string_first_returns_none(self):
+        first, _ = _peek_real_or_none(iter([""]), denial_id=1, stage="primary")
+        assert first is None
+
+    def test_whitespace_first_returns_none(self):
+        first, _ = _peek_real_or_none(iter(["   "]), denial_id=1, stage="primary")
+        assert first is None
+
+    def test_real_first_passes_through(self):
+        real = "this is a long enough appeal text for delivery"
+        first, rest = _peek_real_or_none(iter([real]), denial_id=1, stage="primary")
+        assert first == real
+        # Real item chained back so caller can stream from `rest`
+        assert next(rest) == real
+
+    def test_empty_iter_returns_none(self):
+        first, _ = _peek_real_or_none(iter([]), denial_id=1, stage="primary")
+        assert first is None
+
+    def test_runt_logs_warning_with_stage_and_denial_id(self):
+        with _loguru_capture() as sink:
+            _peek_real_or_none(iter(["short"]), denial_id=999, stage="primary")
+        output = sink.getvalue()
+        assert "primary first item is a runt" in output
+        assert "denial 999" in output
