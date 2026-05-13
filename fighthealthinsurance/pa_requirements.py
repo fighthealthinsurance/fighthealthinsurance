@@ -225,19 +225,21 @@ def resolve_insurance_company_by_name(
             # The cache snapshot can outlive a row that was deleted in
             # between cache-build and now. Skip stale IDs rather than
             # silently returning ``None`` as if it were a successful
-            # match.
-            candidate = InsuranceCompany.objects.filter(pk=candidate_id).first()
-            if candidate is None:
+            # match. Bind to a fresh name so mypy doesn't compare the
+            # ``InsuranceCompany | None`` type here against the
+            # alt-name loop's ``InsuranceCompany``-typed ``candidate``.
+            resolved = InsuranceCompany.objects.filter(pk=candidate_id).first()
+            if resolved is None:
                 continue
             logger.opt(lazy=True).debug(
                 "resolve_insurance_company_by_name: regex fallback hit for "
                 "{!r} -> company id {} after {} pattern(s) in {:.1f} ms",
                 lambda p=payer_clean: p,
-                lambda c=candidate: c.id,
+                lambda c=resolved: c.id,
                 lambda n=regex_scanned: n,
                 lambda s=regex_start: (time.perf_counter() - s) * 1000,
             )
-            return candidate
+            return resolved
         except Exception as e:
             logger.opt(exception=True).debug(
                 f"Error applying regex for company {candidate_id}: {e}"

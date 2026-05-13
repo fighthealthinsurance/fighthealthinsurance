@@ -256,7 +256,7 @@ class PaRequirementsFetcher:
             if lob not in valid_lobs:
                 lob = LineOfBusiness.ALL
 
-            key = {
+            key: Dict[str, Any] = {
                 "insurance_company": company,
                 "line_of_business": lob,
                 "state": (req.state or "")[:2].upper(),
@@ -274,7 +274,7 @@ class PaRequirementsFetcher:
             if manual_row_exists:
                 continue
 
-            defaults = {
+            defaults: Dict[str, Any] = {
                 "code_description": req.code_description[:500],
                 "requires_pa": req.requires_pa,
                 "notification_only": req.notification_only,
