@@ -62,3 +62,11 @@ class TestIntervalHours:
         # actor instantiation (Django bootstrap + 1s sleep).
         assert _Underlying.settings_interval_key == "IMR_REFRESH_INTERVAL_HOURS"
         assert _Underlying.default_interval_hours == 168
+
+    @patch("django.conf.settings.IMR_REFRESH_INTERVAL_HOURS", 24, create=True)
+    def test_reads_interval_from_settings(self):
+        # __new__ bypasses BaseRefreshActor.__init__ (Django bootstrap +
+        # 1s sleep) so we can exercise the inherited settings lookup
+        # directly and catch regressions in the IMR-key wiring.
+        instance = _Underlying.__new__(_Underlying)
+        assert instance._interval_hours() == 24
