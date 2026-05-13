@@ -2884,6 +2884,26 @@ class AppealsBackendHelper:
                 if isinstance(results[3], str) and results[3]:
                     imr_context = results[3]
                     logger.info("IMR decisions context retrieved")
+                # Cache RAG and IMR on the denial so a gen_attempts>=3 retry
+                # or an exception-fallback can recover them without rerunning
+                # the external services. Mirrors the persistence behavior
+                # that pubmed_context / ml_citation_context / nice_context
+                # already enjoy via their helpers.
+                persist_updates: dict[str, Any] = {}
+                if rag_context:
+                    persist_updates["rag_context"] = rag_context
+                if imr_context:
+                    persist_updates["imr_context"] = imr_context
+                if persist_updates:
+                    try:
+                        await Denial.objects.filter(denial_id=denial_id).aupdate(
+                            **persist_updates
+                        )
+                    except Exception as e:
+                        logger.opt(exception=True).debug(
+                            f"Failed to persist RAG/IMR context for "
+                            f"denial {denial_id}: {e}"
+                        )
                 if isinstance(results[4], str) and results[4]:
                     pa_context = results[4]
                     logger.info("Payer PA requirements context retrieved")
@@ -2916,9 +2936,13 @@ class AppealsBackendHelper:
                 pubmed_context = denial.pubmed_context
                 ml_citation_context = denial.ml_citation_context
                 nice_context = denial.nice_context
-                # RAG context is not persisted, so we don't try to retrieve it.
-                # PA context isn't persisted either; re-run the cheap ORM query
-                # so retries don't silently lose payer rules.
+                # RAG and IMR are now persisted (migration 0181) so recover
+                # them on fallback the same way pubmed_context does. Missing
+                # values stay None.
+                rag_context = denial.rag_context or rag_context
+                imr_context = denial.imr_context or imr_context
+                # PA context isn't persisted; re-run the cheap ORM query so
+                # retries don't silently lose payer rules.
                 try:
                     from fighthealthinsurance.pa_requirements import (
                         get_pa_context_for_denial,
@@ -2951,9 +2975,13 @@ class AppealsBackendHelper:
                 logger.debug("Used saved contexts")
         else:
             logger.debug("Too many retries, skipping ML/pubmed/RAG ctx")
-            # Reuse the persisted NICE context; otherwise it'd be dropped on
+            # Reuse the persisted contexts; otherwise they'd be dropped on
             # the very retry path that's supposed to use previous results.
             nice_context = denial.nice_context
+            pubmed_context = denial.pubmed_context
+            ml_citation_context = denial.ml_citation_context
+            rag_context = denial.rag_context
+            imr_context = denial.imr_context
             # PA-requirement lookup is a cheap ORM query, not an external
             # API call, so re-run it on retries instead of dropping it.
             try:
