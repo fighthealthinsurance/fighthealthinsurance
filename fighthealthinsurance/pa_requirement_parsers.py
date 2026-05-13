@@ -143,7 +143,12 @@ def _bool_cell(cell: str) -> Optional[bool]:
 
 
 def _normalize_header(raw: str) -> str:
-    return raw.strip().lower().replace("\n", " ").replace("  ", " ")
+    # Collapse every whitespace run (tabs, newlines, multi-space runs from
+    # PDF/Excel column extraction) into a single space so aliases like
+    # ``"procedure code"`` match headers like ``"Procedure   Code"`` or
+    # ``"Procedure\tCode"`` that the simpler ``.replace("  ", " ")`` would
+    # leave un-normalised.
+    return re.sub(r"\s+", " ", raw.strip().lower())
 
 
 def _map_columns(headers: List[str]) -> Dict[int, str]:
