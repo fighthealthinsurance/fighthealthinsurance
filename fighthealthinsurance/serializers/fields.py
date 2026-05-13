@@ -7,6 +7,19 @@ Provides reusable field types for common patterns in the API.
 from rest_framework import serializers
 
 from fighthealthinsurance.models import DenialTypes
+from fighthealthinsurance.utils import is_valid_denial_id
+
+
+class DenialIdField(serializers.CharField):
+    """A CharField that validates the value is a positive-integer denial ID."""
+
+    default_error_messages = {"invalid": "Invalid denial_id format"}
+
+    def to_internal_value(self, data):
+        value = super().to_internal_value(data)
+        if not is_valid_denial_id(value):
+            self.fail("invalid")
+        return value
 
 
 class StringListField(serializers.ListField):

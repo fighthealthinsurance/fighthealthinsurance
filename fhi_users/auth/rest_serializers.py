@@ -33,6 +33,11 @@ else:
     User = get_user_model()
 
 
+# Fallback URL used when the caller doesn't supply a cancel_url. The
+# "?q=ohno" tag lets us recognize hits from this default in logs.
+DEFAULT_CANCEL_URL = "https://www.fightpaperwork.com/?q=ohno"
+
+
 class LoginFormSerializer(FormSerializer):
     """
     Handles login form data for user authentication.
@@ -106,9 +111,7 @@ class UserSignupSerializer(serializers.Serializer):
     domain_name = serializers.CharField(required=False, allow_blank=True)
     visible_phone_number = serializers.CharField(required=True)
     continue_url = serializers.CharField()  # URL to send user to post signup / payment
-    cancel_url = serializers.URLField(
-        required=False, default="https://www.fightpaperwork.com/?q=ohno"
-    )
+    cancel_url = serializers.URLField(required=False, default=DEFAULT_CANCEL_URL)
     username = serializers.CharField(required=True)
     first_name = serializers.CharField(required=True)
     last_name = serializers.CharField(required=True)
@@ -426,9 +429,7 @@ class FinishPaymentSerializer(serializers.Serializer):
     domain_phone = serializers.CharField(required=False)
     user_email = serializers.EmailField(required=False)
     continue_url = serializers.URLField()
-    cancel_url = serializers.URLField(
-        required=False, default="https://www.fightpaperwork.com/?q=ohno"
-    )
+    cancel_url = serializers.URLField(required=False, default=DEFAULT_CANCEL_URL)
 
 
 class DomainExistsSerializer(serializers.Serializer):

@@ -278,6 +278,25 @@ class MailingListSubscriber(models.Model):
             "unsubscribe", kwargs={"token": self.unsubscribe_token}
         )
 
+    @classmethod
+    def safe_subscribe(cls, email: str, **defaults) -> None:
+        """Subscribe `email` if not already on the list. Errors are logged and swallowed.
+
+        Existing rows are preserved on the happy path; the update fallback only
+        runs if get_or_create raises (e.g. unique-index race) so that races and
+        DB hiccups don't surface to callers in low-stakes opt-in flows.
+        """
+        from loguru import logger
+
+        try:
+            cls.objects.get_or_create(email=email, defaults=defaults)
+        except Exception as e:
+            logger.debug(f"Error subscribing {email} to mailing list: {e}")
+            try:
+                cls.objects.filter(email=email).update(**defaults)
+            except Exception as e2:
+                logger.warning(f"Error updating subscriber {email}: {e2}")
+
 
 class DemoRequests(models.Model):
     """

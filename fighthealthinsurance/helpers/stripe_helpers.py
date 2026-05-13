@@ -144,7 +144,7 @@ class StripeWebhookHelper:
 
                 # Temporary until the FPW UI is ready
                 finish_base_link = (
-                    "https://www.fightpaperwork.com/stripe/finish-checkout"
+                    f"https://{settings.FIGHT_PAPERWORK_DOMAIN}/stripe/finish-checkout"
                 )
                 params = urlencode(
                     {

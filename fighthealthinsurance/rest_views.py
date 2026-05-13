@@ -85,15 +85,21 @@ class ChatViewSet(viewsets.ViewSet):
     Provides metadata about each chat including the first user message preview.
     """
 
+    def _get_active_professional_user(self, user):
+        """Return the active ProfessionalUser for `user`, or a 404 Response."""
+        try:
+            return ProfessionalUser.objects.get(user=user, active=True), None
+        except ProfessionalUser.DoesNotExist:
+            logger.warning(f"Professional user not found for user {user.id}")
+            return None, Response({"error": "Professional user not found"}, status=404)
+
     def list(self, request):
         """List all chats for the current professional user."""
         user: User = request.user  # type: ignore
 
-        try:
-            professional_user = ProfessionalUser.objects.get(user=user, active=True)
-        except ProfessionalUser.DoesNotExist:
-            logger.warning(f"Professional user not found for user {user.id}")
-            return Response({"error": "Professional user not found"}, status=404)
+        professional_user, error = self._get_active_professional_user(user)
+        if error is not None:
+            return error
 
         # Get all chats for this professional user, ordered by most recently updated
         chats = OngoingChat.objects.filter(
@@ -147,11 +153,9 @@ class ChatViewSet(viewsets.ViewSet):
         """Delete a specific chat."""
         user: User = request.user  # type: ignore
 
-        try:
-            professional_user = ProfessionalUser.objects.get(user=user, active=True)
-        except ProfessionalUser.DoesNotExist:
-            logger.warning(f"Professional user not found for user {user.id}")
-            return Response({"error": "Professional user not found"}, status=404)
+        professional_user, error = self._get_active_professional_user(user)
+        if error is not None:
+            return error
 
         try:
             chat = OngoingChat.objects.get(id=pk, professional_user=professional_user)
@@ -369,15 +373,10 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
         )
         # Handle mailing list subscription if requested
         if subscribe and "email" in serializer_data:
-            try:
-                email = serializer_data["email"]
-                if not MailingListSubscriber.objects.filter(email=email).exists():
-                    MailingListSubscriber.objects.create(
-                        email=email,
-                        comments="Subscribed via denial form",
-                    )
-            except Exception as e:
-                logger.warning(f"Failed to subscribe email to mailing list: {e}")
+            MailingListSubscriber.safe_subscribe(
+                serializer_data["email"],
+                comments="Subscribed via denial form",
+            )
         denial = Denial.objects.get(uuid=denial_response_info.uuid)
         # Creating a pending appeal if one doesn't exist
         try:
