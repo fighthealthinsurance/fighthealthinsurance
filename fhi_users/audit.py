@@ -269,9 +269,9 @@ def log_exception_error(
     extra_data = {
         "error_type": error_type[:200],
         "error_message": error_message[:1000],
-        "query_string": (
-            request.META.get("QUERY_STRING", "") if request else ""
-        )[:1000],
+        "query_string": (request.META.get("QUERY_STRING", "") if request else "")[
+            :1000
+        ],
         "remote_addr": (request.META.get("REMOTE_ADDR", "") if request else "")[:100],
         "x_forwarded_for": str(x_forwarded_for)[:500],
         "x_real_ip": (request.META.get("HTTP_X_REAL_IP", "") if request else "")[:100],
