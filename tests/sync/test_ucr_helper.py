@@ -60,6 +60,26 @@ class ProcedureCodeExtractionTests(TestCase):
         denial = Denial(procedure="No structured code here")
         self.assertEqual(UCREnrichmentHelper.resolve_procedure_code(denial), "")
 
+    def test_verified_procedure_preferred_over_free_text(self):
+        denial = Denial(
+            verified_procedure="Primary denied code 99213; secondary 99354",
+            procedure="Procedure mentions 99354 first then 99213",
+            denial_text="Allowed amount for 99354.",
+        )
+        self.assertEqual(UCREnrichmentHelper.resolve_procedure_code(denial), "99213")
+
+    def test_uses_textual_order_not_lexical_order(self):
+        denial = Denial(procedure="Service billed under 99213 and then 90837")
+        # Lexical order would prefer 90837, but textual order should prefer 99213.
+        self.assertEqual(UCREnrichmentHelper.resolve_procedure_code(denial), "99213")
+
+    def test_procedure_text_preferred_before_denial_text(self):
+        denial = Denial(
+            procedure="Service code 99213 documented.",
+            denial_text="Denied as billed under 90837.",
+        )
+        self.assertEqual(UCREnrichmentHelper.resolve_procedure_code(denial), "99213")
+
 
 class AreaResolutionTests(TestCase):
     def test_zip3_preferred(self):
