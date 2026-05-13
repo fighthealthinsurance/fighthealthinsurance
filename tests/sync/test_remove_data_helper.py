@@ -12,6 +12,10 @@ from datetime import date, timedelta
 from django.test import TestCase
 
 from fighthealthinsurance.helpers import RemoveDataHelper
+from django.contrib.auth import get_user_model
+from django.utils import timezone
+
+from fhi_users.models import PatientUser
 from fighthealthinsurance.models import (
     Appeal,
     ChatLeads,
@@ -20,9 +24,13 @@ from fighthealthinsurance.models import (
     FaxesToSend,
     FollowUp,
     FollowUpSched,
+    InsuranceCallLog,
     MailingListSubscriber,
     OngoingChat,
+    PatientEvidence,
 )
+
+User = get_user_model()
 
 
 class TestRemoveDataHelper(TestCase):
@@ -81,6 +89,27 @@ class TestRemoveDataHelper(TestCase):
         MailingListSubscriber.objects.create(email=self.target_email)
         DemoRequests.objects.create(email=self.target_email)
 
+        # Patient dashboard data (linked via User → PatientUser, not hashed_email)
+        self.target_user = User.objects.create_user(
+            username="target_patient",
+            email=self.target_email,
+            password="testpass",
+        )
+        self.target_patient = PatientUser.objects.create(
+            user=self.target_user, active=True
+        )
+        InsuranceCallLog.objects.create(
+            patient_user=self.target_patient,
+            call_date=timezone.now(),
+            representative_name="Target Rep",
+        )
+        PatientEvidence.objects.create(
+            patient_user=self.target_patient,
+            title="Target Evidence",
+            filename="target.pdf",
+            mime_type="application/pdf",
+        )
+
         # --- Control rows (should survive) -----------------------------
         self.other_denial = Denial.objects.create(
             denial_id=2,
@@ -102,6 +131,19 @@ class TestRemoveDataHelper(TestCase):
             agreed_to_terms=True,
         )
         OngoingChat.objects.create(hashed_email=self.other_hash)
+        self.other_user = User.objects.create_user(
+            username="other_patient",
+            email=self.other_email,
+            password="testpass",
+        )
+        self.other_patient = PatientUser.objects.create(
+            user=self.other_user, active=True
+        )
+        InsuranceCallLog.objects.create(
+            patient_user=self.other_patient,
+            call_date=timezone.now(),
+            representative_name="Other Rep",
+        )
 
     def _target_row_counts(self) -> dict:
         """Count the rows that should have been deleted for target_email."""
@@ -129,6 +171,12 @@ class TestRemoveDataHelper(TestCase):
             ).count(),
             "demo_requests": DemoRequests.objects.filter(
                 email__iexact=self.target_email
+            ).count(),
+            "call_logs": InsuranceCallLog.objects.filter(
+                patient_user=self.target_patient
+            ).count(),
+            "evidence": PatientEvidence.objects.filter(
+                patient_user=self.target_patient
             ).count(),
         }
 
@@ -179,6 +227,10 @@ class TestRemoveDataHelper(TestCase):
         self.assertEqual(
             ChatLeads.objects.filter(email__iexact=self.other_email).count(),
             pre_other_leads,
+        )
+        self.assertEqual(
+            InsuranceCallLog.objects.filter(patient_user=self.other_patient).count(),
+            1,
         )
 
     def test_remove_data_normalizes_whitespace_and_case(self):
