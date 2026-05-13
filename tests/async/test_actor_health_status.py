@@ -20,8 +20,8 @@ class TestActorHealthStatus(TestCase):
         assert "alive_actors" in data
         assert "total_actors" in data
         assert "details" in data
-        # Total actors: email, fax, chooser, IMR refresh, UCR refresh
-        assert data["total_actors"] == 5
+        # Total actors: email, fax, chooser, IMR refresh, UCR refresh, PA refresh
+        assert data["total_actors"] == 6
 
     @mock.patch("fighthealthinsurance.actor_health_status.ray")
     def test_actor_health_all_down(self, mock_ray):
