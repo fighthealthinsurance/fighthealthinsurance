@@ -1237,6 +1237,7 @@ class GenerateAppeal(View):
                 "denial_id": denial_id,
                 "semi_sekret": semi_sekret,
                 "current_step": 7,
+                "use_external": bool(denial.use_external),
                 "back_url": build_back_url(
                     "find_next_steps", denial_id, email, semi_sekret
                 ),
@@ -1296,6 +1297,7 @@ class GenerateAppeal(View):
                 "denial_id": form.cleaned_data["denial_id"],
                 "semi_sekret": form.cleaned_data["semi_sekret"],
                 "current_step": 7,
+                "use_external": bool(denial.use_external),
                 "back_url": build_back_url(
                     "find_next_steps",
                     form.cleaned_data["denial_id"],
