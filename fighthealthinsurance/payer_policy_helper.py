@@ -68,25 +68,30 @@ def resolve_company_from_text(name_text: Optional[str]) -> Optional[InsuranceCom
     this, the denying payer can show up in the comparative-evidence section
     as an "other major payer", which is wrong.
 
-    Tries case-insensitive exact match first, then a case-insensitive search
-    of the ``alt_names`` lines. Returns None if no confident match.
+    Delegates to ``pa_requirements.resolve_insurance_company_by_name`` so
+    payer-policy and PA-requirement lookups share the same three-stage
+    resolution (iexact name → alt-name line → cached regex with negative
+    guard) and the same cache. Without the regex fallback, denials whose
+    free-text insurer field is a near-miss for the canonical name
+    (e.g. ``"United Health Care of Texas"``) would fail to resolve here
+    even though they resolve everywhere else, and the denying payer would
+    leak into the comparative-evidence block.
     """
-    if not name_text:
-        return None
-    text = name_text.strip()
-    if not text:
-        return None
+    # Local import to avoid an import-time dependency cycle between the two
+    # sibling helper modules. The import sits inside the ``try`` so an
+    # ``ImportError`` (e.g. a future refactor reintroducing a cycle) flows
+    # through the same best-effort ``None`` fallback as a DB-level failure
+    # rather than propagating out of a function the callers expect to be
+    # safe to call from appeal-generation paths.
     try:
-        match = InsuranceCompany.objects.filter(name__iexact=text).first()
-        if match is not None:
-            return match
-        for company in InsuranceCompany.objects.filter(alt_names__icontains=text):
-            for alt in (company.alt_names or "").splitlines():
-                if alt.strip().lower() == text.lower():
-                    return company
+        from fighthealthinsurance.pa_requirements import (
+            resolve_insurance_company_by_name,
+        )
+
+        return resolve_insurance_company_by_name(name_text)
     except Exception:
         logger.exception("Error resolving InsuranceCompany from text")
-    return None
+        return None
 
 
 # --- query helpers ---------------------------------------------------------
