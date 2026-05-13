@@ -1,11 +1,16 @@
 """Unit tests for the regulator escalation packet feature."""
 
-from unittest.mock import patch
+import json
+from unittest.mock import AsyncMock, patch
 
+from asgiref.sync import async_to_sync
 from django.test import TestCase, Client
 from django.urls import reverse
 
-from fighthealthinsurance.common_view_logic import get_denial_for_action
+from fighthealthinsurance.common_view_logic import (
+    EscalationPacketHelper,
+    get_denial_for_action,
+)
 from fighthealthinsurance.escalation_addresses import (
     DOL_EBSA_NAME,
     RECIPIENT_DOI,
@@ -315,3 +320,174 @@ class EscalationPacketViewTest(TestCase):
             },
         )
         self.assertEqual(response.status_code, 302)
+
+
+def _collect_stream(parameters: dict):
+    """Drive the async generator to completion and return parsed JSON records."""
+
+    async def _consume():
+        results = []
+        async for chunk in EscalationPacketHelper.generate_escalation_letters(
+            parameters
+        ):
+            line = chunk.strip()
+            if not line:
+                continue
+            try:
+                results.append(json.loads(line))
+            except json.JSONDecodeError:
+                pass
+        return results
+
+    return async_to_sync(_consume)()
+
+
+class EscalationStreamReusesExistingTest(TestCase):
+    """The streaming generator must not regenerate or duplicate prior drafts.
+
+    Without this, every revisit to the escalation page (e.g. clicking
+    "Back to all regulator letters" from the review screen) would burn
+    fresh LLM calls and accumulate duplicate `RegulatorEscalation` rows.
+    """
+
+    def setUp(self):
+        self.email = "stream@example.com"
+        self.denial = Denial.objects.create(
+            denial_text="some denial",
+            hashed_email=Denial.get_hashed_email(self.email),
+            insurance_company="Aetna",
+            # No state -> only the medical_director recipient is built.
+            your_state="",
+        )
+
+    def _params(self):
+        return {
+            "denial_id": self.denial.denial_id,
+            "email": self.email,
+            "semi_sekret": self.denial.semi_sekret,
+        }
+
+    def test_existing_letter_is_streamed_without_calling_llm(self):
+        existing = RegulatorEscalation.objects.create(
+            for_denial=self.denial,
+            hashed_email=self.denial.hashed_email,
+            recipient_type=RegulatorEscalation.RECIPIENT_MEDICAL_DIRECTOR,
+            recipient_name="Medical Director, Aetna",
+            letter_text="A previously generated draft we should reuse.",
+        )
+
+        # If the LLM is invoked we fail the test loudly.
+        with patch(
+            "fighthealthinsurance.generate_regulator_letter.generate_regulator_letter",
+            new=AsyncMock(side_effect=AssertionError("LLM must not be called")),
+        ):
+            results = _collect_stream(self._params())
+
+        letters = [r for r in results if r.get("type") == "letter"]
+        self.assertEqual(len(letters), 1)
+        self.assertEqual(letters[0]["escalation_id"], str(existing.uuid))
+        self.assertEqual(letters[0]["content"], existing.letter_text)
+        # No duplicate row was created.
+        self.assertEqual(
+            RegulatorEscalation.objects.filter(for_denial=self.denial).count(),
+            1,
+        )
+
+    def test_missing_recipient_is_generated_existing_is_reused(self):
+        # Pre-seed only the medical_director letter; pretend the denial is
+        # also ERISA-flagged so DOL EBSA is in the recipient list and must
+        # be generated fresh.
+        self.denial.your_state = ""
+        self.denial.save()
+        # Mark the denial as ERISA-likely via the insurance_company_obj path.
+        from fighthealthinsurance.models import InsuranceCompany
+
+        ic = InsuranceCompany.objects.create(
+            name="SomeTPA", is_tpa=True, regex="sometpa", negative_regex="zzznever"
+        )
+        self.denial.insurance_company_obj = ic
+        self.denial.save()
+
+        existing_md = RegulatorEscalation.objects.create(
+            for_denial=self.denial,
+            hashed_email=self.denial.hashed_email,
+            recipient_type=RegulatorEscalation.RECIPIENT_MEDICAL_DIRECTOR,
+            recipient_name="Medical Director, Aetna",
+            letter_text="Existing MD letter.",
+        )
+
+        async def fake_llm(denial, recipient, use_external=False):
+            return f"Fresh letter for {recipient.recipient_type}"
+
+        with patch(
+            "fighthealthinsurance.generate_regulator_letter.generate_regulator_letter",
+            new=AsyncMock(side_effect=fake_llm),
+        ) as mock_llm:
+            results = _collect_stream(self._params())
+
+        letters = [r for r in results if r.get("type") == "letter"]
+        types = {r["recipient_type"] for r in letters}
+        self.assertIn(RegulatorEscalation.RECIPIENT_MEDICAL_DIRECTOR, types)
+        self.assertIn(RegulatorEscalation.RECIPIENT_DOL_EBSA, types)
+        # LLM was only invoked for the missing recipient.
+        self.assertEqual(mock_llm.call_count, 1)
+        called_recipient = mock_llm.call_args.args[1]
+        self.assertEqual(
+            called_recipient.recipient_type, RegulatorEscalation.RECIPIENT_DOL_EBSA
+        )
+        # Existing MD row was reused, not duplicated.
+        md_rows = RegulatorEscalation.objects.filter(
+            for_denial=self.denial,
+            recipient_type=RegulatorEscalation.RECIPIENT_MEDICAL_DIRECTOR,
+        )
+        self.assertEqual(md_rows.count(), 1)
+        self.assertEqual(md_rows.first().pk, existing_md.pk)
+        # A new EBSA row exists.
+        self.assertEqual(
+            RegulatorEscalation.objects.filter(
+                for_denial=self.denial,
+                recipient_type=RegulatorEscalation.RECIPIENT_DOL_EBSA,
+            ).count(),
+            1,
+        )
+
+    def test_fresh_run_generates_one_row_per_recipient(self):
+        async def fake_llm(denial, recipient, use_external=False):
+            return f"Letter for {recipient.recipient_type}"
+
+        with patch(
+            "fighthealthinsurance.generate_regulator_letter.generate_regulator_letter",
+            new=AsyncMock(side_effect=fake_llm),
+        ):
+            results = _collect_stream(self._params())
+
+        letters = [r for r in results if r.get("type") == "letter"]
+        self.assertEqual(len(letters), 1)
+        self.assertEqual(
+            letters[0]["recipient_type"],
+            RegulatorEscalation.RECIPIENT_MEDICAL_DIRECTOR,
+        )
+        # Exactly one row per recipient.
+        self.assertEqual(
+            RegulatorEscalation.objects.filter(for_denial=self.denial).count(),
+            1,
+        )
+
+    def test_invalid_denial_yields_error(self):
+        results = _collect_stream(
+            {
+                "denial_id": self.denial.denial_id,
+                "email": self.email,
+                "semi_sekret": "wrong",
+            }
+        )
+        errors = [r for r in results if r.get("type") == "error"]
+        self.assertTrue(errors)
+        self.assertEqual(
+            RegulatorEscalation.objects.filter(for_denial=self.denial).count(), 0
+        )
+
+    def test_missing_parameters_yield_error(self):
+        results = _collect_stream({"denial_id": "", "email": "", "semi_sekret": ""})
+        errors = [r for r in results if r.get("type") == "error"]
+        self.assertTrue(errors)

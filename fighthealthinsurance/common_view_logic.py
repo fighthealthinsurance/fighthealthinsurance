@@ -3280,15 +3280,16 @@ class EscalationPacketHelper:
             }
         ) + "\n"
 
+        # We deliberately don't ``select_related("regulator",
+        # "insurance_company_obj")`` here: those tables hold ``RegexField``
+        # columns whose ``from_db_value`` raises ``ValidationError`` on NULL,
+        # so a LEFT JOIN against an un-matched denial blows up the whole
+        # stream. Related access happens inside ``sync_to_async`` below.
         try:
-            denial = await (
-                Denial.objects.select_related("regulator", "insurance_company_obj")
-                .prefetch_related("plan_source")
-                .aget(
-                    denial_id=denial_id,
-                    semi_sekret=semi_sekret,
-                    hashed_email=hashed_email,
-                )
+            denial = await Denial.objects.aget(
+                denial_id=denial_id,
+                semi_sekret=semi_sekret,
+                hashed_email=hashed_email,
             )
         except Denial.DoesNotExist:
             yield json.dumps({"type": "error", "message": "Denial not found"}) + "\n"
@@ -3301,14 +3302,51 @@ class EscalationPacketHelper:
             ) + "\n"
             return
 
+        # Reuse any letters we've already drafted for this denial so that
+        # navigating back to the page (e.g. via the "Back to all regulator
+        # letters" button on the review screen, or a browser refresh) doesn't
+        # burn fresh ML calls and accumulate duplicate draft rows.
+        existing_by_type: dict[str, RegulatorEscalation] = {}
+        async for esc in RegulatorEscalation.objects.filter(
+            for_denial=denial, hashed_email=hashed_email
+        ).order_by("-created"):
+            # Keep only the most recent draft per recipient type.
+            existing_by_type.setdefault(esc.recipient_type, esc)
+
+        needing_generation = [
+            r for r in recipients if r.recipient_type not in existing_by_type
+        ]
+
         yield json.dumps(
             {
                 "type": "status",
                 "phase": "generating",
-                "message": f"Generating {len(recipients)} regulator letter(s)...",
-                "total": len(recipients),
+                "message": (
+                    f"Generating {len(needing_generation)} regulator " f"letter(s)..."
+                ),
+                "total": len(needing_generation),
             }
         ) + "\n"
+
+        # Stream existing drafts first so the user sees them immediately
+        # without waiting on the ML calls for the still-missing recipients.
+        for recipient in recipients:
+            existing = existing_by_type.get(recipient.recipient_type)
+            if existing is None:
+                continue
+            yield json.dumps(
+                {
+                    "type": "letter",
+                    "escalation_id": str(existing.uuid),
+                    "recipient_type": existing.recipient_type,
+                    "recipient_name": existing.recipient_name,
+                    "recipient_address": existing.recipient_address,
+                    "recipient_phone": existing.recipient_phone,
+                    "recipient_url": existing.recipient_url,
+                    "rationale": recipient.rationale,
+                    "content": existing.letter_text,
+                }
+            ) + "\n"
 
         use_external = bool(getattr(denial, "use_external", False))
 
@@ -3318,7 +3356,7 @@ class EscalationPacketHelper:
             )
             return recipient, text
 
-        tasks = [asyncio.create_task(_draft(r)) for r in recipients]
+        tasks = [asyncio.create_task(_draft(r)) for r in needing_generation]
         try:
             for fut in asyncio.as_completed(tasks):
                 recipient, letter_text = await fut
