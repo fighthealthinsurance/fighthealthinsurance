@@ -2279,7 +2279,7 @@ class DenialCreatorHelper:
 
 async def _refresh_sync_denial_context(
     denial: Any,
-    getter: typing.Callable[[Any], Optional[str]],
+    getter_factory: typing.Callable[[], typing.Callable[[Any], Optional[str]]],
     label: str,
 ) -> Optional[str]:
     """Re-run a synchronous denial-context getter off the event loop.
@@ -2288,14 +2288,39 @@ async def _refresh_sync_denial_context(
     re-fetch cheap ORM-only context (PA rules, USPSTF preventive recs) that
     isn't persisted on the denial. Empty strings collapse to ``None`` so the
     downstream "has citations?" checks in ``make_open_prompt`` treat absent
-    and empty results the same way. Exceptions are swallowed to debug-level
-    logs so a transient DB error here can't abort the appeal pipeline.
+    and empty results the same way.
+
+    ``getter_factory`` is invoked lazily inside the try block so import-time
+    failures (e.g., ImportError, circular-import edge cases) get the same
+    degrade-to-None treatment as DB errors from the getter itself — matching
+    the original pre-refactor behavior where each call site wrapped its
+    ``from ... import ...`` in the same try/except.
     """
     try:
+        getter = getter_factory()
         return await sync_to_async(getter)(denial) or None
     except Exception as e:
         logger.opt(exception=True).debug(f"{label} context refresh failed: {e}")
         return None
+
+
+def _pa_context_getter_factory() -> typing.Callable[[Any], Optional[str]]:
+    """Lazy importer for the PA-context getter.
+
+    The import lives inside the factory (not at module top) so a failure
+    here is caught by ``_refresh_sync_denial_context``'s try/except rather
+    than aborting the appeal pipeline.
+    """
+    from fighthealthinsurance.pa_requirements import get_pa_context_for_denial
+
+    return get_pa_context_for_denial
+
+
+def _uspstf_context_getter_factory() -> typing.Callable[[Any], Optional[str]]:
+    """Lazy importer for the USPSTF-context getter (see PA factory above)."""
+    from fighthealthinsurance.uspstf_api import get_uspstf_context_for_denial
+
+    return get_uspstf_context_for_denial
 
 
 class AppealsBackendHelper:
@@ -2937,19 +2962,15 @@ class AppealsBackendHelper:
                 # RAG context is not persisted, so we don't try to retrieve it.
                 # PA and USPSTF contexts aren't persisted either; re-run the
                 # cheap ORM queries so retries don't silently lose payer rules
-                # or preventive-services recommendations.
-                from fighthealthinsurance.pa_requirements import (
-                    get_pa_context_for_denial,
-                )
-                from fighthealthinsurance.uspstf_api import (
-                    get_uspstf_context_for_denial,
-                )
-
+                # or preventive-services recommendations. The factories
+                # lazy-import their getter inside ``_refresh_sync_denial_context``
+                # so an import-time failure degrades to None instead of
+                # aborting the fallback path.
                 pa_context = await _refresh_sync_denial_context(
-                    denial, get_pa_context_for_denial, "PA"
+                    denial, _pa_context_getter_factory, "PA"
                 )
                 uspstf_context = await _refresh_sync_denial_context(
-                    denial, get_uspstf_context_for_denial, "USPSTF"
+                    denial, _uspstf_context_getter_factory, "USPSTF"
                 )
                 logger.debug("Used saved contexts")
         else:
@@ -2959,18 +2980,14 @@ class AppealsBackendHelper:
             nice_context = denial.nice_context
             # PA and USPSTF lookups are cheap ORM queries against cached
             # tables, so re-run them on retries instead of dropping them.
-            from fighthealthinsurance.pa_requirements import (
-                get_pa_context_for_denial,
-            )
-            from fighthealthinsurance.uspstf_api import (
-                get_uspstf_context_for_denial,
-            )
-
+            # The factories lazy-import inside the helper's try/except so an
+            # import-time failure degrades to None instead of aborting the
+            # retry path.
             pa_context = await _refresh_sync_denial_context(
-                denial, get_pa_context_for_denial, "PA"
+                denial, _pa_context_getter_factory, "PA"
             )
             uspstf_context = await _refresh_sync_denial_context(
-                denial, get_uspstf_context_for_denial, "USPSTF"
+                denial, _uspstf_context_getter_factory, "USPSTF"
             )
             yield json.dumps(
                 {
