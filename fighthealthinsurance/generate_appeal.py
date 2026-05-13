@@ -753,27 +753,107 @@ def identifier_found_in_text(identifier: str, text: str) -> bool:
     return False
 
 
-# Context shed on retry when zero-result failures may stem from
-# context-window overflow. Only the call-dict keys can be shed here —
-# uspstf/pa/nice/rag/clinical_trials contexts are already baked into the
-# prompt string by make_open_prompt, so they're out of reach without
-# re-rendering. TODO: a future improvement could re-call make_open_prompt
-# with those contexts nulled to get true tier-1-style enrichment shedding.
+# Tier-shed retry: reduce prompt size when zero-result failures may stem
+# from context-window overflow. Each enrichment context appears on TWO
+# surfaces and both need to shrink in lockstep, otherwise we'd null the
+# call-dict copy while the prompt-baked copy still pins the token count
+# above the limit.
+#
+#   * make_open_prompt bakes enrichment (pubmed, ml citations, rag, nice,
+#     uspstf, ucr, pa, payer-policy, medication) into the prompt string.
+#     To shed those we re-render the prompt with the matching kwargs set
+#     to None / truncated.
+#   * The same call dict also carries pubmed_context, ml_citations_context,
+#     plan_context, and patient_context as separate keys, which the model
+#     re-injects via ``context_extra`` (see ml_models.RemoteFullOpenLike).
+#     We null/truncate those alongside the prompt re-render.
+
+# In-prompt enrichment dropped entirely at tier 1+. Names match the
+# ``make_open_prompt`` parameters (note: ``ml_context`` is the prompt-side
+# rendered form of ``ml_citations_context``).
+_PROMPT_TIER1_NULLS: tuple[str, ...] = (
+    "ml_context",
+    "pubmed_context",
+    "rag_context",
+    "nice_context",
+    "uspstf_context",
+    "ucr_context",
+    "pa_context",
+    "payer_policy_context",
+    "medication_context",
+)
+
+# In-prompt patient-specific context truncated (not dropped) at tier 2+.
+_PROMPT_TIER2_TRUNCATIONS: tuple[tuple[str, int], ...] = (("plan_context", 4000),)
+
+# Call-dict copies (the ``context_extra`` injection surface) sheddable at
+# tier 1+. These mirror their ``_PROMPT_TIER1_NULLS`` counterparts.
 _SHEDDABLE_TIER1 = ("pubmed_context", "ml_citations_context")
+
+# Call-dict patient/plan context truncated at tier 2+. ``patient_context``
+# (``medical_context`` in the caller) is not in the prompt string, so it
+# only needs trimming on the call-dict surface.
 _TIER2_TRUNCATIONS = (("plan_context", 4000), ("patient_context", 6000))
 
 
-def _shed_context(calls: list[dict], tier: int) -> tuple[list[dict], list[str]]:
+def _shed_context(
+    calls: list[dict],
+    tier: int,
+    *,
+    open_prompt_kwargs: Optional[dict] = None,
+    rebuild_prompt: Optional[Callable[..., Optional[str]]] = None,
+    original_open_prompt: Optional[str] = None,
+) -> tuple[list[dict], list[str]]:
     """Return (new_calls, changed_names) with context reduced by tier.
 
-    Tier 1 nulls pubmed/citations context. Tier 2 also truncates
-    plan_context and patient_context. Higher tiers include all lower-tier
-    reductions.
+    Tier 1 nulls the enrichment contexts on both surfaces: in the
+    re-rendered prompt (when ``open_prompt_kwargs`` + ``rebuild_prompt`` +
+    ``original_open_prompt`` are provided) and in the call-dict copies.
+    Tier 2 additionally truncates ``plan_context`` (in-prompt) and
+    ``plan_context`` + ``patient_context`` (call-dict). Higher tiers
+    include all lower-tier reductions.
+
+    When the prompt-rebuild arguments are omitted the function falls back
+    to call-dict-only shedding — kept for direct unit testing of the
+    call-dict surface.
     """
     changed: set[str] = set()
+
+    new_open_prompt: Optional[str] = None
+    if (
+        tier >= 1
+        and open_prompt_kwargs is not None
+        and rebuild_prompt is not None
+        and original_open_prompt is not None
+    ):
+        shed_kwargs = dict(open_prompt_kwargs)
+        for key in _PROMPT_TIER1_NULLS:
+            if shed_kwargs.get(key):
+                shed_kwargs[key] = None
+                changed.add(f"prompt.{key}")
+        if tier >= 2:
+            for key, cap in _PROMPT_TIER2_TRUNCATIONS:
+                val = shed_kwargs.get(key)
+                if isinstance(val, str) and len(val) > cap:
+                    shed_kwargs[key] = truncate_at_boundary(val, cap, ellipsis="")
+                    changed.add(f"prompt.{key}(truncated)")
+        new_open_prompt = rebuild_prompt(**shed_kwargs)
+
     new_calls = []
     for call in calls:
         new = dict(call)
+        # Swap the shed prompt into any call whose prompt is the original
+        # open_prompt or starts with it (the specialized variant appends a
+        # hint block). The medically-necessary prompt is unrelated and is
+        # left untouched.
+        if (
+            new_open_prompt is not None
+            and original_open_prompt
+            and isinstance(new.get("prompt"), str)
+            and new["prompt"].startswith(original_open_prompt)
+        ):
+            tail = new["prompt"][len(original_open_prompt) :]
+            new["prompt"] = new_open_prompt + tail
         for key in _SHEDDABLE_TIER1:
             if new.get(key) is not None:
                 new[key] = None
@@ -1862,7 +1942,11 @@ class AppealGenerator(object):
         medication_context = self._collect_medication_context(denial)
         regulatory_citation_context = self._collect_regulatory_context(denial)
 
-        open_prompt = self.make_open_prompt(
+        # Captured as a dict so the tier-shed retry path can re-render the
+        # prompt with enrichment kwargs nulled or truncated — otherwise the
+        # prompt-baked copies of pubmed/citations/rag/etc. would still pin
+        # the token count even after the call-dict copies are dropped.
+        open_prompt_kwargs = dict(
             denial_text=denial.denial_text,
             procedure=denial.procedure,
             diagnosis=denial.diagnosis,
@@ -1891,6 +1975,7 @@ class AppealGenerator(object):
             medication_context=medication_context,
             regulatory_citation_context=regulatory_citation_context,
         )
+        open_prompt = self.make_open_prompt(**open_prompt_kwargs)
         open_medically_necessary_prompt = self.make_open_med_prompt(
             procedure=denial.procedure,
             diagnosis=denial.diagnosis,
@@ -2195,7 +2280,13 @@ class AppealGenerator(object):
             )
             time.sleep(1.0)
             for tier in (1, 2):
-                shed_calls, changed = _shed_context(calls, tier=tier)
+                shed_calls, changed = _shed_context(
+                    calls,
+                    tier=tier,
+                    open_prompt_kwargs=open_prompt_kwargs,
+                    rebuild_prompt=self.make_open_prompt,
+                    original_open_prompt=open_prompt,
+                )
                 logger.warning(
                     f"make_appeals: retrying primary for denial {denial_id} "
                     f"with context shed (tier={tier}, changed={changed})"
