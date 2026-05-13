@@ -550,6 +550,119 @@ class TestCommonViewLogic(TestCase):
 
         async_to_sync(test)()
 
+    @pytest.mark.django_db
+    @patch(
+        "fighthealthinsurance.common_view_logic.fire_and_forget_in_new_threadpool",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "fighthealthinsurance.common_view_logic.appealGenerator.get_procedure_and_diagnosis",
+        new_callable=AsyncMock,
+        return_value=("pembrolizumab", "melanoma"),
+    )
+    def test_extract_schedules_clinical_trials_prefetch(
+        self, _mock_get_proc_diag, mock_fire_forget
+    ):
+        """``extract_set_denial_and_diagnosis`` must fire the ClinicalTrials
+        prefetch alongside the existing PubMed and speculative-context tasks
+        once procedure/diagnosis are populated."""
+        email = "test@example.com"
+        denial = Denial.objects.create(
+            denial_id=15,
+            semi_sekret="sekret",
+            hashed_email=Denial.get_hashed_email(email),
+            denial_text="Insurer denied pembrolizumab for melanoma as experimental.",
+        )
+
+        async def test():
+            try:
+                await DenialCreatorHelper.extract_set_denial_and_diagnosis(
+                    denial.denial_id
+                )
+
+                # All three background tasks must have been scheduled.
+                assert mock_fire_forget.await_count == 3, (
+                    f"Expected 3 fire-and-forget tasks (pubmed, clinical "
+                    f"trials, speculative context); saw "
+                    f"{mock_fire_forget.await_count}"
+                )
+                scheduled_names = [
+                    call.args[0].cr_code.co_name
+                    for call in mock_fire_forget.await_args_list
+                ]
+                assert "find_clinical_trials" in scheduled_names, (
+                    f"ClinicalTrials prefetch coroutine not scheduled; "
+                    f"saw {scheduled_names}"
+                )
+                # Close the captured coroutines so pytest doesn't warn about
+                # un-awaited coros from the mocked-out fire_and_forget.
+                for call in mock_fire_forget.await_args_list:
+                    call.args[0].close()
+            finally:
+                await Denial.objects.filter(denial_id=15).adelete()
+
+        async_to_sync(test)()
+
+    @pytest.mark.django_db
+    @patch(
+        "fighthealthinsurance.common_view_logic.fire_and_forget_in_new_threadpool",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "fighthealthinsurance.common_view_logic.ClinicalTrialsTools.find_trials_for_denial",
+        new_callable=AsyncMock,
+        side_effect=RuntimeError("simulated upstream failure"),
+    )
+    @patch(
+        "fighthealthinsurance.common_view_logic.appealGenerator.get_procedure_and_diagnosis",
+        new_callable=AsyncMock,
+        return_value=("pembrolizumab", "melanoma"),
+    )
+    def test_clinical_trials_prefetch_swallows_failures(
+        self, _mock_get_proc_diag, _mock_find_trials, mock_fire_forget
+    ):
+        """The ``find_clinical_trials`` inner coroutine must swallow every
+        exception so the daemon thread that ``fire_and_forget_in_new_threadpool``
+        spawns can never re-raise into the appeal flow."""
+        email = "test@example.com"
+        denial = Denial.objects.create(
+            denial_id=16,
+            semi_sekret="sekret",
+            hashed_email=Denial.get_hashed_email(email),
+            denial_text="Insurer denied pembrolizumab for melanoma as experimental.",
+        )
+
+        async def test():
+            try:
+                await DenialCreatorHelper.extract_set_denial_and_diagnosis(
+                    denial.denial_id
+                )
+
+                # Locate the captured clinical-trials coroutine and run it
+                # directly. If the inner try/except is correct, awaiting it
+                # must not raise even though find_trials_for_denial throws.
+                ct_coros = [
+                    call.args[0]
+                    for call in mock_fire_forget.await_args_list
+                    if call.args[0].cr_code.co_name == "find_clinical_trials"
+                ]
+                assert len(ct_coros) == 1, (
+                    f"Expected exactly one find_clinical_trials coro; "
+                    f"got {len(ct_coros)}"
+                )
+                # Should complete cleanly despite the upstream RuntimeError.
+                await ct_coros[0]
+
+                # Close any remaining captured coros to avoid pytest warnings.
+                for call in mock_fire_forget.await_args_list:
+                    coro = call.args[0]
+                    if coro.cr_code.co_name != "find_clinical_trials":
+                        coro.close()
+            finally:
+                await Denial.objects.filter(denial_id=16).adelete()
+
+        async_to_sync(test)()
+
 
 @pytest.mark.parametrize(
     "value,expected",

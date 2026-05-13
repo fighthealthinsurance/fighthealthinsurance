@@ -96,12 +96,16 @@ class BaseTool(ABC):
         Returns ``""`` if both are empty/None. Used to glue an LLM follow-up
         response onto the original response (or follow-up context onto the
         original context) so adjacent paragraphs don't run together.
+
+        Only newline characters are stripped at the join — leading spaces /
+        tabs are preserved so markdown indentation, nested-list alignment,
+        and code-block leading whitespace aren't accidentally clobbered.
         """
         if not existing:
-            return (addition or "").lstrip()
+            return (addition or "").lstrip("\n")
         if not addition:
             return existing
-        return f"{existing.rstrip()}\n\n{addition.lstrip()}"
+        return existing.rstrip("\n") + "\n\n" + addition.lstrip("\n")
 
     @abstractmethod
     async def execute(
