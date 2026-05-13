@@ -1084,6 +1084,7 @@ class FindNextSteps(View):
                     "combined": next_step_info.combined_form,
                     "denial_form": denial_ref_form,
                     "pharmacy_suggestion": next_step_info.pharmacy_coupon_suggestion,
+                    "financial_assistance": next_step_info.financial_assistance,
                     "current_step": 6,
                     "back_url": build_back_url(
                         "categorize_review",
