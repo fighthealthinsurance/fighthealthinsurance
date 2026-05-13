@@ -140,11 +140,10 @@ async def log_zero_appeal_diagnostics(
 
 async def _parse_json_or_close(
     consumer: AsyncWebsocketConsumer,
-    text_data: str,
+    text_data: Optional[str],
     *,
     consumer_name: str,
     streaming_protocol: bool = False,
-    require_object: bool = True,
 ) -> Optional[dict]:
     """Parse a single WebSocket text frame as JSON, closing on bad input.
 
@@ -152,31 +151,47 @@ async def _parse_json_or_close(
     malformed (in which case an error frame has already been sent and the
     socket closed). ``streaming_protocol=True`` selects the
     ``{"type": "error", "message": ...}`` envelope expected by the
-    appeals/escalation streaming clients; otherwise the simpler
-    ``{"error": ...}`` shape used by entity/prior-auth/chat consumers.
-    When ``require_object`` is True (default), non-object JSON
-    (``[]``, ``"x"``, ``123``) is rejected so callers can ``.get()``
-    safely without an AttributeError.
+    appeals/escalation streaming clients and appends a trailing newline
+    so the client's line-buffered parser flushes the frame before the
+    socket close arrives; otherwise the simpler ``{"error": ...}`` shape
+    used by entity/prior-auth/chat consumers (which read whole frames).
+
+    Non-object JSON (``[]``, ``"x"``, ``123``, ``null``) is rejected so
+    callers can ``.get()`` on the result without an AttributeError.
     """
 
-    def _err_frame(message: str) -> str:
+    async def _send_err(message: str) -> None:
         if streaming_protocol:
-            return json.dumps({"type": "error", "message": message})
-        return json.dumps({"error": message})
+            # Trailing newline: appeal_fetcher.ts buffers ws.onmessage
+            # data and only parses lines terminated by "\n". Without it
+            # the close arrives before the error frame is parsed and
+            # the client falls through to its generic error path.
+            await consumer.send(
+                json.dumps({"type": "error", "message": message}) + "\n"
+            )
+        else:
+            await consumer.send(json.dumps({"error": message}))
 
+    if text_data is None:
+        logger.warning(
+            f"Empty/None text frame received in {consumer_name} websocket"
+        )
+        await _send_err("Empty message")
+        await consumer.close()
+        return None
     try:
         data = json.loads(text_data)
     except json.JSONDecodeError as e:
         logger.warning(f"Invalid JSON received in {consumer_name} websocket: {e}")
-        await consumer.send(_err_frame("Invalid JSON format"))
+        await _send_err("Invalid JSON format")
         await consumer.close()
         return None
-    if require_object and not isinstance(data, dict):
+    if not isinstance(data, dict):
         logger.warning(
             f"Non-object JSON received in {consumer_name} websocket: "
             f"{type(data).__name__}"
         )
-        await consumer.send(_err_frame("Expected a JSON object"))
+        await _send_err("Expected a JSON object")
         await consumer.close()
         return None
     return data
@@ -203,8 +218,9 @@ class StreamingAppealsBackend(AsyncWebsocketConsumer):
     async def receive(self, text_data):
         # streaming_protocol=True so the client's type==='error' branch
         # in processResponseChunk fires instead of treating this as an
-        # unrecognized frame. require_object=True so the .get(...) calls
-        # below can't raise AttributeError on `[]` / `"x"` / `123`.
+        # unrecognized frame. The helper also rejects non-object JSON
+        # so .get(...) below can't raise AttributeError on `[]` /
+        # `"x"` / `123`.
         data = await _parse_json_or_close(
             self,
             text_data,
@@ -708,8 +724,13 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
         if data is None:
             return
         # Get the required data -- note the message should be sent as "content"
-        # but we also accept "message" for backward compatibility.
-        message = data.get("message", data.get("content", None))
+        # but we also accept "message" for backward compatibility. Coerce
+        # any None/missing/non-string value to "" so the downstream
+        # detect_crisis_keywords/detect_delete_data_request calls (which
+        # do an unguarded regex .search on the message) can't crash on
+        # an iterate-only request.
+        message_raw = data.get("message", data.get("content", None))
+        message: str = message_raw if isinstance(message_raw, str) else ""
         chat_id = data.get("chat_id", self.chat_id)
         replay_requested = data.get("replay", False)
         iterate_on_appeal = data.get("iterate_on_appeal")
