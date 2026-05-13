@@ -56,16 +56,17 @@ class InterestedProfessionalForm(forms.ModelForm):
             }
         ),
     )
-    clicked_for_paid = forms.BooleanField(
-        initial=True,
-        required=False,
-        label="Optional: Pay $10 now to get 3-months of the beta when we launch the professional version while we figure out what/if folks will pay for it.",
-        widget=forms.CheckboxInput(),
-    )
 
     class Meta:
         model = InterestedProfessional
-        exclude = ["paid", "signup_date"]
+        # Block mass-assignment of internal/state-tracking fields via a public POST.
+        exclude = [
+            "paid",
+            "clicked_for_paid",
+            "signup_date",
+            "mod_date",
+            "thankyou_email_sent",
+        ]
 
 
 class DeleteDataForm(forms.Form):

@@ -90,7 +90,7 @@ class ThankyouEmailSender(AsyncEmailSenderMixin):
         try:
             send_fallback_email(
                 template_name="professional_thankyou",
-                subject="Thank you for signing up for Fight Health Insurance Pro Beta!",
+                subject="Thanks for your interest in our new professional version!",
                 context=context,
                 to_email=email,
             )

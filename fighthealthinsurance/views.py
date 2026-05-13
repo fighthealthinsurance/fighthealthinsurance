@@ -16,6 +16,7 @@ from django.http import (
     HttpResponse,
     HttpResponseBase,
     HttpResponseForbidden,
+    HttpResponseNotAllowed,
     HttpResponseRedirect,
     JsonResponse,
 )
@@ -31,6 +32,7 @@ from django.views.decorators.http import require_http_methods
 from django.views.generic.base import TemplateView
 from django.utils import timezone
 from django.views.generic.edit import FormView
+from django.core.mail import send_mail
 
 import stripe
 from django_encrypted_filefield.crypt import Cryptographer
@@ -39,6 +41,7 @@ from PIL import Image
 
 from fighthealthinsurance import common_view_logic, forms as core_forms, models
 from fighthealthinsurance.chat_forms import UnderstandPolicyForm, UserConsentForm
+from fighthealthinsurance.followup_emails import ThankyouEmailSender
 from fighthealthinsurance.helpers.data_helpers import RemoveDataHelper
 from fighthealthinsurance.helpers.stripe_helpers import StripeWebhookHelper
 from fighthealthinsurance.models import (
@@ -242,10 +245,83 @@ def mark_session_consent(session, email: str) -> None:
     session.save()
 
 
-class ProVersionView(generic.RedirectView):
-    """Redirect to the professional version site."""
+class ProVersionView(generic.FormView):
+    """Landing page for the professional version.
 
-    url = "https://www.fightpaperwork.com"
+    When settings.PRO_VERSION_AVAILABLE is True, renders an "available now"
+    page with trial / learn-more CTAs. Otherwise (the default), renders the
+    "new updated professional version coming soon" interest form.
+    """
+
+    template_name = "professional.html"
+    form_class = core_forms.InterestedProfessionalForm
+
+    def dispatch(self, request, *args, **kwargs):
+        if getattr(settings, "PRO_VERSION_AVAILABLE", False):
+            # The available-now page is read-only — surface 405 on POST/other
+            # rather than silently 200-ing a submission the form path would
+            # otherwise have written to the DB.
+            if request.method not in ("GET", "HEAD"):
+                return HttpResponseNotAllowed(["GET", "HEAD"])
+            return render(request, "professional_available.html")
+        return super().dispatch(request, *args, **kwargs)
+
+    def get_success_url(self):
+        return reverse("pro_version_thankyou")
+
+    def form_valid(self, form):
+        # The pay-to-express-interest checkbox is no longer collected; explicitly
+        # mark new records as not clicked so the (legacy default=True) model
+        # field reflects reality.
+        interested_pro = form.save(commit=False)
+        interested_pro.clicked_for_paid = False
+        interested_pro.save()
+        self._notify_support_of_signup(interested_pro)
+        # Send the thank-you email synchronously so the signer gets it right
+        # away. The batched ThankyouEmailSender will skip records where
+        # thankyou_email_sent=True, which dosend() sets on success.
+        try:
+            ThankyouEmailSender().dosend(interested_pro=interested_pro)
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"Error sending immediate pro signup thank-you "
+                f"(interested_professional_id={interested_pro.id})"
+            )
+        return super().form_valid(form)
+
+    @staticmethod
+    def _notify_support_of_signup(
+        interested_pro: "models.InterestedProfessional",
+    ) -> None:
+        admin_path = reverse(
+            "admin:fighthealthinsurance_interestedprofessional_change",
+            args=[interested_pro.id],
+        )
+        admin_url = f"https://{settings.FIGHT_HEALTH_INSURANCE_DOMAIN}{admin_path}"
+        body = (
+            f"A new professional signed up via /pro_version.\n\n"
+            f"Name: {interested_pro.name or 'N/A'}\n"
+            f"Email: {interested_pro.email}\n"
+            f"Job title / provider type: {interested_pro.job_title_or_provider_type or 'N/A'}\n"
+            f"Business: {interested_pro.business_name or 'N/A'}\n"
+            f"Phone: {interested_pro.phone_number or 'N/A'}\n"
+            f"Address: {interested_pro.address or 'N/A'}\n"
+            f"Most common denial: {interested_pro.most_common_denial or 'N/A'}\n"
+            f"Comments: {interested_pro.comments or 'N/A'}\n"
+            f"Admin: {admin_url}\n"
+        )
+        try:
+            send_mail(
+                f"New pro version signup #{interested_pro.id}",
+                body,
+                settings.DEFAULT_FROM_EMAIL,
+                ["support42@fighthealthinsurance.com"],
+            )
+        except Exception:
+            logger.opt(exception=True).error(
+                f"Error sending pro signup notification email "
+                f"(interested_professional_id={interested_pro.id})"
+            )
 
 
 class PatientAccessView(generic.TemplateView):
