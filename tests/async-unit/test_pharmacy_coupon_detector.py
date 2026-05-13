@@ -164,12 +164,13 @@ class TestBuildSuggestion:
         # links remain well-formed.
         suggestion = build_suggestion("emtricitabine/tenofovir")
         for opt in suggestion.pharmacy_options:
-            assert "/" not in opt.url.split("emtricitabine", 1)[-1].split(
-                "tenofovir", 1
-            )[0], f"slash in drug slug not encoded for {opt.name}: {opt.url}"
-            assert "%2F" in opt.url or "/" not in "emtricitabine/tenofovir", (
-                f"expected percent-encoded slash in {opt.name} URL: {opt.url}"
-            )
+            assert (
+                "/"
+                not in opt.url.split("emtricitabine", 1)[-1].split("tenofovir", 1)[0]
+            ), f"slash in drug slug not encoded for {opt.name}: {opt.url}"
+            assert (
+                "%2F" in opt.url or "/" not in "emtricitabine/tenofovir"
+            ), f"expected percent-encoded slash in {opt.name} URL: {opt.url}"
 
     def test_url_encodes_special_characters(self):
         # Drug names with spaces or punctuation should be URL-encoded so the
@@ -181,27 +182,6 @@ class TestBuildSuggestion:
     def test_drug_name_is_lowercased(self):
         suggestion = build_suggestion("Metformin")
         assert suggestion.drug_name == "metformin"
-
-    def test_to_dict_round_trips_all_fields(self):
-        # to_dict() is the single conversion point shared by every REST
-        # surface that returns pharmacy_coupon_suggestion. If any field
-        # ever drops out of the dict shape the frontend silently breaks,
-        # so pin every field here.
-        suggestion = build_suggestion("metformin")
-        payload = suggestion.to_dict()
-        assert payload["drug_name"] == "metformin"
-        assert payload["is_likely_cheap"] is True
-        assert payload["bridge_message"] == suggestion.bridge_message
-        assert payload["oop_max_warning"] == suggestion.oop_max_warning
-        assert len(payload["pharmacy_options"]) == 3
-        for opt_dict in payload["pharmacy_options"]:
-            assert set(opt_dict.keys()) == {
-                "name",
-                "url",
-                "description",
-                "counts_toward_oop_max",
-            }
-            assert opt_dict["counts_toward_oop_max"] is False
 
 
 class TestSuggestForDenial:

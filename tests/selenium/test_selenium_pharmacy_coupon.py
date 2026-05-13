@@ -49,9 +49,7 @@ class SeleniumTestPharmacyCouponSection(FHISeleniumBase, StaticLiveServerTestCas
     def test_microsite_wegovy_shows_pharmacy_discount_options(self):
         """The Wegovy microsite renders the Pharmacy Discount Options section
         with all three pharmacies and the OOP-max caveat."""
-        self.open(
-            f"{self.live_server_url}/microsite/glp1-denial-semaglutide-wegovy"
-        )
+        self.open(f"{self.live_server_url}/microsite/glp1-denial-semaglutide-wegovy")
         self.wait_for_page_ready()
 
         # Section + heading rendered.
@@ -69,8 +67,7 @@ class SeleniumTestPharmacyCouponSection(FHISeleniumBase, StaticLiveServerTestCas
         # discounts (it's an expensive specialty drug).
         body = self.get_text("section#pharmacy-coupons")
         assert "expensive" in body.lower(), (
-            "Wegovy bridge message should warn the drug is expensive; "
-            f"got: {body!r}"
+            "Wegovy bridge message should warn the drug is expensive; " f"got: {body!r}"
         )
 
         # OOP-max caveat is non-negotiable - cash-pay does not count
@@ -80,9 +77,9 @@ class SeleniumTestPharmacyCouponSection(FHISeleniumBase, StaticLiveServerTestCas
         # Amazon link uses our affiliate template.
         amazon_link = self.find_element("section#pharmacy-coupons a[href*='amazon']")
         href = amazon_link.get_attribute("href") or ""
-        assert "tag=totallylegitco-20" in href, (
-            f"Amazon link should carry the affiliate tag; got {href!r}"
-        )
+        assert (
+            "tag=totallylegitco-20" in href
+        ), f"Amazon link should carry the affiliate tag; got {href!r}"
 
     def test_microsite_non_drug_omits_pharmacy_section(self):
         """A non-drug microsite (mri-denial) should NOT render the pharmacy
@@ -115,6 +112,9 @@ class SeleniumTestPharmacyCouponSection(FHISeleniumBase, StaticLiveServerTestCas
             raw_email=email,
             health_history="",
             use_external=False,
+            # CA exercises the state Medicaid (Medi-Cal) pathway in the
+            # financial-assistance directory section below.
+            your_state="CA",
         )
 
         url = (
@@ -134,7 +134,18 @@ class SeleniumTestPharmacyCouponSection(FHISeleniumBase, StaticLiveServerTestCas
         assert "Amazon Search" in body
         # Truvada is flagged expensive (combo brand), so the bridge message
         # warns the appeal is the primary path.
-        assert "expensive" in body.lower(), (
-            f"Truvada bridge message should warn expensive; got: {body!r}"
-        )
+        assert (
+            "expensive" in body.lower()
+        ), f"Truvada bridge message should warn expensive; got: {body!r}"
         assert "out-of-pocket maximum" in body.lower()
+
+        # Financial assistance directory section: HIV diagnosis hits ADAP +
+        # Ryan White, the "CA" your_state field attaches Medi-Cal, and the
+        # general copay-foundation directory rides along.
+        self.assert_element("section#financial-assistance")
+        fa_body = self.get_text("section#financial-assistance")
+        assert "Financial Assistance Directory" in fa_body
+        assert "ADAP" in fa_body, fa_body
+        assert "Ryan White" in fa_body, fa_body
+        # CA → Medi-Cal pathway attached via state_help.
+        assert "Medi-Cal" in fa_body, fa_body

@@ -14,7 +14,7 @@ for the appeal itself.
 import re
 import urllib.parse
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Optional
 
 # Drugs that are typically inexpensive without insurance (under ~$50/month
 # at retail pharmacies via discount cards). Suitable as a "bridge" while
@@ -198,15 +198,6 @@ class PharmacyOption:
     # OOP credit.
     counts_toward_oop_max: bool = False
 
-    def to_dict(self) -> dict[str, Any]:
-        """JSON-serializable view used by REST payloads."""
-        return {
-            "name": self.name,
-            "url": self.url,
-            "description": self.description,
-            "counts_toward_oop_max": self.counts_toward_oop_max,
-        }
-
 
 @dataclass
 class PharmacyCouponSuggestion:
@@ -218,6 +209,12 @@ class PharmacyCouponSuggestion:
     and thus a viable bridge while fighting the denial. When False, the
     patient should still fight the denial because discount programs are
     unlikely to make the drug affordable on their own.
+
+    Consumed directly (attribute access) by:
+      * `partials/pharmacy_coupon_section.html` - server-rendered consumer
+        flow on outside_help.html and microsite landing pages.
+      * `FinancialAssistanceTool._format_results_for_llm` - formats the
+        suggestion into the chat LLM context.
     """
 
     drug_name: str
@@ -230,21 +227,6 @@ class PharmacyCouponSuggestion:
         "out-of-pocket maximum. Continue your appeal to get the medication "
         "covered through insurance."
     )
-
-    def to_dict(self) -> dict[str, Any]:
-        """
-        JSON-serializable view of the suggestion. Shared by every REST
-        surface that returns a pharmacy_coupon_suggestion field
-        (DenialResponseInfo, NextStepInfoSerializable) so the frontend
-        sees a single stable shape regardless of which endpoint produced it.
-        """
-        return {
-            "drug_name": self.drug_name,
-            "is_likely_cheap": self.is_likely_cheap,
-            "bridge_message": self.bridge_message,
-            "oop_max_warning": self.oop_max_warning,
-            "pharmacy_options": [opt.to_dict() for opt in self.pharmacy_options],
-        }
 
 
 def _normalize(text: str) -> str:

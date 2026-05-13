@@ -121,12 +121,7 @@ class TestCommonViewLogic(TestCase):
                 next_steps.pharmacy_coupon_suggestion, PharmacyCouponSuggestion
             )
             assert next_steps.pharmacy_coupon_suggestion.drug_name == "wegovy"
-            # Round-trip through convert_to_serializable so the REST
-            # surface gets the same shape as DenialResponseInfoSerializer.
-            serializable = next_steps.convert_to_serializable()
-            assert serializable.pharmacy_coupon_suggestion is not None
-            assert serializable.pharmacy_coupon_suggestion["drug_name"] == "wegovy"
-            assert len(serializable.pharmacy_coupon_suggestion["pharmacy_options"]) == 3
+            assert len(next_steps.pharmacy_coupon_suggestion.pharmacy_options) == 3
         finally:
             denial.delete()
 
@@ -147,8 +142,49 @@ class TestCommonViewLogic(TestCase):
         try:
             next_steps = FindNextStepsHelper.find_next_steps_for_denial(denial, email)
             assert next_steps.pharmacy_coupon_suggestion is None
-            serializable = next_steps.convert_to_serializable()
-            assert serializable.pharmacy_coupon_suggestion is None
+            # MRI denials shouldn't surface a financial-assistance section
+            # either - has_specific_matches() gates on diagnosis/drug/state
+            # matches, and "Knee pain" doesn't match any catalog entry.
+            assert next_steps.financial_assistance is None
+        finally:
+            denial.delete()
+
+    @pytest.mark.django_db
+    def test_find_next_steps_populates_financial_assistance_for_hiv_truvada(self):
+        """A Truvada (PrEP) denial with an HIV-related diagnosis must
+        surface the financial-assistance directory on the consumer flow:
+        ADAP / Ryan White matches via the diagnosis keyword, the state
+        Medicaid pathway attaches when ``your_state`` is set, and the
+        general copay-foundation catalog rides along."""
+        from fighthealthinsurance.financial_assistance_directory import (
+            FinancialAssistanceResults,
+        )
+
+        email = "truvada-prep@example.com"
+        denial = Denial.objects.create(
+            denial_id=2003,
+            semi_sekret="sekret-truvada",
+            hashed_email=Denial.get_hashed_email(email),
+            procedure="Truvada",
+            diagnosis="HIV pre-exposure prophylaxis",
+            denial_text="Truvada denied as non-formulary.",
+            your_state="CA",
+        )
+        try:
+            next_steps = FindNextStepsHelper.find_next_steps_for_denial(denial, email)
+            assert isinstance(
+                next_steps.financial_assistance, FinancialAssistanceResults
+            )
+            diagnosis_names = [
+                p.name for p in next_steps.financial_assistance.diagnosis_specific
+            ]
+            assert any("ADAP" in n for n in diagnosis_names), diagnosis_names
+            safety_net_names = [
+                p.name for p in next_steps.financial_assistance.safety_net
+            ]
+            assert any("Ryan White" in n for n in safety_net_names), safety_net_names
+            # State pathway attached for CA via state_help.
+            assert next_steps.financial_assistance.state_medicaid_name is not None
         finally:
             denial.delete()
 

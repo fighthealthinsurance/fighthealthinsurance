@@ -23,6 +23,9 @@ from typing import (
 )
 
 if TYPE_CHECKING:
+    from fighthealthinsurance.financial_assistance_directory import (
+        FinancialAssistanceResults,
+    )
     from fighthealthinsurance.pharmacy_coupon_detector import (
         PharmacyCouponSuggestion,
     )
@@ -133,32 +136,16 @@ class NextStepInfo:
     # prescription drug or contains generic prescription cues; None
     # otherwise. Surfaced in outside_help.html so users see GoodRx /
     # Cost Plus / Amazon Pharmacy options as a cash-pay bridge while
-    # they fight the denial.
+    # they fight the denial. Server-rendered only - not part of the
+    # REST serialization.
     pharmacy_coupon_suggestion: Optional["PharmacyCouponSuggestion"] = None
+    # FinancialAssistanceResults aggregate (copay foundations, manufacturer
+    # programs, safety-net clinics, state Medicaid) when the denial has at
+    # least one specific match; None otherwise. Same gating as the pharmacy
+    # field: server-rendered into outside_help.html, not REST-serialized.
+    financial_assistance: Optional["FinancialAssistanceResults"] = None
 
     def convert_to_serializable(self) -> "NextStepInfoSerializable":
-        # Inline the dict shape rather than calling .to_dict() so mypy can
-        # follow the return type without needing to chase the dataclass
-        # method through the django-stubs plugin (which has lost the
-        # return type in CI for `warn_return_any`).
-        suggestion_dict: Optional[dict[str, Any]] = None
-        if self.pharmacy_coupon_suggestion is not None:
-            s = self.pharmacy_coupon_suggestion
-            suggestion_dict = {
-                "drug_name": s.drug_name,
-                "is_likely_cheap": s.is_likely_cheap,
-                "bridge_message": s.bridge_message,
-                "oop_max_warning": s.oop_max_warning,
-                "pharmacy_options": [
-                    {
-                        "name": option.name,
-                        "url": option.url,
-                        "description": option.description,
-                        "counts_toward_oop_max": option.counts_toward_oop_max,
-                    }
-                    for option in s.pharmacy_options
-                ],
-            }
         return NextStepInfoSerializable(
             outside_help_details=self.outside_help_details,
             combined_form=list(
@@ -168,7 +155,6 @@ class NextStepInfo:
                 )
             ),
             semi_sekret=self.semi_sekret,
-            pharmacy_coupon_suggestion=suggestion_dict,
         )
 
     def _field_to_dict(self, field_name: str, field: Any) -> dict[str, Any]:
@@ -752,6 +738,49 @@ class FindNextStepsHelper:
             return None
 
     @classmethod
+    def _build_financial_assistance(
+        cls, denial: "Denial"
+    ) -> Optional["FinancialAssistanceResults"]:
+        """
+        Look up a FinancialAssistanceResults aggregate for the denial.
+
+        Surfaced on the consumer "next steps" page alongside the pharmacy
+        coupon section so users denied a medication see condition-specific
+        copay foundations (ADAP for HIV, LLS for blood cancers, etc.),
+        manufacturer copay cards, the general directory, 340B safety-net
+        clinics, and their state Medicaid pathway.
+
+        Returns None unless the search produced at least one entry tied to
+        the patient's specific drug, diagnosis, or state - i.e. there's
+        something targeted enough to render a dedicated section. The
+        general copay directories alone are not specific enough to gate on
+        (they're always returned by `search()`).
+
+        Best-effort: any failure returns None rather than blocking the
+        flow - the rest of the page is still useful without the directory.
+        """
+        from fighthealthinsurance.financial_assistance_directory import (
+            FinancialAssistanceResults as _FinancialAssistanceResults,
+            search,
+        )
+
+        try:
+            results: _FinancialAssistanceResults = search(
+                drug=denial.procedure,
+                diagnosis=denial.diagnosis,
+                denial_text=denial.denial_text,
+                state_abbreviation=denial.your_state,
+            )
+        except Exception:
+            logger.opt(exception=True).debug(
+                "Financial assistance lookup failed for next-steps; returning None"
+            )
+            return None
+        if not results.has_specific_matches():
+            return None
+        return results
+
+    @classmethod
     def _get_outside_help_details(
         cls, denial: "Denial", state: Optional[str] = None
     ) -> list:
@@ -957,6 +986,7 @@ class FindNextStepsHelper:
 
         # Combine all forms
         pharmacy_coupon_suggestion = cls._build_pharmacy_coupon_suggestion(denial)
+        financial_assistance = cls._build_financial_assistance(denial)
         try:
             combined_form = magic_combined_form(question_forms, existing_answers)
             return NextStepInfo(
@@ -964,6 +994,7 @@ class FindNextStepsHelper:
                 combined_form=combined_form,
                 semi_sekret=semi_sekret,
                 pharmacy_coupon_suggestion=pharmacy_coupon_suggestion,
+                financial_assistance=financial_assistance,
             )
         except Exception as e:
             logger.opt(exception=True).error(
@@ -975,6 +1006,7 @@ class FindNextStepsHelper:
                 combined_form=combined_form,
                 semi_sekret=semi_sekret,
                 pharmacy_coupon_suggestion=pharmacy_coupon_suggestion,
+                financial_assistance=financial_assistance,
             )
 
     @classmethod
@@ -992,6 +1024,7 @@ class FindNextStepsHelper:
             combined_form=combined_form,
             semi_sekret=denial.semi_sekret,
             pharmacy_coupon_suggestion=cls._build_pharmacy_coupon_suggestion(denial),
+            financial_assistance=cls._build_financial_assistance(denial),
         )
 
 
@@ -1012,16 +1045,6 @@ class DenialResponseInfo:
     date_of_service: Optional[str]
     insurance_company: Optional[str]
     plan_id: Optional[str]
-    # Pharmacy discount programs and financial-assistance directory results.
-    # Both are dicts so the REST serializer can render them without bespoke
-    # serializers, and both are None when there is nothing specific to show:
-    #   * pharmacy_coupon_suggestion: populated when the denial concerns a
-    #     known prescription drug or matches a generic prescription cue.
-    #   * financial_assistance: populated when the search finds at least
-    #     one program tied to the patient's drug / diagnosis / state - the
-    #     general copay directories alone do not gate this on.
-    pharmacy_coupon_suggestion: Optional[dict[str, Any]] = None
-    financial_assistance: Optional[dict[str, Any]] = None
 
 
 class PatientNotificationHelper:
@@ -2216,108 +2239,6 @@ class DenialCreatorHelper:
         # Return the current the state
         return cls.format_denial_response_info(denial)
 
-    @staticmethod
-    def _build_pharmacy_coupon_payload(denial) -> Optional[dict[str, Any]]:
-        """
-        Build a JSON-serializable pharmacy coupon suggestion for a denial.
-
-        Returns None when the denial doesn't appear to concern a prescription
-        drug, so the frontend can omit the section cleanly.
-        """
-        from fighthealthinsurance.pharmacy_coupon_detector import suggest_for_denial
-
-        try:
-            suggestion = suggest_for_denial(
-                denial_text=denial.denial_text,
-                procedure=denial.procedure,
-                diagnosis=denial.diagnosis,
-            )
-        except Exception:
-            logger.opt(exception=True).debug(
-                "Pharmacy coupon suggestion failed; returning None"
-            )
-            return None
-        if suggestion is None:
-            return None
-        # Inline the dict construction (instead of suggest.to_dict()) so
-        # mypy's `warn_return_any` can verify the return shape directly
-        # without needing to chase the to_dict() declaration through the
-        # lazy import + django-stubs plugin (which has been intermittently
-        # losing the return type in CI).
-        payload: dict[str, Any] = {
-            "drug_name": suggestion.drug_name,
-            "is_likely_cheap": suggestion.is_likely_cheap,
-            "bridge_message": suggestion.bridge_message,
-            "oop_max_warning": suggestion.oop_max_warning,
-            "pharmacy_options": [
-                {
-                    "name": option.name,
-                    "url": option.url,
-                    "description": option.description,
-                    "counts_toward_oop_max": option.counts_toward_oop_max,
-                }
-                for option in suggestion.pharmacy_options
-            ],
-        }
-        return payload
-
-    @staticmethod
-    def _build_financial_assistance_payload(denial) -> Optional[dict[str, Any]]:
-        """
-        Build a JSON-serializable financial-assistance payload for a denial.
-
-        Returns None unless `search()` produced at least one entry tied to
-        the patient's specific drug, diagnosis, or state - i.e. there's
-        something targeted enough to render a dedicated section. The
-        general copay directories and base safety-net entries are always
-        returned by `search()` but on their own are not specific enough to
-        gate the section on (otherwise it would render for every denial).
-
-        When the section is rendered, the payload still includes those
-        general/safety-net programs so the frontend can show them as
-        background context alongside the targeted matches.
-        """
-        from fighthealthinsurance.financial_assistance_directory import search
-
-        try:
-            results = search(
-                drug=denial.procedure,
-                diagnosis=denial.diagnosis,
-                denial_text=denial.denial_text,
-                state_abbreviation=denial.your_state,
-            )
-        except Exception:
-            logger.opt(exception=True).debug(
-                "Financial assistance search failed; returning None"
-            )
-            return None
-        if not results.has_specific_matches():
-            return None
-
-        def _serialize(program):
-            return {
-                "name": program.name,
-                "url": program.url,
-                "description": program.description,
-                "category": program.category,
-                "eligibility_note": program.eligibility_note,
-                "phone": program.phone,
-            }
-
-        return {
-            "canonical_drug": results.canonical_drug,
-            "diagnosis_text": results.diagnosis_text,
-            "diagnosis_search_haystack": results.diagnosis_search_haystack,
-            "state_abbreviation": results.state_abbreviation,
-            "diagnosis_specific": [_serialize(p) for p in results.diagnosis_specific],
-            "manufacturer": [_serialize(p) for p in results.manufacturer],
-            "general": [_serialize(p) for p in results.general],
-            "safety_net": [_serialize(p) for p in results.safety_net],
-            "state_medicaid_name": results.state_medicaid_name,
-            "state_medicaid_url": results.state_medicaid_url,
-            "state_medicaid_phone": results.state_medicaid_phone,
-        }
-
     @classmethod
     def format_denial_response_info(cls, denial):
         appeal_id = None
@@ -2347,8 +2268,6 @@ class DenialCreatorHelper:
             date_of_service=denial.date_of_service,
             insurance_company=denial.insurance_company,
             plan_id=denial.plan_id,
-            pharmacy_coupon_suggestion=cls._build_pharmacy_coupon_payload(denial),
-            financial_assistance=cls._build_financial_assistance_payload(denial),
         )
         return r
 

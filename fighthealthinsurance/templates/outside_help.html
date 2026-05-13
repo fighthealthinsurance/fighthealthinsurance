@@ -75,5 +75,10 @@ Additional Resources & Questions
 {# Pharmacy discount options when the denial concerns a recognizable medication. #}
 {# Renders nothing when pharmacy_suggestion is None. #}
 {% include 'partials/pharmacy_coupon_section.html' with pharmacy_suggestion=pharmacy_suggestion %}
+
+{# Financial assistance directory: copay foundations, manufacturer programs, #}
+{# 340B safety-net, and state Medicaid pathway when there's a specific match. #}
+{# Renders nothing when financial_assistance is None. #}
+{% include 'partials/financial_assistance_section.html' with financial_assistance=financial_assistance %}
 </div>
 {% endblock content %}
