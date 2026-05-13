@@ -442,6 +442,24 @@ class TestRxNormLookupToolFormatting:
         assert BaseTool.merge_strings("only", "") == "only"
         assert BaseTool.merge_strings("", "only") == "only"
 
+    def test_merge_preserves_leading_spaces_and_indentation(self):
+        """Markdown list bullets and code-block indentation must survive the
+        merge — the join only strips newlines, not spaces/tabs."""
+        from fighthealthinsurance.chat.tools.base_tool import BaseTool
+
+        # Bullet list continuation: leading spaces in the addition matter.
+        merged = BaseTool.merge_strings("Steps:", "  - first step\n  - second step")
+        assert merged == "Steps:\n\n  - first step\n  - second step"
+
+        # Code-block style indentation in addition.
+        assert BaseTool.merge_strings("", "    indented line") == "    indented line"
+
+        # Trailing spaces on existing must be preserved (could be a markdown
+        # hard line break — two trailing spaces).
+        assert BaseTool.merge_strings("hard break  ", "next") == (
+            "hard break  \n\nnext"
+        )
+
 
 class TestRxNormLookupToolHandle:
     """End-to-end coverage of RxNormLookupTool.handle()/execute().
