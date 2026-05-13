@@ -3027,7 +3027,7 @@ class AppealsBackendHelper:
         saved_appeal_texts: list[str] = [
             str(pa.appeal_text)
             async for pa in ProposedAppeal.objects.filter(for_denial=denial)
-            if pa.appeal_text
+            if is_real_appeal(pa.appeal_text)
         ]
         if len(saved_appeal_texts) >= 1:
             yield json.dumps(

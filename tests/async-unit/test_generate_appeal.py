@@ -10,8 +10,7 @@ from fighthealthinsurance.generate_appeal import (
     _peek_real_or_none,
     _shed_context,
     _SHEDDABLE_TIER1,
-    _SHEDDABLE_TIER2,
-    _TIER3_TRUNCATIONS,
+    _TIER2_TRUNCATIONS,
 )
 
 
@@ -202,7 +201,10 @@ class TestAppealQuestionsGeneration:
 
 
 def _make_call(**overrides):
-    """Build a `calls`-shape dict matching make_appeals' schema."""
+    """Build a `calls`-shape dict matching make_appeals' actual 8-key
+    schema. The uspstf/pa/nice/rag contexts are NOT call-dict keys —
+    they're inlined into `prompt` by make_open_prompt before calls is
+    built — so they belong in the prompt string, not as separate keys."""
     base = {
         "model_name": "fhi-internal",
         "prompt": "Please write an appeal.",
@@ -212,10 +214,6 @@ def _make_call(**overrides):
         "pubmed_context": "pubmed citations",
         "ml_citations_context": ["citation-1", "citation-2"],
         "prof_pov": False,
-        "nice_context": "nice guidelines",
-        "rag_context": "rag context",
-        "pa_context": "pa context",
-        "uspstf_context": "uspstf context",
     }
     base.update(overrides)
     return base
@@ -299,35 +297,31 @@ def _name_spy():
 class TestShedContext:
     """_shed_context drops/truncates context in priority order for retry."""
 
-    @pytest.mark.parametrize(
-        "tier,expected_nulled",
-        [
-            (1, _SHEDDABLE_TIER1),
-            (2, _SHEDDABLE_TIER1 + _SHEDDABLE_TIER2),
-        ],
-    )
-    def test_drops_by_tier(self, tier, expected_nulled):
-        new_calls, changed = _shed_context([_make_call()], tier=tier)
+    def test_tier1_drops_pubmed_and_citations(self):
+        new_calls, changed = _shed_context([_make_call()], tier=1)
         new = new_calls[0]
-        for key in expected_nulled:
+        for key in _SHEDDABLE_TIER1:
             assert new[key] is None
-        # Core context never dropped by tier 1/2
+        # Core context never dropped by tier 1
         assert new["plan_context"] == "plan documents summary"
         assert new["patient_context"] == "patient medical history"
-        assert set(changed) == set(expected_nulled)
+        assert set(changed) == set(_SHEDDABLE_TIER1)
 
-    def test_tier3_truncates_core_when_over_cap(self):
-        oversized = {key: "X" * (cap + 100) for key, cap in _TIER3_TRUNCATIONS}
-        new_calls, changed = _shed_context([_make_call(**oversized)], tier=3)
+    def test_tier2_truncates_core_when_over_cap(self):
+        oversized = {key: "X" * (cap + 100) for key, cap in _TIER2_TRUNCATIONS}
+        new_calls, changed = _shed_context([_make_call(**oversized)], tier=2)
         new = new_calls[0]
-        for key, cap in _TIER3_TRUNCATIONS:
+        # Tier 2 also nulls tier-1 keys
+        for key in _SHEDDABLE_TIER1:
+            assert new[key] is None
+        for key, cap in _TIER2_TRUNCATIONS:
             assert len(new[key]) == cap
             assert f"{key}(truncated)" in changed
 
-    def test_tier3_skips_truncation_under_cap(self):
+    def test_tier2_skips_truncation_under_cap(self):
         new_calls, changed = _shed_context(
             [_make_call(plan_context="short", patient_context="also short")],
-            tier=3,
+            tier=2,
         )
         new = new_calls[0]
         assert new["plan_context"] == "short"
@@ -336,13 +330,13 @@ class TestShedContext:
 
     def test_does_not_mutate_input_calls(self):
         original = _make_call()
-        _shed_context([original], tier=3)
-        assert original["uspstf_context"] == "uspstf context"
+        _shed_context([original], tier=2)
         assert original["pubmed_context"] == "pubmed citations"
+        assert original["ml_citations_context"] == ["citation-1", "citation-2"]
 
     def test_already_none_inputs_not_reported_as_changed(self):
         _, changed = _shed_context(
-            [_make_call(pubmed_context=None, plan_context=None)], tier=3
+            [_make_call(pubmed_context=None, plan_context=None)], tier=2
         )
         assert "pubmed_context" not in changed
 

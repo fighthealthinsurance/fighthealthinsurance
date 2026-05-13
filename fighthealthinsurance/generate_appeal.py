@@ -639,31 +639,33 @@ def identifier_found_in_text(identifier: str, text: str) -> bool:
     return False
 
 
-# Context keys shed on retry when zero-result failures may stem from
-# context-window overflow. Higher tier = more aggressive reduction.
-_SHEDDABLE_TIER1 = ("uspstf_context", "pa_context", "nice_context", "rag_context")
-_SHEDDABLE_TIER2 = ("pubmed_context", "ml_citations_context")
-_TIER3_TRUNCATIONS = (("plan_context", 4000), ("patient_context", 6000))
+# Context shed on retry when zero-result failures may stem from
+# context-window overflow. Only the call-dict keys can be shed here —
+# uspstf/pa/nice/rag contexts are already baked into the prompt string
+# by make_open_prompt, so they're out of reach without re-rendering.
+# TODO: a future improvement could re-call make_open_prompt with those
+# contexts nulled to get true tier-1-style enrichment shedding.
+_SHEDDABLE_TIER1 = ("pubmed_context", "ml_citations_context")
+_TIER2_TRUNCATIONS = (("plan_context", 4000), ("patient_context", 6000))
 
 
 def _shed_context(calls: list[dict], tier: int) -> tuple[list[dict], list[str]]:
     """Return (new_calls, changed_names) with context reduced by tier.
 
-    Tier 1 drops enrichments; tier 2 also drops pubmed/citations; tier 3
-    also truncates plan_context and patient_context. Higher tiers include
-    all lower-tier reductions.
+    Tier 1 nulls pubmed/citations context. Tier 2 also truncates
+    plan_context and patient_context. Higher tiers include all lower-tier
+    reductions.
     """
-    drop_keys = (*_SHEDDABLE_TIER1, *(_SHEDDABLE_TIER2 if tier >= 2 else ()))
     changed: set[str] = set()
     new_calls = []
     for call in calls:
         new = dict(call)
-        for key in drop_keys:
+        for key in _SHEDDABLE_TIER1:
             if new.get(key) is not None:
                 new[key] = None
                 changed.add(key)
-        if tier >= 3:
-            for key, cap in _TIER3_TRUNCATIONS:
+        if tier >= 2:
+            for key, cap in _TIER2_TRUNCATIONS:
                 val = new.get(key)
                 if isinstance(val, str) and len(val) > cap:
                     new[key] = val[:cap]
@@ -1719,10 +1721,11 @@ class AppealGenerator(object):
             prof_pov: bool = False,
         ) -> List[Future[Tuple[str, Optional[str]]]]:
             if model_name not in ml_router.models_by_name:
+                sample = list(itertools.islice(ml_router.models_by_name.keys(), 10))
                 logger.warning(
                     f"get_model_result: requested model {model_name!r} "
                     f"not in ml_router.models_by_name "
-                    f"(available sample: {list(ml_router.models_by_name.keys())[:10]})"
+                    f"(available sample: {sample})"
                 )
                 return []
             model_backends = ml_router.models_by_name[model_name]
@@ -1994,7 +1997,7 @@ class AppealGenerator(object):
                 f"{denial_id} ({ext_note}); retrying primary internal-only"
             )
             time.sleep(1.0)
-            for tier in (1, 2, 3):
+            for tier in (1, 2):
                 shed_calls, changed = _shed_context(calls, tier=tier)
                 logger.warning(
                     f"make_appeals: retrying primary for denial {denial_id} "
@@ -2012,7 +2015,7 @@ class AppealGenerator(object):
                     break
             if first is None:
                 logger.error(
-                    f"make_appeals: all context-shed retries (tiers 1-3) "
+                    f"make_appeals: all context-shed retries (tiers 1-2) "
                     f"produced 0 for denial {denial_id}; giving up. "
                     f"({ext_note})"
                 )
