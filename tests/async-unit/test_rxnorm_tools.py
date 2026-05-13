@@ -392,7 +392,7 @@ class TestPubMedSingleDrugHeuristic:
 
 
 class TestRxNormLookupToolFormatting:
-    """Cover RxNormLookupTool._format_context (score gating, _merge)."""
+    """Cover RxNormLookupTool._format_context (score gating, merge_strings)."""
 
     def test_low_score_treated_as_miss(self):
         from fighthealthinsurance.chat.tools.rxnorm_tool import RxNormLookupTool
@@ -429,18 +429,18 @@ class TestRxNormLookupToolFormatting:
         assert "Lipitor" in out
 
     def test_merge_inserts_separator(self):
-        from fighthealthinsurance.chat.tools.rxnorm_tool import RxNormLookupTool
+        from fighthealthinsurance.chat.tools.base_tool import BaseTool
 
-        merged = RxNormLookupTool._merge("first sentence.", "second sentence.")
+        merged = BaseTool.merge_strings("first sentence.", "second sentence.")
         assert merged == "first sentence.\n\nsecond sentence."
 
     def test_merge_handles_empties(self):
-        from fighthealthinsurance.chat.tools.rxnorm_tool import RxNormLookupTool
+        from fighthealthinsurance.chat.tools.base_tool import BaseTool
 
-        assert RxNormLookupTool._merge("", "") == ""
-        assert RxNormLookupTool._merge(None, None) == ""
-        assert RxNormLookupTool._merge("only", "") == "only"
-        assert RxNormLookupTool._merge("", "only") == "only"
+        assert BaseTool.merge_strings("", "") == ""
+        assert BaseTool.merge_strings(None, None) == ""
+        assert BaseTool.merge_strings("only", "") == "only"
+        assert BaseTool.merge_strings("", "only") == "only"
 
 
 class TestRxNormLookupToolHandle:

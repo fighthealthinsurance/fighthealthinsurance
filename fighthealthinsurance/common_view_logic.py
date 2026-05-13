@@ -79,6 +79,7 @@ from fighthealthinsurance.utils import (
     MIN_APPEAL_CHARS,
     sync_iterator_to_async,
 )
+from .clinicaltrials_tools import ClinicalTrialsTools
 from .pubmed_tools import PubMedTools
 from .nice_tools import NICETools
 from .email_utils import is_sendable_email
@@ -1491,7 +1492,7 @@ class DenialCreatorHelper:
         """
         Asynchronously extracts procedure and diagnosis from a denial's text and updates the denial record.
 
-        Attempts to extract the procedure and diagnosis fields using the appeal generator. Updates the denial with the extracted values and marks extraction as finished, regardless of success. If extraction is successful or existing values are present, triggers background tasks to search for related PubMed articles and build speculative context. Handles timeouts and cancellation during PubMed search gracefully.
+        Attempts to extract the procedure and diagnosis fields using the appeal generator. Updates the denial with the extracted values and marks extraction as finished, regardless of success. If extraction is successful or existing values are present, triggers background tasks to search for related PubMed articles, prefetch ClinicalTrials.gov matches, and build speculative context. All background searches are fire-and-forget with their own timeouts and never block the caller.
         """
         denial = await Denial.objects.filter(denial_id=denial_id).aget()
         procedure = None
@@ -1559,14 +1560,52 @@ class DenialCreatorHelper:
                             f"Failed to find PubMed articles for denial {denial_id}: {e}"
                         )
 
+                async def find_clinical_trials():
+                    """
+                    Prefetch ClinicalTrials.gov matches for this denial into the
+                    DB cache, so the chat assistant (and any future appeal-side
+                    consumer) gets an instant hit instead of a live API roundtrip.
+
+                    Intentionally fire-and-forget: trial data is supplementary
+                    evidence, and the appeal flow must never stall on it. Any
+                    timeout, cancellation, or unexpected error is swallowed here
+                    so it can't propagate out of the daemon thread.
+                    """
+                    try:
+                        ct_tools = ClinicalTrialsTools()
+                        # find_trials_for_denial enforces its own end-to-end
+                        # budget; wait_for is a belt-and-suspenders cap in case
+                        # something deeper hangs past the internal timeout.
+                        await asyncio.wait_for(
+                            ct_tools.find_trials_for_denial(denial, timeout=40.0),
+                            timeout=50.0,
+                        )
+                    except asyncio.TimeoutError:
+                        logger.debug(
+                            f"ClinicalTrials search timed out for denial {denial_id}"
+                        )
+                    except asyncio.exceptions.CancelledError:
+                        logger.debug(
+                            f"Cancelled ClinicalTrials search for denial {denial_id}"
+                        )
+                    except Exception as e:
+                        logger.opt(exception=True).debug(
+                            f"ClinicalTrials prefetch failed for denial {denial_id}: "
+                            f"{type(e).__name__}"
+                        )
+
                 # Fire and forget the PubMed search task
                 await fire_and_forget_in_new_threadpool(find_pubmed_articles())
+                # Fire and forget the ClinicalTrials.gov prefetch. Supplementary
+                # evidence for "experimental/investigational" denials; non-blocking.
+                await fire_and_forget_in_new_threadpool(find_clinical_trials())
                 # Fire and forget the building the speculative context
                 await fire_and_forget_in_new_threadpool(
                     cls.build_speculative_context(denial_id)
                 )
                 logger.debug(
-                    f"Fired pubmed search & speculative context for denial {denial_id}"
+                    f"Fired pubmed + clinical-trials search & speculative context "
+                    f"for denial {denial_id}"
                 )
 
         except Exception as e:

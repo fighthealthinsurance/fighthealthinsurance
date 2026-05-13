@@ -124,17 +124,10 @@ class ClinicalTrialsTool(BaseTool):
                 fallback_backends=kwargs.get("fallback_backends"),
                 full_history=kwargs.get("full_history"),
             )
-            if cleaned_response and additional_response:
-                cleaned_response += additional_response
-            elif additional_response:
-                cleaned_response = additional_response
+            cleaned_response = self.merge_strings(cleaned_response, additional_response)
+            context = self.merge_strings(context, additional_context)
 
-            if context and additional_context:
-                context = context + additional_context
-            elif additional_context:
-                context = additional_context
-
-        updated_context = context + trial_context if context else trial_context
+        updated_context = self.merge_strings(context, trial_context)
         return cleaned_response, updated_context
 
     def _build_trials_context(self, trials) -> str:
