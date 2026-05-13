@@ -1580,10 +1580,10 @@ class DenialCreatorHelper:
             logger.opt(exception=True).warning(
                 f"Failed to extract procedure and diagnosis for denial {denial_id}: {e}"
             )
-            # Even on failure, mark extraction as finished
-            await Denial.objects.filter(denial_id=denial_id).aupdate(
-                extract_procedure_diagnosis_finished=True
-            )
+            # Leave extract_procedure_diagnosis_finished as False so a
+            # subsequent extract_entity call re-attempts extraction and
+            # re-fires the PubMed / speculative-citation cache warmers.
+            # The retry budget is enforced externally via denial.gen_attempts.
 
     @classmethod
     async def _match_insurance_company(
