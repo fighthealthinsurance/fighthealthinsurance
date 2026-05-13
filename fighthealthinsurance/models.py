@@ -2272,6 +2272,13 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     pubmed_context = models.TextField(null=True, blank=True)
     # NICE (UK) syndication guidance context, treated as international clinical guidance
     nice_context = models.TextField(null=True, blank=True)
+    # RAG-retrieved guideline excerpts (CPT/HCPCS/ICD-10 keyed). Cached so a
+    # gen_attempts>=3 retry can fall back to the prior round's evidence
+    # instead of dropping it on the floor when the RAG service is skipped.
+    rag_context = models.TextField(null=True, blank=True)
+    # IMR (Independent Medical Review) prior-decision excerpts. Same retry
+    # semantics as rag_context — persist so retries don't lose it.
+    imr_context = models.TextField(null=True, blank=True)
     generated_questions = models.JSONField(null=True, blank=True)
     # ML-generated citations for the appeal
     ml_citation_context = models.JSONField(null=True, blank=True)
