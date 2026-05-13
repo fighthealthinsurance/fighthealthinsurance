@@ -147,3 +147,16 @@ class ProVersionAvailableModeTest(TestCase):
         self.assertContains(response, "The New Professional Version Is Here")
         self.assertContains(response, "Schedule a Trial or Learn More")
         self.assertNotContains(response, 'method="post"')
+
+    def test_post_returns_405(self):
+        """POSTs must not be silently swallowed when the page is read-only."""
+        response = self.client.post(
+            reverse("pro_version"),
+            {"name": "Hopeful", "email": "hopeful@clinic.example"},
+        )
+        self.assertEqual(response.status_code, 405)
+        self.assertFalse(
+            InterestedProfessional.objects.filter(
+                email="hopeful@clinic.example"
+            ).exists()
+        )

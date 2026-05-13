@@ -16,6 +16,7 @@ from django.http import (
     HttpResponse,
     HttpResponseBase,
     HttpResponseForbidden,
+    HttpResponseNotAllowed,
     HttpResponseRedirect,
     JsonResponse,
 )
@@ -257,6 +258,11 @@ class ProVersionView(generic.FormView):
 
     def dispatch(self, request, *args, **kwargs):
         if getattr(settings, "PRO_VERSION_AVAILABLE", False):
+            # The available-now page is read-only — surface 405 on POST/other
+            # rather than silently 200-ing a submission the form path would
+            # otherwise have written to the DB.
+            if request.method not in ("GET", "HEAD"):
+                return HttpResponseNotAllowed(["GET", "HEAD"])
             return render(request, "professional_available.html")
         return super().dispatch(request, *args, **kwargs)
 
