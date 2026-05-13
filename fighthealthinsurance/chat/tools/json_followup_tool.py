@@ -119,7 +119,7 @@ class JsonFollowupTool(BaseTool):
 
         Default behavior: return ``match.group(1)`` — the regex-captured
         JSON blob. Subclasses whose payloads may contain nested objects
-        override this and call ``_extract_balanced_json`` so a simple,
+        override this and call ``extract_balanced_json`` so a simple,
         ReDoS-safe ``{[^}]*}`` regex can still match the *start* of the
         token while the actual extraction walks brace depth.
         """

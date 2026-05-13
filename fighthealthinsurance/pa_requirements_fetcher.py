@@ -28,6 +28,7 @@ from urllib.parse import urlparse
 
 import aiohttp
 from asgiref.sync import sync_to_async
+from django.db import transaction
 from loguru import logger
 
 from fighthealthinsurance.models import (
@@ -140,11 +141,11 @@ class PaRequirementsFetcher:
 
         stats["fetched"] += 1
         source_name = f"{AUTO_SOURCE_PREFIX}{company.pa_requirement_list_url}"
-        seen_pks, written = await sync_to_async(self._upsert_rows)(
+        written, retired = await sync_to_async(self._persist_company)(
             company, parsed, source_name
         )
         stats["entries"] += written
-        stats["retired"] += await sync_to_async(self._retire_missing)(company, seen_pks)
+        stats["retired"] += retired
         return stats
 
     async def parse_company(
@@ -224,6 +225,27 @@ class PaRequirementsFetcher:
                 encoding = resp.charset or "utf-8"
                 return content_type, data.decode(encoding, errors="replace")
             return content_type, data
+
+    @classmethod
+    def _persist_company(
+        cls,
+        company: InsuranceCompany,
+        parsed: List[ParsedPARequirement],
+        source_name: str,
+    ) -> "tuple[int, int]":
+        """Upsert + soft-retire for one company in a single transaction.
+
+        Wrapping both phases keeps the whole carrier refresh atomic for
+        ``lookup_pa_requirements`` readers — they'll see either the old
+        state or the new state, never a half-rewritten one. It also
+        coalesces ``update_or_create``'s per-row autocommits into one
+        transaction, materially cutting commit overhead on the hundreds-
+        to-thousands-of-rows lists carriers publish.
+        """
+        with transaction.atomic():
+            seen_pks, written = cls._upsert_rows(company, parsed, source_name)
+            retired = cls._retire_missing(company, seen_pks)
+        return written, retired
 
     @staticmethod
     def _upsert_rows(
