@@ -173,9 +173,7 @@ async def _parse_json_or_close(
             await consumer.send(json.dumps({"error": message}))
 
     if text_data is None:
-        logger.warning(
-            f"Empty/None text frame received in {consumer_name} websocket"
-        )
+        logger.warning(f"Empty/None text frame received in {consumer_name} websocket")
         await _send_err("Empty message")
         await consumer.close()
         return None
