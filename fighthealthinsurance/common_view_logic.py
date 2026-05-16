@@ -52,7 +52,9 @@ from fhi_users import emails as fhi_emails
 from fhi_users.audit import TrackingInfo
 from fhi_users.models import ProfessionalUser, UserDomain
 from fighthealthinsurance import stripe_utils
+from fighthealthinsurance.context_barrier import with_warm_cache
 from fighthealthinsurance.context_utils import attach_supplemental_to_citations
+from fighthealthinsurance.denial_context import merge_plan_context, merge_qa
 from fighthealthinsurance.denials.algorithmic_review_detector import (
     detect_algorithmic_review_terms,
     render_template_blocks,
@@ -1579,10 +1581,10 @@ class DenialCreatorHelper:
             logger.opt(exception=True).warning(
                 f"Failed to extract procedure and diagnosis for denial {denial_id}: {e}"
             )
-            # Even on failure, mark extraction as finished
-            await Denial.objects.filter(denial_id=denial_id).aupdate(
-                extract_procedure_diagnosis_finished=True
-            )
+            # Leave extract_procedure_diagnosis_finished as False so a
+            # subsequent extract_entity call re-attempts extraction and
+            # re-fires the PubMed / speculative-citation cache warmers.
+            # The retry budget is enforced externally via denial.gen_attempts.
 
     @classmethod
     async def _match_insurance_company(
@@ -2652,15 +2654,17 @@ class AppealsBackendHelper:
                     if dt.appeal_text is not None:
                         main.append(dt.appeal_text)
 
-        # Add the context to the denial
-        if medical_context is not None:
-            qa_context = {}
-            if denial.qa_context is not None:
-                qa_context = json.loads(denial.qa_context)
-            qa_context["medical_context"] = " ".join(medical_context)
-            denial.qa_context = json.dumps(qa_context)
-        if plan_context is not None and denial.plan_context is None:
-            denial.plan_context = " ".join(set(plan_context))
+        # Add the context to the denial — merge, never overwrite. Previously
+        # this rebuilt qa_context with json.dumps and gated plan_context on
+        # `is None`, dropping any plan info on subsequent calls.
+        if medical_context:
+            merge_qa(
+                denial,
+                {"medical_context": " ".join(medical_context)},
+                source="appeal_gen_form",
+            )
+        if plan_context:
+            merge_plan_context(denial, plan_context)
         # Update the denial object with the received parameter if it differs
         if denial.professional_to_finish != professional_to_finish:
             logger.info(
@@ -2730,21 +2734,53 @@ class AppealsBackendHelper:
                     )
                     return None
 
-            pubmed_context_awaitable = tracked_awaitable(
-                asyncio.wait_for(cls.pmt.find_context_for_denial(denial), timeout=40),
-                substep="pubmed",
-                done_msg="PubMed search complete",
+            # Brief bounded wait for any in-flight fire-and-forget PubMed /
+            # citation tasks (launched during entity extraction) before
+            # falling through to the inline 40s fetch.  Keeps first-attempt
+            # appeals from being under-contextualized when the background
+            # cache warmer is almost done, while still capping the wait so
+            # we never block forever.  Tunable via settings.
+            from django.conf import settings as django_settings
+
+            barrier_timeout = float(
+                getattr(django_settings, "FHI_CONTEXT_BARRIER_TIMEOUT_S", 10)
             )
 
-            ml_citation_context_awaitable = tracked_awaitable(
-                asyncio.wait_for(
-                    MLCitationsHelper.generate_citations_for_denial(
-                        denial, speculative=False
+            pubmed_context_awaitable = with_warm_cache(
+                denial_id=denial_id,
+                field_name="pubmed_context",
+                barrier_timeout=barrier_timeout,
+                poll_interval=0.5,
+                status_queue=status_queue,
+                substep="pubmed",
+                ready_msg="Background PubMed search ready",
+                fallback_factory=lambda: tracked_awaitable(
+                    asyncio.wait_for(
+                        cls.pmt.find_context_for_denial(denial), timeout=40
                     ),
-                    timeout=40,
+                    substep="pubmed",
+                    done_msg="PubMed search complete",
                 ),
+            )
+
+            ml_citation_context_awaitable = with_warm_cache(
+                denial_id=denial_id,
+                field_name="ml_citation_context",
+                barrier_timeout=barrier_timeout,
+                poll_interval=0.5,
+                status_queue=status_queue,
                 substep="citations",
-                done_msg="Citations generated",
+                ready_msg="Background citations ready",
+                fallback_factory=lambda: tracked_awaitable(
+                    asyncio.wait_for(
+                        MLCitationsHelper.generate_citations_for_denial(
+                            denial, speculative=False
+                        ),
+                        timeout=40,
+                    ),
+                    substep="citations",
+                    done_msg="Citations generated",
+                ),
             )
 
             # Extract procedure (CPT + HCPCS) and ICD-10 codes from the
@@ -2881,6 +2917,26 @@ class AppealsBackendHelper:
                 if isinstance(results[3], str) and results[3]:
                     imr_context = results[3]
                     logger.info("IMR decisions context retrieved")
+                # Cache RAG and IMR on the denial so a gen_attempts>=3 retry
+                # or an exception-fallback can recover them without rerunning
+                # the external services. Mirrors the persistence behavior
+                # that pubmed_context / ml_citation_context / nice_context
+                # already enjoy via their helpers.
+                persist_updates: dict[str, Any] = {}
+                if rag_context:
+                    persist_updates["rag_context"] = rag_context
+                if imr_context:
+                    persist_updates["imr_context"] = imr_context
+                if persist_updates:
+                    try:
+                        await Denial.objects.filter(denial_id=denial_id).aupdate(
+                            **persist_updates
+                        )
+                    except Exception as e:
+                        logger.opt(exception=True).debug(
+                            f"Failed to persist RAG/IMR context for "
+                            f"denial {denial_id}: {e}"
+                        )
                 if isinstance(results[4], str) and results[4]:
                     pa_context = results[4]
                     logger.info("Payer PA requirements context retrieved")
@@ -2913,9 +2969,13 @@ class AppealsBackendHelper:
                 pubmed_context = denial.pubmed_context
                 ml_citation_context = denial.ml_citation_context
                 nice_context = denial.nice_context
-                # RAG context is not persisted, so we don't try to retrieve it.
-                # PA context isn't persisted either; re-run the cheap ORM query
-                # so retries don't silently lose payer rules.
+                # RAG and IMR are now persisted (migration 0181) so recover
+                # them on fallback the same way pubmed_context does. Missing
+                # values stay None.
+                rag_context = denial.rag_context or rag_context
+                imr_context = denial.imr_context or imr_context
+                # PA context isn't persisted; re-run the cheap ORM query so
+                # retries don't silently lose payer rules.
                 try:
                     from fighthealthinsurance.pa_requirements import (
                         get_pa_context_for_denial,
@@ -2948,9 +3008,13 @@ class AppealsBackendHelper:
                 logger.debug("Used saved contexts")
         else:
             logger.debug("Too many retries, skipping ML/pubmed/RAG ctx")
-            # Reuse the persisted NICE context; otherwise it'd be dropped on
+            # Reuse the persisted contexts; otherwise they'd be dropped on
             # the very retry path that's supposed to use previous results.
             nice_context = denial.nice_context
+            pubmed_context = denial.pubmed_context
+            ml_citation_context = denial.ml_citation_context
+            rag_context = denial.rag_context
+            imr_context = denial.imr_context
             # PA-requirement lookup is a cheap ORM query, not an external
             # API call, so re-run it on retries instead of dropping it.
             try:
