@@ -116,15 +116,29 @@ class TestBuildSuggestion:
         assert suggestion.is_likely_cheap is False
         assert "expensive" in suggestion.bridge_message.lower()
 
-    def test_includes_three_pharmacy_options(self):
+    def test_includes_expected_pharmacy_options(self):
         suggestion = build_suggestion("metformin")
         names = {opt.name for opt in suggestion.pharmacy_options}
         assert "GoodRx" in names
         assert "Mark Cuban Cost Plus Drugs" in names
+        assert "Crush Cost" in names
         # When a specific drug is detected the Amazon option is labeled
         # "Amazon Search" because the affiliate URL points to amazon.com/s
         # (general retail) rather than pharmacy.amazon.com.
         assert "Amazon Search" in names
+
+    def test_crushcost_url_uses_price_search_endpoint(self):
+        # Crush Cost's user-facing search lives at /price-search?uri=<drug>
+        # (URL-encoded). The /api/v1/coupon/drug-search endpoint on
+        # api.crushcost.com is their internal autocomplete and must NOT be
+        # used as a link - it returns JSON, not a user-facing page.
+        suggestion = build_suggestion("metformin")
+        crushcost = next(
+            opt for opt in suggestion.pharmacy_options if opt.name == "Crush Cost"
+        )
+        assert crushcost.url.startswith("https://crushcost.com/price-search?uri=")
+        assert "metformin" in crushcost.url
+        assert "api.crushcost.com" not in crushcost.url
 
     def test_pharmacy_urls_include_drug_name(self):
         suggestion = build_suggestion("metformin")
@@ -227,8 +241,13 @@ class TestSuggestForDenial:
         # No specific drug detected, so drug_name is empty
         assert suggestion.drug_name == ""
         assert suggestion.is_likely_cheap is False
-        # Should still provide pharmacy options pointing at search pages
-        assert len(suggestion.pharmacy_options) == 3
+        # Should still provide pharmacy options pointing at search pages.
+        # Count is fragile, so we assert the expected set of names instead.
+        names = {opt.name for opt in suggestion.pharmacy_options}
+        assert "GoodRx" in names
+        assert "Mark Cuban Cost Plus Drugs" in names
+        assert "Crush Cost" in names
+        assert "Amazon Pharmacy" in names
 
     def test_returns_none_for_unrelated_denial(self):
         suggestion = suggest_for_denial(
