@@ -268,6 +268,23 @@ def _build_costplus_option(drug_name: str) -> PharmacyOption:
     )
 
 
+def _build_crushcost_option(drug_name: str) -> PharmacyOption:
+    # Crush Cost's price-search page reads `uri` as a URL-encoded drug name
+    # (the same shape as JS `encodeURIComponent`). `_slug_for_url` uses
+    # `quote(..., safe="")` so combo names like "emtricitabine/tenofovir"
+    # percent-encode their slashes and survive the round trip.
+    slug = _slug_for_url(drug_name)
+    return PharmacyOption(
+        name="Crush Cost",
+        url=f"https://crushcost.com/price-search?uri={slug}",
+        description=(
+            "Free pharmacy-discount card with retail-pharmacy price lookup. "
+            "Useful as a second quote alongside GoodRx since the two cards "
+            "frequently come back with different prices at the same counter."
+        ),
+    )
+
+
 # Amazon affiliate URL template used when a specific drug has been
 # detected. Substitutes the (URL-encoded) drug name for `{slug}`. The
 # remaining query parameters carry our Amazon Associates tag and the
@@ -372,6 +389,7 @@ def build_suggestion(drug_name: str) -> PharmacyCouponSuggestion:
     options = [
         _build_goodrx_option(name),
         _build_costplus_option(name),
+        _build_crushcost_option(name),
         _build_amazon_option(name),
     ]
 
@@ -442,6 +460,14 @@ def suggest_for_denial(
                     description=(
                         "Transparent-pricing mail-order pharmacy. Worth checking "
                         "if your medication is a generic."
+                    ),
+                ),
+                PharmacyOption(
+                    name="Crush Cost",
+                    url="https://crushcost.com/",
+                    description=(
+                        "Free pharmacy-discount card with retail-pharmacy "
+                        "price lookup. Worth comparing alongside GoodRx."
                     ),
                 ),
                 PharmacyOption(
