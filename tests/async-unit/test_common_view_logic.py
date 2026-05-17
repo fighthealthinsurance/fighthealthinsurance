@@ -128,7 +128,12 @@ class TestCommonViewLogic(TestCase):
                 opt.name
                 for opt in next_steps.pharmacy_coupon_suggestion.pharmacy_options
             }
-            assert {"GoodRx", "Mark Cuban Cost Plus Drugs", "Crush Cost"} <= opt_names
+            assert {
+                "GoodRx",
+                "Mark Cuban Cost Plus Drugs",
+                "Crush Cost",
+                "Amazon Search",
+            } <= opt_names
         finally:
             denial.delete()
 
