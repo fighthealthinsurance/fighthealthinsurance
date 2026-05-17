@@ -96,10 +96,42 @@ class TestSearchByDiagnosis:
         assert "National Multiple Sclerosis Society" in names
 
     def test_crohn_partial_match_returns_ibd_program(self):
-        # "crohn" prefix should match "Crohn's disease"
+        # "crohn" should match "Crohn's disease"
         results = search(diagnosis="Crohn's disease, severe")
         names = {p.name for p in results.diagnosis_specific}
         assert "Crohn's & Colitis Foundation Patient Aid" in names
+
+    def test_crohns_without_apostrophe_still_matches(self):
+        # Users often type "Crohns" without the apostrophe; the matcher
+        # must accept the bare-plural form too.
+        results = search(diagnosis="Crohns disease, severe")
+        names = {p.name for p in results.diagnosis_specific}
+        assert "Crohn's & Colitis Foundation Patient Aid" in names
+
+    def test_short_abbreviation_does_not_substring_match(self):
+        # Short abbreviations in the diagnosis tag set ("ms", "cf", "hiv",
+        # "hcv", "hbv", "ibd", "mds") must NOT fire on substrings - e.g.
+        # "hiv" in "hives" or "cf" in "cfp". A naive `\b<needle>` prefix
+        # match would have incorrectly fired ADAP on a "hives" diagnosis
+        # and the CFF Compass on "cfp clinic visit".
+        hives = search(diagnosis="patient presented with chronic hives")
+        hives_names = {p.name for p in hives.diagnosis_specific}
+        assert "HIV/AIDS Drug Assistance Program (ADAP)" not in hives_names
+
+        cfp = search(diagnosis="patient referred to cfp clinic")
+        cfp_names = {p.name for p in cfp.diagnosis_specific}
+        assert "Cystic Fibrosis Foundation Compass" not in cfp_names
+
+    def test_standalone_abbreviation_still_matches(self):
+        # The fix must not regress the legitimate standalone-abbreviation
+        # match path that real denial / diagnosis text uses.
+        cf_results = search(diagnosis="CF, with pulmonary involvement")
+        cf_names = {p.name for p in cf_results.diagnosis_specific}
+        assert "Cystic Fibrosis Foundation Compass" in cf_names
+
+        hcv_results = search(diagnosis="HCV genotype 1a")
+        hcv_names = {p.name for p in hcv_results.diagnosis_specific}
+        assert "Hepatitis Foundation International" in hcv_names
 
     def test_hiv_diagnosis_returns_adap_and_ryan_white(self):
         results = search(diagnosis="HIV-positive, virally suppressed")

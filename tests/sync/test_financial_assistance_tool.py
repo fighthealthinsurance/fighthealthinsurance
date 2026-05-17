@@ -325,10 +325,12 @@ class TestPharmacyDiscountInclusion(TestCase):
         )
         callback.assert_awaited_once()
         info_text = callback.call_args[0][1]
-        # GoodRx + Cost Plus + Amazon must show up alongside the directory
-        # programs, since the prompt promises pharmacy discount options.
+        # GoodRx + Cost Plus + Crush Cost + Amazon must show up alongside
+        # the directory programs, since the prompt promises pharmacy
+        # discount options.
         self.assertIn("GoodRx", info_text)
         self.assertIn("Mark Cuban Cost Plus Drugs", info_text)
+        self.assertIn("Crush Cost", info_text)
         self.assertIn("Amazon Search", info_text)
 
     def test_handle_does_not_treat_non_drug_as_drug(self):
