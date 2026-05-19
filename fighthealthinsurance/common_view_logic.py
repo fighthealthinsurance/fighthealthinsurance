@@ -3130,7 +3130,11 @@ class AppealsBackendHelper:
             async for pa in ProposedAppeal.objects.filter(for_denial=denial)
             if is_real_appeal(pa.appeal_text)
         ]
-        if len(saved_appeal_texts) >= 1:
+        # Synthesis requires >=2 drafts to be meaningful: with a single
+        # input, models often regurgitate it verbatim. The client dedupes
+        # by content, so a verbatim copy gets silently dropped, which then
+        # trips the "partial delivery" error path in appeal_fetcher.ts.
+        if len(saved_appeal_texts) >= 2:
             yield json.dumps(
                 {
                     "type": "status",
@@ -3174,14 +3178,24 @@ class AppealsBackendHelper:
                 else:
                     synthesized = synthesis_task.result()
                     if synthesized:
-                        saved = await save_appeal(synthesized)
-                        subbed = await sub_in_appeals(saved)
-                        subbed["synthesized"] = "true"
-                        yield await format_response(subbed)
-                        new += 1
-                        logger.info(
-                            f"Synthesized appeal generated from {len(saved_appeal_texts)} drafts"
-                        )
+                        # Belt-and-suspenders: even with >=2 drafts a model
+                        # can still pick one verbatim. Skip the yield in
+                        # that case rather than ship a known duplicate.
+                        normalized = synthesized.strip()
+                        existing_normalized = {s.strip() for s in saved_appeal_texts}
+                        if normalized in existing_normalized:
+                            logger.info(
+                                "Synthesis returned a verbatim copy of an input draft; skipping yield"
+                            )
+                        else:
+                            saved = await save_appeal(synthesized)
+                            subbed = await sub_in_appeals(saved)
+                            subbed["synthesized"] = "true"
+                            yield await format_response(subbed)
+                            new += 1
+                            logger.info(
+                                f"Synthesized appeal generated from {len(saved_appeal_texts)} drafts"
+                            )
                     else:
                         logger.debug("Synthesis returned no result, skipping")
             except Exception:

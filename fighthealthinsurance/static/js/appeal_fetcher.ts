@@ -382,6 +382,11 @@ let lastWsCloseCode = -1;
 let lastWsCloseReason = '';
 let lastWsErrorMessage = '';
 let lastRestErrorMessage = '';
+// Count of appeals the client deduped against ones already shown. The
+// server counts these in total_appeals, so we offset the partial-delivery
+// check by this value — otherwise a legitimately-duplicated synthesis
+// would page Sentry every time.
+let duplicatesSkipped = 0;
 
 // Wait-time tracking so Sentry shows how long the user waited
 // before we gave up. `doQueryStartedAtMs` is the moment doQuery()
@@ -430,6 +435,7 @@ function reportClientError(error: string): void {
   // user-agent string in browser_info doesn't truncate them.
   const diagnostics = [
     `appeals_received=${appealsSoFar.length}`,
+    `dupes_skipped=${duplicatesSkipped}`,
     `retries=${retries}`,
     `status_msgs=${statusMessagesReceived}`,
     `last_phase=${lastPhaseReceived || 'none'}`,
@@ -590,12 +596,17 @@ function processResponseChunk(chunk: string): void {
             serverReportedTotalAppeals = total;
             serverReportedNewAppeals = newAppeals;
             serverReportedExistingAppeals = existing;
-            console.log(`Server stream complete: ${total} total appeals (${newAppeals} new, ${existing} existing), client has ${appealsSoFar.length}`);
-            if (total > 0 && appealsSoFar.length === 0) {
+            // The server counts attempted yields; the client counts
+            // distinct payloads. If we deduped some, account for them
+            // here so a benign duplicate (e.g. synthesis returning a
+            // verbatim draft) doesn't fire the partial-delivery alarm.
+            const accountedFor = appealsSoFar.length + duplicatesSkipped;
+            console.log(`Server stream complete: ${total} total appeals (${newAppeals} new, ${existing} existing), client has ${appealsSoFar.length} (+${duplicatesSkipped} deduped)`);
+            if (total > 0 && appealsSoFar.length === 0 && duplicatesSkipped === 0) {
               console.error(`BUG: Server sent ${total} appeals but client received none!`);
               reportClientError(`Server sent ${total} appeals but client received 0 (lost in transit)`);
-            } else if (total > appealsSoFar.length) {
-              console.warn(`Partial delivery: server reported ${total} appeals, client got ${appealsSoFar.length}`);
+            } else if (total > accountedFor) {
+              console.warn(`Partial delivery: server reported ${total} appeals, client got ${appealsSoFar.length} (+${duplicatesSkipped} deduped)`);
               reportClientError(`Partial delivery: server reported ${total} appeals, client got ${appealsSoFar.length}`);
             }
             markAllDone();
@@ -657,6 +668,7 @@ function processResponseChunk(chunk: string): void {
             (appeal) => JSON.stringify(appeal) === JSON.stringify(appealText),
           )
         ) {
+          duplicatesSkipped++;
           console.log("Duplicate appeal found. Skipping.");
           return;
         }
