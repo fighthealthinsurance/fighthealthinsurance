@@ -5,6 +5,12 @@ import json
 import pytest
 
 from fighthealthinsurance.common_view_logic import AppealsBackendHelper
+from fighthealthinsurance.generate_appeal import GeneratedAppeal
+
+
+def _ga(text: str, model_name: str = "test-model"):
+    """Shorthand for the appeal-generation iterator's GeneratedAppeal items."""
+    return GeneratedAppeal(text=text, model_name=model_name)
 
 
 async def passthrough_interleave(iterator):
@@ -194,7 +200,7 @@ class TestAppealsBackendHelperWithCitations:
             # lookup (sync ORM) and once to wrap make_appeals. Route each to
             # its own AsyncMock so we can assert make_appeals was invoked.
             mock_make_appeals_wrapper = AsyncMock(
-                return_value=["Appeal text with citations"]
+                return_value=[_ga("Appeal text with citations")]
             )
             mock_pa_wrapper = AsyncMock(return_value="")
             mock_sync_to_async.side_effect = _sync_to_async_router(
@@ -278,7 +284,7 @@ class TestAppealsBackendHelperWithCitations:
             mock_regex_processor.get_appeal_templates = AsyncMock(return_value=[])
 
             mock_make_appeals_wrapper = AsyncMock(
-                return_value=["Appeal text without citations"]
+                return_value=[_ga("Appeal text without citations")]
             )
             mock_pa_wrapper = AsyncMock(return_value="")
             mock_sync_to_async.side_effect = _sync_to_async_router(
@@ -364,7 +370,7 @@ class TestAppealsBackendHelperWithCitations:
             mock_regex_processor.get_appeal_templates = AsyncMock(return_value=[])
 
             mock_make_appeals_wrapper = AsyncMock(
-                return_value=["Appeal with both citation types"]
+                return_value=[_ga("Appeal with both citation types")]
             )
             mock_pa_wrapper = AsyncMock(return_value="")
             mock_sync_to_async.side_effect = _sync_to_async_router(
@@ -457,7 +463,7 @@ class TestAppealsBackendHelperWithCitations:
             mock_regex_processor.get_appeal_templates = AsyncMock(return_value=[])
 
             mock_make_appeals_wrapper = AsyncMock(
-                return_value=["Appeal with USPSTF context"]
+                return_value=[_ga("Appeal with USPSTF context")]
             )
             mock_pa_wrapper = AsyncMock(return_value="")
             mock_uspstf_wrapper = AsyncMock(return_value=uspstf_payload)
@@ -641,7 +647,9 @@ async def test_synthesis_threshold(saved_texts, synthesis_should_run):
         mock_regex.get_appeal_templates = AsyncMock(return_value=[])
         mock_sync_to_async.side_effect = _sync_to_async_router(
             AsyncMock(return_value=""),  # pa_wrapper
-            AsyncMock(return_value=saved_texts),  # make_appeals_wrapper
+            AsyncMock(
+                return_value=[_ga(t) for t in saved_texts]
+            ),  # make_appeals_wrapper
         )
         mock_pa_cls.return_value = MagicMock(id=1, asave=AsyncMock())
         mock_pa_cls.objects.filter.return_value = (
@@ -714,7 +722,7 @@ async def test_synthesis_skips_verbatim_duplicate():
         mock_regex.get_appeal_templates = AsyncMock(return_value=[])
         mock_sync_to_async.side_effect = _sync_to_async_router(
             AsyncMock(return_value=""),
-            AsyncMock(return_value=saved_texts),
+            AsyncMock(return_value=[_ga(t) for t in saved_texts]),
         )
         mock_pa_cls.return_value = MagicMock(id=1, asave=AsyncMock())
         mock_pa_cls.objects.filter.return_value = (

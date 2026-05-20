@@ -6,9 +6,23 @@ import re
 import time
 import traceback
 from concurrent.futures import Future
-from typing import Any, Callable, Coroutine, Iterator, List, Optional, Tuple
+from dataclasses import dataclass
+from typing import Any, Callable, Coroutine, Iterator, List, Optional, Tuple, TypeVar
 
 from loguru import logger
+
+
+@dataclass
+class GeneratedAppeal:
+    """An appeal text along with the model that produced it.
+
+    Threaded through the streaming pipeline so ProposedAppeal rows can be
+    saved with their originating model_name for downstream analytics.
+    """
+
+    text: str
+    model_name: Optional[str]
+
 
 from fighthealthinsurance.context_utils import truncate_at_boundary
 from fighthealthinsurance.denial_base import DenialBase
@@ -675,7 +689,12 @@ def _shed_context(calls: list[dict], tier: int) -> tuple[list[dict], list[str]]:
     return new_calls, sorted(changed)
 
 
-def _peek_or_none(it: Iterator[str]) -> Tuple[Optional[str], Iterator[str]]:
+_T_peek = TypeVar("_T_peek")
+
+
+def _peek_or_none(
+    it: Iterator[_T_peek],
+) -> Tuple[Optional[_T_peek], Iterator[_T_peek]]:
     """Pull one item or return (None, empty). Chains the pulled item back
     so callers can use the returned iterator without losing the head."""
     try:
@@ -686,15 +705,15 @@ def _peek_or_none(it: Iterator[str]) -> Tuple[Optional[str], Iterator[str]]:
 
 
 def _peek_real_or_none(
-    it: Iterator[str], denial_id: Any, stage: str
-) -> Tuple[Optional[str], Iterator[str]]:
+    it: Iterator["GeneratedAppeal"], denial_id: Any, stage: str
+) -> Tuple[Optional["GeneratedAppeal"], Iterator["GeneratedAppeal"]]:
     """Like _peek_or_none, but returns (None, _) when the first item is
     non-None but fails is_real_appeal. Without this, a runt first item
     would suppress the fallback path even though downstream filtering
     drops it — leading to zero deliverable appeals."""
     first, it = _peek_or_none(it)
-    if first is not None and not is_real_appeal(first):
-        first_len = len(first.strip()) if isinstance(first, str) else 0
+    if first is not None and not is_real_appeal(first.text):
+        first_len = len(first.text.strip()) if isinstance(first.text, str) else 0
         logger.warning(
             f"make_appeals: {stage} first item is a runt (len={first_len}) "
             f"for denial {denial_id}; treating as empty to trigger fallback"
@@ -1621,7 +1640,7 @@ class AppealGenerator(object):
         pa_context=None,
         uspstf_context=None,
         clinical_trials_context=None,
-    ) -> Iterator[str]:
+    ) -> Iterator[GeneratedAppeal]:
         """
         Generates an iterator of appeal texts for a given insurance denial using templates, non-AI sources, and AI models.
 
@@ -1948,37 +1967,45 @@ class AppealGenerator(object):
         logger.debug(f"Initial appeal {initial_appeals}")
         # Executor map wants a list for each parameter.
 
-        def make_async_model_calls(calls) -> List[Future[Iterator[str]]]:
+        def make_async_model_calls(
+            calls,
+        ) -> List[Future[Iterator[GeneratedAppeal]]]:
             logger.debug(f"Calling models: {calls}")
-            model_futures = itertools.chain.from_iterable(
-                map(lambda x: get_model_result(**x), calls)
-            )
+            # Bind model_name to each future so we can recover it after
+            # the per-call iterator collapses results to (kind, text) pairs.
+            model_futures: List[Tuple[Optional[str], Future]] = []
+            for call in calls:
+                model_name = call.get("model_name")
+                for fut in get_model_result(**call):
+                    model_futures.append((model_name, fut))
 
-            def generated_to_appeals_text(k_text_future):
+            def generated_to_appeals_text(
+                model_name: Optional[str], k_text_future
+            ) -> Iterator[GeneratedAppeal]:
                 model_results = k_text_future.result()
                 if model_results is None:
-                    return []
+                    return
                 for k, text in model_results:
                     if text is None:
                         continue
                     # It's either full or a reason to plug into a template
                     if k == "full":
                         logger.debug(f"Bubbling up full response ({len(text)} chars)")
-                        yield text
+                        yield GeneratedAppeal(text=text, model_name=model_name)
                     else:
-                        yield template_generator.generate(text)
+                        templated = template_generator.generate(text)
+                        if templated is not None:
+                            yield GeneratedAppeal(text=templated, model_name=model_name)
 
             # Python lack reasonable future chaining (ugh)
-            generated_text_futures = list(
-                map(
-                    lambda f: executor.submit(generated_to_appeals_text, f),
-                    model_futures,
-                )
-            )
+            generated_text_futures = [
+                executor.submit(generated_to_appeals_text, mn, f)
+                for mn, f in model_futures
+            ]
             return generated_text_futures
 
-        generated_text_futures: List[Future[Iterator[str]]] = make_async_model_calls(
-            calls
+        generated_text_futures: List[Future[Iterator[GeneratedAppeal]]] = (
+            make_async_model_calls(calls)
         )
 
         # Tiered fallback: primary -> backup -> retry primary with shed
@@ -2033,7 +2060,14 @@ class AppealGenerator(object):
                     f"({ext_note})"
                 )
                 appeals = iter([])
-        appeals = itertools.chain(appeals, initial_appeals)
+        # Wrap template-based / non-AI appeals (plain strings) as
+        # GeneratedAppeal so the downstream pipeline has a uniform type.
+        initial_appeals_wrapped: Iterator[GeneratedAppeal] = (
+            GeneratedAppeal(text=t, model_name=None)
+            for t in initial_appeals
+            if t is not None
+        )
+        appeals = itertools.chain(appeals, initial_appeals_wrapped)
         return appeals
 
     async def synthesize_appeals(

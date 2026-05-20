@@ -757,13 +757,9 @@ class ShareAppealView(View):
             logger.debug(form.cleaned_data)
             denial.appeal_text = form.cleaned_data["appeal_text"]
             denial.save()
-            pa = models.ProposedAppeal(
-                appeal_text=form.cleaned_data["appeal_text"],
-                for_denial=denial,
-                chosen=True,
-                editted=True,
+            common_view_logic.mark_proposal_chosen(
+                denial, form.cleaned_data["appeal_text"], editted=True
             )
-            pa.save()
             return render(request, "thankyou.html")
 
 

@@ -1,0 +1,89 @@
+{% load static %}
+<!DOCTYPE html>
+<html>
+<head>
+  <title>{{ title }}</title>
+  <script src="{% static 'canvasjs.min.js' %}"></script>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; background: #f5f5f5; }
+    h1 { color: #333; border-bottom: 2px solid #007bff; padding-bottom: 10px; }
+    h2 { color: #555; margin-top: 30px; border-left: 4px solid #007bff; padding-left: 10px; }
+    h3 { color: #444; margin: 18px 0 6px 0; font-size: 1.05em; }
+    .window-section { background: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+    .chart-container { width: 100%; height: 360px; }
+    table.usage { width: 100%; border-collapse: collapse; margin-top: 8px; margin-bottom: 18px; }
+    table.usage th, table.usage td { padding: 6px 10px; text-align: left; border-bottom: 1px solid #eee; }
+    table.usage th { background: #f0f4f8; }
+    table.usage td.num, table.usage th.num { text-align: right; }
+    .source-label { font-size: 0.85em; color: #666; font-weight: normal; }
+    .legend-key { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }
+    .nav-back { display: inline-block; margin-bottom: 14px; color: #007bff; text-decoration: none; }
+    .nav-back:hover { text-decoration: underline; }
+    .summary-note { color: #666; font-size: 0.9em; margin-bottom: 18px; }
+  </style>
+</head>
+<body>
+  <a class="nav-back" href="{% url 'staff_dashboard' %}">&laquo; Back to Staff Dashboard</a>
+  <h1>{{ title }}</h1>
+  <p class="summary-note">
+    Chosen counts and win rates per ML model. Sources:
+    <span class="legend-key" style="background:#1f77b4;"></span>ProposedAppeal (denial flow),
+    <span class="legend-key" style="background:#ff7f0e;"></span>Chooser&mdash;Appeal,
+    <span class="legend-key" style="background:#2ca02c;"></span>Chooser&mdash;Chat.
+    Win rate = chosen / presented. Synthesized appeals are bucketed as model_name &ldquo;synthesized&rdquo;.
+  </p>
+
+  {% for w in windows %}
+  <div class="window-section">
+    <h2>{{ w.label }}</h2>
+    <div id="chart-{{ w.slug }}" class="chart-container"></div>
+
+    <h3>ProposedAppeal <span class="source-label">(real denial flow &mdash; user-chosen)</span></h3>
+    {% include "model_usage_table_partial.html" with rows=w.proposed_appeal %}
+
+    <h3>ChooserVote &mdash; Appeal Letter <span class="source-label">(synthetic chooser)</span></h3>
+    {% include "model_usage_table_partial.html" with rows=w.chooser_appeal %}
+
+    <h3>ChooserVote &mdash; Chat Response <span class="source-label">(synthetic chooser)</span></h3>
+    {% include "model_usage_table_partial.html" with rows=w.chooser_chat %}
+  </div>
+  {% endfor %}
+
+  <script>
+    (function() {
+      var windowData = [
+        {% for w in windows %}
+        {
+          slug: "{{ w.slug|escapejs }}",
+          label: "{{ w.label|escapejs }}",
+          chartData: JSON.parse("{{ w.chart_data_json|escapejs }}")
+        }{% if not forloop.last %},{% endif %}
+        {% endfor %}
+      ];
+
+      windowData.forEach(function(w) {
+        var data = w.chartData.series.map(function(s) {
+          return {
+            type: "stackedColumn",
+            name: s.name,
+            color: s.color,
+            showInLegend: true,
+            dataPoints: s.dataPoints
+          };
+        });
+        var chart = new CanvasJS.Chart("chart-" + w.slug, {
+          theme: "light1",
+          animationEnabled: false,
+          title: { text: w.label + " - Chosen counts by model" },
+          axisX: { interval: 1, labelAngle: -30 },
+          axisY: { title: "Chosen count", minimum: 0 },
+          toolTip: { shared: true },
+          legend: { cursor: "pointer" },
+          data: data
+        });
+        chart.render();
+      });
+    })();
+  </script>
+</body>
+</html>

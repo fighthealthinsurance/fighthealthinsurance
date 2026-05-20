@@ -2452,6 +2452,8 @@ class ProposedAppeal(ExportModelOperationsMixin("ProposedAppeal"), models.Model)
     )
     chosen = models.BooleanField(default=False)
     editted = models.BooleanField(default=False)
+    model_name = models.CharField(max_length=200, null=True, blank=True, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True, null=True)
 
     def __str__(self):
         if self.appeal_text is not None:

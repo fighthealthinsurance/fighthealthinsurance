@@ -506,6 +506,35 @@ class AppealAssemblyHelper:
         return target
 
 
+def mark_proposal_chosen(
+    denial: Denial, appeal_text: str, editted: bool = False
+) -> ProposedAppeal:
+    """Create a chosen=True ProposedAppeal, copying model_name from the original
+    generated row when the text matches exactly. Returns the new ProposedAppeal.
+
+    Falls back to model_name=None if no exact-text original exists (e.g. the
+    user edited the appeal away from any model's draft, or the proposal was
+    generated before the model_name field was added).
+    """
+    original = (
+        ProposedAppeal.objects.filter(
+            for_denial=denial, appeal_text=appeal_text, chosen=False
+        )
+        .order_by("-id")
+        .first()
+    )
+    model_name = original.model_name if original is not None else None
+    pa = ProposedAppeal(
+        appeal_text=appeal_text,
+        for_denial=denial,
+        chosen=True,
+        editted=editted,
+        model_name=model_name,
+    )
+    pa.save()
+    return pa
+
+
 class ChooseAppealHelper:
     @classmethod
     def choose_appeal(
@@ -520,8 +549,7 @@ class ChooseAppealHelper:
         ).get()
         denial.appeal_text = appeal_text
         denial.save()
-        pa = ProposedAppeal(appeal_text=appeal_text, for_denial=denial, chosen=True)
-        pa.save()
+        mark_proposal_chosen(denial, appeal_text)
         articles = None
         article_ids = None
 
@@ -3113,15 +3141,21 @@ class AppealsBackendHelper:
             ml_citation_context, pubmed_context, imr_context
         )
 
-        async def save_appeal(appeal_text: str) -> dict[str, str]:
+        async def save_appeal(item: GeneratedAppeal) -> dict[str, str]:
             # Save all of the proposed appeals, so we can use RL later.
+            appeal_text = item.text
+            model_name = item.model_name
             t = time.time()
             logger.debug(f"Saving appeal ({len(appeal_text)} chars)")
             await asyncio.sleep(0)
             # YOLO on saving appeals, sqllite gets sad.
             id = "unknown"
             try:
-                pa = ProposedAppeal(appeal_text=appeal_text, for_denial=denial)
+                pa = ProposedAppeal(
+                    appeal_text=appeal_text,
+                    for_denial=denial,
+                    model_name=model_name,
+                )
                 await pa.asave()
                 id = str(pa.id)
             except Exception as e:
@@ -3150,7 +3184,9 @@ class AppealsBackendHelper:
         else:
             model_plan_context = denial.plan_documents_summary
 
-        appeals: Iterator[str] = await sync_to_async(appealGenerator.make_appeals)(
+        appeals: Iterator[GeneratedAppeal] = await sync_to_async(
+            appealGenerator.make_appeals
+        )(
             denial,
             AppealTemplateGenerator(prefaces, main, footer),
             medical_reasons=medical_reasons,
@@ -3170,21 +3206,26 @@ class AppealsBackendHelper:
         # "models producing only short strings".
         runts = 0
 
-        def keep(x: Optional[str]) -> bool:
+        def keep(item: Optional[GeneratedAppeal]) -> bool:
             nonlocal runts
-            if is_real_appeal(x):
+            if item is None:
+                return False
+            text = item.text
+            if is_real_appeal(text):
                 return True
-            if isinstance(x, str) and x.strip():
+            if isinstance(text, str) and text.strip():
                 runts += 1
             return False
 
-        filtered_appeals: Iterator[str] = filter(keep, appeals)
+        filtered_appeals: Iterator[GeneratedAppeal] = filter(keep, appeals)
 
         # Convert the blocking sync iterator to async so next() calls
         # run in a thread executor and don't block the event loop.
         # Without this, as_available_nested()'s concurrent.futures.as_completed()
         # blocks the event loop, preventing keep-alive newlines from being sent.
-        async_appeals: AsyncIterator[str] = sync_iterator_to_async(filtered_appeals)
+        async_appeals: AsyncIterator[GeneratedAppeal] = sync_iterator_to_async(
+            filtered_appeals
+        )
 
         # We convert to async here.
         saved_appeals: AsyncIterator[dict[str, str]] = a.map(save_appeal, async_appeals)
@@ -3285,7 +3326,11 @@ class AppealsBackendHelper:
                                 "Synthesis returned a verbatim copy of an input draft; skipping yield"
                             )
                         else:
-                            saved = await save_appeal(synthesized)
+                            saved = await save_appeal(
+                                GeneratedAppeal(
+                                    text=synthesized, model_name="synthesized"
+                                )
+                            )
                             subbed = await sub_in_appeals(saved)
                             subbed["synthesized"] = "true"
                             yield await format_response(subbed)

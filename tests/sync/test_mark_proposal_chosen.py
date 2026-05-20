@@ -1,0 +1,66 @@
+"""Tests for common_view_logic.mark_proposal_chosen helper."""
+
+from django.test import TestCase
+
+from fighthealthinsurance.common_view_logic import mark_proposal_chosen
+from fighthealthinsurance.models import Denial, ProposedAppeal
+
+
+class MarkProposalChosenTest(TestCase):
+    def setUp(self):
+        self.denial = Denial.objects.create(
+            hashed_email="hash",
+            denial_text="denied",
+            procedure="MRI",
+            diagnosis="back pain",
+            insurance_company="TestIns",
+        )
+
+    def test_exact_text_match_copies_model_name(self):
+        ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="text-x",
+            chosen=False,
+            model_name="model-x",
+        )
+        pa = mark_proposal_chosen(self.denial, "text-x")
+        self.assertTrue(pa.chosen)
+        self.assertEqual(pa.model_name, "model-x")
+        # The original row is not mutated.
+        original = ProposedAppeal.objects.get(
+            for_denial=self.denial, appeal_text="text-x", chosen=False
+        )
+        self.assertEqual(original.model_name, "model-x")
+
+    def test_no_match_falls_back_to_none(self):
+        ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="original-text",
+            chosen=False,
+            model_name="model-x",
+        )
+        pa = mark_proposal_chosen(self.denial, "edited-text")
+        self.assertTrue(pa.chosen)
+        self.assertIsNone(pa.model_name)
+
+    def test_editted_flag_propagated(self):
+        pa = mark_proposal_chosen(self.denial, "any-text", editted=True)
+        self.assertTrue(pa.editted)
+
+    def test_picks_most_recent_original_on_ties(self):
+        # Two original rows with the same appeal_text but different model_name;
+        # the most recent (highest id) wins.
+        ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="dup",
+            chosen=False,
+            model_name="model-old",
+        )
+        ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="dup",
+            chosen=False,
+            model_name="model-new",
+        )
+        pa = mark_proposal_chosen(self.denial, "dup")
+        self.assertEqual(pa.model_name, "model-new")

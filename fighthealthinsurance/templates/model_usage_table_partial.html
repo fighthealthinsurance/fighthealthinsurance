@@ -1,0 +1,24 @@
+{% if rows %}
+<table class="usage">
+  <thead>
+    <tr>
+      <th>Model</th>
+      <th class="num">Chosen</th>
+      <th class="num">Presented</th>
+      <th class="num">Win rate</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for r in rows %}
+    <tr>
+      <td>{{ r.model_name }}</td>
+      <td class="num">{{ r.chosen }}</td>
+      <td class="num">{{ r.presented }}</td>
+      <td class="num">{{ r.win_rate|floatformat:1 }}%</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p><em>No data.</em></p>
+{% endif %}
