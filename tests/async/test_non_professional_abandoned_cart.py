@@ -47,16 +47,28 @@ def test_non_professional_abandoned_cart():
         assert "next_url" in response.json()
         assert response.json()["next_url"] == "https://checkout.stripe.com/test"
 
-    # Test GET method (token-based)
+    # Test GET method (token-based) with explicit JSON opt-in for API callers
+    with patch("stripe.checkout.Session.create") as mock_create:
+        mock_create.return_value.url = "https://checkout.stripe.com/test"
+
+        query_params = urlencode({"token": token, "format": "json"})
+        response = client.get(f"{reverse('complete_payment')}?{query_params}")
+
+        assert response.status_code == 200
+        assert "next_url" in response.json()
+        assert response.json()["next_url"] == "https://checkout.stripe.com/test"
+
+    # Test GET method (token-based) from a browser: the recovery email link is
+    # opened directly, so it should redirect the visitor straight to Stripe
+    # rather than dumping raw JSON.
     with patch("stripe.checkout.Session.create") as mock_create:
         mock_create.return_value.url = "https://checkout.stripe.com/test"
 
         query_params = urlencode({"token": token})
         response = client.get(f"{reverse('complete_payment')}?{query_params}")
 
-        assert response.status_code == 200
-        assert "next_url" in response.json()
-        assert response.json()["next_url"] == "https://checkout.stripe.com/test"
+        assert response.status_code == 302
+        assert response["Location"] == "https://checkout.stripe.com/test"
 
     # Brute-forcing a post-rollout row id (>= the legacy cutoff) must not work —
     # only the secure_token grants access for new sessions.
@@ -101,9 +113,8 @@ def test_non_professional_abandoned_cart():
     )
     with patch("stripe.checkout.Session.create") as mock_create:
         mock_create.return_value.url = "https://checkout.stripe.com/legacy"
-        response = client.get(
-            f"{reverse('complete_payment')}?session_id={legacy_session.pk}"
-        )
+        query_params = urlencode({"session_id": legacy_session.pk, "format": "json"})
+        response = client.get(f"{reverse('complete_payment')}?{query_params}")
         assert response.status_code == 200
         assert response.json()["next_url"] == "https://checkout.stripe.com/legacy"
 

@@ -1,0 +1,26 @@
+{% extends 'base.html' %}
+{% block title %}
+Checkout Link Problem
+{% endblock title %}
+{% block content %}
+
+<!-- HOME -->
+<section id="stripe-finish-error" data-stellar-background-ratio="0.5">
+    <div class="row mt-5 mb-5">
+        <div class="caption d-flex flex-column align-items-center justify-content-center">
+            <div class="col-md-offset-1 col-md-10 text-align-center d-flex flex-column align-items-center justify-content-center" style="margin-top: 10vh;">
+                <h2>We couldn't resume your checkout</h2>
+                <p>Sorry, something went wrong while trying to continue your payment.</p>
+                {% if error_message %}
+                <div class="alert alert-warning mt-3 text-start" role="alert" style="max-width: 640px;">
+                    {{ error_message }}
+                </div>
+                {% endif %}
+                <p class="mt-3">The recovery link may have expired or already been used. You can start a new checkout, or contact us if you need a hand.</p>
+                <p class="mt-3"><strong>Need help?</strong> Reach out to <a href="mailto:{{ support_email }}">{{ support_email }}</a> and we'll get you sorted.</p>
+            </div>
+        </div>
+    </div>
+</section>
+
+{% endblock content %}

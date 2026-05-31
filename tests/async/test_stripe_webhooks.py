@@ -141,10 +141,41 @@ class StripeWebhookTests(TestCase):
         link = mock_send_email.call_args.kwargs["link"]
 
         lost_session = LostStripeSession.objects.get(session_id=mock_session.id)
-        # Link must be absolute, target the configured host (so non-prod
-        # environments don't email production links), and carry the
-        # unguessable token rather than the row id.
-        self.assertTrue(link.startswith(f"https://{settings.FIGHT_PAPERWORK_DOMAIN}/"))
+        # Non-professional recovery is completed by the Django `complete_payment`
+        # view, which is served on the Fight Health Insurance domain. The link
+        # must be absolute, target that host (so non-prod environments don't
+        # email production links and so customers don't hit the Fight Paperwork
+        # SPA's "Invalid Demo Type" catch-all), and carry the unguessable token
+        # rather than the row id.
+        self.assertTrue(
+            link.startswith(f"https://{settings.FIGHT_HEALTH_INSURANCE_DOMAIN}/")
+        )
+        self.assertIn("/stripe/finish?", link)
         self.assertIn(f"token={lost_session.secure_token}", link)
         self.assertNotIn(f"session_id={lost_session.id}", link)
         self.assertNotIn(f"session_id={lost_session.pk}", link)
+
+    @patch(
+        "fighthealthinsurance.helpers.stripe_helpers.fhi_emails.send_checkout_session_expired"
+    )
+    def test_professional_subscription_recovery_link_targets_fpw_spa(
+        self, mock_send_email
+    ):
+        """Professional domain subscriptions resume in the Fight Paperwork SPA."""
+        mock_session = MagicMock()
+        mock_session.id = "cs_unique_for_pro_test"
+        mock_session.metadata = {
+            "payment_type": "professional_domain_subscription",
+            "domain_id": "123",
+            "professional_id": "456",
+        }
+        mock_session.customer_email = "pro@example.com"
+
+        StripeWebhookHelper.handle_checkout_session_expired(self.client, mock_session)
+
+        mock_send_email.assert_called_once()
+        link = mock_send_email.call_args.kwargs["link"]
+        self.assertTrue(link.startswith(f"https://{settings.FIGHT_PAPERWORK_DOMAIN}/"))
+        self.assertIn("/stripe/finish-checkout?", link)
+        self.assertIn("domain_id=123", link)
+        self.assertIn("professional_id=456", link)
