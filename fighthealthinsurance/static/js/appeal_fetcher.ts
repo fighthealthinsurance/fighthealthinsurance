@@ -505,40 +505,42 @@ function maybeShowExternalModelsPrompt(): void {
   if (appealsSoFar.length > FEW_APPEALS_THRESHOLD) {
     return;
   }
+  if (prompt.style.display === "block") {
+    return;
+  }
   prompt.style.display = "block";
   const button = document.getElementById(
     "request-external-models-btn",
   ) as HTMLButtonElement | null;
-  if (!button || (button as any)._fhiWired) {
-    return;
-  }
-  (button as any)._fhiWired = true;
-  button.addEventListener("click", () => {
-    void requestExternalModels(button);
-  });
+  if (!button) return;
+  button.addEventListener(
+    "click",
+    () => {
+      void requestExternalModels(button, prompt);
+    },
+    { once: true },
+  );
 }
 
 async function requestExternalModels(
   button: HTMLButtonElement,
+  prompt: HTMLElement,
 ): Promise<void> {
   const statusEl = document.getElementById("external-models-status");
+  const setStatus = (text: string, color: string) => {
+    if (statusEl) {
+      statusEl.textContent = text;
+      statusEl.style.color = color;
+    }
+  };
   const url = (window as any).enableExternalModelsUrl as string | undefined;
   if (!url) {
-    if (statusEl) {
-      statusEl.textContent = "Unable to enable external models right now.";
-      statusEl.style.color = "#dc3545";
-    }
+    setStatus("Unable to enable external models right now.", "#dc3545");
     return;
   }
-  const denialId = (my_data as any).denial_id || "";
-  const email = (my_data as any).email || "";
-  const semiSekret = (my_data as any).semi_sekret || "";
   const csrfToken = (my_data as any).csrfmiddlewaretoken || "";
   button.disabled = true;
-  if (statusEl) {
-    statusEl.textContent = "Enabling external models and re-running appeals...";
-    statusEl.style.color = "#333";
-  }
+  setStatus("Enabling external models and re-running appeals...", "#333");
   try {
     const response = await fetch(url, {
       method: "POST",
@@ -547,21 +549,19 @@ async function requestExternalModels(
         "X-CSRFToken": csrfToken,
       },
       body: JSON.stringify({
-        denial_id: denialId,
-        email,
-        semi_sekret: semiSekret,
+        denial_id: (my_data as any).denial_id || "",
+        email: (my_data as any).email || "",
+        semi_sekret: (my_data as any).semi_sekret || "",
       }),
     });
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
-    if (statusEl) {
-      statusEl.textContent =
-        "External models enabled. Re-generating appeals now...";
-      statusEl.style.color = "#28a745";
-    }
-    const prompt = document.getElementById("external-models-prompt");
-    if (prompt) prompt.style.display = "none";
+    setStatus(
+      "External models enabled. Re-generating appeals now...",
+      "#28a745",
+    );
+    prompt.style.display = "none";
     // Reset client state so doQuery starts a fresh generation pass
     // rather than treating this as a retry of the previous attempt.
     retries = 0;
@@ -570,11 +570,10 @@ async function requestExternalModels(
     doQuery(my_backend_url, my_data, my_rest_fallback_url);
   } catch (error) {
     console.error("Failed to enable external models:", error);
-    if (statusEl) {
-      statusEl.textContent =
-        "Could not enable external models. Please try again later.";
-      statusEl.style.color = "#dc3545";
-    }
+    setStatus(
+      "Could not enable external models. Please try again later.",
+      "#dc3545",
+    );
     button.disabled = false;
   }
 }

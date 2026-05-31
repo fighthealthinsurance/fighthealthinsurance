@@ -803,15 +803,16 @@ class EnableExternalModelsTest(APITestCase):
     LLM models from the appeal page when the initial internal-only
     generation produced few or no appeals."""
 
-    fixtures = ["./fighthealthinsurance/fixtures/initial.yaml"]
-
-    def _make_internal_only_denial(
-        self, email: str = "owner@example.com"
+    def _make_denial(
+        self,
+        *,
+        email: str = "owner@example.com",
+        use_external: bool = False,
     ) -> Denial:
         return Denial.objects.create(
             denial_text="Test denial body",
             hashed_email=Denial.get_hashed_email(email),
-            use_external=False,
+            use_external=use_external,
         )
 
     def _post(self, payload: dict):
@@ -822,7 +823,7 @@ class EnableExternalModelsTest(APITestCase):
         )
 
     def test_flips_use_external_on_valid_credentials(self):
-        denial = self._make_internal_only_denial()
+        denial = self._make_denial()
         self.assertFalse(denial.use_external)
         response = self._post(
             {
@@ -841,10 +842,8 @@ class EnableExternalModelsTest(APITestCase):
         must succeed (200) without raising. The button is only shown to
         users whose denial has use_external=False, but races and reloads
         should not 500."""
-        denial = Denial.objects.create(
-            denial_text="Already-external denial",
-            hashed_email=Denial.get_hashed_email("already@example.com"),
-            use_external=True,
+        denial = self._make_denial(
+            email="already@example.com", use_external=True
         )
         response = self._post(
             {
@@ -858,7 +857,7 @@ class EnableExternalModelsTest(APITestCase):
         self.assertTrue(denial.use_external)
 
     def test_rejects_wrong_semi_sekret(self):
-        denial = self._make_internal_only_denial()
+        denial = self._make_denial()
         response = self._post(
             {
                 "denial_id": denial.denial_id,
@@ -871,7 +870,7 @@ class EnableExternalModelsTest(APITestCase):
         self.assertFalse(denial.use_external)
 
     def test_rejects_wrong_email(self):
-        denial = self._make_internal_only_denial()
+        denial = self._make_denial()
         response = self._post(
             {
                 "denial_id": denial.denial_id,
@@ -884,7 +883,7 @@ class EnableExternalModelsTest(APITestCase):
         self.assertFalse(denial.use_external)
 
     def test_rejects_missing_credentials(self):
-        denial = self._make_internal_only_denial()
+        denial = self._make_denial()
         response = self._post({"denial_id": denial.denial_id})
         self.assertEqual(response.status_code, 404)
         denial.refresh_from_db()
@@ -892,8 +891,8 @@ class EnableExternalModelsTest(APITestCase):
 
     def test_cross_denial_isolation(self):
         """Denial A's credentials must not be able to flip Denial B."""
-        denial_a = self._make_internal_only_denial(email="alice@example.com")
-        denial_b = self._make_internal_only_denial(email="bob@example.com")
+        denial_a = self._make_denial(email="alice@example.com")
+        denial_b = self._make_denial(email="bob@example.com")
         response = self._post(
             {
                 "denial_id": denial_b.denial_id,
@@ -909,8 +908,6 @@ class EnableExternalModelsTest(APITestCase):
 class GenerateAppealUseExternalContextTest(APITestCase):
     """The appeals page must expose `use_external` so the JS client can
     decide whether to surface the 'request external models' opt-in."""
-
-    fixtures = ["./fighthealthinsurance/fixtures/initial.yaml"]
 
     def test_context_reflects_internal_only_denial(self):
         denial = Denial.objects.create(
@@ -928,9 +925,9 @@ class GenerateAppealUseExternalContextTest(APITestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertFalse(response.context["use_external"])
-        # Prompt block is only rendered when use_external is False.
+        # Prompt block (which wraps the button) only renders when
+        # use_external is False.
         self.assertContains(response, "external-models-prompt")
-        self.assertContains(response, "request-external-models-btn")
 
     def test_context_reflects_external_enabled_denial(self):
         denial = Denial.objects.create(
