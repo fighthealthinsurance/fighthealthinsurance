@@ -618,49 +618,48 @@ class ScanView(generic.TemplateView):
         return {"ocr_result": "", "upload_more": True}
 
 
-class PrivacyPolicyView(generic.TemplateView):
+class _TitledTemplateView(generic.TemplateView):
+    """Base for static pages that only need to inject a ``title`` into context."""
+
+    title: str = ""
+
+    def get_context_data(self, **kwargs):
+        return {"title": self.title}
+
+
+class PrivacyPolicyView(_TitledTemplateView):
     """Privacy policy page."""
 
     template_name = "privacy_policy.html"
-
-    def get_context_data(self, **kwargs):
-        return {"title": "Privacy Policy"}
+    title = "Privacy Policy"
 
 
-class MHMDAView(generic.TemplateView):
+class MHMDAView(_TitledTemplateView):
     """My Health My Data Act consumer privacy notice page."""
 
     template_name = "mhmda.html"
-
-    def get_context_data(self, **kwargs):
-        return {"title": "Consumer Health Data Privacy Notice"}
+    title = "Consumer Health Data Privacy Notice"
 
 
-class TermsOfServiceView(generic.TemplateView):
+class TermsOfServiceView(_TitledTemplateView):
     """Terms of service page."""
 
     template_name = "tos.html"
-
-    def get_context_data(self, **kwargs):
-        return {"title": "Terms of Service"}
+    title = "Terms of Service"
 
 
-class ContactView(generic.TemplateView):
+class ContactView(_TitledTemplateView):
     """Contact us page."""
 
     template_name = "contact.html"
-
-    def get_context_data(self, **kwargs):
-        return {"title": "Contact Us"}
+    title = "Contact Us"
 
 
-class FAQView(generic.TemplateView):
+class FAQView(_TitledTemplateView):
     """Frequently asked questions page."""
 
     template_name = "faq.html"
-
-    def get_context_data(self, **kwargs):
-        return {"title": "Frequently Asked Questions"}
+    title = "Frequently Asked Questions"
 
 
 class MedicaidFAQView(generic.TemplateView):
