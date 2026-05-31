@@ -71,6 +71,31 @@ else:
     User = get_user_model()
 
 
+def _error_response(message: str, status_code: int) -> Response:
+    """Wrap ``message`` in the project's standard error envelope."""
+    return Response(
+        common_serializers.ErrorSerializer({"error": message}).data,
+        status=status_code,
+    )
+
+
+def _get_professional_user_for_request(
+    request: Request,
+) -> tuple[Optional[ProfessionalUser], Optional[Response]]:
+    """Look up the ProfessionalUser tied to ``request.user``.
+
+    Returns ``(professional_user, None)`` on success or ``(None, error_response)``
+    with a 404 envelope when the current user isn't a professional.
+    """
+    current_user: User = request.user  # type: ignore
+    try:
+        return ProfessionalUser.objects.get(user=current_user), None
+    except ProfessionalUser.DoesNotExist:
+        return None, _error_response(
+            "User is not a professional user", status.HTTP_404_NOT_FOUND
+        )
+
+
 class UserDomainExistsViewSet(viewsets.ViewSet, SerializerMixin):
     """
     Check if a UserDomain exists by name or phone number.
@@ -97,11 +122,9 @@ class UserDomainExistsViewSet(viewsets.ViewSet, SerializerMixin):
         phone_number = serializer.validated_data.get("phone_number")
 
         if not domain_name and not phone_number:
-            return Response(
-                common_serializers.ErrorSerializer(
-                    {"error": "Either domain_name or phone_number must be provided"}
-                ).data,
-                status=status.HTTP_400_BAD_REQUEST,
+            return _error_response(
+                "Either domain_name or phone_number must be provided",
+                status.HTTP_400_BAD_REQUEST,
             )
 
         # Check if domain exists
@@ -142,11 +165,8 @@ class WhoAmIViewSet(viewsets.ViewSet):
             # Get the user domain from the session
             domain_id = auth_utils.get_domain_id_from_request(request)
             if not domain_id:
-                return Response(
-                    common_serializers.ErrorSerializer(
-                        {"error": "Domain ID not found in session"}
-                    ).data,
-                    status=status.HTTP_400_BAD_REQUEST,
+                return _error_response(
+                    "Domain ID not found in session", status.HTTP_400_BAD_REQUEST
                 )
             user_domain = UserDomain.objects.get(id=domain_id)
             patient = False
@@ -191,11 +211,8 @@ class WhoAmIViewSet(viewsets.ViewSet):
                 status=status.HTTP_200_OK,
             )
         else:
-            return Response(
-                common_serializers.ErrorSerializer(
-                    {"error": "User is not authenticated"}
-                ).data,
-                status=status.HTTP_401_UNAUTHORIZED,
+            return _error_response(
+                "User is not authenticated", status.HTTP_401_UNAUTHORIZED
             )
 
 
@@ -273,11 +290,8 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                 logger.opt(exception=True).error(
                     f"Domain ID not found in session for user: {current_user.username}"
                 )
-                return Response(
-                    common_serializers.ErrorSerializer(
-                        {"error": "Domain ID not found in session"}
-                    ).data,
-                    status=status.HTTP_400_BAD_REQUEST,
+                return _error_response(
+                    "Domain ID not found in session", status.HTTP_400_BAD_REQUEST
                 )
 
             # Ensure current user is an admin in the domain
@@ -286,11 +300,8 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                 logger.opt(exception=True).error(
                     f"User {current_user.username} attempted to create professional without admin privileges in domain {domain_id}"
                 )
-                return Response(
-                    common_serializers.ErrorSerializer(
-                        {"error": "User does not have admin privileges"}
-                    ).data,
-                    status=status.HTTP_403_FORBIDDEN,
+                return _error_response(
+                    "User does not have admin privileges", status.HTTP_403_FORBIDDEN
                 )
 
             # Extract data from serializer
@@ -305,13 +316,9 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                 logger.opt(exception=True).error(
                     f"Cannot create professional - email already exists: {mask_email_for_logging(email)}"
                 )
-                return Response(
-                    common_serializers.ErrorSerializer(
-                        {
-                            "error": "A user with this email already exists in this practice/domain."
-                        }
-                    ).data,
-                    status=status.HTTP_400_BAD_REQUEST,
+                return _error_response(
+                    "A user with this email already exists in this practice/domain.",
+                    status.HTTP_400_BAD_REQUEST,
                 )
 
             # Generate a random password (user will reset it)
@@ -416,9 +423,8 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
             logger.opt(exception=True).error(
                 f"Unexpected error creating professional: {str(e)}"
             )
-            return Response(
-                common_serializers.ErrorSerializer({"error": f"Error: {str(e)}"}).data,
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return _error_response(
+                f"Error: {str(e)}", status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
     @extend_schema(
@@ -440,21 +446,15 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
             current_user: User = request.user  # type: ignore
             domain_id = auth_utils.get_domain_id_from_request(request)
             if not domain_id:
-                return Response(
-                    common_serializers.ErrorSerializer(
-                        {"error": "Domain ID not found in session"}
-                    ).data,
-                    status=status.HTTP_400_BAD_REQUEST,
+                return _error_response(
+                    "Domain ID not found in session", status.HTTP_400_BAD_REQUEST
                 )
 
             # Ensure current user is an admin in the domain
             user_domain = UserDomain.objects.get(id=domain_id)
             if not user_is_admin_in_domain(current_user, domain_id):
-                return Response(
-                    common_serializers.ErrorSerializer(
-                        {"error": "User does not have admin privileges"}
-                    ).data,
-                    status=status.HTTP_403_FORBIDDEN,
+                return _error_response(
+                    "User does not have admin privileges", status.HTTP_403_FORBIDDEN
                 )
 
             # Extract data from serializer
@@ -486,10 +486,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
 
         except Exception as e:
             logger.opt(exception=e).error("Error inviting professional")
-            return Response(
-                common_serializers.ErrorSerializer({"error": f"Error {e}"}).data,
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+            return _error_response(f"Error {e}", status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     @method_decorator(
         cache_control(max_age=600, private=True)
@@ -564,11 +561,8 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
         current_user_admin_in_domain = user_is_admin_in_domain(current_user, domain_id)
         if not current_user_admin_in_domain:
             # Credentials are valid but does not have permissions
-            return Response(
-                common_serializers.ErrorSerializer(
-                    {"error": "User does not have admin privileges"}
-                ).data,
-                status=status.HTTP_403_FORBIDDEN,
+            return _error_response(
+                "User does not have admin privileges", status.HTTP_403_FORBIDDEN
             )
         relation = ProfessionalDomainRelation.objects.get(
             professional_id=professional_user_id,
@@ -607,11 +601,8 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
         current_user_admin_in_domain = user_is_admin_in_domain(current_user, domain_id)
         if not current_user_admin_in_domain:
             # Credentials are valid but does not have permissions
-            return Response(
-                common_serializers.ErrorSerializer(
-                    {"error": "User does not have admin privileges"}
-                ).data,
-                status=status.HTTP_403_FORBIDDEN,
+            return _error_response(
+                "User does not have admin privileges", status.HTTP_403_FORBIDDEN
             )
         relation = ProfessionalDomainRelation.objects.get(
             professional_id=professional_user_id,
@@ -654,21 +645,13 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
             )
             if not current_user_admin_in_domain:
                 # Credentials are valid but does not have permissions
-                return Response(
-                    common_serializers.ErrorSerializer(
-                        {
-                            "error": "User does not have admin privileges",
-                        }
-                    ).data,
-                    status=status.HTTP_403_FORBIDDEN,
+                return _error_response(
+                    "User does not have admin privileges", status.HTTP_403_FORBIDDEN
                 )
         except Exception as e:
             # Unexecpted generic error, fail closed
             logger.opt(exception=e).error("Error in accepting professional user")
-            return Response(
-                common_serializers.ErrorSerializer({"error": f"Error {e}"}).data,
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+            return _error_response(f"Error {e}", status.HTTP_500_INTERNAL_SERVER_ERROR)
         try:
             relation = ProfessionalDomainRelation.objects.get(
                 professional_id=professional_user_id,
@@ -688,13 +671,8 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                 status=status.HTTP_200_OK,
             )
         except ProfessionalDomainRelation.DoesNotExist:
-            return Response(
-                common_serializers.ErrorSerializer(
-                    {
-                        "error": "Relation not found or already accepted",
-                    }
-                ).data,
-                status=status.HTTP_404_NOT_FOUND,
+            return _error_response(
+                "Relation not found or already accepted", status.HTTP_404_NOT_FOUND
             )
 
     @extend_schema(
@@ -814,11 +792,8 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                 professional_user = User.objects.get(email=user_email).professionaluser
                 email = user_email
             else:
-                return Response(
-                    common_serializers.ErrorSerializer(
-                        {"error": "Missing required parameters"}
-                    ).data,
-                    status=status.HTTP_400_BAD_REQUEST,
+                return _error_response(
+                    "Missing required parameters", status.HTTP_400_BAD_REQUEST
                 )
 
             checkout_session = self.create_stripe_checkout_session(
@@ -831,23 +806,14 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                 status=status.HTTP_200_OK,
             )
         except UserDomain.DoesNotExist:
-            return Response(
-                common_serializers.ErrorSerializer({"error": "Domain not found"}).data,
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return _error_response("Domain not found", status.HTTP_400_BAD_REQUEST)
         except ProfessionalUser.DoesNotExist:
-            return Response(
-                common_serializers.ErrorSerializer(
-                    {"error": "Professional user not found"}
-                ).data,
-                status=status.HTTP_400_BAD_REQUEST,
+            return _error_response(
+                "Professional user not found", status.HTTP_400_BAD_REQUEST
             )
         except Exception as e:
             logger.opt(exception=e).error("Error in finishing payment")
-            return Response(
-                common_serializers.ErrorSerializer({"error": f"Error {e}"}).data,
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+            return _error_response(f"Error {e}", status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     @transaction.atomic
     def perform_create(self, request: Request, serializer: Serializer) -> Response:
@@ -867,10 +833,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
         logger.debug(f"Creating professional user (has_session={bool(session_key)})")
 
         if not validate_password(user_signup_info["password"]):
-            return Response(
-                common_serializers.ErrorSerializer({"error": "Invalid password"}).data,
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return _error_response("Invalid password", status.HTTP_400_BAD_REQUEST)
 
         # Check if this user is trying to sign up again (possibly after pressing back from Stripe)
         existing_checkout = (
@@ -921,13 +884,9 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                                 f"Deleted inactive domain {domain_to_delete.name} during signup retry"
                             )
                         else:
-                            return Response(
-                                common_serializers.ErrorSerializer(
-                                    {
-                                        "error": "Domain is active, cannot delete, please contact support42@fightpaperwork.com"
-                                    }
-                                ).data,
-                                status=status.HTTP_400_BAD_REQUEST,
+                            return _error_response(
+                                "Domain is active, cannot delete, please contact support42@fightpaperwork.com",
+                                status.HTTP_400_BAD_REQUEST,
                             )
                     except UserDomain.DoesNotExist:
                         logger.error("Domain doesn't exist for cleanup")
@@ -949,13 +908,9 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                     logger.debug(
                         f"Error finding domain a user wants to join {domain_name} / {visible_phone_number}"
                     )
-                    return Response(
-                        common_serializers.ErrorSerializer(
-                            {
-                                "error": f"Can not join missing domain {domain_name} / {visible_phone_number} it does not exist"
-                            }
-                        ).data,
-                        status=status.HTTP_400_BAD_REQUEST,
+                    return _error_response(
+                        f"Can not join missing domain {domain_name} / {visible_phone_number} it does not exist",
+                        status.HTTP_400_BAD_REQUEST,
                     )
                 else:
                     user_domain_opt = UserDomain.objects.filter(
@@ -967,11 +922,8 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
             if UserDomain.find_by_name(name=domain_name).count() != 0:
                 # Check if this is the domain we created previously
                 existing_domain = UserDomain.find_by_name(name=domain_name).get()
-                return Response(
-                    common_serializers.ErrorSerializer(
-                        {"error": "Domain already exists"}
-                    ).data,
-                    status=status.HTTP_400_BAD_REQUEST,
+                return _error_response(
+                    "Domain already exists", status.HTTP_400_BAD_REQUEST
                 )
             elif (
                 UserDomain.objects.filter(
@@ -979,37 +931,24 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                 ).count()
                 != 0
             ):
-                return Response(
-                    common_serializers.ErrorSerializer(
-                        {
-                            "error": "Visible phone number already exists",
-                        }
-                    ).data,
-                    status=status.HTTP_400_BAD_REQUEST,
+                return _error_response(
+                    "Visible phone number already exists", status.HTTP_400_BAD_REQUEST
                 )
 
             if user_domain_opt is None:
                 if "user_domain" not in data:
-                    return Response(
-                        common_serializers.ErrorSerializer(
-                            {
-                                "error": "Need domain info when making a new domain or solo provider",
-                            }
-                        ).data,
-                        status=status.HTTP_400_BAD_REQUEST,
+                    return _error_response(
+                        "Need domain info when making a new domain or solo provider",
+                        status.HTTP_400_BAD_REQUEST,
                     )
                 user_domain_info: dict[str, Optional[str]] = data["user_domain"]  # type: ignore
                 if domain_name != user_domain_info["name"]:
                     if user_domain_info["name"] is None:
                         user_domain_info["name"] = domain_name
                     else:
-                        return Response(
-                            common_serializers.ErrorSerializer(
-                                {
-                                    "error": "Domain name and user domain name must match",
-                                }
-                            ).data,
-                            status=status.HTTP_400_BAD_REQUEST,
+                        return _error_response(
+                            "Domain name and user domain name must match",
+                            status.HTTP_400_BAD_REQUEST,
                         )
                 # We want to allow null
                 if user_domain_info["name"] == "":
@@ -1022,13 +961,9 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                         user_domain_info["visible_phone_number"] = visible_phone_number
                     else:
                         udpn = user_domain_info["visible_phone_number"]
-                        return Response(
-                            common_serializers.ErrorSerializer(
-                                {
-                                    "error": f"Visible phone number {visible_phone_number} and user domain visible phone number {udpn} must match",
-                                }
-                            ).data,
-                            status=status.HTTP_400_BAD_REQUEST,
+                        return _error_response(
+                            f"Visible phone number {visible_phone_number} and user domain visible phone number {udpn} must match",
+                            status.HTTP_400_BAD_REQUEST,
                         )
                 user_domain_opt = UserDomain.objects.create(
                     active=False,
@@ -1064,12 +999,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                 pending_domain_relation=not new_domain,
             )
         except IntegrityError:
-            return Response(
-                common_serializers.ErrorSerializer(
-                    {"error": "User already exists"}
-                ).data,
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return _error_response("User already exists", status.HTTP_400_BAD_REQUEST)
 
         # If the domain is not new we don't need billing info
         if not new_domain:
@@ -1158,11 +1088,8 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                 logger.opt(exception=True).error(
                     f"User {current_user.username} attempted to make another user admin without admin privileges in domain {domain_id}"
                 )
-                return Response(
-                    common_serializers.ErrorSerializer(
-                        {"error": "User does not have admin privileges"}
-                    ).data,
-                    status=status.HTTP_403_FORBIDDEN,
+                return _error_response(
+                    "User does not have admin privileges", status.HTTP_403_FORBIDDEN
                 )
 
             # Get the professional user to make admin
@@ -1171,11 +1098,8 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                     id=professional_user_id
                 )
             except ProfessionalUser.DoesNotExist:
-                return Response(
-                    common_serializers.ErrorSerializer(
-                        {"error": "Professional user not found"}
-                    ).data,
-                    status=status.HTTP_404_NOT_FOUND,
+                return _error_response(
+                    "Professional user not found", status.HTTP_404_NOT_FOUND
                 )
 
             # Get the relation between the professional and domain
@@ -1186,13 +1110,9 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                     active_domain_relation=True,
                 )
             except ProfessionalDomainRelation.DoesNotExist:
-                return Response(
-                    common_serializers.ErrorSerializer(
-                        {
-                            "error": "No active relationship found between user and domain"
-                        }
-                    ).data,
-                    status=status.HTTP_404_NOT_FOUND,
+                return _error_response(
+                    "No active relationship found between user and domain",
+                    status.HTTP_404_NOT_FOUND,
                 )
 
             # Make the user an admin
@@ -1212,9 +1132,8 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
         except Exception as e:
             # Unexpected generic error, fail closed
             logger.opt(exception=e).error("Error in making professional user an admin")
-            return Response(
-                common_serializers.ErrorSerializer({"error": f"Error: {str(e)}"}).data,
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return _error_response(
+                f"Error: {str(e)}", status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
     @extend_schema(
@@ -1231,27 +1150,18 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
         current_user: User = request.user  # type: ignore
         domain_id = auth_utils.get_domain_id_from_request(request)
         if not domain_id:
-            return Response(
-                common_serializers.ErrorSerializer(
-                    {"error": "Domain ID not found in session"}
-                ).data,
-                status=status.HTTP_400_BAD_REQUEST,
+            return _error_response(
+                "Domain ID not found in session", status.HTTP_400_BAD_REQUEST
             )
         user_domain = UserDomain.objects.get(id=domain_id)
         if not user_is_admin_in_domain(current_user, domain_id):
-            return Response(
-                common_serializers.ErrorSerializer(
-                    {"error": "User is not an admin in this domain"}
-                ).data,
-                status=status.HTTP_403_FORBIDDEN,
+            return _error_response(
+                "User is not an admin in this domain", status.HTTP_403_FORBIDDEN
             )
         # Must have a Stripe customer ID to access billing portal
         if not user_domain.stripe_customer_id:
-            return Response(
-                common_serializers.ErrorSerializer(
-                    {"error": "No Stripe customer found for this domain"}
-                ).data,
-                status=status.HTTP_400_BAD_REQUEST,
+            return _error_response(
+                "No Stripe customer found for this domain", status.HTTP_400_BAD_REQUEST
             )
         stripe.api_key = settings.STRIPE_API_SECRET_KEY
         try:
@@ -1269,11 +1179,9 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
             logger.opt(exception=True).error(
                 f"Error creating Stripe billing portal session: {str(e)}"
             )
-            return Response(
-                common_serializers.ErrorSerializer(
-                    {"error": f"Could not create billing portal session: {str(e)}"}
-                ).data,
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return _error_response(
+                f"Could not create billing portal session: {str(e)}",
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
 
@@ -1310,13 +1218,8 @@ class RestLoginView(ViewSet, SerializerMixin):
                     status=status.HTTP_401_UNAUTHORIZED,
                 )
         except Exception as e:
-            return Response(
-                common_serializers.ErrorSerializer(
-                    {
-                        "error": f"Domain or phone number not found -- {e}",
-                    }
-                ).data,
-                status=status.HTTP_400_BAD_REQUEST,
+            return _error_response(
+                f"Domain or phone number not found -- {e}", status.HTTP_400_BAD_REQUEST
             )
         user = authenticate(username=username, password=password)
         if user:
@@ -1330,20 +1233,13 @@ class RestLoginView(ViewSet, SerializerMixin):
             user = User.objects.get(username=username)
             if not user.is_active:
                 send_verification_email(request, user)
-                return Response(
-                    common_serializers.ErrorSerializer(
-                        {
-                            "error": "User is inactive -- please verify your e-mail",
-                        }
-                    ).data,
-                    status=status.HTTP_401_UNAUTHORIZED,
+                return _error_response(
+                    "User is inactive -- please verify your e-mail",
+                    status.HTTP_401_UNAUTHORIZED,
                 )
         except User.DoesNotExist:
             pass
-        return Response(
-            common_serializers.ErrorSerializer({"error": f"Invalid credentials"}).data,
-            status=status.HTTP_401_UNAUTHORIZED,
-        )
+        return _error_response("Invalid credentials", status.HTTP_401_UNAUTHORIZED)
 
 
 class PatientUserViewSet(ViewSet, CreateMixin):
@@ -1371,13 +1267,9 @@ class PatientUserViewSet(ViewSet, CreateMixin):
             logger.opt(exception=True).error(
                 f"Domain not found error when creating patient user: {str(e)}"
             )
-            return Response(
-                common_serializers.ErrorSerializer(
-                    {
-                        "error": "The specified healthcare provider was not found, ask them to sign up for Fight Paperwork."
-                    }
-                ).data,
-                status=status.HTTP_400_BAD_REQUEST,
+            return _error_response(
+                "The specified healthcare provider was not found, ask them to sign up for Fight Paperwork.",
+                status.HTTP_400_BAD_REQUEST,
             )
         except django_db_utils.IntegrityError as e:
             # Check for uniqueness constraint errors (typically email or username conflicts)
@@ -1388,31 +1280,22 @@ class PatientUserViewSet(ViewSet, CreateMixin):
                 logger.opt(exception=True).error(
                     f"Uniqueness constraint error when creating patient user: {str(e)}"
                 )
-                return Response(
-                    common_serializers.ErrorSerializer(
-                        {"error": "A user with this email already exists"}
-                    ).data,
-                    status=status.HTTP_400_BAD_REQUEST,
+                return _error_response(
+                    "A user with this email already exists", status.HTTP_400_BAD_REQUEST
                 )
             # Log but pass through other integrity errors
             logger.opt(exception=True).error(
                 f"Database integrity error when creating patient user: {str(e)}"
             )
-            return Response(
-                common_serializers.ErrorSerializer(
-                    {"error": f"Database error: {str(e)}"}
-                ).data,
-                status=status.HTTP_400_BAD_REQUEST,
+            return _error_response(
+                f"Database error: {str(e)}", status.HTTP_400_BAD_REQUEST
             )
         except Exception as e:
             # Catch all other exceptions to provide friendlier responses
             logger.opt(exception=True).error(
                 f"Unexpected error when creating patient user: {str(e)}"
             )
-            return Response(
-                common_serializers.ErrorSerializer({"error": str(e)}).data,
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+            return _error_response(str(e), status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     @extend_schema(responses=serializers.StatusResponseSerializer)
     def perform_create(self, request: Request, serializer) -> Response:
@@ -1444,11 +1327,8 @@ class PatientUserViewSet(ViewSet, CreateMixin):
         except IntegrityError:
 
             logger.opt(exception=True).error("Integrity error when creating user")
-            return Response(
-                common_serializers.ErrorSerializer(
-                    {"error": "A user with this email already exists"}
-                ).data,
-                status=status.HTTP_400_BAD_REQUEST,
+            return _error_response(
+                "A user with this email already exists", status.HTTP_400_BAD_REQUEST
             )
         country = "USA"
         if "country" in validated_data:
@@ -1533,23 +1413,15 @@ class VerifyEmailViewSet(ViewSet, SerializerMixin):
             uid = serializer.validated_data["user_id"]
             user = User.objects.get(pk=uid)
         except (TypeError, ValueError, OverflowError, User.DoesNotExist) as e:
-            return Response(
-                common_serializers.ErrorSerializer(
-                    {
-                        "error": "Invalid activation link [user not found]",
-                    }
-                ).data,
-                status=status.HTTP_400_BAD_REQUEST,
+            return _error_response(
+                "Invalid activation link [user not found]", status.HTTP_400_BAD_REQUEST
             )
         token = serializer.validated_data["token"]
         try:
             verification_token = VerificationToken.objects.get(user=user, token=token)
             if timezone.now() > verification_token.expires_at:
-                return Response(
-                    common_serializers.ErrorSerializer(
-                        {"error": "Activation link has expired"}
-                    ).data,
-                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                return _error_response(
+                    "Activation link has expired", status.HTTP_500_INTERNAL_SERVER_ERROR
                 )
             with transaction.atomic():
                 user.is_active = True
@@ -1567,11 +1439,8 @@ class VerifyEmailViewSet(ViewSet, SerializerMixin):
                 serializers.StatusResponseSerializer({"status": "success"}).data
             )
         except VerificationToken.DoesNotExist as e:
-            return Response(
-                common_serializers.ErrorSerializer(
-                    {"error": "Invalid activation link"}
-                ).data,
-                status=status.HTTP_400_BAD_REQUEST,
+            return _error_response(
+                "Invalid activation link", status.HTTP_400_BAD_REQUEST
             )
 
     @extend_schema(responses=serializers.StatusResponseSerializer)
@@ -1640,32 +1509,20 @@ class PasswordResetViewSet(ViewSet, SerializerMixin):
 
         except User.DoesNotExist:
             logger.debug(f"User does not exist")
-            return Response(
-                common_serializers.ErrorSerializer(
-                    {"error": "User does not exist"}
-                ).data,
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return _error_response("User does not exist", status.HTTP_400_BAD_REQUEST)
 
         except UserDomain.DoesNotExist:
             logger.debug(f"User domain does not exist")
-            return Response(
-                common_serializers.ErrorSerializer(
-                    {
-                        "error": "User domain does not exist -- check provider phone number"
-                    }
-                ).data,
-                status=status.HTTP_400_BAD_REQUEST,
+            return _error_response(
+                "User domain does not exist -- check provider phone number",
+                status.HTTP_400_BAD_REQUEST,
             )
 
         except Exception as e:
             logger.opt(exception=e).error(
                 f"Password reset request failed with unexpected error"
             )
-            return Response(
-                common_serializers.ErrorSerializer({"error": str(e)}).data,
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return _error_response(str(e), status.HTTP_400_BAD_REQUEST)
 
     @extend_schema(
         responses={
@@ -1686,22 +1543,14 @@ class PasswordResetViewSet(ViewSet, SerializerMixin):
             # Check if token has expired
             if timezone.now() > reset_token.expires_at:
                 reset_token.delete()
-                return Response(
-                    common_serializers.ErrorSerializer(
-                        {"error": "Reset token has expired"}
-                    ).data,
-                    status=status.HTTP_400_BAD_REQUEST,
+                return _error_response(
+                    "Reset token has expired", status.HTTP_400_BAD_REQUEST
                 )
 
             # Update password
             user = reset_token.user
             if not validate_password(data["new_password"]):
-                return Response(
-                    common_serializers.ErrorSerializer(
-                        {"error": "Invalid password"}
-                    ).data,
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
+                return _error_response("Invalid password", status.HTTP_400_BAD_REQUEST)
             user.set_password(data["new_password"])
             user.save()
 
@@ -1715,12 +1564,7 @@ class PasswordResetViewSet(ViewSet, SerializerMixin):
             )
 
         except ResetToken.DoesNotExist:
-            return Response(
-                common_serializers.ErrorSerializer(
-                    {"error": "Invalid reset token"}
-                ).data,
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return _error_response("Invalid reset token", status.HTTP_400_BAD_REQUEST)
 
 
 class UserDomainViewSet(viewsets.ViewSet, SerializerMixin):
@@ -1753,11 +1597,8 @@ class UserDomainViewSet(viewsets.ViewSet, SerializerMixin):
         try:
             domain_id = auth_utils.get_domain_id_from_request(request)
             if not domain_id:
-                return Response(
-                    common_serializers.ErrorSerializer(
-                        {"error": "Domain ID not found in session"}
-                    ).data,
-                    status=status.HTTP_400_BAD_REQUEST,
+                return _error_response(
+                    "Domain ID not found in session", status.HTTP_400_BAD_REQUEST
                 )
 
             domain = get_object_or_404(UserDomain, id=domain_id)
@@ -1766,10 +1607,7 @@ class UserDomainViewSet(viewsets.ViewSet, SerializerMixin):
 
         except Exception as e:
             logger.opt(exception=e).error("Error retrieving domain information")
-            return Response(
-                common_serializers.ErrorSerializer({"error": str(e)}).data,
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+            return _error_response(str(e), status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     @extend_schema(
         responses={
@@ -1787,21 +1625,15 @@ class UserDomainViewSet(viewsets.ViewSet, SerializerMixin):
         try:
             domain_id = auth_utils.get_domain_id_from_request(request)
             if not domain_id:
-                return Response(
-                    common_serializers.ErrorSerializer(
-                        {"error": "Domain ID not found in session"}
-                    ).data,
-                    status=status.HTTP_400_BAD_REQUEST,
+                return _error_response(
+                    "Domain ID not found in session", status.HTTP_400_BAD_REQUEST
                 )
 
             # Verify user is admin for this domain
             current_user: User = request.user  # type: ignore
             if not user_is_admin_in_domain(current_user, domain_id):
-                return Response(
-                    common_serializers.ErrorSerializer(
-                        {"error": "User does not have admin privileges"}
-                    ).data,
-                    status=status.HTTP_403_FORBIDDEN,
+                return _error_response(
+                    "User does not have admin privileges", status.HTTP_403_FORBIDDEN
                 )
 
             domain = get_object_or_404(UserDomain, id=domain_id)
@@ -1820,10 +1652,7 @@ class UserDomainViewSet(viewsets.ViewSet, SerializerMixin):
 
         except Exception as e:
             logger.opt(exception=e).error("Error updating domain information")
-            return Response(
-                common_serializers.ErrorSerializer({"error": str(e)}).data,
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+            return _error_response(str(e), status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class ProfessionalUserUpdateViewSet(viewsets.ViewSet, SerializerMixin):
@@ -1855,16 +1684,9 @@ class ProfessionalUserUpdateViewSet(viewsets.ViewSet, SerializerMixin):
         Returns the current professional user's information.
         """
         try:
-            current_user: User = request.user  # type: ignore
-            try:
-                professional_user = ProfessionalUser.objects.get(user=current_user)
-            except ProfessionalUser.DoesNotExist:
-                return Response(
-                    common_serializers.ErrorSerializer(
-                        {"error": "User is not a professional user"}
-                    ).data,
-                    status=status.HTTP_404_NOT_FOUND,
-                )
+            professional_user, error = _get_professional_user_for_request(request)
+            if error is not None:
+                return error
 
             serializer = serializers.UpdateProfessionalUserSerializer(professional_user)
             return Response(serializer.data, status=status.HTTP_200_OK)
@@ -1873,10 +1695,7 @@ class ProfessionalUserUpdateViewSet(viewsets.ViewSet, SerializerMixin):
             logger.opt(exception=e).error(
                 "Error retrieving professional user information"
             )
-            return Response(
-                common_serializers.ErrorSerializer({"error": str(e)}).data,
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+            return _error_response(str(e), status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     @extend_schema(
         responses={
@@ -1892,16 +1711,9 @@ class ProfessionalUserUpdateViewSet(viewsets.ViewSet, SerializerMixin):
         Update professional user profile information.
         """
         try:
-            current_user: User = request.user  # type: ignore
-            try:
-                professional_user = ProfessionalUser.objects.get(user=current_user)
-            except ProfessionalUser.DoesNotExist:
-                return Response(
-                    common_serializers.ErrorSerializer(
-                        {"error": "User is not a professional user"}
-                    ).data,
-                    status=status.HTTP_404_NOT_FOUND,
-                )
+            professional_user, error = _get_professional_user_for_request(request)
+            if error is not None:
+                return error
 
             serializer = self.deserialize(data=request.data)
             serializer.is_valid(raise_exception=True)
@@ -1920,10 +1732,7 @@ class ProfessionalUserUpdateViewSet(viewsets.ViewSet, SerializerMixin):
             logger.opt(exception=e).error(
                 "Error updating professional user information"
             )
-            return Response(
-                common_serializers.ErrorSerializer({"error": str(e)}).data,
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+            return _error_response(str(e), status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class PasswordViewSet(viewsets.ViewSet, SerializerMixin):
@@ -1956,29 +1765,20 @@ class PasswordViewSet(viewsets.ViewSet, SerializerMixin):
             current_user: User = request.user  # type: ignore
             # Check the user is authenticated
             if not current_user.is_authenticated:
-                return Response(
-                    common_serializers.ErrorSerializer(
-                        {"error": "User is not authenticated"}
-                    ).data,
-                    status=status.HTTP_401_UNAUTHORIZED,
+                return _error_response(
+                    "User is not authenticated", status.HTTP_401_UNAUTHORIZED
                 )
             # Check the old password is correct
             if not current_user.check_password(
                 serializer.validated_data["current_password"]
             ):
-                return Response(
-                    common_serializers.ErrorSerializer(
-                        {"error": "Current password is incorrect"}
-                    ).data,
-                    status=status.HTTP_400_BAD_REQUEST,
+                return _error_response(
+                    "Current password is incorrect", status.HTTP_400_BAD_REQUEST
                 )
             # Validate the new password
             if not validate_password(serializer.validated_data["new_password"]):
-                return Response(
-                    common_serializers.ErrorSerializer(
-                        {"error": "Invalid new password"}
-                    ).data,
-                    status=status.HTTP_400_BAD_REQUEST,
+                return _error_response(
+                    "Invalid new password", status.HTTP_400_BAD_REQUEST
                 )
             # Change the password
             current_user.set_password(serializer.validated_data["new_password"])
@@ -1993,7 +1793,4 @@ class PasswordViewSet(viewsets.ViewSet, SerializerMixin):
 
         except Exception as e:
             logger.opt(exception=e).error("Error changing password")
-            return Response(
-                common_serializers.ErrorSerializer({"error": str(e)}).data,
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return _error_response(str(e), status.HTTP_400_BAD_REQUEST)

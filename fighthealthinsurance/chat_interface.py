@@ -138,22 +138,17 @@ class ChatInterface:
 
     async def send_error_message(self, message: str):
         """Sends an error message to the client."""
-        await self.send_json_message_func(
-            {"error": message, "chat_id": str(self.chat.id)}
-        )
+        # chat_id is added by send_json_message_func wrapper
+        await self.send_json_message_func({"error": message})
 
     async def send_status_message(self, message: str):
         """Sends a status message to the client."""
         logger.debug(f"Chat {self.chat.id} status: {message}")
-        await self.send_json_message_func(
-            {"status": message, "chat_id": str(self.chat.id)}
-        )
+        await self.send_json_message_func({"status": message})
 
     async def send_message_to_client(self, message: str):
         """Sends a message to the client."""
-        await self.send_json_message_func(
-            {"content": message, "chat_id": str(self.chat.id), "role": "assistant"}
-        )
+        await self.send_json_message_func({"content": message, "role": "assistant"})
 
     async def _get_user_info(self) -> str:
         """Generates a descriptive string for the user (either professional or patient)."""

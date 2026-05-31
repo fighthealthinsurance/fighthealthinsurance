@@ -1055,31 +1055,46 @@ class DenialResponseInfo:
 
 class PatientNotificationHelper:
     @classmethod
+    def _send(
+        cls,
+        email: str,
+        professional_name: Optional[str],
+        practice_number: str,
+        base_subject: str,
+        template_name: str,
+    ):
+        subject = base_subject
+        if professional_name:
+            subject += f" from {professional_name}"
+        return send_fallback_email(
+            subject=subject,
+            template_name=template_name,
+            context={"practice_number": practice_number},
+            to_email=email,
+        )
+
+    @classmethod
     def send_signup_invitation(
         cls, email: str, professional_name: Optional[str], practice_number: str
     ):
-        subject = "Welcome to Fight Paperwork"
-        if professional_name:
-            subject += " from {professional_name}"
-        return send_fallback_email(
-            subject=subject,
+        return cls._send(
+            email,
+            professional_name,
+            practice_number,
+            base_subject="Welcome to Fight Paperwork",
             template_name="new_patient",
-            context={"practice_number": practice_number},
-            to_email=email,
         )
 
     @classmethod
     def notify_of_draft_appeal(
         cls, email: str, professional_name: Optional[str], practice_number: str
     ):
-        subject = "Draft Appeal on Fight Paperwork"
-        if professional_name:
-            subject += " from {professional_name}"
-        return send_fallback_email(
-            subject=subject,
+        return cls._send(
+            email,
+            professional_name,
+            practice_number,
+            base_subject="Draft Appeal on Fight Paperwork",
             template_name="draft_appeal",
-            context={"practice_number": practice_number},
-            to_email=email,
         )
 
 

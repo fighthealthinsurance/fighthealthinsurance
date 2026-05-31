@@ -77,6 +77,14 @@ appeal_assembly_helper = AppealAssemblyHelper()
 pubmed_tools = PubMedTools()
 
 
+def _error_response(message, status_code: int) -> Response:
+    """Wrap ``message`` in the project's standard error envelope."""
+    return Response(
+        serializers.ErrorSerializer({"error": message}).data,
+        status=status_code,
+    )
+
+
 class ChatViewSet(viewsets.ViewSet):
     """
     ViewSet for managing ongoing chats with the LLM assistant.
@@ -933,10 +941,7 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
     def notify_patient(self, request: Request) -> Response:
         serializer = self.deserialize(request.data)
         if not serializer.is_valid():
-            return Response(
-                serializers.ErrorSerializer({"error": serializer.errors}).data,
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return _error_response(serializer.errors, status.HTTP_400_BAD_REQUEST)
         pk = serializer.validated_data["id"]
         include_professional = False
         if "include_professional" in serializer.validated_data:
@@ -956,10 +961,7 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
             appeal.save()
         patient_user: Optional[PatientUser] = appeal.patient_user
         if patient_user is None:
-            return Response(
-                serializers.ErrorSerializer({"error": "Patient not found"}).data,
-                status=status.HTTP_404_NOT_FOUND,
-            )
+            return _error_response("Patient not found", status.HTTP_404_NOT_FOUND)
         professional_name = None
         if include_professional:
             professional_name = ProfessionalUser.objects.get(
@@ -1354,11 +1356,9 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
     def search(self, request):
         query = request.GET.get("q", "")
         if not query:
-            return Response(
-                serializers.ErrorSerializer(
-                    {"error": 'Please provide a search query parameter "q"'}
-                ).data,
-                status=status.HTTP_400_BAD_REQUEST,
+            return _error_response(
+                'Please provide a search query parameter "q"',
+                status.HTTP_400_BAD_REQUEST,
             )
 
         # Search in Appeals with user permissions
@@ -1504,19 +1504,13 @@ class AppealAttachmentViewSet(viewsets.ViewSet):
         """List attachments for a given appeal"""
         appeal_id = request.query_params.get("appeal_id")
         if not appeal_id:
-            return Response(
-                serializers.ErrorSerializer({"error": "appeal_id required"}).data,
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return _error_response("appeal_id required", status.HTTP_400_BAD_REQUEST)
 
         appeal_id_number: Optional[int] = (
             int(appeal_id) if appeal_id.isdigit() else None
         )
         if not appeal_id_number:
-            return Response(
-                serializers.ErrorSerializer({"error": "Invalid appeal_id"}).data,
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return _error_response("Invalid appeal_id", status.HTTP_400_BAD_REQUEST)
 
         current_user: User = request.user  # type: ignore
         appeal = get_object_or_404(
@@ -2216,10 +2210,7 @@ class ChooserViewSet(viewsets.ViewSet):
         """
         serializer = serializers.ChooserVoteRequestSerializer(data=request.data)
         if not serializer.is_valid():
-            return Response(
-                serializers.ErrorSerializer({"error": str(serializer.errors)}).data,
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return _error_response(str(serializer.errors), status.HTTP_400_BAD_REQUEST)
 
         session_key = self._get_session_key(request)
         task_id = serializer.validated_data["task_id"]
@@ -2230,17 +2221,11 @@ class ChooserViewSet(viewsets.ViewSet):
         try:
             task = ChooserTask.objects.get(id=task_id)
         except ChooserTask.DoesNotExist:
-            return Response(
-                serializers.ErrorSerializer({"error": "Task not found"}).data,
-                status=status.HTTP_404_NOT_FOUND,
-            )
+            return _error_response("Task not found", status.HTTP_404_NOT_FOUND)
 
         if task.status not in ["READY", "IN_USE"]:
-            return Response(
-                serializers.ErrorSerializer(
-                    {"error": "Task is not available for voting"}
-                ).data,
-                status=status.HTTP_400_BAD_REQUEST,
+            return _error_response(
+                "Task is not available for voting", status.HTTP_400_BAD_REQUEST
             )
 
         # Validate chosen candidate exists and belongs to this task
@@ -2249,29 +2234,21 @@ class ChooserViewSet(viewsets.ViewSet):
                 id=chosen_candidate_id, task=task
             )
         except ChooserCandidate.DoesNotExist:
-            return Response(
-                serializers.ErrorSerializer(
-                    {"error": "Invalid candidate for this task"}
-                ).data,
-                status=status.HTTP_400_BAD_REQUEST,
+            return _error_response(
+                "Invalid candidate for this task", status.HTTP_400_BAD_REQUEST
             )
 
         # Check if this session has already voted on this task
         if ChooserVote.objects.filter(task=task, session_key=session_key).exists():
-            return Response(
-                serializers.ErrorSerializer(
-                    {"error": "You have already voted on this task"}
-                ).data,
-                status=status.HTTP_400_BAD_REQUEST,
+            return _error_response(
+                "You have already voted on this task", status.HTTP_400_BAD_REQUEST
             )
 
         # Validate that chosen_candidate_id is in presented_candidate_ids
         if chosen_candidate_id not in presented_candidate_ids:
-            return Response(
-                serializers.ErrorSerializer(
-                    {"error": "Chosen candidate was not in the presented candidates"}
-                ).data,
-                status=status.HTTP_400_BAD_REQUEST,
+            return _error_response(
+                "Chosen candidate was not in the presented candidates",
+                status.HTTP_400_BAD_REQUEST,
             )
 
         # Create the vote
@@ -2283,11 +2260,8 @@ class ChooserViewSet(viewsets.ViewSet):
                 session_key=session_key,
             )
         except IntegrityError:
-            return Response(
-                serializers.ErrorSerializer(
-                    {"error": "You have already voted on this task"}
-                ).data,
-                status=status.HTTP_400_BAD_REQUEST,
+            return _error_response(
+                "You have already voted on this task", status.HTTP_400_BAD_REQUEST
             )
 
         return Response(
@@ -2321,10 +2295,7 @@ class ChooserViewSet(viewsets.ViewSet):
         """
         serializer = serializers.ChooserSkipRequestSerializer(data=request.data)
         if not serializer.is_valid():
-            return Response(
-                serializers.ErrorSerializer({"error": str(serializer.errors)}).data,
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return _error_response(str(serializer.errors), status.HTTP_400_BAD_REQUEST)
 
         session_key = self._get_session_key(request)
         task_id = serializer.validated_data["task_id"]
@@ -2333,18 +2304,12 @@ class ChooserViewSet(viewsets.ViewSet):
         try:
             task = ChooserTask.objects.get(id=task_id)
         except ChooserTask.DoesNotExist:
-            return Response(
-                serializers.ErrorSerializer({"error": "Task not found"}).data,
-                status=status.HTTP_404_NOT_FOUND,
-            )
+            return _error_response("Task not found", status.HTTP_404_NOT_FOUND)
 
         # Check if already voted on this task (can't skip if already voted)
         if ChooserVote.objects.filter(task=task, session_key=session_key).exists():
-            return Response(
-                serializers.ErrorSerializer(
-                    {"error": "You have already voted on this task"}
-                ).data,
-                status=status.HTTP_400_BAD_REQUEST,
+            return _error_response(
+                "You have already voted on this task", status.HTTP_400_BAD_REQUEST
             )
 
         # Create the skip record (or ignore if already skipped)
