@@ -47,25 +47,30 @@ else:
     User = get_user_model()
 
 
+def _create_test_domain(name="testdomain"):
+    """Shared factory for the standard test UserDomain used across setUps."""
+    return UserDomain.objects.create(
+        name=name,
+        visible_phone_number="1234567890",
+        internal_phone_number="0987654321",
+        active=True,
+        display_name="Test Domain",
+        business_name="Test Business",
+        country="USA",
+        state="CA",
+        city="Test City",
+        address1="123 Test St",
+        zipcode="12345",
+    )
+
+
 class DenialLongEmployerName(APITestCase):
     """Test denial with long employer name."""
 
     fixtures = ["./fighthealthinsurance/fixtures/initial.yaml"]
 
     def setUp(self):
-        self.domain = UserDomain.objects.create(
-            name="testdomain",
-            visible_phone_number="1234567890",
-            internal_phone_number="0987654321",
-            active=True,
-            display_name="Test Domain",
-            business_name="Test Business",
-            country="USA",
-            state="CA",
-            city="Test City",
-            address1="123 Test St",
-            zipcode="12345",
-        )
+        self.domain = _create_test_domain()
         self.user = User.objects.create_user(
             username=f"testuser🐼{self.domain.id}",
             password="testpass",
@@ -126,19 +131,7 @@ class DenialEndToEnd(APITestCase):
     fixtures = ["./fighthealthinsurance/fixtures/initial.yaml"]
 
     def setUp(self):
-        self.domain = UserDomain.objects.create(
-            name="testdomain",
-            visible_phone_number="1234567890",
-            internal_phone_number="0987654321",
-            active=True,
-            display_name="Test Domain",
-            business_name="Test Business",
-            country="USA",
-            state="CA",
-            city="Test City",
-            address1="123 Test St",
-            zipcode="12345",
-        )
+        self.domain = _create_test_domain()
         self.user = User.objects.create_user(
             username=f"testuser🐼{self.domain.id}",
             password="testpass",
@@ -480,9 +473,7 @@ class StreamingAppealsRestFallbackTest(APITestCase):
         async def _drain(stream):
             chunks = []
             async for chunk in stream:
-                chunks.append(
-                    chunk.encode() if isinstance(chunk, str) else chunk
-                )
+                chunks.append(chunk.encode() if isinstance(chunk, str) else chunk)
             return b"".join(chunks)
 
         return async_to_sync(_drain)(response.streaming_content).decode()
@@ -490,9 +481,7 @@ class StreamingAppealsRestFallbackTest(APITestCase):
     @staticmethod
     def _content_lines(body: str) -> list:
         return [
-            line
-            for line in body.split("\n")
-            if line.strip() and '"content"' in line
+            line for line in body.split("\n") if line.strip() and '"content"' in line
         ]
 
     def _post_fallback(self, payload: dict):
@@ -540,9 +529,7 @@ class StreamingAppealsRestFallbackTest(APITestCase):
 
         async def fake_generate_appeals(_data):
             yield (
-                json.dumps(
-                    {"type": "status", "phase": "init", "message": "starting"}
-                )
+                json.dumps({"type": "status", "phase": "init", "message": "starting"})
                 + "\n"
             )
             yield json.dumps({"id": "1", "content": "Dear Insurer,..."}) + "\n"
@@ -586,9 +573,7 @@ class StreamingAppealsRestFallbackTest(APITestCase):
                 content_type="application/json",
             )
             self.assertEqual(response.status_code, 200)
-            self.assertEqual(
-                response["Content-Type"], "application/x-ndjson"
-            )
+            self.assertEqual(response["Content-Type"], "application/x-ndjson")
             # Anti-buffering headers — defeating these proxies is the
             # whole point of the fallback existing.
             self.assertEqual(response["X-Accel-Buffering"], "no")
@@ -680,9 +665,7 @@ class StreamingAppealsRestFallbackTest(APITestCase):
         triggered generation before the 404 would fail this assert."""
         from fighthealthinsurance.common_view_logic import AppealsBackendHelper
 
-        with patch.object(
-            AppealsBackendHelper, "generate_appeals"
-        ) as generate_appeals:
+        with patch.object(AppealsBackendHelper, "generate_appeals") as generate_appeals:
             response = self._post_fallback(
                 {
                     "denial_id": 999999,
@@ -752,10 +735,7 @@ class StreamingAppealsRestFallbackTest(APITestCase):
 
         async def fake_three_appeals(_data):
             for i in (1, 2, 3):
-                yield (
-                    json.dumps({"id": f"appeal-{i}", "content": f"Body {i}"})
-                    + "\n"
-                )
+                yield (json.dumps({"id": f"appeal-{i}", "content": f"Body {i}"}) + "\n")
             yield (
                 json.dumps(
                     {
@@ -805,19 +785,7 @@ class NotifyPatientTest(APITestCase):
 
     def setUp(self):
         # Create domain
-        self.domain = UserDomain.objects.create(
-            name="testdomain",
-            visible_phone_number="1234567890",
-            internal_phone_number="0987654321",
-            active=True,
-            display_name="Test Domain",
-            business_name="Test Business",
-            country="USA",
-            state="CA",
-            city="Test City",
-            address1="123 Test St",
-            zipcode="12345",
-        )
+        self.domain = _create_test_domain()
 
         # Create professional user
         self.pro_user = User.objects.create_user(
@@ -919,19 +887,7 @@ class SendFaxTest(APITestCase):
 
     def setUp(self):
         # Create domain
-        self.domain = UserDomain.objects.create(
-            name="testdomain",
-            visible_phone_number="1234567890",
-            internal_phone_number="0987654321",
-            active=True,
-            display_name="Test Domain",
-            business_name="Test Business",
-            country="USA",
-            state="CA",
-            city="Test City",
-            address1="123 Test St",
-            zipcode="12345",
-        )
+        self.domain = _create_test_domain()
 
         # Create professional user
         self.pro_user = User.objects.create_user(
@@ -1069,19 +1025,7 @@ class InviteProviderTest(APITestCase):
 
     def setUp(self):
         # Create domain
-        self.domain = UserDomain.objects.create(
-            name="testdomain",
-            visible_phone_number="1234567890",
-            internal_phone_number="0987654321",
-            active=True,
-            display_name="Test Domain",
-            business_name="Test Business",
-            country="USA",
-            state="CA",
-            city="Test City",
-            address1="123 Test St",
-            zipcode="12345",
-        )
+        self.domain = _create_test_domain()
 
         # Create primary professional user
         self.primary_pro_user = User.objects.create_user(
@@ -1223,19 +1167,7 @@ class StatisticsTest(APITestCase):
 
     def setUp(self):
         # Create domain
-        self.domain = UserDomain.objects.create(
-            name="testdomain",
-            visible_phone_number="1234567890",
-            internal_phone_number="0987654321",
-            active=True,
-            display_name="Test Domain",
-            business_name="Test Business",
-            country="USA",
-            state="CA",
-            city="Test City",
-            address1="123 Test St",
-            zipcode="12345",
-        )
+        self.domain = _create_test_domain()
 
         # Create professional user
         self.pro_user = User.objects.create_user(
@@ -1494,19 +1426,7 @@ class GetFullDetailsTest(APITestCase):
 
     def setUp(self):
         # Create domain
-        self.domain = UserDomain.objects.create(
-            name="testdomain",
-            visible_phone_number="1234567890",
-            internal_phone_number="0987654321",
-            active=True,
-            display_name="Test Domain",
-            business_name="Test Business",
-            country="USA",
-            state="CA",
-            city="Test City",
-            address1="123 Test St",
-            zipcode="12345",
-        )
+        self.domain = _create_test_domain()
 
         # Create professional user
         self.pro_user = User.objects.create_user(
@@ -1667,19 +1587,7 @@ class DenialCreateWithExistingId(APITestCase):
     fixtures = ["./fighthealthinsurance/fixtures/initial.yaml"]
 
     def setUp(self):
-        self.domain = UserDomain.objects.create(
-            name="testdomain",
-            visible_phone_number="1234567890",
-            internal_phone_number="0987654321",
-            active=True,
-            display_name="Test Domain",
-            business_name="Test Business",
-            country="USA",
-            state="CA",
-            city="Test City",
-            address1="123 Test St",
-            zipcode="12345",
-        )
+        self.domain = _create_test_domain()
         self.user = User.objects.create_user(
             username=f"testuser{self.domain.id}",
             password="testpass",
@@ -1748,19 +1656,7 @@ class DuplicateUserDomainTest(APITestCase):
     def setUp(self):
         # Create initial test domain
         self.domain_name = "testdomain"
-        self.domain = UserDomain.objects.create(
-            name=self.domain_name,
-            visible_phone_number="1234567890",
-            internal_phone_number="0987654321",
-            active=True,
-            display_name="Test Domain",
-            business_name="Test Business",
-            country="USA",
-            state="CA",
-            city="Test City",
-            address1="123 Test St",
-            zipcode="12345",
-        )
+        self.domain = _create_test_domain(name=self.domain_name)
 
     def test_duplicate_domain_creation(self):
         """Test that creating a domain with an existing name returns a non-200 response."""
