@@ -1112,6 +1112,15 @@ Remember in the last three sentences GLP-1 is just an _example_ check what the u
         """Whether this is an external model"""
         return True
 
+    @property
+    def context_only(self):
+        """
+        Whether this model should only be used for building context (e.g.
+        gathering citations / web-informed research) and never for general
+        text generation such as appeals, chat, or prior auth.
+        """
+        return False
+
 
 @dataclass(kw_only=True)
 class ModelDescription:
@@ -2688,6 +2697,12 @@ class RemotePerplexity(RemoteFullOpenLike):
 
     @property
     def supports_system(self):
+        return True
+
+    @property
+    def context_only(self):
+        # Perplexity is only used for building context (web-informed
+        # citations / research), never for generating appeals or chat.
         return True
 
     @classmethod
