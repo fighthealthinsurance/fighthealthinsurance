@@ -96,6 +96,26 @@ def _get_professional_user_for_request(
         )
 
 
+def _resolve_domain_and_active_professional(request: Request):
+    """Look up the request's domain + active ProfessionalDomainRelation.
+
+    Raises Http404 (via get_object_or_404) when the caller isn't an active
+    professional in the domain. Returns ``(domain, professional_user)``.
+    """
+    domain_id = auth_utils.get_domain_id_from_request(request)
+    domain = UserDomain.objects.get(id=domain_id)
+    current_user: User = request.user  # type: ignore
+    professional_user = ProfessionalUser.objects.get(user=current_user)
+    get_object_or_404(
+        ProfessionalDomainRelation.objects.filter(
+            professional=professional_user,
+            domain=domain,
+            active_domain_relation=True,
+        )
+    )
+    return domain, professional_user
+
+
 class UserDomainExistsViewSet(viewsets.ViewSet, SerializerMixin):
     """
     Check if a UserDomain exists by name or phone number.
@@ -500,18 +520,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
     @action(detail=False, methods=["post"])
     def list_active_in_domain(self, request) -> Response:
         """List the active users in a given domain"""
-        domain_id = auth_utils.get_domain_id_from_request(request)
-        domain = UserDomain.objects.get(id=domain_id)
-        # Ensure current user is an active professional in domain
-        current_user: User = request.user
-        professional_user = ProfessionalUser.objects.get(user=current_user)
-        get_object_or_404(
-            ProfessionalDomainRelation.objects.filter(
-                professional=ProfessionalUser.objects.get(user=current_user),
-                domain=domain,
-                active_domain_relation=True,
-            )
-        )
+        domain, _ = _resolve_domain_and_active_professional(request)
         professionals = domain.get_professional_users(active_domain_relation=True)
         serializer = serializers.ProfessionalSummary(professionals, many=True)
         return Response(serializer.data)
@@ -528,17 +537,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
     @action(detail=False, methods=["post"])
     def list_pending_in_domain(self, request) -> Response:
         """List the pending user in a given domain"""
-        domain_id = auth_utils.get_domain_id_from_request(request)
-        domain = UserDomain.objects.get(id=domain_id)
-        # Ensure current user is active in domain
-        current_user: User = request.user
-        get_object_or_404(
-            ProfessionalDomainRelation.objects.filter(
-                professional=ProfessionalUser.objects.get(user=current_user),
-                domain=domain,
-                active_domain_relation=True,
-            )
-        )
+        domain, _ = _resolve_domain_and_active_professional(request)
         professionals = domain.get_professional_users(pending_domain_relation=True)
         serializer = serializers.ProfessionalSummary(professionals, many=True)
         return Response(serializer.data)
