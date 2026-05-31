@@ -5,10 +5,10 @@ Handles `financial_assistance` tool calls from the LLM and assembles a
 combined, LLM-readable context from two sources:
 
   * `pharmacy_coupon_detector.suggest_for_denial` - pharmacy discount
-    programs (GoodRx, Mark Cuban Cost Plus Drugs, Amazon Pharmacy) and
-    the OOP-max caveat. Returns drug-specific URLs when a known drug
-    is detected, or generic search-page links when only generic
-    prescription-denial cues are present.
+    programs (GoodRx, Mark Cuban Cost Plus Drugs, Crush Cost, Amazon
+    Pharmacy) and the OOP-max caveat. Returns drug-specific URLs when
+    a known drug is detected, or generic search-page links when only
+    generic prescription-denial cues are present.
   * `financial_assistance_directory.search` - diagnosis-specific copay
     foundations (CancerCare, LLS, MS Society, etc.), manufacturer copay
     cards (Wegovy, Humira, etc.), the general copay-foundation
@@ -189,10 +189,11 @@ class FinancialAssistanceTool(BaseTool):
             )
             return cleaned_response, context
 
-        # Pharmacy discount options (GoodRx / Cost Plus / Amazon Search)
-        # are sourced from the pharmacy_coupon_detector, not the directory -
-        # combine both into a single LLM-facing context block so the model
-        # can recommend whichever path is most relevant.
+        # Pharmacy discount options (GoodRx / Cost Plus / Crush Cost /
+        # Amazon Search) are sourced from the pharmacy_coupon_detector,
+        # not the directory - combine both into a single LLM-facing
+        # context block so the model can recommend whichever path is most
+        # relevant.
         #
         # Only forward the LLM-supplied `drug` parameter when our detector
         # recognizes it as an actual medication. Otherwise the LLM might

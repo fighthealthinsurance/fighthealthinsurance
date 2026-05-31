@@ -138,9 +138,9 @@ class NextStepInfo:
     # PharmacyCouponSuggestion when the denial concerns a recognizable
     # prescription drug or contains generic prescription cues; None
     # otherwise. Surfaced in outside_help.html so users see GoodRx /
-    # Cost Plus / Amazon Pharmacy options as a cash-pay bridge while
-    # they fight the denial. Server-rendered only - not part of the
-    # REST serialization.
+    # Cost Plus / Crush Cost / Amazon Pharmacy options as a cash-pay
+    # bridge while they fight the denial. Server-rendered only - not
+    # part of the REST serialization.
     pharmacy_coupon_suggestion: Optional["PharmacyCouponSuggestion"] = None
     # FinancialAssistanceResults aggregate (copay foundations, manufacturer
     # programs, safety-net clinics, state Medicaid) when the denial has at
@@ -708,9 +708,10 @@ class FindNextStepsHelper:
         Compute a PharmacyCouponSuggestion for the denial, or None.
 
         Surfaced on the consumer flow's "next steps" page so users with a
-        denied medication can see GoodRx / Cost Plus / Amazon Pharmacy
-        options as a short-term cash-pay bridge while they fight the
-        denial. Lazy-imports to avoid circular-import pain at module load.
+        denied medication can see GoodRx / Cost Plus / Crush Cost / Amazon
+        Pharmacy options as a short-term cash-pay bridge while they fight
+        the denial. Lazy-imports to avoid circular-import pain at module
+        load.
 
         Best-effort: any failure returns None rather than blocking the
         flow - the rest of the page is still useful without coupons.

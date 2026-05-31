@@ -102,7 +102,8 @@ class TestCommonViewLogic(TestCase):
     def test_find_next_steps_populates_pharmacy_suggestion_for_drug_denial(self):
         """For a denial whose procedure is a known drug (Wegovy), the
         next-steps payload should carry a PharmacyCouponSuggestion so the
-        consumer flow can surface GoodRx / Cost Plus / Amazon Pharmacy."""
+        consumer flow can surface GoodRx / Cost Plus / Crush Cost / Amazon
+        Pharmacy."""
         from fighthealthinsurance.pharmacy_coupon_detector import (
             PharmacyCouponSuggestion,
         )

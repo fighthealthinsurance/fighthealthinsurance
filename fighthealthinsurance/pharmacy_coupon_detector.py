@@ -2,8 +2,9 @@
 Pharmacy coupon and discount program detector.
 
 Detects when a denial concerns a prescription medication and suggests
-discount pharmacy alternatives (GoodRx, Cost Plus Drugs, Amazon Pharmacy)
-that may serve as a "bridge" while the patient fights their denial.
+discount pharmacy alternatives (GoodRx, Cost Plus Drugs, Crush Cost,
+Amazon Pharmacy) that may serve as a "bridge" while the patient fights
+their denial.
 
 Important caveat: amounts paid through discount programs typically do NOT
 count toward the patient's deductible or out-of-pocket (OOP) maximum, so
@@ -193,9 +194,9 @@ class PharmacyOption:
     url: str
     description: str
     # Whether amounts paid here typically count toward the patient's OOP max.
-    # For all of these (GoodRx, Cost Plus Drugs, Amazon Pharmacy without
-    # insurance) the answer is False; insurance must process the claim for
-    # OOP credit.
+    # For all of these (GoodRx, Cost Plus Drugs, Crush Cost, Amazon Pharmacy
+    # without insurance) the answer is False; insurance must process the claim
+    # for OOP credit.
     counts_toward_oop_max: bool = False
 
 
