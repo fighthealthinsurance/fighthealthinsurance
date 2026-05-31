@@ -55,6 +55,18 @@ class TestRefreshSource:
 
 
 class TestIntervalHours:
+    def test_class_is_wired_to_imr_settings_key(self):
+        # _interval_hours is provided by BaseRefreshActor and reads from
+        # settings via these class attributes, so verifying the wiring is
+        # sufficient — exercising the inherited method would require a full
+        # actor instantiation (Django bootstrap + 1s sleep).
+        assert _Underlying.settings_interval_key == "IMR_REFRESH_INTERVAL_HOURS"
+        assert _Underlying.default_interval_hours == 168
+
     @patch("django.conf.settings.IMR_REFRESH_INTERVAL_HOURS", 24, create=True)
-    def test_returns_configured_value(self):
-        assert _Underlying._interval_hours() == 24
+    def test_reads_interval_from_settings(self):
+        # __new__ bypasses BaseRefreshActor.__init__ (Django bootstrap +
+        # 1s sleep) so we can exercise the inherited settings lookup
+        # directly and catch regressions in the IMR-key wiring.
+        instance = _Underlying.__new__(_Underlying)
+        assert instance._interval_hours() == 24
