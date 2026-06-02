@@ -40,8 +40,8 @@ from loguru import logger
 from PIL import Image
 
 from fighthealthinsurance import common_view_logic, forms as core_forms, models
-from fighthealthinsurance.denial_context import merge_qa
 from fighthealthinsurance.chat_forms import UnderstandPolicyForm, UserConsentForm
+from fighthealthinsurance.denial_context import merge_qa
 from fighthealthinsurance.followup_emails import ThankyouEmailSender
 from fighthealthinsurance.helpers.data_helpers import RemoveDataHelper
 from fighthealthinsurance.helpers.stripe_helpers import StripeWebhookHelper
