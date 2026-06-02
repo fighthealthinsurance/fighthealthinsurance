@@ -6,7 +6,9 @@ relevant medical literature.
 """
 
 import asyncio
+import os
 import re
+from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Optional, Tuple, Union
 
 from loguru import logger
@@ -195,7 +197,7 @@ class PubMedTool(BaseTool):
         """
         Search PubMed for articles matching the query.
 
-        Searches both recent (since 2024) and all-time articles,
+        Searches both recent and all-time articles,
         then combines the results.
 
         Args:
@@ -204,8 +206,9 @@ class PubMedTool(BaseTool):
         Returns:
             List of unique article IDs
         """
+        recent_since_year = self._recent_since_year()
         recent_awaitable = self.pubmed_tools.find_pubmed_article_ids_for_query(
-            query=query, since="2024", timeout=30.0
+            query=query, since=recent_since_year, timeout=30.0
         )
         all_awaitable = self.pubmed_tools.find_pubmed_article_ids_for_query(
             query=query, timeout=30.0
@@ -243,6 +246,16 @@ class PubMedTool(BaseTool):
         )
 
         return article_ids
+
+    def _recent_since_year(self) -> str:
+        """Compute rolling lower bound year for the "recent" PubMed query."""
+        raw_window = os.getenv("PUBMED_RECENT_WINDOW_YEARS", "2")
+        try:
+            window_years = max(0, int(raw_window))
+        except ValueError:
+            window_years = 2
+        current_year = datetime.now(timezone.utc).year
+        return str(current_year - window_years)
 
     async def _build_article_context(self, article_ids: list[str]) -> str:
         """

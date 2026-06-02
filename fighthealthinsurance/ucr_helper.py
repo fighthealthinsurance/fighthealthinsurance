@@ -257,22 +257,74 @@ class UCREnrichmentHelper:
 
     @classmethod
     def resolve_procedure_code(cls, denial: Denial) -> str:
-        """Pull a CPT/HCPCS code from `denial`'s free-text fields.
+        """Resolve the primary CPT/HCPCS code from structured + free-text fields.
 
-        Delegates extraction to the project's centralized
-        `medical_code_extractor` so we don't drift from the canonical regex.
+        Selection priority is deterministic and intentionally *not* lexical:
+          1. Prefer explicit structured values first (e.g. `verified_procedure`).
+          2. For free text, prefer the earliest textual occurrence in
+             `denial.procedure` before `denial.denial_text`.
+          3. As a soft tiebreaker for free-text candidates, boost codes that
+             appear near context words like "denied", "allowed", or "service".
+
+        Backward-compatibility guard: when a field yields only one code, return
+        it directly (equivalent to prior behavior for single-code inputs).
+
+        Extraction itself delegates to the centralized
+        `medical_code_extractor` regex set.
         """
-        for explicit in (
-            getattr(denial, "verified_procedure", "") or "",
+        structured_fields = (getattr(denial, "verified_procedure", "") or "",)
+        free_text_fields = (
             denial.procedure or "",
             denial.denial_text or "",
-        ):
+        )
+
+        for explicit in structured_fields:
             if not explicit:
                 continue
-            codes = sorted(extract_procedure_codes(explicit))
-            if codes:
+            codes = list(extract_procedure_codes(explicit))
+            if len(codes) == 1:
                 return codes[0]
+            if len(codes) > 1:
+                ranked = cls._rank_codes_from_text(explicit, codes)
+                if ranked:
+                    return ranked[0]
+
+        for text in free_text_fields:
+            if not text:
+                continue
+            codes = list(extract_procedure_codes(text))
+            if len(codes) == 1:
+                return codes[0]
+            if len(codes) > 1:
+                ranked = cls._rank_codes_from_text(text, codes)
+                if ranked:
+                    return ranked[0]
         return ""
+
+    @staticmethod
+    def _rank_codes_from_text(text: str, codes: Sequence[str]) -> list[str]:
+        keyword_re = re.compile(r"\b(?:denied|allowed|service)\b", re.IGNORECASE)
+
+        scored: list[tuple[int, int, str]] = []
+        for code in sorted(set(codes)):
+            match = re.search(rf"\b{re.escape(code)}\b", text)
+            if match is None:
+                continue
+            first_index = match.start()
+
+            # Soft boost when the code appears in the same short clause as a
+            # claim-adjudication keyword.
+            start = max(0, first_index - 40)
+            end = min(len(text), match.end() + 40)
+            nearby = text[start:end]
+            keyword_boost = 1 if keyword_re.search(nearby) else 0
+
+            # Higher keyword_boost wins; then earliest appearance; then lexical
+            # for deterministic total ordering.
+            scored.append((-keyword_boost, first_index, code))
+
+        scored.sort()
+        return [code for _boost, _idx, code in scored]
 
     @classmethod
     def resolve_geographic_area(cls, denial: Denial) -> Optional[UCRGeographicArea]:
