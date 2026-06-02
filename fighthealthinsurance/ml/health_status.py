@@ -16,7 +16,7 @@ import os
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from loguru import logger
 
@@ -51,11 +51,17 @@ class _HealthStatus:
 
     def get_snapshot(self) -> Dict[str, Any]:
         # Use lock to prevent race condition on first access
+        pending_alert: Optional[
+            Tuple[int, int, List[BackendHealthDetail], Optional[str]]
+        ] = None
         with self._lock:
             if not self._initialized:
-                self._refresh_unlocked()
+                pending_alert = self._refresh_unlocked()
                 self._schedule_refresh()
                 self._initialized = True
+
+        if pending_alert is not None:
+            self._alert_if_all_internal_dead(*pending_alert)
 
         return {
             "alive_models": self._snapshot.alive_models,
@@ -76,12 +82,19 @@ class _HealthStatus:
         except Exception as e:
             logger.warning(f"Failed to schedule health refresh: {e}")
 
-    def _refresh_unlocked(self):
+    def _refresh_unlocked(
+        self,
+    ) -> Tuple[int, int, List[BackendHealthDetail], Optional[str]]:
         """
         Recalculate health snapshot using cheap checks and cache it.
 
         This method does NOT acquire the lock - caller must hold it if needed.
         Used during initialization when we already hold the lock.
+
+        Returns ``(internal_total, internal_alive, internal_failures,
+        enumeration_error)`` so the caller can fire the alert email outside
+        the lock — ``send_mail`` can block on SMTP and we don't want any
+        concurrent ``get_snapshot()`` reader stuck behind it.
         """
         alive_count = 0
         internal_total = 0
@@ -171,9 +184,7 @@ class _HealthStatus:
 
         self._snapshot = snapshot
 
-        self._alert_if_all_internal_dead(
-            internal_total, internal_alive, internal_failures, enumeration_error
-        )
+        return internal_total, internal_alive, internal_failures, enumeration_error
 
     def _alert_if_all_internal_dead(
         self,
@@ -232,7 +243,9 @@ class _HealthStatus:
         Acquires lock, performs refresh, then schedules next refresh outside lock.
         """
         with self._lock:
-            self._refresh_unlocked()
+            pending_alert = self._refresh_unlocked()
+
+        self._alert_if_all_internal_dead(*pending_alert)
 
         # Since only one timer no need to worry about lock.
         self._schedule_refresh()
