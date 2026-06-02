@@ -828,6 +828,10 @@ def _shed_context(
     ):
         shed_kwargs = dict(open_prompt_kwargs)
         for key in _PROMPT_TIER1_NULLS:
+            # Truthy check (not ``is not None``): an empty-string enrichment
+            # is already a no-op inside ``make_open_prompt`` (each section is
+            # gated on ``!= ""``), so nulling it would add diagnostic noise
+            # to ``changed`` without changing the rebuilt prompt.
             if shed_kwargs.get(key):
                 shed_kwargs[key] = None
                 changed.add(f"prompt.{key}")

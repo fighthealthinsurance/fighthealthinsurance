@@ -467,6 +467,25 @@ class TestShedContextPromptRebuild:
         assert len(seen_kwargs[key]) <= cap
         assert f"prompt.{key}(truncated)" in changed
 
+    def test_tier2_stacks_tier1_enrichment_nulls_in_prompt(self):
+        # Stacking: tier 2 must also apply the tier-1 enrichment nulls to
+        # the rebuilt prompt's kwargs, not just the call-dict copies.
+        seen_kwargs: dict = {}
+
+        def rebuild(**rk):
+            seen_kwargs.update(rk)
+            return "OUT"
+
+        _shed_context(
+            [_make_call(prompt="ORIGINAL")],
+            tier=2,
+            open_prompt_kwargs=_prompt_kwargs(),
+            rebuild_prompt=rebuild,
+            original_open_prompt="ORIGINAL",
+        )
+        for key in _PROMPT_TIER1_NULLS:
+            assert seen_kwargs[key] is None, f"{key} not nulled at tier 2"
+
     def test_omitted_rebuild_args_falls_back_to_call_dict_only(self):
         # When the caller doesn't pass rebuild args, _shed_context is a
         # pure call-dict shedder — same shape as the legacy tests above.
