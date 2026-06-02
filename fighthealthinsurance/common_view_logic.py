@@ -3331,7 +3331,7 @@ class EscalationPacketHelper:
                 "type": "status",
                 "phase": "generating",
                 "message": (
-                    f"Generating {len(needing_generation)} regulator " f"letter(s)..."
+                    f"Generating {len(needing_generation)} regulator letter(s)..."
                 ),
                 "total": len(needing_generation),
             }
