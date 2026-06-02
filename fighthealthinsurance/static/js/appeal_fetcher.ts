@@ -495,7 +495,15 @@ function done(): void {
 // surfacing the external-models opt-in for.
 const FEW_APPEALS_THRESHOLD = 2;
 
+// Latched once the user has already opted in. Prevents re-showing the
+// prompt if the post-opt-in rerun also underdelivers — the user has
+// already made the call, repeating it doesn't help.
+let externalModelsRequested = false;
+
 function maybeShowExternalModelsPrompt(): void {
+  if (externalModelsRequested) {
+    return;
+  }
   const prompt = document.getElementById("external-models-prompt");
   if (!prompt) {
     // Template didn't include the prompt - either external models are
@@ -557,8 +565,9 @@ async function requestExternalModels(
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
+    externalModelsRequested = true;
     setStatus(
-      "External models enabled. Re-generating appeals now...",
+      "External models enabled. Generating additional appeals...",
       "#28a745",
     );
     prompt.style.display = "none";
