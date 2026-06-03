@@ -92,6 +92,83 @@ _ELINK_CACHE_PREFIX = "pubmed:elink:related:"
 # than presence (new articles get indexed).
 _EMPTY_QUERY_NEGCACHE_DAYS = 2
 
+# Backoff schedule for retrying transient metapub fetch failures (e.g. a
+# dropped connection to dx.doi.org during DOI resolution). metapub swallows
+# these into FindIt.reason rather than raising, so we sniff the reason text
+# and retry rather than treating a momentary blip as "no PDF available".
+_METAPUB_RETRY_ATTEMPTS = 3
+_METAPUB_RETRY_BASE_DELAY = 0.5
+_METAPUB_RETRY_MAX_DELAY = 4.0
+
+# Lower-cased substrings that mark a FindIt failure as transient/network-level
+# (worth a retry) rather than a permanent "this article has no free PDF"
+# verdict (not worth retrying). metapub phrases dx.doi.org outages as e.g.
+# "TXERROR: dx.doi.org lookup failed ... Connection error for URL ...".
+_TRANSIENT_FETCH_MARKERS = (
+    "connection error",
+    "connection aborted",
+    "connection reset",
+    "dx.doi.org lookup failed",
+    "timed out",
+    "timeout",
+    "temporarily unavailable",
+    "max retries exceeded",
+    "txerror",
+    "502",
+    "503",
+    "504",
+)
+
+
+def _looks_transient(text: Optional[str]) -> bool:
+    """True if ``text`` (a FindIt reason or exception message) reads like a
+    transient network failure that's worth retrying with backoff."""
+    if not text:
+        return False
+    lowered = text.lower()
+    return any(marker in lowered for marker in _TRANSIENT_FETCH_MARKERS)
+
+
+class _TransientFetchError(Exception):
+    """Internal signal that a metapub call failed transiently and should be
+    retried. Used to funnel both raised exceptions and swallowed
+    ``FindIt.reason`` strings through the same backoff path."""
+
+
+async def _retry_with_backoff(
+    make_awaitable: Any,
+    *,
+    label: str,
+    attempts: int = _METAPUB_RETRY_ATTEMPTS,
+    base_delay: float = _METAPUB_RETRY_BASE_DELAY,
+    max_delay: float = _METAPUB_RETRY_MAX_DELAY,
+) -> Any:
+    """Await ``make_awaitable()`` retrying on transient failures.
+
+    ``make_awaitable`` is a zero-arg callable returning a fresh awaitable on
+    each attempt. Retries on :class:`_TransientFetchError`, connection-level
+    ``OSError``s, and :class:`asyncio.TimeoutError`; anything else (e.g. a
+    programming error or a permanent "no PDF" outcome) propagates immediately.
+    Re-raises the last error once attempts are exhausted so callers keep their
+    existing failure handling.
+    """
+    delay = base_delay
+    for attempt in range(1, attempts + 1):
+        try:
+            return await make_awaitable()
+        except (_TransientFetchError, asyncio.TimeoutError, OSError) as e:
+            if attempt >= attempts:
+                logger.debug(
+                    f"[{label}] transient failure after {attempt} attempt(s): {e}"
+                )
+                raise
+            logger.debug(
+                f"[{label}] transient failure (attempt {attempt}/{attempts}): "
+                f"{e}; retrying in {delay:.1f}s"
+            )
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, max_delay)
+
 
 @asynccontextmanager
 async def _ensure_session(
@@ -238,14 +315,38 @@ class PubMedTools(object):
                 await session.close()
 
     async def _try_findit(self, pmid: str, timeout_secs: float) -> Optional[str]:
-        """Try metapub's FindIt to locate article URL."""
-        try:
-            src = await asyncio.wait_for(
-                sync_to_async(FindIt)(pmid),
-                timeout=timeout_secs,
-            )
+        """Try metapub's FindIt to locate article URL.
+
+        FindIt resolves DOIs against dx.doi.org, which occasionally drops
+        connections. metapub records that as a ``reason`` string rather than
+        raising, so a momentary blip otherwise looks identical to "no free PDF
+        exists". We detect transient reasons (and any raised connection errors)
+        and retry with exponential backoff before giving up.
+        """
+
+        async def _attempt() -> Optional[str]:
+            try:
+                src = await asyncio.wait_for(
+                    sync_to_async(FindIt)(pmid),
+                    timeout=timeout_secs,
+                )
+            except Exception as e:
+                # A raised connection/timeout error is transient; re-raise as a
+                # retryable signal. Anything else propagates and is handled below.
+                if _looks_transient(str(e)) or isinstance(
+                    e, (asyncio.TimeoutError, OSError)
+                ):
+                    raise _TransientFetchError(str(e)) from e
+                raise
             url: Optional[str] = src.url
+            if not url:
+                reason = getattr(src, "reason", None)
+                if _looks_transient(reason):
+                    raise _TransientFetchError(reason or "")
             return url
+
+        try:
+            return await _retry_with_backoff(_attempt, label=f"FindIt {pmid}")
         except Exception:
             logger.debug(f"[{pmid}] FindIt failed")
             return None

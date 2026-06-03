@@ -1034,3 +1034,102 @@ class PubMedNegativeCachingTest(TransactionTestCase):
             )
 
         async_to_sync(run_test)()
+
+
+class FindItRetryTest(TestCase):
+    """`_try_findit` must back off and retry transient metapub/dx.doi.org
+    failures instead of treating a momentary blip as 'no PDF available'."""
+
+    @staticmethod
+    def _findit_result(url=None, reason=None):
+        result = mock.MagicMock()
+        result.url = url
+        result.reason = reason
+        return result
+
+    def test_transient_doi_reason_is_retried_then_succeeds(self):
+        """A dx.doi.org connection blip (surfaced as FindIt.reason) is retried,
+        and a later success returns the resolved URL."""
+        transient = self._findit_result(
+            reason=(
+                "TXERROR: dx.doi.org lookup failed for doi 10.1007/x: "
+                "Connection error for URL http://dx.doi.org/10.1007/x"
+            )
+        )
+        success = self._findit_result(url="https://example.com/article.pdf")
+
+        with mock.patch(
+            "fighthealthinsurance.pubmed_tools.FindIt",
+            side_effect=[transient, success],
+        ) as mock_findit, mock.patch(
+            "fighthealthinsurance.pubmed_tools.asyncio.sleep", new=AsyncMock()
+        ):
+
+            async def run_test():
+                tools = PubMedTools()
+                return await tools._try_findit("12345678", timeout_secs=5.0)
+
+            url = async_to_sync(run_test)()
+
+        self.assertEqual(url, "https://example.com/article.pdf")
+        self.assertEqual(mock_findit.call_count, 2)
+
+    def test_permanent_no_pdf_reason_is_not_retried(self):
+        """A genuine 'no free PDF' verdict must NOT be retried — it isn't
+        transient, so retrying just wastes round-trips."""
+        no_pdf = self._findit_result(
+            reason="NOFORMAT: no PDF link could be found for this article"
+        )
+
+        with mock.patch(
+            "fighthealthinsurance.pubmed_tools.FindIt", side_effect=[no_pdf]
+        ) as mock_findit, mock.patch(
+            "fighthealthinsurance.pubmed_tools.asyncio.sleep", new=AsyncMock()
+        ):
+
+            async def run_test():
+                tools = PubMedTools()
+                return await tools._try_findit("12345678", timeout_secs=5.0)
+
+            url = async_to_sync(run_test)()
+
+        self.assertIsNone(url)
+        self.assertEqual(mock_findit.call_count, 1)
+
+    def test_raised_connection_error_is_retried_then_gives_up(self):
+        """When metapub raises a connection error on every attempt, we retry up
+        to the cap and then return None rather than propagating."""
+        with mock.patch(
+            "fighthealthinsurance.pubmed_tools.FindIt",
+            side_effect=ConnectionError("Connection aborted"),
+        ) as mock_findit, mock.patch(
+            "fighthealthinsurance.pubmed_tools.asyncio.sleep", new=AsyncMock()
+        ):
+
+            async def run_test():
+                tools = PubMedTools()
+                return await tools._try_findit("12345678", timeout_secs=5.0)
+
+            url = async_to_sync(run_test)()
+
+        self.assertIsNone(url)
+        self.assertEqual(mock_findit.call_count, 3)
+
+    def test_non_transient_exception_is_not_retried(self):
+        """A programming-style error must surface as a single failed attempt,
+        not be retried as if it were a network blip."""
+        with mock.patch(
+            "fighthealthinsurance.pubmed_tools.FindIt",
+            side_effect=ValueError("bad PMID"),
+        ) as mock_findit, mock.patch(
+            "fighthealthinsurance.pubmed_tools.asyncio.sleep", new=AsyncMock()
+        ):
+
+            async def run_test():
+                tools = PubMedTools()
+                return await tools._try_findit("12345678", timeout_secs=5.0)
+
+            url = async_to_sync(run_test)()
+
+        self.assertIsNone(url)
+        self.assertEqual(mock_findit.call_count, 1)
