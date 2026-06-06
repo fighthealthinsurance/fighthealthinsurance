@@ -757,26 +757,24 @@ def get_uspstf_context_for_denial(denial: Any) -> str:
     ORM lookup wrapped via ``sync_to_async`` in the gather block.
     """
     from fighthealthinsurance.medical_code_extractor import (
+        collect_denial_text,
         extract_icd10_codes,
         extract_procedure_codes,
     )
 
-    sources: List[str] = []
-    for value in (
-        getattr(denial, "denial_text", None),
-        getattr(denial, "procedure", None),
-        getattr(denial, "diagnosis", None),
-        getattr(denial, "candidate_procedure", None),
-        getattr(denial, "verified_procedure", None),
-        getattr(denial, "candidate_diagnosis", None),
-        getattr(denial, "verified_diagnosis", None),
-    ):
-        if value:
-            sources.append(str(value))
-    if not sources:
+    combined = collect_denial_text(
+        denial,
+        "denial_text",
+        "procedure",
+        "diagnosis",
+        "candidate_procedure",
+        "verified_procedure",
+        "candidate_diagnosis",
+        "verified_diagnosis",
+    )
+    if not combined:
         return ""
 
-    combined = "\n".join(sources)
     codes = extract_procedure_codes(combined) | extract_icd10_codes(combined)
     if not codes:
         return ""

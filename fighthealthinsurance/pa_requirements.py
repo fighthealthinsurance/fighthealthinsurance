@@ -296,16 +296,15 @@ def infer_line_of_business(denial: Denial) -> Optional[str]:
     surfacing a Medicare-Advantage-only rule on an unknown-LOB denial
     would mis-attribute the rule.
     """
-    candidates: List[str] = []
-    for value in (
-        getattr(denial, "denial_text", None),
-        getattr(denial, "plan_context", None),
-        getattr(denial, "employer_name", None),
-        getattr(denial, "insurance_company", None),
-    ):
-        if value:
-            candidates.append(str(value))
-    blob = "\n".join(candidates)
+    from fighthealthinsurance.medical_code_extractor import collect_denial_text
+
+    blob = collect_denial_text(
+        denial,
+        "denial_text",
+        "plan_context",
+        "employer_name",
+        "insurance_company",
+    )
     if not blob:
         return None
     for lob, pat in _LOB_PATTERN_MAP:
@@ -507,19 +506,19 @@ def _denial_lookup(
     without it we would search across all carriers and surface rules from
     the wrong insurer in payer-attributed appeal context.
     """
-    sources: List[str] = []
-    for value in (
-        getattr(denial, "denial_text", None),
-        getattr(denial, "procedure", None),
-        getattr(denial, "candidate_procedure", None),
-        getattr(denial, "verified_procedure", None),
-    ):
-        if value:
-            sources.append(str(value))
-    if not sources:
+    from fighthealthinsurance.medical_code_extractor import collect_denial_text
+
+    combined = collect_denial_text(
+        denial,
+        "denial_text",
+        "procedure",
+        "candidate_procedure",
+        "verified_procedure",
+    )
+    if not combined:
         return [], []
 
-    codes = extract_cpt_hcpcs_codes("\n".join(sources))
+    codes = extract_cpt_hcpcs_codes(combined)
     if not codes:
         return [], []
 
