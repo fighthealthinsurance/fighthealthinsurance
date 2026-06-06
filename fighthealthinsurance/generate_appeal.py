@@ -783,8 +783,16 @@ _PROMPT_TIER1_NULLS: tuple[str, ...] = (
     "medication_context",
 )
 
+# Tier-2 truncation caps. ``plan_context`` lives on BOTH the prompt and the
+# call-dict surface and is truncated to the same length on each, so the cap
+# is a single shared constant rather than two literals that could drift.
+_PLAN_CONTEXT_TIER2_CAP = 4000
+_PATIENT_CONTEXT_TIER2_CAP = 6000
+
 # In-prompt patient-specific context truncated (not dropped) at tier 2+.
-_PROMPT_TIER2_TRUNCATIONS: tuple[tuple[str, int], ...] = (("plan_context", 4000),)
+_PROMPT_TIER2_TRUNCATIONS: tuple[tuple[str, int], ...] = (
+    ("plan_context", _PLAN_CONTEXT_TIER2_CAP),
+)
 
 # Call-dict copies (the ``context_extra`` injection surface) sheddable at
 # tier 1+. These mirror their ``_PROMPT_TIER1_NULLS`` counterparts.
@@ -793,7 +801,32 @@ _SHEDDABLE_TIER1 = ("pubmed_context", "ml_citations_context")
 # Call-dict patient/plan context truncated at tier 2+. ``patient_context``
 # (``medical_context`` in the caller) is not in the prompt string, so it
 # only needs trimming on the call-dict surface.
-_TIER2_TRUNCATIONS = (("plan_context", 4000), ("patient_context", 6000))
+_TIER2_TRUNCATIONS = (
+    ("plan_context", _PLAN_CONTEXT_TIER2_CAP),
+    ("patient_context", _PATIENT_CONTEXT_TIER2_CAP),
+)
+
+
+def _apply_tier2_truncations(
+    target: dict,
+    truncations: tuple[tuple[str, int], ...],
+    changed: set[str],
+    *,
+    label: str,
+) -> None:
+    """Boundary-aware truncate over-cap string values in ``target`` in place.
+
+    Shared by the prompt-kwargs and call-dict surfaces so both truncate
+    identically (same boundary-aware helper, same caps). ``label`` prefixes
+    the ``changed`` entry (``"prompt."`` for the prompt surface, ``""`` for
+    the call dict). ``ellipsis=""`` because this text is fed to the model,
+    not displayed, so a trailing marker would only waste budget.
+    """
+    for key, cap in truncations:
+        val = target.get(key)
+        if isinstance(val, str) and len(val) > cap:
+            target[key] = truncate_at_boundary(val, cap, ellipsis="")
+            changed.add(f"{label}{key}(truncated)")
 
 
 def _shed_context(
@@ -836,11 +869,9 @@ def _shed_context(
                 shed_kwargs[key] = None
                 changed.add(f"prompt.{key}")
         if tier >= 2:
-            for key, cap in _PROMPT_TIER2_TRUNCATIONS:
-                val = shed_kwargs.get(key)
-                if isinstance(val, str) and len(val) > cap:
-                    shed_kwargs[key] = truncate_at_boundary(val, cap, ellipsis="")
-                    changed.add(f"prompt.{key}(truncated)")
+            _apply_tier2_truncations(
+                shed_kwargs, _PROMPT_TIER2_TRUNCATIONS, changed, label="prompt."
+            )
         new_open_prompt = rebuild_prompt(**shed_kwargs)
 
     new_calls = []
@@ -863,11 +894,7 @@ def _shed_context(
                 new[key] = None
                 changed.add(key)
         if tier >= 2:
-            for key, cap in _TIER2_TRUNCATIONS:
-                val = new.get(key)
-                if isinstance(val, str) and len(val) > cap:
-                    new[key] = val[:cap]
-                    changed.add(f"{key}(truncated)")
+            _apply_tier2_truncations(new, _TIER2_TRUNCATIONS, changed, label="")
         new_calls.append(new)
     return new_calls, sorted(changed)
 

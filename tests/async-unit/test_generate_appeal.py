@@ -335,6 +335,22 @@ class TestShedContext:
         assert new["patient_context"] == "also short"
         assert not any("(truncated)" in c for c in changed)
 
+    def test_tier2_call_dict_truncation_is_boundary_aware(self):
+        # Regression: the call-dict surface previously hard-cut val[:cap]
+        # mid-word, diverging from the boundary-aware prompt surface even
+        # though plan_context carries the same value on both. Both now use
+        # truncate_at_boundary, so the call-dict copy must end on a word
+        # boundary (not a partial token) and stay within the cap.
+        (key, cap), *_ = _TIER2_TRUNCATIONS
+        oversized = "word " * (cap // 2)  # spaces give a boundary to cut on
+        new_calls, _ = _shed_context([_make_call(**{key: oversized})], tier=2)
+        result = new_calls[0][key]
+        assert len(result) <= cap
+        # Boundary-aware: result is a prefix ending on a word boundary, so it
+        # does not end mid-token and remains a prefix of the input.
+        assert not result.endswith("wor")
+        assert oversized.startswith(result.rstrip())
+
     def test_does_not_mutate_input_calls(self):
         original = _make_call()
         _shed_context([original], tier=2)
