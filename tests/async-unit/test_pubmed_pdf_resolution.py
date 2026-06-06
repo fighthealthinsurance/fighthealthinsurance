@@ -349,6 +349,29 @@ class TestQueryBiorxiv:
             == "https://www.biorxiv.org/content/10.1101/2024.01.01.123456.full.pdf"
         )
 
+    async def test_details_ignores_jatsxml_without_source_xml_suffix(self, tools):
+        """Regression: a jatsxml URL that isn't the expected .source.xml form
+        must not be returned as-is (it would not be a PDF). We should fall
+        through to the DOI-derived .full.pdf URL instead."""
+        resp = _make_mock_response(
+            json_data={
+                "collection": [
+                    {
+                        "doi": "10.1101/2024.01.01.123456",
+                        "jatsxml": "https://www.medrxiv.org/content/10.1101/2024.01.01.123456v1.full.json",
+                    }
+                ]
+            }
+        )
+        session = _make_mock_session(responses=[resp])
+        result = await tools._query_biorxiv(
+            "medrxiv", "10.1101/2024.01.01.123456", "details", session, timeout_secs=5.0
+        )
+        assert (
+            result
+            == "https://www.medrxiv.org/content/10.1101/2024.01.01.123456.full.pdf"
+        )
+
     async def test_pubs_returns_preprint_pdf(self, tools):
         resp = _make_mock_response(
             json_data={"collection": [{"preprint_doi": "10.1101/2023.06.15.545100"}]}
