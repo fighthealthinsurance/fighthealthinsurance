@@ -35,7 +35,7 @@ from django.conf import settings
 from django.core.files import File
 from django.core.mail import send_mail
 from django.core.validators import validate_email
-from django.db.models import Q, QuerySet
+from django.db.models import F, Q, QuerySet
 from django.forms import Form
 from django.template.loader import render_to_string
 from django.urls import reverse
@@ -1442,6 +1442,19 @@ class DenialCreatorHelper:
         ):
             logger.debug(f"extract_entity({denial_id}): skipping, already done")
             return
+        # Bound persistent extraction failures: extract_entity runs once per
+        # WebSocket connection (websockets.StreamingEntityBackend.receive)
+        # with no upstream rate-limit, so without a cap a denial whose LLM
+        # extraction reliably fails would re-run extraction (and re-fire
+        # the PubMed/citation cache warmers) on every reconnect. The
+        # counter is bumped in extract_set_denial_and_diagnosis's except
+        # path via F() so the increment is race-safe.
+        if (denial.extract_attempts or 0) >= 3:
+            logger.warning(
+                f"extract_entity({denial_id}): skipping, "
+                f"extract_attempts={denial.extract_attempts} exhausted"
+            )
+            return
 
         # Define a wrapper function that returns both the name and result
         async def named_task(awaitable: Awaitable[Any], name: str) -> tuple[str, Any]:
@@ -1664,9 +1677,18 @@ class DenialCreatorHelper:
                 f"Failed to extract procedure and diagnosis for denial {denial_id}: {e}"
             )
             # Leave extract_procedure_diagnosis_finished as False so a
-            # subsequent extract_entity call re-attempts extraction and
-            # re-fires the PubMed / speculative-citation cache warmers.
-            # The retry budget is enforced externally via denial.gen_attempts.
+            # subsequent extract_entity call can re-attempt extraction on
+            # transient failures. Bump extract_attempts atomically (F()
+            # makes concurrent-reconnect increments race-safe) so
+            # extract_entity's gate stops retrying after 3 failures.
+            try:
+                await Denial.objects.filter(denial_id=denial_id).aupdate(
+                    extract_attempts=F("extract_attempts") + 1
+                )
+            except Exception as inner:
+                logger.opt(exception=True).debug(
+                    f"Failed to bump extract_attempts for denial {denial_id}: {inner}"
+                )
 
     @classmethod
     async def _match_insurance_company(

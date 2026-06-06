@@ -2219,6 +2219,12 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     extract_procedure_diagnosis_finished = models.BooleanField(
         default=False, null=True, blank=True
     )
+    # Number of times procedure/diagnosis extraction has been attempted.
+    # extract_entity gates re-entry on this so a persistent extraction
+    # failure (LLM down, malformed denial) doesn't allow unbounded
+    # re-runs across WebSocket reconnects. Incremented atomically via F()
+    # in the exception path of extract_set_denial_and_diagnosis.
+    extract_attempts = models.PositiveSmallIntegerField(default=0)
     appeal_text = models.TextField(null=True, blank=True)
     raw_email = models.TextField(max_length=300, null=True, blank=True)
     created = models.DateTimeField(db_default=Now(), null=True)
