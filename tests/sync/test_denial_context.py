@@ -62,12 +62,30 @@ class TestMergeQA(unittest.TestCase):
         merge_qa(d, {"q1": ""}, source="test")
         self.assertEqual(json.loads(d.qa_context)["q1"], "keep")
 
-    def test_ignores_unknown_sentinel(self):
+    def test_ignores_uppercase_unknown_sentinel(self):
+        """Uppercase 'UNKNOWN' is the form sentinel for unanswered."""
         d = _fake_denial(qa_context=json.dumps({"q1": "keep"}))
         merge_qa(d, {"q1": "UNKNOWN", "q2": "UNKNOWN"}, source="test")
         result = json.loads(d.qa_context)
         self.assertEqual(result["q1"], "keep")
         self.assertNotIn("q2", result)
+
+    def test_keeps_lowercase_unknown_as_real_answer(self):
+        """Lowercase 'unknown' is a legitimate answer (e.g. 'patient unknown
+        whether they tried other treatments')."""
+        d = _fake_denial()
+        merge_qa(d, {"q1": "unknown"}, source="test")
+        self.assertEqual(json.loads(d.qa_context)["q1"], "unknown")
+
+    def test_keeps_none_lowercase_as_real_answer(self):
+        """'none' / 'None' answer 'Other treatments tried (if any)?' and must
+        be preserved — appeal needs to know the patient tried no other
+        treatments."""
+        d = _fake_denial()
+        merge_qa(d, {"q1": "none", "q2": "None"}, source="test")
+        result = json.loads(d.qa_context)
+        self.assertEqual(result["q1"], "none")
+        self.assertEqual(result["q2"], "None")
 
     def test_ignores_none_value(self):
         d = _fake_denial(qa_context=json.dumps({"q1": "keep"}))

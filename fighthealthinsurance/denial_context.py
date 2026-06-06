@@ -19,7 +19,12 @@ from typing import Any, Iterable, Mapping, Optional
 
 from loguru import logger
 
-_DROPPED_VALUES = {"", "unknown", "UNKNOWN", "none", "None", None}
+# Match the historical filter at views.GenerateAppeal.post: only the
+# empty string and the form-sentinel "UNKNOWN" mean "user hasn't
+# answered."  Lowercase "unknown", "none", and "None" are legitimate
+# substantive answers to questions like "Other treatments tried (if
+# any)?" or "Comorbidities (if any)?" and must not be dropped.
+_DROPPED_VALUES = {"", "UNKNOWN", None}
 
 
 def load_qa(denial: Any) -> dict[str, str]:
