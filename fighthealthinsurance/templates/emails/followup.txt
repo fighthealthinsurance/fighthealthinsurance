@@ -12,7 +12,7 @@ It looks like we didn't manage to generate a proposal this time. Thank you for g
 
 If you can fill out the follow-up form at {{ followup_link }} that would be greatly appreciated.
 
-If you're more comfortable sharing feedback over e-mail, you can also just reply to this message and I'll take a look :) Please keep in mind that e-mail is not encrypted, so if you'd rather not include personal or medical details in your reply, the follow-up form above is the more private option.
+If you're more comfortable sharing feedback over e-mail, you can also just reply to this message and I'll take a look :) Please keep in mind that e-mail is not a secure channel, so if you'd rather not include personal or medical details in your reply, the follow-up form above is the more private option.
 
 Thank you for being part of our community! If you found Fight Health Insurance helpful, there are many ways you can help us and others fighting unfair denials:
 - Share your experience with friends and family who might need help
