@@ -1098,12 +1098,14 @@ class FindItRetryTest(TestCase):
 
     def test_raised_connection_error_is_retried_then_gives_up(self):
         """When metapub raises a connection error on every attempt, we retry up
-        to the cap and then return None rather than propagating."""
+        to the cap and then return None rather than propagating. Also pins the
+        exponential backoff schedule so it can't silently regress."""
+        mock_sleep = AsyncMock()
         with mock.patch(
             "fighthealthinsurance.pubmed_tools.FindIt",
             side_effect=ConnectionError("Connection aborted"),
         ) as mock_findit, mock.patch(
-            "fighthealthinsurance.pubmed_tools.asyncio.sleep", new=AsyncMock()
+            "fighthealthinsurance.pubmed_tools.asyncio.sleep", new=mock_sleep
         ):
 
             async def run_test():
@@ -1114,6 +1116,12 @@ class FindItRetryTest(TestCase):
 
         self.assertIsNone(url)
         self.assertEqual(mock_findit.call_count, 3)
+        # 3 attempts => 2 backoff sleeps between them, doubling from the base
+        # delay (0.5s -> 1.0s); the final failure re-raises without sleeping.
+        self.assertEqual(
+            mock_sleep.await_args_list,
+            [mock.call(0.5), mock.call(1.0)],
+        )
 
     def test_non_transient_exception_is_not_retried(self):
         """A programming-style error must surface as a single failed attempt,
@@ -1133,3 +1141,27 @@ class FindItRetryTest(TestCase):
 
         self.assertIsNone(url)
         self.assertEqual(mock_findit.call_count, 1)
+
+    def test_timeout_is_a_terminal_miss_not_retried(self):
+        """A wait_for timeout means FindIt is slow; the underlying sync call
+        keeps running in the executor, so retrying would only queue behind it.
+        It must be a single terminal miss rather than a retried attempt."""
+        import asyncio
+
+        mock_sleep = AsyncMock()
+        with mock.patch(
+            "fighthealthinsurance.pubmed_tools.FindIt",
+            side_effect=asyncio.TimeoutError(),
+        ) as mock_findit, mock.patch(
+            "fighthealthinsurance.pubmed_tools.asyncio.sleep", new=mock_sleep
+        ):
+
+            async def run_test():
+                tools = PubMedTools()
+                return await tools._try_findit("12345678", timeout_secs=5.0)
+
+            url = async_to_sync(run_test)()
+
+        self.assertIsNone(url)
+        self.assertEqual(mock_findit.call_count, 1)
+        mock_sleep.assert_not_awaited()

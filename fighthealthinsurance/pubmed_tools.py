@@ -8,7 +8,18 @@ import tempfile
 import xml.etree.ElementTree as ET
 from contextlib import asynccontextmanager
 from datetime import timedelta
-from typing import Any, AsyncIterator, Dict, List, Optional, Set, Tuple
+from typing import (
+    Any,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Dict,
+    List,
+    Optional,
+    Set,
+    Tuple,
+    TypeVar,
+)
 from urllib.parse import quote, urlencode, urljoin
 
 import aiohttp
@@ -43,6 +54,9 @@ if sys.version_info >= (3, 11):
     from asyncio import timeout as async_timeout
 else:
     from async_timeout import timeout as async_timeout
+
+# Return type for the generic retry helper below.
+T = TypeVar("T")
 
 
 PER_QUERY = 2
@@ -104,19 +118,25 @@ _METAPUB_RETRY_MAX_DELAY = 4.0
 # (worth a retry) rather than a permanent "this article has no free PDF"
 # verdict (not worth retrying). metapub phrases dx.doi.org outages as e.g.
 # "TXERROR: dx.doi.org lookup failed ... Connection error for URL ...".
+#
+# Only HTTP 5xx *reason phrases* are matched (not bare "502"/"503"/"504"
+# digits), since those digits routinely appear inside DOIs and other
+# identifiers and would otherwise misclassify permanent failures as transient.
 _TRANSIENT_FETCH_MARKERS = (
     "connection error",
     "connection aborted",
     "connection reset",
+    "connection refused",
     "dx.doi.org lookup failed",
+    "failed to establish a new connection",
     "timed out",
     "timeout",
     "temporarily unavailable",
     "max retries exceeded",
     "txerror",
-    "502",
-    "503",
-    "504",
+    "bad gateway",  # HTTP 502
+    "service unavailable",  # HTTP 503
+    "gateway timeout",  # HTTP 504
 )
 
 
@@ -136,27 +156,27 @@ class _TransientFetchError(Exception):
 
 
 async def _retry_with_backoff(
-    make_awaitable: Any,
+    make_awaitable: Callable[[], Awaitable[T]],
     *,
     label: str,
     attempts: int = _METAPUB_RETRY_ATTEMPTS,
     base_delay: float = _METAPUB_RETRY_BASE_DELAY,
     max_delay: float = _METAPUB_RETRY_MAX_DELAY,
-) -> Any:
+) -> T:
     """Await ``make_awaitable()`` retrying on transient failures.
 
     ``make_awaitable`` is a zero-arg callable returning a fresh awaitable on
-    each attempt. Retries on :class:`_TransientFetchError`, connection-level
-    ``OSError``s, and :class:`asyncio.TimeoutError`; anything else (e.g. a
-    programming error or a permanent "no PDF" outcome) propagates immediately.
-    Re-raises the last error once attempts are exhausted so callers keep their
-    existing failure handling.
+    each attempt. It retries only on :class:`_TransientFetchError`, so callers
+    decide what counts as transient and funnel it through that signal; anything
+    else (a programming error, a cancellation, or a permanent "no PDF" outcome)
+    propagates immediately. Re-raises the last error once attempts are exhausted
+    so callers keep their existing failure handling.
     """
     delay = base_delay
     for attempt in range(1, attempts + 1):
         try:
             return await make_awaitable()
-        except (_TransientFetchError, asyncio.TimeoutError, OSError) as e:
+        except _TransientFetchError as e:
             if attempt >= attempts:
                 logger.debug(
                     f"[{label}] transient failure after {attempt} attempt(s): {e}"
@@ -168,6 +188,9 @@ async def _retry_with_backoff(
             )
             await asyncio.sleep(delay)
             delay = min(delay * 2, max_delay)
+    # Unreachable: ``attempts`` >= 1, so the final iteration always returns a
+    # value or re-raises. Present to satisfy the type checker.
+    raise AssertionError("retry loop exited without returning")
 
 
 @asynccontextmanager
@@ -330,12 +353,20 @@ class PubMedTools(object):
                     sync_to_async(FindIt)(pmid),
                     timeout=timeout_secs,
                 )
+            except asyncio.CancelledError:
+                # Let cancellation/upstream timeouts propagate untouched.
+                raise
+            except asyncio.TimeoutError:
+                # A slow FindIt isn't a quick-retry candidate: the underlying
+                # sync call keeps running in asgiref's thread-sensitive executor,
+                # so a retry would just queue behind it. Treat a timeout as a
+                # terminal miss (the behavior before retries were added).
+                raise
             except Exception as e:
-                # A raised connection/timeout error is transient; re-raise as a
-                # retryable signal. Anything else propagates and is handled below.
-                if _looks_transient(str(e)) or isinstance(
-                    e, (asyncio.TimeoutError, OSError)
-                ):
+                # A raised connection error is transient; re-raise as a
+                # retryable signal. Non-transient errors propagate and become a
+                # single miss.
+                if _looks_transient(str(e)):
                     raise _TransientFetchError(str(e)) from e
                 raise
             url: Optional[str] = src.url
@@ -347,6 +378,8 @@ class PubMedTools(object):
 
         try:
             return await _retry_with_backoff(_attempt, label=f"FindIt {pmid}")
+        except asyncio.CancelledError:
+            raise
         except Exception:
             logger.debug(f"[{pmid}] FindIt failed")
             return None
