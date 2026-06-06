@@ -2010,6 +2010,11 @@ class CompletePaymentView(View):
     """
 
     def get(self, request):
+        """Resume an abandoned checkout from the emailed recovery link.
+
+        Browsers are 302-redirected to Stripe; ``?format=json`` callers and
+        error cases get JSON, and other errors render a friendly HTML page.
+        """
         # Computed up front so the exception handler below can honor the JSON
         # contract even when an unexpected error escapes _resolve_next_url.
         wants_json = request.GET.get("format") == "json"
@@ -2038,6 +2043,7 @@ class CompletePaymentView(View):
             return self._render_error_page(request, "An internal error occurred", 500)
 
     def post(self, request):
+        """Resolve an abandoned checkout from a JSON body and return next_url."""
         try:
             try:
                 data = json.loads(request.body)
