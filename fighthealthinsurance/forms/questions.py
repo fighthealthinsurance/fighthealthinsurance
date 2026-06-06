@@ -861,6 +861,14 @@ class EmergencyServicesQuestions(InsuranceQuestions):
         label="Did the patient require stabilization treatment in the ER?",
         help_text="Treatment received in the ER supports that the visit was medically necessary.",
     )
+    denied_based_on_final_diagnosis = forms.BooleanField(
+        required=False,
+        label="Was the claim denied because the final diagnosis turned out not to be an emergency?",
+        help_text=(
+            "The prudent layperson standard requires coverage based on your symptoms at "
+            "the time of the visit, not the final diagnosis."
+        ),
+    )
 
     def medical_context(self):
         response = super().medical_context()
@@ -877,6 +885,11 @@ class EmergencyServicesQuestions(InsuranceQuestions):
             "stabilization_needed",
             "Patient required stabilization treatment in the ER",
         )
+        response = self._append_context(
+            response,
+            "denied_based_on_final_diagnosis",
+            "The claim was denied based on the final diagnosis rather than the presenting symptoms",
+        )
         return response
 
     def main(self):
@@ -886,6 +899,14 @@ class EmergencyServicesQuestions(InsuranceQuestions):
             "§ 1395dd and adopted by most state laws), emergency services must be covered "
             "based on the patient's presenting symptoms, not the final diagnosis. A "
             "reasonable person with the same symptoms would have sought emergency care."
+        )
+        r.append(
+            "As the American College of Emergency Physicians explains, the prudent "
+            "layperson standard \"requires that insurance coverage be based on a patient's "
+            'symptoms, not their final diagnosis," and patients are not expected to be '
+            "healthcare professionals or to diagnose themselves. Because roughly 90% of "
+            "urgent and non-urgent symptoms overlap, the appropriateness of an emergency "
+            "visit cannot be judged in hindsight from the final diagnosis."
         )
         if self.cleaned_data.get("symptoms_at_time"):
             r.append(
@@ -904,6 +925,18 @@ class EmergencyServicesQuestions(InsuranceQuestions):
                 "Under EMTALA, hospitals must provide stabilizing treatment for emergency "
                 "conditions regardless of insurance status."
             )
+        if self.cleaned_data.get("denied_based_on_final_diagnosis"):
+            r.append(
+                "This claim was denied based on the final diagnosis rather than the "
+                "symptoms at the time of presentation, which is precisely what the prudent "
+                "layperson standard prohibits."
+            )
+        r.append(
+            "For reference, see the American College of Emergency Physicians: "
+            "https://www.emergencyphysicians.org/article/access/prudent-layperson-standard "
+            "and https://www.acep.org/administration/reimbursement/reimbursement-faqs/"
+            "emtala-and-prudent-layperson-standard-faq."
+        )
         return r
 
 
