@@ -234,3 +234,87 @@ class TestFindTrialsForQuery:
         assert trial is not None
         assert trial.study_url == "https://clinicaltrials.gov/study/NCT44444444"
         assert trial.brief_title == "Cached title"
+
+    async def test_get_context_for_denial_returns_none_when_no_prefetch(self):
+        """No audit row from the prefetch means no context — appeal-gen must
+        not turn the cache miss into a live API call."""
+        tools = ClinicalTrialsTools()
+        denial = await Denial.objects.acreate(
+            procedure="pembrolizumab",
+            diagnosis="melanoma",
+        )
+        # Force an explosion if anything tries to hit the network from this path.
+        with patch(
+            "fighthealthinsurance.clinicaltrials_tools.aiohttp.ClientSession",
+            side_effect=AssertionError("should not hit network"),
+        ):
+            ctx = await tools.get_context_for_denial(denial)
+        assert ctx is None
+
+    async def test_get_context_for_denial_returns_none_for_empty_match_audit(self):
+        """An audit row with ``nct_ids == "[]"`` (registry returned zero
+        matches) must surface as no-context, not as an empty section in
+        the appeal prompt."""
+        tools = ClinicalTrialsTools()
+        denial = await Denial.objects.acreate(
+            procedure="exotic_thing",
+            diagnosis="rare_condition",
+        )
+        await ClinicalTrialQueryData.objects.acreate(
+            denial_id=denial,
+            query="exotic_thing rare_condition",
+            condition="rare_condition",
+            intervention="exotic_thing",
+            nct_ids="[]",
+        )
+        ctx = await tools.get_context_for_denial(denial)
+        assert ctx is None
+
+    async def test_get_context_for_denial_renders_cached_trials(self):
+        """When the prefetch has populated the audit row + trial rows, the
+        context block must include each NCT ID and the self-contained header
+        that the appeal prompt bakes verbatim."""
+        tools = ClinicalTrialsTools()
+        denial = await Denial.objects.acreate(
+            procedure="pembrolizumab",
+            diagnosis="melanoma",
+        )
+        await ClinicalTrial.objects.acreate(
+            nct_id="NCT77777777",
+            brief_title="Pembrolizumab in advanced melanoma",
+            overall_status="RECRUITING",
+            phases="PHASE3",
+            study_type="INTERVENTIONAL",
+            conditions="Melanoma",
+            interventions="DRUG: Pembrolizumab",
+            brief_summary="Evaluates pembrolizumab in stage IV melanoma.",
+        )
+        await ClinicalTrial.objects.acreate(
+            nct_id="NCT88888888",
+            brief_title="Combination therapy for melanoma",
+            overall_status="ACTIVE_NOT_RECRUITING",
+        )
+        await ClinicalTrialQueryData.objects.acreate(
+            denial_id=denial,
+            query="pembrolizumab melanoma",
+            condition="melanoma",
+            intervention="pembrolizumab",
+            nct_ids='["NCT77777777", "NCT88888888"]',
+        )
+
+        # Belt-and-suspenders: this must be a pure DB read, no network.
+        with patch(
+            "fighthealthinsurance.clinicaltrials_tools.aiohttp.ClientSession",
+            side_effect=AssertionError("should not hit network"),
+        ):
+            ctx = await tools.get_context_for_denial(denial)
+
+        assert ctx is not None
+        # Self-contained header: callers bake it verbatim with no extra label.
+        assert "CLINICAL TRIAL EVIDENCE" in ctx
+        assert "experimental" in ctx.lower()
+        # Both NCT IDs surface, in registry-ranked order (the JSON order).
+        assert ctx.index("NCT77777777") < ctx.index("NCT88888888")
+        # The "trial != coverage" caveat from the chat tool must also live
+        # here so appeal letters carry the same framing.
+        assert "does not by itself establish coverage" in ctx

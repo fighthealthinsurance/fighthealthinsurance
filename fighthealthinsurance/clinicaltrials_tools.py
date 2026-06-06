@@ -431,6 +431,70 @@ class ClinicalTrialsTools(object):
             )
         return []
 
+    async def get_context_for_denial(
+        self,
+        denial: Denial,
+        max_trials: int = DEFAULT_MAX_TRIALS,
+    ) -> Optional[str]:
+        """Render the cached trials for this denial as an appeal-ready block.
+
+        DB-only — never makes a live API call. The fire-and-forget prefetch
+        in ``DenialCreatorHelper.extract_set_denial_and_diagnosis`` is what
+        populates the audit row + ``ClinicalTrial`` rows this reads from.
+        Returns ``None`` on cache-miss (prefetch hasn't completed, or the
+        registry had zero matches), so the appeal-gen gather can tell the
+        difference between "nothing to cite" and "live network from inside
+        the appeal hot path" — the latter is exactly what we wanted to
+        avoid by going through the prefetch in the first place.
+
+        Header text is self-contained: callers can bake the returned string
+        directly into the prompt with no extra section label, matching the
+        ``uspstf_context`` / ``pa_context`` pattern in ``make_open_prompt``.
+        """
+        try:
+            audit = (
+                await ClinicalTrialQueryData.objects.filter(denial_id=denial.denial_id)
+                .order_by("-created")
+                .afirst()
+            )
+            if audit is None or not audit.nct_ids:
+                return None
+            try:
+                nct_ids: List[str] = json.loads(audit.nct_ids.replace("\x00", ""))
+            except json.JSONDecodeError:
+                logger.debug("Corrupt nct_ids JSON in audit row; skipping context")
+                return None
+            if not nct_ids:
+                return None
+            wanted = nct_ids[:max_trials]
+            by_id: Dict[str, ClinicalTrial] = {
+                t.nct_id: t
+                async for t in ClinicalTrial.objects.filter(nct_id__in=wanted)
+            }
+            # Preserve the order the prefetch surfaced them in (relevance-
+            # ranked by the registry), and skip IDs we don't have details
+            # for rather than emitting a row with just an NCT and no body.
+            ordered = [by_id[n] for n in wanted if n in by_id]
+            rendered = [r for r in (self.format_trial_short(t) for t in ordered) if r]
+            if not rendered:
+                return None
+            return (
+                "CLINICAL TRIAL EVIDENCE (relevant when the denial cites "
+                '"experimental" or "investigational" grounds):\n\n'
+                + "\n\n".join(rendered)
+                + "\n\nWhen citing a trial, include the NCT ID and the URL. "
+                "The existence of a trial does not by itself establish "
+                "coverage; use it to argue that the therapy is being "
+                "actively studied or used clinically — so the relevant "
+                "question is whether the therapy is medically appropriate "
+                "for THIS patient, not whether the therapy is hypothetical."
+            )
+        except Exception as e:
+            logger.opt(exception=True).debug(
+                f"get_context_for_denial failed: {type(e).__name__}"
+            )
+            return None
+
     @staticmethod
     def format_trial_short(trial: ClinicalTrial) -> str:
         """Compact one-line-per-field rendering for LLM context."""

@@ -642,10 +642,10 @@ def identifier_found_in_text(identifier: str, text: str) -> bool:
 
 # Context shed on retry when zero-result failures may stem from
 # context-window overflow. Only the call-dict keys can be shed here —
-# uspstf/pa/nice/rag contexts are already baked into the prompt string
-# by make_open_prompt, so they're out of reach without re-rendering.
-# TODO: a future improvement could re-call make_open_prompt with those
-# contexts nulled to get true tier-1-style enrichment shedding.
+# uspstf/pa/nice/rag/clinical_trials contexts are already baked into the
+# prompt string by make_open_prompt, so they're out of reach without
+# re-rendering. TODO: a future improvement could re-call make_open_prompt
+# with those contexts nulled to get true tier-1-style enrichment shedding.
 _SHEDDABLE_TIER1 = ("pubmed_context", "ml_citations_context")
 _TIER2_TRUNCATIONS = (("plan_context", 4000), ("patient_context", 6000))
 
@@ -1337,6 +1337,7 @@ class AppealGenerator(object):
         payer_policy_context=None,
         pa_context=None,
         uspstf_context=None,
+        clinical_trials_context=None,
         medication_context=None,
     ) -> Optional[str]:
         """
@@ -1427,9 +1428,10 @@ class AppealGenerator(object):
             or (rag_context is not None and rag_context != "")
             or (nice_context is not None and nice_context != "")
             or (uspstf_context is not None and uspstf_context != "")
+            or (clinical_trials_context is not None and clinical_trials_context != "")
         )
         if has_citations:
-            base = f"{base}\n\nCITATION INSTRUCTIONS: You may ONLY cite medical literature, studies, or references that are explicitly provided below. Do NOT invent, fabricate, or hallucinate any citations, PMIDs, journal names, author names, or study details. If you want to make a medical claim, either cite from the provided references or state it as general medical knowledge without a specific citation."
+            base = f"{base}\n\nCITATION INSTRUCTIONS: You may ONLY cite medical literature, studies, or references that are explicitly provided below. Do NOT invent, fabricate, or hallucinate any citations, PMIDs, NCT IDs, journal names, author names, or study details. If you want to make a medical claim, either cite from the provided references or state it as general medical knowledge without a specific citation."
             if rag_context is not None and rag_context != "":
                 base = f"{base}\n\nEvidence from medical guidelines and regulations:\n{rag_context}"
             if ml_context is not None and ml_context != "":
@@ -1446,9 +1448,15 @@ class AppealGenerator(object):
                 # ACA cost-sharing angle and the A/B-only caveat, so no extra
                 # section label is needed here.
                 base = f"{base}\n\n{uspstf_context}"
+            if clinical_trials_context is not None and clinical_trials_context != "":
+                # The header inside ``clinical_trials_context`` already
+                # explains the "experimental/investigational" angle and
+                # the "trial != coverage" caveat, so no extra section
+                # label is needed here.
+                base = f"{base}\n\n{clinical_trials_context}"
         else:
             # No citations provided - explicitly tell the model not to make any up
-            base = f"{base}\n\nIMPORTANT: No specific medical citations have been provided. Do NOT invent or hallucinate any citations, PMIDs, journal names, or study references. You may state general medical knowledge without citations, but do not fabricate specific study references."
+            base = f"{base}\n\nIMPORTANT: No specific medical citations have been provided. Do NOT invent or hallucinate any citations, PMIDs, NCT IDs, journal names, or study references. You may state general medical knowledge without citations, but do not fabricate specific study references."
         if ucr_context:
             # The block carries an independent rate benchmark for this
             # procedure + area; the model decides whether the evidence is
@@ -1612,6 +1620,7 @@ class AppealGenerator(object):
         specialized_templates: Optional[List[type[SpecializedDenialTemplate]]] = None,
         pa_context=None,
         uspstf_context=None,
+        clinical_trials_context=None,
     ) -> Iterator[str]:
         """
         Generates an iterator of appeal texts for a given insurance denial using templates, non-AI sources, and AI models.
@@ -1703,6 +1712,7 @@ class AppealGenerator(object):
             payer_policy_context=payer_policy_context,
             pa_context=pa_context,
             uspstf_context=uspstf_context,
+            clinical_trials_context=clinical_trials_context,
             medication_context=medication_context,
         )
         open_medically_necessary_prompt = self.make_open_med_prompt(

@@ -2757,6 +2757,7 @@ class AppealsBackendHelper:
         imr_context: Optional[str] = None
         pa_context: Optional[str] = None
         uspstf_context: Optional[str] = None
+        clinical_trials_context: Optional[str] = None
 
         # Get PubMed context
         logger.debug("Looking up the pubmed context")
@@ -2900,6 +2901,20 @@ class AppealsBackendHelper:
                 done_msg="USPSTF preventive-services lookup complete",
             )
 
+            # Look up cached ClinicalTrials.gov matches for this denial.
+            # DB-only read — the live registry call already happened in the
+            # ``find_clinical_trials`` prefetch fired from
+            # ``extract_set_denial_and_diagnosis``. A short timeout is enough
+            # because the worst case here is a couple of indexed ORM queries.
+            clinical_trials_context_awaitable = tracked_awaitable(
+                asyncio.wait_for(
+                    ClinicalTrialsTools().get_context_for_denial(denial),
+                    timeout=10,
+                ),
+                substep="clinical_trials",
+                done_msg="ClinicalTrials.gov lookup complete",
+            )
+
             # Skip the NICE task entirely when no key is configured: avoids a
             # misleading "NICE guidance lookup complete" status and the wait_for
             # overhead in environments without syndication access.
@@ -2910,6 +2925,7 @@ class AppealsBackendHelper:
                 imr_context_awaitable,
                 pa_context_awaitable,
                 uspstf_context_awaitable,
+                clinical_trials_context_awaitable,
             ]
             if cls.nice.api_key:
                 gather_awaitables.append(
@@ -2966,8 +2982,11 @@ class AppealsBackendHelper:
                 if isinstance(results[5], str) and results[5]:
                     uspstf_context = results[5]
                     logger.info("USPSTF preventive-services context retrieved")
-                if len(results) > 6 and isinstance(results[6], str):
-                    nice_context = results[6]
+                if isinstance(results[6], str) and results[6]:
+                    clinical_trials_context = results[6]
+                    logger.info("ClinicalTrials.gov context retrieved")
+                if len(results) > 7 and isinstance(results[7], str):
+                    nice_context = results[7]
                 else:
                     # No fresh NICE result (skipped task or non-string error). Fall
                     # back to whatever is already persisted on the denial so cached
@@ -3005,6 +3024,22 @@ class AppealsBackendHelper:
                 uspstf_context = await _refresh_sync_denial_context(
                     denial, _uspstf_context_getter_factory, "USPSTF"
                 )
+                # ClinicalTrials context isn't persisted either; re-render from
+                # the prefetched cache so the fallback path doesn't silently
+                # lose trial evidence. The reader is already async (DB-only — no
+                # live registry call), so it can't go through
+                # _refresh_sync_denial_context (which wraps a sync getter in
+                # sync_to_async); use an inline guard with the same
+                # degrade-to-None behavior.
+                try:
+                    clinical_trials_context = (
+                        await ClinicalTrialsTools().get_context_for_denial(denial)
+                    )
+                except Exception as inner:
+                    logger.opt(exception=True).debug(
+                        f"ClinicalTrials context refresh during fallback failed: {inner}"
+                    )
+                    clinical_trials_context = None
                 logger.debug("Used saved contexts")
         else:
             logger.debug("Too many retries, skipping ML/pubmed/RAG ctx")
@@ -3022,6 +3057,19 @@ class AppealsBackendHelper:
             uspstf_context = await _refresh_sync_denial_context(
                 denial, _uspstf_context_getter_factory, "USPSTF"
             )
+            # ClinicalTrials lookup is also DB-only against the prefetched
+            # cache, so re-render it on retries. The reader is async, so it
+            # uses an inline guard rather than _refresh_sync_denial_context
+            # (which wraps a sync getter in sync_to_async).
+            try:
+                clinical_trials_context = (
+                    await ClinicalTrialsTools().get_context_for_denial(denial)
+                )
+            except Exception as e:
+                logger.opt(exception=True).debug(
+                    f"ClinicalTrials context refresh on retry failed: {e}"
+                )
+                clinical_trials_context = None
             yield json.dumps(
                 {
                     "type": "status",
@@ -3108,6 +3156,7 @@ class AppealsBackendHelper:
             specialized_templates=specialized_templates,
             pa_context=pa_context,
             uspstf_context=uspstf_context,
+            clinical_trials_context=clinical_trials_context,
         )
         # Drop None / empty / whitespace / runt outputs. Track runts so the
         # zero-appeal diagnostic can distinguish "models silent" from
