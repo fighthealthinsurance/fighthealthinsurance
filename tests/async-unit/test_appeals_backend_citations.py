@@ -1,6 +1,8 @@
 from unittest.mock import patch, AsyncMock, MagicMock
-import pytest
 import asyncio
+import json
+
+import pytest
 
 from fighthealthinsurance.common_view_logic import AppealsBackendHelper
 
@@ -485,14 +487,19 @@ class TestAppealsBackendHelperWithCitations:
 @pytest.mark.parametrize(
     "saved_texts,synthesis_should_run",
     [
-        (["single saved appeal text"], True),  # Step 5: >=1 triggers synthesis
+        # >=2 drafts: synthesis is meaningful (combines multiple inputs).
+        (["draft one text", "draft two text"], True),
+        # 1 draft: skipped — models tend to regurgitate a single input
+        # verbatim, which the client then dedupes and reports as a
+        # partial-delivery error.
+        (["single saved appeal text"], False),
         ([], False),  # 0 saved appeals -> synthesis skipped
     ],
-    ids=["one_saved_appeal", "zero_saved_appeals"],
+    ids=["two_saved_appeals", "one_saved_appeal", "zero_saved_appeals"],
 )
 @pytest.mark.asyncio
 async def test_synthesis_threshold(saved_texts, synthesis_should_run):
-    """Step 5: synthesis runs when >=1 saved appeal exists (was >=2)."""
+    """Synthesis runs only when >=2 saved appeals exist."""
     mock_denial = _make_mock_denial()
     parameters = {
         "denial_id": "12345",
@@ -557,3 +564,91 @@ async def test_synthesis_threshold(saved_texts, synthesis_should_run):
             )
         else:
             mock_appeal_gen.synthesize_appeals.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_synthesis_skips_verbatim_duplicate():
+    """If the synthesizer returns text matching a saved draft, it must not be
+    yielded — otherwise the client's content-based dedup silently drops it
+    and reports a spurious "partial delivery" error.
+    """
+    mock_denial = _make_mock_denial()
+    parameters = {
+        "denial_id": "12345",
+        "email": "test@example.com",
+        "semi_sekret": "test-secret",
+    }
+    saved_texts = ["draft one text body", "draft two text body"]
+
+    with (
+        patch(
+            "fighthealthinsurance.common_view_logic.Denial.objects.filter",
+            return_value=_make_mock_denial_query(mock_denial),
+        ),
+        patch(
+            "fighthealthinsurance.common_view_logic.Denial.get_hashed_email",
+            return_value="hashed",
+        ),
+        patch.object(AppealsBackendHelper, "regex_denial_processor") as mock_regex,
+        patch(
+            "fighthealthinsurance.common_view_logic.MLCitationsHelper.generate_citations_for_denial",
+            new_callable=AsyncMock,
+            return_value="",
+        ),
+        patch.object(
+            AppealsBackendHelper.pmt,
+            "find_context_for_denial",
+            new_callable=AsyncMock,
+            return_value="",
+        ),
+        patch(
+            "fighthealthinsurance.common_view_logic.sync_to_async",
+        ) as mock_sync_to_async,
+        patch(
+            "fighthealthinsurance.common_view_logic.interleave_iterator_for_keep_alive",
+            side_effect=passthrough_interleave,
+        ),
+        patch(
+            "fighthealthinsurance.common_view_logic.ProposedAppeal",
+        ) as mock_pa_cls,
+        patch(
+            "fighthealthinsurance.common_view_logic.appealGenerator"
+        ) as mock_appeal_gen,
+    ):
+        mock_regex.get_appeal_templates = AsyncMock(return_value=[])
+        mock_sync_to_async.side_effect = _sync_to_async_router(
+            AsyncMock(return_value=""),
+            AsyncMock(return_value=saved_texts),
+        )
+        mock_pa_cls.return_value = MagicMock(id=1, asave=AsyncMock())
+        mock_pa_cls.objects.filter.return_value = (
+            _make_proposed_appeal_query_with_texts(saved_texts)
+        )
+        # Synthesizer returns a verbatim copy of the first saved draft —
+        # the server must NOT yield it as a "new" appeal.
+        mock_appeal_gen.synthesize_appeals = AsyncMock(return_value=saved_texts[0])
+
+        chunks = []
+        async for chunk in AppealsBackendHelper.generate_appeals(parameters):
+            chunks.append(chunk)
+
+    # The "done" frame should report only the streamed drafts, not the
+    # deduped synthesis: new_appeals should equal len(saved_texts).
+    done_frames = []
+    for c in chunks:
+        stripped = c.strip()
+        if not stripped:
+            continue
+        try:
+            parsed = json.loads(stripped)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict) and parsed.get("phase") == "done":
+            done_frames.append(parsed)
+    assert len(done_frames) == 1, f"expected exactly one done frame, got {done_frames}"
+    assert done_frames[0]["new_appeals"] == len(saved_texts)
+    # And no chunk should carry the "synthesized": "true" marker.
+    for c in chunks:
+        assert '"synthesized": "true"' not in c, (
+            f"verbatim-duplicate synthesis should have been skipped, got chunk: {c}"
+        )
