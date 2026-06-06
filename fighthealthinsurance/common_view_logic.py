@@ -507,22 +507,38 @@ class AppealAssemblyHelper:
 
 
 def mark_proposal_chosen(
-    denial: Denial, appeal_text: str, editted: bool = False
+    denial: Denial,
+    appeal_text: str,
+    editted: bool = False,
+    proposed_appeal_id: Optional[int] = None,
 ) -> ProposedAppeal:
     """Create a chosen=True ProposedAppeal, copying model_name from the original
-    generated row when the text matches exactly. Returns the new ProposedAppeal.
+    generated row when we can identify which draft was picked.
 
-    Falls back to model_name=None if no exact-text original exists (e.g. the
-    user edited the appeal away from any model's draft, or the proposal was
-    generated before the model_name field was added).
+    Lookup precedence:
+      1. proposed_appeal_id (preferred) - the id returned by save_appeal in
+         the streaming JSON frame. Survives sub_in_appeals rewriting the
+         displayed text (e.g. {claim_id} -> "ABC123") since it does not
+         depend on string equality.
+      2. exact appeal_text match against a chosen=False row for the same
+         denial. Useful as a fallback when the frontend did not echo the id
+         (older clients, share-appeal flow).
+      3. model_name=None - the user edited the draft heavily, or the
+         proposal predates the model_name field.
     """
-    original = (
-        ProposedAppeal.objects.filter(
-            for_denial=denial, appeal_text=appeal_text, chosen=False
+    original: Optional[ProposedAppeal] = None
+    if proposed_appeal_id is not None:
+        original = ProposedAppeal.objects.filter(
+            id=proposed_appeal_id, for_denial=denial
+        ).first()
+    if original is None:
+        original = (
+            ProposedAppeal.objects.filter(
+                for_denial=denial, appeal_text=appeal_text, chosen=False
+            )
+            .order_by("-id")
+            .first()
         )
-        .order_by("-id")
-        .first()
-    )
     model_name = original.model_name if original is not None else None
     pa = ProposedAppeal(
         appeal_text=appeal_text,
@@ -538,7 +554,12 @@ def mark_proposal_chosen(
 class ChooseAppealHelper:
     @classmethod
     def choose_appeal(
-        cls, denial_id: str, appeal_text: str, email: str, semi_sekret: str
+        cls,
+        denial_id: str,
+        appeal_text: str,
+        email: str,
+        semi_sekret: str,
+        proposed_appeal_id: Optional[int] = None,
     ) -> Tuple[
         Optional[str], Optional[str], Optional[QuerySet[PubMedArticleSummarized]]
     ]:
@@ -549,7 +570,7 @@ class ChooseAppealHelper:
         ).get()
         denial.appeal_text = appeal_text
         denial.save()
-        mark_proposal_chosen(denial, appeal_text)
+        mark_proposal_chosen(denial, appeal_text, proposed_appeal_id=proposed_appeal_id)
         articles = None
         article_ids = None
 

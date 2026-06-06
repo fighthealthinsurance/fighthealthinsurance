@@ -378,19 +378,22 @@ class ModelUsageDashboardView(generic.TemplateView):
         since: Optional[datetime.datetime],
     ) -> List[Dict[str, Any]]:
         chosen_qs = ProposedAppeal.objects.filter(chosen=True, model_name__isnull=False)
-        presented_qs = ProposedAppeal.objects.filter(
-            chosen=False, model_name__isnull=False
-        )
         if since is not None:
             chosen_qs = chosen_qs.filter(created_at__gte=since)
-            presented_qs = presented_qs.filter(created_at__gte=since)
 
-        # Restrict presented universe to denials that had a chosen appeal,
-        # so abandoned denials don't penalize the model that proposed.
-        chosen_denial_ids = list(
-            chosen_qs.values_list("for_denial_id", flat=True).distinct()
+        # Tie the presented universe to denials that were picked within
+        # the window. We intentionally do NOT filter presented_qs by
+        # created_at: a user can generate appeals on day 0 and pick one on
+        # day 1, and a 1-day window anchored on the pick should still count
+        # the drafts that were actually presented. Pass the subquery
+        # straight into __in to avoid materializing a potentially huge id
+        # list (Django keeps it as a SQL subquery).
+        chosen_denial_ids = chosen_qs.values_list("for_denial_id", flat=True).distinct()
+        presented_qs = ProposedAppeal.objects.filter(
+            chosen=False,
+            model_name__isnull=False,
+            for_denial_id__in=chosen_denial_ids,
         )
-        presented_qs = presented_qs.filter(for_denial_id__in=chosen_denial_ids)
 
         chosen = {
             name: count
@@ -421,9 +424,11 @@ class ModelUsageDashboardView(generic.TemplateView):
         }
 
         # Presented: walk votes' presented_candidate_ids JSON lists into a
-        # counter, then resolve ids to model_names (filtered by kind so chat
-        # votes do not count appeal candidates and vice versa).
-        votes_qs = ChooserVote.objects.all()
+        # counter. Scope the votes themselves to the requested kind so we
+        # don't pay to iterate JSON for unrelated task types. Each
+        # ChooserVote belongs to one ChooserTask whose candidates share a
+        # single kind, so chosen_candidate__kind is the task kind.
+        votes_qs = ChooserVote.objects.filter(chosen_candidate__kind=kind)
         if since is not None:
             votes_qs = votes_qs.filter(created_at__gte=since)
         counter: Counter = Counter()

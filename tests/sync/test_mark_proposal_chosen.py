@@ -64,3 +64,45 @@ class MarkProposalChosenTest(TestCase):
         )
         pa = mark_proposal_chosen(self.denial, "dup")
         self.assertEqual(pa.model_name, "model-new")
+
+    def test_id_lookup_survives_substitution(self):
+        # Regression: sub_in_appeals rewrites the displayed text after
+        # save_appeal persists the raw template. The id-based lookup must
+        # still recover model_name even when the submitted text no longer
+        # matches the saved row.
+        original = ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="raw with {claim_id} placeholder",
+            chosen=False,
+            model_name="model-y",
+        )
+        # User submits the substituted text plus the id from the JSON frame.
+        pa = mark_proposal_chosen(
+            self.denial,
+            "raw with ABC123 placeholder",
+            proposed_appeal_id=original.id,
+        )
+        self.assertEqual(pa.model_name, "model-y")
+        self.assertEqual(pa.appeal_text, "raw with ABC123 placeholder")
+
+    def test_id_lookup_ignores_wrong_denial(self):
+        # An id that belongs to a different denial should not leak model_name.
+        other_denial = Denial.objects.create(
+            hashed_email="other",
+            denial_text="denied",
+            procedure="MRI",
+            diagnosis="back pain",
+            insurance_company="TestIns",
+        )
+        other_pa = ProposedAppeal.objects.create(
+            for_denial=other_denial,
+            appeal_text="other text",
+            chosen=False,
+            model_name="model-other",
+        )
+        pa = mark_proposal_chosen(
+            self.denial,
+            "totally different text",
+            proposed_appeal_id=other_pa.id,
+        )
+        self.assertIsNone(pa.model_name)

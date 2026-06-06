@@ -730,6 +730,14 @@ function processResponseChunk(chunk: string): void {
         appealTextElem.prop("form", `form_${appealId}`);
         appealTextElem[0].setAttribute("form", `form_${appealId}`);
 
+        // Carry the saved ProposedAppeal row id (from save_appeal) back to
+        // the backend so model attribution survives sub_in_appeals rewriting
+        // the displayed text.
+        const proposedId = parsedLine.id;
+        if (proposedId !== undefined && proposedId !== null && proposedId !== "unknown") {
+          clonedForm.find("input.proposed_appeal_id").val(String(proposedId));
+        }
+
         outputContainer.append(clonedForm);
 
         if (!hasAutoScrolledToFirstAppeal) {

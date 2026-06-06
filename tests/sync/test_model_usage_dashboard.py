@@ -69,9 +69,9 @@ class ModelUsageDashboardContentTest(TestCase):
             insurance_company="TestIns",
         )
 
-    def _make_proposed(self, model_name, chosen, days_ago=0):
+    def _make_proposed(self, model_name, chosen, days_ago=0, denial=None):
         pa = ProposedAppeal.objects.create(
-            for_denial=self.denial,
+            for_denial=denial or self.denial,
             appeal_text=f"appeal-{model_name}-{chosen}-{days_ago}",
             chosen=chosen,
             model_name=model_name,
@@ -83,13 +83,27 @@ class ModelUsageDashboardContentTest(TestCase):
             )
         return pa
 
+    def _make_denial(self, suffix):
+        return Denial.objects.create(
+            hashed_email=f"hash-{suffix}",
+            denial_text="denied",
+            procedure="MRI",
+            diagnosis="back pain",
+            insurance_company="TestIns",
+        )
+
     def test_proposed_appeal_window_filtering(self):
+        # Use distinct denials so the window definition
+        # ("denials picked within the window") isolates fresh and old.
+        d_fresh = self.denial
+        d_old = self._make_denial("old")
+
         # Model "fresh" picked today (within 1d and 30d).
-        self._make_proposed("fresh", chosen=False, days_ago=0)
-        self._make_proposed("fresh", chosen=True, days_ago=0)
+        self._make_proposed("fresh", chosen=False, days_ago=0, denial=d_fresh)
+        self._make_proposed("fresh", chosen=True, days_ago=0, denial=d_fresh)
         # Model "old" picked 45 days ago (only in global).
-        self._make_proposed("old", chosen=False, days_ago=45)
-        self._make_proposed("old", chosen=True, days_ago=45)
+        self._make_proposed("old", chosen=False, days_ago=45, denial=d_old)
+        self._make_proposed("old", chosen=True, days_ago=45, denial=d_old)
 
         response = self.client.get(reverse("model_usage_dashboard"))
         windows = response.context["windows"]
@@ -104,6 +118,24 @@ class ModelUsageDashboardContentTest(TestCase):
         self.assertNotIn("old", day_models)
         self.assertIn("fresh", month_models)
         self.assertNotIn("old", month_models)
+
+    def test_presented_counts_drafts_generated_before_window(self):
+        # Regression for the "1-day window" review concern: a draft generated
+        # 45 days ago but picked today should still count as presented in
+        # the 1-day window, because the window is anchored on the pick.
+        denial = self.denial
+        old_draft = self._make_proposed(
+            "old-draft-model", chosen=False, days_ago=45, denial=denial
+        )
+        # Pick is "today" - the chosen row is in window.
+        self._make_proposed("old-draft-model", chosen=True, days_ago=0, denial=denial)
+
+        response = self.client.get(reverse("model_usage_dashboard"))
+        day_rows = response.context["windows"][1]["proposed_appeal"]
+        row = next(r for r in day_rows if r["model_name"] == "old-draft-model")
+        self.assertEqual(row["chosen"], 1)
+        self.assertEqual(row["presented"], 1)
+        self.assertAlmostEqual(row["win_rate"], 100.0)
 
     def test_proposed_appeal_excludes_abandoned_from_presented(self):
         # Denial #1 has a chosen appeal => counts toward presented.

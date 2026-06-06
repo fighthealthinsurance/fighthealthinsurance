@@ -1659,7 +1659,9 @@ class AppealGenerator(object):
                 highest-quality internal model only (one extra call).
 
         Returns:
-            An iterator yielding generated appeal texts as strings.
+            An iterator of ``GeneratedAppeal`` items (each carries the
+            appeal text plus the originating model_name, or ``None`` for
+            template-based / non-AI appeals).
         """
         logger.debug("Starting to make appeals...")
         if medical_reasons is None:
