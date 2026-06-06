@@ -6,10 +6,15 @@ from .llm_client import (
     BAD_CONTEXT_PATTERNS,
     BAD_RESPONSE_PATTERNS,
     build_llm_calls,
+    build_llm_calls_for_variants,
     build_retry_calls,
     create_response_scorer,
     estimate_history_tokens,
     score_llm_response,
+)
+from .message_preprocessor import (
+    MessageVariant,
+    prepare_user_message_variants,
 )
 from .safety_filters import (
     CRISIS_RESOURCES,
@@ -27,7 +32,11 @@ __all__ = [
     "score_llm_response",
     "create_response_scorer",
     "build_llm_calls",
+    "build_llm_calls_for_variants",
     "build_retry_calls",
     "BAD_RESPONSE_PATTERNS",
     "BAD_CONTEXT_PATTERNS",
+    # Message preprocessing
+    "MessageVariant",
+    "prepare_user_message_variants",
 ]
