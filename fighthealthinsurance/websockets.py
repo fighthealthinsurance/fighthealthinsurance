@@ -60,8 +60,14 @@ async def enqueue_denied_items_analysis(
             f"Denied-items analysis enqueue deduped for chat {chat_id} job_key={job_key}"
         )
         return None
-    await OngoingChatConsumer.dispatch_denied_items_analysis_job(
-        job_key=job_key, chat_id=chat_id, disconnect_event_ts=disconnect_event_ts
+    from fighthealthinsurance.denied_items_analysis_actor_ref import (
+        denied_items_analysis_actor_ref,
+    )
+
+    denied_items_analysis_actor_ref.get.run_analysis.remote(
+        job_key=job_key,
+        chat_id=chat_id,
+        disconnect_event_ts=disconnect_event_ts,
     )
     return job_key
 
@@ -579,22 +585,6 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                 logger.opt(exception=True).warning(
                     f"Failed to enqueue denied-item analysis for chat {self.chat_id}: {e}"
                 )
-
-    @classmethod
-    async def dispatch_denied_items_analysis_job(
-        cls, *, job_key: str, chat_id: str, disconnect_event_ts: str
-    ) -> None:
-        """Run denied-item analysis in the background worker threadpool."""
-        async def _run():
-            await cls._run_denied_items_analysis_job(
-                job_key=job_key,
-                chat_id=chat_id,
-                disconnect_event_ts=disconnect_event_ts,
-            )
-
-        from fighthealthinsurance.utils import fire_and_forget_in_new_threadpool
-
-        await fire_and_forget_in_new_threadpool(_run())
 
     @classmethod
     async def _run_denied_items_analysis_job(

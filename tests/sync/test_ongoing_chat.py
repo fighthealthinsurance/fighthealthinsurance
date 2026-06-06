@@ -261,12 +261,12 @@ class OngoingChatWebSocketTest(APITestCase):
         )
         consumer.chat_id = str(chat.id)
         with patch(
-            "fighthealthinsurance.websockets.OngoingChatConsumer.dispatch_denied_items_analysis_job",
-            new=AsyncMock(),
+            "fighthealthinsurance.denied_items_analysis_actor_ref.denied_items_analysis_actor_ref",
         ) as mock_dispatch:
+            mock_dispatch.get.run_analysis.remote.return_value = "job-ref"
             await consumer.disconnect(1000)
             await consumer.disconnect(1000)
-            self.assertEqual(mock_dispatch.await_count, 1)
+            self.assertEqual(mock_dispatch.get.run_analysis.remote.call_count, 1)
         await self.asyncTearDown()
 
     async def test_disconnect_is_non_blocking_when_dispatch_fails(self):
