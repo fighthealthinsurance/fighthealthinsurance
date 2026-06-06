@@ -889,6 +889,18 @@ class EnableExternalModelsTest(APITestCase):
         denial.refresh_from_db()
         self.assertFalse(denial.use_external)
 
+    def test_rejects_non_object_body(self):
+        """Non-mapping JSON bodies (arrays, strings, numbers) must 400
+        rather than 500. Without the isinstance guard, request.data.get
+        on a list would raise AttributeError."""
+        response = self.client.post(
+            reverse("enable_external_models"),
+            data=json.dumps([1, 2, 3]),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("JSON object", response.content.decode())
+
     def test_cross_denial_isolation(self):
         """Denial A's credentials must not be able to flip Denial B."""
         denial_a = self._make_denial(email="alice@example.com")

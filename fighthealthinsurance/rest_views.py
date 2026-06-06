@@ -574,12 +574,35 @@ class EnableExternalModels(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []  # Magic-key auth via the triple
 
+    @extend_schema(
+        description=(
+            "Opt a denial into external models. Authenticated by the "
+            "(denial_id, email, semi_sekret) triple in the JSON body. "
+            "Idempotent — succeeds with 200 if `use_external` is "
+            "already True. Returns 404 for any auth failure (uniform "
+            "to avoid leaking which field was wrong)."
+        ),
+        request=OpenApiTypes.OBJECT,
+        responses={
+            200: OpenApiTypes.OBJECT,
+            400: OpenApiTypes.OBJECT,
+            404: OpenApiTypes.OBJECT,
+        },
+    )
     def post(self, request: Request) -> Response:
-        denial_id = request.data.get("denial_id")
-        email = request.data.get("email") or ""
-        semi_sekret = request.data.get("semi_sekret") or ""
+        data = request.data
+        # Reject non-mapping bodies (e.g. JSON arrays/strings) up front;
+        # without this, request.data.get(...) raises and we'd serve 500
+        # on malformed input. Matches streaming_appeals_rest_fallback.
+        if not isinstance(data, dict):
+            return Response(
+                {"error": "Expected a JSON object"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         denial = common_view_logic.get_denial_for_action(
-            denial_id=denial_id, email=email, semi_sekret=semi_sekret
+            denial_id=data.get("denial_id"),
+            email=data.get("email") or "",
+            semi_sekret=data.get("semi_sekret") or "",
         )
         if denial is None:
             return Response({"error": "Not found"}, status=status.HTTP_404_NOT_FOUND)

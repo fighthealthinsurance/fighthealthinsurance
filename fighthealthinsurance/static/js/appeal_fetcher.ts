@@ -571,8 +571,15 @@ async function requestExternalModels(
       "#28a745",
     );
     prompt.style.display = "none";
-    // Reset client state so doQuery starts a fresh generation pass
-    // rather than treating this as a retry of the previous attempt.
+    // Reset retry/parser state so doQuery starts a fresh generation
+    // pass rather than treating this as a retry of the previous
+    // attempt. Deliberately do NOT clear appealsSoFar or
+    // #output-container: any already-shown internal-only drafts stay
+    // on screen for the user to read while external models stream
+    // additional drafts. processResponseChunk dedups against
+    // appealsSoFar so server-side re-yielded ProposedAppeals don't
+    // append twice, and the >=3 done() check counting old+new is
+    // intentional — we want a total of 3 drafts, not 3 *new* ones.
     retries = 0;
     respBuffer = "";
     hasAutoScrolledToFirstAppeal = false;
