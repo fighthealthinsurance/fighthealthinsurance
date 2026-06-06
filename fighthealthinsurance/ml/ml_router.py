@@ -17,6 +17,7 @@ class MLRouter(object):
     internal_models_by_cost: List[RemoteModelLike]
     all_models_by_cost: List[RemoteModelLike]
     external_models_by_cost: List[RemoteModelLike]
+    context_only_models_by_cost: List[RemoteModelLike]
 
     def __init__(self):
         # Initialize instance attributes to avoid mutable class-level state
@@ -24,10 +25,12 @@ class MLRouter(object):
         self.internal_models_by_cost = []
         self.all_models_by_cost = []
         self.external_models_by_cost = []
+        self.context_only_models_by_cost = []
         logger.debug("MLRouter: starting model registration")
         building_internal_models_by_cost = []
         building_external_models_by_cost = []
         building_all_models_by_cost = []
+        building_context_only_models_by_cost = []
         building_models_by_name: dict[str, List[ModelDescription]] = {}
         for backend in candidate_model_backends:
             try:
@@ -36,11 +39,18 @@ class MLRouter(object):
                 for m in models:
                     if m.model is None:
                         m.model = backend(model=m.internal_name)
-                    if not m.model.external:
-                        building_internal_models_by_cost.append(m)
+                    # Context-only models (e.g. Perplexity) are reserved for
+                    # building context such as citations and must never appear
+                    # in the general generation pools. They remain reachable by
+                    # name via models_by_name for the context-building methods.
+                    if m.model.context_only:
+                        building_context_only_models_by_cost.append(m)
                     else:
-                        building_external_models_by_cost.append(m)
-                    building_all_models_by_cost.append(m)
+                        if not m.model.external:
+                            building_internal_models_by_cost.append(m)
+                        else:
+                            building_external_models_by_cost.append(m)
+                        building_all_models_by_cost.append(m)
                     same_models: list[ModelDescription] = []
                     if m.name in building_models_by_name:
                         same_models = building_models_by_name[m.name]
@@ -66,9 +76,15 @@ class MLRouter(object):
             for x in sorted(building_external_models_by_cost)
             if x.model is not None
         ]
+        self.context_only_models_by_cost = [
+            x.model
+            for x in sorted(building_context_only_models_by_cost)
+            if x.model is not None
+        ]
         logger.info(
             f"MLRouter initialized with {len(self.all_models_by_cost)} total models, "
-            f"{len(self.internal_models_by_cost)} internal, {len(self.external_models_by_cost)} external"
+            f"{len(self.internal_models_by_cost)} internal, {len(self.external_models_by_cost)} external, "
+            f"{len(self.context_only_models_by_cost)} context-only"
         )
         logger.info(f"All loaded models: {[str(m) for m in self.all_models_by_cost]}")
         logger.debug(

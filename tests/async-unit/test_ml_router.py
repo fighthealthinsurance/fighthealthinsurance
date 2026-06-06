@@ -4,7 +4,12 @@ import asyncio
 from typing import Optional
 
 from fighthealthinsurance.ml.ml_router import MLRouter
-from fighthealthinsurance.ml.ml_models import RemoteModelLike
+from fighthealthinsurance.ml.ml_models import (
+    ModelDescription,
+    RemoteHealthInsurance,
+    RemoteModelLike,
+    RemotePerplexity,
+)
 
 
 class TestMLRouterGenerateTextBackendNames(unittest.TestCase):
@@ -220,6 +225,108 @@ class TestMLRouterChatBackends(unittest.TestCase):
             # Verify get_chat_backends was called with use_external=False
             mock_get_chat.assert_called_once_with(use_external=False)
             self.assertEqual(primary_models, ["mock_model"])
+
+
+class TestContextOnlyModelFlag(unittest.TestCase):
+    """Tests for the context_only flag and how the router handles it."""
+
+    def test_default_model_is_not_context_only(self):
+        """Models default to not being context-only."""
+        with patch.dict(
+            "os.environ",
+            {"HEALTH_BACKEND_HOST": "localhost", "HEALTH_BACKEND_PORT": "80"},
+        ):
+            model = RemoteHealthInsurance(model="test")
+        self.assertFalse(model.context_only)
+
+    def test_perplexity_is_context_only(self):
+        """Perplexity is flagged as context-only (citations / research only)."""
+        with patch.dict("os.environ", {"PERPLEXITY_API": "test-token"}):
+            model = RemotePerplexity(model="sonar")
+        self.assertTrue(model.context_only)
+
+    def _make_backend(self, descriptions):
+        class FakeBackend:
+            @classmethod
+            def models(cls):
+                return descriptions
+
+        return FakeBackend
+
+    def test_context_only_model_kept_out_of_generation_pools(self):
+        """Context-only models must not appear in the general generation pools
+        but should remain reachable by name for context-building tasks."""
+        internal_model = MagicMock(spec=RemoteModelLike)
+        internal_model.external = False
+        internal_model.context_only = False
+
+        external_model = MagicMock(spec=RemoteModelLike)
+        external_model.external = True
+        external_model.context_only = False
+
+        context_model = MagicMock(spec=RemoteModelLike)
+        context_model.external = True
+        context_model.context_only = True
+
+        descriptions = [
+            ModelDescription(
+                cost=2, name="fhi", internal_name="fhi", model=internal_model
+            ),
+            ModelDescription(
+                cost=8, name="ext", internal_name="ext", model=external_model
+            ),
+            ModelDescription(
+                cost=100, name="sonar", internal_name="sonar", model=context_model
+            ),
+        ]
+        fake_backend = self._make_backend(descriptions)
+
+        with patch(
+            "fighthealthinsurance.ml.ml_router.candidate_model_backends",
+            [fake_backend],
+        ):
+            router = MLRouter()
+
+        # Tracked in the dedicated context-only pool.
+        self.assertIn(context_model, router.context_only_models_by_cost)
+        # Excluded from every general generation pool.
+        self.assertNotIn(context_model, router.all_models_by_cost)
+        self.assertNotIn(context_model, router.external_models_by_cost)
+        self.assertNotIn(context_model, router.internal_models_by_cost)
+        # Regular models still populate the generation pools.
+        self.assertIn(internal_model, router.internal_models_by_cost)
+        self.assertIn(external_model, router.external_models_by_cost)
+        # Still reachable by name so citation/context methods can use it.
+        self.assertIn(context_model, router.models_by_name["sonar"])
+
+    def test_context_only_model_not_used_for_text_generation(self):
+        """The text generation backend list excludes context-only models."""
+        external_model = MagicMock(spec=RemoteModelLike)
+        external_model.external = True
+        external_model.context_only = False
+
+        context_model = MagicMock(spec=RemoteModelLike)
+        context_model.external = True
+        context_model.context_only = True
+
+        descriptions = [
+            ModelDescription(
+                cost=8, name="ext", internal_name="ext", model=external_model
+            ),
+            ModelDescription(
+                cost=100, name="sonar", internal_name="sonar", model=context_model
+            ),
+        ]
+        fake_backend = self._make_backend(descriptions)
+
+        with patch(
+            "fighthealthinsurance.ml.ml_router.candidate_model_backends",
+            [fake_backend],
+        ):
+            router = MLRouter()
+
+        backends = router.generate_text_backends(use_external=True)
+        self.assertNotIn(context_model, backends)
 
 
 class TestMLRouterSummarizeChatHistory(unittest.TestCase):
