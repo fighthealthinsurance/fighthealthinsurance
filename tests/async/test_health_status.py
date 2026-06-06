@@ -1,3 +1,4 @@
+import time
 from unittest import mock
 from django.core import mail
 from django.test import TestCase
@@ -36,6 +37,21 @@ class _ExternalBad:
 
     def model_is_ok(self):
         return False
+
+
+class _SlowInternalGood:
+    """Healthy internal backend whose check finishes after a short delay.
+
+    Exercises the path where a check completes while still inside the wait
+    window — it must be classified from its final state (alive), not dropped.
+    """
+
+    model = "slow-internal-good"
+    external = False
+
+    def model_is_ok(self):
+        time.sleep(0.2)
+        return True
 
 
 class TestHealthStatus(TestCase):
@@ -157,6 +173,21 @@ class TestHealthStatus(TestCase):
 
         _HealthStatus._refresh(health_status)
 
+        alerts = [
+            m for m in mail.outbox if "internal models are dead" in m.subject.lower()
+        ]
+        assert alerts == []
+
+    @mock.patch("fighthealthinsurance.ml.ml_router.ml_router")
+    def test_slow_but_healthy_internal_counts_alive_no_alert(self, fake_router):
+        """A slow-but-healthy internal backend is counted alive, not paged on."""
+        fake_router.all_models_by_cost = [_SlowInternalGood()]
+        from fighthealthinsurance.ml.health_status import _HealthStatus
+
+        _HealthStatus._refresh(health_status)
+        snap = health_status.get_snapshot()
+
+        assert snap["alive_models"] == 1
         alerts = [
             m for m in mail.outbox if "internal models are dead" in m.subject.lower()
         ]

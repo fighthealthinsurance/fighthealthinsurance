@@ -115,7 +115,13 @@ class _HealthStatus:
         for m in candidates:
             if not getattr(m, "external", True):
                 internal_total += 1
-        # Run health checks in parallel with per-model timeouts
+        # Run health checks in parallel with a shared deadline. We wait up to
+        # timeout_seconds for the checks to finish, then classify every backend
+        # from its *final* state. Doing the classification in a single pass (as
+        # opposed to splitting it across an as_completed loop plus a "not done"
+        # sweep) means a check that completes right at the deadline is never
+        # dropped from both buckets, which could otherwise fire a false "all
+        # internal models are dead" page for a slow-but-healthy backend.
         details: List[BackendHealthDetail] = []
         timeout_seconds = 10
         if candidates:
@@ -123,58 +129,38 @@ class _HealthStatus:
                 max_workers=min(8, len(candidates))
             ) as ex:
                 future_map = {ex.submit(m.model_is_ok): m for m in candidates}
-                try:
-                    for future in concurrent.futures.as_completed(
-                        future_map, timeout=timeout_seconds
-                    ):
-                        m = future_map[future]
-                        name = (
-                            getattr(m, "model", None)
-                            or getattr(m, "__class__", type(m)).__name__
-                        )
-                        name = str(name)
-                        is_internal = not getattr(m, "external", True)
-                        ok = False
-                        err: Optional[str] = None
+                # Block until all checks finish or the deadline elapses.
+                concurrent.futures.wait(future_map, timeout=timeout_seconds)
+
+                for future, m in future_map.items():
+                    name = str(
+                        getattr(m, "model", None)
+                        or getattr(m, "__class__", type(m)).__name__
+                    )
+                    is_internal = not getattr(m, "external", True)
+                    ok = False
+                    err: Optional[str] = None
+                    if future.done():
                         try:
-                            # This should already be ready.
                             ok = future.result(timeout=0)
                         except Exception as e:
                             err = str(e)
                             logger.debug(f"Health check error for {name}: {e}")
-                        if ok:
-                            alive_count += 1
-                            if is_internal:
-                                internal_alive += 1
-                        elif is_internal:
-                            internal_failures.append(
-                                BackendHealthDetail(
-                                    name=name, ok=False, error=err or "not ok"
-                                )
-                            )
-                except concurrent.futures.TimeoutError:
-                    logger.debug(
-                        "Timed out checking backends, remaining marked as dead."
-                    )
-
-                # Handle any futures that didn't complete within the as_completed window
-                for future, m in future_map.items():
-                    if not future.done():
-                        name = (
-                            getattr(m, "model", None)
-                            or getattr(m, "__class__", type(m)).__name__
-                        )
-                        name = str(name)
-                        timeout_err = f"timeout>{timeout_seconds}s"
+                    else:
+                        err = f"timeout>{timeout_seconds}s"
                         details.append(
-                            BackendHealthDetail(name=name, ok=False, error=timeout_err)
+                            BackendHealthDetail(name=name, ok=False, error=err)
                         )
-                        if not getattr(m, "external", True):
-                            internal_failures.append(
-                                BackendHealthDetail(
-                                    name=name, ok=False, error=timeout_err
-                                )
+                    if ok:
+                        alive_count += 1
+                        if is_internal:
+                            internal_alive += 1
+                    elif is_internal:
+                        internal_failures.append(
+                            BackendHealthDetail(
+                                name=name, ok=False, error=err or "not ok"
                             )
+                        )
 
         snapshot = HealthSnapshot(
             alive_models=alive_count,
