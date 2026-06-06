@@ -118,15 +118,27 @@ class StripeWebhookHelper:
           error: that SPA has no ``/stripe/finish`` route, so its router
           treated ``stripe`` as a demo-type path segment.
 
+        Returns ``None`` when we can't build a link the target app could
+        actually act on, so the caller skips emailing a dead resume link.
+
         Hosts are read from settings so non-prod environments don't email
         users production links.
         """
         if payment_type == "professional_domain_subscription":
-            # Completed in the Fight Paperwork SPA.
+            # Completed in the Fight Paperwork SPA. Without both ids the SPA
+            # can't resume the subscription, so skip rather than email a dead
+            # link.
+            domain_id = metadata.get("domain_id")
+            professional_id = metadata.get("professional_id")
+            if not domain_id or not professional_id:
+                logger.warning(
+                    "Skipping professional recovery link: missing domain_id/professional_id"
+                )
+                return None
             params = urlencode(
                 {
-                    "domain_id": metadata.get("domain_id"),
-                    "professional_id": metadata.get("professional_id"),
+                    "domain_id": domain_id,
+                    "professional_id": professional_id,
                 }
             )
             return (
@@ -134,8 +146,18 @@ class StripeWebhookHelper:
                 f"/stripe/finish-checkout?{params}"
             )
         # Completed by the Django `complete_payment` view on the Fight Health
-        # Insurance domain. Use the unguessable secure_token rather than the
-        # row id so the recovery URL can't be brute-forced by enumerating ids.
+        # Insurance domain. That view rebuilds the checkout from either a
+        # `recovery_info_id` or serialized `line_items` in the metadata; if
+        # neither is present (e.g. pay-what-you-want donations) it can't
+        # recreate the session, so skip emailing a link that would only error.
+        if not metadata.get("recovery_info_id") and not metadata.get("line_items"):
+            logger.warning(
+                f"Skipping recovery link for payment_type={payment_type}: "
+                "no recovery_info_id or line_items in metadata"
+            )
+            return None
+        # Use the unguessable secure_token rather than the row id so the
+        # recovery URL can't be brute-forced by enumerating ids.
         params = urlencode({"token": lost_session.secure_token})
         return (
             f"https://{settings.FIGHT_HEALTH_INSURANCE_DOMAIN}"

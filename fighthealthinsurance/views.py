@@ -2010,13 +2010,15 @@ class CompletePaymentView(View):
     """
 
     def get(self, request):
+        # Computed up front so the exception handler below can honor the JSON
+        # contract even when an unexpected error escapes _resolve_next_url.
+        wants_json = request.GET.get("format") == "json"
         try:
             data = {
                 "token": request.GET.get("token"),
                 "session_id": request.GET.get("session_id"),
             }
             next_url, error = self._resolve_next_url(data)
-            wants_json = request.GET.get("format") == "json"
             if error is not None or next_url is None:
                 message, status_code = error or ("An internal error occurred", 500)
                 if wants_json:
@@ -2031,11 +2033,18 @@ class CompletePaymentView(View):
             logger.opt(exception=True).error(
                 "Error processing payment completion from GET"
             )
+            if wants_json:
+                return self._json_error_response("An internal error occurred", 500)
             return self._render_error_page(request, "An internal error occurred", 500)
 
     def post(self, request):
         try:
-            data = json.loads(request.body)
+            try:
+                data = json.loads(request.body)
+            except json.JSONDecodeError:
+                return self._json_error_response("Invalid JSON body", 400)
+            if not isinstance(data, dict):
+                return self._json_error_response("Invalid request body", 400)
             next_url, error = self._resolve_next_url(data)
             if error is not None or next_url is None:
                 message, status_code = error or ("An internal error occurred", 500)
@@ -2043,7 +2052,7 @@ class CompletePaymentView(View):
             return JsonResponse({"next_url": next_url})
         except Exception as e:
             logger.opt(exception=True).error("Error processing payment completion")
-            return HttpResponse(status=500)
+            return self._json_error_response("An internal error occurred", 500)
 
     @staticmethod
     def _json_error_response(error: str, status_code: int) -> JsonResponse:

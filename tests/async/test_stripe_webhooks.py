@@ -179,3 +179,42 @@ class StripeWebhookTests(TestCase):
         self.assertIn("/stripe/finish-checkout?", link)
         self.assertIn("domain_id=123", link)
         self.assertIn("professional_id=456", link)
+
+    @patch(
+        "fighthealthinsurance.helpers.stripe_helpers.fhi_emails.send_checkout_session_expired"
+    )
+    def test_no_recovery_email_for_unrebuildable_payment(self, mock_send_email):
+        """Payment types with no line_items/recovery_info don't get a dead link.
+
+        Pay-what-you-want donations only store payment_type/source metadata, so
+        the complete_payment view can't recreate the checkout. We must skip the
+        recovery email rather than send a link that would only error.
+        """
+        mock_session = MagicMock()
+        mock_session.id = "cs_unique_for_donation_test"
+        mock_session.metadata = {
+            "payment_type": "donation",
+            "donation_type": "pwyw",
+            "source": "checkout",
+        }
+        mock_session.customer_email = "donor@example.com"
+
+        StripeWebhookHelper.handle_checkout_session_expired(self.client, mock_session)
+
+        mock_send_email.assert_not_called()
+
+    @patch(
+        "fighthealthinsurance.helpers.stripe_helpers.fhi_emails.send_checkout_session_expired"
+    )
+    def test_no_recovery_email_when_professional_ids_missing(self, mock_send_email):
+        """A professional subscription without domain/professional ids is skipped."""
+        mock_session = MagicMock()
+        mock_session.id = "cs_unique_for_pro_missing_ids"
+        mock_session.metadata = {
+            "payment_type": "professional_domain_subscription",
+        }
+        mock_session.customer_email = "pro@example.com"
+
+        StripeWebhookHelper.handle_checkout_session_expired(self.client, mock_session)
+
+        mock_send_email.assert_not_called()
