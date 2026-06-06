@@ -279,7 +279,7 @@ class TestFormatResultsForLLM(TestCase):
     def test_includes_pharmacy_discount_block_when_suggestion_present(self):
         # The chat tool combines directory results with the pharmacy_coupon_
         # detector's suggestion so the LLM can also recommend GoodRx, Cost
-        # Plus, and Amazon Pharmacy as a cash-pay bridge.
+        # Plus, Crush Cost, and Amazon Pharmacy as a cash-pay bridge.
         from fighthealthinsurance.financial_assistance_directory import search
         from fighthealthinsurance.pharmacy_coupon_detector import (
             suggest_for_denial,
@@ -288,11 +288,12 @@ class TestFormatResultsForLLM(TestCase):
         results = search(drug="Wegovy")
         suggestion = suggest_for_denial(drug="Wegovy")
         formatted = FinancialAssistanceTool._format_results_for_llm(results, suggestion)
-        # GoodRx / Cost Plus / Amazon must all be in the LLM context
-        # ("Amazon Search" because the drug-detected affiliate URL points
-        # at amazon.com/s rather than pharmacy.amazon.com).
+        # GoodRx / Cost Plus / Crush Cost / Amazon must all be in the LLM
+        # context ("Amazon Search" because the drug-detected affiliate URL
+        # points at amazon.com/s rather than pharmacy.amazon.com).
         self.assertIn("GoodRx", formatted)
         self.assertIn("Mark Cuban Cost Plus Drugs", formatted)
+        self.assertIn("Crush Cost", formatted)
         self.assertIn("Amazon Search", formatted)
         # OOP-max caveat surfaces too
         self.assertIn("out-of-pocket maximum", formatted.lower())
@@ -325,10 +326,12 @@ class TestPharmacyDiscountInclusion(TestCase):
         )
         callback.assert_awaited_once()
         info_text = callback.call_args[0][1]
-        # GoodRx + Cost Plus + Amazon must show up alongside the directory
-        # programs, since the prompt promises pharmacy discount options.
+        # GoodRx + Cost Plus + Crush Cost + Amazon must show up alongside
+        # the directory programs, since the prompt promises pharmacy
+        # discount options.
         self.assertIn("GoodRx", info_text)
         self.assertIn("Mark Cuban Cost Plus Drugs", info_text)
+        self.assertIn("Crush Cost", info_text)
         self.assertIn("Amazon Search", info_text)
 
     def test_handle_does_not_treat_non_drug_as_drug(self):

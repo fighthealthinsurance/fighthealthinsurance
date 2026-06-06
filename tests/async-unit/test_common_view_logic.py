@@ -102,7 +102,8 @@ class TestCommonViewLogic(TestCase):
     def test_find_next_steps_populates_pharmacy_suggestion_for_drug_denial(self):
         """For a denial whose procedure is a known drug (Wegovy), the
         next-steps payload should carry a PharmacyCouponSuggestion so the
-        consumer flow can surface GoodRx / Cost Plus / Amazon Pharmacy."""
+        consumer flow can surface GoodRx / Cost Plus / Crush Cost / Amazon
+        Pharmacy."""
         from fighthealthinsurance.pharmacy_coupon_detector import (
             PharmacyCouponSuggestion,
         )
@@ -122,7 +123,18 @@ class TestCommonViewLogic(TestCase):
                 next_steps.pharmacy_coupon_suggestion, PharmacyCouponSuggestion
             )
             assert next_steps.pharmacy_coupon_suggestion.drug_name == "wegovy"
-            assert len(next_steps.pharmacy_coupon_suggestion.pharmacy_options) == 3
+            # Pin by name set rather than count: option count is fragile as
+            # new pharmacy discount programs (e.g. Crush Cost) are added.
+            opt_names = {
+                opt.name
+                for opt in next_steps.pharmacy_coupon_suggestion.pharmacy_options
+            }
+            assert {
+                "GoodRx",
+                "Mark Cuban Cost Plus Drugs",
+                "Crush Cost",
+                "Amazon Search",
+            } <= opt_names
         finally:
             denial.delete()
 

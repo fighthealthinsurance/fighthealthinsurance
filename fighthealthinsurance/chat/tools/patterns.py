@@ -80,9 +80,9 @@ CLINICAL_TRIALS_QUERY_REGEX = (
 
 # Financial assistance directory tool - detects the call prefix only.
 # Matches: financial_assistance {JSON} or **financial_assistance {JSON}**
-# Looks up pharmacy discount programs (GoodRx, Cost Plus, Amazon Pharmacy),
-# diagnosis-specific copay foundations, manufacturer programs, safety-net
-# clinics (340B), and state Medicaid pathways.
+# Looks up pharmacy discount programs (GoodRx, Cost Plus, Crush Cost,
+# Amazon Pharmacy), diagnosis-specific copay foundations, manufacturer
+# programs, safety-net clinics (340B), and state Medicaid pathways.
 #
 # The other JSON-payload tools above bound their body with `\{[^}]*\}`, which
 # stops at the first `}`. That's fine for their tightly-schemaed payloads,

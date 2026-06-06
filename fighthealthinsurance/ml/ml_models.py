@@ -779,7 +779,7 @@ When the tool result lists a rule, quote the criteria document name and submissi
         financial_assistance_tool = """**Financial Assistance Directory Tool**: When a user is concerned about the cost of a denied prescription, treatment, or specialty drug, you can look up curated financial-assistance options using: **financial_assistance {"drug": "Wegovy", "diagnosis": "obesity", "state": "CA"}**
 
 All three keys are optional - supply whatever you know. The tool returns:
-  * Pharmacy discount programs (GoodRx, Mark Cuban Cost Plus Drugs, Amazon Pharmacy) - useful as a short-term BRIDGE while the patient appeals; out-of-pocket payments through these programs do NOT count toward the patient's deductible or out-of-pocket maximum.
+  * Pharmacy discount programs (GoodRx, Mark Cuban Cost Plus Drugs, Crush Cost, Amazon Pharmacy) - useful as a short-term BRIDGE while the patient appeals; out-of-pocket payments through these programs do NOT count toward the patient's deductible or out-of-pocket maximum.
   * Diagnosis-specific copay foundations (CancerCare, Leukemia & Lymphoma Society, MS Society, Crohn's & Colitis Foundation, ADAP for HIV, etc.).
   * Manufacturer copay cards for expensive specialty drugs (Wegovy, Ozempic, Mounjaro, Zepbound, Humira, Enbrel, Dupixent).
   * General copay foundation directories (NeedyMeds, PAN, Good Days, HealthWell, Patient Advocate Foundation, The Assistance Fund, NORD, RxAssist).

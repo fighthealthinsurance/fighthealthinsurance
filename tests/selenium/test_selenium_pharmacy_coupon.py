@@ -48,7 +48,7 @@ class SeleniumTestPharmacyCouponSection(FHISeleniumBase, StaticLiveServerTestCas
     # ------------------------------------------------------------------
     def test_microsite_wegovy_shows_pharmacy_discount_options(self):
         """The Wegovy microsite renders the Pharmacy Discount Options section
-        with all three pharmacies and the OOP-max caveat."""
+        with all four pharmacies and the OOP-max caveat."""
         self.open(f"{self.live_server_url}/microsite/glp1-denial-semaglutide-wegovy")
         self.wait_for_page_ready()
 
@@ -56,12 +56,27 @@ class SeleniumTestPharmacyCouponSection(FHISeleniumBase, StaticLiveServerTestCas
         self.assert_element("section#pharmacy-coupons")
         self.assert_text("Pharmacy Discount Options", "section#pharmacy-coupons")
 
-        # All three discount pharmacies surfaced. The Amazon option is
+        # All four discount pharmacies surfaced. The Amazon option is
         # labeled "Amazon Search" because the affiliate URL points at
         # amazon.com/s rather than the prescription pharmacy.amazon.com.
         self.assert_text("GoodRx", "section#pharmacy-coupons")
         self.assert_text("Mark Cuban Cost Plus Drugs", "section#pharmacy-coupons")
+        self.assert_text("Crush Cost", "section#pharmacy-coupons")
         self.assert_text("Amazon Search", "section#pharmacy-coupons")
+
+        # Crush Cost link goes to their price-search page (not the API
+        # endpoint), URL-encoding the drug name.
+        crush_link = self.find_element(
+            "section#pharmacy-coupons a[href*='crushcost.com']"
+        )
+        crush_href = crush_link.get_attribute("href") or ""
+        assert (
+            "price-search" in crush_href
+        ), f"Crush Cost link should point at /price-search; got {crush_href!r}"
+        assert "api.crushcost.com" not in crush_href, (
+            f"Crush Cost link must not point at their internal API; got "
+            f"{crush_href!r}"
+        )
 
         # The Wegovy-specific bridge message warns the user not to rely on
         # discounts (it's an expensive specialty drug).
@@ -131,6 +146,7 @@ class SeleniumTestPharmacyCouponSection(FHISeleniumBase, StaticLiveServerTestCas
         body = self.get_text("section#pharmacy-coupons")
         assert "GoodRx" in body
         assert "Mark Cuban Cost Plus Drugs" in body
+        assert "Crush Cost" in body
         assert "Amazon Search" in body
         # Truvada is flagged expensive (combo brand), so the bridge message
         # warns the appeal is the primary path.

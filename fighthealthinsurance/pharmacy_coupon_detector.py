@@ -2,8 +2,9 @@
 Pharmacy coupon and discount program detector.
 
 Detects when a denial concerns a prescription medication and suggests
-discount pharmacy alternatives (GoodRx, Cost Plus Drugs, Amazon Pharmacy)
-that may serve as a "bridge" while the patient fights their denial.
+discount pharmacy alternatives (GoodRx, Cost Plus Drugs, Crush Cost,
+Amazon Pharmacy) that may serve as a "bridge" while the patient fights
+their denial.
 
 Important caveat: amounts paid through discount programs typically do NOT
 count toward the patient's deductible or out-of-pocket (OOP) maximum, so
@@ -193,9 +194,9 @@ class PharmacyOption:
     url: str
     description: str
     # Whether amounts paid here typically count toward the patient's OOP max.
-    # For all of these (GoodRx, Cost Plus Drugs, Amazon Pharmacy without
-    # insurance) the answer is False; insurance must process the claim for
-    # OOP credit.
+    # For all of these (GoodRx, Cost Plus Drugs, Crush Cost, Amazon Pharmacy
+    # without insurance) the answer is False; insurance must process the claim
+    # for OOP credit.
     counts_toward_oop_max: bool = False
 
 
@@ -264,6 +265,23 @@ def _build_costplus_option(drug_name: str) -> PharmacyOption:
         description=(
             "Mail-order pharmacy with transparent pricing (manufacturer cost + "
             "15% markup + dispensing fee). Carries many common generics."
+        ),
+    )
+
+
+def _build_crushcost_option(drug_name: str) -> PharmacyOption:
+    # Crush Cost's price-search page reads `uri` as a URL-encoded drug name
+    # (the same shape as JS `encodeURIComponent`). `_slug_for_url` uses
+    # `quote(..., safe="")` so combo names like "emtricitabine/tenofovir"
+    # percent-encode their slashes and survive the round trip.
+    slug = _slug_for_url(drug_name)
+    return PharmacyOption(
+        name="Crush Cost",
+        url=f"https://crushcost.com/price-search?uri={slug}",
+        description=(
+            "Free pharmacy-discount card with retail-pharmacy price lookup. "
+            "Useful as a second quote alongside GoodRx since the two cards "
+            "frequently come back with different prices at the same counter."
         ),
     )
 
@@ -372,6 +390,7 @@ def build_suggestion(drug_name: str) -> PharmacyCouponSuggestion:
     options = [
         _build_goodrx_option(name),
         _build_costplus_option(name),
+        _build_crushcost_option(name),
         _build_amazon_option(name),
     ]
 
@@ -442,6 +461,14 @@ def suggest_for_denial(
                     description=(
                         "Transparent-pricing mail-order pharmacy. Worth checking "
                         "if your medication is a generic."
+                    ),
+                ),
+                PharmacyOption(
+                    name="Crush Cost",
+                    url="https://crushcost.com/",
+                    description=(
+                        "Free pharmacy-discount card with retail-pharmacy "
+                        "price lookup. Worth comparing alongside GoodRx."
                     ),
                 ),
                 PharmacyOption(
