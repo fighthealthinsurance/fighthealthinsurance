@@ -1,7 +1,9 @@
+import datetime
 import time
 from unittest import mock
 from django.core import mail
 from django.test import TestCase
+from django.utils import timezone
 
 from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance.ml.health_status import health_status
@@ -245,11 +247,16 @@ class TestHealthStatus(TestCase):
             _HealthStatus,
             ALERT_THROTTLE_SECONDS,
         )
+        from fighthealthinsurance.models import ModelHealthAlertState
 
         _HealthStatus._refresh(health_status)
-        # Simulate the throttle window elapsing by backdating the timestamp.
-        assert health_status._last_alert_sent_at is not None
-        health_status._last_alert_sent_at -= ALERT_THROTTLE_SECONDS + 1
+        # Simulate the throttle window elapsing by backdating the stored row.
+        backdated = timezone.now() - datetime.timedelta(
+            seconds=ALERT_THROTTLE_SECONDS + 1
+        )
+        ModelHealthAlertState.objects.filter(key="internal_models_dead").update(
+            last_alert_sent=backdated
+        )
         _HealthStatus._refresh(health_status)
 
         alerts = [
@@ -275,3 +282,40 @@ class TestHealthStatus(TestCase):
 
         assert len(mail.outbox) == 1
         assert "internal models are dead" in mail.outbox[0].subject.lower()
+
+    @mock.patch("fighthealthinsurance.ml.ml_router.ml_router")
+    def test_db_throttle_dedupes_across_pods(self, fake_router):
+        """Two independent instances (simulating two pods) sharing the DB send
+        only one alert between them, even though their in-memory throttles are
+        separate."""
+        fake_router.all_models_by_cost = [_InternalBad()]
+        from fighthealthinsurance.ml.health_status import _HealthStatus
+
+        pod_a = _HealthStatus()
+        pod_b = _HealthStatus()
+        _HealthStatus._refresh(pod_a)
+        _HealthStatus._refresh(pod_b)
+
+        alerts = [
+            m for m in mail.outbox if "internal models are dead" in m.subject.lower()
+        ]
+        assert len(alerts) == 1
+
+    @mock.patch("fighthealthinsurance.ml.ml_router.ml_router")
+    def test_alert_falls_back_to_in_memory_when_db_unavailable(self, fake_router):
+        """If the DB throttle errors, the per-pod in-memory throttle still
+        caps a single pod at one email per window."""
+        fake_router.all_models_by_cost = [_InternalBad()]
+        from fighthealthinsurance.ml.health_status import _HealthStatus
+        from fighthealthinsurance.models import ModelHealthAlertState
+
+        with mock.patch.object(
+            ModelHealthAlertState, "try_claim", side_effect=Exception("db down")
+        ):
+            _HealthStatus._refresh(health_status)  # in-memory claim -> sends
+            _HealthStatus._refresh(health_status)  # in-memory throttle -> suppressed
+
+        alerts = [
+            m for m in mail.outbox if "internal models are dead" in m.subject.lower()
+        ]
+        assert len(alerts) == 1

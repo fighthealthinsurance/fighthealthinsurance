@@ -3540,3 +3540,49 @@ class UCRLookup(models.Model):
 
     def __str__(self) -> str:
         return f"UCRLookup<denial={self.denial_id} created={self.created}>"
+
+
+class ModelHealthAlertState(models.Model):
+    """Cross-pod throttle for model-health alert emails.
+
+    Each web pod runs its own in-process liveliness check, so without
+    coordination every pod would email support when the internal models go
+    dead. This single-row-per-key table records when the last alert email was
+    sent so that, across all pods sharing the database, at most one email goes
+    out per throttle window.
+    """
+
+    key = models.CharField(max_length=64, unique=True)
+    last_alert_sent = models.DateTimeField()
+
+    @classmethod
+    def try_claim(cls, key: str, throttle_seconds: int) -> bool:
+        """Atomically claim the right to send an alert for ``key``.
+
+        Returns ``True`` for at most one caller per ``throttle_seconds`` window
+        across every process sharing this database, ``False`` otherwise.
+
+        Implemented with a conditional ``UPDATE`` (a single atomic statement)
+        that only succeeds when the stored timestamp is older than the window,
+        plus a ``get_or_create`` for the first-ever call. No explicit locking
+        or transaction is needed: each interleaving still yields exactly one
+        winner because both the conditional update and the unique-key insert
+        are individually atomic.
+        """
+        now = timezone.now()
+        cutoff = now - datetime.timedelta(seconds=throttle_seconds)
+        # Only the caller that flips a stale timestamp forward wins the slot.
+        claimed = cls.objects.filter(key=key, last_alert_sent__lte=cutoff).update(
+            last_alert_sent=now
+        )
+        if claimed:
+            return True
+        # The row is either fresh (someone alerted recently) or absent. The
+        # caller that creates it owns the very first slot; everyone else loses.
+        _, created = cls.objects.get_or_create(
+            key=key, defaults={"last_alert_sent": now}
+        )
+        return created
+
+    def __str__(self) -> str:
+        return f"ModelHealthAlertState<{self.key}@{self.last_alert_sent}>"

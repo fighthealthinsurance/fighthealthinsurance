@@ -216,19 +216,13 @@ class _HealthStatus:
         # address either way, and a duplicate page during an active incident
         # is more noise than signal). The error log above still fires every
         # refresh so log-based monitoring isn't suppressed.
-        now = time.monotonic()
-        with self._lock:
-            last = self._last_alert_sent_at
-            if last is not None and now - last < ALERT_THROTTLE_SECONDS:
-                logger.debug(
-                    f"Suppressing alert email; last sent {now - last:.0f}s ago"
-                )
-                return
-            # Mark sent before the SMTP call so a concurrent caller doesn't
-            # double-send while we're inside send_mail. If SMTP fails we still
-            # keep the timestamp — retrying every refresh against a broken
-            # mail server defeats the throttle's purpose.
-            self._last_alert_sent_at = now
+        #
+        # The authoritative throttle is a shared DB row so that, with multiple
+        # web pods each running their own check, the cluster sends at most one
+        # email per window. The in-memory timestamp is a per-pod fallback used
+        # only if the DB throttle is unreachable.
+        if not self._should_send_alert():
+            return
 
         try:
             from django.conf import settings
@@ -245,6 +239,55 @@ class _HealthStatus:
             logger.opt(exception=True).error(
                 "Failed to send internal-models-dead alert email"
             )
+
+    def _should_send_alert(self) -> bool:
+        """Decide whether this caller should send the alert email now.
+
+        Prefers a cross-pod DB throttle; on any DB error falls back to the
+        per-pod in-memory throttle so a database hiccup degrades to "one email
+        per pod per hour" rather than one per refresh.
+        """
+        try:
+            from django.db import close_old_connections
+            from fighthealthinsurance.models import ModelHealthAlertState
+
+            # This can run from the long-lived refresh timer thread, which
+            # never gets Django's per-request connection cleanup. Drop any
+            # stale connection first so we don't fall back to the per-pod
+            # throttle (and lose cluster-wide dedup) on a dead socket.
+            close_old_connections()
+
+            claimed = ModelHealthAlertState.try_claim(
+                "internal_models_dead", ALERT_THROTTLE_SECONDS
+            )
+            # Keep the in-memory fallback timestamp warm so a later DB outage
+            # doesn't immediately re-open the floodgates on this pod.
+            if claimed:
+                with self._lock:
+                    self._last_alert_sent_at = time.monotonic()
+            else:
+                logger.debug("Suppressing alert email; throttled cluster-wide")
+            return claimed
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Cross-pod alert throttle unavailable; using per-pod throttle"
+            )
+            return self._claim_in_memory_alert_slot()
+
+    def _claim_in_memory_alert_slot(self) -> bool:
+        """Per-pod fallback throttle. Returns True if this pod may send now."""
+        now = time.monotonic()
+        with self._lock:
+            last = self._last_alert_sent_at
+            if last is not None and now - last < ALERT_THROTTLE_SECONDS:
+                logger.debug(
+                    f"Suppressing alert email; last sent {now - last:.0f}s ago"
+                )
+                return False
+            # Mark sent before the SMTP call so a concurrent caller doesn't
+            # double-send while we're inside send_mail.
+            self._last_alert_sent_at = now
+            return True
 
     def _refresh(self):
         """
