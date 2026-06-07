@@ -74,6 +74,36 @@ _INLINE_CODE = re.compile(
     r"\b(\d{5}|[ABCDEGHJKLPQRSTV]\d{4})(?:[-\s][A-Z0-9]{2})?\b", re.IGNORECASE
 )
 
+# Positive context cues that mark a free-text token as a CPT/HCPCS code inside a
+# prior-authorization listing. ``_scan_text_for_codes`` only emits a record when
+# one of these appears in the surrounding context window; without this gate the
+# ``_INLINE_CODE`` regex matches any bare 5-digit number (ZIP codes, dollar
+# amounts, member/group IDs, fax/phone fragments) and would fabricate
+# "requires prior authorization" rows. Compared lowercase against ``ctx_lower``.
+# Cues are kept specific on purpose: a bare ``"authorization"`` matches
+# incidental fragments like ``"Authorization # 12345"`` and a bare
+# ``"procedure"`` matches ``"Procedure date: 90210"`` — both would re-introduce
+# false PA rows from incidental 5-digit numbers. ``"procedure code"`` already
+# covers ``"procedure codes"`` via substring.
+_PA_CONTEXT_CUES: frozenset[str] = frozenset(
+    {
+        "prior auth",
+        "prior authorization",
+        "authorization required",
+        "preauth",
+        "pre-auth",
+        "precert",
+        "pre-cert",
+        "precertification",
+        "auth required",
+        "requires pa",
+        "pa required",
+        "cpt",
+        "hcpcs",
+        "procedure code",
+    }
+)
+
 # Column header keywords → canonical field names. Headers are normalised
 # (lowercased, whitespace squashed) before lookup.
 _COLUMN_ALIASES: Dict[str, str] = {
@@ -374,6 +404,12 @@ def _scan_text_for_codes(
             code = m.group(1).upper()
             context = " ".join(lines[max(0, i - 1) : i + 3])
             ctx_lower = context.lower()
+            # Require positive PA/CPT context before treating the token as a
+            # code. Without a cue nearby it is almost certainly an incidental
+            # 5-digit number (ZIP, dollar amount, member/group ID, fax/phone),
+            # not a procedure code that requires prior authorization.
+            if not any(cue in ctx_lower for cue in _PA_CONTEXT_CUES):
+                continue
             requires_pa = True
             notification_only = False
             if any(

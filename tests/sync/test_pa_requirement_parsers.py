@@ -15,6 +15,7 @@ from fighthealthinsurance.pa_requirement_parsers import (
     _dedupe,
     _map_columns,
     _rows_to_requirements,
+    _scan_text_for_codes,
     apply_enrichment,
     enrichment_for_host,
     parse_csv_pa_list,
@@ -310,3 +311,87 @@ class CSVParserTests(TestCase):
         )
         reqs = parse_csv_pa_list(csv_data)
         self.assertEqual(len(reqs), 1)
+
+
+class ScanTextForCodesTests(TestCase):
+    """Free-text fallback scanning (used for PDF pages with no detectable table).
+
+    The scanner must only emit requirements when surrounding text carries a
+    positive PA/CPT cue; otherwise incidental 5-digit numbers (ZIPs, dollar
+    amounts, member/group IDs) would become false "requires prior auth" rows.
+    """
+
+    def test_bare_non_code_numbers_without_pa_context_yield_nothing(self):
+        # Member/group IDs and a ZIP code all match the 5-digit _INLINE_CODE
+        # regex but appear with no PA/CPT context — none should be emitted.
+        text = "Member ID: 12345\n" "Group Number: 67890\n" "ZIP: 90210"
+        reqs = _scan_text_for_codes(text)
+        self.assertEqual(reqs, [])
+
+    def test_dollar_amount_without_pa_context_yields_nothing(self):
+        # "$10,000" extracts a bare "10000"; without PA context it must be
+        # ignored rather than treated as a procedure code.
+        text = "Estimated out-of-pocket maximum is $10,000 per plan year."
+        reqs = _scan_text_for_codes(text)
+        self.assertEqual(reqs, [])
+
+    def test_code_with_pa_context_is_extracted(self):
+        text = (
+            "The following CPT codes require prior authorization:\n"
+            "72148 MRI lumbar spine"
+        )
+        reqs = _scan_text_for_codes(text)
+        self.assertEqual(len(reqs), 1)
+        self.assertEqual(reqs[0].cpt_hcpcs_code, "72148")
+        self.assertTrue(reqs[0].requires_pa)
+
+    def test_negative_phrase_with_context_sets_requires_pa_false(self):
+        text = "CPT 72148 does not require prior authorization."
+        reqs = _scan_text_for_codes(text)
+        self.assertEqual(len(reqs), 1)
+        self.assertEqual(reqs[0].cpt_hcpcs_code, "72148")
+        self.assertFalse(reqs[0].requires_pa)
+
+    def test_notification_only_context_sets_flag(self):
+        # Advance-notification language carries a "procedure code" cue but no
+        # "authorization", so the record is flagged notification-only.
+        text = (
+            "Advance notification is required for the following procedure codes:\n"
+            "27447 Total knee arthroplasty"
+        )
+        reqs = _scan_text_for_codes(text)
+        self.assertEqual(len(reqs), 1)
+        self.assertEqual(reqs[0].cpt_hcpcs_code, "27447")
+        self.assertTrue(reqs[0].notification_only)
+        self.assertTrue(reqs[0].requires_pa)
+
+    def test_hcpcs_code_with_pa_context_is_extracted(self):
+        text = (
+            "HCPCS codes requiring prior authorization:\n" "J0490 Belimumab injection"
+        )
+        reqs = _scan_text_for_codes(text)
+        self.assertEqual(len(reqs), 1)
+        self.assertEqual(reqs[0].cpt_hcpcs_code, "J0490")
+        self.assertTrue(reqs[0].requires_pa)
+
+    def test_source_document_is_propagated(self):
+        text = (
+            "Prior authorization is required for procedure code 72148.\n"
+            "72148 MRI lumbar spine"
+        )
+        reqs = _scan_text_for_codes(text, source_document="payer.pdf")
+        self.assertTrue(reqs)
+        self.assertTrue(all(r.source_document == "payer.pdf" for r in reqs))
+
+    def test_authorization_number_fragment_yields_nothing(self):
+        # A bare "Authorization # 12345" fragment is an incidental reference
+        # number, not a PA code listing. With the broad "authorization" cue
+        # removed, the lone 5-digit token must no longer be emitted.
+        reqs = _scan_text_for_codes("Authorization # 12345")
+        self.assertEqual(reqs, [])
+
+    def test_procedure_date_fragment_yields_nothing(self):
+        # "Procedure date: 90210" carries the word "procedure" but no
+        # "procedure code" cue; the bare 5-digit date token must be ignored.
+        reqs = _scan_text_for_codes("Procedure date: 90210")
+        self.assertEqual(reqs, [])
