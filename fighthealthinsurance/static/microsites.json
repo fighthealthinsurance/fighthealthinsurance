@@ -40,6 +40,54 @@
       "impact of delayed MRI diagnosis outcomes"
     ]
   },
+  "zepbound-denial": {
+    "slug": "zepbound-denial",
+    "title": "Appealing GLP-1 & Zepbound Weight-Loss Denials",
+    "default_procedure": "Zepbound (tirzepatide)",
+    "default_condition": "Obesity / Weight Management",
+    "tagline": "Insurers love to call GLP-1s 'cosmetic' or 'not covered'—here's how to fight a Zepbound, Wegovy, or Saxenda denial.",
+    "hero_h1": "Appeal Your Zepbound or GLP-1 Denial",
+    "hero_subhead": "Obesity is a disease, not a lifestyle choice—your appeal can say so.",
+    "intro": "GLP-1 and GIP/GLP-1 weight-management medications like Zepbound, Wegovy, and Saxenda get denied constantly—often with a blanket 'weight-loss drug exclusion,' a 'cosmetic' label, or a step-therapy requirement. But these are FDA-approved treatments for a recognized disease, and several carry additional FDA indications (cardiovascular risk reduction, obstructive sleep apnea). A focused appeal that names the right indication and the exact plan language has a real shot at overturning the denial.",
+    "common_denial_reasons": [
+      "Weight-loss medications are excluded under your plan",
+      "Considered cosmetic or for lifestyle",
+      "Step therapy / try other options first",
+      "Does not meet BMI or medical-necessity criteria",
+      "Non-formulary"
+    ],
+    "how_we_help": "We help you frame your denial around the FDA-approved indication you're actually being treated for, the recognition of obesity as a disease, and the exact exclusion language in your plan—then generate an appeal letter you can submit today.",
+    "cta": "Start your GLP-1 / Zepbound appeal—it takes about 3 minutes.",
+    "manufacturer": "Eli Lilly (Zepbound); Novo Nordisk (Wegovy, Saxenda)",
+    "faq": [
+      {
+        "question": "My plan says weight-loss drugs are excluded. Can I still appeal?",
+        "answer": "Often yes. Ask the plan to quote the exact exclusion language and show how it applies to the specific FDA-approved indication you're being treated for. If you're being treated for a condition like cardiovascular risk or obstructive sleep apnea, a blanket 'weight-loss' exclusion may not reach it."
+      },
+      {
+        "question": "Is Zepbound covered for anything besides weight loss?",
+        "answer": "Tirzepatide (Zepbound) is FDA-approved for chronic weight management and for moderate-to-severe obstructive sleep apnea in adults with obesity. Semaglutide (Wegovy) is also approved to reduce the risk of major cardiovascular events in certain adults. Naming the indication your doctor is treating can change how the plan must evaluate the claim."
+      },
+      {
+        "question": "What if the insurer calls it 'cosmetic'?",
+        "answer": "The American Medical Association recognized obesity as a disease in 2013. Anti-obesity medications are FDA-approved treatments, not cosmetic products—your appeal can make that point directly and ask the reviewer to apply individualized medical-necessity criteria."
+      },
+      {
+        "question": "They want me to try other drugs first (step therapy). Now what?",
+        "answer": "You can request a step-therapy override where preferred drugs were tried and failed, are contraindicated, or are expected to be ineffective. Your appeal should ask for the override and the plan's specific clinical criteria."
+      }
+    ],
+    "evidence_snippets": [
+      "The American Medical Association recognized obesity as a chronic disease in 2013; anti-obesity medications are FDA-approved treatments rather than cosmetic products.",
+      "Several GLP-1/GIP medications carry FDA-approved indications beyond weight management—for example, semaglutide (Wegovy) for reducing major cardiovascular events in adults with established cardiovascular disease, and tirzepatide (Zepbound) for moderate-to-severe obstructive sleep apnea in adults with obesity.",
+      "When a plan applies a categorical weight-loss-drug exclusion, the exact plan language should be reviewed against the specific FDA-approved indication being treated."
+    ],
+    "pubmed_search_terms": [
+      "tirzepatide obesity efficacy",
+      "semaglutide cardiovascular outcomes SELECT trial",
+      "tirzepatide obstructive sleep apnea"
+    ]
+  },
   "ct-scan-denial": {
     "slug": "ct-scan-denial",
     "title": "Appealing CT Scan Denials",

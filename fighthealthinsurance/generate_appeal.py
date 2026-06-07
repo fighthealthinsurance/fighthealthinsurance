@@ -492,12 +492,111 @@ class PostSurgicalRehabAppeal(SpecializedDenialTemplate):
         )
 
 
+class GLP1WeightLossAppeal(SpecializedDenialTemplate):
+    name = "GLP-1 / anti-obesity medication denial (Wegovy, Zepbound, Saxenda)"
+    # Scoped to weight-management / anti-obesity GLP-1 use. Diabetes-only
+    # GLP-1 denials (e.g., Ozempic/Mounjaro for type 2 diabetes) are left to
+    # SpecialtyMedicationAppeal; this template adds the obesity-as-disease,
+    # "not cosmetic," and FDA-comorbidity-indication arguments that are
+    # specific to weight-loss coverage fights. SpecialtyMedicationAppeal may
+    # also fire on the drug name — detect_specialized_templates returns every
+    # match by design, so the two are complementary, not exclusive.
+    # Match only when the denial actually references an anti-obesity / GLP-1
+    # *medication* (brand or generic) or an explicit weight-loss/anti-obesity
+    # drug phrase — never an obesity/overweight diagnosis alone, which would
+    # otherwise attach a weight-management-medication letter to unrelated
+    # denials (bariatric surgery, nutrition counseling, or sleep-study care
+    # that merely carry an obesity diagnosis).
+    text_patterns = (
+        r"\b(?:wegovy|zepbound|saxenda)\b",
+        r"\banti[\s\-]?obesity\s+"
+        r"(?:drug|medication|medications|agent|agents|rx|therap|pharmacotherap)",
+        r"\bweight[\s\-]?(?:loss|management)\s+"
+        r"(?:drug|medication|medications|agent|agents|injection|injections|rx|pill|pills|therap)",
+        r"\bGLP[\s\-]?1\b.*\b(?:weight|obesit)",
+        r"\b(?:semaglutide|tirzepatide|liraglutide)\b.*\b(?:weight|obesit)",
+    )
+    procedure_patterns = (
+        r"\b(?:wegovy|zepbound|saxenda)\b",
+        r"\banti[\s\-]?obesity\s+(?:drug|medication|medications|agent|agents)\b",
+        r"\bweight[\s\-]?(?:loss|management)\s+"
+        r"(?:drug|medication|medications|agent|agents|injection|injections)\b",
+    )
+    # No diagnosis_patterns by design: an obesity/overweight diagnosis alone is
+    # not sufficient — a GLP-1 / anti-obesity medication must be referenced.
+    citations = (
+        "American Medical Association recognition of obesity as a disease "
+        "(AMA Policy H-440.842, adopted 2013)",
+        "FDA-approved labeling for the prescribed anti-obesity medication — "
+        "e.g., Wegovy (semaglutide 2.4 mg) for chronic weight management and, "
+        "under its 2024 SELECT-trial indication, reduction of major adverse "
+        "cardiovascular events; Zepbound (tirzepatide) for chronic weight "
+        "management and for moderate-to-severe obstructive sleep apnea in "
+        "adults with obesity",
+        "Affordable Care Act Section 1557 non-discrimination, " "42 U.S.C. § 18116",
+        "ERISA § 503 / 29 C.F.R. § 2560.503-1 (full and fair review — "
+        "disclosure of the clinical criteria, reviewer credentials, and the "
+        "exact plan-exclusion language relied upon)",
+        "CMS 2024 Final Rule on the use of algorithms and artificial "
+        "intelligence in coverage determinations",
+    )
+
+    @classmethod
+    def static_appeal(cls) -> str:
+        return (
+            "Re: Appeal of denied weight-management medication, "
+            "claim {claim_id}\n\n"
+            "Dear {insurance_company},\n\n"
+            "I am appealing the denial of {procedure} for {diagnosis}. "
+            "Anti-obesity medications such as GLP-1 and GIP/GLP-1 receptor "
+            "agonists are FDA-approved treatments for a recognized disease, "
+            "and the denial as issued does not engage with that individualized "
+            "clinical analysis.\n\n"
+            "1. Obesity is a disease, not a cosmetic concern. The American "
+            "Medical Association formally recognized obesity as a disease in "
+            "2013 (Policy H-440.842). To the extent this denial relies on a "
+            "'cosmetic,' 'lifestyle,' or 'weight-loss' exclusion, that "
+            "exclusion does not properly reach FDA-approved pharmacotherapy "
+            "prescribed to treat a diagnosed disease. Please quote the exact "
+            "plan language relied upon and explain how it encompasses the "
+            "FDA-approved indication at issue.\n\n"
+            "2. FDA-approved indication. The requested medication is FDA-"
+            "approved for the patient's condition — chronic weight management "
+            "in patients with obesity, or with overweight and a weight-related "
+            "comorbidity — and, for several agents, additional medical "
+            "indications (Wegovy for reducing major adverse cardiovascular "
+            "events in adults with established cardiovascular disease; "
+            "Zepbound for moderate-to-severe obstructive sleep apnea in adults "
+            "with obesity). Where the patient is being treated for such an "
+            "indication, the therapy treats a covered medical condition and is "
+            "medically necessary.\n\n"
+            "3. Individualized, full-and-fair review. Under ERISA § 503 "
+            "(29 C.F.R. § 2560.503-1) and ACA Section 1557 (42 U.S.C. "
+            "§ 18116), please produce the specific clinical criteria applied, "
+            "the credentials of the reviewing clinician, and any internal rule "
+            "or guideline relied upon. Where the patient has already been "
+            "stabilized on this therapy, I request continuity-of-care "
+            "protection so that treatment is not interrupted during this "
+            "appeal.\n\n"
+            "4. CMS 2024 Final Rule on algorithmic coverage determinations. "
+            "If an automated tool contributed to this denial, the final "
+            "decision must still rest on an individualized clinical review by "
+            "a qualified human reviewer; the algorithm may not be the sole "
+            "basis for the adverse determination. Please disclose whether such "
+            "a tool was used and identify it.\n\n"
+            "I respectfully request that the denial be overturned and the "
+            "medication authorized without further delay.\n\n"
+            "Sincerely,\n[Name]\n"
+        )
+
+
 SPECIALIZED_DENIAL_TEMPLATES: tuple[type[SpecializedDenialTemplate], ...] = (
     MentalHealthParityAppeal,
     AdvancedImagingAppeal,
     SpecialtyMedicationAppeal,
     PhysicalTherapyContinuationAppeal,
     PostSurgicalRehabAppeal,
+    GLP1WeightLossAppeal,
 )
 
 
@@ -1358,6 +1457,7 @@ class AppealGenerator(object):
         uspstf_context=None,
         clinical_trials_context=None,
         medication_context=None,
+        regulatory_citation_context=None,
     ) -> Optional[str]:
         """
         Constructs a prompt for generating a health insurance appeal based on denial details and optional contextual information.
@@ -1499,6 +1599,11 @@ class AppealGenerator(object):
                 f"curated context where relevant. Do not invent citations beyond "
                 f"those listed elsewhere.\n{medication_context}"
             )
+        if regulatory_citation_context:
+            # Pre-framed (header + conservative caveats) by
+            # regulatory_citations.get_regulatory_citation_context, so just
+            # append it as its own section.
+            base = f"{base}\n\n{regulatory_citation_context}"
         if (
             insurance_company is not None
             and insurance_company != ""
@@ -1548,6 +1653,43 @@ class AppealGenerator(object):
             else:
                 return f"{base}Why is {procedure} is medically necessary?"
         else:
+            return None
+
+    @staticmethod
+    def _collect_regulatory_context(denial) -> Optional[str]:
+        """Surface curated state/federal prior-authorization reform citations
+        for the denial's state, framed conservatively by plan type.
+
+        Mirrors ``_collect_medication_context``: defensive by design — any
+        import/attribute failure returns ``None`` so the appeal pipeline keeps
+        working, and the underlying selector only returns content for states we
+        have a verified hook for (so most appeals are unaffected).
+        """
+        try:
+            from fighthealthinsurance.regulatory_citations import (
+                get_regulatory_citation_context,
+            )
+        except Exception as e:
+            logger.opt(exception=True).debug(f"regulatory_citations unavailable: {e}")
+            return None
+
+        try:
+            # Best-effort self-insured/ERISA signal from the linked carrier; a
+            # TPA administers self-funded employer (ERISA) plans. None when we
+            # cannot tell, which selects the neutral caveat wording.
+            self_insured: Optional[bool] = None
+            ico = getattr(denial, "insurance_company_obj", None)
+            if ico is not None and getattr(ico, "is_tpa", False):
+                self_insured = True
+            return get_regulatory_citation_context(
+                state=getattr(denial, "your_state", None),
+                denial_text=getattr(denial, "denial_text", None),
+                procedure=getattr(denial, "procedure", None),
+                diagnosis=getattr(denial, "diagnosis", None),
+                self_insured=self_insured,
+            )
+        except Exception as e:
+            logger.opt(exception=True).debug(f"_collect_regulatory_context failed: {e}")
             return None
 
     @staticmethod
@@ -1707,6 +1849,7 @@ class AppealGenerator(object):
                 payer_policy_context = ""
 
         medication_context = self._collect_medication_context(denial)
+        regulatory_citation_context = self._collect_regulatory_context(denial)
 
         open_prompt = self.make_open_prompt(
             denial_text=denial.denial_text,
@@ -1735,6 +1878,7 @@ class AppealGenerator(object):
             uspstf_context=uspstf_context,
             clinical_trials_context=clinical_trials_context,
             medication_context=medication_context,
+            regulatory_citation_context=regulatory_citation_context,
         )
         open_medically_necessary_prompt = self.make_open_med_prompt(
             procedure=denial.procedure,

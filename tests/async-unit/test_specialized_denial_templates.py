@@ -16,6 +16,7 @@ from fighthealthinsurance.generate_appeal import (
     AdvancedImagingAppeal,
     AppealGenerator,
     AppealTemplateGenerator,
+    GLP1WeightLossAppeal,
     MentalHealthParityAppeal,
     PhysicalTherapyContinuationAppeal,
     PostSurgicalRehabAppeal,
@@ -221,6 +222,65 @@ class TestPostSurgicalRehabAppealMatches(unittest.TestCase):
         self.assertIn("CMS 2024 Final Rule", text)
 
 
+class TestGLP1WeightLossAppealMatches(unittest.TestCase):
+    def test_matches_zepbound_text(self):
+        self.assertTrue(
+            GLP1WeightLossAppeal.matches(
+                "Coverage for Zepbound is denied.",
+            )
+        )
+
+    def test_matches_anti_obesity_medication(self):
+        self.assertTrue(
+            GLP1WeightLossAppeal.matches(
+                "Anti-obesity medication is excluded under your plan.",
+            )
+        )
+
+    def test_matches_wegovy_with_weight_context(self):
+        self.assertTrue(
+            GLP1WeightLossAppeal.matches(
+                "Wegovy for weight loss is denied as not medically necessary.",
+            )
+        )
+
+    def test_does_not_match_obesity_diagnosis_without_medication(self):
+        # An obesity/overweight diagnosis alone must NOT fire the medication
+        # template — e.g. bariatric surgery or nutrition-counseling denials
+        # that merely carry an obesity diagnosis.
+        self.assertFalse(
+            GLP1WeightLossAppeal.matches(
+                "Bariatric surgery is denied as not medically necessary.",
+                procedure="Bariatric surgery",
+                diagnosis="Obesity",
+            )
+        )
+
+    def test_does_not_match_diabetes_ozempic_denial(self):
+        # Diabetes GLP-1 denials are handled by SpecialtyMedicationAppeal;
+        # this weight-management template should not fire on a bare
+        # Ozempic-for-diabetes denial with no weight/obesity context.
+        self.assertFalse(
+            GLP1WeightLossAppeal.matches(
+                "Ozempic is denied; patient must try metformin first.",
+                diagnosis="Type 2 diabetes",
+            )
+        )
+
+    def test_static_appeal_cites_obesity_disease_and_fda(self):
+        text = GLP1WeightLossAppeal.static_appeal()
+        self.assertIn("H-440.842", text)
+        self.assertIn("42 U.S.C. § 18116", text)
+        self.assertIn("CMS 2024 Final Rule", text)
+
+    def test_static_appeal_uses_substitution_placeholders(self):
+        text = GLP1WeightLossAppeal.static_appeal()
+        self.assertIn("{insurance_company}", text)
+        self.assertIn("{claim_id}", text)
+        self.assertIn("{procedure}", text)
+        self.assertIn("{diagnosis}", text)
+
+
 class TestMatchingFlags(unittest.TestCase):
     """`matches()` uses IGNORECASE and DOTALL so that real-world denial
     letters (which routinely break key phrases across newlines) still
@@ -315,13 +375,19 @@ class TestDetectSpecializedTemplates(unittest.TestCase):
         self.assertIn(MentalHealthParityAppeal, matches)
         self.assertIn(PhysicalTherapyContinuationAppeal, matches)
 
+    def test_detect_picks_glp1_weight_loss(self):
+        matches = detect_specialized_templates(
+            "Zepbound for chronic weight management is denied.",
+        )
+        self.assertIn(GLP1WeightLossAppeal, matches)
+
     def test_detect_returns_empty_for_non_matching_denial(self):
         matches = detect_specialized_templates(
             "Routine annual checkup paid in full; no denial.",
         )
         self.assertEqual(matches, [])
 
-    def test_specialized_registry_contains_all_five_templates(self):
+    def test_specialized_registry_contains_all_templates(self):
         names = {t.__name__ for t in SPECIALIZED_DENIAL_TEMPLATES}
         self.assertEqual(
             names,
@@ -331,6 +397,7 @@ class TestDetectSpecializedTemplates(unittest.TestCase):
                 "SpecialtyMedicationAppeal",
                 "PhysicalTherapyContinuationAppeal",
                 "PostSurgicalRehabAppeal",
+                "GLP1WeightLossAppeal",
             },
         )
 
