@@ -483,6 +483,102 @@ class TestAppealsBackendHelperWithCitations:
             call_kwargs = mock_make_appeals_wrapper.call_args[1]
             assert call_kwargs["uspstf_context"] == uspstf_payload
 
+    @pytest.mark.asyncio
+    async def test_clinical_trials_context_passed_to_make_appeals(self):
+        """ClinicalTrials context from the gather block is threaded into
+        make_appeals.
+
+        Mirrors the USPSTF/PA routing pattern, but the trials reader is an
+        async method on the shared ``clinical_trials`` helper (DB-only — the
+        live registry call happened earlier in the prefetch), so it's patched
+        directly rather than through the ``sync_to_async`` router.
+        """
+        mock_denial = _make_mock_denial()
+        mock_denial_query = _make_mock_denial_query(mock_denial)
+
+        parameters = {
+            "denial_id": "12345",
+            "email": "test@example.com",
+            "semi_sekret": "test-secret",
+        }
+
+        ct_payload = (
+            "CLINICAL TRIAL EVIDENCE (relevant when the denial cites "
+            '"experimental" or "investigational" grounds):\n\n'
+            "NCT: NCT12345678; Title: Pembrolizumab in Melanoma"
+        )
+
+        with (
+            patch(
+                "fighthealthinsurance.common_view_logic.Denial.objects.filter",
+                return_value=mock_denial_query,
+            ),
+            patch(
+                "fighthealthinsurance.common_view_logic.Denial.get_hashed_email",
+                return_value="hashed",
+            ),
+            patch.object(
+                AppealsBackendHelper,
+                "regex_denial_processor",
+            ) as mock_regex_processor,
+            patch(
+                "fighthealthinsurance.common_view_logic.MLCitationsHelper.generate_citations_for_denial",
+                new_callable=AsyncMock,
+                return_value="ML Citation 1",
+            ),
+            patch.object(
+                AppealsBackendHelper.pmt,
+                "find_context_for_denial",
+                new_callable=AsyncMock,
+                return_value="PubMed context data",
+            ),
+            patch.object(
+                AppealsBackendHelper.clinical_trials,
+                "get_context_for_denial",
+                new_callable=AsyncMock,
+                return_value=ct_payload,
+            ) as mock_get_ct_context,
+            patch(
+                "fighthealthinsurance.common_view_logic.sync_to_async",
+            ) as mock_sync_to_async,
+            patch(
+                "fighthealthinsurance.common_view_logic.interleave_iterator_for_keep_alive",
+            ) as mock_interleave,
+            patch(
+                "fighthealthinsurance.common_view_logic.ProposedAppeal",
+            ) as mock_proposed_appeal_cls,
+        ):
+            mock_regex_processor.get_appeal_templates = AsyncMock(return_value=[])
+
+            mock_make_appeals_wrapper = AsyncMock(
+                return_value=["Appeal with clinical trials context"]
+            )
+            mock_pa_wrapper = AsyncMock(return_value="")
+            mock_sync_to_async.side_effect = _sync_to_async_router(
+                mock_pa_wrapper, mock_make_appeals_wrapper
+            )
+
+            mock_pa_instance = MagicMock()
+            mock_pa_instance.id = 1
+            mock_pa_instance.asave = AsyncMock()
+            mock_proposed_appeal_cls.return_value = mock_pa_instance
+
+            mock_proposed_appeal_cls.objects.filter.return_value = (
+                _make_empty_proposed_appeal_query()
+            )
+
+            mock_interleave.side_effect = passthrough_interleave
+
+            async for _ in AppealsBackendHelper.generate_appeals(parameters):
+                pass
+
+            # The reader was consulted (DB-only cache read), and its output
+            # reached make_appeals as the clinical_trials_context kwarg.
+            mock_get_ct_context.assert_awaited()
+            mock_make_appeals_wrapper.assert_called_once()
+            call_kwargs = mock_make_appeals_wrapper.call_args[1]
+            assert call_kwargs["clinical_trials_context"] == ct_payload
+
 
 @pytest.mark.parametrize(
     "saved_texts,synthesis_should_run",
@@ -649,6 +745,6 @@ async def test_synthesis_skips_verbatim_duplicate():
     assert done_frames[0]["new_appeals"] == len(saved_texts)
     # And no chunk should carry the "synthesized": "true" marker.
     for c in chunks:
-        assert '"synthesized": "true"' not in c, (
-            f"verbatim-duplicate synthesis should have been skipped, got chunk: {c}"
-        )
+        assert (
+            '"synthesized": "true"' not in c
+        ), f"verbatim-duplicate synthesis should have been skipped, got chunk: {c}"

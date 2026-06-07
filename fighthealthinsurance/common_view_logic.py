@@ -2360,6 +2360,7 @@ class AppealsBackendHelper:
     regex_denial_processor = ProcessDenialRegex()
     pmt = PubMedTools()
     nice = NICETools()
+    clinical_trials = ClinicalTrialsTools()
 
     @classmethod
     async def generate_appeals(cls, parameters) -> AsyncIterator[str]:
@@ -2908,7 +2909,7 @@ class AppealsBackendHelper:
             # because the worst case here is a couple of indexed ORM queries.
             clinical_trials_context_awaitable = tracked_awaitable(
                 asyncio.wait_for(
-                    ClinicalTrialsTools().get_context_for_denial(denial),
+                    cls.clinical_trials.get_context_for_denial(denial),
                     timeout=10,
                 ),
                 substep="clinical_trials",
@@ -3033,7 +3034,7 @@ class AppealsBackendHelper:
                 # degrade-to-None behavior.
                 try:
                     clinical_trials_context = (
-                        await ClinicalTrialsTools().get_context_for_denial(denial)
+                        await cls.clinical_trials.get_context_for_denial(denial)
                     )
                 except Exception as inner:
                     logger.opt(exception=True).debug(
@@ -3063,7 +3064,7 @@ class AppealsBackendHelper:
             # (which wraps a sync getter in sync_to_async).
             try:
                 clinical_trials_context = (
-                    await ClinicalTrialsTools().get_context_for_denial(denial)
+                    await cls.clinical_trials.get_context_for_denial(denial)
                 )
             except Exception as e:
                 logger.opt(exception=True).debug(
