@@ -129,6 +129,57 @@ interface ChatState {
   showVoiceIntake: boolean;
 }
 
+// Shared styles that keep long/no-space content (URLs, claim IDs, OCR strings)
+// from breaking the layout or causing horizontal page overflow.
+const messageContentStyle: React.CSSProperties = {
+  minWidth: 0,
+  overflowWrap: "anywhere",
+  wordBreak: "break-word",
+};
+
+// Above this length a message is collapsed behind a "Show more" toggle so a
+// huge paste doesn't render as one giant block in the DOM.
+const MESSAGE_COLLAPSE_THRESHOLD = 4000;
+const MESSAGE_PREVIEW_CHARS = 2000;
+
+// Renders a chat message body, collapsing very long content behind a toggle.
+const ChatMessageContent: React.FC<{ content: string }> = ({ content }) => {
+  const [expanded, setExpanded] = useState(false);
+  const isLong = content.length > MESSAGE_COLLAPSE_THRESHOLD;
+
+  if (!isLong) {
+    return (
+      <Box style={messageContentStyle}>
+        <ReactMarkdown>{content}</ReactMarkdown>
+      </Box>
+    );
+  }
+
+  if (expanded) {
+    return (
+      <Box style={messageContentStyle}>
+        <ReactMarkdown>{content}</ReactMarkdown>
+        <Button variant="subtle" size="xs" px={4} mt="xs" onClick={() => setExpanded(false)}>
+          Show less
+        </Button>
+      </Box>
+    );
+  }
+
+  // Collapsed: show a plain-text, pre-wrapped preview (no markdown, no giant
+  // DOM) with a toggle to expand the full content.
+  return (
+    <Box style={messageContentStyle}>
+      <Box style={{ ...messageContentStyle, whiteSpace: "pre-wrap" }}>
+        {content.slice(0, MESSAGE_PREVIEW_CHARS) + "…"}
+      </Box>
+      <Button variant="subtle" size="xs" px={4} mt="xs" onClick={() => setExpanded(true)}>
+        Show more ({content.length.toLocaleString()} characters)
+      </Button>
+    </Box>
+  );
+};
+
 // Typing animation component for loading state with elapsed time
 const TypingAnimation: React.FC<{ startTime?: number | null }> = ({ startTime }) => {
   const [dots, setDots] = useState(".");
@@ -844,9 +895,10 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
           paddingRight: 14, // Added padding
           marginTop: 5, // Added margin for better spacing
           marginBottom: 5, // Added margin for better spacing
+          overflow: 'hidden', // keep long content inside the bubble
         }}
       >
-        <Flex gap="xs" align="flex-start">
+        <Flex gap="xs" align="flex-start" style={{ minWidth: 0 }}>
           {!isUser && (
             <Image
               src="/static/images/better-logo.png"
@@ -855,14 +907,14 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
               alt="FHI Logo"
               />
           )}
-          <Box flex={1}>
+          <Box flex={1} style={{ minWidth: 0 }}>
             <MantineText fw={500} size="sm" c={isUser ? "blue" : "dark"} mb="xs">
               {isUser ? "You" : "FightHealthInsurance Assistant"}
             </MantineText>
             {message.status === "typing" ? (
               <TypingAnimation startTime={state.requestStartTime} />
             ) : (
-              <ReactMarkdown>{message.content}</ReactMarkdown>
+              <ChatMessageContent content={message.content} />
             )}
           </Box>
         </Flex>
@@ -1125,8 +1177,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
                             }
                           }}
                           minRows={3}
-                          maxRows={3}
-                          autosize={false}
+                          maxRows={8}
+                          autosize
                           disabled={state.isProcessingFile}
                           styles={{
                             input: {
@@ -1137,6 +1189,11 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
                               paddingBottom: 40,
                               resize: 'none',
                               verticalAlign: 'top',
+                              // Auto-grow up to maxRows, then scroll internally.
+                              // Note: do NOT set maxHeight/height here -- with
+                              // `autosize`, react-textarea-autosize throws on
+                              // style.maxHeight and crashes the component;
+                              // maxRows already caps growth and scrolls.
                             },
                             root: {
                               flex: 1,

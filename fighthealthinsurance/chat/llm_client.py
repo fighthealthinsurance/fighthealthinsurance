@@ -9,6 +9,7 @@ from typing import Awaitable, Callable, Dict, List, Optional, Tuple
 
 from loguru import logger
 
+from fighthealthinsurance.chat.message_preprocessor import MessageVariant
 from fighthealthinsurance.chat.safety_filters import detect_false_promises
 from fighthealthinsurance.chat.tools.patterns import ALL_TOOL_PATTERNS as tools_regex
 from fighthealthinsurance.ml.ml_models import RemoteModelLike, repetition_penalty
@@ -397,6 +398,74 @@ def build_llm_calls(
                 call_scores[full_history_call] = (model_backend.quality() ** 2) // 4
 
     return calls, call_scores
+
+
+def build_llm_calls_for_variants(
+    model_backends: List[RemoteModelLike],
+    variants: List[MessageVariant],
+    previous_context_summary: Optional[str],
+    history: List[Dict[str, str]],
+    is_professional: bool,
+    is_logged_in: bool,
+    full_history: Optional[List[Dict[str, str]]] = None,
+) -> Tuple[
+    List[Awaitable[Tuple[Optional[str], Optional[str]]]],
+    Dict[Awaitable, int],
+    List[Awaitable],
+]:
+    """
+    Build parallel LLM calls from a list of message variants.
+
+    Each variant's ``text_for_llm`` is fanned out across the backends via
+    :func:`build_llm_calls`, then the variant's ``score_delta`` is added to every
+    resulting call's base score. Only calls from the ``primary_original`` variant
+    are returned in ``primary_calls`` (so they keep the is-primary scoring bonus);
+    alternative-variant calls do not. A valid primary therefore outranks the
+    alternatives, while a failed primary (scored ``-inf`` by ``score_llm_response``)
+    lets the best alternative win.
+
+    Args:
+        model_backends: List of model backends to call.
+        variants: Ordered message variants (primary first when present).
+        previous_context_summary: Summary of previous context.
+        history: Truncated message history.
+        is_professional: Whether the user is a professional.
+        is_logged_in: Whether the user is logged in.
+        full_history: Full untruncated history (optional).
+
+    Returns:
+        Tuple of (all calls, call->score dict, primary-variant calls).
+    """
+    all_calls: List[Awaitable[Tuple[Optional[str], Optional[str]]]] = []
+    all_scores: Dict[Awaitable, int] = {}
+    primary_calls: List[Awaitable] = []
+
+    for variant in variants:
+        calls, call_scores = build_llm_calls(
+            model_backends=model_backends,
+            current_message=variant.text_for_llm,
+            previous_context_summary=previous_context_summary,
+            history=history,
+            is_professional=is_professional,
+            is_logged_in=is_logged_in,
+            full_history=full_history,
+        )
+        # Apply the variant's score delta to every call it produced.
+        for call in calls:
+            call_scores[call] = call_scores.get(call, 0) + variant.score_delta
+
+        all_calls.extend(calls)
+        all_scores.update(call_scores)
+        if variant.kind == "primary_original":
+            primary_calls.extend(calls)
+
+        # Non-PHI logging only: variant kind, delta, and call count.
+        logger.debug(
+            f"build_llm_calls_for_variants: variant={variant.kind} "
+            f"delta={variant.score_delta} calls={len(calls)}"
+        )
+
+    return all_calls, all_scores, primary_calls
 
 
 def build_retry_calls(

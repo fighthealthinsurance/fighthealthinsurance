@@ -1,5 +1,6 @@
 import asyncio
 import re
+from dataclasses import replace
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 from django.utils import timezone
@@ -16,7 +17,15 @@ from fighthealthinsurance.chat.context_manager import (
     prepare_history_for_llm,
     should_store_summary,
 )
-from fighthealthinsurance.chat.llm_client import build_llm_calls, create_response_scorer
+from fighthealthinsurance.chat.llm_client import (
+    build_llm_calls,
+    build_llm_calls_for_variants,
+    create_response_scorer,
+)
+from fighthealthinsurance.chat.message_preprocessor import (
+    MessageVariant,
+    prepare_user_message_variants,
+)
 from fighthealthinsurance.chat.document_processor import process_uploaded_document
 from fighthealthinsurance.chat.document_search import get_document_context_for_message
 from fighthealthinsurance.chat.retry_handler import (
@@ -163,6 +172,29 @@ class ChatInterface:
             logger.warning(f"Could not generate detailed user info: {e}")
             return "a user"
 
+    async def _denial_context_for_chat(self, chat: OngoingChat) -> Optional[str]:
+        """Build a short denial-context string (procedure/diagnosis) for a chat.
+
+        Used to give document/long-paste summarization a hint about what the
+        linked appeal is about. Returns None when there's no linked denial.
+        """
+        appeal = (
+            await Appeal.objects.select_related("for_denial").filter(chat=chat).afirst()
+        )
+        if not appeal or not appeal.for_denial:
+            return None
+        linked_denial = appeal.for_denial
+        parts = []
+        if linked_denial.procedure or linked_denial.candidate_procedure:
+            parts.append(
+                f"Procedure: {linked_denial.procedure or linked_denial.candidate_procedure}"
+            )
+        if linked_denial.diagnosis or linked_denial.candidate_diagnosis:
+            parts.append(
+                f"Diagnosis: {linked_denial.diagnosis or linked_denial.candidate_diagnosis}"
+            )
+        return "; ".join(parts) if parts else None
+
     async def _merge_summary_from_db(self, chat: OngoingChat) -> None:
         """
         Merge the latest summary_for_next_call from the DB into the in-memory chat object.
@@ -264,6 +296,7 @@ class ChatInterface:
         fallback_backends: Optional[List[RemoteModelLike]] = None,
         full_history: Optional[List[Dict[str, str]]] = None,
         user_message_for_scoring: Optional[str] = None,
+        message_variants: Optional[List[MessageVariant]] = None,
     ) -> Tuple[Optional[str], Optional[str]]:
         """
         Calls the LLM, handles PubMed query requests if present and returns the response.
@@ -284,6 +317,11 @@ class ChatInterface:
                 scoring. Distinct from current_message_for_llm, which may be wrapped
                 with intro-template content or the delete-data instruction. Defaults
                 to current_message_for_llm when not provided.
+            message_variants: Optional list of LLM-ready message variants (primary
+                first, lower-scored long/Unicode alternatives after). When provided,
+                calls are fanned out per variant and each variant's score_delta is
+                applied so the primary path wins unless it fails. When None (e.g.
+                recursive tool calls), the single current_message_for_llm is used.
         """
         if depth > 3:
             return None, None
@@ -299,21 +337,37 @@ class ChatInterface:
             else current_message_for_llm
         )
 
-        # Build LLM calls using the extracted module
-        calls, call_scores = build_llm_calls(
-            model_backends=model_backends,
-            current_message=current_message_for_llm,
-            previous_context_summary=previous_context_summary,
-            history=history,
-            is_professional=is_professional,
-            is_logged_in=is_logged_in,
-            full_history=full_history,
-        )
+        # Build LLM calls using the extracted module. When message variants are
+        # supplied (top-level user turn), fan out per variant and apply each
+        # variant's score delta; only the primary_original variant's calls keep
+        # the is-primary scoring bonus. Otherwise (recursive tool calls) fall
+        # back to the single wrapped message, preserving existing behavior.
+        if message_variants:
+            calls, call_scores, primary_calls = build_llm_calls_for_variants(
+                model_backends=model_backends,
+                variants=message_variants,
+                previous_context_summary=previous_context_summary,
+                history=history,
+                is_professional=is_professional,
+                is_logged_in=is_logged_in,
+                full_history=full_history,
+            )
+        else:
+            calls, call_scores = build_llm_calls(
+                model_backends=model_backends,
+                current_message=current_message_for_llm,
+                previous_context_summary=previous_context_summary,
+                history=history,
+                is_professional=is_professional,
+                is_logged_in=is_logged_in,
+                full_history=full_history,
+            )
+            primary_calls = calls
 
         # Create scoring function using the extracted module
         score_fn = create_response_scorer(
             call_scores,
-            primary_calls=calls,
+            primary_calls=primary_calls,
             chat_history=chat.chat_history,
             current_message=scoring_message,
         )
@@ -529,25 +583,7 @@ class ChatInterface:
                 f"Document uploaded in chat {chat.id}: {doc_name} ({char_count} chars)"
             )
 
-            denial_context = None
-            appeal = (
-                await Appeal.objects.select_related("for_denial")
-                .filter(chat=chat)
-                .afirst()
-            )
-            if appeal and appeal.for_denial:
-                linked_denial = appeal.for_denial
-                parts = []
-                if linked_denial.procedure or linked_denial.candidate_procedure:
-                    parts.append(
-                        f"Procedure: {linked_denial.procedure or linked_denial.candidate_procedure}"
-                    )
-                if linked_denial.diagnosis or linked_denial.candidate_diagnosis:
-                    parts.append(
-                        f"Diagnosis: {linked_denial.diagnosis or linked_denial.candidate_diagnosis}"
-                    )
-                if parts:
-                    denial_context = "; ".join(parts)
+            denial_context = await self._denial_context_for_chat(chat)
 
             await process_uploaded_document(
                 chat=chat,
@@ -793,33 +829,90 @@ class ChatInterface:
                         f"Most recent context summary:\n{current_llm_context}"
                     )
 
-        llm_input_message = user_message
+        # Build message variants: the original/primary path plus lower-scored
+        # long-message and weird-Unicode alternatives. A normal short message
+        # yields a single primary_original variant, so the wrapped input, stored
+        # history, and scoring stay identical to sending the raw message.
+        message_variants = prepare_user_message_variants(
+            user_message,
+            is_document=is_document,
+            document_name=document_name,
+        )
 
+        # Long paste detected (and not already an explicit upload): preserve the
+        # full original in document storage and switch history/scoring to a
+        # compact marker, so we neither bloat chat_history nor fan the huge text
+        # out to every backend.
+        long_paste_variant = next(
+            (v for v in message_variants if v.metadata.get("store_full_text")),
+            None,
+        )
+        if long_paste_variant is not None and not is_document:
+            char_count = long_paste_variant.metadata.get(
+                "char_count", len(user_message)
+            )
+            doc_name = long_paste_variant.metadata.get(
+                "document_name",
+                f"pasted_message_{int(timezone.now().timestamp())}.txt",
+            )
+            logger.info(
+                f"Long pasted message in chat {chat.id}: storing {char_count} chars "
+                f"as {doc_name} for reference"
+            )
+            denial_context = await self._denial_context_for_chat(chat)
+            await process_uploaded_document(
+                chat=chat,
+                document_name=doc_name,
+                full_text=user_message,
+                denial_context=denial_context,
+            )
+            await self.send_status_message(
+                f"Long message received ({char_count:,} chars). "
+                f"Stored for reference and analyzing in background..."
+            )
+            # From here on, history + scoring use the compact marker.
+            user_message = long_paste_variant.display_text or user_message
+
+        # Determine how to wrap a variant's text for the LLM (intro template on
+        # new chats, delete-data instruction on ongoing turns), then apply it to
+        # every variant. The trial banner is a one-time side effect for new chats.
         if is_new_chat:
-            # If this is a trial professional user, add a banner message
             if self.is_trial_professional:
                 trial_banner = {
                     "role": "system",
                     "content": "⚠️ You're using a free trial version. Responses may be slower, and features like linked appeals and prior auths require a full professional account.\n\nWant full access? [Create a free account →](/signup)",
                     "timestamp": timezone.now().isoformat(),
                 }
-
-                # We don't add the trial banner to the history since it needs to go user -> agent -> user.
-
-                # Send the trial banner to the client
+                # We don't add the trial banner to the history since it needs to
+                # go user -> agent -> user.
                 await self.send_json_message_func(trial_banner)
 
             user_info_str = await self._get_user_info()
             template = get_intro_template(self.chat.chat_type)
-            llm_input_message = template.format(
-                user_info=user_info_str, message=user_message
-            )
+
+            def wrap_for_llm(text: str) -> str:
+                return template.format(user_info=user_info_str, message=text)
+
         else:
-            # Re-inject the delete-data handoff instruction on every ongoing
-            # turn. The intro template (which contains it) only fires for new
-            # chats, so without this the sentinel fallback would silently stop
-            # working past the first message.
-            llm_input_message = f"{DELETE_DATA_INSTRUCTION}\n\n{user_message}"
+
+            def wrap_for_llm(text: str) -> str:
+                # Re-inject the delete-data handoff instruction on every ongoing
+                # turn. The intro template (which contains it) only fires for new
+                # chats, so without this the sentinel fallback would silently
+                # stop working past the first message.
+                return f"{DELETE_DATA_INSTRUCTION}\n\n{text}"
+
+        llm_message_variants = [
+            replace(v, text_for_llm=wrap_for_llm(v.text_for_llm))
+            for v in message_variants
+        ]
+        # Prefer the primary variant for the single-message fields (recursion,
+        # tool calls); fall back to the best alternative for long pastes.
+        primary_variant = next(
+            (v for v in llm_message_variants if v.kind == "primary_original"),
+            llm_message_variants[0],
+        )
+        llm_input_message = primary_variant.text_for_llm
 
         # Prepare history for LLM using the context manager
         # This handles truncation, summarization, and full history preservation
@@ -872,6 +965,7 @@ class ChatInterface:
                 fallback_backends=fallback_models if fallback_models else None,
                 full_history=full_history_for_llm,  # Also try with full history if model supports it
                 user_message_for_scoring=user_message,
+                message_variants=llm_message_variants,
             )
 
             if response_text and response_text.strip():
