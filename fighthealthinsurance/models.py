@@ -2219,6 +2219,12 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     extract_procedure_diagnosis_finished = models.BooleanField(
         default=False, null=True, blank=True
     )
+    # Number of times procedure/diagnosis extraction has been attempted.
+    # extract_entity gates re-entry on this so a persistent extraction
+    # failure (LLM down, malformed denial) doesn't allow unbounded
+    # re-runs across WebSocket reconnects. Incremented atomically via F()
+    # in the exception path of extract_set_denial_and_diagnosis.
+    extract_attempts = models.PositiveSmallIntegerField(default=0)
     appeal_text = models.TextField(null=True, blank=True)
     raw_email = models.TextField(max_length=300, null=True, blank=True)
     created = models.DateTimeField(db_default=Now(), null=True)
@@ -2272,6 +2278,13 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     pubmed_context = models.TextField(null=True, blank=True)
     # NICE (UK) syndication guidance context, treated as international clinical guidance
     nice_context = models.TextField(null=True, blank=True)
+    # RAG-retrieved guideline excerpts (CPT/HCPCS/ICD-10 keyed). Cached so a
+    # gen_attempts>=3 retry can fall back to the prior round's evidence
+    # instead of dropping it on the floor when the RAG service is skipped.
+    rag_context = models.TextField(null=True, blank=True)
+    # IMR (Independent Medical Review) prior-decision excerpts. Same retry
+    # semantics as rag_context — persist so retries don't lose it.
+    imr_context = models.TextField(null=True, blank=True)
     generated_questions = models.JSONField(null=True, blank=True)
     # ML-generated citations for the appeal
     ml_citation_context = models.JSONField(null=True, blank=True)

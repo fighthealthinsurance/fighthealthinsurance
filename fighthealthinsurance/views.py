@@ -41,6 +41,7 @@ from PIL import Image
 
 from fighthealthinsurance import common_view_logic, forms as core_forms, models
 from fighthealthinsurance.chat_forms import UnderstandPolicyForm, UserConsentForm
+from fighthealthinsurance.denial_context import merge_qa
 from fighthealthinsurance.followup_emails import ThankyouEmailSender
 from fighthealthinsurance.helpers.data_helpers import RemoveDataHelper
 from fighthealthinsurance.helpers.stripe_helpers import StripeWebhookHelper
@@ -1262,26 +1263,25 @@ class GenerateAppeal(View):
         elems = dict((k, v[0]) for k, v in elems.items())
         try:
             generated_questions: list[tuple[str, str]] = denial.generated_questions  # type: ignore
-            qa_context_str = denial.qa_context
-            qa_context: dict[str, str] = {}
-            if qa_context_str:
-                try:
-                    qa_context = json.loads(qa_context_str)
-                except json.JSONDecodeError:
-                    qa_context["misc"] = qa_context_str
             restricted = ["csrfmiddlewaretoken", "denial_id", "email", "semi_sekret"]
+            updates: dict[str, str] = {}
             for k, v in elems.items():
                 key = k
                 if "appeal_generated_" in k:
                     key = generated_questions[int(k.split("_")[-1]) - 1][0]
                 if isinstance(v, list):
-                    elems[k] = v[0]
-                if v and v != "" and v != "UNKNOWN" and key not in restricted:
-                    qa_context[key] = v
-            denial.qa_context = json.dumps(qa_context)
-            denial.save()
+                    v = v[0]
+                    elems[k] = v
+                if key in restricted:
+                    continue
+                updates[key] = v
+            merge_qa(denial, updates, source="appeal_form_post")
+            denial.save(update_fields=["qa_context"])
         except Exception as e:
-            logger.error(f"Error updating medical context: {e}")
+            logger.warning(
+                f"Error updating qa_context for denial {denial_id} "
+                f"keys={sorted(elems.keys())}: {e}"
+            )
 
         del elems["csrfmiddlewaretoken"]
         return render(

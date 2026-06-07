@@ -36,6 +36,7 @@ from stopit import ThreadingTimeout as Timeout
 from fhi_users.auth import auth_utils
 from fhi_users.models import PatientUser, ProfessionalUser, UserDomain
 from fighthealthinsurance import common_view_logic, rest_serializers as serializers
+from fighthealthinsurance.denial_context import merge_qa
 from fighthealthinsurance.external_review import (
     generate_external_review_packet,
     schedule_external_review_followups,
@@ -494,12 +495,13 @@ class QAResponseViewSet(viewsets.ViewSet, CreateMixin):
             DenialQA.objects.bulk_update(to_update, ["text_answer"])
         if to_create:
             DenialQA.objects.bulk_create(to_create)
-        # Rebuild qa_context: existing_qa.values() contains in-place modified objects,
-        # plus we add newly created objects from to_create
-        qa_context = {dqa.question: dqa.text_answer for dqa in existing_qa.values()}
-        qa_context.update({dqa.question: dqa.text_answer for dqa in to_create})
-        denial.qa_context = json.dumps(qa_context)
-        denial.save()
+        # Merge the DenialQA rows into qa_context instead of rebuilding it
+        # from scratch — rebuilding clobbers keys like "medical_context" or
+        # form-derived dates that other writers stored.
+        merged_updates = {dqa.question: dqa.text_answer for dqa in existing_qa.values()}
+        merged_updates.update({dqa.question: dqa.text_answer for dqa in to_create})
+        merge_qa(denial, merged_updates, source="rest_qa_response")
+        denial.save(update_fields=["qa_context"])
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
