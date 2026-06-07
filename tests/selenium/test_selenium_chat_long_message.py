@@ -64,6 +64,9 @@ class SeleniumChatLongMessageTest(FHISeleniumBase, StaticLiveServerTestCase):
         self.click("button[type='submit']")
         self.wait_for_element("#chat-interface-root", timeout=15)
         self.wait_for_page_ready()
+        # Wait for React to actually mount the input before any test logic
+        # touches it (the root div exists before React renders into it).
+        self.wait_for_element("textarea", timeout=15)
         time.sleep(1)  # Let React components settle
 
     def _horizontal_overflow(self):
@@ -75,9 +78,11 @@ class SeleniumChatLongMessageTest(FHISeleniumBase, StaticLiveServerTestCase):
 
     def _set_textarea(self, value):
         """Set the React-controlled textarea value via its native setter."""
+        self.wait_for_element("textarea", timeout=15)
         self.execute_script(
             """
             const textarea = document.querySelector('textarea');
+            if (!textarea) { return; }
             const setter = Object.getOwnPropertyDescriptor(
                 window.HTMLTextAreaElement.prototype, 'value').set;
             setter.call(textarea, arguments[0]);
@@ -102,6 +107,8 @@ class SeleniumChatLongMessageTest(FHISeleniumBase, StaticLiveServerTestCase):
         baseline = self._horizontal_overflow()
         long_text = "This claim was denied as not medically necessary. " * 80
         self._set_textarea(long_text)
+        time.sleep(0.3)  # let React enable the send button after the input event
+        self.wait_for_element("button[aria-label='Send message']", timeout=10)
         self.execute_script(
             "const b = document.querySelector('button[aria-label=\"Send message\"]');"
             " if (b) b.click();"
