@@ -272,6 +272,13 @@ class SendMailingListMailView(generic.FormView):
             )
 
 
+# Bucket label for chosen ProposedAppeal rows whose model_name is NULL —
+# i.e. the user picked something we couldn't attribute back to a generated
+# draft (heavy edit, share-appeal flow, or a row predating the model_name
+# field). Surfacing them keeps the dashboard's total-picks number honest.
+UNKNOWN_MODEL_LABEL = "(unknown)"
+
+
 def _merge_stats(
     chosen: Dict[str, int], presented: Dict[str, int]
 ) -> List[Dict[str, Any]]:
@@ -377,7 +384,12 @@ class ModelUsageDashboardView(generic.TemplateView):
     def _proposed_appeal_stats(
         since: Optional[datetime.datetime],
     ) -> List[Dict[str, Any]]:
-        chosen_qs = ProposedAppeal.objects.filter(chosen=True, model_name__isnull=False)
+        # Keep chosen rows with model_name=NULL in the chosen aggregation —
+        # mark_proposal_chosen intentionally falls back to None when the
+        # picked text can't be matched to a generated draft, and those are
+        # still real user picks worth surfacing. They are bucketed under
+        # "(unknown)" below so they don't get silently dropped.
+        chosen_qs = ProposedAppeal.objects.filter(chosen=True)
         if since is not None:
             chosen_qs = chosen_qs.filter(created_at__gte=since)
 
@@ -395,12 +407,10 @@ class ModelUsageDashboardView(generic.TemplateView):
             for_denial_id__in=chosen_denial_ids,
         )
 
-        chosen = {
-            name: count
-            for name, count in chosen_qs.values_list("model_name").annotate(
-                c=Count("id")
-            )
-        }
+        chosen: Dict[str, int] = {}
+        for name, count in chosen_qs.values_list("model_name").annotate(c=Count("id")):
+            label = name if name is not None else UNKNOWN_MODEL_LABEL
+            chosen[label] = chosen.get(label, 0) + count
         presented = {
             name: count
             for name, count in presented_qs.values_list("model_name").annotate(
