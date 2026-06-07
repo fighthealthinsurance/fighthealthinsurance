@@ -2810,22 +2810,32 @@ class AppealsBackendHelper:
         # `is None`, dropping any plan info on subsequent calls.
         # medical_context / plan_context are sets; sort before joining so the
         # persisted strings are deterministic and don't churn between runs.
+        # Save only the fields we touch here. A full-row asave() on this
+        # denial — loaded well before the fire-and-forget PubMed/citation
+        # warmers run — would write back the stale in-memory cache columns
+        # (pubmed_context, candidate_ml_citation_context, ...) and clobber
+        # whatever those background tasks persisted, defeating the warm-cache
+        # barrier downstream.
+        dirty_fields = {"gen_attempts"}
         if medical_context:
             merge_qa(
                 denial,
                 {"medical_context": " ".join(sorted(medical_context))},
                 source="appeal_gen_form",
             )
+            dirty_fields.add("qa_context")
         if plan_context:
             merge_plan_context(denial, sorted(plan_context))
+            dirty_fields.add("plan_context")
         # Update the denial object with the received parameter if it differs
         if denial.professional_to_finish != professional_to_finish:
             logger.info(
                 f"Updating denial {denial.denial_id} professional_to_finish from {denial.professional_to_finish} to {professional_to_finish}"
             )
             denial.professional_to_finish = professional_to_finish
+            dirty_fields.add("professional_to_finish")
         denial.gen_attempts = (denial.gen_attempts or 0) + 1
-        await denial.asave()
+        await denial.asave(update_fields=sorted(dirty_fields))
 
         # Get pubmed, ml citations, and RAG context
         pubmed_context: Optional[str] = None
@@ -3293,13 +3303,17 @@ class AppealsBackendHelper:
             }
         ) + "\n"
 
-        model_plan_context: Optional[str] = None
-        if denial.plan_context is not None:
-            model_plan_context = str(denial.plan_context)
-        if model_plan_context and len(plan_context) > 0:
-            model_plan_context = f"{plan_context}{denial.plan_documents_summary or ''}"
-        else:
-            model_plan_context = denial.plan_documents_summary
+        # Feed the prompt the *merged* plan_context (built by
+        # merge_plan_context above) plus the plan-documents summary. The old
+        # code interpolated the raw `plan_context` set, which both dropped
+        # the merged fragments and leaked a Python set repr ("{'a', 'b'}")
+        # into the model prompt.
+        plan_parts: list[str] = []
+        if denial.plan_context:
+            plan_parts.append(str(denial.plan_context))
+        if denial.plan_documents_summary:
+            plan_parts.append(denial.plan_documents_summary)
+        model_plan_context: Optional[str] = "\n\n".join(plan_parts) or None
 
         appeals: Iterator[GeneratedAppeal] = await sync_to_async(
             appealGenerator.make_appeals
