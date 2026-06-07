@@ -69,7 +69,11 @@ def merge_qa(
     for key, value in updates.items():
         if key is None or key == "":
             continue
-        if value in _DROPPED_VALUES:
+        # Handle None explicitly rather than `value in _DROPPED_VALUES` so an
+        # unhashable update value (list/dict from a form/serializer) can't
+        # raise TypeError. The stringified-text check below covers the
+        # "" / "UNKNOWN" sentinels.
+        if value is None:
             continue
         text = str(value).strip()
         if not text or text in _DROPPED_VALUES:

@@ -2808,14 +2808,16 @@ class AppealsBackendHelper:
         # Add the context to the denial — merge, never overwrite. Previously
         # this rebuilt qa_context with json.dumps and gated plan_context on
         # `is None`, dropping any plan info on subsequent calls.
+        # medical_context / plan_context are sets; sort before joining so the
+        # persisted strings are deterministic and don't churn between runs.
         if medical_context:
             merge_qa(
                 denial,
-                {"medical_context": " ".join(medical_context)},
+                {"medical_context": " ".join(sorted(medical_context))},
                 source="appeal_gen_form",
             )
         if plan_context:
-            merge_plan_context(denial, plan_context)
+            merge_plan_context(denial, sorted(plan_context))
         # Update the denial object with the received parameter if it differs
         if denial.professional_to_finish != professional_to_finish:
             logger.info(

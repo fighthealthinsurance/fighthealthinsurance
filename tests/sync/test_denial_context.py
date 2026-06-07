@@ -107,6 +107,15 @@ class TestMergeQA(unittest.TestCase):
         merge_qa(d, {"q1": "  trimmed  "}, source="test")
         self.assertEqual(json.loads(d.qa_context)["q1"], "trimmed")
 
+    def test_unhashable_value_does_not_raise(self):
+        """A list/dict update value must not raise TypeError on the
+        sentinel check (values are typed Any)."""
+        d = _fake_denial()
+        merge_qa(d, {"q1": ["a", "b"], "q2": "ok"}, source="test")
+        result = json.loads(d.qa_context)
+        # Stringified rather than crashing; the real answer survives too.
+        self.assertEqual(result["q2"], "ok")
+
     def test_no_change_when_all_updates_redundant(self):
         d = _fake_denial(qa_context=json.dumps({"q1": "same"}))
         original = d.qa_context
