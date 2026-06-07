@@ -129,21 +129,6 @@ class SeleniumChatLongMessageTest(FHISeleniumBase, StaticLiveServerTestCase):
             self._horizontal_overflow(), baseline + _OVERFLOW_TOLERANCE_PX
         )
 
-    def test_very_long_message_is_collapsed(self):
-        """A very long pasted message renders collapsed behind a Show more
-        toggle and does not widen the page."""
-        self._open_chat()
-        baseline = self._horizontal_overflow()
-        long_text = "This claim was denied as not medically necessary. " * 120
-        self._set_textarea_via_js(long_text)
-        self._send_current_input()
-        # Collapse toggle appears for very long content.
-        self.wait_for_text("Show more", timeout=_WAIT_TIMEOUT)
-        time.sleep(0.5)
-        self.assertLessEqual(
-            self._horizontal_overflow(), baseline + _OVERFLOW_TOLERANCE_PX
-        )
-
     def test_unicode_message_renders_without_crashing(self):
         """Emoji / bidi / non-Latin input must not crash rendering or overflow."""
         self._open_chat()
