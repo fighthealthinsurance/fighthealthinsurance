@@ -14,6 +14,7 @@ Each test class targets one row of the safety/appeal scenario table:
 """
 
 import asyncio
+import datetime
 import re
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -498,6 +499,64 @@ class OcrDataExtractionTests(TestCase):
         self.assertEqual(
             score_extracted_field("dob", "03/04/1985", "DOB 1985-03-04"),
             "high",
+        )
+
+    def test_identifier_confidence_matches_across_separator_variants(self):
+        # IDs often appear in the source with different separators than the
+        # extracted value. The extracted "H5521001" should still be evidenced
+        # by a "H5521-001" rendering in the document and reach "high".
+        self.assertEqual(
+            score_extracted_field(
+                "member_id", "H5521001", "... Member ID: H5521-001 ..."
+            ),
+            "high",
+        )
+
+    def test_identifier_confidence_present_verbatim_is_high(self):
+        # A plausible identifier that appears verbatim in the source is "high".
+        self.assertEqual(
+            score_extracted_field(
+                "member_id", "ABC123456789", "Member ID: ABC123456789"
+            ),
+            "high",
+        )
+
+    def test_identifier_confidence_implausible_value_is_low(self):
+        # An implausible identifier scores "low" regardless of source presence.
+        self.assertEqual(
+            score_extracted_field("member_id", "Plan ID", "Plan ID listed here"),
+            "low",
+        )
+
+    def test_dob_confidence_recognizes_day_first_rendering(self):
+        # When the DOB is a pre-parsed date (the view-parsed path) and the
+        # source renders it day-first (e.g. "15/01/1980"), it should still be
+        # evidenced and reach "high" rather than dropping to "medium".
+        self.assertEqual(
+            score_extracted_field(
+                "dob", datetime.date(1980, 1, 15), "... DOB 15/01/1980 ..."
+            ),
+            "high",
+        )
+
+    def test_dob_confidence_us_and_iso_renderings_still_high(self):
+        # US-format and ISO renderings of a pre-parsed date remain "high".
+        self.assertEqual(
+            score_extracted_field("dob", datetime.date(1980, 1, 15), "DOB 01/15/1980"),
+            "high",
+        )
+        self.assertEqual(
+            score_extracted_field("dob", datetime.date(1980, 1, 15), "DOB 1980-01-15"),
+            "high",
+        )
+
+    def test_dob_confidence_plausible_but_absent_is_medium(self):
+        # A plausible pre-parsed date with no source evidence drops to "medium".
+        self.assertEqual(
+            score_extracted_field(
+                "dob", datetime.date(1980, 1, 15), "No date anywhere here."
+            ),
+            "medium",
         )
 
 
