@@ -35,7 +35,6 @@ class StaticViewSitemap(Sitemap):
         return [
             "root",
             "about",
-            "vs-claimable",
             "pbs-newshour",
             "preparing-2026",
             "turning-26",

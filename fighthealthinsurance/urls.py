@@ -210,13 +210,6 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         name="how-to-help",
     ),
     path(
-        "compare/claimable",
-        cache_control(public=True)(
-            cache_page(60 * 60 * 2)(views.VsClaimableView.as_view())
-        ),
-        name="vs-claimable",
-    ),
-    path(
         "preparing-for-2026",
         cache_control(public=True)(
             cache_page(60 * 60 * 2)(views.Preparing2026View.as_view())
