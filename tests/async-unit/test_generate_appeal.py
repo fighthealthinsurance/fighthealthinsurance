@@ -374,6 +374,9 @@ class TestShedContext:
         # Tier-1 call-dict keys survive unchanged.
         for key in _SHEDDABLE_TIER1:
             assert new_calls[0][key] == original[key]
+        # Tier-2 call-dict keys also survive unchanged (no truncation).
+        for key, _cap in _TIER2_TRUNCATIONS:
+            assert new_calls[0][key] == original[key]
 
 
 # --- _shed_context prompt-rebuild tests -------------------------------------
@@ -412,6 +415,32 @@ def _prompt_kwargs(**overrides):
     return base
 
 
+def _rebuild_spy(return_value="REBUILT"):
+    """Return (seen_kwargs, rebuild_fn) for capturing _shed_context's
+    rebuild_prompt invocation. Shared by the prompt-rebuild tests below so
+    each one doesn't redefine the same 3-line closure."""
+    seen_kwargs: dict = {}
+
+    def rebuild(**rk):
+        seen_kwargs.update(rk)
+        return return_value
+
+    return seen_kwargs, rebuild
+
+
+def _rebuild_counter():
+    """Return (count_box, rebuild_fn) for tests that only care whether
+    rebuild_prompt was called, not what kwargs it saw. ``count_box[0]``
+    holds the call count."""
+    count_box = [0]
+
+    def rebuild(**_):
+        count_box[0] += 1
+        return "REBUILT"
+
+    return count_box, rebuild
+
+
 class TestShedContextPromptRebuild:
     """Tier shedding must re-render the prompt with enrichment stripped.
 
@@ -422,12 +451,7 @@ class TestShedContextPromptRebuild:
 
     def test_tier1_rebuilds_prompt_with_enrichment_nulled(self):
         kwargs = _prompt_kwargs()
-        seen_kwargs: dict = {}
-
-        def rebuild(**rk):
-            seen_kwargs.update(rk)
-            return "REBUILT-PROMPT"
-
+        seen_kwargs, rebuild = _rebuild_spy(return_value="REBUILT-PROMPT")
         new_calls, changed = _shed_context(
             [_make_call(prompt="ORIGINAL")],
             tier=1,
@@ -454,12 +478,7 @@ class TestShedContextPromptRebuild:
         # leave it pinning the token count — the exact bug this PR fixed for
         # pubmed/citations.
         assert "clinical_trials_context" in _PROMPT_TIER1_NULLS
-        seen_kwargs: dict = {}
-
-        def rebuild(**rk):
-            seen_kwargs.update(rk)
-            return "REBUILT"
-
+        seen_kwargs, rebuild = _rebuild_spy()
         _, changed = _shed_context(
             [_make_call(prompt="ORIGINAL")],
             tier=1,
@@ -476,12 +495,7 @@ class TestShedContextPromptRebuild:
         # it must be in _PROMPT_TIER1_NULLS or a context-overflow retry would
         # leave it pinning the token count.
         assert "regulatory_citation_context" in _PROMPT_TIER1_NULLS
-        seen_kwargs: dict = {}
-
-        def rebuild(**rk):
-            seen_kwargs.update(rk)
-            return "REBUILT"
-
+        seen_kwargs, rebuild = _rebuild_spy()
         _, changed = _shed_context(
             [_make_call(prompt="ORIGINAL")],
             tier=1,
@@ -527,12 +541,7 @@ class TestShedContextPromptRebuild:
         (key, cap), *_ = _PROMPT_TIER2_TRUNCATIONS
         oversized = "para. " * (cap // 5)  # well past the cap
         kwargs = _prompt_kwargs(**{key: oversized})
-        seen_kwargs: dict = {}
-
-        def rebuild(**rk):
-            seen_kwargs.update(rk)
-            return "OUT"
-
+        seen_kwargs, rebuild = _rebuild_spy(return_value="OUT")
         _, changed = _shed_context(
             [_make_call(prompt="ORIGINAL")],
             tier=2,
@@ -547,12 +556,7 @@ class TestShedContextPromptRebuild:
     def test_tier2_stacks_tier1_enrichment_nulls_in_prompt(self):
         # Stacking: tier 2 must also apply the tier-1 enrichment nulls to
         # the rebuilt prompt's kwargs, not just the call-dict copies.
-        seen_kwargs: dict = {}
-
-        def rebuild(**rk):
-            seen_kwargs.update(rk)
-            return "OUT"
-
+        seen_kwargs, rebuild = _rebuild_spy(return_value="OUT")
         _shed_context(
             [_make_call(prompt="ORIGINAL")],
             tier=2,
@@ -578,12 +582,7 @@ class TestShedContextPromptRebuild:
         # when no prompt kwarg was nulled or truncated.
         empty_kwargs = {key: None for key in _PROMPT_TIER1_NULLS}
         kwargs = _prompt_kwargs(**empty_kwargs, plan_context="short")
-        calls_count = [0]
-
-        def rebuild(**_):
-            calls_count[0] += 1
-            return "SHOULD-NOT-BE-USED"
-
+        calls_count, rebuild = _rebuild_counter()
         new_calls, changed = _shed_context(
             [_make_call(prompt="ORIGINAL")],
             tier=2,  # tier 2 would otherwise try plan_context truncation
@@ -606,12 +605,7 @@ class TestShedContextPromptRebuild:
         # whitespace-only values and trigger a rebuild.
         whitespace_kwargs = {key: "   \n\t" for key in _PROMPT_TIER1_NULLS}
         kwargs = _prompt_kwargs(**whitespace_kwargs)
-        seen_kwargs: dict = {}
-
-        def rebuild(**rk):
-            seen_kwargs.update(rk)
-            return "SHED"
-
+        seen_kwargs, rebuild = _rebuild_spy(return_value="SHED")
         _, changed = _shed_context(
             [_make_call(prompt="ORIGINAL")],
             tier=1,
@@ -631,12 +625,7 @@ class TestShedContextPromptRebuild:
         # truly-empty case still avoids a rebuild call.
         empty_kwargs = {key: "" for key in _PROMPT_TIER1_NULLS}
         kwargs = _prompt_kwargs(**empty_kwargs, plan_context="short")
-        calls_count = [0]
-
-        def rebuild(**_):
-            calls_count[0] += 1
-            return "X"
-
+        calls_count, rebuild = _rebuild_counter()
         _, changed = _shed_context(
             [_make_call(prompt="ORIGINAL")],
             tier=2,
