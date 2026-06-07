@@ -760,9 +760,9 @@ def identifier_found_in_text(identifier: str, text: str) -> bool:
 # above the limit.
 #
 #   * make_open_prompt bakes enrichment (pubmed, ml citations, rag, nice,
-#     uspstf, clinical trials, ucr, pa, payer-policy, medication) into the
-#     prompt string. To shed those we re-render the prompt with the matching
-#     kwargs set to None / truncated.
+#     uspstf, clinical trials, regulatory citations, ucr, pa, payer-policy,
+#     medication) into the prompt string. To shed those we re-render the
+#     prompt with the matching kwargs set to None / truncated.
 #   * The same call dict also carries pubmed_context, ml_citations_context,
 #     plan_context, and patient_context as separate keys, which the model
 #     re-injects via ``context_extra`` (see ml_models.RemoteFullOpenLike).
@@ -778,6 +778,7 @@ _PROMPT_TIER1_NULLS: tuple[str, ...] = (
     "nice_context",
     "uspstf_context",
     "clinical_trials_context",
+    "regulatory_citation_context",
     "ucr_context",
     "pa_context",
     "payer_policy_context",
