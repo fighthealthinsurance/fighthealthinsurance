@@ -363,6 +363,18 @@ class TestShedContext:
         )
         assert "pubmed_context" not in changed
 
+    def test_tier0_is_a_noop(self):
+        # Regression (CodeRabbit on PR #824): _shed_context's documented
+        # tier contract is "tier N applies all tier-<=N reductions". Tier 0
+        # must therefore shed nothing — neither the prompt surface (already
+        # guarded on tier >= 1) nor the call-dict surface.
+        original = _make_call()
+        new_calls, changed = _shed_context([original], tier=0)
+        assert changed == []
+        # Tier-1 call-dict keys survive unchanged.
+        for key in _SHEDDABLE_TIER1:
+            assert new_calls[0][key] == original[key]
+
 
 # --- _shed_context prompt-rebuild tests -------------------------------------
 

@@ -898,10 +898,11 @@ def _shed_context(
         ):
             tail = new["prompt"][len(original_open_prompt) :]
             new["prompt"] = new_open_prompt + tail
-        for key in _SHEDDABLE_TIER1:
-            if new.get(key) is not None:
-                new[key] = None
-                changed.add(key)
+        if tier >= 1:
+            for key in _SHEDDABLE_TIER1:
+                if new.get(key) is not None:
+                    new[key] = None
+                    changed.add(key)
         if tier >= 2:
             _apply_tier2_truncations(new, _TIER2_TRUNCATIONS, changed, label="")
         new_calls.append(new)
