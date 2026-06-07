@@ -101,6 +101,70 @@ class StripeWebhookHelper:
             raise e
 
     @staticmethod
+    def _build_recovery_link(
+        payment_type: Optional[str], metadata: Any, lost_session: LostStripeSession
+    ) -> Optional[str]:
+        """Build the abandoned-cart recovery link for an expired checkout.
+
+        The link has to point at whichever app actually serves the resume
+        route, otherwise the customer lands on a 404 / SPA catch-all:
+
+        * Professional domain subscriptions are completed in the Fight
+          Paperwork SPA at ``/stripe/finish-checkout``.
+        * Everything else (patient appeals, fax, pay-what-you-want, ...) is
+          completed by this Django backend's ``complete_payment`` view, which
+          is served on the Fight Health Insurance domain. Pointing these at
+          the Fight Paperwork SPA is what produced the "Invalid Demo Type"
+          error: that SPA has no ``/stripe/finish`` route, so its router
+          treated ``stripe`` as a demo-type path segment.
+
+        Returns ``None`` when we can't build a link the target app could
+        actually act on, so the caller skips emailing a dead resume link.
+
+        Hosts are read from settings so non-prod environments don't email
+        users production links.
+        """
+        if payment_type == "professional_domain_subscription":
+            # Completed in the Fight Paperwork SPA. Without both ids the SPA
+            # can't resume the subscription, so skip rather than email a dead
+            # link.
+            domain_id = metadata.get("domain_id")
+            professional_id = metadata.get("professional_id")
+            if not domain_id or not professional_id:
+                logger.warning(
+                    "Skipping professional recovery link: missing domain_id/professional_id"
+                )
+                return None
+            params = urlencode(
+                {
+                    "domain_id": domain_id,
+                    "professional_id": professional_id,
+                }
+            )
+            return (
+                f"https://{settings.FIGHT_PAPERWORK_DOMAIN}"
+                f"/stripe/finish-checkout?{params}"
+            )
+        # Completed by the Django `complete_payment` view on the Fight Health
+        # Insurance domain. That view rebuilds the checkout from either a
+        # `recovery_info_id` or serialized `line_items` in the metadata; if
+        # neither is present (e.g. pay-what-you-want donations) it can't
+        # recreate the session, so skip emailing a link that would only error.
+        if not metadata.get("recovery_info_id") and not metadata.get("line_items"):
+            logger.warning(
+                f"Skipping recovery link for payment_type={payment_type}: "
+                "no recovery_info_id or line_items in metadata"
+            )
+            return None
+        # Use the unguessable secure_token rather than the row id so the
+        # recovery URL can't be brute-forced by enumerating ids.
+        params = urlencode({"token": lost_session.secure_token})
+        return (
+            f"https://{settings.FIGHT_HEALTH_INSURANCE_DOMAIN}"
+            f"{reverse('complete_payment')}?{params}"
+        )
+
+    @staticmethod
     def handle_checkout_session_expired(request: Any, session: Any) -> None:
         """
         Handle an expired Stripe checkout session.
@@ -121,7 +185,6 @@ class StripeWebhookHelper:
                 metadata = session["metadata"]
             payment_type = metadata.get("payment_type")
             item = "Fight Health Insurance / Fight paperwork"
-            finish_link = None
 
             if payment_type == "fax":
                 item = "Fight Health Insurance Fax"
@@ -141,18 +204,6 @@ class StripeWebhookHelper:
                         logger.info(
                             f"Domain {domain_id} no longer exists, might have been recreated"
                         )
-
-                # Temporary until the FPW UI is ready
-                finish_base_link = (
-                    "https://www.fightpaperwork.com/stripe/finish-checkout"
-                )
-                params = urlencode(
-                    {
-                        "domain_id": domain_id,
-                        "professional_id": metadata.get("professional_id"),
-                    }
-                )
-                finish_link = f"{finish_base_link}?{params}"
 
             # Try to extract email from various session locations
             email: Optional[str] = None
@@ -232,16 +283,9 @@ class StripeWebhookHelper:
                 session_id=session_id,
                 metadata=metadata,
             )
-            if finish_link is None:
-                # Use the unguessable secure_token rather than the row id so the
-                # recovery URL can't be brute-forced by enumerating ids. Build
-                # the host from settings so non-prod environments don't email
-                # users a production link.
-                params = urlencode({"token": lost_session.secure_token})
-                finish_link = (
-                    f"https://{settings.FIGHT_PAPERWORK_DOMAIN}"
-                    f"{reverse('complete_payment')}?{params}"
-                )
+            finish_link = StripeWebhookHelper._build_recovery_link(
+                payment_type, metadata, lost_session
+            )
             if finish_link:
                 fhi_emails.send_checkout_session_expired(
                     request,

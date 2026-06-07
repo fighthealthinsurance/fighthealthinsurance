@@ -1995,39 +1995,94 @@ class StripeWebhookView(View):
 
 
 class CompletePaymentView(View):
-    """View for completing payment after Stripe checkout redirect."""
+    """View for completing payment after a Stripe checkout redirect.
+
+    This backs the abandoned-cart recovery link (``/stripe/finish``) that is
+    emailed to patients/Fight Health Insurance customers. The link is opened
+    directly in a browser, so a GET redirects the visitor straight to a fresh
+    Stripe checkout session (302). Programmatic callers can opt into the JSON
+    payload via ``?format=json`` or by POSTing, which keeps returning
+    ``{"next_url": ...}`` for the front-end checkout flows.
+    """
 
     def get(self, request):
+        """Resume an abandoned checkout from the emailed recovery link.
+
+        Browsers are 302-redirected to Stripe. ``?format=json`` callers get
+        JSON (the next URL on success, an error object on failure); every
+        other client gets a friendly HTML error page when something fails.
+        """
+        # Computed up front so the exception handler below can honor the JSON
+        # contract even when an unexpected error escapes _resolve_next_url.
+        wants_json = request.GET.get("format") == "json"
         try:
             data = {
                 "token": request.GET.get("token"),
                 "session_id": request.GET.get("session_id"),
             }
-
-            return self.process_payment(data)
+            next_url, error = self._resolve_next_url(data)
+            if error is not None or next_url is None:
+                message, status_code = error or ("An internal error occurred", 500)
+                if wants_json:
+                    return self._json_error_response(message, status_code)
+                return self._render_error_page(request, message, status_code)
+            if wants_json:
+                return JsonResponse({"next_url": next_url})
+            # Browser navigation from the recovery email: send the visitor
+            # straight to Stripe rather than showing them raw JSON.
+            return HttpResponseRedirect(next_url)
         except Exception as e:
             logger.opt(exception=True).error(
                 "Error processing payment completion from GET"
             )
-            return HttpResponse(status=500)
+            if wants_json:
+                return self._json_error_response("An internal error occurred", 500)
+            return self._render_error_page(request, "An internal error occurred", 500)
 
     def post(self, request):
+        """Resolve an abandoned checkout from a JSON body and return next_url."""
         try:
-            return self.do_post(request)
+            try:
+                data = json.loads(request.body)
+            except json.JSONDecodeError:
+                return self._json_error_response("Invalid JSON body", 400)
+            if not isinstance(data, dict):
+                return self._json_error_response("Invalid request body", 400)
+            next_url, error = self._resolve_next_url(data)
+            if error is not None or next_url is None:
+                message, status_code = error or ("An internal error occurred", 500)
+                return self._json_error_response(message, status_code)
+            return JsonResponse({"next_url": next_url})
         except Exception as e:
             logger.opt(exception=True).error("Error processing payment completion")
-            return HttpResponse(status=500)
-
-    def do_post(self, request):
-        data = json.loads(request.body)
-        return self.process_payment(data)
+            return self._json_error_response("An internal error occurred", 500)
 
     @staticmethod
     def _json_error_response(error: str, status_code: int) -> JsonResponse:
         """Return a standardized JSON error response for payment completion."""
         return JsonResponse({"error": error}, status=status_code)
 
-    def process_payment(self, data):
+    @staticmethod
+    def _render_error_page(request, message: str, status_code: int) -> HttpResponse:
+        """Render a friendly HTML page for browser visitors hitting an error."""
+        return render(
+            request,
+            "stripe_finish_error.html",
+            {
+                "error_message": message,
+                "support_email": "support42@fighthealthinsurance.com",
+            },
+            status=status_code,
+        )
+
+    def _resolve_next_url(
+        self, data
+    ) -> typing.Tuple[typing.Optional[str], typing.Optional[typing.Tuple[str, int]]]:
+        """Resolve the Stripe checkout URL to resume an abandoned session.
+
+        Returns ``(next_url, None)`` on success or ``(None, (message, status))``
+        on failure so callers can render either JSON or an HTML page.
+        """
         token = data.get("token")
         session_id = data.get("session_id")
 
@@ -2045,7 +2100,7 @@ class CompletePaymentView(View):
                 except (TypeError, ValueError):
                     pass
                 if legacy_id is None or legacy_id <= 0:
-                    return self._json_error_response("Invalid or expired link", 400)
+                    return None, ("Invalid or expired link", 400)
                 rollout_at = getattr(settings, "SECURE_TOKEN_ROLLOUT_AT", None)
                 legacy_max_id = int(
                     getattr(settings, "SECURE_TOKEN_LEGACY_MAX_ID", 1000)
@@ -2062,10 +2117,10 @@ class CompletePaymentView(View):
                         id=legacy_id
                     ).first()
                 if lost_session_opt is None:
-                    return self._json_error_response("Invalid or expired link", 400)
+                    return None, ("Invalid or expired link", 400)
                 lost_session = lost_session_opt
             else:
-                return self._json_error_response("Missing token", 400)
+                return None, ("Missing token", 400)
             continue_url = lost_session.success_url
             cancel_url = lost_session.cancel_url
             payment_type = lost_session.payment_type
@@ -2076,9 +2131,7 @@ class CompletePaymentView(View):
                 line_items_json = metadata.get("line_items")
                 if not line_items_json:
                     logger.error(f"No recovery info found in metadata {metadata}")
-                    return self._json_error_response(
-                        "No recovery info found in metadata", 400
-                    )
+                    return None, ("No recovery info found in metadata", 400)
                 line_items = json.loads(line_items_json)
             else:
                 line_items = StripeRecoveryInfo.objects.get(id=recovery_info_id).items
@@ -2091,16 +2144,12 @@ class CompletePaymentView(View):
                 metadata=metadata,
             )
 
-            return HttpResponse(
-                json.dumps({"next_url": checkout_session.url}),
-                status=200,
-                content_type="application/json",
-            )
+            return checkout_session.url, None
         except models.LostStripeSession.DoesNotExist:
-            return self._json_error_response("Session not found", 400)
+            return None, ("Session not found", 400)
         except Exception as e:
             logger.opt(exception=e).error("Error in finishing payment")
-            return self._json_error_response("An internal error occurred", 500)
+            return None, ("An internal error occurred", 500)
 
 
 @ensure_csrf_cookie
@@ -2314,22 +2363,30 @@ def create_pwyw_checkout(request: HttpRequest) -> HttpResponse:
             success_url = request.build_absolute_uri("/") + "?donation=success"
             cancel_url = request.build_absolute_uri("/")
 
+        # Persist the line items so an expired/abandoned donation checkout can
+        # be rebuilt by CompletePaymentView via the recovery email link. PWYW
+        # uses inline price_data (the amount is dynamic), so we store the items
+        # in a StripeRecoveryInfo and reference it by id in the metadata,
+        # mirroring the fax flow.
+        line_items = [
+            {
+                "price_data": {
+                    "currency": "usd",
+                    "unit_amount": amount * 100,  # Convert dollars to cents
+                    "product_data": {
+                        "name": "Fight Health Insurance - Pay What You Want",
+                        "description": "Support our mission to help people fight health insurance denials",
+                    },
+                },
+                "quantity": 1,
+            }
+        ]
+        recovery_info = StripeRecoveryInfo.objects.create(items=line_items)
+
         # Create a checkout session with the specified amount
         checkout_session = stripe.checkout.Session.create(
             payment_method_types=["card"],
-            line_items=[
-                {
-                    "price_data": {
-                        "currency": "usd",
-                        "unit_amount": amount * 100,  # Convert dollars to cents
-                        "product_data": {
-                            "name": "Fight Health Insurance - Pay What You Want",
-                            "description": "Support our mission to help people fight health insurance denials",
-                        },
-                    },
-                    "quantity": 1,
-                }
-            ],
+            line_items=line_items,  # type: ignore
             mode="payment",
             success_url=success_url,
             cancel_url=cancel_url,
@@ -2337,6 +2394,7 @@ def create_pwyw_checkout(request: HttpRequest) -> HttpResponse:
                 "payment_type": "donation",
                 "donation_type": "pwyw",
                 "source": "checkout",
+                "recovery_info_id": str(recovery_info.id),
             },
         )
 

@@ -2,6 +2,8 @@ import json
 from django.test import TestCase, Client
 from unittest.mock import patch, MagicMock
 
+from fighthealthinsurance.models import StripeRecoveryInfo
+
 
 class PWYWCheckoutTest(TestCase):
     def setUp(self):
@@ -116,6 +118,29 @@ class PWYWCheckoutTest(TestCase):
             call_kwargs = mock_stripe_create.call_args[1]
             self.assertTrue(call_kwargs["success_url"].endswith("/?donation=success"))
             self.assertFalse("evil.com" in call_kwargs["success_url"])
+
+    @patch("stripe.checkout.Session.create")
+    def test_pwyw_checkout_persists_recovery_info(self, mock_stripe_create):
+        """The donation checkout stores recovery info so an expired link can rebuild it."""
+        mock_session = MagicMock()
+        mock_session.url = "https://checkout.stripe.com/test"
+        mock_stripe_create.return_value = mock_session
+
+        response = self.client.post(
+            "/v0/pwyw/checkout",
+            data=json.dumps({"amount": 30}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        call_kwargs = mock_stripe_create.call_args[1]
+        # A StripeRecoveryInfo holding the line items must be created and
+        # referenced in the metadata so CompletePaymentView can rebuild the
+        # session from the recovery email link.
+        recovery_info_id = call_kwargs["metadata"]["recovery_info_id"]
+        recovery_info = StripeRecoveryInfo.objects.get(id=recovery_info_id)
+        self.assertEqual(recovery_info.items, call_kwargs["line_items"])
+        self.assertEqual(recovery_info.items[0]["price_data"]["unit_amount"], 30 * 100)
 
     @patch("stripe.checkout.Session.create")
     def test_pwyw_checkout_stripe_error(self, mock_stripe_create):
