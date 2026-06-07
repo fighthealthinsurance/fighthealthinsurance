@@ -987,11 +987,14 @@ class AppealGenerator(object):
                 score = score_freetext_extraction(extracted, denial_text)
                 if score == "low":
                     # Previously dropped silently. Log at INFO so the
-                    # rejection is traceable for triage.
+                    # rejection is traceable for triage — but only metadata.
+                    # attempt_model also extracts claim_id / plan_id / member
+                    # info, so the raw value can be PHI/PII and must not hit
+                    # the logs.
                     logger.info(
                         f"Dropped low-confidence extraction: "
                         f"method={model_method_name} model={type(model).__name__} "
-                        f"value={extracted!r}"
+                        f"value_len={len(extracted.strip())}"
                     )
                     await asyncio.sleep(1)
                     continue
