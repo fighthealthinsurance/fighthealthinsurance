@@ -860,19 +860,27 @@ def _shed_context(
         and original_open_prompt is not None
     ):
         shed_kwargs = dict(open_prompt_kwargs)
+        prompt_changed_before = len(changed)
         for key in _PROMPT_TIER1_NULLS:
-            # Truthy check (not ``is not None``): an empty-string enrichment
-            # is already a no-op inside ``make_open_prompt`` (each section is
-            # gated on ``!= ""``), so nulling it would add diagnostic noise
-            # to ``changed`` without changing the rebuilt prompt.
-            if shed_kwargs.get(key):
+            # Only null real content: ``make_open_prompt`` gates each section
+            # on ``!= ""`` and a whitespace-only value yields a no-op section
+            # body, so treat empty/whitespace as already-shed. Skipping these
+            # keeps ``changed`` honest and avoids a needless rebuild_prompt
+            # call below (``make_open_prompt`` random.shuffle()s the
+            # professional-POV examples — re-calling it for a no-op would
+            # silently change the retry prompt's example ordering).
+            val = shed_kwargs.get(key)
+            if isinstance(val, str) and val.strip():
                 shed_kwargs[key] = None
                 changed.add(f"prompt.{key}")
         if tier >= 2:
             _apply_tier2_truncations(
                 shed_kwargs, _PROMPT_TIER2_TRUNCATIONS, changed, label="prompt."
             )
-        new_open_prompt = rebuild_prompt(**shed_kwargs)
+        # Only rebuild if the prompt-surface actually shrank — otherwise the
+        # original ``open_prompt`` is reused as-is.
+        if len(changed) > prompt_changed_before:
+            new_open_prompt = rebuild_prompt(**shed_kwargs)
 
     new_calls = []
     for call in calls:

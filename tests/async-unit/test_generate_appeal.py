@@ -509,6 +509,56 @@ class TestShedContextPromptRebuild:
         assert new_calls[0]["prompt"] == "Please write an appeal."  # unchanged
         assert not any(c.startswith("prompt.") for c in changed)
 
+    def test_skips_rebuild_when_no_prompt_surface_changes(self):
+        # Regression (Copilot review): make_open_prompt random.shuffle()s
+        # the professional-POV example list, so re-calling it for a no-op
+        # would silently change the retry prompt's example ordering even
+        # though ``changed`` reports nothing shed. Skip the rebuild entirely
+        # when no prompt kwarg was nulled or truncated.
+        empty_kwargs = {key: None for key in _PROMPT_TIER1_NULLS}
+        kwargs = _prompt_kwargs(**empty_kwargs, plan_context="short")
+        calls_count = [0]
+
+        def rebuild(**_):
+            calls_count[0] += 1
+            return "SHOULD-NOT-BE-USED"
+
+        new_calls, changed = _shed_context(
+            [_make_call(prompt="ORIGINAL")],
+            tier=2,  # tier 2 would otherwise try plan_context truncation
+            open_prompt_kwargs=kwargs,
+            rebuild_prompt=rebuild,
+            original_open_prompt="ORIGINAL",
+        )
+        assert calls_count[0] == 0, "rebuild_prompt called despite no-op shed"
+        assert not any(c.startswith("prompt.") for c in changed)
+        # Call's prompt is untouched too (no swap happened).
+        assert new_calls[0]["prompt"] == "ORIGINAL"
+
+    def test_whitespace_only_enrichment_treated_as_already_shed(self):
+        # Regression (Copilot review): a whitespace-only enrichment value
+        # is truthy in Python but is a no-op section in make_open_prompt
+        # (gated on ``!= ""``). Treat it as already-shed so we don't add
+        # diagnostic noise to ``changed`` for a string that wasn't
+        # contributing anything.
+        whitespace_kwargs = {key: "   \n\t" for key in _PROMPT_TIER1_NULLS}
+        kwargs = _prompt_kwargs(**whitespace_kwargs)
+        calls_count = [0]
+
+        def rebuild(**_):
+            calls_count[0] += 1
+            return "X"
+
+        _, changed = _shed_context(
+            [_make_call(prompt="ORIGINAL")],
+            tier=1,
+            open_prompt_kwargs=kwargs,
+            rebuild_prompt=rebuild,
+            original_open_prompt="ORIGINAL",
+        )
+        assert calls_count[0] == 0, "rebuild_prompt fired on whitespace-only enrichment"
+        assert not any(c.startswith("prompt.") for c in changed)
+
 
 # --- make_appeals router-call-pattern tests --------------------------------
 
