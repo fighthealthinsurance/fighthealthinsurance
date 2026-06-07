@@ -32,6 +32,8 @@ _OVERFLOW_TOLERANCE_PX = 5
 # Generous element-wait timeout: the chat bundle is large and can render the
 # input late on a cold browser cache.
 _WAIT_TIMEOUT = 30
+# How many times to (re)load the chat page waiting for React to mount the input.
+_MAX_LOAD_ATTEMPTS = 3
 
 
 class SeleniumChatLongMessageTest(FHISeleniumBase, StaticLiveServerTestCase):
@@ -62,11 +64,24 @@ class SeleniumChatLongMessageTest(FHISeleniumBase, StaticLiveServerTestCase):
         self.open(f"{self.live_server_url}/chat-consent")
         self.fill_consent_form()
         self.click("button[type='submit']")
-        # seleniumbase's own waits reliably locate React-rendered elements
-        # (the custom raw-Selenium presence wait did not).
         self.wait_for_element_present("#chat-interface-root", timeout=_WAIT_TIMEOUT)
         self.wait_for_page_ready()
-        self.wait_for_element_visible("textarea", timeout=_WAIT_TIMEOUT)
+        # React mounts the input asynchronously after the large JS bundle loads;
+        # on a cold/slow first load (this file sorts before chat_status, so it
+        # often pays the cold-cache cost) it can miss the window. Retry with a
+        # page refresh until the textarea actually renders.
+        for attempt in range(_MAX_LOAD_ATTEMPTS):
+            try:
+                self.wait_for_element_visible("textarea", timeout=_WAIT_TIMEOUT)
+                break
+            except Exception:
+                if attempt == _MAX_LOAD_ATTEMPTS - 1:
+                    raise
+                self.refresh_page()
+                self.wait_for_element_present(
+                    "#chat-interface-root", timeout=_WAIT_TIMEOUT
+                )
+                self.wait_for_page_ready()
         time.sleep(1)  # Let React components settle
 
     def _horizontal_overflow(self):
