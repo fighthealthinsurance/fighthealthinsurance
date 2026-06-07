@@ -2,33 +2,30 @@
 
 When the user reaches the appeal-generation step, ``PubMed`` and
 ``ml_citation`` lookups may already be in flight as fire-and-forget tasks
-launched during entity extraction.  The downstream helpers
+launched during entity extraction.  Those background tasks write their
+results to columns on the ``Denial`` row; the cache-aware inline fetchers
 (``PubMedTools.find_context_for_denial`` /
-``MLCitationsHelper.generate_citations_for_denial``) short-circuit on the
-cached value, but only after a slow inline call has at least started.  We
-want to wait briefly for the in-flight task to finish so the inline call
-isn't duplicate work, while still communicating progress to the frontend
-and giving up after a bounded number of seconds.
+``MLCitationsHelper.generate_citations_for_denial``) short-circuit on those
+columns — but they check the *in-memory* ``denial`` instance, which was
+loaded before the background task finished and is therefore stale.
+
+So the barrier does two things: (1) wait a bounded time for the background
+task to populate its column(s), then (2) refresh those columns onto the
+in-memory ``denial`` so the subsequent inline fetch short-circuits instead
+of regenerating.  Crucially the *readiness* columns are the ones the
+background task actually writes — for citations that is
+``candidate_ml_citation_context`` (the speculative task stores there), not
+``ml_citation_context``.  After refresh we always run the inline fetch,
+which reuses the helper's own freshness/promotion logic rather than
+duplicating it here.
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
-from typing import Any, Awaitable, Callable, Optional
+from typing import Any, Awaitable, Callable, Sequence
 
 from loguru import logger
-
-_BARRIER_PHASE = "research"
-
-
-async def _read_field(denial_id: int, field_name: str) -> Any:
-    """Read a single field from the Denial row without loading the whole instance."""
-    # Local import keeps the module importable in non-Django contexts (tests).
-    from fighthealthinsurance.models import Denial
-
-    row = await Denial.objects.filter(denial_id=denial_id).values(field_name).afirst()
-    return row[field_name] if row else None
 
 
 def _is_populated(value: Any) -> bool:
@@ -41,84 +38,91 @@ def _is_populated(value: Any) -> bool:
     return True
 
 
-async def _emit_status(
-    queue: Optional[asyncio.Queue[str]],
-    *,
-    substep: str,
-    state: str,
-    message: str,
-) -> None:
-    if queue is None:
-        return
-    await queue.put(
-        json.dumps(
-            {
-                "type": "status",
-                "phase": _BARRIER_PHASE,
-                "substep": substep,
-                "state": state,
-                "message": message,
-            }
-        )
-    )
+async def _any_field_populated(denial_id: int, fields: Sequence[str]) -> bool:
+    """True if any of ``fields`` on the Denial row is non-empty.
 
-
-async def with_warm_cache(
-    denial_id: int,
-    field_name: str,
-    *,
-    barrier_timeout: float,
-    poll_interval: float,
-    status_queue: Optional[asyncio.Queue[str]],
-    substep: str,
-    ready_msg: str,
-    fallback_factory: Callable[[], Awaitable[Any]],
-) -> Any:
-    """Wait up to ``barrier_timeout`` seconds for ``Denial[field_name]`` to
-    become non-empty.  On a cache hit, emit a ``state="done"`` frame and
-    return the cached value.  On miss, await ``fallback_factory()`` (which
-    should itself stream its own status frames).
-
-    The frame schema matches what ``appeal_fetcher.ts`` already expects:
-    ``{type, phase="research", substep, state="done", message}``.  No
-    new field shapes — the FE renders unchanged.
+    One ``values()`` query covers all fields so a multi-field readiness
+    check is a single round-trip.
     """
-    deadline = asyncio.get_event_loop().time() + max(0.0, barrier_timeout)
-    # Cheap upfront check — avoids sleeping when the cache is already warm
-    # from a previous attempt.
+    # Local import keeps the module importable in non-Django contexts (tests
+    # patch this function directly).
+    from fighthealthinsurance.models import Denial
+
+    row = await Denial.objects.filter(denial_id=denial_id).values(*fields).afirst()
+    if not row:
+        return False
+    return any(_is_populated(row.get(f)) for f in fields)
+
+
+async def wait_for_warm_cache(
+    denial: Any,
+    *,
+    readiness_fields: Sequence[str],
+    refresh_fields: Sequence[str],
+    barrier_timeout: float,
+    poll_interval: float = 1.0,
+) -> bool:
+    """Wait up to ``barrier_timeout`` for an in-flight background task to
+    populate any of ``readiness_fields`` on the denial's DB row.
+
+    On readiness, refresh ``refresh_fields`` onto the in-memory ``denial``
+    so a subsequent cache-aware fetch short-circuits.  Returns ``True`` on
+    readiness, ``False`` on timeout.  Never raises — a DB hiccup degrades to
+    "not ready" and the caller falls through to a normal (possibly
+    regenerating) fetch.
+    """
+    denial_id = denial.denial_id
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + max(0.0, barrier_timeout)
+    hit = False
     try:
-        cached = await _read_field(denial_id, field_name)
+        hit = await _any_field_populated(denial_id, readiness_fields)
+        while not hit and loop.time() < deadline:
+            await asyncio.sleep(poll_interval)
+            hit = await _any_field_populated(denial_id, readiness_fields)
     except Exception as e:
         logger.opt(exception=True).debug(
-            f"Cache barrier initial read failed for {field_name}: {e}"
+            f"Cache barrier poll failed for denial {denial_id} "
+            f"fields={list(readiness_fields)}: {e}"
         )
-        cached = None
-    if _is_populated(cached):
-        await _emit_status(
-            status_queue, substep=substep, state="done", message=ready_msg
-        )
-        return cached
+        return False
 
-    while asyncio.get_event_loop().time() < deadline:
-        await asyncio.sleep(poll_interval)
+    if hit:
         try:
-            cached = await _read_field(denial_id, field_name)
+            await denial.arefresh_from_db(fields=list(refresh_fields))
         except Exception as e:
             logger.opt(exception=True).debug(
-                f"Cache barrier poll read failed for {field_name}: {e}"
+                f"Cache barrier refresh failed for denial {denial_id}: {e}"
             )
-            cached = None
-        if _is_populated(cached):
-            await _emit_status(
-                status_queue, substep=substep, state="done", message=ready_msg
-            )
-            return cached
+    else:
+        logger.debug(
+            f"Cache barrier timed out for denial {denial_id} after "
+            f"{barrier_timeout}s; falling through to inline fetch"
+        )
+    return hit
 
-    # Cache miss: fall through to the inline awaitable. The inline call's
-    # own tracked_awaitable will emit its completion frame, so no
-    # additional status here.
-    logger.debug(
-        f"Cache barrier timed out for {field_name} on denial {denial_id} "
-        f"after {barrier_timeout}s; falling through to inline fetch"
+
+async def warm_then_fetch(
+    denial: Any,
+    *,
+    readiness_fields: Sequence[str],
+    refresh_fields: Sequence[str],
+    barrier_timeout: float,
+    fetch: Callable[[], Awaitable[Any]],
+    poll_interval: float = 1.0,
+) -> Any:
+    """Wait briefly for the background cache to warm, then run ``fetch``.
+
+    ``fetch`` is the cache-aware inline fetcher (wrapped in the caller's
+    ``tracked_awaitable`` so it still streams its own FE status frame).  On
+    a warm cache it short-circuits and returns instantly; on a cold cache
+    (barrier timed out) it regenerates as before.
+    """
+    await wait_for_warm_cache(
+        denial,
+        readiness_fields=readiness_fields,
+        refresh_fields=refresh_fields,
+        barrier_timeout=barrier_timeout,
+        poll_interval=poll_interval,
     )
-    return await fallback_factory()
+    return await fetch()

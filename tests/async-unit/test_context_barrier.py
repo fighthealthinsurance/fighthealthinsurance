@@ -1,11 +1,15 @@
 """Tests for the bounded-wait cache barrier."""
 
 import asyncio
-import json
 import unittest
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
-from fighthealthinsurance.context_barrier import _is_populated, with_warm_cache
+from fighthealthinsurance.context_barrier import (
+    _is_populated,
+    wait_for_warm_cache,
+    warm_then_fetch,
+)
 
 
 class TestIsPopulated(unittest.TestCase):
@@ -28,169 +32,141 @@ class TestIsPopulated(unittest.TestCase):
         self.assertFalse(_is_populated({}))
 
 
-class TestWithWarmCache(unittest.IsolatedAsyncioTestCase):
-    async def test_immediate_cache_hit(self):
-        """If the cache is already populated, return it without polling."""
-        queue: asyncio.Queue[str] = asyncio.Queue()
-        fallback_called = False
+def _fake_denial():
+    """A denial whose arefresh_from_db is an async no-op spy."""
+    d = SimpleNamespace(denial_id=1)
+    d.arefresh_from_db = AsyncMock()
+    return d
 
-        async def fallback():
-            nonlocal fallback_called
-            fallback_called = True
-            return "fallback"
 
+class TestWaitForWarmCache(unittest.IsolatedAsyncioTestCase):
+    async def test_immediate_readiness_refreshes_and_returns_true(self):
+        denial = _fake_denial()
         with patch(
-            "fighthealthinsurance.context_barrier._read_field",
-            return_value="cached_value",
+            "fighthealthinsurance.context_barrier._any_field_populated",
+            AsyncMock(return_value=True),
         ):
-            result = await with_warm_cache(
-                denial_id=1,
-                field_name="pubmed_context",
+            ready = await wait_for_warm_cache(
+                denial,
+                readiness_fields=["pubmed_context"],
+                refresh_fields=["pubmed_context"],
                 barrier_timeout=10,
-                poll_interval=0.5,
-                status_queue=queue,
-                substep="pubmed",
-                ready_msg="ready",
-                fallback_factory=fallback,
+                poll_interval=0.01,
             )
-        self.assertEqual(result, "cached_value")
-        self.assertFalse(fallback_called)
-        # One status frame emitted
-        frame = json.loads(queue.get_nowait())
-        self.assertEqual(frame["type"], "status")
-        self.assertEqual(frame["phase"], "research")
-        self.assertEqual(frame["substep"], "pubmed")
-        self.assertEqual(frame["state"], "done")
-        self.assertEqual(frame["message"], "ready")
+        self.assertTrue(ready)
+        denial.arefresh_from_db.assert_awaited_once_with(fields=["pubmed_context"])
 
-    async def test_cache_populates_mid_wait(self):
-        """Cache appears during the polling window — return it before fallback."""
-        queue: asyncio.Queue[str] = asyncio.Queue()
-        call_count = 0
+    async def test_readiness_appears_mid_wait(self):
+        denial = _fake_denial()
+        calls = {"n": 0}
 
-        async def read(denial_id, field_name):
-            nonlocal call_count
-            call_count += 1
-            # First call (the upfront check) misses; second poll hits.
-            if call_count <= 1:
-                return None
-            return "appeared"
-
-        fallback_called = False
-
-        async def fallback():
-            nonlocal fallback_called
-            fallback_called = True
-            return "fallback"
+        async def _poll(denial_id, fields):
+            calls["n"] += 1
+            return calls["n"] >= 2  # miss first, hit second
 
         with patch(
-            "fighthealthinsurance.context_barrier._read_field", side_effect=read
+            "fighthealthinsurance.context_barrier._any_field_populated",
+            side_effect=_poll,
         ):
-            result = await with_warm_cache(
-                denial_id=1,
-                field_name="pubmed_context",
+            ready = await wait_for_warm_cache(
+                denial,
+                readiness_fields=["pubmed_context"],
+                refresh_fields=["pubmed_context"],
                 barrier_timeout=5,
                 poll_interval=0.01,
-                status_queue=queue,
-                substep="pubmed",
-                ready_msg="ready",
-                fallback_factory=fallback,
             )
-        self.assertEqual(result, "appeared")
-        self.assertFalse(fallback_called)
-        # Exactly one "done" frame
-        self.assertEqual(queue.qsize(), 1)
+        self.assertTrue(ready)
+        denial.arefresh_from_db.assert_awaited_once()
 
-    async def test_timeout_falls_through_to_fallback(self):
-        """If the cache never populates, the fallback runs."""
-        queue: asyncio.Queue[str] = asyncio.Queue()
-
-        async def fallback():
-            return "from_fallback"
-
+    async def test_timeout_returns_false_no_refresh(self):
+        denial = _fake_denial()
         with patch(
-            "fighthealthinsurance.context_barrier._read_field", return_value=None
+            "fighthealthinsurance.context_barrier._any_field_populated",
+            AsyncMock(return_value=False),
         ):
-            result = await with_warm_cache(
-                denial_id=1,
-                field_name="pubmed_context",
-                barrier_timeout=0.05,  # short timeout for speed
-                poll_interval=0.01,
-                status_queue=queue,
-                substep="pubmed",
-                ready_msg="ready",
-                fallback_factory=fallback,
-            )
-        self.assertEqual(result, "from_fallback")
-        # No status frame emitted — fallback owns its own frames
-        self.assertEqual(queue.qsize(), 0)
-
-    async def test_read_error_treated_as_cache_miss(self):
-        """A DB error during cache polling falls through to fallback safely."""
-        queue: asyncio.Queue[str] = asyncio.Queue()
-
-        async def read_failing(*args, **kwargs):
-            raise RuntimeError("DB down")
-
-        async def fallback():
-            return "ok"
-
-        with patch(
-            "fighthealthinsurance.context_barrier._read_field",
-            side_effect=read_failing,
-        ):
-            result = await with_warm_cache(
-                denial_id=1,
-                field_name="pubmed_context",
+            ready = await wait_for_warm_cache(
+                denial,
+                readiness_fields=["pubmed_context"],
+                refresh_fields=["pubmed_context"],
                 barrier_timeout=0.05,
                 poll_interval=0.01,
-                status_queue=queue,
-                substep="pubmed",
-                ready_msg="ready",
-                fallback_factory=fallback,
             )
-        self.assertEqual(result, "ok")
+        self.assertFalse(ready)
+        denial.arefresh_from_db.assert_not_awaited()
 
-    async def test_zero_timeout_still_checks_cache_once(self):
-        """A barrier_timeout of 0 still does the initial cache check."""
-        queue: asyncio.Queue[str] = asyncio.Queue()
-
-        async def fallback():
-            return "fallback"
-
+    async def test_db_error_degrades_to_not_ready(self):
+        denial = _fake_denial()
         with patch(
-            "fighthealthinsurance.context_barrier._read_field",
-            return_value="cached",
+            "fighthealthinsurance.context_barrier._any_field_populated",
+            AsyncMock(side_effect=RuntimeError("DB down")),
         ):
-            result = await with_warm_cache(
-                denial_id=1,
-                field_name="pubmed_context",
-                barrier_timeout=0,
-                poll_interval=0.5,
-                status_queue=queue,
-                substep="pubmed",
-                ready_msg="ready",
-                fallback_factory=fallback,
+            ready = await wait_for_warm_cache(
+                denial,
+                readiness_fields=["pubmed_context"],
+                refresh_fields=["pubmed_context"],
+                barrier_timeout=0.05,
+                poll_interval=0.01,
             )
-        self.assertEqual(result, "cached")
+        self.assertFalse(ready)
+        denial.arefresh_from_db.assert_not_awaited()
 
-    async def test_no_status_queue_still_works(self):
-        """Caller may omit the status queue; barrier returns silently."""
+    async def test_refresh_error_is_swallowed(self):
+        denial = _fake_denial()
+        denial.arefresh_from_db = AsyncMock(side_effect=RuntimeError("boom"))
         with patch(
-            "fighthealthinsurance.context_barrier._read_field",
-            return_value="cached",
+            "fighthealthinsurance.context_barrier._any_field_populated",
+            AsyncMock(return_value=True),
         ):
-            result = await with_warm_cache(
-                denial_id=1,
-                field_name="pubmed_context",
+            # Must not raise even though refresh fails.
+            ready = await wait_for_warm_cache(
+                denial,
+                readiness_fields=["pubmed_context"],
+                refresh_fields=["pubmed_context"],
                 barrier_timeout=1,
-                poll_interval=0.5,
-                status_queue=None,
-                substep="pubmed",
-                ready_msg="ready",
-                fallback_factory=lambda: asyncio.sleep(0, result="nope"),
+                poll_interval=0.01,
             )
-        self.assertEqual(result, "cached")
+        self.assertTrue(ready)
+
+
+class TestWarmThenFetch(unittest.IsolatedAsyncioTestCase):
+    async def test_runs_fetch_after_readiness(self):
+        denial = _fake_denial()
+        fetch = AsyncMock(return_value="ctx")
+        with patch(
+            "fighthealthinsurance.context_barrier._any_field_populated",
+            AsyncMock(return_value=True),
+        ):
+            result = await warm_then_fetch(
+                denial,
+                readiness_fields=["pubmed_context"],
+                refresh_fields=["pubmed_context"],
+                barrier_timeout=1,
+                fetch=lambda: fetch(),
+                poll_interval=0.01,
+            )
+        self.assertEqual(result, "ctx")
+        fetch.assert_awaited_once()
+        denial.arefresh_from_db.assert_awaited_once()
+
+    async def test_runs_fetch_on_timeout(self):
+        """Even when the barrier times out, the inline fetch still runs."""
+        denial = _fake_denial()
+        fetch = AsyncMock(return_value="generated")
+        with patch(
+            "fighthealthinsurance.context_barrier._any_field_populated",
+            AsyncMock(return_value=False),
+        ):
+            result = await warm_then_fetch(
+                denial,
+                readiness_fields=["ml_citation_context"],
+                refresh_fields=["ml_citation_context"],
+                barrier_timeout=0.05,
+                fetch=lambda: fetch(),
+                poll_interval=0.01,
+            )
+        self.assertEqual(result, "generated")
+        fetch.assert_awaited_once()
+        denial.arefresh_from_db.assert_not_awaited()
 
 
 if __name__ == "__main__":

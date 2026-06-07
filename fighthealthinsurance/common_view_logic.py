@@ -52,7 +52,7 @@ from fhi_users import emails as fhi_emails
 from fhi_users.audit import TrackingInfo
 from fhi_users.models import ProfessionalUser, UserDomain
 from fighthealthinsurance import stripe_utils
-from fighthealthinsurance.context_barrier import with_warm_cache
+from fighthealthinsurance.context_barrier import warm_then_fetch
 from fighthealthinsurance.context_utils import attach_supplemental_to_citations
 from fighthealthinsurance.denial_context import merge_plan_context, merge_qa
 from fighthealthinsurance.denials.algorithmic_review_detector import (
@@ -2898,15 +2898,18 @@ class AppealsBackendHelper:
                 getattr(django_settings, "FHI_CONTEXT_BARRIER_TIMEOUT_S", 10)
             )
 
-            pubmed_context_awaitable = with_warm_cache(
-                denial_id=denial_id,
-                field_name="pubmed_context",
+            # Readiness columns are the ones the *background* task writes.
+            # The speculative citation task stores to
+            # candidate_ml_citation_context (not ml_citation_context), so
+            # the barrier watches both; the refresh then hands the inline
+            # generate_citations call a warm in-memory denial, and that
+            # helper applies its own candidate->main freshness/promotion.
+            pubmed_context_awaitable = warm_then_fetch(
+                denial,
+                readiness_fields=["pubmed_context"],
+                refresh_fields=["pubmed_context"],
                 barrier_timeout=barrier_timeout,
-                poll_interval=0.5,
-                status_queue=status_queue,
-                substep="pubmed",
-                ready_msg="Background PubMed search ready",
-                fallback_factory=lambda: tracked_awaitable(
+                fetch=lambda: tracked_awaitable(
                     asyncio.wait_for(
                         cls.pmt.find_context_for_denial(denial), timeout=40
                     ),
@@ -2915,15 +2918,20 @@ class AppealsBackendHelper:
                 ),
             )
 
-            ml_citation_context_awaitable = with_warm_cache(
-                denial_id=denial_id,
-                field_name="ml_citation_context",
+            ml_citation_context_awaitable = warm_then_fetch(
+                denial,
+                readiness_fields=[
+                    "ml_citation_context",
+                    "candidate_ml_citation_context",
+                ],
+                refresh_fields=[
+                    "ml_citation_context",
+                    "candidate_ml_citation_context",
+                    "candidate_procedure",
+                    "candidate_diagnosis",
+                ],
                 barrier_timeout=barrier_timeout,
-                poll_interval=0.5,
-                status_queue=status_queue,
-                substep="citations",
-                ready_msg="Background citations ready",
-                fallback_factory=lambda: tracked_awaitable(
+                fetch=lambda: tracked_awaitable(
                     asyncio.wait_for(
                         MLCitationsHelper.generate_citations_for_denial(
                             denial, speculative=False
