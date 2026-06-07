@@ -6,7 +6,11 @@ from django.test import TestCase
 from django.urls import reverse
 from django.contrib.auth import get_user_model
 
-from fighthealthinsurance.models import StripeWebhookEvents, LostStripeSession
+from fighthealthinsurance.models import (
+    StripeWebhookEvents,
+    LostStripeSession,
+    StripeRecoveryInfo,
+)
 from fighthealthinsurance.helpers.stripe_helpers import StripeWebhookHelper
 
 User = get_user_model()
@@ -186,9 +190,10 @@ class StripeWebhookTests(TestCase):
     def test_no_recovery_email_for_unrebuildable_payment(self, mock_send_email):
         """Payment types with no line_items/recovery_info don't get a dead link.
 
-        Pay-what-you-want donations only store payment_type/source metadata, so
-        the complete_payment view can't recreate the checkout. We must skip the
-        recovery email rather than send a link that would only error.
+        Legacy donation sessions (created before recovery_info was persisted)
+        only store payment_type/source metadata, so the complete_payment view
+        can't recreate the checkout. We must skip the recovery email rather
+        than send a link that would only error.
         """
         mock_session = MagicMock()
         mock_session.id = "cs_unique_for_donation_test"
@@ -202,6 +207,42 @@ class StripeWebhookTests(TestCase):
         StripeWebhookHelper.handle_checkout_session_expired(self.client, mock_session)
 
         mock_send_email.assert_not_called()
+
+    @patch(
+        "fighthealthinsurance.helpers.stripe_helpers.fhi_emails.send_checkout_session_expired"
+    )
+    def test_donation_with_recovery_info_gets_fhi_recovery_link(self, mock_send_email):
+        """A PWYW donation carrying recovery_info_id gets a working FHI link.
+
+        New donation checkouts persist their line items and reference them via
+        recovery_info_id, so the recovery email points at the Django
+        complete_payment view (which can rebuild the session).
+        """
+        recovery_info = StripeRecoveryInfo.objects.create(
+            items=[
+                {"price_data": {"currency": "usd", "unit_amount": 500}, "quantity": 1}
+            ]
+        )
+        mock_session = MagicMock()
+        mock_session.id = "cs_unique_for_donation_recovery"
+        mock_session.metadata = {
+            "payment_type": "donation",
+            "donation_type": "pwyw",
+            "source": "checkout",
+            "recovery_info_id": str(recovery_info.id),
+        }
+        mock_session.customer_email = "donor@example.com"
+
+        StripeWebhookHelper.handle_checkout_session_expired(self.client, mock_session)
+
+        mock_send_email.assert_called_once()
+        link = mock_send_email.call_args.kwargs["link"]
+        self.assertTrue(
+            link.startswith(f"https://{settings.FIGHT_HEALTH_INSURANCE_DOMAIN}/")
+        )
+        self.assertIn("/stripe/finish?", link)
+        lost_session = LostStripeSession.objects.get(session_id=mock_session.id)
+        self.assertIn(f"token={lost_session.secure_token}", link)
 
     @patch(
         "fighthealthinsurance.helpers.stripe_helpers.fhi_emails.send_checkout_session_expired"

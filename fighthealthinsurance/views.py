@@ -2367,22 +2367,30 @@ def create_pwyw_checkout(request: HttpRequest) -> HttpResponse:
             success_url = request.build_absolute_uri("/") + "?donation=success"
             cancel_url = request.build_absolute_uri("/")
 
+        # Persist the line items so an expired/abandoned donation checkout can
+        # be rebuilt by CompletePaymentView via the recovery email link. PWYW
+        # uses inline price_data (the amount is dynamic), so we store the items
+        # in a StripeRecoveryInfo and reference it by id in the metadata,
+        # mirroring the fax flow.
+        line_items = [
+            {
+                "price_data": {
+                    "currency": "usd",
+                    "unit_amount": amount * 100,  # Convert dollars to cents
+                    "product_data": {
+                        "name": "Fight Health Insurance - Pay What You Want",
+                        "description": "Support our mission to help people fight health insurance denials",
+                    },
+                },
+                "quantity": 1,
+            }
+        ]
+        recovery_info = StripeRecoveryInfo.objects.create(items=line_items)
+
         # Create a checkout session with the specified amount
         checkout_session = stripe.checkout.Session.create(
             payment_method_types=["card"],
-            line_items=[
-                {
-                    "price_data": {
-                        "currency": "usd",
-                        "unit_amount": amount * 100,  # Convert dollars to cents
-                        "product_data": {
-                            "name": "Fight Health Insurance - Pay What You Want",
-                            "description": "Support our mission to help people fight health insurance denials",
-                        },
-                    },
-                    "quantity": 1,
-                }
-            ],
+            line_items=line_items,  # type: ignore
             mode="payment",
             success_url=success_url,
             cancel_url=cancel_url,
@@ -2390,6 +2398,7 @@ def create_pwyw_checkout(request: HttpRequest) -> HttpResponse:
                 "payment_type": "donation",
                 "donation_type": "pwyw",
                 "source": "checkout",
+                "recovery_info_id": str(recovery_info.id),
             },
         )
 

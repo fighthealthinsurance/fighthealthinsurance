@@ -5,7 +5,7 @@ from urllib.parse import urlencode
 from unittest.mock import patch
 from django.urls import reverse
 from django.test import Client
-from fighthealthinsurance.models import LostStripeSession
+from fighthealthinsurance.models import LostStripeSession, StripeRecoveryInfo
 from fighthealthinsurance.helpers.stripe_helpers import StripeWebhookHelper
 
 EMAIL = "test@example.com"
@@ -119,6 +119,44 @@ def test_legacy_session_id_link_still_works():
         response = Client().get(f"{reverse('complete_payment')}?{query}")
     assert response.status_code == 200
     assert response.json()["next_url"] == "https://checkout.stripe.com/legacy"
+
+
+@pytest.mark.django_db
+def test_donation_recovery_link_redirects_to_stripe():
+    """A browser opening an expired-donation recovery link is redirected to Stripe.
+
+    PWYW donations persist their line items in a StripeRecoveryInfo referenced
+    by recovery_info_id, so complete_payment can rebuild the checkout.
+    """
+    recovery_info = StripeRecoveryInfo.objects.create(
+        items=[{"price_data": {"currency": "usd", "unit_amount": 500}, "quantity": 1}]
+    )
+    lost_session = LostStripeSession.objects.create(
+        session_id="donation_session",
+        payment_type="donation",
+        email=EMAIL,
+        metadata={
+            "payment_type": "donation",
+            "donation_type": "pwyw",
+            "source": "checkout",
+            "recovery_info_id": str(recovery_info.id),
+        },
+    )
+    with patch("stripe.checkout.Session.create") as mock_create:
+        mock_create.return_value.url = "https://checkout.stripe.com/donation"
+        query = urlencode({"token": lost_session.secure_token})
+        response = Client().get(f"{reverse('complete_payment')}?{query}")
+    assert response.status_code == 302
+    assert response["Location"] == "https://checkout.stripe.com/donation"
+
+
+@pytest.mark.django_db
+def test_browser_error_renders_html_error_page():
+    """A forged token opened in a browser renders the friendly HTML error page."""
+    response = Client().get(f"{reverse('complete_payment')}?token=not-a-real-token")
+    assert response.status_code == 400
+    assert response["Content-Type"].startswith("text/html")
+    assert b"resume your checkout" in response.content
 
 
 @pytest.mark.django_db
