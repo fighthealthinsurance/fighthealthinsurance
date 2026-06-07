@@ -1189,10 +1189,11 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
                               paddingBottom: 40,
                               resize: 'none',
                               verticalAlign: 'top',
-                              // Auto-grow up to maxRows, then scroll internally
-                              // instead of expanding without bound.
-                              maxHeight: 200,
-                              overflowY: 'auto',
+                              // Auto-grow up to maxRows, then scroll internally.
+                              // Note: do NOT set maxHeight/height here -- with
+                              // `autosize`, react-textarea-autosize throws on
+                              // style.maxHeight and crashes the component;
+                              // maxRows already caps growth and scrolls.
                             },
                             root: {
                               flex: 1,

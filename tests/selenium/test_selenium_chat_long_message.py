@@ -29,12 +29,11 @@ _FAMILY_EMOJI = chr(0x1F468) + _ZWJ + chr(0x1F469) + _ZWJ + chr(0x1F467)
 _BIDI_TEXT = chr(0x202E) + "reversed" + chr(0x202C)
 # Allow a few pixels for sub-pixel rounding / scrollbars.
 _OVERFLOW_TOLERANCE_PX = 5
-# Element-wait timeout. Kept short here so the diagnostic run fails fast and
-# returns its dump quickly (the input has never mounted in CI regardless of how
-# long we wait, so a long timeout only slows the run).
-_WAIT_TIMEOUT = 15
+# Generous element-wait timeout: the chat bundle is large and can render the
+# input late on a cold browser cache.
+_WAIT_TIMEOUT = 30
 # How many times to (re)load the chat page waiting for React to mount the input.
-_MAX_LOAD_ATTEMPTS = 1
+_MAX_LOAD_ATTEMPTS = 2
 
 
 class SeleniumChatLongMessageTest(FHISeleniumBase, StaticLiveServerTestCase):
@@ -67,20 +66,14 @@ class SeleniumChatLongMessageTest(FHISeleniumBase, StaticLiveServerTestCase):
         self.click("button[type='submit']")
         self.wait_for_element_present("#chat-interface-root", timeout=_WAIT_TIMEOUT)
         self.wait_for_page_ready()
-        # React mounts the input asynchronously after the large JS bundle loads;
-        # on a cold/slow first load (this file sorts before chat_status, so it
-        # often pays the cold-cache cost) it can miss the window. Retry with a
-        # page refresh until the textarea actually renders.
+        # React mounts the input asynchronously after the JS bundle loads; retry
+        # with a refresh if it isn't visible on the first load.
         for attempt in range(_MAX_LOAD_ATTEMPTS):
             try:
                 self.wait_for_element_visible("textarea", timeout=_WAIT_TIMEOUT)
                 break
             except Exception:
                 if attempt == _MAX_LOAD_ATTEMPTS - 1:
-                    # TEMPORARY: capture why React never renders the chat input
-                    # in this test class (works fine in chat_status) so we can
-                    # diagnose the CI-only failure.
-                    self._dump_diagnostics("textarea-not-found")
                     raise
                 self.refresh_page()
                 self.wait_for_element_present(
@@ -88,52 +81,6 @@ class SeleniumChatLongMessageTest(FHISeleniumBase, StaticLiveServerTestCase):
                 )
                 self.wait_for_page_ready()
         time.sleep(1)  # Let React components settle
-
-    def _dump_diagnostics(self, label):
-        """TEMPORARY: print page state to the CI log to diagnose why the chat
-        input doesn't mount. Remove once understood."""
-
-        def _safe(script):
-            try:
-                return self.execute_script(script)
-            except Exception as exc:  # noqa: BLE001
-                return f"<script error: {exc}>"
-
-        info = {
-            "url": _safe("return document.location.href;"),
-            "title": _safe("return document.title;"),
-            "ready_state": _safe("return document.readyState;"),
-            "textarea_count": _safe(
-                "return document.querySelectorAll('textarea').length;"
-            ),
-            "root_present": _safe(
-                "return !!document.getElementById('chat-interface-root');"
-            ),
-            "root_html_len": _safe(
-                "var r=document.getElementById('chat-interface-root');"
-                "return r ? r.innerHTML.length : -1;"
-            ),
-            "script_tags": _safe(
-                "return Array.from(document.scripts).map(s=>s.src).join(' | ');"
-            ),
-            "body_text": _safe("return (document.body.innerText||'').slice(0,2000);"),
-            "root_html_head": _safe(
-                "var r=document.getElementById('chat-interface-root');"
-                "return r ? r.innerHTML.slice(0,1500) : '<no root>';"
-            ),
-        }
-        try:
-            logs = self.driver.get_log("browser")
-            info["console"] = " || ".join(
-                entry.get("message", "")[:600] for entry in logs[-30:]
-            )
-        except Exception as exc:  # noqa: BLE001
-            info["console"] = f"<no browser logs: {exc}>"
-
-        print(f"\n===== CHAT DIAGNOSTICS [{label}] =====")
-        for key, value in info.items():
-            print(f"--- {key}:\n{value}")
-        print("===== END CHAT DIAGNOSTICS =====\n")
 
     def _horizontal_overflow(self):
         """Pixels of horizontal overflow on the document (0 means no overflow)."""
