@@ -2906,9 +2906,21 @@ class AppealsBackendHelper:
             # we never block forever.  Tunable via settings.
             from django.conf import settings as django_settings
 
-            barrier_timeout = float(
-                getattr(django_settings, "FHI_CONTEXT_BARRIER_TIMEOUT_S", 10)
+            # Tolerate bad config: a present-but-unparseable value (None, "",
+            # or a typo'd string) would otherwise raise here and abort appeal
+            # generation before the inline fallback ever runs. Degrade to the
+            # default instead — the whole barrier is best-effort.
+            raw_barrier_timeout = getattr(
+                django_settings, "FHI_CONTEXT_BARRIER_TIMEOUT_S", 10
             )
+            try:
+                barrier_timeout = float(raw_barrier_timeout)
+            except (TypeError, ValueError):
+                logger.warning(
+                    f"Invalid FHI_CONTEXT_BARRIER_TIMEOUT_S="
+                    f"{raw_barrier_timeout!r}; defaulting to 10s"
+                )
+                barrier_timeout = 10.0
 
             # Readiness columns are the ones the *background* task writes.
             # The speculative citation task stores to
@@ -3201,8 +3213,18 @@ class AppealsBackendHelper:
                 logger.debug("Used saved contexts")
         else:
             logger.debug("Too many retries, skipping ML/pubmed/RAG ctx")
-            # Reuse the persisted contexts; otherwise they'd be dropped on
-            # the very retry path that's supposed to use previous results.
+            # Re-read the row before reusing persisted contexts: earlier
+            # attempts (or still-in-flight fire-and-forget tasks) may have
+            # written pubmed/citation/RAG/IMR context after this request loaded
+            # ``denial`` (~L2488). Without the refresh we'd log "using previous
+            # results" while reading a stale snapshot and dropping the very
+            # context this path exists to reuse. Mirrors the fallback branch.
+            try:
+                # Added in Django 5.1
+                await denial.arefresh_from_db(from_queryset=denial_query)
+            except AttributeError:
+                # arefresh_from_db(from_queryset=...) not available pre-5.1
+                denial = await denial_query.aget()
             nice_context = denial.nice_context
             pubmed_context = denial.pubmed_context
             ml_citation_context = denial.ml_citation_context
