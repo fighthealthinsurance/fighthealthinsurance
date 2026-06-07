@@ -174,6 +174,10 @@ class ChooseAppealForm(DenialRefForm):
     appeal_text = forms.CharField(
         widget=forms.Textarea(attrs={"class": "appeal_text"}), required=True
     )
+    # Optional id of the ProposedAppeal row generated for this draft.
+    # When present, ChooseAppealHelper uses it to preserve model attribution
+    # even after sub_in_appeals rewrites the raw text the user sees.
+    proposed_appeal_id = forms.IntegerField(required=False, widget=forms.HiddenInput())
 
 
 class ChooseEscalationLetterForm(DenialRefForm):

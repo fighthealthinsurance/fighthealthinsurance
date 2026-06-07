@@ -1,7 +1,12 @@
 import datetime
+import json
+from collections import Counter, defaultdict
+from typing import Any, Dict, List, Optional
 
 from django.db import transaction
+from django.db.models import Count
 from django.http import HttpResponse
+from django.utils import timezone
 from django.views import View, generic
 
 import ray
@@ -18,11 +23,14 @@ from fighthealthinsurance.forms import FollowUpTestForm
 from fighthealthinsurance.helpers.fax_helpers import SendFaxHelper
 from fighthealthinsurance.mailing_list_actor_ref import mailing_list_actor_ref
 from fighthealthinsurance.models import (
+    ChooserCandidate,
+    ChooserVote,
     Denial,
     FollowUpSched,
     MailingListSubscriber,
     ProfessionalDomainRelation,
     ProfessionalUser,
+    ProposedAppeal,
     UserDomain,
 )
 from fighthealthinsurance.email_utils import is_sendable_email
@@ -262,3 +270,186 @@ class SendMailingListMailView(generic.FormView):
             return HttpResponse(
                 f"Error sending mailing list email: {str(e)}", status=500
             )
+
+
+# Bucket label for chosen ProposedAppeal rows whose model_name is NULL —
+# i.e. the user picked something we couldn't attribute back to a generated
+# draft (heavy edit, share-appeal flow, or a row predating the model_name
+# field). Surfacing them keeps the dashboard's total-picks number honest.
+UNKNOWN_MODEL_LABEL = "(unknown)"
+
+
+def _merge_stats(
+    chosen: Dict[str, int], presented: Dict[str, int]
+) -> List[Dict[str, Any]]:
+    """Combine per-model chosen + presented counts into a sorted list of dicts."""
+    rows: List[Dict[str, Any]] = []
+    for model_name in set(chosen) | set(presented):
+        c = chosen.get(model_name, 0)
+        p = presented.get(model_name, 0)
+        win_rate = (c / p * 100.0) if p > 0 else 0.0
+        rows.append(
+            {
+                "model_name": model_name,
+                "chosen": c,
+                "presented": p,
+                "win_rate": win_rate,
+            }
+        )
+    rows.sort(key=lambda r: (-r["chosen"], -r["win_rate"], r["model_name"]))
+    return rows
+
+
+class ModelUsageDashboardView(generic.TemplateView):
+    """Staff dashboard showing which ML models users pick most often.
+
+    Aggregates three signal sources across three time windows:
+      * ProposedAppeal.chosen=True  - implicit pick from real denial flow
+      * ChooserVote (kind=appeal_letter) - synthetic chooser appeal vote
+      * ChooserVote (kind=chat_response) - synthetic chooser chat vote
+    """
+
+    template_name = "model_usage_dashboard.html"
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        now = timezone.now()
+        windows = [
+            ("global", "All Time", None),
+            ("1d", "Last 1 Day", now - datetime.timedelta(days=1)),
+            ("30d", "Last 30 Days", now - datetime.timedelta(days=30)),
+        ]
+        windows_ctx = []
+        for slug, label, since in windows:
+            proposed = self._proposed_appeal_stats(since)
+            chooser_appeal = self._chooser_stats("appeal_letter", since)
+            chooser_chat = self._chooser_stats("chat_response", since)
+            windows_ctx.append(
+                {
+                    "slug": slug,
+                    "label": label,
+                    "proposed_appeal": proposed,
+                    "chooser_appeal": chooser_appeal,
+                    "chooser_chat": chooser_chat,
+                    "chart_data_json": json.dumps(
+                        self._chart_data(proposed, chooser_appeal, chooser_chat)
+                    ),
+                }
+            )
+        ctx["title"] = "ML Model Usage Dashboard"
+        ctx["windows"] = windows_ctx
+        return ctx
+
+    @staticmethod
+    def _chart_data(
+        proposed: List[Dict[str, Any]],
+        chooser_appeal: List[Dict[str, Any]],
+        chooser_chat: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """Build a CanvasJS-friendly stacked-column data structure."""
+        labels: List[str] = []
+        seen = set()
+        for source in (proposed, chooser_appeal, chooser_chat):
+            for row in source:
+                if row["model_name"] not in seen:
+                    seen.add(row["model_name"])
+                    labels.append(row["model_name"])
+
+        def series_for(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+            by_name = {r["model_name"]: r["chosen"] for r in rows}
+            return [{"label": lbl, "y": by_name.get(lbl, 0)} for lbl in labels]
+
+        return {
+            "labels": labels,
+            "series": [
+                {
+                    "name": "ProposedAppeal (denial flow)",
+                    "color": "#1f77b4",
+                    "dataPoints": series_for(proposed),
+                },
+                {
+                    "name": "Chooser - Appeal",
+                    "color": "#ff7f0e",
+                    "dataPoints": series_for(chooser_appeal),
+                },
+                {
+                    "name": "Chooser - Chat",
+                    "color": "#2ca02c",
+                    "dataPoints": series_for(chooser_chat),
+                },
+            ],
+        }
+
+    @staticmethod
+    def _proposed_appeal_stats(
+        since: Optional[datetime.datetime],
+    ) -> List[Dict[str, Any]]:
+        # Keep chosen rows with model_name=NULL in the chosen aggregation —
+        # mark_proposal_chosen intentionally falls back to None when the
+        # picked text can't be matched to a generated draft, and those are
+        # still real user picks worth surfacing. They are bucketed under
+        # "(unknown)" below so they don't get silently dropped.
+        chosen_qs = ProposedAppeal.objects.filter(chosen=True)
+        if since is not None:
+            chosen_qs = chosen_qs.filter(created_at__gte=since)
+
+        # Tie the presented universe to denials that were picked within
+        # the window. We intentionally do NOT filter presented_qs by
+        # created_at: a user can generate appeals on day 0 and pick one on
+        # day 1, and a 1-day window anchored on the pick should still count
+        # the drafts that were actually presented. Pass the subquery
+        # straight into __in to avoid materializing a potentially huge id
+        # list (Django keeps it as a SQL subquery).
+        chosen_denial_ids = chosen_qs.values_list("for_denial_id", flat=True).distinct()
+        presented_qs = ProposedAppeal.objects.filter(
+            chosen=False,
+            model_name__isnull=False,
+            for_denial_id__in=chosen_denial_ids,
+        )
+
+        chosen: Dict[str, int] = {}
+        for name, count in chosen_qs.values_list("model_name").annotate(c=Count("id")):
+            label = name if name is not None else UNKNOWN_MODEL_LABEL
+            chosen[label] = chosen.get(label, 0) + count
+        presented = {
+            name: count
+            for name, count in presented_qs.values_list("model_name").annotate(
+                c=Count("id")
+            )
+        }
+        return _merge_stats(chosen, presented)
+
+    @staticmethod
+    def _chooser_stats(
+        kind: str, since: Optional[datetime.datetime]
+    ) -> List[Dict[str, Any]]:
+        chosen_qs = ChooserVote.objects.filter(chosen_candidate__kind=kind)
+        if since is not None:
+            chosen_qs = chosen_qs.filter(created_at__gte=since)
+        chosen = {
+            name: count
+            for name, count in chosen_qs.values_list(
+                "chosen_candidate__model_name"
+            ).annotate(c=Count("id"))
+        }
+
+        # Presented: walk votes' presented_candidate_ids JSON lists into a
+        # counter. We reuse chosen_qs (same filter) and call .iterator() so
+        # the All Time window doesn't load every vote into a result cache.
+        counter: Counter = Counter()
+        for ids in chosen_qs.values_list(
+            "presented_candidate_ids", flat=True
+        ).iterator():
+            if ids:
+                counter.update(ids)
+        cand_to_model = dict(
+            ChooserCandidate.objects.filter(
+                id__in=list(counter.keys()), kind=kind
+            ).values_list("id", "model_name")
+        )
+        presented: Dict[str, int] = defaultdict(int)
+        for cid, n in counter.items():
+            mn = cand_to_model.get(cid)
+            if mn:
+                presented[mn] += n
+        return _merge_stats(chosen, dict(presented))
