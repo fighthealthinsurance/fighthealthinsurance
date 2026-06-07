@@ -559,19 +559,21 @@ class TestShedContextPromptRebuild:
         # Call's prompt is untouched too (no swap happened).
         assert new_calls[0]["prompt"] == "ORIGINAL"
 
-    def test_whitespace_only_enrichment_treated_as_already_shed(self):
-        # Regression (Copilot review): a whitespace-only enrichment value
-        # is truthy in Python but is a no-op section in make_open_prompt
-        # (gated on ``!= ""``). Treat it as already-shed so we don't add
-        # diagnostic noise to ``changed`` for a string that wasn't
-        # contributing anything.
+    def test_whitespace_only_enrichment_is_still_shed(self):
+        # Regression (Copilot review on PR #824): a whitespace-only
+        # enrichment value is NOT a no-op in make_open_prompt --- the gate
+        # there is ``is not None and != ""``, so ``"   "`` still trips
+        # has_citations and renders the CITATION INSTRUCTIONS block plus
+        # the per-section header (``Provided citations (use these):    ``).
+        # Those bytes need to drop on retry, so the shed pass must null
+        # whitespace-only values and trigger a rebuild.
         whitespace_kwargs = {key: "   \n\t" for key in _PROMPT_TIER1_NULLS}
         kwargs = _prompt_kwargs(**whitespace_kwargs)
-        calls_count = [0]
+        seen_kwargs: dict = {}
 
-        def rebuild(**_):
-            calls_count[0] += 1
-            return "X"
+        def rebuild(**rk):
+            seen_kwargs.update(rk)
+            return "SHED"
 
         _, changed = _shed_context(
             [_make_call(prompt="ORIGINAL")],
@@ -580,7 +582,32 @@ class TestShedContextPromptRebuild:
             rebuild_prompt=rebuild,
             original_open_prompt="ORIGINAL",
         )
-        assert calls_count[0] == 0, "rebuild_prompt fired on whitespace-only enrichment"
+        # Every whitespace-only enrichment is nulled and reported.
+        for key in _PROMPT_TIER1_NULLS:
+            assert seen_kwargs[key] is None, f"{key} should have been nulled"
+            assert f"prompt.{key}" in changed
+
+    def test_truly_empty_string_enrichment_is_skipped(self):
+        # The truly-empty string ``""`` IS already a no-op in
+        # make_open_prompt (gate fails on ``!= ""``), so it can be skipped
+        # without adding diagnostic noise to ``changed``. Pin that the
+        # truly-empty case still avoids a rebuild call.
+        empty_kwargs = {key: "" for key in _PROMPT_TIER1_NULLS}
+        kwargs = _prompt_kwargs(**empty_kwargs, plan_context="short")
+        calls_count = [0]
+
+        def rebuild(**_):
+            calls_count[0] += 1
+            return "X"
+
+        _, changed = _shed_context(
+            [_make_call(prompt="ORIGINAL")],
+            tier=2,
+            open_prompt_kwargs=kwargs,
+            rebuild_prompt=rebuild,
+            original_open_prompt="ORIGINAL",
+        )
+        assert calls_count[0] == 0, "rebuild fired on truly-empty enrichment"
         assert not any(c.startswith("prompt.") for c in changed)
 
 

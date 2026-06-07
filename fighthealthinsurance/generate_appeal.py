@@ -863,15 +863,15 @@ def _shed_context(
         shed_kwargs = dict(open_prompt_kwargs)
         prompt_changed_before = len(changed)
         for key in _PROMPT_TIER1_NULLS:
-            # Only null real content: ``make_open_prompt`` gates each section
-            # on ``!= ""`` and a whitespace-only value yields a no-op section
-            # body, so treat empty/whitespace as already-shed. Skipping these
-            # keeps ``changed`` honest and avoids a needless rebuild_prompt
-            # call below (``make_open_prompt`` random.shuffle()s the
-            # professional-POV examples — re-calling it for a no-op would
-            # silently change the retry prompt's example ordering).
+            # Mirror ``make_open_prompt``'s gate exactly: each section is
+            # included on ``is not None and != ""``. A whitespace-only value
+            # is NOT a no-op there — it still trips ``has_citations`` and
+            # renders the CITATION INSTRUCTIONS block plus the section
+            # header (e.g. ``Provided citations (use these):    ``), so it
+            # contributes prompt bytes we need to shed. Only the truly
+            # empty string ``""`` is already-shed and can be skipped.
             val = shed_kwargs.get(key)
-            if isinstance(val, str) and val.strip():
+            if isinstance(val, str) and val != "":
                 shed_kwargs[key] = None
                 changed.add(f"prompt.{key}")
         if tier >= 2:
