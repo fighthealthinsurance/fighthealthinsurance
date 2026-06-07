@@ -1,8 +1,13 @@
 """Selenium tests for long-message and weird-Unicode rendering in the chat UI.
 
 Guards the frontend fixes that keep long pasted content, long unbroken strings,
-and weird Unicode from breaking the chat layout (horizontal page overflow) or
-crashing rendering.
+and weird Unicode from breaking the chat layout (horizontal page overflow),
+collapsing very long messages, or crashing rendering.
+
+These mirror the resilient interaction pattern of test_selenium_chat_status.py:
+element finding/typing/clicking goes through seleniumbase's own methods (which
+reliably locate the React-rendered textarea), and the native value-setter is
+used only where send_keys can't help (non-BMP emoji and long pastes).
 
 Invisible / bidi characters are built with ``chr()`` so this source file
 contains no hidden (or "Trojan Source") characters.
@@ -12,9 +17,6 @@ import time
 
 from django.contrib.staticfiles.testing import StaticLiveServerTestCase
 from seleniumbase import BaseCase
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.support.ui import WebDriverWait
 
 from .fhi_selenium_base import FHISeleniumBase
 
@@ -27,6 +29,9 @@ _FAMILY_EMOJI = chr(0x1F468) + _ZWJ + chr(0x1F469) + _ZWJ + chr(0x1F467)
 _BIDI_TEXT = chr(0x202E) + "reversed" + chr(0x202C)
 # Allow a few pixels for sub-pixel rounding / scrollbars.
 _OVERFLOW_TOLERANCE_PX = 5
+# Generous element-wait timeout: the chat bundle is large and can render the
+# input late on a cold browser cache.
+_WAIT_TIMEOUT = 30
 
 
 class SeleniumChatLongMessageTest(FHISeleniumBase, StaticLiveServerTestCase):
@@ -41,11 +46,6 @@ class SeleniumChatLongMessageTest(FHISeleniumBase, StaticLiveServerTestCase):
     def tearDownClass(cls):
         super(StaticLiveServerTestCase, cls).tearDownClass()
         super(BaseCase, cls).tearDownClass()
-
-    def wait_for_element(self, selector, timeout=10):
-        WebDriverWait(self.driver, timeout).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, selector))
-        )
 
     def fill_consent_form(self):
         self.type("input#store_fname", "TestFirstName")
@@ -62,11 +62,11 @@ class SeleniumChatLongMessageTest(FHISeleniumBase, StaticLiveServerTestCase):
         self.open(f"{self.live_server_url}/chat-consent")
         self.fill_consent_form()
         self.click("button[type='submit']")
-        self.wait_for_element("#chat-interface-root", timeout=15)
+        # seleniumbase's own waits reliably locate React-rendered elements
+        # (the custom raw-Selenium presence wait did not).
+        self.wait_for_element_present("#chat-interface-root", timeout=_WAIT_TIMEOUT)
         self.wait_for_page_ready()
-        # Wait for React to actually mount the input before any test logic
-        # touches it (the root div exists before React renders into it).
-        self.wait_for_element("textarea", timeout=15)
+        self.wait_for_element_visible("textarea", timeout=_WAIT_TIMEOUT)
         time.sleep(1)  # Let React components settle
 
     def _horizontal_overflow(self):
@@ -76,9 +76,13 @@ class SeleniumChatLongMessageTest(FHISeleniumBase, StaticLiveServerTestCase):
             " - document.documentElement.clientWidth;"
         )
 
-    def _set_textarea(self, value):
-        """Set the React-controlled textarea value via its native setter."""
-        self.wait_for_element("textarea", timeout=15)
+    def _set_textarea_via_js(self, value):
+        """Set the React-controlled textarea value via its native setter.
+
+        Required for content send_keys can't type reliably (non-BMP emoji) or
+        cheaply (long pastes); React needs the native setter so onChange fires.
+        """
+        self.wait_for_element_visible("textarea", timeout=_WAIT_TIMEOUT)
         self.execute_script(
             """
             const textarea = document.querySelector('textarea');
@@ -91,33 +95,37 @@ class SeleniumChatLongMessageTest(FHISeleniumBase, StaticLiveServerTestCase):
             value,
         )
 
-    def test_long_no_space_string_does_not_overflow(self):
-        """A long unbroken string in the input must not widen the page."""
+    def _send_current_input(self):
+        self.wait_for_element_visible(
+            "button[aria-label='Send message']", timeout=_WAIT_TIMEOUT
+        )
+        self.click("button[aria-label='Send message']")
+
+    def test_long_no_space_string_in_bubble_does_not_overflow(self):
+        """A long unbroken string, once rendered in a bubble, must not widen the
+        page (exercises overflow-wrap/word-break on the message content)."""
         self._open_chat()
         baseline = self._horizontal_overflow()
-        self._set_textarea("A" * 5000)
+        long_token = "A" * 240
+        self.type("textarea", long_token)
+        self._send_current_input()
+        # The user message is echoed optimistically (no backend needed).
+        self.wait_for_text(long_token[:60], timeout=_WAIT_TIMEOUT)
         time.sleep(0.5)
         self.assertLessEqual(
             self._horizontal_overflow(), baseline + _OVERFLOW_TOLERANCE_PX
         )
 
-    def test_long_pasted_message_bubble_does_not_overflow(self):
-        """A long pasted message rendered in a bubble must not widen the page."""
+    def test_very_long_message_is_collapsed(self):
+        """A very long pasted message renders collapsed behind a Show more
+        toggle and does not widen the page."""
         self._open_chat()
         baseline = self._horizontal_overflow()
-        long_text = "This claim was denied as not medically necessary. " * 80
-        self._set_textarea(long_text)
-        time.sleep(0.3)  # let React enable the send button after the input event
-        self.wait_for_element("button[aria-label='Send message']", timeout=10)
-        self.execute_script(
-            "const b = document.querySelector('button[aria-label=\"Send message\"]');"
-            " if (b) b.click();"
-        )
-        # The user message is echoed optimistically (no backend needed).
-        self.wait_for_page_ready(
-            predicate=lambda d: "not medically necessary"
-            in d.execute_script("return document.body.innerText || ''")
-        )
+        long_text = "This claim was denied as not medically necessary. " * 120
+        self._set_textarea_via_js(long_text)
+        self._send_current_input()
+        # Collapse toggle appears for very long content.
+        self.wait_for_text("Show more", timeout=_WAIT_TIMEOUT)
         time.sleep(0.5)
         self.assertLessEqual(
             self._horizontal_overflow(), baseline + _OVERFLOW_TOLERANCE_PX
@@ -128,7 +136,7 @@ class SeleniumChatLongMessageTest(FHISeleniumBase, StaticLiveServerTestCase):
         self._open_chat()
         baseline = self._horizontal_overflow()
         weird = "Patient café " + _FAMILY_EMOJI + " " + _BIDI_TEXT + " 你好 مرحبا"
-        self._set_textarea(weird)
+        self._set_textarea_via_js(weird)
         time.sleep(0.5)
         # The textarea accepted the value and the page is still responsive.
         value = self.execute_script("return document.querySelector('textarea').value;")
