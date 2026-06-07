@@ -74,11 +74,20 @@ async def wait_for_warm_cache(
     denial_id = denial.denial_id
     loop = asyncio.get_running_loop()
     deadline = loop.time() + max(0.0, barrier_timeout)
+    # Clamp to a positive minimum so a 0/negative poll_interval can't
+    # hot-loop or raise from asyncio.sleep.
+    safe_poll = max(0.01, poll_interval)
     hit = False
     try:
         hit = await _any_field_populated(denial_id, readiness_fields)
-        while not hit and loop.time() < deadline:
-            await asyncio.sleep(poll_interval)
+        while not hit:
+            # Cap each sleep to the time left so the total wait stays
+            # bounded by barrier_timeout instead of overshooting by up to
+            # one poll_interval on the final iteration.
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                break
+            await asyncio.sleep(min(safe_poll, remaining))
             hit = await _any_field_populated(denial_id, readiness_fields)
     except Exception as e:
         logger.opt(exception=True).debug(
