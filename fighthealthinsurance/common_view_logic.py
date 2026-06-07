@@ -3031,10 +3031,14 @@ class AppealsBackendHelper:
                 # live registry call), so it can't go through
                 # _refresh_sync_denial_context (which wraps a sync getter in
                 # sync_to_async); use an inline guard with the same
-                # degrade-to-None behavior.
+                # degrade-to-None behavior. wait_for bounds the DB read with
+                # the same 10s budget the gather path uses so a stalled query
+                # can't hang this resilience path (TimeoutError is an
+                # Exception subclass, so the except below catches it too).
                 try:
-                    clinical_trials_context = (
-                        await cls.clinical_trials.get_context_for_denial(denial)
+                    clinical_trials_context = await asyncio.wait_for(
+                        cls.clinical_trials.get_context_for_denial(denial),
+                        timeout=10,
                     )
                 except Exception as inner:
                     logger.opt(exception=True).debug(
@@ -3061,10 +3065,12 @@ class AppealsBackendHelper:
             # ClinicalTrials lookup is also DB-only against the prefetched
             # cache, so re-render it on retries. The reader is async, so it
             # uses an inline guard rather than _refresh_sync_denial_context
-            # (which wraps a sync getter in sync_to_async).
+            # (which wraps a sync getter in sync_to_async). wait_for bounds
+            # the DB read with the same 10s budget as the gather path.
             try:
-                clinical_trials_context = (
-                    await cls.clinical_trials.get_context_for_denial(denial)
+                clinical_trials_context = await asyncio.wait_for(
+                    cls.clinical_trials.get_context_for_denial(denial),
+                    timeout=10,
                 )
             except Exception as e:
                 logger.opt(exception=True).debug(

@@ -7,86 +7,87 @@ Parallel to ``test_uspstf_api.MakeOpenPromptIncludesUSPSTFContextTests`` and
 from django.test import TestCase
 
 
-class MakeOpenPromptIncludesClinicalTrialsContextTests(TestCase):
-    """Verify the appeal-generation prompt picks up clinical_trials_context."""
+# A realistic rendered block (what ``get_context_for_denial`` would return):
+# self-contained header + one trial row carrying an NCT id.
+SAMPLE_TRIALS_CONTEXT = (
+    "CLINICAL TRIAL EVIDENCE (relevant when the denial cites "
+    '"experimental" or "investigational" grounds):\n\n'
+    "NCT: NCT12345678; Title: Pembrolizumab in Melanoma; "
+    "Status: RECRUITING; Phase: PHASE3"
+)
 
-    def test_make_open_prompt_includes_clinical_trials_block(self):
+# Minimal trials block used by the "trials are the only evidence" cases.
+TRIALS_ONLY_CONTEXT = "CLINICAL TRIAL EVIDENCE …\n\nNCT: NCT99999999"
+
+# The exact sentence make_open_prompt emits when no citation evidence at all
+# was supplied; its presence/absence is how we tell the two prompt branches
+# apart.
+NO_CITATIONS_WARNING = "No specific medical citations have been provided"
+
+
+class MakeOpenPromptIncludesClinicalTrialsContextTests(TestCase):
+    """Verify the appeal-generation prompt picks up clinical_trials_context.
+
+    Each test asserts a single behavior; shared setup (generator construction +
+    make_open_prompt call with sensible defaults) lives in ``_prompt``.
+    """
+
+    def _prompt(self, **overrides) -> str:
+        """Build an appeal prompt, assert it rendered, and return it.
+
+        ``denial_text`` and ``insurance_company`` default to non-empty values
+        so callers only pass the kwarg under test (e.g.
+        ``clinical_trials_context``).
+        """
         from fighthealthinsurance.generate_appeal import AppealGenerator
 
-        generator = AppealGenerator()
-        prompt = generator.make_open_prompt(
-            denial_text=(
-                "Insurer denied pembrolizumab as experimental/investigational."
-            ),
-            procedure="Pembrolizumab",
-            diagnosis="Melanoma",
-            insurance_company="ExamplePayer",
-            clinical_trials_context=(
-                "CLINICAL TRIAL EVIDENCE (relevant when the denial cites "
-                '"experimental" or "investigational" grounds):\n\n'
-                "NCT: NCT12345678; Title: Pembrolizumab in Melanoma; "
-                "Status: RECRUITING; Phase: PHASE3"
-            ),
-        )
+        kwargs = {
+            "denial_text": "Insurer denied pembrolizumab as experimental.",
+            "insurance_company": "ExamplePayer",
+        }
+        kwargs.update(overrides)
+        prompt = AppealGenerator().make_open_prompt(**kwargs)
         self.assertIsNotNone(prompt)
-        assert prompt is not None
-        # The self-contained header survives unchanged into the prompt.
+        assert prompt is not None  # narrow Optional[str] for mypy
+        return prompt
+
+    def test_clinical_trials_block_included_when_provided(self):
+        """The self-contained header + NCT id survive unchanged into the prompt."""
+        prompt = self._prompt(clinical_trials_context=SAMPLE_TRIALS_CONTEXT)
         self.assertIn("CLINICAL TRIAL EVIDENCE", prompt)
         self.assertIn("NCT12345678", prompt)
-        # Citation instructions block kicks in because trials count as
-        # citation evidence; NCT IDs must be in the no-fabricate list.
+
+    def test_clinical_trials_adds_nct_to_citation_no_fabricate_list(self):
+        """Trials count as citation evidence: the citation-instructions block
+        fires and NCT IDs join the no-fabricate list."""
+        prompt = self._prompt(clinical_trials_context=SAMPLE_TRIALS_CONTEXT)
         self.assertIn("CITATION INSTRUCTIONS", prompt)
         self.assertIn("NCT IDs", prompt)
 
-    def test_make_open_prompt_omits_clinical_trials_block_when_empty(self):
-        from fighthealthinsurance.generate_appeal import AppealGenerator
-
-        generator = AppealGenerator()
-        prompt = generator.make_open_prompt(
-            denial_text="Insurer denied pembrolizumab.",
-            insurance_company="ExamplePayer",
-            clinical_trials_context="",
-        )
-        self.assertIsNotNone(prompt)
-        assert prompt is not None
+    def test_clinical_trials_block_omitted_when_empty(self):
+        """An empty-string context must not emit a trial section."""
+        prompt = self._prompt(clinical_trials_context="")
         self.assertNotIn("CLINICAL TRIAL EVIDENCE", prompt)
 
-    def test_make_open_prompt_omits_clinical_trials_block_when_none(self):
-        """Default (no clinical_trials_context kwarg) must not emit a stub
-        trial section or otherwise pollute the prompt."""
-        from fighthealthinsurance.generate_appeal import AppealGenerator
-
-        generator = AppealGenerator()
-        prompt = generator.make_open_prompt(
-            denial_text="Insurer denied pembrolizumab.",
-            insurance_company="ExamplePayer",
-        )
-        self.assertIsNotNone(prompt)
-        assert prompt is not None
+    def test_clinical_trials_block_omitted_when_none(self):
+        """Default call (no clinical_trials_context kwarg) emits no trial section."""
+        prompt = self._prompt()
         self.assertNotIn("CLINICAL TRIAL EVIDENCE", prompt)
 
-    def test_clinical_trials_context_alone_triggers_citation_instructions(self):
-        """When the only evidence we have is trial data, the model must still
-        get the "ONLY cite what's provided" block instead of the fallback
-        "no citations available, don't invent any" block."""
-        from fighthealthinsurance.generate_appeal import AppealGenerator
+    def test_trials_only_triggers_citation_instructions(self):
+        """When trial data is the sole evidence, the "ONLY cite what's
+        provided" block must still fire."""
+        prompt = self._prompt(clinical_trials_context=TRIALS_ONLY_CONTEXT)
+        self.assertIn("CITATION INSTRUCTIONS", prompt)
 
-        generator = AppealGenerator()
-        trials_only_prompt = generator.make_open_prompt(
-            denial_text="Insurer denied X as experimental.",
-            insurance_company="ExamplePayer",
-            clinical_trials_context="CLINICAL TRIAL EVIDENCE …\n\nNCT: NCT99999999",
-        )
-        no_evidence_prompt = generator.make_open_prompt(
-            denial_text="Insurer denied X as experimental.",
-            insurance_company="ExamplePayer",
-        )
-        assert trials_only_prompt is not None and no_evidence_prompt is not None
-        self.assertIn("CITATION INSTRUCTIONS", trials_only_prompt)
-        self.assertNotIn(
-            "No specific medical citations have been provided",
-            trials_only_prompt,
-        )
-        self.assertIn(
-            "No specific medical citations have been provided", no_evidence_prompt
-        )
+    def test_trials_only_suppresses_no_citations_warning(self):
+        """Trial-only evidence must NOT fall through to the "no citations
+        available" guard."""
+        prompt = self._prompt(clinical_trials_context=TRIALS_ONLY_CONTEXT)
+        self.assertNotIn(NO_CITATIONS_WARNING, prompt)
+
+    def test_no_evidence_emits_no_citations_warning(self):
+        """With no citation context of any kind, the explicit no-citations
+        guard is emitted."""
+        prompt = self._prompt()
+        self.assertIn(NO_CITATIONS_WARNING, prompt)
