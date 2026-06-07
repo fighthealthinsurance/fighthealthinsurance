@@ -595,12 +595,24 @@ async def _interleave_iterator_for_keep_alive(
             task = None
 
 
+# In-flight fire-and-forget background threads. Tracked so tests can wait for
+# outstanding background DB work to drain between tests: a leaked thread doing
+# sqlite writes can hold a table lock that breaks the next test's fixture load
+# (a flaky "database table is locked" under the parallel async suite). See
+# join_fire_and_forget_threads and the autouse drain fixture in tests/conftest.py.
+_fire_and_forget_threads: "set[threading.Thread]" = set()
+_fire_and_forget_threads_lock = threading.Lock()
+
+
 async def fire_and_forget_in_new_threadpool(task: Coroutine) -> None:
     """
     Runs an asynchronous coroutine in a separate thread with its own event loop.
 
     The coroutine is executed in a fire-and-forget manner; any exceptions are logged,
     and the function does not wait for completion or return a result.
+
+    The spawned thread is registered in a module-level set so callers and tests
+    can wait for outstanding background work via ``join_fire_and_forget_threads``.
     """
 
     def run_async_task() -> None:
@@ -614,14 +626,31 @@ async def fire_and_forget_in_new_threadpool(task: Coroutine) -> None:
             )
         finally:
             loop.close()
+            with _fire_and_forget_threads_lock:
+                _fire_and_forget_threads.discard(threading.current_thread())
             logger.debug(f"fire_and_forget task {task} finished")
 
     # Create and start a thread that will run the task in its own loop
     thread = threading.Thread(target=run_async_task)
     thread.daemon = True  # Thread will exit when main thread exits
+    with _fire_and_forget_threads_lock:
+        _fire_and_forget_threads.add(thread)
     thread.start()
     logger.debug(f"fire_and_forget task {task} started")
     return
+
+
+def join_fire_and_forget_threads(timeout: Optional[float] = None) -> None:
+    """Wait for outstanding fire-and-forget background threads to finish.
+
+    Intended mainly for tests: background DB work spawned by one test must not
+    leak into the next, where it can hold a sqlite table lock during fixture
+    loading. ``timeout`` is applied per thread (None waits indefinitely).
+    """
+    with _fire_and_forget_threads_lock:
+        threads = list(_fire_and_forget_threads)
+    for thread in threads:
+        thread.join(timeout)
 
 
 async def best_within_timelimit(
