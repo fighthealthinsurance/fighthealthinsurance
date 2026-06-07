@@ -392,6 +392,7 @@ def _prompt_kwargs(**overrides):
         "payer_policy_context": "payer policy ctx",
         "pa_context": "pa ctx",
         "uspstf_context": "uspstf ctx",
+        "clinical_trials_context": "clinical trials ctx",
         "medication_context": "med ctx",
     }
     base.update(overrides)
@@ -432,6 +433,29 @@ class TestShedContextPromptRebuild:
             assert f"prompt.{key}" in changed
         # Call's prompt was swapped to the rebuilt one.
         assert new_calls[0]["prompt"] == "REBUILT-PROMPT"
+
+    def test_tier1_sheds_clinical_trials_context(self):
+        # Regression: clinical_trials_context (added to make_open_prompt in
+        # #821) is a prompt-baked enrichment with no call-dict copy, so it
+        # must be in _PROMPT_TIER1_NULLS or a context-overflow retry would
+        # leave it pinning the token count — the exact bug this PR fixed for
+        # pubmed/citations.
+        assert "clinical_trials_context" in _PROMPT_TIER1_NULLS
+        seen_kwargs: dict = {}
+
+        def rebuild(**rk):
+            seen_kwargs.update(rk)
+            return "REBUILT"
+
+        _, changed = _shed_context(
+            [_make_call(prompt="ORIGINAL")],
+            tier=1,
+            open_prompt_kwargs=_prompt_kwargs(clinical_trials_context="NCT0123 ..."),
+            rebuild_prompt=rebuild,
+            original_open_prompt="ORIGINAL",
+        )
+        assert seen_kwargs["clinical_trials_context"] is None
+        assert "prompt.clinical_trials_context" in changed
 
     def test_tier1_preserves_specialized_hint_suffix(self):
         # Specialized calls use `open_prompt + "\n\n--- ... ---\n" + hint`.
