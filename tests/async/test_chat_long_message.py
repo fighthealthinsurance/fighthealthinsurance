@@ -10,6 +10,7 @@ Verifies end-to-end (through the WebSocket consumer) that:
 
 import contextlib
 import typing
+from itertools import pairwise
 from unittest.mock import AsyncMock, patch
 
 from channels.testing import WebsocketCommunicator
@@ -173,7 +174,7 @@ class LongPasteChatTest(APITestCase):
                 await chat.arefresh_from_db()
                 roles = [m.get("role") for m in chat.chat_history]
                 # Alternation: no two consecutive messages share a role.
-                for prev, nxt in zip(roles, roles[1:]):
+                for prev, nxt in pairwise(roles):
                     self.assertNotEqual(prev, nxt)
                 self.assertEqual(roles[-1], "assistant")
 

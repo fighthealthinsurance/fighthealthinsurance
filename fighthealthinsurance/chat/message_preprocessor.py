@@ -7,14 +7,14 @@ is safe to use. Long-message and weird-Unicode handling are provided only as
 *lower-scored alternative* variants so they can win when the primary path fails,
 exceeds limits, or would produce an invalid response.
 
-This module is intentionally dependency-free (stdlib only) and must never log
-full message contents (PHI).
+This module depends only on the stdlib plus loguru (the project's standard
+logger) and must never log full message contents (PHI).
 """
 
 import time
 import unicodedata
 from dataclasses import dataclass, field
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from loguru import logger
 
@@ -104,10 +104,10 @@ class MessageVariant:
     text_for_llm: str
     score_delta: int
     display_text: Optional[str] = None
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
 
-def ensure_encodable(text: str) -> tuple[str, bool]:
+def ensure_encodable(text: str) -> Tuple[str, bool]:
     """Guarantee the text can be UTF-8 encoded (JSON/WebSocket/DB safe).
 
     Python strings may contain lone surrogates (e.g. ``chr(0xD800)``) that crash
@@ -215,7 +215,7 @@ def _build_long_variants(
         f"You pasted a long message (~{char_count:,} chars). "
         f"It has been stored for reference as {doc_name}."
     )
-    common_meta: dict[str, Any] = {
+    common_meta: Dict[str, Any] = {
         "document_name": doc_name,
         "char_count": char_count,
     }
