@@ -382,3 +382,16 @@ class ScanTextForCodesTests(TestCase):
         reqs = _scan_text_for_codes(text, source_document="payer.pdf")
         self.assertTrue(reqs)
         self.assertTrue(all(r.source_document == "payer.pdf" for r in reqs))
+
+    def test_authorization_number_fragment_yields_nothing(self):
+        # A bare "Authorization # 12345" fragment is an incidental reference
+        # number, not a PA code listing. With the broad "authorization" cue
+        # removed, the lone 5-digit token must no longer be emitted.
+        reqs = _scan_text_for_codes("Authorization # 12345")
+        self.assertEqual(reqs, [])
+
+    def test_procedure_date_fragment_yields_nothing(self):
+        # "Procedure date: 90210" carries the word "procedure" but no
+        # "procedure code" cue; the bare 5-digit date token must be ignored.
+        reqs = _scan_text_for_codes("Procedure date: 90210")
+        self.assertEqual(reqs, [])

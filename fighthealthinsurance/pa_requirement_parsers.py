@@ -80,23 +80,27 @@ _INLINE_CODE = re.compile(
 # ``_INLINE_CODE`` regex matches any bare 5-digit number (ZIP codes, dollar
 # amounts, member/group IDs, fax/phone fragments) and would fabricate
 # "requires prior authorization" rows. Compared lowercase against ``ctx_lower``.
-_PA_CONTEXT_CUES: frozenset = frozenset(
+# Cues are kept specific on purpose: a bare ``"authorization"`` matches
+# incidental fragments like ``"Authorization # 12345"`` and a bare
+# ``"procedure"`` matches ``"Procedure date: 90210"`` — both would re-introduce
+# false PA rows from incidental 5-digit numbers. ``"procedure code"`` already
+# covers ``"procedure codes"`` via substring.
+_PA_CONTEXT_CUES: frozenset[str] = frozenset(
     {
         "prior auth",
         "prior authorization",
+        "authorization required",
         "preauth",
         "pre-auth",
         "precert",
         "pre-cert",
         "precertification",
-        "authorization",
         "auth required",
         "requires pa",
         "pa required",
         "cpt",
         "hcpcs",
         "procedure code",
-        "procedure",
     }
 )
 
