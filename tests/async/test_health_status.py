@@ -57,6 +57,12 @@ class _SlowInternalGood:
 class TestHealthStatus(TestCase):
     """Tests for cached model health endpoint behavior."""
 
+    def setUp(self):
+        # health_status is a module-level singleton, so its throttle
+        # timestamp leaks across tests. Reset it so each test sees a
+        # clean "no email sent yet" state.
+        health_status._last_alert_sent_at = None
+
     def test_snapshot_shape(self):
         print("Getting router...")
         ml_router
@@ -216,3 +222,56 @@ class TestHealthStatus(TestCase):
         assert dead_alerts == []
         assert "router not ready" in enum_alerts[0].body
         assert "RuntimeError" in enum_alerts[0].body
+
+    @mock.patch("fighthealthinsurance.ml.ml_router.ml_router")
+    def test_throttle_suppresses_email_within_window(self, fake_router):
+        """Two consecutive refreshes inside the throttle window => one email."""
+        fake_router.all_models_by_cost = [_InternalBad()]
+        from fighthealthinsurance.ml.health_status import _HealthStatus
+
+        _HealthStatus._refresh(health_status)
+        _HealthStatus._refresh(health_status)
+
+        alerts = [
+            m for m in mail.outbox if "internal models are dead" in m.subject.lower()
+        ]
+        assert len(alerts) == 1
+
+    @mock.patch("fighthealthinsurance.ml.ml_router.ml_router")
+    def test_throttle_releases_after_window(self, fake_router):
+        """A refresh after the throttle window elapses sends a fresh email."""
+        fake_router.all_models_by_cost = [_InternalBad()]
+        from fighthealthinsurance.ml.health_status import (
+            _HealthStatus,
+            ALERT_THROTTLE_SECONDS,
+        )
+
+        _HealthStatus._refresh(health_status)
+        # Simulate the throttle window elapsing by backdating the timestamp.
+        assert health_status._last_alert_sent_at is not None
+        health_status._last_alert_sent_at -= ALERT_THROTTLE_SECONDS + 1
+        _HealthStatus._refresh(health_status)
+
+        alerts = [
+            m for m in mail.outbox if "internal models are dead" in m.subject.lower()
+        ]
+        assert len(alerts) == 2
+
+    @mock.patch("fighthealthinsurance.ml.ml_router.ml_router")
+    def test_throttle_is_shared_across_alert_subjects(self, fake_router):
+        """All-dead and enumeration-failure share one throttle slot."""
+        fake_router.all_models_by_cost = [_InternalBad()]
+        from fighthealthinsurance.ml.health_status import _HealthStatus
+
+        _HealthStatus._refresh(health_status)  # all-dead alert
+
+        class BrokenRouter:
+            @property
+            def all_models_by_cost(self):
+                raise RuntimeError("router not ready")
+
+        with mock.patch("fighthealthinsurance.ml.ml_router.ml_router", BrokenRouter()):
+            _HealthStatus._refresh(health_status)  # would normally enumerate-fail alert
+
+        assert len(mail.outbox) == 1
+        assert "internal models are dead" in mail.outbox[0].subject.lower()

@@ -23,6 +23,7 @@ from loguru import logger
 from fighthealthinsurance.ml import ml_router as ml_router_module
 
 REFRESH_INTERVAL_SECONDS = 60 * 60  # hourly
+ALERT_THROTTLE_SECONDS = 60 * 60  # at most one alert email per hour
 
 
 @dataclass
@@ -48,6 +49,9 @@ class _HealthStatus:
         self._lock = threading.RLock()
         # Fast mode for tests to avoid network stalls
         self._fast_mode = os.getenv("FHI_HEALTH_FAST", "0") == "1"
+        # Monotonic timestamp of last alert email, used to throttle
+        # outgoing alerts to at most one per ALERT_THROTTLE_SECONDS.
+        self._last_alert_sent_at: Optional[float] = None
 
     def get_snapshot(self) -> Dict[str, Any]:
         # Use lock to prevent race condition on first access
@@ -206,6 +210,26 @@ class _HealthStatus:
                 f"Failures: {detail}"
             )
         logger.error(message)
+
+        # Throttle outgoing emails to at most one per ALERT_THROTTLE_SECONDS,
+        # shared across alert subjects (the recipient is the same on-call
+        # address either way, and a duplicate page during an active incident
+        # is more noise than signal). The error log above still fires every
+        # refresh so log-based monitoring isn't suppressed.
+        now = time.monotonic()
+        with self._lock:
+            last = self._last_alert_sent_at
+            if last is not None and now - last < ALERT_THROTTLE_SECONDS:
+                logger.debug(
+                    f"Suppressing alert email; last sent {now - last:.0f}s ago"
+                )
+                return
+            # Mark sent before the SMTP call so a concurrent caller doesn't
+            # double-send while we're inside send_mail. If SMTP fails we still
+            # keep the timestamp — retrying every refresh against a broken
+            # mail server defeats the throttle's purpose.
+            self._last_alert_sent_at = now
+
         try:
             from django.conf import settings
             from django.core.mail import send_mail
