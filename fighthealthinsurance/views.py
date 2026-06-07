@@ -1270,7 +1270,8 @@ class GenerateAppeal(View):
                 if "appeal_generated_" in k:
                     key = generated_questions[int(k.split("_")[-1]) - 1][0]
                 if isinstance(v, list):
-                    elems[k] = v[0]
+                    v = v[0]
+                    elems[k] = v
                 if key in restricted:
                     continue
                 updates[key] = v
