@@ -354,6 +354,12 @@ class HowToHelpView(generic.TemplateView):
     template_name = "how_to_help.html"
 
 
+class VsClaimableView(generic.TemplateView):
+    """Comparison page: Fight Health Insurance vs Claimable."""
+
+    template_name = "vs_claimable.html"
+
+
 class Preparing2026View(generic.TemplateView):
     """Landing page helping users prepare for 2026 insurance changes."""
 

@@ -1,0 +1,96 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Fight Health Insurance vs Claimable{% endblock title %}
+{% block metatitle %}Fight Health Insurance vs Claimable — How They Compare{% endblock metatitle %}
+{% block metadescription %}Comparing Fight Health Insurance and Claimable for appealing health insurance denials: cost, who they help, denial types covered, transparency, and provider/prior-auth tooling.{% endblock metadescription %}
+
+{% block extra_style %}
+<style>
+  html { scroll-behavior: smooth; }
+  .compare-table th, .compare-table td { vertical-align: top; padding: 0.9rem 1rem; }
+  .compare-table thead th { background-color: #a5c422; color: #fff; }
+  .compare-table tbody tr:nth-child(odd) { background-color: #f8f9fa; }
+  .compare-feature { font-weight: 600; width: 22%; }
+  .compare-note { font-size: 0.9rem; color: #666; }
+</style>
+{% endblock extra_style %}
+
+{% block content %}
+<div class="container mt-5">
+    <h1 style="margin-top: 10vh; text-align: center; margin-bottom: 1rem;">Fight Health Insurance vs Claimable</h1>
+    <p style="text-align: center; font-size: 1.1rem; max-width: 820px; margin: 0 auto 2rem;">
+        Both tools use AI to help people fight health insurance denials. Here's an honest look at how
+        Fight Health Insurance compares to Claimable so you can pick what fits your situation.
+    </p>
+
+    <div class="table-responsive">
+        <table class="table compare-table">
+            <thead>
+                <tr>
+                    <th>&nbsp;</th>
+                    <th>Fight Health Insurance</th>
+                    <th>Claimable</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td class="compare-feature">Cost for patients</td>
+                    <td>Free — pay what you can. $0 is totally fine.</td>
+                    <td>Paid service (see claimable.health for current pricing).</td>
+                </tr>
+                <tr>
+                    <td class="compare-feature">Who it helps</td>
+                    <td>Patients directly — plus providers, clinics, labs, DME suppliers, and pharma/market-access teams through our sister product, <a href="https://www.fightpaperwork.com" target="_blank" rel="noopener noreferrer">Fight Paperwork</a>.</td>
+                    <td>Primarily patients, with pharma/enterprise partnerships.</td>
+                </tr>
+                <tr>
+                    <td class="compare-feature">Denial types covered</td>
+                    <td>Any denial — procedures, imaging, therapy, mental health, specialty and weight-management medications, and more.</td>
+                    <td>AI-assisted appeals, with a notable focus on specific high-profile drug and condition categories.</td>
+                </tr>
+                <tr>
+                    <td class="compare-feature">How appeals are built</td>
+                    <td>An AI-generated draft <em>you</em> review and control — grounded in medical literature and the federal/state regulations that apply to your denial.</td>
+                    <td>Proprietary AI appeal service.</td>
+                </tr>
+                <tr>
+                    <td class="compare-feature">Transparency</td>
+                    <td>Fully <a href="https://github.com/orgs/fighthealthinsurance/repositories" target="_blank" rel="noopener noreferrer">open source</a>, and transparent about <a href="{% url 'about-ai' %}">how our AI works</a>.</td>
+                    <td>Proprietary.</td>
+                </tr>
+                <tr>
+                    <td class="compare-feature">Your data</td>
+                    <td>You control your data and can <a href="{% url 'remove_data' %}">delete it at any time</a>.</td>
+                    <td>See their privacy policy.</td>
+                </tr>
+                <tr>
+                    <td class="compare-feature">Provider &amp; prior-auth tooling</td>
+                    <td>Yes — Fight Paperwork handles prior authorization, appeals, and denial response for healthcare organizations.</td>
+                    <td>Patient-focused, with pharma partnerships.</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <p class="compare-note" style="max-width: 820px; margin: 1rem auto 0;">
+        This comparison is based on publicly available information as of June 2026 and may change.
+        We aim to be accurate — if anything here is out of date, email
+        <a href="mailto:support42@fighthealthinsurance.com?subject=Comparison%20correction">support42@fighthealthinsurance.com</a>
+        and we'll fix it.
+    </p>
+
+    <section style="text-align: center; padding: 3rem 0; background-color: #f8f9fa; border-radius: 8px; margin-top: 3rem;">
+        <h3 style="margin-bottom: 1rem;">Ready to fight your denial?</h3>
+        <p style="font-size: 1.1rem; margin-bottom: 2rem;">
+            Generate a health insurance appeal in minutes — free, and you stay in control.
+        </p>
+        <a href="{% url 'scan' %}" class="section-btn btn btn-default smoothScroll" style="display: inline-block; margin-right: 1rem;">
+            Generate an Appeal
+        </a>
+        <a href="{% url 'chat' %}" class="btn btn-outline-green smoothScroll" style="display: inline-block;">
+            AI Chat
+        </a>
+    </section>
+</div>
+{% endblock content %}
