@@ -178,3 +178,6 @@ memory
 
 # metapub auto-generated db
 default/
+
+# Claude Code agent worktrees (transient, created by background agents)
+.claude/worktrees/
