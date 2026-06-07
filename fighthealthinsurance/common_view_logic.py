@@ -2913,25 +2913,33 @@ class AppealsBackendHelper:
             # Readiness columns are the ones the *background* task writes.
             # The speculative citation task stores to
             # candidate_ml_citation_context (not ml_citation_context), so
-            # the barrier watches both; the refresh then hands the inline
-            # generate_citations call a warm in-memory denial, and that
-            # helper applies its own candidate->main freshness/promotion.
-            pubmed_context_awaitable = warm_then_fetch(
-                denial,
+            # the citation barrier watches both; the refresh then hands the
+            # inline generate_citations call a warm in-memory denial, and
+            # that helper applies its own candidate->main freshness/promotion.
+            def warmed_context(
+                readiness_fields, refresh_fields, substep, done_msg, inline_coro
+            ):
+                return warm_then_fetch(
+                    denial,
+                    readiness_fields=readiness_fields,
+                    refresh_fields=refresh_fields,
+                    barrier_timeout=barrier_timeout,
+                    fetch=lambda: tracked_awaitable(
+                        asyncio.wait_for(inline_coro(), timeout=40),
+                        substep=substep,
+                        done_msg=done_msg,
+                    ),
+                )
+
+            pubmed_context_awaitable = warmed_context(
                 readiness_fields=["pubmed_context"],
                 refresh_fields=["pubmed_context"],
-                barrier_timeout=barrier_timeout,
-                fetch=lambda: tracked_awaitable(
-                    asyncio.wait_for(
-                        cls.pmt.find_context_for_denial(denial), timeout=40
-                    ),
-                    substep="pubmed",
-                    done_msg="PubMed search complete",
-                ),
+                substep="pubmed",
+                done_msg="PubMed search complete",
+                inline_coro=lambda: cls.pmt.find_context_for_denial(denial),
             )
 
-            ml_citation_context_awaitable = warm_then_fetch(
-                denial,
+            ml_citation_context_awaitable = warmed_context(
                 readiness_fields=[
                     "ml_citation_context",
                     "candidate_ml_citation_context",
@@ -2942,16 +2950,10 @@ class AppealsBackendHelper:
                     "candidate_procedure",
                     "candidate_diagnosis",
                 ],
-                barrier_timeout=barrier_timeout,
-                fetch=lambda: tracked_awaitable(
-                    asyncio.wait_for(
-                        MLCitationsHelper.generate_citations_for_denial(
-                            denial, speculative=False
-                        ),
-                        timeout=40,
-                    ),
-                    substep="citations",
-                    done_msg="Citations generated",
+                substep="citations",
+                done_msg="Citations generated",
+                inline_coro=lambda: MLCitationsHelper.generate_citations_for_denial(
+                    denial, speculative=False
                 ),
             )
 

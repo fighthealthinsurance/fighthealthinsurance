@@ -29,13 +29,13 @@ from loguru import logger
 
 
 def _is_populated(value: Any) -> bool:
-    if value is None:
-        return False
-    if isinstance(value, (str, bytes)):
-        return len(value) > 0
-    if isinstance(value, (list, tuple, dict)):
-        return len(value) > 0
-    return True
+    """True when a cached context column holds a non-empty value.
+
+    The watched columns are TextFields (str/None) and JSONFields
+    (list/dict/None); ``bool`` already treats empty string/list/dict and
+    None as falsy, which is exactly the "is it populated?" question.
+    """
+    return bool(value)
 
 
 async def _any_field_populated(denial_id: int, fields: Sequence[str]) -> bool:
