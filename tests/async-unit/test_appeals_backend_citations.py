@@ -557,7 +557,7 @@ class TestAppealsBackendHelperWithCitations:
             mock_regex_processor.get_appeal_templates = AsyncMock(return_value=[])
 
             mock_make_appeals_wrapper = AsyncMock(
-                return_value=["Appeal with clinical trials context"]
+                return_value=[_ga("Appeal with clinical trials context")]
             )
             mock_pa_wrapper = AsyncMock(return_value="")
             mock_sync_to_async.side_effect = _sync_to_async_router(
