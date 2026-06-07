@@ -72,3 +72,24 @@ def _clear_pa_resolver_cache():
     _regex_candidates.cache_clear()
     yield
     _regex_candidates.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def _drain_fire_and_forget_threads():
+    """Drain fire-and-forget background threads at the end of each test.
+
+    ``fire_and_forget_in_new_threadpool`` runs coroutines -- often sqlite writes,
+    e.g. chooser task prefill or chat context summaries -- in detached daemon
+    threads. If one outlives the test that started it, its DB work can hold a
+    table lock during the next test's fixture load, surfacing as a flaky
+    "database table is locked" in the parallel async suite. Joining outstanding
+    threads at teardown (which runs before the next class's setUpClass) keeps
+    that work inside the test that started it. The per-thread timeout is a safety
+    cap; leaked threads normally finish in milliseconds.
+    """
+    yield
+    try:
+        from fighthealthinsurance.utils import join_fire_and_forget_threads
+    except Exception:
+        return
+    join_fire_and_forget_threads(timeout=10.0)
