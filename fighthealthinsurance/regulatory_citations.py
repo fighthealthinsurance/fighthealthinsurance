@@ -25,7 +25,10 @@ class RegulatoryHook:
     jurisdiction: str  # "US" for federal, or a 2-letter state code
     effective: str  # human-readable effective date / status
     source_url: str  # documentation only; not rendered into the prompt
-    applies_to_self_insured: bool  # state insurance mandates are ERISA-exempt
+    # Whether the hook reaches self-funded ERISA employer plans. State
+    # insurance mandates do not; neither do payer-type-specific federal rules
+    # (e.g. CMS-0057-F, which covers MA/Medicaid/CHIP/FFE issuers only).
+    applies_to_self_insured: bool
 
 
 # Federal hooks apply broadly (subject to plan type); included alongside any
@@ -46,7 +49,9 @@ FEDERAL_HOOKS: tuple[RegulatoryHook, ...] = (
             "medicare-and-medicaid-programs-advancing-interoperability-and-"
             "improving-prior-authorization-processes"
         ),
-        applies_to_self_insured=True,
+        # CMS limits impacted payers to MA orgs, Medicaid/CHIP, and FFE QHP
+        # issuers — not self-funded employer (ERISA) plans.
+        applies_to_self_insured=False,
     ),
     RegulatoryHook(
         name=(
@@ -66,7 +71,9 @@ FEDERAL_HOOKS: tuple[RegulatoryHook, ...] = (
             "regulation-of-ai-in-prior-authorization-and-claims-review-a-look-"
             "at-federal-and-state-consumer-protections/"
         ),
-        applies_to_self_insured=True,
+        # This is a Medicare Advantage rule; it does not bind self-funded
+        # commercial employer plans.
+        applies_to_self_insured=False,
     ),
     RegulatoryHook(
         name="ACA internal appeal and external review rights (45 C.F.R. § 147.136)",
@@ -81,6 +88,8 @@ FEDERAL_HOOKS: tuple[RegulatoryHook, ...] = (
             "https://www.ecfr.gov/current/title-45/subtitle-A/subchapter-B/"
             "part-147/section-147.136"
         ),
+        # Internal claims/appeals and external review reach non-grandfathered
+        # self-insured group health plans (enforced via 29 C.F.R. 2590.715-2719).
         applies_to_self_insured=True,
     ),
 )
@@ -108,7 +117,8 @@ _KFF_AI_TRACKER_URL = (
 )
 
 
-STATE_HOOKS: tuple[RegulatoryHook, ...] = (
+# Explicit, individually-sourced state reforms.
+_EXPLICIT_STATE_HOOKS: tuple[RegulatoryHook, ...] = (
     RegulatoryHook(
         name="Massachusetts prior-authorization elimination regulation",
         summary=(
@@ -143,7 +153,10 @@ STATE_HOOKS: tuple[RegulatoryHook, ...] = (
         ),
         applies_to_self_insured=False,
     ),
-) + tuple(
+)
+
+# Per-state AI-oversight hooks, generated from the KFF tracker list.
+_AI_OVERSIGHT_HOOKS: tuple[RegulatoryHook, ...] = tuple(
     RegulatoryHook(
         name=(
             f"{state_name} law restricting AI as the sole basis for a "
@@ -162,6 +175,11 @@ STATE_HOOKS: tuple[RegulatoryHook, ...] = (
         applies_to_self_insured=False,
     )
     for abbr, state_name in _AI_OVERSIGHT_STATES
+)
+
+STATE_HOOKS: tuple[RegulatoryHook, ...] = (
+    *_EXPLICIT_STATE_HOOKS,
+    *_AI_OVERSIGHT_HOOKS,
 )
 
 
@@ -200,9 +218,14 @@ def get_regulatory_citation_context(
     Returns ``None`` unless the state has at least one verified hook, so the
     overwhelming majority of appeals are unaffected. ``denial_text`` /
     ``procedure`` / ``diagnosis`` are accepted for future service-specific
-    refinement and are intentionally unused today. ``self_insured`` only
-    adjusts the ERISA caveat wording — it never suppresses a hook, so we never
-    wrongly drop a citation a patient might be entitled to.
+    refinement and are intentionally unused today.
+
+    When ``self_insured`` is ``True`` (a self-funded ERISA employer plan), hooks
+    that do not reach such plans are dropped — state insurance mandates and
+    payer-type-specific federal rules (e.g. CMS-0057-F, which covers Medicare
+    Advantage, Medicaid/CHIP, and federally-facilitated Marketplace issuers, not
+    self-funded employer plans) — so we never tell a self-insured appellant to
+    rely on a protection that does not apply to them.
     """
     abbr = _normalize_state(state)
     if not abbr:
@@ -212,19 +235,24 @@ def get_regulatory_citation_context(
         return None
 
     hooks = list(FEDERAL_HOOKS) + state_hooks
+    if self_insured is True:
+        hooks = [h for h in hooks if h.applies_to_self_insured]
+
     bullet_lines = "\n".join(f"- {h.name} ({h.effective}): {h.summary}" for h in hooks)
 
     if self_insured is True:
-        erisa_note = (
+        caveat = (
             "Note: this appears to be a self-insured (ERISA) employer plan. "
-            "State insurance mandates generally do NOT bind self-insured plans, "
-            "so rely on the federal items above and the plan's own terms, and "
-            "raise a state law only if the plan is in fact subject to it."
+            "State insurance mandates and Medicare/Medicaid/Marketplace-specific "
+            "federal prior-authorization rules generally do not bind it, so only "
+            "the broadly applicable federal protections above are listed; rely on "
+            "those and on the plan's own terms, and confirm the plan's specific "
+            "obligations."
         )
     else:
-        erisa_note = (
-            "Note: the state laws below generally apply to fully-insured plans; "
-            "self-insured (ERISA) employer plans are typically exempt, so "
+        caveat = (
+            "Note: the state laws listed above generally apply to fully-insured "
+            "plans; self-insured (ERISA) employer plans are typically exempt, so "
             "confirm the plan type before relying on a state mandate."
         )
 
@@ -235,4 +263,4 @@ def get_regulatory_citation_context(
         "assert applicability you cannot support, and do not invent statute "
         "section numbers, dates, or quotations beyond what is provided here."
     )
-    return f"{header}\n{bullet_lines}\n{erisa_note}"
+    return f"{header}\n{bullet_lines}\n{caveat}"

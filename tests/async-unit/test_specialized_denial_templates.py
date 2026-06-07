@@ -244,10 +244,14 @@ class TestGLP1WeightLossAppealMatches(unittest.TestCase):
             )
         )
 
-    def test_matches_obesity_diagnosis(self):
-        self.assertTrue(
+    def test_does_not_match_obesity_diagnosis_without_medication(self):
+        # An obesity/overweight diagnosis alone must NOT fire the medication
+        # template — e.g. bariatric surgery or nutrition-counseling denials
+        # that merely carry an obesity diagnosis.
+        self.assertFalse(
             GLP1WeightLossAppeal.matches(
-                "Claim denied.",
+                "Bariatric surgery is denied as not medically necessary.",
+                procedure="Bariatric surgery",
                 diagnosis="Obesity",
             )
         )

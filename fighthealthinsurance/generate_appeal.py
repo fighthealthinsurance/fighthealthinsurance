@@ -487,23 +487,29 @@ class GLP1WeightLossAppeal(SpecializedDenialTemplate):
     # specific to weight-loss coverage fights. SpecialtyMedicationAppeal may
     # also fire on the drug name — detect_specialized_templates returns every
     # match by design, so the two are complementary, not exclusive.
+    # Match only when the denial actually references an anti-obesity / GLP-1
+    # *medication* (brand or generic) or an explicit weight-loss/anti-obesity
+    # drug phrase — never an obesity/overweight diagnosis alone, which would
+    # otherwise attach a weight-management-medication letter to unrelated
+    # denials (bariatric surgery, nutrition counseling, or sleep-study care
+    # that merely carry an obesity diagnosis).
     text_patterns = (
         r"\b(?:wegovy|zepbound|saxenda)\b",
-        r"\banti[\s\-]?obesity\b",
+        r"\banti[\s\-]?obesity\s+"
+        r"(?:drug|medication|medications|agent|agents|rx|therap|pharmacotherap)",
         r"\bweight[\s\-]?(?:loss|management)\s+"
-        r"(?:drug|medication|medications|agent|injection|program|treatment|therap)",
+        r"(?:drug|medication|medications|agent|agents|injection|injections|rx|pill|pills|therap)",
         r"\bGLP[\s\-]?1\b.*\b(?:weight|obesit)",
         r"\b(?:semaglutide|tirzepatide|liraglutide)\b.*\b(?:weight|obesit)",
     )
     procedure_patterns = (
         r"\b(?:wegovy|zepbound|saxenda)\b",
-        r"\banti[\s\-]?obesity\b",
-        r"\bweight[\s\-]?(?:loss|management)\b",
+        r"\banti[\s\-]?obesity\s+(?:drug|medication|medications|agent|agents)\b",
+        r"\bweight[\s\-]?(?:loss|management)\s+"
+        r"(?:drug|medication|medications|agent|agents|injection|injections)\b",
     )
-    diagnosis_patterns = (
-        r"\b(?:obesity|overweight)\b",
-        r"\bweight[\s\-]?management\b",
-    )
+    # No diagnosis_patterns by design: an obesity/overweight diagnosis alone is
+    # not sufficient — a GLP-1 / anti-obesity medication must be referenced.
     citations = (
         "American Medical Association recognition of obesity as a disease "
         "(AMA Policy H-440.842, adopted 2013)",

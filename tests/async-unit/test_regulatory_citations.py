@@ -55,6 +55,17 @@ class TestGetRegulatoryCitationContext(unittest.TestCase):
         assert neutral is not None
         self.assertIn("fully-insured", neutral)
 
+    def test_self_insured_drops_payer_specific_federal_hooks(self):
+        block = get_regulatory_citation_context("MA", self_insured=True)
+        assert block is not None
+        # CMS-0057-F does not reach self-funded ERISA employer plans.
+        self.assertNotIn("CMS-0057-F", block)
+        # ACA internal/external review still reaches non-grandfathered
+        # self-insured plans.
+        self.assertIn("147.136", block)
+        # State insurance mandates are dropped for self-insured plans.
+        self.assertNotIn("Massachusetts", block)
+
 
 class TestRegulatoryPromptInjection(unittest.TestCase):
     def setUp(self):

@@ -1,4 +1,9 @@
-"""Tests for the 'Fight Health Insurance vs Claimable' comparison page."""
+"""Tests for the 'Fight Health Insurance vs Claimable' comparison page.
+
+This is a plain synchronous page-render test (Django ``TestCase`` + test
+client), so it lives under ``tests/sync/`` alongside the other view-render
+tests rather than the pytest-asyncio suites in ``tests/async/``.
+"""
 
 from django.test import Client, TestCase
 from django.urls import reverse
@@ -7,7 +12,7 @@ from django.urls import reverse
 class TestVsClaimableView(TestCase):
     """The comparison page should render as a simple static page."""
 
-    fixtures = ["fighthealthinsurance/fixtures/initial.yaml"]
+    fixtures = ("fighthealthinsurance/fixtures/initial.yaml",)
 
     def setUp(self):
         self.client = Client()
