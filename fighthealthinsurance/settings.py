@@ -493,6 +493,12 @@ class Base(Configuration):
         re.compile(r"^/robots\.txt$"),
     ]
 
+    # Seconds the appeal-generation flow waits for in-flight background
+    # PubMed/citation cache-warming before falling through to an inline
+    # fetch (fighthealthinsurance.context_barrier). Tests override this to
+    # 0 so the barrier no-ops instead of polling a never-populated row.
+    FHI_CONTEXT_BARRIER_TIMEOUT_S = 10
+
 
 class Dev(Base):
     CSRF_TRUSTED_ORIGINS = [
@@ -571,6 +577,9 @@ class Dev(Base):
 
 
 class Test(Dev):
+    # Barrier no-ops in tests: mock denials have no DB row, so any positive
+    # timeout would poll until it expires on every generate_appeals test.
+    FHI_CONTEXT_BARRIER_TIMEOUT_S = 0
     # Relax for http in test even though we mostly want https
     # but we use http a bunch in test :)
     # Session cookie configs
@@ -617,6 +626,8 @@ class Test(Dev):
 
 class TestSync(Dev):
     DEBUG = True
+    # Barrier no-ops in tests (see Test class).
+    FHI_CONTEXT_BARRIER_TIMEOUT_S = 0
     # Set TESTING env var for SessionRequiredMixin and other test-aware code
     os.environ["TESTING"] = "True"
     # Point CMS Coverage API at an unroutable address (see Test class).
@@ -639,6 +650,8 @@ class TestSync(Dev):
 
 class TestActor(Dev):
     DEBUG = True
+    # Barrier no-ops in tests (see Test class).
+    FHI_CONTEXT_BARRIER_TIMEOUT_S = 0
     # Set TESTING env var for SessionRequiredMixin and other test-aware code
     os.environ["TESTING"] = "True"
     # Point CMS Coverage API at an unroutable address (see Test class).

@@ -94,6 +94,26 @@ class TestWaitForWarmCache(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(ready)
         denial.arefresh_from_db.assert_not_awaited()
 
+    async def test_zero_timeout_checks_once_and_does_not_poll(self):
+        """timeout=0 (test config) must do exactly one readiness check and
+        return immediately instead of polling a never-populated row."""
+        denial = _fake_denial()
+        probe = AsyncMock(return_value=False)
+        with patch(
+            "fighthealthinsurance.context_barrier._any_field_populated",
+            probe,
+        ):
+            ready = await wait_for_warm_cache(
+                denial,
+                readiness_fields=["pubmed_context"],
+                refresh_fields=["pubmed_context"],
+                barrier_timeout=0,
+                poll_interval=1.0,
+            )
+        self.assertFalse(ready)
+        self.assertEqual(probe.await_count, 1)
+        denial.arefresh_from_db.assert_not_awaited()
+
     async def test_db_error_degrades_to_not_ready(self):
         denial = _fake_denial()
         with patch(
