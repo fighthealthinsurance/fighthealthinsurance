@@ -373,9 +373,9 @@ def collect_denial_text(denial: Any, *fields: str) -> str:
     blob can be scanned uniformly. Returns an empty string when none of
     the requested fields carry a value.
     """
-    parts = [
-        str(getattr(denial, field, None))
-        for field in fields
-        if getattr(denial, field, None)
-    ]
+    parts: list[str] = []
+    for field in fields:
+        value = getattr(denial, field, None)
+        if value:
+            parts.append(str(value))
     return "\n".join(parts)

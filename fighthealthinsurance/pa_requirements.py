@@ -30,6 +30,7 @@ from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 from django.db.models import Q
 from loguru import logger
 
+from fighthealthinsurance.medical_code_extractor import collect_denial_text
 from fighthealthinsurance.models import (
     Denial,
     InsuranceCompany,
@@ -296,8 +297,6 @@ def infer_line_of_business(denial: Denial) -> Optional[str]:
     surfacing a Medicare-Advantage-only rule on an unknown-LOB denial
     would mis-attribute the rule.
     """
-    from fighthealthinsurance.medical_code_extractor import collect_denial_text
-
     blob = collect_denial_text(
         denial,
         "denial_text",
@@ -506,8 +505,6 @@ def _denial_lookup(
     without it we would search across all carriers and surface rules from
     the wrong insurer in payer-attributed appeal context.
     """
-    from fighthealthinsurance.medical_code_extractor import collect_denial_text
-
     combined = collect_denial_text(
         denial,
         "denial_text",
