@@ -1545,14 +1545,16 @@ class AppealGenerator(object):
             logger.opt(exception=True).debug(f"MedicationContext unavailable: {e}")
             return None
 
-        haystack_parts = [
-            getattr(denial, "denial_text", None) or "",
-            getattr(denial, "diagnosis", None) or "",
-            getattr(denial, "procedure", None) or "",
-            getattr(denial, "health_history", None) or "",
-            getattr(denial, "qa_context", None) or "",
-        ]
-        haystack = "\n".join(p for p in haystack_parts if p)
+        from fighthealthinsurance.medical_code_extractor import collect_denial_text
+
+        haystack = collect_denial_text(
+            denial,
+            "denial_text",
+            "diagnosis",
+            "procedure",
+            "health_history",
+            "qa_context",
+        )
         if not haystack.strip():
             return None
 

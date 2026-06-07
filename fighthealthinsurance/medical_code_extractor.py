@@ -17,7 +17,7 @@ heuristics like DME keyword detection).
 from __future__ import annotations
 
 import re
-from typing import Iterable, Optional
+from typing import Any, Iterable, Optional
 
 # CPT codes are five characters: typically 5 digits (Category I), or
 # 4 digits + a letter (Category II ends in F; Category III ends in T).
@@ -362,3 +362,20 @@ def unique_in_order(items: Iterable[str]) -> list[str]:
             seen.add(item)
             out.append(item)
     return out
+
+
+def collect_denial_text(denial: Any, *fields: str) -> str:
+    """Join non-empty text values from named denial fields with newlines.
+
+    Shared building block for code extraction, keyword search, and
+    line-of-business inference: each caller picks the field set relevant
+    to its lookup, and missing/empty fields are skipped so the resulting
+    blob can be scanned uniformly. Returns an empty string when none of
+    the requested fields carry a value.
+    """
+    parts: list[str] = []
+    for field in fields:
+        value = getattr(denial, field, None)
+        if value:
+            parts.append(str(value))
+    return "\n".join(parts)
