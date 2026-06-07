@@ -229,6 +229,22 @@ class MicrositeJSONValidationTest(TestCase):
                 f"Expected microsite '{slug}' to be defined in microsites.json",
             )
 
+    def test_emergency_microsite_has_prudent_layperson_resources(self):
+        """The out-of-network emergency microsite should surface the prudent
+        layperson standard and link to both ACEP references."""
+        microsite = self.microsites.get("out-of-network-emergency-denial")
+        self.assertIsNotNone(
+            microsite,
+            "Expected microsite 'out-of-network-emergency-denial' to be defined",
+        )
+        urls = " ".join(r.get("url", "") for r in microsite.advocacy_resources)
+        self.assertIn("emergencyphysicians.org", urls)
+        self.assertIn("acep.org", urls)
+        combined = " ".join(microsite.evidence_snippets) + " ".join(
+            f.get("question", "") + f.get("answer", "") for f in microsite.faq
+        )
+        self.assertIn("prudent layperson", combined.lower())
+
     def test_no_unexpected_keys_in_microsites(self):
         """Test that microsites.json contains no unexpected/typo keys.
 

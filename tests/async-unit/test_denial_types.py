@@ -7,6 +7,7 @@ import pytest
 from asgiref.sync import sync_to_async
 from django.test import TestCase
 
+from fighthealthinsurance.forms.questions import EmergencyServicesQuestions
 from fighthealthinsurance.models import DenialTypes, PlanType, Regulator
 from fighthealthinsurance.process_denial import (
     ProcessDenialCodes,
@@ -32,6 +33,55 @@ class TestDenialTypes(TestCase):
             name="Medically Necessary"
         ).aget()
         assert denial_type[0] == expected_denial_type
+
+    # ------------------------------------------------------------------
+    # Emergency Services / prudent layperson standard
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_denial_matches_emergency_services_prudent_layperson(self):
+        """Emergency / prudent-layperson denial text should match the
+        "Emergency Services" denial type, which carries the prudent layperson
+        context and ACEP references."""
+        denial_type_checker = ProcessDenialRegex()
+        denial_types = await denial_type_checker.get_denialtype(
+            "Your emergency room visit is denied under prudent layperson review",
+            None,
+            None,
+        )
+        assert any(dt.name == "Emergency Services" for dt in denial_types)
+
+    @pytest.mark.asyncio
+    async def test_denial_matches_emergency_services_non_emergent_phrasing(self):
+        """The widened regex should also catch common prudent-layperson denial
+        phrasing such as "not an emergency" / "non-emergent"."""
+        denial_type_checker = ProcessDenialRegex()
+        denial_types = await denial_type_checker.get_denialtype(
+            "Claim denied: the visit was deemed non-emergent and not an emergency",
+            None,
+            None,
+        )
+        assert any(dt.name == "Emergency Services" for dt in denial_types)
+
+    def test_emergency_services_questions_main_includes_acep_references(self):
+        """EmergencyServicesQuestions.main() should always surface the prudent
+        layperson argument and both ACEP reference links."""
+        form = EmergencyServicesQuestions(data={})
+        assert form.is_valid()
+        main_text = " ".join(form.main())
+        assert "prudent layperson" in main_text.lower()
+        assert "emergencyphysicians.org" in main_text
+        assert "acep.org" in main_text
+
+    def test_emergency_services_questions_final_diagnosis_argument(self):
+        """When the denial was based on the final diagnosis, main() should make
+        the symptoms-not-final-diagnosis argument explicitly."""
+        form = EmergencyServicesQuestions(
+            data={"denied_based_on_final_diagnosis": True}
+        )
+        assert form.is_valid()
+        main_text = " ".join(form.main())
+        assert "final diagnosis" in main_text.lower()
 
     # ------------------------------------------------------------------
     # ProcessDenialRegex — procedure / diagnosis / templates coverage
@@ -264,8 +314,6 @@ class TestDenialTypes(TestCase):
 
         assert len(result) == 1
         assert result[0].name == "Preventive Care"
-
-
 
     @pytest.mark.asyncio
     async def test_find_uspstf_evidence_extracts_cpt_and_hcpcs_codes(self):

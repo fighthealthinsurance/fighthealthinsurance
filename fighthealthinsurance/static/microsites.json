@@ -3944,12 +3944,19 @@
       {
         "question": "What about care after I was stabilized?",
         "answer": "Some post-stabilization care at out-of-network facilities can be protected until you can safely be transferred. Your appeal should document that you were not stable enough to transfer."
+      },
+      {
+        "question": "What is the prudent layperson standard?",
+        "answer": "Federal law (and most state laws) require insurers to cover emergency care based on your symptoms at the time, not the final diagnosis. If a reasonable person with average medical knowledge would have believed an emergency existed, the visit must be covered — even if testing later showed it was not serious. This protection was first required nationally by the Balanced Budget Act of 1997 and reinforced by the Affordable Care Act."
       }
     ],
     "evidence_snippets": [
       "The No Surprises Act requires insurers to cover emergency services at out-of-network facilities without requiring prior authorization.",
       "Patients cannot be charged more than in-network cost-sharing for emergency services regardless of network status.",
-      "Emergency medical conditions are defined as those requiring immediate medical attention to prevent serious health consequences."
+      "Emergency medical conditions are defined as those requiring immediate medical attention to prevent serious health consequences.",
+      "The prudent layperson standard requires that insurance coverage for emergency care be based on the patient's presenting symptoms, not the final diagnosis (American College of Emergency Physicians).",
+      "An emergency medical condition is one manifesting itself by acute symptoms of sufficient severity (including severe pain) such that a prudent layperson could reasonably expect the absence of immediate medical attention to place their health in serious jeopardy.",
+      "Patients are not expected to diagnose themselves; roughly 90% of urgent and non-urgent symptoms overlap, so an emergency visit cannot be judged by its final diagnosis."
     ],
     "pubmed_search_terms": [
       "surprise medical billing emergency department policy",
@@ -3960,6 +3967,18 @@
       "File a complaint with your state insurance department if you receive a surprise balance bill.",
       "Request the Independent Dispute Resolution process if your insurer and provider can't agree on payment.",
       "Contact the CMS No Surprises Help Desk at 1-800-985-3059 for assistance."
+    ],
+    "advocacy_resources": [
+      {
+        "name": "Prudent Layperson Standard — American College of Emergency Physicians",
+        "url": "https://www.emergencyphysicians.org/article/access/prudent-layperson-standard",
+        "description": "ACEP patient resource: insurers must cover emergency care based on your symptoms, not your final diagnosis."
+      },
+      {
+        "name": "EMTALA and Prudent Layperson Standard FAQ — ACEP",
+        "url": "https://www.acep.org/administration/reimbursement/reimbursement-faqs/emtala-and-prudent-layperson-standard-faq",
+        "description": "ACEP FAQ on how EMTALA and the prudent layperson standard require covering emergency services based on presenting symptoms."
+      }
     ]
   },
   "medicare-work-requirements-denial": {
