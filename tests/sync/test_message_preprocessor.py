@@ -29,7 +29,6 @@ from fighthealthinsurance.chat.message_preprocessor import (
     LONG_DOC_REFERENCE_DELTA,
     MessageVariant,
     has_suspicious_unicode,
-    longest_unbroken_run,
     prepare_user_message_variants,
     safe_display_truncate,
     strip_control_chars,
@@ -161,10 +160,10 @@ class PrepareUnicodeTest(SimpleTestCase):
     def test_excessive_combining_marks_offer_alternatives_keep_primary(self):
         zalgo = "e" + (COMBINING_ACUTE * 50)
         variants = prepare_user_message_variants(zalgo, is_document=False)
-        self.assertEqual(variants[0].kind, "primary_original")
         self.assertEqual(variants[0].text_for_llm, zalgo)  # preserved
-        self.assertIn("unicode_nfc", _kinds(variants))
-        self.assertIn("unicode_control_stripped", _kinds(variants))
+        self.assertEqual(
+            _kinds(variants), ["primary_original", "unicode_control_stripped"]
+        )
 
     def test_few_combining_marks_is_not_flagged(self):
         # A normal accented word should not be treated as suspicious.
@@ -231,10 +230,6 @@ class UnicodeHelperTest(SimpleTestCase):
         self.assertEqual(strip_control_chars("a\tb\nc"), "a\tb\nc")
         self.assertEqual(strip_control_chars("a" + ZERO_WIDTH_SPACE + "b"), "ab")
 
-    def test_longest_unbroken_run(self):
-        self.assertEqual(longest_unbroken_run("ab cde f"), 3)
-        self.assertEqual(longest_unbroken_run(""), 0)
-
 
 class VariantScoringTest(SimpleTestCase):
     """Primary stays highest when valid; alternatives win when primary fails."""
@@ -289,7 +284,7 @@ class BuildCallsForVariantsTest(SimpleTestCase):
         backend = _StubBackend(quality=10)
         variants = [
             MessageVariant("primary_original", "hello", 0),
-            MessageVariant("unicode_nfc", "hello-nfc", -30),
+            MessageVariant("unicode_control_stripped", "hello-stripped", -30),
         ]
         calls, scores, primary_calls = build_llm_calls_for_variants(
             model_backends=[backend],
@@ -308,7 +303,7 @@ class BuildCallsForVariantsTest(SimpleTestCase):
             self.assertEqual(len(primary_calls), 1)
             self.assertEqual(scores[primary_calls[0]], base)
             # Primary text fanned out first, then the alternative.
-            self.assertEqual(backend.received, ["hello", "hello-nfc"])
+            self.assertEqual(backend.received, ["hello", "hello-stripped"])
         finally:
             for c in calls:
                 c.close()
