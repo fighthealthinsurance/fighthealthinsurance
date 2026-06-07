@@ -529,7 +529,7 @@ def mark_proposal_chosen(
     original: Optional[ProposedAppeal] = None
     if proposed_appeal_id is not None:
         original = ProposedAppeal.objects.filter(
-            id=proposed_appeal_id, for_denial=denial
+            id=proposed_appeal_id, for_denial=denial, chosen=False
         ).first()
     if original is None:
         original = (

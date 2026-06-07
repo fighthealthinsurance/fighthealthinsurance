@@ -424,15 +424,12 @@ class ModelUsageDashboardView(generic.TemplateView):
         }
 
         # Presented: walk votes' presented_candidate_ids JSON lists into a
-        # counter. Scope the votes themselves to the requested kind so we
-        # don't pay to iterate JSON for unrelated task types. Each
-        # ChooserVote belongs to one ChooserTask whose candidates share a
-        # single kind, so chosen_candidate__kind is the task kind.
-        votes_qs = ChooserVote.objects.filter(chosen_candidate__kind=kind)
-        if since is not None:
-            votes_qs = votes_qs.filter(created_at__gte=since)
+        # counter. We reuse chosen_qs (same filter) and call .iterator() so
+        # the All Time window doesn't load every vote into a result cache.
         counter: Counter = Counter()
-        for ids in votes_qs.values_list("presented_candidate_ids", flat=True):
+        for ids in chosen_qs.values_list(
+            "presented_candidate_ids", flat=True
+        ).iterator():
             if ids:
                 counter.update(ids)
         cand_to_model = dict(
