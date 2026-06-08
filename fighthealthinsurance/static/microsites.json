@@ -7048,5 +7048,74 @@
         "description": "Organization dedicated to expanding life participation approaches for people with aphasia."
       }
     ]
+  },
+  "breztri-denial": {
+    "slug": "breztri-denial",
+    "title": "Appealing Breztri Denials",
+    "default_procedure": "Breztri Aerosphere (budesonide/glycopyrrolate/formoterol fumarate)",
+    "default_condition": "COPD",
+    "tagline": "Insurers often deny Breztri as 'non-formulary' or push step therapy first—here's how to fight back.",
+    "hero_h1": "Appeal Your Breztri Denial",
+    "hero_subhead": "If dual-therapy inhalers aren't controlling your COPD, triple therapy may be medically necessary.",
+    "intro": "Breztri Aerosphere is a once-daily triple-therapy inhaler that combines an inhaled corticosteroid (budesonide), a long-acting muscarinic antagonist (glycopyrrolate), and a long-acting beta agonist (formoterol). Insurers frequently deny it for COPD patients—demanding step therapy with cheaper dual-therapy inhalers, questioning medical necessity, or labeling it non-formulary. A focused appeal that documents your COPD history, prior medications, and exacerbations can overturn these denials.",
+    "common_denial_reasons": [
+      "Non-formulary or requires step therapy with cheaper inhalers first",
+      "Not medically necessary / dual therapy considered adequate",
+      "Insufficient documentation of COPD severity or exacerbation history",
+      "Prior authorization not approved",
+      "Quantity limits or coverage restrictions"
+    ],
+    "how_we_help": "We help you and your clinician summarize your COPD history—prior inhalers, exacerbations, hospitalizations, ER visits, and lung function (FEV1)—to demonstrate why triple therapy and Breztri specifically are medically appropriate for you.",
+    "cta": "Start your Breztri appeal.",
+    "faq": [
+      {
+        "question": "Why is Breztri denied so often?",
+        "answer": "Triple-therapy inhalers are more expensive than single- or dual-therapy options, so insurers commonly require step therapy—asking you to try and fail cheaper inhalers first. Your appeal can explain why you specifically need triple therapy now."
+      },
+      {
+        "question": "What should my doctor highlight about my COPD?",
+        "answer": "Document prior COPD medications and how you responded, the frequency and severity of exacerbations, hospitalizations and ER visits, oral steroid or antibiotic courses, lung function tests (FEV1, FEV1/FVC), and how symptoms limit your daily life."
+      },
+      {
+        "question": "Can I appeal if I was stable on Breztri and my plan is now switching me off it?",
+        "answer": "Yes. If you're already stable on Breztri and your insurer wants you to switch or removes it from formulary, you may have continuity of care rights and can request a medical exception explaining that switching may destabilize your COPD. See our continuity of care page for more information."
+      }
+    ],
+    "evidence_snippets": [
+      "Breztri Aerosphere is FDA-approved for the maintenance treatment of chronic obstructive pulmonary disease (COPD).",
+      "In clinical trials, triple therapy with budesonide/glycopyrrolate/formoterol reduced the rate of moderate-to-severe COPD exacerbations compared with dual therapy.",
+      "Triple ICS/LAMA/LABA therapy improves lung function and symptom control in patients with COPD who remain symptomatic on dual therapy.",
+      "GOLD guidelines support escalation to triple therapy for COPD patients with continued exacerbations despite LAMA/LABA treatment."
+    ],
+    "pubmed_search_terms": [
+      "budesonide glycopyrrolate formoterol COPD randomized trial",
+      "triple therapy COPD exacerbation reduction ETHOS trial",
+      "GOLD guideline triple inhaler therapy COPD"
+    ],
+    "assistance_programs": [
+      {
+        "name": "Breztri Savings Program",
+        "url": "https://www.breztri.com/savings-and-support.html",
+        "description": "Eligible commercially insured patients may pay as little as $0 per fill for Breztri. Restrictions apply; not valid for government insurance."
+      },
+      {
+        "name": "AZ&Me Prescription Savings Program",
+        "url": "https://www.azandmeapp.com/",
+        "description": "AstraZeneca's patient assistance program offering Breztri at no cost to eligible uninsured patients and those on Medicare who meet income requirements."
+      }
+    ],
+    "advocacy_resources": [
+      {
+        "name": "COPD Foundation",
+        "url": "https://www.copdfoundation.org/",
+        "description": "Leading patient advocacy and education organization for people living with COPD."
+      },
+      {
+        "name": "American Lung Association",
+        "url": "https://www.lung.org/lung-health-diseases/lung-disease-lookup/copd",
+        "description": "Nonprofit providing COPD education, support, and patient advocacy resources."
+      }
+    ],
+    "manufacturer": "AstraZeneca"
   }
 }
