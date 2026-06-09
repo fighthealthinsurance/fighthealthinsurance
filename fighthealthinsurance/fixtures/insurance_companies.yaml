@@ -130,6 +130,9 @@
     is_major_commercial_payer: true
     medical_policy_name: Medical Coverage Policies
     medical_policy_notes: Humana publishes Medical Coverage Policies that document medical-necessity and coverage criteria the plan applies, including for Medicare Advantage members where additional CMS rules also apply. The public-facing index URL has changed repeatedly; locate the current index from humana.com's provider portal.
+    pa_requirement_list_url: https://www.humana.com/provider/medical-resources/prior-authorization
+    pa_requirement_list_url_is_parseable: false
+    pa_requirement_list_notes: Humana's prior-authorization requirement lists are published per-plan and require provider portal login. Most specialty PA routes through Gold Carding or Availity.
 
 - model: fighthealthinsurance.insurancecompany
   pk: 6
