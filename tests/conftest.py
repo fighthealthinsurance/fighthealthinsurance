@@ -92,6 +92,29 @@ def _clear_pa_resolver_cache():
 
 
 @pytest.fixture(autouse=True)
+def _stub_denied_items_analysis_dispatch():
+    """Stub the denied-items analysis Ray dispatch for the whole suite.
+
+    ``OngoingChatConsumer.disconnect`` enqueues analysis on a detached Ray
+    actor. In tests there is no Ray cluster, so the first unpatched chat
+    disconnect would lazily start an in-process Ray instance whose detached
+    actor crash-loops against the test database and eventually hard-kills
+    the pytest process mid-suite. Tests that assert on dispatch behavior
+    patch the same attribute themselves; their innermost patch wins.
+    """
+    from unittest.mock import patch as _patch
+
+    try:
+        with _patch(
+            "fighthealthinsurance.denied_items_analysis_actor_ref.denied_items_analysis_actor_ref"
+        ) as mock_ref:
+            mock_ref.get.run_analysis.remote.return_value = None
+            yield
+    except (ImportError, AttributeError):
+        yield
+
+
+@pytest.fixture(autouse=True)
 def _drain_fire_and_forget_threads():
     """Drain fire-and-forget background threads at the end of each test.
 
