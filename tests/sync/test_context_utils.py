@@ -262,6 +262,23 @@ class TestAttachSupplementalToCitations(unittest.TestCase):
         self.assertEqual(ml, existing)
         self.assertIsNone(pm)
 
+    def test_dedupe_preserves_list_input_type_when_already_present(self):
+        # Regression: when ml_citation_context is a list whose flattened
+        # form already contains the supplemental (e.g. a single entry
+        # that the previous call appended into), the function must
+        # return the original list rather than silently flattening it
+        # to a string. Downstream consumers in common_view_logic.py
+        # branch on isinstance(..., list) and produce different output
+        # for the two shapes.
+        supp = "Prior IMR decision: case 12345 reversed."
+        # flatten_citation_context joins list entries with "\n", so a
+        # single entry containing "...\n\nsupp" splits into two blocks
+        # on "\n\n" and the dedup matcher can detect it.
+        existing_list = [f"original context\n\n{supp}"]
+        ml, pm = attach_supplemental_to_citations(existing_list, None, supp)
+        self.assertIs(ml, existing_list)
+        self.assertIsNone(pm)
+
 
 if __name__ == "__main__":
     unittest.main()

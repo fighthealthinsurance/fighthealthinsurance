@@ -229,13 +229,15 @@ def attach_supplemental_to_citations(
     flat_ml = flatten_citation_context(ml_citation_context)
     if flat_ml:
         if _supplemental_already_present(flat_ml, supp):
-            return flat_ml, pubmed_context
+            # Idempotent: nothing to append, so preserve the original input
+            # type (list inputs stay lists, strings stay strings).
+            return ml_citation_context, pubmed_context
         return f"{flat_ml}\n\n{supp}", pubmed_context
 
     if pubmed_context and pubmed_context.strip():
         existing = pubmed_context.strip()
         if _supplemental_already_present(existing, supp):
-            return ml_citation_context, existing
+            return ml_citation_context, pubmed_context
         return ml_citation_context, f"{existing}\n\n{supp}"
 
     return supp, pubmed_context
