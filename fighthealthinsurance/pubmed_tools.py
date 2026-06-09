@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import io
 import json
 import os
@@ -105,6 +106,7 @@ _ELINK_CACHE_PREFIX = "pubmed:elink:related:"
 # shorter than the 30-day positive cache because absence is more volatile
 # than presence (new articles get indexed).
 _EMPTY_QUERY_NEGCACHE_DAYS = 2
+_QUERY_CACHE_PREFIX = "pubmed:query:"
 
 # Backoff schedule for retrying transient metapub fetch failures (e.g. a
 # dropped connection to dx.doi.org during DOI resolution). metapub swallows
@@ -572,9 +574,16 @@ class PubMedTools(object):
             A list of PubMed article IDs (PMIDs) matching the query.
         """
         pmids: List[str] = []
+        cache_key = self._pubmed_query_cache_key(query=query, since=since)
+        cache_sentinel = object()
 
         try:
             async with async_timeout(timeout):
+                cached_pmids = await cache.aget(cache_key, default=cache_sentinel)
+                if cached_pmids is not cache_sentinel:
+                    # Distinguish a real negative cache hit ([]) from a miss.
+                    return cached_pmids or []
+
                 # Use timezone-aware "now" so comparisons against the DB's
                 # tz-aware ``created`` field work without raising.
                 now = timezone.now()
@@ -600,6 +609,11 @@ class PubMedTools(object):
                         logger.error(f"Error parsing cached articles JSON for {query}")
                         continue
                     if article_ids:
+                        await cache.aset(
+                            cache_key,
+                            article_ids,
+                            timeout=int(timedelta(days=30).total_seconds()),
+                        )
                         return article_ids
                     # The most recent informative row is an empty result.
                     # Honor it as a cache hit inside the shorter negative-
@@ -608,6 +622,15 @@ class PubMedTools(object):
                         query_data.created is not None
                         and query_data.created >= neg_cache_cutoff
                     ):
+                        await cache.aset(
+                            cache_key,
+                            [],
+                            timeout=int(
+                                timedelta(
+                                    days=_EMPTY_QUERY_NEGCACHE_DAYS
+                                ).total_seconds()
+                            ),
+                        )
                         return []
                     # Stale empty: the newest signal says "no hits", but it
                     # is past the negative-cache window. Don't fall back to
@@ -633,6 +656,15 @@ class PubMedTools(object):
                     since=since,
                     articles=articles_json,
                 )
+                await cache.aset(
+                    cache_key,
+                    pmids,
+                    timeout=int(
+                        timedelta(
+                            days=30 if pmids else _EMPTY_QUERY_NEGCACHE_DAYS
+                        ).total_seconds()
+                    ),
+                )
                 return pmids
         except asyncio.TimeoutError as e:
             # We might timeout
@@ -647,6 +679,14 @@ class PubMedTools(object):
             )
             pass
         return pmids
+
+    @staticmethod
+    def _pubmed_query_cache_key(query: str, since: Optional[str]) -> str:
+        normalized_query = " ".join((query or "").strip().lower().split())
+        normalized_since = (since or "").strip().lower()
+        key_material = f"{normalized_query}|{normalized_since}"
+        digest = hashlib.sha256(key_material.encode("utf-8")).hexdigest()
+        return f"{_QUERY_CACHE_PREFIX}{digest}"
 
     async def fetch_mesh_and_pub_types(
         self,
