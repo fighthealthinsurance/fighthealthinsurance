@@ -1202,6 +1202,23 @@ class ChooseAppeal(View):
 class GenerateAppeal(View):
     """View for generating appeal letters using ML models."""
 
+    @staticmethod
+    def _appeals_context(
+        *, denial, denial_id: str, email: str, semi_sekret: str, elems: dict
+    ) -> dict:
+        return {
+            "form_context": json.dumps(elems),
+            "user_email": email,
+            "denial_id": denial_id,
+            "semi_sekret": semi_sekret,
+            "current_step": 7,
+            "use_external": denial.use_external,
+            "back_url": build_back_url(
+                "find_next_steps", denial_id, email, semi_sekret
+            ),
+            "back_label": "Back to questions",
+        }
+
     def get(self, request):
         """Handle GET requests for back navigation to appeals page."""
         denial_id = request.GET.get("denial_id")
@@ -1229,17 +1246,13 @@ class GenerateAppeal(View):
         return render(
             request,
             "appeals.html",
-            context={
-                "form_context": json.dumps(elems),
-                "user_email": email,
-                "denial_id": denial_id,
-                "semi_sekret": semi_sekret,
-                "current_step": 7,
-                "back_url": build_back_url(
-                    "find_next_steps", denial_id, email, semi_sekret
-                ),
-                "back_label": "Back to questions",
-            },
+            context=self._appeals_context(
+                denial=denial,
+                denial_id=denial_id,
+                email=email,
+                semi_sekret=semi_sekret,
+                elems=elems,
+            ),
         )
 
     def post(self, request):
@@ -1287,20 +1300,13 @@ class GenerateAppeal(View):
         return render(
             request,
             "appeals.html",
-            context={
-                "form_context": json.dumps(elems),
-                "user_email": form.cleaned_data["email"],
-                "denial_id": form.cleaned_data["denial_id"],
-                "semi_sekret": form.cleaned_data["semi_sekret"],
-                "current_step": 7,
-                "back_url": build_back_url(
-                    "find_next_steps",
-                    form.cleaned_data["denial_id"],
-                    form.cleaned_data["email"],
-                    form.cleaned_data["semi_sekret"],
-                ),
-                "back_label": "Back to questions",
-            },
+            context=self._appeals_context(
+                denial=denial,
+                denial_id=form.cleaned_data["denial_id"],
+                email=form.cleaned_data["email"],
+                semi_sekret=form.cleaned_data["semi_sekret"],
+                elems=elems,
+            ),
         )
 
 

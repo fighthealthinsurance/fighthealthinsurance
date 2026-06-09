@@ -106,6 +106,22 @@ Fight Your Health Insurance Denial: Choose an Appeal
   </p>
 </div>
 
+{% if not use_external %}
+<div id="external-models-prompt" class="alert-box alert-warning" style="display:none; margin-top: 1.5rem;">
+  <h4>Want more options?</h4>
+  <p>
+    Your denial wasn't set up to use external (cloud) AI models, and we
+    generated fewer appeals than usual. External models tend to be more
+    creative and may produce additional drafts for you to choose from.
+    Your denial text is sent to a third-party model provider when you opt in.
+  </p>
+  <button type="button" id="request-external-models-btn" class="btn btn-green">
+    Generate more appeals using external models
+  </button>
+  <div id="external-models-status" style="margin-top: 0.75rem; font-size: 0.95rem;"></div>
+</div>
+{% endif %}
+
 <div class="form-nav-centered">
   {% if back_url %}
   <a href="{{ back_url }}" class="btn btn-secondary-custom">
@@ -130,6 +146,7 @@ Fight Your Health Insurance Denial: Choose an Appeal
       // REST fallback for clients that can't hold a WebSocket open
       // (iOS Safari ITP, corporate proxies that block WS upgrades, etc).
       const restFallbackUrl = `${window.location.protocol}//${window.location.host}{% url 'streaming_appeals_fallback' %}`;
+      const enableExternalModelsUrl = `${window.location.protocol}//${window.location.host}{% url 'enable_external_models' %}`;
       const data = {
 	  {% autoescape off %}
           ...{{form_context}},
@@ -137,6 +154,10 @@ Fight Your Health Insurance Denial: Choose an Appeal
           ...{
               'csrfmiddlewaretoken': '{{ csrf_token }}',
               'timbit': 'is most awesomex2'}}
+
+      // Expose endpoint so appeal_fetcher can offer the "request external
+      // models" button when initial generation yields zero or few appeals.
+      window.enableExternalModelsUrl = enableExternalModelsUrl;
 
       // Call the doQuery function
       doQuery(backendUrl, data, restFallbackUrl);

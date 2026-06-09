@@ -561,6 +561,62 @@ class ReportClientError(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
+class EnableExternalModels(APIView):
+    """Opt a denial into external models so a re-run of appeal generation
+    can call out to higher-capability cloud LLMs.
+
+    Patients see a button on the appeals page offering this when the
+    initial generation produced few or no appeals from internal models;
+    this endpoint flips `Denial.use_external` so the next generation
+    request includes the external backends. Auth mirrors the appeal
+    stream: the (denial_id, email, semi_sekret) triple is the only
+    credential.
+    """
+
+    permission_classes = [AllowAny]
+    authentication_classes = []  # Magic-key auth via the triple
+
+    @extend_schema(
+        description=(
+            "Opt a denial into external models. Authenticated by the "
+            "(denial_id, email, semi_sekret) triple in the JSON body. "
+            "Idempotent — succeeds with 200 if `use_external` is "
+            "already True. Returns 404 for any auth failure (uniform "
+            "to avoid leaking which field was wrong)."
+        ),
+        request=OpenApiTypes.OBJECT,
+        responses={
+            200: OpenApiTypes.OBJECT,
+            400: OpenApiTypes.OBJECT,
+            404: OpenApiTypes.OBJECT,
+        },
+    )
+    def post(self, request: Request) -> Response:
+        data = request.data
+        # Reject non-mapping bodies (e.g. JSON arrays/strings) up front;
+        # without this, request.data.get(...) raises and we'd serve 500
+        # on malformed input. Matches streaming_appeals_rest_fallback.
+        if not isinstance(data, dict):
+            return Response(
+                {"error": "Expected a JSON object"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        denial = common_view_logic.get_denial_for_action(
+            denial_id=data.get("denial_id"),
+            email=data.get("email") or "",
+            semi_sekret=data.get("semi_sekret") or "",
+        )
+        if denial is None:
+            return Response({"error": "Not found"}, status=status.HTTP_404_NOT_FOUND)
+        if not denial.use_external:
+            denial.use_external = True
+            denial.save(update_fields=["use_external"])
+            logger.info(
+                f"Enabled external models for denial {denial.denial_id} on user request"
+            )
+        return Response({"use_external": True}, status=status.HTTP_200_OK)
+
+
 @extend_schema(
     description=(
         "REST/HTTP fallback for the WebSocket appeal stream used by "

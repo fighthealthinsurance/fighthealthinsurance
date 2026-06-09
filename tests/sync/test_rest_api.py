@@ -798,6 +798,169 @@ class StreamingAppealsRestFallbackTest(APITestCase):
         self.assertEqual(len(set(ids)), len(ids))
 
 
+class EnableExternalModelsTest(APITestCase):
+    """Test the endpoint that lets users opt their denial into external
+    LLM models from the appeal page when the initial internal-only
+    generation produced few or no appeals."""
+
+    def _make_denial(
+        self,
+        *,
+        email: str = "owner@example.com",
+        use_external: bool = False,
+    ) -> Denial:
+        return Denial.objects.create(
+            denial_text="Test denial body",
+            hashed_email=Denial.get_hashed_email(email),
+            use_external=use_external,
+        )
+
+    def _post(self, payload: dict):
+        return self.client.post(
+            reverse("enable_external_models"),
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+    def test_flips_use_external_on_valid_credentials(self):
+        denial = self._make_denial()
+        self.assertFalse(denial.use_external)
+        response = self._post(
+            {
+                "denial_id": denial.denial_id,
+                "email": "owner@example.com",
+                "semi_sekret": denial.semi_sekret,
+            }
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"use_external": True})
+        denial.refresh_from_db()
+        self.assertTrue(denial.use_external)
+
+    def test_idempotent_when_already_enabled(self):
+        """Calling the endpoint when external models are already on
+        must succeed (200) without raising. The button is only shown to
+        users whose denial has use_external=False, but races and reloads
+        should not 500."""
+        denial = self._make_denial(
+            email="already@example.com", use_external=True
+        )
+        response = self._post(
+            {
+                "denial_id": denial.denial_id,
+                "email": "already@example.com",
+                "semi_sekret": denial.semi_sekret,
+            }
+        )
+        self.assertEqual(response.status_code, 200)
+        denial.refresh_from_db()
+        self.assertTrue(denial.use_external)
+
+    def test_rejects_wrong_semi_sekret(self):
+        denial = self._make_denial()
+        response = self._post(
+            {
+                "denial_id": denial.denial_id,
+                "email": "owner@example.com",
+                "semi_sekret": "wrong-sekret",
+            }
+        )
+        self.assertEqual(response.status_code, 404)
+        denial.refresh_from_db()
+        self.assertFalse(denial.use_external)
+
+    def test_rejects_wrong_email(self):
+        denial = self._make_denial()
+        response = self._post(
+            {
+                "denial_id": denial.denial_id,
+                "email": "someone-else@example.com",
+                "semi_sekret": denial.semi_sekret,
+            }
+        )
+        self.assertEqual(response.status_code, 404)
+        denial.refresh_from_db()
+        self.assertFalse(denial.use_external)
+
+    def test_rejects_missing_credentials(self):
+        denial = self._make_denial()
+        response = self._post({"denial_id": denial.denial_id})
+        self.assertEqual(response.status_code, 404)
+        denial.refresh_from_db()
+        self.assertFalse(denial.use_external)
+
+    def test_rejects_non_object_body(self):
+        """Non-mapping JSON bodies (arrays, strings, numbers) must 400
+        rather than 500. Without the isinstance guard, request.data.get
+        on a list would raise AttributeError."""
+        response = self.client.post(
+            reverse("enable_external_models"),
+            data=json.dumps([1, 2, 3]),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("JSON object", response.content.decode())
+
+    def test_cross_denial_isolation(self):
+        """Denial A's credentials must not be able to flip Denial B."""
+        denial_a = self._make_denial(email="alice@example.com")
+        denial_b = self._make_denial(email="bob@example.com")
+        response = self._post(
+            {
+                "denial_id": denial_b.denial_id,
+                "email": "alice@example.com",
+                "semi_sekret": denial_a.semi_sekret,
+            }
+        )
+        self.assertEqual(response.status_code, 404)
+        denial_b.refresh_from_db()
+        self.assertFalse(denial_b.use_external)
+
+
+class GenerateAppealUseExternalContextTest(APITestCase):
+    """The appeals page must expose `use_external` so the JS client can
+    decide whether to surface the 'request external models' opt-in."""
+
+    def test_context_reflects_internal_only_denial(self):
+        denial = Denial.objects.create(
+            denial_text="Internal-only denial",
+            hashed_email=Denial.get_hashed_email("internal@example.com"),
+            use_external=False,
+        )
+        response = self.client.get(
+            reverse("generate_appeal"),
+            {
+                "denial_id": str(denial.denial_id),
+                "email": "internal@example.com",
+                "semi_sekret": denial.semi_sekret,
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.context["use_external"])
+        # Prompt block (which wraps the button) only renders when
+        # use_external is False.
+        self.assertContains(response, "external-models-prompt")
+
+    def test_context_reflects_external_enabled_denial(self):
+        denial = Denial.objects.create(
+            denial_text="External-enabled denial",
+            hashed_email=Denial.get_hashed_email("external@example.com"),
+            use_external=True,
+        )
+        response = self.client.get(
+            reverse("generate_appeal"),
+            {
+                "denial_id": str(denial.denial_id),
+                "email": "external@example.com",
+                "semi_sekret": denial.semi_sekret,
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context["use_external"])
+        # When external is already on, we don't render the opt-in prompt.
+        self.assertNotContains(response, "external-models-prompt")
+
+
 class NotifyPatientTest(APITestCase):
     """Test the notify_patient API endpoint."""
 
