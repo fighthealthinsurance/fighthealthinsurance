@@ -1,8 +1,11 @@
 import typing
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 from channels.testing import WebsocketCommunicator
 
+from django.core.cache import cache
 from django.contrib.auth import get_user_model
+from django.test import override_settings
+from django.utils import timezone
 
 from rest_framework.test import APITestCase
 
@@ -15,6 +18,16 @@ from fighthealthinsurance.models import (
 from fighthealthinsurance.websockets import OngoingChatConsumer
 from fhi_users.models import ProfessionalDomainRelation
 from .mock_chat_model import MockChatModel
+
+# Real in-memory cache for tests that exercise cache.add dedupe and job
+# state writes; the suite-wide default is DummyCache, which discards
+# writes and reports every add as new.
+_LOCMEM_CACHE = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+        "LOCATION": "test-ongoing-chat",
+    }
+}
 
 from asgiref.sync import sync_to_async, async_to_sync
 
@@ -244,6 +257,79 @@ class OngoingChatWebSocketTest(APITestCase):
         )
         self.assertEqual(prior_auth_refresh.chat_id, chat.id)
         await communicator.disconnect()
+        await self.asyncTearDown()
+
+    async def test_disconnect_enqueues_denied_items_analysis_once(self):
+        await self.asyncSetUp()
+        consumer = OngoingChatConsumer()
+        consumer.chat_interface = object()
+        chat = await sync_to_async(OngoingChat.objects.create)(
+            is_patient=True,
+            user=await sync_to_async(User.objects.create_user)(
+                username="enqueueuser", password="testpass", email="enqueue@example.com"
+            ),
+            chat_history=[],
+            summary_for_next_call=[],
+        )
+        consumer.chat_id = str(chat.id)
+        # Dedupe relies on cache.add; the suite-wide DummyCache "adds"
+        # every time, so swap in a real in-memory cache for this test.
+        with override_settings(CACHES=_LOCMEM_CACHE):
+            cache.clear()
+            with patch(
+                "fighthealthinsurance.denied_items_analysis_actor_ref.denied_items_analysis_actor_ref",
+            ) as mock_dispatch:
+                mock_dispatch.get.run_analysis.remote.return_value = "job-ref"
+                # Same disconnect event timestamp both times so the job key
+                # (and therefore cache.add dedupe) matches.
+                with patch(
+                    "fighthealthinsurance.websockets.timezone.now",
+                    return_value=timezone.now(),
+                ):
+                    await consumer.disconnect(1000)
+                    await consumer.disconnect(1000)
+                self.assertEqual(mock_dispatch.get.run_analysis.remote.call_count, 1)
+        await self.asyncTearDown()
+
+    async def test_disconnect_is_non_blocking_when_dispatch_fails(self):
+        await self.asyncSetUp()
+        consumer = OngoingChatConsumer()
+        consumer.chat_interface = object()
+        chat = await sync_to_async(OngoingChat.objects.create)(
+            is_patient=True,
+            user=await sync_to_async(User.objects.create_user)(
+                username="failuser", password="testpass", email="fail@example.com"
+            ),
+            chat_history=[],
+            summary_for_next_call=[],
+        )
+        consumer.chat_id = str(chat.id)
+        with patch(
+            "fighthealthinsurance.websockets.enqueue_denied_items_analysis",
+            new=AsyncMock(side_effect=RuntimeError("queue offline")),
+        ), patch("fighthealthinsurance.websockets.logger") as mock_logger:
+            await consumer.disconnect(1000)
+            # disconnect logs via logger.opt(exception=True).warning(...)
+            self.assertTrue(mock_logger.opt.return_value.warning.called)
+        await self.asyncTearDown()
+
+    async def test_background_failure_marks_failed_state(self):
+        await self.asyncSetUp()
+        job_key = "denied-items-analysis:test:failure"
+        with override_settings(CACHES=_LOCMEM_CACHE):
+            cache.clear()
+            with patch(
+                "fighthealthinsurance.websockets.OngoingChatConsumer._analyze_denied_items",
+                new=AsyncMock(side_effect=RuntimeError("model failure")),
+            ):
+                await OngoingChatConsumer._run_denied_items_analysis_job(
+                    job_key=job_key,
+                    chat_id="fake-chat",
+                    disconnect_event_ts="2026-05-13T00:00:00+00:00",
+                )
+            state = cache.get(job_key)
+            self.assertEqual(state["status"], "failed")
+            self.assertEqual(state["chat_id"], "fake-chat")
         await self.asyncTearDown()
 
     async def test_link_chat_to_appeal_permission_denied(self):
