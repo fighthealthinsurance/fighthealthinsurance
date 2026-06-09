@@ -106,7 +106,9 @@ _AI_OVERSIGHT_STATES: tuple[tuple[str, str], ...] = (
     ("IL", "Illinois"),
     ("AL", "Alabama"),
     ("UT", "Utah"),
-    ("WA", "Washington"),
+    # Washington is intentionally absent here: it has an explicit,
+    # individually-verified hook below (SB 5395) with a known effective date,
+    # so listing it generically would duplicate that entry.
     ("MD", "Maryland"),
 )
 
@@ -150,6 +152,30 @@ _EXPLICIT_STATE_HOOKS: tuple[RegulatoryHook, ...] = (
         source_url=(
             "https://kffhealthnews.org/news/article/prior-authorization-"
             "insurance-delays-coverage-denials-state-laws-west-virginia/"
+        ),
+        applies_to_self_insured=False,
+    ),
+    RegulatoryHook(
+        name="Washington prior-authorization AI-oversight and transparency law",
+        summary=(
+            "An AI or algorithm may not be the sole basis to deny, delay, or "
+            "modify care; a licensed provider must make any medical-necessity "
+            "adverse determination, the tool must account for the patient's "
+            "individual clinical condition (not just group data), and the "
+            "denial notice must disclose the credentials, board certifications, "
+            "and specialty of the provider who had clinical oversight. Demand "
+            "that human reviewer's clinical rationale and credentials, and "
+            "confirmation that AI was not the sole basis for the denial."
+        ),
+        jurisdiction="WA",
+        effective="effective June 11, 2026",
+        # Washington SB 5395 (2026); effective date and provisions confirmed via
+        # the bill sponsor's office and a state-law summary (Holland & Knight,
+        # May 2026). Per this module's convention we render a descriptive name
+        # rather than the bill number into the prompt.
+        source_url=(
+            "https://senatedemocrats.wa.gov/orwall/2026/03/25/orwall-bill-to-"
+            "improve-prior-authorization-transparency-signed-into-law/"
         ),
         applies_to_self_insured=False,
     ),

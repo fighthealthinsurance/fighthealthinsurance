@@ -46,6 +46,23 @@ class TestGetRegulatoryCitationContext(unittest.TestCase):
         self.assertIn("California", block)
         self.assertIn("sole basis", block)
 
+    def test_washington_explicit_hook_supersedes_generic(self):
+        # Washington has a specific, individually-verified SB 5395 hook, so the
+        # block carries its real effective date and credential-disclosure demand
+        # (which the generic AI-oversight framing lacked) and lists WA only once.
+        block = get_regulatory_citation_context("WA")
+        self.assertIsNotNone(block)
+        assert block is not None
+        self.assertIn("Washington", block)
+        self.assertIn("June 11, 2026", block)
+        self.assertIn("credentials", block)
+        # AI-as-sole-basis framing is preserved.
+        self.assertIn("sole basis", block)
+        # Federal hooks still ride along with the state hook.
+        self.assertIn("CMS-0057-F", block)
+        # No generic + explicit duplication: Washington appears exactly once.
+        self.assertEqual(block.count("Washington"), 1)
+
     def test_self_insured_caveat_wording(self):
         self_insured = get_regulatory_citation_context("MA", self_insured=True)
         assert self_insured is not None
