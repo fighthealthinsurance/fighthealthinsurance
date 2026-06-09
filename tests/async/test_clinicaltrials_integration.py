@@ -164,6 +164,12 @@ class TestFindTrialsForQuery:
     async def test_find_trials_for_denial_writes_audit_row_and_global_cache(self):
         """find_trials_for_denial must write a global cache row that the next
         call can hit, plus a separate denial-scoped audit row."""
+        # Drop any leftover cache rows for this query (a failed flush in a
+        # previous attempt leaks rows across the rerun) so the cache-miss
+        # and row-count assertions below start from a clean slate.
+        await ClinicalTrialQueryData.objects.filter(
+            query="pembrolizumab melanoma"
+        ).adelete()
         tools = ClinicalTrialsTools()
         denial = await Denial.objects.acreate(
             procedure="pembrolizumab",
@@ -185,8 +191,13 @@ class TestFindTrialsForQuery:
         assert [t.nct_id for t in trials_again] == ["NCT55555555"]
         assert session_factory.call_count == 1
         # One global cache row + two denial-scoped audit rows (one per call).
+        # Scope the global count to this test's query: with
+        # transaction=True cleanup is a table flush, and if a previous
+        # test's flush failed (e.g. transient sqlite table lock) its global
+        # rows survive into the rerun and an unscoped count flakes.
         global_rows = await ClinicalTrialQueryData.objects.filter(
-            denial_id__isnull=True
+            denial_id__isnull=True,
+            query="pembrolizumab melanoma",
         ).acount()
         denial_rows = await ClinicalTrialQueryData.objects.filter(
             denial_id=denial

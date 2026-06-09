@@ -18,18 +18,35 @@ os.environ["TESTING"] = "True"
 
 
 def _has_ssl_intercepting_proxy() -> bool:
-    """Detect if an SSL-intercepting proxy prevents connecting to api.stripe.com.
+    """Detect environments where api.stripe.com can't be reached with a valid
+    certificate.
 
-    Returns True when the environment has an HTTPS proxy AND SSL verification
-    to api.stripe.com fails (e.g. self-signed cert from a MITM proxy).
-    Returns False when there is no proxy or when SSL verification succeeds.
+    Covers env-var-configured proxies, transparent SSL-intercepting proxies
+    (which set no proxy env vars), and fully firewalled sandboxes. The E2E
+    Stripe tests can't pass in any of those, so they should skip rather than
+    fail on connect.
+
+    The probe verifies against the Stripe SDK's bundled CA file — the same
+    bundle the SDK uses at request time. A sandbox that injects its MITM CA
+    into the *system* trust store would otherwise pass a default-context
+    probe while every real SDK call still fails certificate verification.
     """
-    if not (os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy")):
-        return False
     try:
-        handler = urllib.request.ProxyHandler()
-        opener = urllib.request.build_opener(handler)
+        import stripe
+
+        ssl_context = ssl.create_default_context(cafile=stripe.ca_bundle_path)
+    except Exception:
+        ssl_context = ssl.create_default_context()
+    try:
+        opener = urllib.request.build_opener(
+            urllib.request.ProxyHandler(),
+            urllib.request.HTTPSHandler(context=ssl_context),
+        )
         opener.open("https://api.stripe.com", timeout=5)
+        return False
+    except urllib.error.HTTPError:
+        # An HTTP error status still means we reached Stripe with a valid
+        # TLS handshake; only transport/verification failures mean blocked.
         return False
     except (ssl.SSLError, ssl.SSLCertVerificationError, urllib.error.URLError, OSError):
         return True
