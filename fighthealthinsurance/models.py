@@ -293,6 +293,11 @@ class DemoRequests(models.Model):
     source = models.CharField(max_length=300, default="", blank=True)
     signup_date = models.DateField(auto_now_add=True)
     phone = models.CharField(max_length=300, default="", blank=True)
+    # Request provenance for these (business/sales) leads. The full IP is
+    # stored here -- not ASN-only -- so sales can vet inbound demo requests.
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    asn = models.CharField(max_length=50, blank=True, default="")
+    asn_name = models.CharField(max_length=200, blank=True, default="")
 
     def __str__(self):
         return self.email
@@ -2776,6 +2781,13 @@ class LostStripeSession(models.Model):
     success_url = models.CharField(max_length=255, null=True, blank=True)
     email = models.CharField(max_length=255, null=True, blank=True)
     metadata = models.JSONField(null=True, blank=True)
+    # Client IP/ASN of whoever started the checkout, threaded through the
+    # Stripe session metadata at creation (the expiry webhook itself comes
+    # from Stripe, not the user). Full IP is retained here to investigate
+    # abandoned-checkout abuse patterns.
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    asn = models.CharField(max_length=50, blank=True, default="")
+    asn_name = models.CharField(max_length=200, blank=True, default="")
 
 
 class LostStripeMeters(models.Model):

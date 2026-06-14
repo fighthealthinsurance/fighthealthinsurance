@@ -269,9 +269,9 @@ def log_exception_error(
     extra_data = {
         "error_type": error_type[:200],
         "error_message": error_message[:1000],
-        "query_string": (
-            request.META.get("QUERY_STRING", "") if request else ""
-        )[:1000],
+        "query_string": (request.META.get("QUERY_STRING", "") if request else "")[
+            :1000
+        ],
         "remote_addr": (request.META.get("REMOTE_ADDR", "") if request else "")[:100],
         "x_forwarded_for": str(x_forwarded_for)[:500],
         "x_real_ip": (request.META.get("HTTP_X_REAL_IP", "") if request else "")[:100],
@@ -342,6 +342,32 @@ def get_asn_info(ip_address: Optional[str]) -> tuple[str, str]:
         pass
 
     return ("", "")
+
+
+def tracking_metadata_for_request(
+    request: Optional[Union[HttpRequest, "DRFRequest"]],
+) -> dict[str, str]:
+    """Return Stripe-metadata-safe client provenance (ip/asn) for ``request``.
+
+    Threaded into checkout-session metadata at creation time so an expired
+    session -- whose webhook arrives from Stripe, not the user -- can still be
+    tied back to the originating client for abandoned-checkout abuse
+    investigation. Returns only the populated fields; all values are strings
+    because Stripe metadata values must be strings. The full IP is included
+    deliberately (see LostStripeSession.ip_address).
+    """
+    md: dict[str, str] = {}
+    if request is None:
+        return md
+    ip = get_client_ip(request)
+    if ip:
+        md["ip_address"] = ip
+    asn, asn_name = get_asn_info(ip)
+    if asn:
+        md["asn"] = asn
+    if asn_name:
+        md["asn_name"] = asn_name
+    return md
 
 
 @dataclass

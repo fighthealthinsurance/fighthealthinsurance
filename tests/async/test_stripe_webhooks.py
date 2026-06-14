@@ -162,6 +162,51 @@ class StripeWebhookTests(TestCase):
     @patch(
         "fighthealthinsurance.helpers.stripe_helpers.fhi_emails.send_checkout_session_expired"
     )
+    def test_expired_session_records_client_ip_and_asn(self, mock_send_email):
+        # IP/ASN are stamped into the checkout session metadata at creation
+        # (tracking_metadata_for_request); the expiry handler must persist them
+        # onto LostStripeSession so abandoned-checkout abuse is queryable.
+        mock_session = MagicMock()
+        mock_session.id = "cs_ip_tracking_test"
+        mock_session.metadata = {
+            "payment_type": "non_professional_item",
+            "line_items": "[]",
+            "ip_address": "203.0.113.7",
+            "asn": "64500",
+            "asn_name": "EXAMPLE-HOSTING",
+        }
+        mock_session.customer_email = "abuser@example.com"
+
+        StripeWebhookHelper.handle_checkout_session_expired(self.client, mock_session)
+
+        lost_session = LostStripeSession.objects.get(session_id=mock_session.id)
+        self.assertEqual(lost_session.ip_address, "203.0.113.7")
+        self.assertEqual(lost_session.asn, "64500")
+        self.assertEqual(lost_session.asn_name, "EXAMPLE-HOSTING")
+
+    @patch(
+        "fighthealthinsurance.helpers.stripe_helpers.fhi_emails.send_checkout_session_expired"
+    )
+    def test_expired_session_without_ip_metadata_stores_null(self, mock_send_email):
+        # Sessions created before IP capture (or where the IP was unknown) carry
+        # no ip_address in metadata; the handler must store NULL, not crash.
+        mock_session = MagicMock()
+        mock_session.id = "cs_no_ip_test"
+        mock_session.metadata = {
+            "payment_type": "non_professional_item",
+            "line_items": "[]",
+        }
+        mock_session.customer_email = "legacy@example.com"
+
+        StripeWebhookHelper.handle_checkout_session_expired(self.client, mock_session)
+
+        lost_session = LostStripeSession.objects.get(session_id=mock_session.id)
+        self.assertIsNone(lost_session.ip_address)
+        self.assertEqual(lost_session.asn, "")
+
+    @patch(
+        "fighthealthinsurance.helpers.stripe_helpers.fhi_emails.send_checkout_session_expired"
+    )
     def test_professional_subscription_recovery_link_targets_fpw_spa(
         self, mock_send_email
     ):

@@ -117,6 +117,15 @@ class Base(Configuration):
     BCC_EMAILS = ["auto-user-messages@fighthealthinsurance.com"]
     DEFAULT_FROM_EMAIL = "support42@fighthealthinsurance.com"
 
+    # Demo-request notifications always go to support42@; additional recipients
+    # can be configured via the DEMO_REQUEST_EXTRA_NOTIFICATION_EMAILS env var
+    # (comma-separated).
+    DEMO_REQUEST_NOTIFICATION_EMAILS = ["support42@fighthealthinsurance.com"] + [
+        e.strip()
+        for e in os.getenv("DEMO_REQUEST_EXTRA_NOTIFICATION_EMAILS", "").split(",")
+        if e.strip()
+    ]
+
     # Session cookie configs
     SESSION_COOKIE_SECURE = True  # https only (up to the browser to enforce)
     SESSION_COOKIE_HTTPONLY = False  # allow js access

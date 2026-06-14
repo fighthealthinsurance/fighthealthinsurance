@@ -6,6 +6,7 @@ from typing import Optional
 
 from django.conf import settings
 from django.core.exceptions import SuspiciousFileOperation
+from django.core.mail import send_mail
 from django.db import IntegrityError, models
 from django.db.models import Count, Q
 from django.http import FileResponse, StreamingHttpResponse
@@ -1513,12 +1514,54 @@ class DemoRequestsViewSet(viewsets.ViewSet, CreateMixin, DeleteMixin):
 
     @extend_schema(responses=serializers.StatusResponseSerializer)
     def perform_create(self, request: Request, serializer) -> Response:
-        """Save the demo request."""
-        serializer.save()
+        """Save the demo request, recording client IP/ASN, then notify sales."""
+        from fhi_users.audit import get_asn_info, get_client_ip
+
+        ip = get_client_ip(request)
+        asn, asn_name = get_asn_info(ip)
+        demo = serializer.save(ip_address=ip, asn=asn, asn_name=asn_name)
+        self._notify_demo_request(demo)
         return Response(
             serializers.StatusResponseSerializer({"status": "subscribed"}).data,
             status=status.HTTP_201_CREATED,
         )
+
+    @staticmethod
+    def _notify_demo_request(demo: DemoRequests) -> None:
+        """Email support42@ (plus any DEMO_REQUEST_EXTRA_NOTIFICATION_EMAILS)
+        about a new demo request. Best-effort: a mail failure must not fail the
+        request, which is already persisted."""
+        recipients = list(
+            getattr(
+                settings,
+                "DEMO_REQUEST_NOTIFICATION_EMAILS",
+                ["support42@fighthealthinsurance.com"],
+            )
+        )
+        if not recipients:
+            return
+        body = (
+            "New demo request:\n\n"
+            f"Email: {demo.email}\n"
+            f"Name: {demo.name or 'N/A'}\n"
+            f"Company: {demo.company or 'N/A'}\n"
+            f"Role: {demo.role or 'N/A'}\n"
+            f"Phone: {demo.phone or 'N/A'}\n"
+            f"Source: {demo.source or 'N/A'}\n"
+            f"IP: {demo.ip_address or 'N/A'}\n"
+            f"ASN: {demo.asn or 'N/A'} ({demo.asn_name or 'N/A'})\n"
+        )
+        try:
+            send_mail(
+                f"New demo request: {demo.email}",
+                body,
+                settings.DEFAULT_FROM_EMAIL,
+                recipients,
+            )
+        except Exception:
+            logger.opt(exception=True).error(
+                f"Error sending demo request notification for {demo.email}"
+            )
 
     @extend_schema(responses=serializers.StatusResponseSerializer)
     def perform_delete(self, request: Request, serializer):

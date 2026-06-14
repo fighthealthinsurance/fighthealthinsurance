@@ -2389,6 +2389,18 @@ def create_pwyw_checkout(request: HttpRequest) -> HttpResponse:
         ]
         recovery_info = StripeRecoveryInfo.objects.create(items=line_items)
 
+        donation_metadata = {
+            "payment_type": "donation",
+            "donation_type": "pwyw",
+            "source": "checkout",
+            "recovery_info_id": str(recovery_info.id),
+        }
+        # Capture client IP/ASN so an expired/abandoned donation checkout can be
+        # tied back to the originating client (the expiry webhook is from Stripe).
+        from fhi_users.audit import tracking_metadata_for_request
+
+        donation_metadata.update(tracking_metadata_for_request(request))
+
         # Create a checkout session with the specified amount
         checkout_session = stripe.checkout.Session.create(
             payment_method_types=["card"],
@@ -2396,12 +2408,7 @@ def create_pwyw_checkout(request: HttpRequest) -> HttpResponse:
             mode="payment",
             success_url=success_url,
             cancel_url=cancel_url,
-            metadata={
-                "payment_type": "donation",
-                "donation_type": "pwyw",
-                "source": "checkout",
-                "recovery_info_id": str(recovery_info.id),
-            },
+            metadata=donation_metadata,
         )
 
         return HttpResponse(

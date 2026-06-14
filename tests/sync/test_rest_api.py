@@ -480,9 +480,7 @@ class StreamingAppealsRestFallbackTest(APITestCase):
         async def _drain(stream):
             chunks = []
             async for chunk in stream:
-                chunks.append(
-                    chunk.encode() if isinstance(chunk, str) else chunk
-                )
+                chunks.append(chunk.encode() if isinstance(chunk, str) else chunk)
             return b"".join(chunks)
 
         return async_to_sync(_drain)(response.streaming_content).decode()
@@ -490,9 +488,7 @@ class StreamingAppealsRestFallbackTest(APITestCase):
     @staticmethod
     def _content_lines(body: str) -> list:
         return [
-            line
-            for line in body.split("\n")
-            if line.strip() and '"content"' in line
+            line for line in body.split("\n") if line.strip() and '"content"' in line
         ]
 
     def _post_fallback(self, payload: dict):
@@ -540,9 +536,7 @@ class StreamingAppealsRestFallbackTest(APITestCase):
 
         async def fake_generate_appeals(_data):
             yield (
-                json.dumps(
-                    {"type": "status", "phase": "init", "message": "starting"}
-                )
+                json.dumps({"type": "status", "phase": "init", "message": "starting"})
                 + "\n"
             )
             yield json.dumps({"id": "1", "content": "Dear Insurer,..."}) + "\n"
@@ -586,9 +580,7 @@ class StreamingAppealsRestFallbackTest(APITestCase):
                 content_type="application/json",
             )
             self.assertEqual(response.status_code, 200)
-            self.assertEqual(
-                response["Content-Type"], "application/x-ndjson"
-            )
+            self.assertEqual(response["Content-Type"], "application/x-ndjson")
             # Anti-buffering headers — defeating these proxies is the
             # whole point of the fallback existing.
             self.assertEqual(response["X-Accel-Buffering"], "no")
@@ -680,9 +672,7 @@ class StreamingAppealsRestFallbackTest(APITestCase):
         triggered generation before the 404 would fail this assert."""
         from fighthealthinsurance.common_view_logic import AppealsBackendHelper
 
-        with patch.object(
-            AppealsBackendHelper, "generate_appeals"
-        ) as generate_appeals:
+        with patch.object(AppealsBackendHelper, "generate_appeals") as generate_appeals:
             response = self._post_fallback(
                 {
                     "denial_id": 999999,
@@ -752,10 +742,7 @@ class StreamingAppealsRestFallbackTest(APITestCase):
 
         async def fake_three_appeals(_data):
             for i in (1, 2, 3):
-                yield (
-                    json.dumps({"id": f"appeal-{i}", "content": f"Body {i}"})
-                    + "\n"
-                )
+                yield (json.dumps({"id": f"appeal-{i}", "content": f"Body {i}"}) + "\n")
             yield (
                 json.dumps(
                     {
@@ -842,9 +829,7 @@ class EnableExternalModelsTest(APITestCase):
         must succeed (200) without raising. The button is only shown to
         users whose denial has use_external=False, but races and reloads
         should not 500."""
-        denial = self._make_denial(
-            email="already@example.com", use_external=True
-        )
+        denial = self._make_denial(email="already@example.com", use_external=True)
         response = self._post(
             {
                 "denial_id": denial.denial_id,
@@ -1974,3 +1959,74 @@ class DuplicateUserDomainTest(APITestCase):
             name=self.domain_name
         ).count()
         self.assertEqual(domains_with_same_name, 1)
+
+
+class DemoRequestEndpointTest(APITestCase):
+    """The demo-request endpoint records the lead (with client IP/ASN) and
+    notifies sales. (Verification: before this change it did neither beyond
+    writing the DB row -- no email was ever sent.)"""
+
+    def test_records_ip_asn_and_emails_support42(self):
+        from fighthealthinsurance.models import DemoRequests
+
+        with patch(
+            "fhi_users.audit.get_asn_info", return_value=("64500", "EXAMPLE-NET")
+        ), patch("fighthealthinsurance.rest_views.send_mail") as mock_send:
+            response = self.client.post(
+                reverse("demorequest-list"),
+                data=json.dumps(
+                    {
+                        "email": "lead@example.com",
+                        "name": "Dr. Lead",
+                        "company": "Acme Health",
+                    }
+                ),
+                content_type="application/json",
+                REMOTE_ADDR="203.0.113.42",
+            )
+        self.assertEqual(response.status_code, 201)
+        demo = DemoRequests.objects.get(email="lead@example.com")
+        self.assertEqual(demo.ip_address, "203.0.113.42")
+        self.assertEqual(demo.asn, "64500")
+        self.assertEqual(demo.asn_name, "EXAMPLE-NET")
+        mock_send.assert_called_once()
+        # send_mail(subject, body, from_email, recipients): support42@ is always
+        # a recipient and the body carries the IP for lead vetting.
+        _subject, body, _from, recipients = mock_send.call_args.args
+        self.assertIn("support42@fighthealthinsurance.com", recipients)
+        self.assertIn("203.0.113.42", body)
+
+    def test_extra_notification_recipient_is_configurable(self):
+        with patch(
+            "fighthealthinsurance.rest_views.send_mail"
+        ) as mock_send, self.settings(
+            DEMO_REQUEST_NOTIFICATION_EMAILS=[
+                "support42@fighthealthinsurance.com",
+                "sales@example.com",
+            ]
+        ):
+            response = self.client.post(
+                reverse("demorequest-list"),
+                data=json.dumps({"email": "lead2@example.com"}),
+                content_type="application/json",
+            )
+        self.assertEqual(response.status_code, 201)
+        recipients = mock_send.call_args.args[3]
+        self.assertIn("sales@example.com", recipients)
+
+    def test_mail_failure_does_not_fail_request(self):
+        # The lead is already persisted before the notification is attempted, so
+        # a mail-backend error must not turn into a 500.
+        from fighthealthinsurance.models import DemoRequests
+
+        with patch(
+            "fighthealthinsurance.rest_views.send_mail",
+            side_effect=RuntimeError("smtp down"),
+        ):
+            response = self.client.post(
+                reverse("demorequest-list"),
+                data=json.dumps({"email": "lead3@example.com"}),
+                content_type="application/json",
+            )
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(DemoRequests.objects.filter(email="lead3@example.com").exists())
