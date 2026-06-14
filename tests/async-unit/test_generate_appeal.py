@@ -11,6 +11,7 @@ from fighthealthinsurance.generate_appeal import (
     _peek_real_or_none,
     _shed_context,
     _PROMPT_TIER1_NULLS,
+    _PROMPT_TIER1_STRIP_GATED,
     _PROMPT_TIER2_TRUNCATIONS,
     _SHEDDABLE_TIER1,
     _TIER2_TRUNCATIONS,
@@ -596,14 +597,18 @@ class TestShedContextPromptRebuild:
         assert new_calls[0]["prompt"] == "ORIGINAL"
 
     def test_whitespace_only_enrichment_is_still_shed(self):
-        # Regression (Copilot review on PR #824): a whitespace-only
-        # enrichment value is NOT a no-op in make_open_prompt --- the gate
-        # there is ``is not None and != ""``, so ``"   "`` still trips
-        # has_citations and renders the CITATION INSTRUCTIONS block plus
-        # the per-section header (``Provided citations (use these):    ``).
-        # Those bytes need to drop on retry, so the shed pass must null
-        # whitespace-only values and trigger a rebuild.
-        whitespace_kwargs = {key: "   \n\t" for key in _PROMPT_TIER1_NULLS}
+        # Regression (Copilot review on PR #824): for the ``!= ""``-gated
+        # sections a whitespace-only value is NOT a no-op in make_open_prompt
+        # --- ``"   "`` still trips has_citations and renders the CITATION
+        # INSTRUCTIONS block plus the per-section header
+        # (``Provided citations (use these):    ``). Those bytes need to drop
+        # on retry, so the shed pass must null whitespace-only values and
+        # trigger a rebuild. ``pa_context`` is ``.strip()``-gated and is
+        # covered separately below, so it's excluded here.
+        shed_keys = [
+            k for k in _PROMPT_TIER1_NULLS if k not in _PROMPT_TIER1_STRIP_GATED
+        ]
+        whitespace_kwargs = {key: "   \n\t" for key in shed_keys}
         kwargs = _prompt_kwargs(**whitespace_kwargs)
         seen_kwargs, rebuild = _rebuild_spy(return_value="SHED")
         _, changed = _shed_context(
@@ -613,10 +618,38 @@ class TestShedContextPromptRebuild:
             rebuild_prompt=rebuild,
             original_open_prompt="ORIGINAL",
         )
-        # Every whitespace-only enrichment is nulled and reported.
-        for key in _PROMPT_TIER1_NULLS:
+        # Every whitespace-only ``!= ""``-gated enrichment is nulled and reported.
+        for key in shed_keys:
             assert seen_kwargs[key] is None, f"{key} should have been nulled"
             assert f"prompt.{key}" in changed
+
+    def test_whitespace_only_pa_context_alone_skips_rebuild(self):
+        # Regression (CodeRabbit on PR #844): pa_context is the one tier-1
+        # section make_open_prompt gates on ``.strip()`` rather than ``!= ""``
+        # (and it is not part of has_citations), so a whitespace-only
+        # pa_context renders nothing there and is already a no-op. Nulling it
+        # would force a rebuild that reshuffles make_open_prompt's randomized
+        # GOOD EXAMPLEs and changes the retry prompt with zero size reduction.
+        # With every other enrichment already empty, a whitespace-only
+        # pa_context must NOT trigger a rebuild.
+        assert "pa_context" in _PROMPT_TIER1_STRIP_GATED
+        # Every other enrichment empty; only pa_context is whitespace.
+        overrides = {key: "" for key in _PROMPT_TIER1_NULLS}
+        overrides["pa_context"] = "   \n\t"
+        kwargs = _prompt_kwargs(**overrides, plan_context="short")
+        calls_count, rebuild = _rebuild_counter()
+        new_calls, changed = _shed_context(
+            [_make_call(prompt="ORIGINAL")],
+            tier=2,  # tier 2 would otherwise also try plan_context truncation
+            open_prompt_kwargs=kwargs,
+            rebuild_prompt=rebuild,
+            original_open_prompt="ORIGINAL",
+        )
+        assert calls_count[0] == 0, "rebuild fired for whitespace-only pa_context"
+        assert "prompt.pa_context" not in changed
+        assert not any(c.startswith("prompt.") for c in changed)
+        # No rebuild means the original prompt is reused untouched.
+        assert new_calls[0]["prompt"] == "ORIGINAL"
 
     def test_truly_empty_string_enrichment_is_skipped(self):
         # The truly-empty string ``""`` IS already a no-op in
@@ -724,9 +757,7 @@ class TestPeekRealOrNone:
         assert first is None
 
     def test_whitespace_first_returns_none(self):
-        first, _ = _peek_real_or_none(
-            iter([_ga("   ")]), denial_id=1, stage="primary"
-        )
+        first, _ = _peek_real_or_none(iter([_ga("   ")]), denial_id=1, stage="primary")
         assert first is None
 
     def test_real_first_passes_through(self):
@@ -742,9 +773,7 @@ class TestPeekRealOrNone:
 
     def test_runt_logs_warning_with_stage_and_denial_id(self):
         with _loguru_capture() as sink:
-            _peek_real_or_none(
-                iter([_ga("short")]), denial_id=999, stage="primary"
-            )
+            _peek_real_or_none(iter([_ga("short")]), denial_id=999, stage="primary")
         output = sink.getvalue()
         assert "primary first item is a runt" in output
         assert "denial 999" in output

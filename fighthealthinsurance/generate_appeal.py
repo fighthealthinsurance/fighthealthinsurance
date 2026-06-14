@@ -785,6 +785,13 @@ _PROMPT_TIER1_NULLS: tuple[str, ...] = (
     "medication_context",
 )
 
+# ``pa_context`` is the one tier-1 section ``make_open_prompt`` gates on
+# ``.strip()`` (line ~1661) rather than ``!= ""``: a whitespace-only value
+# renders nothing there, so it must NOT be treated as sheddable — nulling it
+# would only force a needless prompt rebuild (which reshuffles the randomized
+# GOOD EXAMPLEs) with no size reduction. See ``_shed_context``.
+_PROMPT_TIER1_STRIP_GATED: frozenset[str] = frozenset({"pa_context"})
+
 # Tier-2 truncation caps. ``plan_context`` lives on BOTH the prompt and the
 # call-dict surface and is truncated to the same length on each, so the cap
 # is a single shared constant rather than two literals that could drift.
@@ -864,15 +871,23 @@ def _shed_context(
         shed_kwargs = dict(open_prompt_kwargs)
         prompt_changed_before = len(changed)
         for key in _PROMPT_TIER1_NULLS:
-            # Mirror ``make_open_prompt``'s gate exactly: each section is
-            # included on ``is not None and != ""``. A whitespace-only value
-            # is NOT a no-op there — it still trips ``has_citations`` and
-            # renders the CITATION INSTRUCTIONS block plus the section
-            # header (e.g. ``Provided citations (use these):    ``), so it
-            # contributes prompt bytes we need to shed. Only the truly
-            # empty string ``""`` is already-shed and can be skipped.
+            # Match ``make_open_prompt``'s per-field render gate so we only
+            # null (and rebuild for) a section that actually contributes
+            # prompt bytes there. Most sections render on ``!= ""`` — a
+            # whitespace-only value still trips ``has_citations`` and renders
+            # the section header (e.g. ``Provided citations (use these):    ``),
+            # so it must be shed. ``pa_context`` is the exception:
+            # ``make_open_prompt`` gates it on ``.strip()``, so a
+            # whitespace-only pa_context renders nothing and is already a
+            # no-op; nulling it would only force a needless rebuild (which
+            # reshuffles the randomized GOOD EXAMPLEs) with no size reduction.
             val = shed_kwargs.get(key)
-            if isinstance(val, str) and val != "":
+            if not isinstance(val, str):
+                continue
+            rendered = (
+                bool(val.strip()) if key in _PROMPT_TIER1_STRIP_GATED else val != ""
+            )
+            if rendered:
                 shed_kwargs[key] = None
                 changed.add(f"prompt.{key}")
         if tier >= 2:
