@@ -1,8 +1,7 @@
 """Ray actor that runs denied-items analysis off the WebSocket disconnect path.
 
-``OngoingChatConsumer.disconnect`` enqueues one job per (chat, disconnect
-event); this actor performs the actual analysis so the disconnect handler
-stays non-blocking.
+``OngoingChatConsumer.disconnect`` hands the chat id to this actor, which runs
+the (idempotent) analysis so the disconnect handler stays non-blocking.
 """
 
 import os
@@ -27,13 +26,7 @@ class DeniedItemsAnalysisActor:
 
         get_wsgi_application()
 
-    def run_analysis(
-        self, *, job_key: str, chat_id: str, disconnect_event_ts: str
-    ) -> None:
+    def run_analysis(self, *, chat_id: str) -> None:
         from fighthealthinsurance.websockets import OngoingChatConsumer
 
-        async_to_sync(OngoingChatConsumer._run_denied_items_analysis_job)(
-            job_key=job_key,
-            chat_id=chat_id,
-            disconnect_event_ts=disconnect_event_ts,
-        )
+        async_to_sync(OngoingChatConsumer.run_denied_items_analysis)(chat_id=chat_id)

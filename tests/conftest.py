@@ -52,11 +52,18 @@ def _has_ssl_intercepting_proxy() -> bool:
         return True
 
 
-_skip_stripe_ssl = _has_ssl_intercepting_proxy()
+# Only probe when Stripe is actually configured. The E2E tests gated on this
+# need STRIPE_TEST_SECRET_KEY and can't run without it, so when it's unset we
+# skip them without paying ~5s for a network probe to api.stripe.com whose
+# result can't change the outcome (pure waste in firewalled CI that never
+# configures Stripe).
+_skip_stripe_ssl = (
+    _has_ssl_intercepting_proxy() if os.environ.get("STRIPE_TEST_SECRET_KEY") else True
+)
 
 skip_if_stripe_ssl_blocked = pytest.mark.skipif(
     _skip_stripe_ssl,
-    reason="SSL-intercepting proxy blocks Stripe API connections",
+    reason="Stripe not configured (STRIPE_TEST_SECRET_KEY unset) or SSL-intercepting proxy blocks api.stripe.com",
 )
 
 skip_if_no_pandoc = pytest.mark.skipif(

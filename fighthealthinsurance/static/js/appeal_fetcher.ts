@@ -527,13 +527,15 @@ function maybeShowExternalModelsPrompt(): void {
     "request-external-models-btn",
   ) as HTMLButtonElement | null;
   if (!button) return;
-  button.addEventListener(
-    "click",
-    () => {
-      void requestExternalModels(button, prompt);
-    },
-    { once: true },
-  );
+  // Deliberately NOT { once: true }: a transient opt-in failure re-enables
+  // the button (see the catch in requestExternalModels) and the user must be
+  // able to click again. The button.disabled flag set at the start of the
+  // request guards against double-submit while one is in flight, and the
+  // `display === "block"` guard above keeps this listener from being attached
+  // more than once.
+  button.addEventListener("click", () => {
+    void requestExternalModels(button, prompt);
+  });
 }
 
 async function requestExternalModels(

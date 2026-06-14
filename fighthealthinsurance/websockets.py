@@ -1,16 +1,13 @@
 import asyncio
-import hashlib
 import json
 import os
 import re
 import uuid
 from typing import AsyncIterator, Callable, Optional, Tuple, cast
 
-from django.core.cache import cache
 from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
 from django.db import transaction
-from django.utils import timezone
 
 from asgiref.sync import sync_to_async
 from channels.generic.websocket import AsyncWebsocketConsumer
@@ -34,42 +31,21 @@ from fighthealthinsurance.models import (
 
 from .chat_interface import ChatInterface
 
-DENIED_ITEMS_ANALYSIS_CACHE_TTL_SECONDS = 60 * 60 * 24
 
+async def enqueue_denied_items_analysis(*, chat_id: str) -> None:
+    """Dispatch denied-items analysis as fire-and-forget background work.
 
-async def enqueue_denied_items_analysis(
-    *, chat_id: str, disconnect_event_ts: str
-) -> Optional[str]:
-    """Dispatch denied-items analysis as fire-and-forget background work."""
-    job_key = (
-        f"denied-items-analysis:{chat_id}:{disconnect_event_ts}:v1:"
-        f"{hashlib.sha256(f'{chat_id}:{disconnect_event_ts}:v1'.encode()).hexdigest()[:12]}"
-    )
-    created = await sync_to_async(cache.add)(
-        job_key,
-        {
-            "status": "queued",
-            "chat_id": chat_id,
-            "disconnect_event_ts": disconnect_event_ts,
-            "queued_at": timezone.now().isoformat(),
-        },
-        timeout=DENIED_ITEMS_ANALYSIS_CACHE_TTL_SECONDS,
-    )
-    if not created:
-        logger.info(
-            f"Denied-items analysis enqueue deduped for chat {chat_id} job_key={job_key}"
-        )
-        return None
+    No dedup/job-state layer on purpose: ``_analyze_denied_items`` is already
+    idempotent (it no-ops when the chat already has a denied item/reason), and
+    Prod's per-process LocMemCache made any cross-process job-state tracking
+    write-only anyway. The disconnect handler just hands the chat id to the
+    detached Ray actor.
+    """
     from fighthealthinsurance.denied_items_analysis_actor_ref import (
         denied_items_analysis_actor_ref,
     )
 
-    denied_items_analysis_actor_ref.get.run_analysis.remote(
-        job_key=job_key,
-        chat_id=chat_id,
-        disconnect_event_ts=disconnect_event_ts,
-    )
-    return job_key
+    denied_items_analysis_actor_ref.get.run_analysis.remote(chat_id=chat_id)
 
 
 def _get_client_ip_from_scope(scope: Optional[dict] = None) -> Optional[str]:
@@ -620,58 +596,23 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
         # If a chat was active, enqueue denied-item analysis asynchronously.
         # Disconnect stays non-blocking; analysis is eventually consistent.
         if self.chat_interface and self.chat_id:
-            disconnect_event_ts = timezone.now().isoformat()
             try:
-                await enqueue_denied_items_analysis(
-                    chat_id=self.chat_id, disconnect_event_ts=disconnect_event_ts
-                )
+                await enqueue_denied_items_analysis(chat_id=self.chat_id)
             except Exception as e:
                 logger.opt(exception=True).warning(
                     f"Failed to enqueue denied-item analysis for chat {self.chat_id}: {e}"
                 )
 
     @classmethod
-    async def _run_denied_items_analysis_job(
-        cls, *, job_key: str, chat_id: str, disconnect_event_ts: str
-    ) -> None:
-        await sync_to_async(cache.set)(
-            job_key,
-            {
-                "status": "running",
-                "chat_id": chat_id,
-                "disconnect_event_ts": disconnect_event_ts,
-                "started_at": timezone.now().isoformat(),
-            },
-            timeout=DENIED_ITEMS_ANALYSIS_CACHE_TTL_SECONDS,
-        )
-        try:
-            await cls()._analyze_denied_items(chat_id)
-            await sync_to_async(cache.set)(
-                job_key,
-                {
-                    "status": "succeeded",
-                    "chat_id": chat_id,
-                    "disconnect_event_ts": disconnect_event_ts,
-                    "finished_at": timezone.now().isoformat(),
-                },
-                timeout=DENIED_ITEMS_ANALYSIS_CACHE_TTL_SECONDS,
-            )
-        except Exception as e:
-            logger.opt(exception=True).error(
-                "Denied-items analysis worker failure "
-                f"job_key={job_key} chat_id={chat_id} disconnect_event_ts={disconnect_event_ts}: {e}"
-            )
-            await sync_to_async(cache.set)(
-                job_key,
-                {
-                    "status": "failed",
-                    "chat_id": chat_id,
-                    "disconnect_event_ts": disconnect_event_ts,
-                    "error": str(e),
-                    "failed_at": timezone.now().isoformat(),
-                },
-                timeout=DENIED_ITEMS_ANALYSIS_CACHE_TTL_SECONDS,
-            )
+    async def run_denied_items_analysis(cls, *, chat_id: str) -> None:
+        """Actor entry point: run the (idempotent) denied-items analysis.
+
+        Instantiated bare because ``_analyze_denied_items`` only reads/writes
+        the DB — it doesn't use websocket scope or connection state. Errors are
+        logged inside ``_analyze_denied_items``; nothing here needs to track
+        job status (see ``enqueue_denied_items_analysis``).
+        """
+        await cls()._analyze_denied_items(chat_id)
 
     async def _analyze_denied_items(self, chat_id: str):
         """

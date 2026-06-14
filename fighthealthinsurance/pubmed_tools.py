@@ -579,7 +579,7 @@ class PubMedTools(object):
 
         try:
             async with async_timeout(timeout):
-                cached_pmids = await cache.aget(cache_key, default=cache_sentinel)
+                cached_pmids = await self._query_cache_get(cache_key, cache_sentinel)
                 if cached_pmids is not cache_sentinel:
                     # Distinguish a real negative cache hit ([]) from a miss.
                     return cached_pmids or []
@@ -609,7 +609,7 @@ class PubMedTools(object):
                         logger.error(f"Error parsing cached articles JSON for {query}")
                         continue
                     if article_ids:
-                        await cache.aset(
+                        await self._query_cache_set(
                             cache_key,
                             article_ids,
                             timeout=int(timedelta(days=30).total_seconds()),
@@ -622,7 +622,7 @@ class PubMedTools(object):
                         query_data.created is not None
                         and query_data.created >= neg_cache_cutoff
                     ):
-                        await cache.aset(
+                        await self._query_cache_set(
                             cache_key,
                             [],
                             timeout=int(
@@ -656,7 +656,7 @@ class PubMedTools(object):
                     since=since,
                     articles=articles_json,
                 )
-                await cache.aset(
+                await self._query_cache_set(
                     cache_key,
                     pmids,
                     timeout=int(
@@ -687,6 +687,28 @@ class PubMedTools(object):
         key_material = f"{normalized_query}|{normalized_since}"
         digest = hashlib.sha256(key_material.encode("utf-8")).hexdigest()
         return f"{_QUERY_CACHE_PREFIX}{digest}"
+
+    @staticmethod
+    async def _query_cache_get(key: str, default: Any) -> Any:
+        """Best-effort query-cache read. A cache-backend failure must not
+        break an otherwise-working lookup (mirrors the defensive pattern in
+        fetch_mesh_and_pub_types); on failure we return ``default`` so the
+        caller falls through to the DB/NCBI path."""
+        try:
+            return await cache.aget(key, default=default)
+        except Exception as e:
+            logger.warning(f"PubMed query cache read failed for {key}: {e}")
+            return default
+
+    @staticmethod
+    async def _query_cache_set(key: str, value: Any, *, timeout: int) -> None:
+        """Best-effort query-cache write. The DB row and the returned PMIDs are
+        the source of truth; a cache write failure should be logged and
+        swallowed rather than failing a query that already succeeded."""
+        try:
+            await cache.aset(key, value, timeout=timeout)
+        except Exception as e:
+            logger.warning(f"PubMed query cache write failed for {key}: {e}")
 
     async def fetch_mesh_and_pub_types(
         self,
