@@ -13,6 +13,7 @@ from django.urls import reverse
 from loguru import logger
 
 from fhi_users import emails as fhi_emails
+from fhi_users.audit import bound_client_ip
 from fhi_users.models import ProfessionalUser, UserDomain
 from fighthealthinsurance.models import (
     FaxesToSend,
@@ -287,10 +288,10 @@ class StripeWebhookHelper:
                 metadata=metadata,
                 # ip_address comes verbatim from the client-controlled
                 # X-Forwarded-For header (never validated), so it may be
-                # malformed/spoofed. Store it as-is, truncated to the column
-                # width (CharField(max_length=64)), so a bad value can't raise
-                # and make Stripe retry this webhook.
-                ip_address=(metadata.get("ip_address") or "")[:64] or None,
+                # malformed/spoofed. Store it bounded (LostStripeSession.ip_address
+                # is a CharField) so a bad value can't raise and make Stripe retry
+                # this webhook.
+                ip_address=bound_client_ip(metadata.get("ip_address")),
                 asn=metadata.get("asn") or "",
                 asn_name=metadata.get("asn_name") or "",
             )

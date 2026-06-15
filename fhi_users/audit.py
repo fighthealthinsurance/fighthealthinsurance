@@ -130,6 +130,25 @@ def get_client_ip(request: Union[HttpRequest, "DRFRequest"]) -> Optional[str]:
     return str(remote_addr) if remote_addr else None
 
 
+# Client IPs come from the unvalidated, client-controlled X-Forwarded-For header
+# and are stored in CharField(max_length=64) columns (and Stripe metadata, which
+# Stripe caps at 500 chars). Bound the value so a garbage/over-long header can't
+# overflow the column or the metadata limit and fail the write.
+CLIENT_IP_MAX_LENGTH = 64
+
+
+def bound_client_ip(ip: Optional[str]) -> Optional[str]:
+    """Truncate a header-derived IP to the stored column width, preserving None.
+
+    The value is stored verbatim (never validated as a real IP) so spoofed/
+    malformed input is retained for abuse investigation; only its length is
+    bounded so the write can't fail.
+    """
+    if not ip:
+        return None
+    return ip[:CLIENT_IP_MAX_LENGTH]
+
+
 def is_professional_user(user) -> bool:
     """Check if user is a professional (for determining data retention level)."""
     if not user or isinstance(user, AnonymousUser):
@@ -361,11 +380,11 @@ def tracking_metadata_for_request(
         return md
     ip = get_client_ip(request)
     if ip:
-        # X-Forwarded-For is client-controlled and unvalidated; bound the value
-        # so an over-long/garbage header can't exceed Stripe's 500-char metadata
-        # limit (which would break checkout creation) or overflow the
+        # Bound the client-controlled value (see bound_client_ip) so an
+        # over-long/garbage header can't exceed Stripe's 500-char metadata limit
+        # (which would break checkout creation) or overflow the
         # LostStripeSession.ip_address column it is later persisted into.
-        md["ip_address"] = ip[:64]
+        md["ip_address"] = ip[:CLIENT_IP_MAX_LENGTH]
     asn, asn_name = get_asn_info(ip)
     if asn:
         md["asn"] = asn
@@ -394,7 +413,7 @@ class TrackingInfo:
             "user_agent": self.user_agent,
             "asn": self.asn,
             "asn_name": self.asn_name,
-            "ip_address": self.ip_address,
+            "ip_address": bound_client_ip(self.ip_address),
         }
 
     def update_model_fields(self, model_instance: HasTrackingFields) -> None:
@@ -407,7 +426,7 @@ class TrackingInfo:
         model_instance.user_agent = self.user_agent
         model_instance.asn = self.asn
         model_instance.asn_name = self.asn_name
-        model_instance.ip_address = self.ip_address
+        model_instance.ip_address = bound_client_ip(self.ip_address)
 
 
 def extract_tracking_info(

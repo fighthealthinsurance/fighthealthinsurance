@@ -1996,6 +1996,25 @@ class DemoRequestEndpointTest(APITestCase):
         self.assertIn("support42@fighthealthinsurance.com", recipients)
         self.assertIn("203.0.113.42", body)
 
+    def test_malformed_xforwardedfor_is_stored_bounded_not_500(self):
+        """A malformed/over-long X-Forwarded-For on the public demo endpoint is
+        stored (bounded), not rejected -- the IP comes from an unvalidated,
+        client-controlled header so it must not crash the lead write."""
+        from fighthealthinsurance.models import DemoRequests
+
+        with patch("fhi_users.audit.get_asn_info", return_value=("", "")), patch(
+            "fighthealthinsurance.rest_views.send_mail"
+        ):
+            response = self.client.post(
+                reverse("demorequest-list"),
+                data=json.dumps({"email": "spoofed@example.com"}),
+                content_type="application/json",
+                HTTP_X_FORWARDED_FOR="9" * 200,
+            )
+        self.assertEqual(response.status_code, 201)
+        demo = DemoRequests.objects.get(email="spoofed@example.com")
+        self.assertEqual(demo.ip_address, "9" * 64)
+
     def test_extra_notification_recipient_is_configurable(self):
         with patch(
             "fighthealthinsurance.rest_views.send_mail"

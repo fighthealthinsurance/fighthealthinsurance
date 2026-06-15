@@ -295,7 +295,11 @@ class DemoRequests(models.Model):
     phone = models.CharField(max_length=300, default="", blank=True)
     # Request provenance for these (business/sales) leads. The full IP is
     # stored here -- not ASN-only -- so sales can vet inbound demo requests.
-    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    # Free-form text rather than GenericIPAddressField: the value comes from the
+    # client-controlled X-Forwarded-For header (see audit.get_client_ip) and is
+    # never validated, so a malformed/spoofed value must persist instead of
+    # raising on write. Bounded to max_length at the write boundary.
+    ip_address = models.CharField(max_length=64, null=True, blank=True)
     asn = models.CharField(max_length=50, blank=True, default="")
     asn_name = models.CharField(max_length=200, blank=True, default="")
 
@@ -2337,8 +2341,12 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     # ASN provides privacy-preserving geolocation (network-level, not individual)
     asn = models.CharField(max_length=50, blank=True, default="")
     asn_name = models.CharField(max_length=200, blank=True, default="")
-    # IP address only stored for professional users (privacy-sensitive)
-    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    # IP address only stored for professional users (privacy-sensitive).
+    # Free-form text rather than GenericIPAddressField: the value comes from the
+    # client-controlled X-Forwarded-For header (see audit.get_client_ip) and is
+    # never validated, so a malformed/spoofed value must persist instead of
+    # raising on write. Bounded to max_length when applied (TrackingInfo).
+    ip_address = models.CharField(max_length=64, null=True, blank=True)
 
     # UCR (Usual & Customary Rate) fields.
     # service_zip stores ZIP3 (HIPAA Safe Harbor de-identified). Procedure
@@ -3030,8 +3038,12 @@ class OngoingChat(models.Model):
     # ASN provides privacy-preserving geolocation (network-level, not individual)
     asn = models.CharField(max_length=50, blank=True, default="")
     asn_name = models.CharField(max_length=200, blank=True, default="")
-    # IP address only stored for professional users (privacy-sensitive)
-    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    # IP address only stored for professional users (privacy-sensitive).
+    # Free-form text rather than GenericIPAddressField: the value comes from the
+    # client-controlled X-Forwarded-For header (see audit.get_client_ip) and is
+    # never validated, so a malformed/spoofed value must persist instead of
+    # raising on write. Bounded to max_length when applied (TrackingInfo).
+    ip_address = models.CharField(max_length=64, null=True, blank=True)
 
     @staticmethod
     def find_chats_by_email(email: str):

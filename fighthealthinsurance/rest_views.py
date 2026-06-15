@@ -1515,11 +1515,17 @@ class DemoRequestsViewSet(viewsets.ViewSet, CreateMixin, DeleteMixin):
     @extend_schema(responses=serializers.StatusResponseSerializer)
     def perform_create(self, request: Request, serializer) -> Response:
         """Save the demo request, recording client IP/ASN, then notify sales."""
-        from fhi_users.audit import get_asn_info, get_client_ip
+        from fhi_users.audit import bound_client_ip, get_asn_info, get_client_ip
 
         ip = get_client_ip(request)
         asn, asn_name = get_asn_info(ip)
-        demo = serializer.save(ip_address=ip, asn=asn, asn_name=asn_name)
+        # bound_client_ip: the IP is taken verbatim from the client-controlled
+        # X-Forwarded-For header, so store it bounded (DemoRequests.ip_address is
+        # a CharField) rather than risk a malformed/over-long value failing the
+        # public, unauthenticated demo-request write.
+        demo = serializer.save(
+            ip_address=bound_client_ip(ip), asn=asn, asn_name=asn_name
+        )
         self._notify_demo_request(demo)
         return Response(
             serializers.StatusResponseSerializer({"status": "subscribed"}).data,
