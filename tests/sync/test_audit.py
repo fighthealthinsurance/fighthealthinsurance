@@ -20,6 +20,7 @@ from fhi_users.audit import (
     get_user_agent,
     extract_tracking_info,
     extract_tracking_info_from_scope,
+    tracking_metadata_for_request,
     TrackingInfo,
 )
 from fhi_users.models import ProfessionalUser
@@ -243,6 +244,17 @@ class TrackingInfoTest(TestCase):
         request = self.factory.get("/", HTTP_USER_AGENT=long_ua)
         ua = get_user_agent(request)
         self.assertEqual(len(ua), 500)
+
+    def test_tracking_metadata_bounds_overlong_ip(self):
+        """An over-long X-Forwarded-For is truncated before reaching Stripe.
+
+        Stripe rejects metadata values over 500 chars and the value is later
+        persisted into a bounded column, so a garbage/spoofed header must be
+        truncated rather than break checkout creation or the expiry webhook.
+        """
+        request = self.factory.get("/", HTTP_X_FORWARDED_FOR="9" * 600)
+        md = tracking_metadata_for_request(request)
+        self.assertEqual(md["ip_address"], "9" * 64)
 
     def test_extract_tracking_info_basic(self):
         """Test basic tracking info extraction."""

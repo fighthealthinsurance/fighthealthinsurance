@@ -2785,7 +2785,13 @@ class LostStripeSession(models.Model):
     # Stripe session metadata at creation (the expiry webhook itself comes
     # from Stripe, not the user). Full IP is retained here to investigate
     # abandoned-checkout abuse patterns.
-    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    #
+    # Free-form text rather than GenericIPAddressField: the value originates
+    # from the client-controlled X-Forwarded-For header and is never validated
+    # (see audit.get_client_ip), so a malformed/spoofed value must persist
+    # verbatim instead of raising on write -- a raise here fails the webhook and
+    # makes Stripe retry it. Truncated to max_length at the write boundary.
+    ip_address = models.CharField(max_length=64, null=True, blank=True)
     asn = models.CharField(max_length=50, blank=True, default="")
     asn_name = models.CharField(max_length=200, blank=True, default="")
 

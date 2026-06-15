@@ -285,7 +285,12 @@ class StripeWebhookHelper:
                 email=email,
                 session_id=session_id,
                 metadata=metadata,
-                ip_address=metadata.get("ip_address") or None,
+                # ip_address comes verbatim from the client-controlled
+                # X-Forwarded-For header (never validated), so it may be
+                # malformed/spoofed. Store it as-is, truncated to the column
+                # width (CharField(max_length=64)), so a bad value can't raise
+                # and make Stripe retry this webhook.
+                ip_address=(metadata.get("ip_address") or "")[:64] or None,
                 asn=metadata.get("asn") or "",
                 asn_name=metadata.get("asn_name") or "",
             )

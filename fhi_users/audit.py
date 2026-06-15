@@ -361,7 +361,11 @@ def tracking_metadata_for_request(
         return md
     ip = get_client_ip(request)
     if ip:
-        md["ip_address"] = ip
+        # X-Forwarded-For is client-controlled and unvalidated; bound the value
+        # so an over-long/garbage header can't exceed Stripe's 500-char metadata
+        # limit (which would break checkout creation) or overflow the
+        # LostStripeSession.ip_address column it is later persisted into.
+        md["ip_address"] = ip[:64]
     asn, asn_name = get_asn_info(ip)
     if asn:
         md["asn"] = asn
