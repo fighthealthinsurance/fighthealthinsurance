@@ -20,6 +20,7 @@ from fhi_users.audit import (
     get_user_agent,
     extract_tracking_info,
     extract_tracking_info_from_scope,
+    tracking_metadata_for_request,
     TrackingInfo,
 )
 from fhi_users.models import ProfessionalUser
@@ -244,6 +245,17 @@ class TrackingInfoTest(TestCase):
         ua = get_user_agent(request)
         self.assertEqual(len(ua), 500)
 
+    def test_tracking_metadata_bounds_overlong_ip(self):
+        """An over-long X-Forwarded-For is truncated before reaching Stripe.
+
+        Stripe rejects metadata values over 500 chars and the value is later
+        persisted into a bounded column, so a garbage/spoofed header must be
+        truncated rather than break checkout creation or the expiry webhook.
+        """
+        request = self.factory.get("/", HTTP_X_FORWARDED_FOR="9" * 600)
+        md = tracking_metadata_for_request(request)
+        self.assertEqual(md["ip_address"], "9" * 64)
+
     def test_extract_tracking_info_basic(self):
         """Test basic tracking info extraction."""
         request = self.factory.get(
@@ -386,6 +398,30 @@ class TrackingInfoFromScopeTest(TestCase):
         self.assertEqual(model.ip_address, "10.0.0.1")
         self.assertEqual(model.asn, "AS9999")
         self.assertEqual(model.asn_name, "Test ASN")
+
+    def test_to_model_kwargs_bounds_overlong_ip(self):
+        """An over-long header IP is truncated before it reaches a model field."""
+        info = TrackingInfo(ip_address="9" * 200)
+        self.assertEqual(info.to_model_kwargs()["ip_address"], "9" * 64)
+
+    def test_update_model_fields_bounds_overlong_ip(self):
+        """update_model_fields truncates an over-long header IP to column width."""
+        info = TrackingInfo(ip_address="9" * 200)
+        model = MockModelWithTrackingFields()
+        info.update_model_fields(model)
+        self.assertEqual(model.ip_address, "9" * 64)
+
+    def test_tracking_ip_address_fields_are_char(self):
+        """Columns that store raw header IPs are free-form text, not a validating
+        GenericIPAddressField (which would raise on a spoofed/malformed value)."""
+        from django.db import models as dj_models
+        from fighthealthinsurance.models import DemoRequests, Denial, OngoingChat
+
+        for model in (DemoRequests, Denial, OngoingChat):
+            field = model._meta.get_field("ip_address")
+            self.assertIsInstance(
+                field, dj_models.CharField, f"{model.__name__}.ip_address"
+            )
 
 
 class DenialTrackingInfoTest(TestCase):

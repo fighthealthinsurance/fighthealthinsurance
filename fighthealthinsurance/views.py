@@ -1202,6 +1202,23 @@ class ChooseAppeal(View):
 class GenerateAppeal(View):
     """View for generating appeal letters using ML models."""
 
+    @staticmethod
+    def _appeals_context(
+        *, denial, denial_id: str, email: str, semi_sekret: str, elems: dict
+    ) -> dict:
+        return {
+            "form_context": json.dumps(elems),
+            "user_email": email,
+            "denial_id": denial_id,
+            "semi_sekret": semi_sekret,
+            "current_step": 7,
+            "use_external": denial.use_external,
+            "back_url": build_back_url(
+                "find_next_steps", denial_id, email, semi_sekret
+            ),
+            "back_label": "Back to questions",
+        }
+
     def get(self, request):
         """Handle GET requests for back navigation to appeals page."""
         denial_id = request.GET.get("denial_id")
@@ -1229,17 +1246,13 @@ class GenerateAppeal(View):
         return render(
             request,
             "appeals.html",
-            context={
-                "form_context": json.dumps(elems),
-                "user_email": email,
-                "denial_id": denial_id,
-                "semi_sekret": semi_sekret,
-                "current_step": 7,
-                "back_url": build_back_url(
-                    "find_next_steps", denial_id, email, semi_sekret
-                ),
-                "back_label": "Back to questions",
-            },
+            context=self._appeals_context(
+                denial=denial,
+                denial_id=denial_id,
+                email=email,
+                semi_sekret=semi_sekret,
+                elems=elems,
+            ),
         )
 
     def post(self, request):
@@ -1287,20 +1300,13 @@ class GenerateAppeal(View):
         return render(
             request,
             "appeals.html",
-            context={
-                "form_context": json.dumps(elems),
-                "user_email": form.cleaned_data["email"],
-                "denial_id": form.cleaned_data["denial_id"],
-                "semi_sekret": form.cleaned_data["semi_sekret"],
-                "current_step": 7,
-                "back_url": build_back_url(
-                    "find_next_steps",
-                    form.cleaned_data["denial_id"],
-                    form.cleaned_data["email"],
-                    form.cleaned_data["semi_sekret"],
-                ),
-                "back_label": "Back to questions",
-            },
+            context=self._appeals_context(
+                denial=denial,
+                denial_id=form.cleaned_data["denial_id"],
+                email=form.cleaned_data["email"],
+                semi_sekret=form.cleaned_data["semi_sekret"],
+                elems=elems,
+            ),
         )
 
 
@@ -2383,6 +2389,18 @@ def create_pwyw_checkout(request: HttpRequest) -> HttpResponse:
         ]
         recovery_info = StripeRecoveryInfo.objects.create(items=line_items)
 
+        donation_metadata = {
+            "payment_type": "donation",
+            "donation_type": "pwyw",
+            "source": "checkout",
+            "recovery_info_id": str(recovery_info.id),
+        }
+        # Capture client IP/ASN so an expired/abandoned donation checkout can be
+        # tied back to the originating client (the expiry webhook is from Stripe).
+        from fhi_users.audit import tracking_metadata_for_request
+
+        donation_metadata.update(tracking_metadata_for_request(request))
+
         # Create a checkout session with the specified amount
         checkout_session = stripe.checkout.Session.create(
             payment_method_types=["card"],
@@ -2390,12 +2408,7 @@ def create_pwyw_checkout(request: HttpRequest) -> HttpResponse:
             mode="payment",
             success_url=success_url,
             cancel_url=cancel_url,
-            metadata={
-                "payment_type": "donation",
-                "donation_type": "pwyw",
-                "source": "checkout",
-                "recovery_info_id": str(recovery_info.id),
-            },
+            metadata=donation_metadata,
         )
 
         return HttpResponse(

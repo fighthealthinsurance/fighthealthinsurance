@@ -489,6 +489,116 @@ function done(): void {
     }
     clearTimeout(timeoutHandle!);
     hideLoading();
+    // When internal-only generation underdelivered (0-2 appeals), the
+    // template emits a hidden prompt offering to opt the denial into
+    // external models. Reveal it and wire up the click.
+    maybeShowExternalModelsPrompt();
+  }
+}
+
+// Threshold for "we didn't generate enough appeals" - the regular flow
+// targets 3 appeals, so 2 or fewer indicates underdelivery worth
+// surfacing the external-models opt-in for.
+const FEW_APPEALS_THRESHOLD = 2;
+
+// Latched once the user has already opted in. Prevents re-showing the
+// prompt if the post-opt-in rerun also underdelivers — the user has
+// already made the call, repeating it doesn't help.
+let externalModelsRequested = false;
+
+function maybeShowExternalModelsPrompt(): void {
+  if (externalModelsRequested) {
+    return;
+  }
+  const prompt = document.getElementById("external-models-prompt");
+  if (!prompt) {
+    // Template didn't include the prompt - either external models are
+    // already enabled, or we're on a page that doesn't have it.
+    return;
+  }
+  if (appealsSoFar.length > FEW_APPEALS_THRESHOLD) {
+    return;
+  }
+  if (prompt.style.display === "block") {
+    return;
+  }
+  prompt.style.display = "block";
+  const button = document.getElementById(
+    "request-external-models-btn",
+  ) as HTMLButtonElement | null;
+  if (!button) return;
+  // Deliberately NOT { once: true }: a transient opt-in failure re-enables
+  // the button (see the catch in requestExternalModels) and the user must be
+  // able to click again. The button.disabled flag set at the start of the
+  // request guards against double-submit while one is in flight, and the
+  // `display === "block"` guard above keeps this listener from being attached
+  // more than once.
+  button.addEventListener("click", () => {
+    void requestExternalModels(button, prompt);
+  });
+}
+
+async function requestExternalModels(
+  button: HTMLButtonElement,
+  prompt: HTMLElement,
+): Promise<void> {
+  const statusEl = document.getElementById("external-models-status");
+  const setStatus = (text: string, color: string) => {
+    if (statusEl) {
+      statusEl.textContent = text;
+      statusEl.style.color = color;
+    }
+  };
+  const url = (window as any).enableExternalModelsUrl as string | undefined;
+  if (!url) {
+    setStatus("Unable to enable external models right now.", "#dc3545");
+    return;
+  }
+  const csrfToken = (my_data as any).csrfmiddlewaretoken || "";
+  button.disabled = true;
+  setStatus("Enabling external models and re-running appeals...", "#333");
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CSRFToken": csrfToken,
+      },
+      body: JSON.stringify({
+        denial_id: (my_data as any).denial_id || "",
+        email: (my_data as any).email || "",
+        semi_sekret: (my_data as any).semi_sekret || "",
+      }),
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+    externalModelsRequested = true;
+    setStatus(
+      "External models enabled. Generating additional appeals...",
+      "#28a745",
+    );
+    prompt.style.display = "none";
+    // Reset retry/parser state so doQuery starts a fresh generation
+    // pass rather than treating this as a retry of the previous
+    // attempt. Deliberately do NOT clear appealsSoFar or
+    // #output-container: any already-shown internal-only drafts stay
+    // on screen for the user to read while external models stream
+    // additional drafts. processResponseChunk dedups against
+    // appealsSoFar so server-side re-yielded ProposedAppeals don't
+    // append twice, and the >=3 done() check counting old+new is
+    // intentional — we want a total of 3 drafts, not 3 *new* ones.
+    retries = 0;
+    respBuffer = "";
+    hasAutoScrolledToFirstAppeal = false;
+    doQuery(my_backend_url, my_data, my_rest_fallback_url);
+  } catch (error) {
+    console.error("Failed to enable external models:", error);
+    setStatus(
+      "Could not enable external models. Please try again later.",
+      "#dc3545",
+    );
+    button.disabled = false;
   }
 }
 

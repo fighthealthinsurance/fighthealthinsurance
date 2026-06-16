@@ -21,7 +21,10 @@ import datetime
 import re
 from typing import Optional
 
-from fighthealthinsurance.generate_appeal import is_plausible_identifier
+from fighthealthinsurance.generate_appeal import (
+    identifier_found_in_text,
+    is_plausible_identifier,
+)
 
 _LABEL_TOKENS = {
     "patient",
@@ -69,7 +72,12 @@ def _score_name(value: str, source_text: str) -> str:
 def _score_identifier(value: str, source_text: str) -> str:
     if not is_plausible_identifier(value):
         return "low"
-    if _appears_in_source(value, source_text):
+    # Use the separator-normalizing matcher so IDs that appear in the source
+    # with different separators than the extracted value (e.g. "H5521001" vs
+    # "H5521-001" or "H5521 001") still count as source evidence. This is
+    # still substring-based on the normalized text; it improves recall, not
+    # word-boundary precision.
+    if identifier_found_in_text(value, source_text):
         return "high"
     return "medium"
 
@@ -114,6 +122,13 @@ def _score_dob(value, source_text: str) -> str:
             parsed.strftime("%m/%d/%Y"),
             parsed.strftime("%m-%d-%Y"),
             f"{parsed.month}/{parsed.day}/{parsed.year}",
+            # Day-first renderings (e.g. "15/01/1980") so documents that write
+            # the date day-first still provide source evidence. Adding these
+            # only widens what counts as evidence; the date must still appear
+            # in the source, so a hallucinated date cannot reach "high".
+            parsed.strftime("%d/%m/%Y"),
+            parsed.strftime("%d-%m-%Y"),
+            f"{parsed.day}/{parsed.month}/{parsed.year}",
         ]
     )
     if any(_appears_in_source(c, source_text) for c in candidates):

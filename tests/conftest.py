@@ -18,28 +18,52 @@ os.environ["TESTING"] = "True"
 
 
 def _has_ssl_intercepting_proxy() -> bool:
-    """Detect if an SSL-intercepting proxy prevents connecting to api.stripe.com.
+    """Detect environments where api.stripe.com can't be reached with a valid
+    certificate.
 
-    Returns True when the environment has an HTTPS proxy AND SSL verification
-    to api.stripe.com fails (e.g. self-signed cert from a MITM proxy).
-    Returns False when there is no proxy or when SSL verification succeeds.
+    Covers env-var-configured proxies, transparent SSL-intercepting proxies
+    (which set no proxy env vars), and fully firewalled sandboxes. The E2E
+    Stripe tests can't pass in any of those, so they should skip rather than
+    fail on connect.
+
+    The probe verifies against the Stripe SDK's bundled CA file — the same
+    bundle the SDK uses at request time. A sandbox that injects its MITM CA
+    into the *system* trust store would otherwise pass a default-context
+    probe while every real SDK call still fails certificate verification.
     """
-    if not (os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy")):
-        return False
     try:
-        handler = urllib.request.ProxyHandler()
-        opener = urllib.request.build_opener(handler)
+        import stripe
+
+        ssl_context = ssl.create_default_context(cafile=stripe.ca_bundle_path)
+    except Exception:
+        ssl_context = ssl.create_default_context()
+    try:
+        opener = urllib.request.build_opener(
+            urllib.request.ProxyHandler(),
+            urllib.request.HTTPSHandler(context=ssl_context),
+        )
         opener.open("https://api.stripe.com", timeout=5)
+        return False
+    except urllib.error.HTTPError:
+        # An HTTP error status still means we reached Stripe with a valid
+        # TLS handshake; only transport/verification failures mean blocked.
         return False
     except (ssl.SSLError, ssl.SSLCertVerificationError, urllib.error.URLError, OSError):
         return True
 
 
-_skip_stripe_ssl = _has_ssl_intercepting_proxy()
+# Only probe when Stripe is actually configured. The E2E tests gated on this
+# need STRIPE_TEST_SECRET_KEY and can't run without it, so when it's unset we
+# skip them without paying ~5s for a network probe to api.stripe.com whose
+# result can't change the outcome (pure waste in firewalled CI that never
+# configures Stripe).
+_skip_stripe_ssl = (
+    _has_ssl_intercepting_proxy() if os.environ.get("STRIPE_TEST_SECRET_KEY") else True
+)
 
 skip_if_stripe_ssl_blocked = pytest.mark.skipif(
     _skip_stripe_ssl,
-    reason="SSL-intercepting proxy blocks Stripe API connections",
+    reason="Stripe not configured (STRIPE_TEST_SECRET_KEY unset) or SSL-intercepting proxy blocks api.stripe.com",
 )
 
 skip_if_no_pandoc = pytest.mark.skipif(
@@ -72,6 +96,29 @@ def _clear_pa_resolver_cache():
     _regex_candidates.cache_clear()
     yield
     _regex_candidates.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def _stub_denied_items_analysis_dispatch():
+    """Stub the denied-items analysis Ray dispatch for the whole suite.
+
+    ``OngoingChatConsumer.disconnect`` enqueues analysis on a detached Ray
+    actor. In tests there is no Ray cluster, so the first unpatched chat
+    disconnect would lazily start an in-process Ray instance whose detached
+    actor crash-loops against the test database and eventually hard-kills
+    the pytest process mid-suite. Tests that assert on dispatch behavior
+    patch the same attribute themselves; their innermost patch wins.
+    """
+    from unittest.mock import patch as _patch
+
+    try:
+        with _patch(
+            "fighthealthinsurance.denied_items_analysis_actor_ref.denied_items_analysis_actor_ref"
+        ) as mock_ref:
+            mock_ref.get.run_analysis.remote.return_value = None
+            yield
+    except (ImportError, AttributeError):
+        yield
 
 
 @pytest.fixture(autouse=True)

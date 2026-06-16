@@ -13,6 +13,7 @@ from django.urls import reverse
 from loguru import logger
 
 from fhi_users import emails as fhi_emails
+from fhi_users.audit import bound_client_ip
 from fhi_users.models import ProfessionalUser, UserDomain
 from fighthealthinsurance.models import (
     FaxesToSend,
@@ -277,11 +278,22 @@ class StripeWebhookHelper:
                         f"Error checking for active domains for user {email}: {e}"
                     )
 
+            # Client IP/ASN was stamped into the session metadata at checkout
+            # creation (tracking_metadata_for_request); surface it onto its own
+            # columns so abandoned-checkout abuse can be queried by IP/ASN.
             lost_session = LostStripeSession.objects.create(
                 payment_type=payment_type,
                 email=email,
                 session_id=session_id,
                 metadata=metadata,
+                # ip_address comes verbatim from the client-controlled
+                # X-Forwarded-For header (never validated), so it may be
+                # malformed/spoofed. Store it bounded (LostStripeSession.ip_address
+                # is a CharField) so a bad value can't raise and make Stripe retry
+                # this webhook.
+                ip_address=bound_client_ip(metadata.get("ip_address")),
+                asn=metadata.get("asn") or "",
+                asn_name=metadata.get("asn_name") or "",
             )
             finish_link = StripeWebhookHelper._build_recovery_link(
                 payment_type, metadata, lost_session

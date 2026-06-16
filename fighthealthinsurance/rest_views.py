@@ -6,6 +6,7 @@ from typing import Optional
 
 from django.conf import settings
 from django.core.exceptions import SuspiciousFileOperation
+from django.core.mail import send_mail
 from django.db import IntegrityError, models
 from django.db.models import Count, Q
 from django.http import FileResponse, StreamingHttpResponse
@@ -559,6 +560,62 @@ class ReportClientError(APIView):
             f"denial_id_valid={denial_id_valid} | denial_id_raw={denial_id_raw}"
         )
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class EnableExternalModels(APIView):
+    """Opt a denial into external models so a re-run of appeal generation
+    can call out to higher-capability cloud LLMs.
+
+    Patients see a button on the appeals page offering this when the
+    initial generation produced few or no appeals from internal models;
+    this endpoint flips `Denial.use_external` so the next generation
+    request includes the external backends. Auth mirrors the appeal
+    stream: the (denial_id, email, semi_sekret) triple is the only
+    credential.
+    """
+
+    permission_classes = [AllowAny]
+    authentication_classes = []  # Magic-key auth via the triple
+
+    @extend_schema(
+        description=(
+            "Opt a denial into external models. Authenticated by the "
+            "(denial_id, email, semi_sekret) triple in the JSON body. "
+            "Idempotent — succeeds with 200 if `use_external` is "
+            "already True. Returns 404 for any auth failure (uniform "
+            "to avoid leaking which field was wrong)."
+        ),
+        request=OpenApiTypes.OBJECT,
+        responses={
+            200: OpenApiTypes.OBJECT,
+            400: OpenApiTypes.OBJECT,
+            404: OpenApiTypes.OBJECT,
+        },
+    )
+    def post(self, request: Request) -> Response:
+        data = request.data
+        # Reject non-mapping bodies (e.g. JSON arrays/strings) up front;
+        # without this, request.data.get(...) raises and we'd serve 500
+        # on malformed input. Matches streaming_appeals_rest_fallback.
+        if not isinstance(data, dict):
+            return Response(
+                {"error": "Expected a JSON object"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        denial = common_view_logic.get_denial_for_action(
+            denial_id=data.get("denial_id"),
+            email=data.get("email") or "",
+            semi_sekret=data.get("semi_sekret") or "",
+        )
+        if denial is None:
+            return Response({"error": "Not found"}, status=status.HTTP_404_NOT_FOUND)
+        if not denial.use_external:
+            denial.use_external = True
+            denial.save(update_fields=["use_external"])
+            logger.info(
+                f"Enabled external models for denial {denial.denial_id} on user request"
+            )
+        return Response({"use_external": True}, status=status.HTTP_200_OK)
 
 
 @extend_schema(
@@ -1457,12 +1514,60 @@ class DemoRequestsViewSet(viewsets.ViewSet, CreateMixin, DeleteMixin):
 
     @extend_schema(responses=serializers.StatusResponseSerializer)
     def perform_create(self, request: Request, serializer) -> Response:
-        """Save the demo request."""
-        serializer.save()
+        """Save the demo request, recording client IP/ASN, then notify sales."""
+        from fhi_users.audit import bound_client_ip, get_asn_info, get_client_ip
+
+        ip = get_client_ip(request)
+        asn, asn_name = get_asn_info(ip)
+        # bound_client_ip: the IP is taken verbatim from the client-controlled
+        # X-Forwarded-For header, so store it bounded (DemoRequests.ip_address is
+        # a CharField) rather than risk a malformed/over-long value failing the
+        # public, unauthenticated demo-request write.
+        demo = serializer.save(
+            ip_address=bound_client_ip(ip), asn=asn, asn_name=asn_name
+        )
+        self._notify_demo_request(demo)
         return Response(
             serializers.StatusResponseSerializer({"status": "subscribed"}).data,
             status=status.HTTP_201_CREATED,
         )
+
+    @staticmethod
+    def _notify_demo_request(demo: DemoRequests) -> None:
+        """Email support42@ (plus any DEMO_REQUEST_EXTRA_NOTIFICATION_EMAILS)
+        about a new demo request. Best-effort: a mail failure must not fail the
+        request, which is already persisted."""
+        recipients = list(
+            getattr(
+                settings,
+                "DEMO_REQUEST_NOTIFICATION_EMAILS",
+                ["support42@fighthealthinsurance.com"],
+            )
+        )
+        if not recipients:
+            return
+        body = (
+            "New demo request:\n\n"
+            f"Email: {demo.email}\n"
+            f"Name: {demo.name or 'N/A'}\n"
+            f"Company: {demo.company or 'N/A'}\n"
+            f"Role: {demo.role or 'N/A'}\n"
+            f"Phone: {demo.phone or 'N/A'}\n"
+            f"Source: {demo.source or 'N/A'}\n"
+            f"IP: {demo.ip_address or 'N/A'}\n"
+            f"ASN: {demo.asn or 'N/A'} ({demo.asn_name or 'N/A'})\n"
+        )
+        try:
+            send_mail(
+                f"New demo request: {demo.email}",
+                body,
+                settings.DEFAULT_FROM_EMAIL,
+                recipients,
+            )
+        except Exception:
+            logger.opt(exception=True).error(
+                f"Error sending demo request notification for {demo.email}"
+            )
 
     @extend_schema(responses=serializers.StatusResponseSerializer)
     def perform_delete(self, request: Request, serializer):

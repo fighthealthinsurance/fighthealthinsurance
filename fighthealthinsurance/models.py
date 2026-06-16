@@ -293,6 +293,15 @@ class DemoRequests(models.Model):
     source = models.CharField(max_length=300, default="", blank=True)
     signup_date = models.DateField(auto_now_add=True)
     phone = models.CharField(max_length=300, default="", blank=True)
+    # Request provenance for these (business/sales) leads. The full IP is
+    # stored here -- not ASN-only -- so sales can vet inbound demo requests.
+    # Free-form text rather than GenericIPAddressField: the value comes from the
+    # client-controlled X-Forwarded-For header (see audit.get_client_ip) and is
+    # never validated, so a malformed/spoofed value must persist instead of
+    # raising on write. Bounded to max_length at the write boundary.
+    ip_address = models.CharField(max_length=64, null=True, blank=True)
+    asn = models.CharField(max_length=50, blank=True, default="")
+    asn_name = models.CharField(max_length=200, blank=True, default="")
 
     def __str__(self):
         return self.email
@@ -2332,8 +2341,12 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     # ASN provides privacy-preserving geolocation (network-level, not individual)
     asn = models.CharField(max_length=50, blank=True, default="")
     asn_name = models.CharField(max_length=200, blank=True, default="")
-    # IP address only stored for professional users (privacy-sensitive)
-    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    # IP address only stored for professional users (privacy-sensitive).
+    # Free-form text rather than GenericIPAddressField: the value comes from the
+    # client-controlled X-Forwarded-For header (see audit.get_client_ip) and is
+    # never validated, so a malformed/spoofed value must persist instead of
+    # raising on write. Bounded to max_length when applied (TrackingInfo).
+    ip_address = models.CharField(max_length=64, null=True, blank=True)
 
     # UCR (Usual & Customary Rate) fields.
     # service_zip stores ZIP3 (HIPAA Safe Harbor de-identified). Procedure
@@ -2776,6 +2789,19 @@ class LostStripeSession(models.Model):
     success_url = models.CharField(max_length=255, null=True, blank=True)
     email = models.CharField(max_length=255, null=True, blank=True)
     metadata = models.JSONField(null=True, blank=True)
+    # Client IP/ASN of whoever started the checkout, threaded through the
+    # Stripe session metadata at creation (the expiry webhook itself comes
+    # from Stripe, not the user). Full IP is retained here to investigate
+    # abandoned-checkout abuse patterns.
+    #
+    # Free-form text rather than GenericIPAddressField: the value originates
+    # from the client-controlled X-Forwarded-For header and is never validated
+    # (see audit.get_client_ip), so a malformed/spoofed value must persist
+    # verbatim instead of raising on write -- a raise here fails the webhook and
+    # makes Stripe retry it. Truncated to max_length at the write boundary.
+    ip_address = models.CharField(max_length=64, null=True, blank=True)
+    asn = models.CharField(max_length=50, blank=True, default="")
+    asn_name = models.CharField(max_length=200, blank=True, default="")
 
 
 class LostStripeMeters(models.Model):
@@ -3012,8 +3038,12 @@ class OngoingChat(models.Model):
     # ASN provides privacy-preserving geolocation (network-level, not individual)
     asn = models.CharField(max_length=50, blank=True, default="")
     asn_name = models.CharField(max_length=200, blank=True, default="")
-    # IP address only stored for professional users (privacy-sensitive)
-    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    # IP address only stored for professional users (privacy-sensitive).
+    # Free-form text rather than GenericIPAddressField: the value comes from the
+    # client-controlled X-Forwarded-For header (see audit.get_client_ip) and is
+    # never validated, so a malformed/spoofed value must persist instead of
+    # raising on write. Bounded to max_length when applied (TrackingInfo).
+    ip_address = models.CharField(max_length=64, null=True, blank=True)
 
     @staticmethod
     def find_chats_by_email(email: str):

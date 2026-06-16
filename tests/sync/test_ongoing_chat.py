@@ -1,5 +1,5 @@
 import typing
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 from channels.testing import WebsocketCommunicator
 
 from django.contrib.auth import get_user_model
@@ -244,6 +244,66 @@ class OngoingChatWebSocketTest(APITestCase):
         )
         self.assertEqual(prior_auth_refresh.chat_id, chat.id)
         await communicator.disconnect()
+        await self.asyncTearDown()
+
+    async def test_disconnect_enqueues_denied_items_analysis(self):
+        await self.asyncSetUp()
+        consumer = OngoingChatConsumer()
+        consumer.chat_interface = object()
+        chat = await sync_to_async(OngoingChat.objects.create)(
+            is_patient=True,
+            user=await sync_to_async(User.objects.create_user)(
+                username="enqueueuser", password="testpass", email="enqueue@example.com"
+            ),
+            chat_history=[],
+            summary_for_next_call=[],
+        )
+        consumer.chat_id = str(chat.id)
+        # Disconnect hands the chat id to the detached Ray actor. There is no
+        # cache dedup layer (the analysis is idempotent on its own), so a
+        # single disconnect dispatches exactly one analysis for the chat id.
+        with patch(
+            "fighthealthinsurance.denied_items_analysis_actor_ref.denied_items_analysis_actor_ref",
+        ) as mock_dispatch:
+            await consumer.disconnect(1000)
+            mock_dispatch.get.run_analysis.remote.assert_called_once_with(
+                chat_id=str(chat.id)
+            )
+        await self.asyncTearDown()
+
+    async def test_disconnect_is_non_blocking_when_dispatch_fails(self):
+        await self.asyncSetUp()
+        consumer = OngoingChatConsumer()
+        consumer.chat_interface = object()
+        chat = await sync_to_async(OngoingChat.objects.create)(
+            is_patient=True,
+            user=await sync_to_async(User.objects.create_user)(
+                username="failuser", password="testpass", email="fail@example.com"
+            ),
+            chat_history=[],
+            summary_for_next_call=[],
+        )
+        consumer.chat_id = str(chat.id)
+        with patch(
+            "fighthealthinsurance.websockets.enqueue_denied_items_analysis",
+            new=AsyncMock(side_effect=RuntimeError("queue offline")),
+        ), patch("fighthealthinsurance.websockets.logger") as mock_logger:
+            await consumer.disconnect(1000)
+            # disconnect logs via logger.opt(exception=True).warning(...)
+            self.assertTrue(mock_logger.opt.return_value.warning.called)
+        await self.asyncTearDown()
+
+    async def test_run_denied_items_analysis_invokes_analyze(self):
+        await self.asyncSetUp()
+        # The Ray-actor entry point bottoms out in the (idempotent)
+        # _analyze_denied_items with the chat id. With the job-status cache
+        # removed there is no extra state to assert.
+        with patch(
+            "fighthealthinsurance.websockets.OngoingChatConsumer._analyze_denied_items",
+            new=AsyncMock(return_value=None),
+        ) as mock_analyze:
+            await OngoingChatConsumer.run_denied_items_analysis(chat_id="fake-chat")
+        mock_analyze.assert_awaited_once_with("fake-chat")
         await self.asyncTearDown()
 
     async def test_link_chat_to_appeal_permission_denied(self):

@@ -157,6 +157,12 @@ class StageFaxView(generic.FormView):
             "fax_request_uuid": str(staged.uuid),
             "recovery_info_id": str(stripe_recovery_info.id),
         }
+        # Capture client IP/ASN into the session metadata so an expired
+        # checkout can be tied back to the originating client (the expiry
+        # webhook comes from Stripe, not the user).
+        from fhi_users.audit import tracking_metadata_for_request
+
+        metadata.update(tracking_metadata_for_request(self.request))
         checkout = stripe.checkout.Session.create(
             line_items=items,  # type: ignore
             mode="payment",  # No subscriptions

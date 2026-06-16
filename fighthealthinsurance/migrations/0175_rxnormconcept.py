@@ -5,8 +5,17 @@ from django.db.models.functions import Now
 
 
 class Migration(migrations.Migration):
+    # This migration originally shipped as 0173_rxnormconcept (depending on
+    # 0172) and was renamed to 0175 when 0173_medicationcontext landed (#787).
+    # Databases that migrated before the rename have it recorded under the old
+    # name; ``replaces`` makes Django treat those as already applied instead
+    # of re-creating the table. The dependency stays 0172 (its original) so
+    # such databases don't trip the applied-before-dependency consistency
+    # check; 0176 depends on both this and 0174 to keep the graph linear.
+    replaces = [("fighthealthinsurance", "0173_rxnormconcept")]
+
     dependencies = [
-        ("fighthealthinsurance", "0174_seed_medication_contexts"),
+        ("fighthealthinsurance", "0172_payerpriorauthrequirement"),
     ]
 
     operations = [

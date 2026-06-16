@@ -7,7 +7,7 @@ from typing import AsyncIterator, Callable, Optional, Tuple, cast
 
 from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
-from django.utils import timezone
+from django.db import transaction
 
 from asgiref.sync import sync_to_async
 from channels.generic.websocket import AsyncWebsocketConsumer
@@ -30,6 +30,22 @@ from fighthealthinsurance.models import (
 )
 
 from .chat_interface import ChatInterface
+
+
+async def enqueue_denied_items_analysis(*, chat_id: str) -> None:
+    """Dispatch denied-items analysis as fire-and-forget background work.
+
+    No dedup/job-state layer on purpose: ``_analyze_denied_items`` is already
+    idempotent (it no-ops when the chat already has a denied item/reason), and
+    Prod's per-process LocMemCache made any cross-process job-state tracking
+    write-only anyway. The disconnect handler just hands the chat id to the
+    detached Ray actor.
+    """
+    from fighthealthinsurance.denied_items_analysis_actor_ref import (
+        denied_items_analysis_actor_ref,
+    )
+
+    denied_items_analysis_actor_ref.get.run_analysis.remote(chat_id=chat_id)
 
 
 def _get_client_ip_from_scope(scope: Optional[dict] = None) -> Optional[str]:
@@ -138,6 +154,63 @@ async def log_zero_appeal_diagnostics(
         )
 
 
+async def _parse_json_or_close(
+    consumer: AsyncWebsocketConsumer,
+    text_data: Optional[str],
+    *,
+    consumer_name: str,
+    streaming_protocol: bool = False,
+) -> Optional[dict]:
+    """Parse a single WebSocket text frame as JSON, closing on bad input.
+
+    Returns the decoded dict on success, or ``None`` when the frame was
+    malformed (in which case an error frame has already been sent and the
+    socket closed). ``streaming_protocol=True`` selects the
+    ``{"type": "error", "message": ...}`` envelope expected by the
+    appeals/escalation streaming clients and appends a trailing newline
+    so the client's line-buffered parser flushes the frame before the
+    socket close arrives; otherwise the simpler ``{"error": ...}`` shape
+    used by entity/prior-auth/chat consumers (which read whole frames).
+
+    Non-object JSON (``[]``, ``"x"``, ``123``, ``null``) is rejected so
+    callers can ``.get()`` on the result without an AttributeError.
+    """
+
+    async def _send_err(message: str) -> None:
+        if streaming_protocol:
+            # Trailing newline: appeal_fetcher.ts buffers ws.onmessage
+            # data and only parses lines terminated by "\n". Without it
+            # the close arrives before the error frame is parsed and
+            # the client falls through to its generic error path.
+            await consumer.send(
+                json.dumps({"type": "error", "message": message}) + "\n"
+            )
+        else:
+            await consumer.send(json.dumps({"error": message}))
+
+    if text_data is None:
+        logger.warning(f"Empty/None text frame received in {consumer_name} websocket")
+        await _send_err("Empty message")
+        await consumer.close()
+        return None
+    try:
+        data = json.loads(text_data)
+    except json.JSONDecodeError as e:
+        logger.warning(f"Invalid JSON received in {consumer_name} websocket: {e}")
+        await _send_err("Invalid JSON format")
+        await consumer.close()
+        return None
+    if not isinstance(data, dict):
+        logger.warning(
+            f"Non-object JSON received in {consumer_name} websocket: "
+            f"{type(data).__name__}"
+        )
+        await _send_err("Expected a JSON object")
+        await consumer.close()
+        return None
+    return data
+
+
 # Test hook: when truthy, StreamingAppealsBackend accepts the
 # connection and closes immediately without yielding any appeal
 # payloads. Lets tests exercise the REST fallback path without
@@ -157,30 +230,18 @@ class StreamingAppealsBackend(AsyncWebsocketConsumer):
         logger.debug(f"appeals ws: disconnect code={close_code}")
 
     async def receive(self, text_data):
-        try:
-            data = json.loads(text_data)
-        except json.JSONDecodeError as e:
-            logger.warning(f"Invalid JSON received in appeals websocket: {e}")
-            # Match the streaming protocol shape so the client's
-            # type==='error' branch in processResponseChunk fires
-            # instead of treating this as an unrecognized frame.
-            await self.send(
-                json.dumps({"type": "error", "message": "Invalid JSON format"})
-            )
-            await self.close()
-            return
-        if not isinstance(data, dict):
-            # Valid JSON but not an object (e.g. `[]`, `"x"`, `123`).
-            # Without this guard, data.get(...) below would raise and
-            # the client would just see a server-side close.
-            logger.warning(
-                "Non-object JSON received in appeals websocket: "
-                f"{type(data).__name__}"
-            )
-            await self.send(
-                json.dumps({"type": "error", "message": "Expected a JSON object"})
-            )
-            await self.close()
+        # streaming_protocol=True so the client's type==='error' branch
+        # in processResponseChunk fires instead of treating this as an
+        # unrecognized frame. The helper also rejects non-object JSON
+        # so .get(...) below can't raise AttributeError on `[]` /
+        # `"x"` / `123`.
+        data = await _parse_json_or_close(
+            self,
+            text_data,
+            consumer_name="appeals",
+            streaming_protocol=True,
+        )
+        if data is None:
             return
         # Test hook: simulate a silent WS death so the JS client falls
         # back to REST. We close cleanly with no payload so the client
@@ -283,14 +344,13 @@ class StreamingEscalationBackend(AsyncWebsocketConsumer):
         logger.debug(f"escalation ws: disconnect code={close_code}")
 
     async def receive(self, text_data):
-        try:
-            data = json.loads(text_data)
-        except json.JSONDecodeError as e:
-            logger.warning(f"Invalid JSON received in escalation websocket: {e}")
-            await self.send(
-                json.dumps({"type": "error", "message": "Invalid JSON format"})
-            )
-            await self.close()
+        data = await _parse_json_or_close(
+            self,
+            text_data,
+            consumer_name="escalation",
+            streaming_protocol=True,
+        )
+        if data is None:
             return
         aitr: AsyncIterator[str] = (
             common_view_logic.EscalationPacketHelper.generate_escalation_letters(data)
@@ -338,12 +398,12 @@ class StreamingEntityBackend(AsyncWebsocketConsumer):
         logger.debug(f"entity ws: disconnect code={close_code}")
 
     async def receive(self, text_data):
-        try:
-            data = json.loads(text_data)
-        except json.JSONDecodeError as e:
-            logger.warning(f"Invalid JSON received in entity extraction websocket: {e}")
-            await self.send(json.dumps({"error": "Invalid JSON format"}))
-            await self.close()
+        data = await _parse_json_or_close(
+            self,
+            text_data,
+            consumer_name="entity extraction",
+        )
+        if data is None:
             return
         if "denial_id" not in data:
             logger.warning("Missing denial_id in entity extraction request")
@@ -385,12 +445,12 @@ class PriorAuthConsumer(AsyncWebsocketConsumer):
         logger.debug(f"prior-auth ws: disconnect code={close_code}")
 
     async def receive(self, text_data):
-        try:
-            data = json.loads(text_data)
-        except json.JSONDecodeError as e:
-            logger.warning(f"Invalid JSON received in prior auth websocket: {e}")
-            await self.send(json.dumps({"error": "Invalid JSON format"}))
-            await self.close()
+        data = await _parse_json_or_close(
+            self,
+            text_data,
+            consumer_name="prior auth",
+        )
+        if data is None:
             return
         logger.debug("prior-auth ws: starting generation")
 
@@ -533,9 +593,26 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
 
     async def disconnect(self, close_code):
         logger.debug(f"chat ws: disconnect code={close_code}")
-        # If a chat was active, trigger analysis of denied items
+        # If a chat was active, enqueue denied-item analysis asynchronously.
+        # Disconnect stays non-blocking; analysis is eventually consistent.
         if self.chat_interface and self.chat_id:
-            await self._analyze_denied_items(self.chat_id)
+            try:
+                await enqueue_denied_items_analysis(chat_id=self.chat_id)
+            except Exception as e:
+                logger.opt(exception=True).warning(
+                    f"Failed to enqueue denied-item analysis for chat {self.chat_id}: {e}"
+                )
+
+    @classmethod
+    async def run_denied_items_analysis(cls, *, chat_id: str) -> None:
+        """Actor entry point: run the (idempotent) denied-items analysis.
+
+        Instantiated bare because ``_analyze_denied_items`` only reads/writes
+        the DB — it doesn't use websocket scope or connection state. Errors are
+        logged inside ``_analyze_denied_items``; nothing here needs to track
+        job status (see ``enqueue_denied_items_analysis``).
+        """
+        await cls()._analyze_denied_items(chat_id)
 
     async def _analyze_denied_items(self, chat_id: str):
         """
@@ -642,7 +719,13 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                                 chat.denied_reason = denied_reason[:_MAX_LEN]
                                 updated = True
                             if updated:
-                                await chat.asave()
+                                await sync_to_async(
+                                    self._persist_denied_items_transactional
+                                )(
+                                    chat.id,
+                                    denied_item[:_MAX_LEN] if denied_item else None,
+                                    denied_reason[:_MAX_LEN] if denied_reason else None,
+                                )
                                 logger.info(
                                     f"Chat {chat_id}: stored denied item/reason "
                                     f"(item_len={len(denied_item) if denied_item else 0}, "
@@ -669,17 +752,34 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                 f"Error analyzing denied items for chat {chat_id}: {e}"
             )
 
+    @staticmethod
+    def _persist_denied_items_transactional(
+        chat_id: uuid.UUID, denied_item: Optional[str], denied_reason: Optional[str]
+    ) -> None:
+        with transaction.atomic():
+            chat = OngoingChat.objects.select_for_update().get(id=chat_id)
+            if denied_item:
+                chat.denied_item = denied_item
+            if denied_reason:
+                chat.denied_reason = denied_reason
+            chat.save(update_fields=["denied_item", "denied_reason"])
+
     async def receive(self, text_data):
-        try:
-            data = json.loads(text_data)
-        except json.JSONDecodeError as e:
-            logger.warning(f"Invalid JSON received in ongoing chat websocket: {e}")
-            await self.send(json.dumps({"error": "Invalid JSON format"}))
-            await self.close()
+        data = await _parse_json_or_close(
+            self,
+            text_data,
+            consumer_name="ongoing chat",
+        )
+        if data is None:
             return
         # Get the required data -- note the message should be sent as "content"
-        # but we also accept "message" for backward compatibility.
-        message = data.get("message", data.get("content", None))
+        # but we also accept "message" for backward compatibility. Coerce
+        # any None/missing/non-string value to "" so the downstream
+        # detect_crisis_keywords/detect_delete_data_request calls (which
+        # do an unguarded regex .search on the message) can't crash on
+        # an iterate-only request.
+        message_raw = data.get("message", data.get("content", None))
+        message: str = message_raw if isinstance(message_raw, str) else ""
         chat_id = data.get("chat_id", self.chat_id)
         replay_requested = data.get("replay", False)
         iterate_on_appeal = data.get("iterate_on_appeal")

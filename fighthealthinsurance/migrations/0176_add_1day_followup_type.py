@@ -27,6 +27,9 @@ def remove_1day_followup_type(apps, schema_editor):
 
 class Migration(migrations.Migration):
     dependencies = [
+        # Both branches of the 0172 fork (0173/0174 medication contexts and
+        # the renamed 0175 RxNorm migration) so the graph keeps a single leaf.
+        ("fighthealthinsurance", "0174_seed_medication_contexts"),
         ("fighthealthinsurance", "0175_rxnormconcept"),
     ]
 

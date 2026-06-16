@@ -718,6 +718,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
         continue_url,
         cancel_url,
         card_required=False,
+        request=None,
     ):
         payment_method_collection = "always"
         if not card_required:
@@ -737,6 +738,17 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
             {"price": fax_metered_price_id},
         ]
         stripe_recovery_info = StripeRecoveryInfo.objects.create(items=line_items)
+        subscription_metadata = {
+            "payment_type": "professional_domain_subscription",
+            "professional_id": str(professional_user_id),
+            "domain_id": str(user_domain.id),
+            "recovery_info_id": str(stripe_recovery_info.id),
+        }
+        # Capture client IP/ASN so an expired subscription checkout can be tied
+        # back to the originating client (the expiry webhook is from Stripe).
+        from fhi_users.audit import tracking_metadata_for_request
+
+        subscription_metadata.update(tracking_metadata_for_request(request))
         checkout_session = stripe.checkout.Session.create(
             payment_method_types=["card"],
             line_items=line_items,  # type: ignore
@@ -745,12 +757,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
             cancel_url=cancel_url,
             customer_email=email,
             allow_promotion_codes=True,
-            metadata={
-                "payment_type": "professional_domain_subscription",
-                "professional_id": str(professional_user_id),
-                "domain_id": str(user_domain.id),
-                "recovery_info_id": str(stripe_recovery_info.id),
-            },
+            metadata=subscription_metadata,
             subscription_data={
                 "trial_period_days": 30,
                 "trial_settings": {
@@ -822,7 +829,12 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                 )
 
             checkout_session = self.create_stripe_checkout_session(
-                email, professional_user.id, user_domain, continue_url, cancel_url
+                email,
+                professional_user.id,
+                user_domain,
+                continue_url,
+                cancel_url,
+                request=request,
             )
             return Response(
                 serializers.FinishPaymentResponseSerializer(
@@ -1098,6 +1110,7 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                 continue_url,
                 cancel_url,
                 card_required=data["card_required"],
+                request=request,
             )
             extra_user_properties = ExtraUserProperties.objects.create(
                 user=user, email_verified=False

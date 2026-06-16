@@ -480,9 +480,7 @@ class StreamingAppealsRestFallbackTest(APITestCase):
         async def _drain(stream):
             chunks = []
             async for chunk in stream:
-                chunks.append(
-                    chunk.encode() if isinstance(chunk, str) else chunk
-                )
+                chunks.append(chunk.encode() if isinstance(chunk, str) else chunk)
             return b"".join(chunks)
 
         return async_to_sync(_drain)(response.streaming_content).decode()
@@ -490,9 +488,7 @@ class StreamingAppealsRestFallbackTest(APITestCase):
     @staticmethod
     def _content_lines(body: str) -> list:
         return [
-            line
-            for line in body.split("\n")
-            if line.strip() and '"content"' in line
+            line for line in body.split("\n") if line.strip() and '"content"' in line
         ]
 
     def _post_fallback(self, payload: dict):
@@ -540,9 +536,7 @@ class StreamingAppealsRestFallbackTest(APITestCase):
 
         async def fake_generate_appeals(_data):
             yield (
-                json.dumps(
-                    {"type": "status", "phase": "init", "message": "starting"}
-                )
+                json.dumps({"type": "status", "phase": "init", "message": "starting"})
                 + "\n"
             )
             yield json.dumps({"id": "1", "content": "Dear Insurer,..."}) + "\n"
@@ -586,9 +580,7 @@ class StreamingAppealsRestFallbackTest(APITestCase):
                 content_type="application/json",
             )
             self.assertEqual(response.status_code, 200)
-            self.assertEqual(
-                response["Content-Type"], "application/x-ndjson"
-            )
+            self.assertEqual(response["Content-Type"], "application/x-ndjson")
             # Anti-buffering headers — defeating these proxies is the
             # whole point of the fallback existing.
             self.assertEqual(response["X-Accel-Buffering"], "no")
@@ -680,9 +672,7 @@ class StreamingAppealsRestFallbackTest(APITestCase):
         triggered generation before the 404 would fail this assert."""
         from fighthealthinsurance.common_view_logic import AppealsBackendHelper
 
-        with patch.object(
-            AppealsBackendHelper, "generate_appeals"
-        ) as generate_appeals:
+        with patch.object(AppealsBackendHelper, "generate_appeals") as generate_appeals:
             response = self._post_fallback(
                 {
                     "denial_id": 999999,
@@ -752,10 +742,7 @@ class StreamingAppealsRestFallbackTest(APITestCase):
 
         async def fake_three_appeals(_data):
             for i in (1, 2, 3):
-                yield (
-                    json.dumps({"id": f"appeal-{i}", "content": f"Body {i}"})
-                    + "\n"
-                )
+                yield (json.dumps({"id": f"appeal-{i}", "content": f"Body {i}"}) + "\n")
             yield (
                 json.dumps(
                     {
@@ -796,6 +783,167 @@ class StreamingAppealsRestFallbackTest(APITestCase):
         self.assertEqual(len(ids), 3)
         # Dedup contract: every id is unique within a single stream
         self.assertEqual(len(set(ids)), len(ids))
+
+
+class EnableExternalModelsTest(APITestCase):
+    """Test the endpoint that lets users opt their denial into external
+    LLM models from the appeal page when the initial internal-only
+    generation produced few or no appeals."""
+
+    def _make_denial(
+        self,
+        *,
+        email: str = "owner@example.com",
+        use_external: bool = False,
+    ) -> Denial:
+        return Denial.objects.create(
+            denial_text="Test denial body",
+            hashed_email=Denial.get_hashed_email(email),
+            use_external=use_external,
+        )
+
+    def _post(self, payload: dict):
+        return self.client.post(
+            reverse("enable_external_models"),
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+    def test_flips_use_external_on_valid_credentials(self):
+        denial = self._make_denial()
+        self.assertFalse(denial.use_external)
+        response = self._post(
+            {
+                "denial_id": denial.denial_id,
+                "email": "owner@example.com",
+                "semi_sekret": denial.semi_sekret,
+            }
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"use_external": True})
+        denial.refresh_from_db()
+        self.assertTrue(denial.use_external)
+
+    def test_idempotent_when_already_enabled(self):
+        """Calling the endpoint when external models are already on
+        must succeed (200) without raising. The button is only shown to
+        users whose denial has use_external=False, but races and reloads
+        should not 500."""
+        denial = self._make_denial(email="already@example.com", use_external=True)
+        response = self._post(
+            {
+                "denial_id": denial.denial_id,
+                "email": "already@example.com",
+                "semi_sekret": denial.semi_sekret,
+            }
+        )
+        self.assertEqual(response.status_code, 200)
+        denial.refresh_from_db()
+        self.assertTrue(denial.use_external)
+
+    def test_rejects_wrong_semi_sekret(self):
+        denial = self._make_denial()
+        response = self._post(
+            {
+                "denial_id": denial.denial_id,
+                "email": "owner@example.com",
+                "semi_sekret": "wrong-sekret",
+            }
+        )
+        self.assertEqual(response.status_code, 404)
+        denial.refresh_from_db()
+        self.assertFalse(denial.use_external)
+
+    def test_rejects_wrong_email(self):
+        denial = self._make_denial()
+        response = self._post(
+            {
+                "denial_id": denial.denial_id,
+                "email": "someone-else@example.com",
+                "semi_sekret": denial.semi_sekret,
+            }
+        )
+        self.assertEqual(response.status_code, 404)
+        denial.refresh_from_db()
+        self.assertFalse(denial.use_external)
+
+    def test_rejects_missing_credentials(self):
+        denial = self._make_denial()
+        response = self._post({"denial_id": denial.denial_id})
+        self.assertEqual(response.status_code, 404)
+        denial.refresh_from_db()
+        self.assertFalse(denial.use_external)
+
+    def test_rejects_non_object_body(self):
+        """Non-mapping JSON bodies (arrays, strings, numbers) must 400
+        rather than 500. Without the isinstance guard, request.data.get
+        on a list would raise AttributeError."""
+        response = self.client.post(
+            reverse("enable_external_models"),
+            data=json.dumps([1, 2, 3]),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("JSON object", response.content.decode())
+
+    def test_cross_denial_isolation(self):
+        """Denial A's credentials must not be able to flip Denial B."""
+        denial_a = self._make_denial(email="alice@example.com")
+        denial_b = self._make_denial(email="bob@example.com")
+        response = self._post(
+            {
+                "denial_id": denial_b.denial_id,
+                "email": "alice@example.com",
+                "semi_sekret": denial_a.semi_sekret,
+            }
+        )
+        self.assertEqual(response.status_code, 404)
+        denial_b.refresh_from_db()
+        self.assertFalse(denial_b.use_external)
+
+
+class GenerateAppealUseExternalContextTest(APITestCase):
+    """The appeals page must expose `use_external` so the JS client can
+    decide whether to surface the 'request external models' opt-in."""
+
+    def test_context_reflects_internal_only_denial(self):
+        denial = Denial.objects.create(
+            denial_text="Internal-only denial",
+            hashed_email=Denial.get_hashed_email("internal@example.com"),
+            use_external=False,
+        )
+        response = self.client.get(
+            reverse("generate_appeal"),
+            {
+                "denial_id": str(denial.denial_id),
+                "email": "internal@example.com",
+                "semi_sekret": denial.semi_sekret,
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.context["use_external"])
+        # Prompt block (which wraps the button) only renders when
+        # use_external is False.
+        self.assertContains(response, "external-models-prompt")
+
+    def test_context_reflects_external_enabled_denial(self):
+        denial = Denial.objects.create(
+            denial_text="External-enabled denial",
+            hashed_email=Denial.get_hashed_email("external@example.com"),
+            use_external=True,
+        )
+        response = self.client.get(
+            reverse("generate_appeal"),
+            {
+                "denial_id": str(denial.denial_id),
+                "email": "external@example.com",
+                "semi_sekret": denial.semi_sekret,
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context["use_external"])
+        # When external is already on, we don't render the opt-in prompt.
+        self.assertNotContains(response, "external-models-prompt")
 
 
 class NotifyPatientTest(APITestCase):
@@ -1811,3 +1959,93 @@ class DuplicateUserDomainTest(APITestCase):
             name=self.domain_name
         ).count()
         self.assertEqual(domains_with_same_name, 1)
+
+
+class DemoRequestEndpointTest(APITestCase):
+    """The demo-request endpoint records the lead (with client IP/ASN) and
+    notifies sales. (Verification: before this change it did neither beyond
+    writing the DB row -- no email was ever sent.)"""
+
+    def test_records_ip_asn_and_emails_support42(self):
+        from fighthealthinsurance.models import DemoRequests
+
+        with patch(
+            "fhi_users.audit.get_asn_info", return_value=("64500", "EXAMPLE-NET")
+        ), patch("fighthealthinsurance.rest_views.send_mail") as mock_send:
+            response = self.client.post(
+                reverse("demorequest-list"),
+                data=json.dumps(
+                    {
+                        "email": "lead@example.com",
+                        "name": "Dr. Lead",
+                        "company": "Acme Health",
+                    }
+                ),
+                content_type="application/json",
+                REMOTE_ADDR="203.0.113.42",
+            )
+        self.assertEqual(response.status_code, 201)
+        demo = DemoRequests.objects.get(email="lead@example.com")
+        self.assertEqual(demo.ip_address, "203.0.113.42")
+        self.assertEqual(demo.asn, "64500")
+        self.assertEqual(demo.asn_name, "EXAMPLE-NET")
+        mock_send.assert_called_once()
+        # send_mail(subject, body, from_email, recipients): support42@ is always
+        # a recipient and the body carries the IP for lead vetting.
+        _subject, body, _from, recipients = mock_send.call_args.args
+        self.assertIn("support42@fighthealthinsurance.com", recipients)
+        self.assertIn("203.0.113.42", body)
+
+    def test_malformed_xforwardedfor_is_stored_bounded_not_500(self):
+        """A malformed/over-long X-Forwarded-For on the public demo endpoint is
+        stored (bounded), not rejected -- the IP comes from an unvalidated,
+        client-controlled header so it must not crash the lead write."""
+        from fighthealthinsurance.models import DemoRequests
+
+        with patch("fhi_users.audit.get_asn_info", return_value=("", "")), patch(
+            "fighthealthinsurance.rest_views.send_mail"
+        ):
+            response = self.client.post(
+                reverse("demorequest-list"),
+                data=json.dumps({"email": "spoofed@example.com"}),
+                content_type="application/json",
+                HTTP_X_FORWARDED_FOR="9" * 200,
+            )
+        self.assertEqual(response.status_code, 201)
+        demo = DemoRequests.objects.get(email="spoofed@example.com")
+        self.assertEqual(demo.ip_address, "9" * 64)
+
+    def test_extra_notification_recipient_is_configurable(self):
+        with patch(
+            "fighthealthinsurance.rest_views.send_mail"
+        ) as mock_send, self.settings(
+            DEMO_REQUEST_NOTIFICATION_EMAILS=[
+                "support42@fighthealthinsurance.com",
+                "sales@example.com",
+            ]
+        ):
+            response = self.client.post(
+                reverse("demorequest-list"),
+                data=json.dumps({"email": "lead2@example.com"}),
+                content_type="application/json",
+            )
+        self.assertEqual(response.status_code, 201)
+        recipients = mock_send.call_args.args[3]
+        self.assertIn("sales@example.com", recipients)
+
+    def test_mail_failure_does_not_fail_request(self):
+        # The lead is already persisted before the notification is attempted, so
+        # a mail-backend error must not turn into a 500.
+        from fighthealthinsurance.models import DemoRequests
+
+        with patch(
+            "fighthealthinsurance.rest_views.send_mail",
+            side_effect=RuntimeError("smtp down"),
+        ):
+            response = self.client.post(
+                reverse("demorequest-list"),
+                data=json.dumps({"email": "lead3@example.com"}),
+                content_type="application/json",
+            )
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(DemoRequests.objects.filter(email="lead3@example.com").exists())
