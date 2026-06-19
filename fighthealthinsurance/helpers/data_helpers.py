@@ -4,6 +4,9 @@ Data management helpers for Fight Health Insurance.
 Provides utilities for data removal and privacy compliance.
 """
 
+from django.contrib.auth import get_user_model
+
+from fhi_users.models import PatientUser
 from fighthealthinsurance.models import (
     Appeal,
     ChatLeads,
@@ -12,8 +15,10 @@ from fighthealthinsurance.models import (
     FaxesToSend,
     FollowUp,
     FollowUpSched,
+    InsuranceCallLog,
     MailingListSubscriber,
     OngoingChat,
+    PatientEvidence,
     PolicyDocument,
 )
 
@@ -51,3 +56,8 @@ class RemoveDataHelper:
         # Mailing list and demo requests
         MailingListSubscriber.objects.filter(email__iexact=email).delete()
         DemoRequests.objects.filter(email__iexact=email).delete()
+        # Patient dashboard data — linked via PatientUser, not hashed_email
+        User = get_user_model()
+        patient_users = PatientUser.objects.filter(user__email__iexact=email)
+        InsuranceCallLog.objects.filter(patient_user__in=patient_users).delete()
+        PatientEvidence.objects.filter(patient_user__in=patient_users).delete()
