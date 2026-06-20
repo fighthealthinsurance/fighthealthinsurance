@@ -377,6 +377,13 @@ def repetition_penalty(text: str, min_block_size: int = 3) -> float:
 class RemoteModelLike(DenialBase):
     """Base class for remote ML model backends used for chat and appeal generation."""
 
+    # Friendly tracking name, stamped by MLRouter during model registration so
+    # that consumers holding a model *instance* (e.g. the chooser in
+    # chooser_tasks.py) can record the same human-readable name the router uses
+    # (matches ModelDescription.name / ml_router.models_by_name keys) instead of
+    # an opaque ``<...object at 0x...>`` repr. ``None`` until the router stamps it.
+    name: Optional[str] = None
+
     # Keywords that indicate Medicaid/Medicare-related conversation
     # Note: All keywords should be lowercase for case-insensitive matching
     MEDICAID_KEYWORDS: ClassVar[List[str]] = [
@@ -460,6 +467,21 @@ class RemoteModelLike(DenialBase):
         "government health",
         "public health insurance",
     ]
+
+    def __str__(self) -> str:
+        # Prefer the friendly tracking name (stamped by MLRouter). Fall back to
+        # a class+model descriptor so logs and any consumer that calls
+        # ``str(model)`` never surface an opaque ``<...object at 0x...>`` repr.
+        name = getattr(self, "name", None)
+        if name:
+            return str(name)
+        model = getattr(self, "model", None)
+        if isinstance(model, str) and model:
+            return f"{type(self).__name__}({model})"
+        return type(self).__name__
+
+    def __repr__(self) -> str:
+        return self.__str__()
 
     def quality(self) -> int:
         return 100
@@ -3277,6 +3299,323 @@ class RemoteAnthropic(RemoteFullOpenLike):
         if not os.getenv("ANTHROPIC_API_KEY"):
             return False
         return self.rate_limiter.can_request()
+
+
+class RemoteAzureOpenLike(RemoteFullOpenLike):
+    """
+    Shared base for Azure-hosted, OpenAI-compatible generative backends.
+
+    Microsoft Azure serves both Azure OpenAI Service (GPT-family models) and,
+    via Azure AI Foundry, Anthropic Claude models through an OpenAI-compatible
+    ``/chat/completions`` surface that accepts Bearer-token authentication —
+    the same wire format ``RemoteOpenLike`` already speaks, so no SDK is
+    required.
+
+    Two things differ from the fixed public Anthropic/Groq endpoints:
+
+    * Azure resources are tenant-specific, so the endpoint *and* the API key
+      are read from environment variables rather than hard-coded.
+    * The set of available models is operator-specific (Azure "deployments"
+      are named by whoever provisions the resource), so each provider ships a
+      latest-models default that can be overridden with an environment
+      variable listing the deployment names to expose.
+
+    Subclasses configure a provider by setting the ``*_ENV`` names, the
+    friendly-name ``NAME_PREFIX`` (used for tracking, e.g. ``azure-openai``),
+    the ``MAX_LEN`` context window, and the ``DEFAULT_MODELS`` spec. Each
+    concrete subclass MUST also declare its own ``_rate_limiters`` /
+    ``_rate_limiter_lock`` so providers don't share rate-limit state.
+
+    Environment variables (names are subclass-specific):
+    - <API_KEY_ENV>:  API key for the Azure resource (required to enable)
+    - <ENDPOINT_ENV>: Base URL up to and including the OpenAI-compatible
+        version segment, e.g.
+        ``https://my-resource.openai.azure.com/openai/v1`` (required)
+    - <MODELS_ENV>:   Optional comma-separated list of deployment names to
+        expose instead of the latest-models default.
+    """
+
+    # --- Subclass configuration (overridden by concrete providers) --------
+    API_KEY_ENV: ClassVar[str] = ""
+    ENDPOINT_ENV: ClassVar[str] = ""
+    MODELS_ENV: ClassVar[str] = ""
+    NAME_PREFIX: ClassVar[str] = "azure"
+    PROVIDER_LABEL: ClassVar[str] = "Azure"
+    MAX_LEN: ClassVar[int] = 128000
+    # Ordered cheapest -> most expensive: (deployment_name, cost, tier).
+    DEFAULT_MODELS: ClassVar[List[Tuple[str, int, str]]] = []
+
+    # Per-provider rate-limit state. Declared here for type-safety; each
+    # concrete subclass overrides these with its own dict/lock so providers do
+    # not share rate-limit state.
+    _rate_limiters: ClassVar[dict[str, RateLimiter]] = {}
+    _rate_limiter_lock: ClassVar[threading.Lock] = threading.Lock()
+
+    # Re-raise ClientResponseError from the parent _infer so we can detect 429.
+    _propagate_http_errors: ClassVar[bool] = True
+
+    def __init__(self, model: str, dual_mode: bool = False):
+        api_key = os.getenv(self.API_KEY_ENV) if self.API_KEY_ENV else None
+        endpoint = os.getenv(self.ENDPOINT_ENV) if self.ENDPOINT_ENV else None
+        if not api_key:
+            raise EnvironmentError(
+                f"No API key found for {self.PROVIDER_LABEL}. Please set the "
+                f"{self.API_KEY_ENV} environment variable in your environment "
+                f"or .env file."
+            )
+        if not endpoint:
+            raise EnvironmentError(
+                f"No endpoint found for {self.PROVIDER_LABEL}. Please set the "
+                f"{self.ENDPOINT_ENV} environment variable (e.g. "
+                f"https://my-resource.openai.azure.com/openai/v1)."
+            )
+
+        api_base = self._normalize_endpoint(endpoint)
+        super().__init__(
+            api_base, api_key, model=model, dual_mode=dual_mode, max_len=self.MAX_LEN
+        )
+
+        self._ensure_rate_limiter(model)
+
+        tier = self.get_tier()
+        logger.debug(
+            f"{type(self).__name__} initialized: model={model}, tier={tier}, "
+            f"endpoint={api_base}"
+        )
+
+    @staticmethod
+    def _normalize_endpoint(endpoint: str) -> str:
+        """Trim trailing slashes and a trailing ``/chat/completions`` so the
+        operator can paste either the base URL or the full completions URL.
+
+        ``__infer`` appends ``/chat/completions`` to ``api_base``; stripping it
+        here keeps both forms working.
+        """
+        e = endpoint.strip().rstrip("/")
+        suffix = "/chat/completions"
+        if e.endswith(suffix):
+            e = e[: -len(suffix)]
+        return e
+
+    @classmethod
+    def _configured_deployments(cls) -> List[Tuple[str, int, str]]:
+        """Resolve the (deployment, cost, tier) list, honoring the optional
+        ``MODELS_ENV`` override. Overridden deployments inherit incrementing
+        costs from the cheapest default and a ``custom`` tier."""
+        override = os.getenv(cls.MODELS_ENV) if cls.MODELS_ENV else None
+        if override and override.strip():
+            names = [n.strip() for n in override.split(",") if n.strip()]
+            base_cost = cls.DEFAULT_MODELS[0][1] if cls.DEFAULT_MODELS else 60
+            return [(n, base_cost + i * 10, "custom") for i, n in enumerate(names)]
+        return list(cls.DEFAULT_MODELS)
+
+    @classmethod
+    def _ensure_rate_limiter(cls, model: str) -> None:
+        """Ensure a rate limiter exists for the given model (thread-safe)."""
+        if model not in cls._rate_limiters:
+            with cls._rate_limiter_lock:
+                if model not in cls._rate_limiters:
+                    cls._rate_limiters[model] = RateLimiter(
+                        name=f"{cls.NAME_PREFIX}-{model}",
+                    )
+                    logger.info(f"Created rate limiter for {cls.NAME_PREFIX}-{model}")
+
+    @property
+    def rate_limiter(self) -> RateLimiter:
+        """Get the rate limiter for this model instance."""
+        return self._rate_limiters[self.model]
+
+    @property
+    def supports_system(self):
+        return True
+
+    @property
+    def external(self):
+        return True
+
+    def get_tier(self) -> str:
+        """Get the tier (speed/quality/premium/custom) for this model."""
+        for deployment, _cost, tier in self._configured_deployments():
+            if deployment == self.model:
+                return tier
+        return "unknown"
+
+    async def _infer(
+        self,
+        system_prompts: list[str],
+        prompt: str,
+        patient_context: Optional[str] = None,
+        plan_context: Optional[str] = None,
+        pubmed_context: Optional[str] = None,
+        ml_citations_context: Optional[List[str]] = None,
+        history: Optional[List[dict[str, str]]] = None,
+        temperature: float = 0.7,
+    ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
+        """Perform inference with rate-limit checking and 429 handling.
+
+        Mirrors the public Anthropic/Groq backends: skip when backing off, and
+        on a 429 mark the limiter exhausted (honoring Retry-After) so other
+        backends can take over.
+        """
+        if not self.rate_limiter.can_request():
+            logger.debug(
+                f"{type(self).__name__}._infer: Skipping {self.model} - backing off"
+            )
+            return None
+
+        try:
+            return await super()._infer(
+                system_prompts=system_prompts,
+                prompt=prompt,
+                patient_context=patient_context,
+                plan_context=plan_context,
+                pubmed_context=pubmed_context,
+                ml_citations_context=ml_citations_context,
+                history=history,
+                temperature=temperature,
+            )
+        except aiohttp.ClientResponseError as e:
+            if e.status == 429:
+                retry_after = 60.0
+                if hasattr(e, "headers") and e.headers:
+                    retry_header = e.headers.get("Retry-After", "")
+                    if retry_header:
+                        try:
+                            retry_after = float(retry_header)
+                        except ValueError:
+                            logger.debug(
+                                f"{type(self).__name__}._infer: Non-numeric "
+                                f"Retry-After header '{retry_header}' for "
+                                f"{self.model}; using default {retry_after}s"
+                            )
+
+                retry_after = max(1.0, min(retry_after, 600.0))
+
+                self.rate_limiter.mark_exhausted(retry_after)
+                logger.warning(
+                    f"{type(self).__name__}._infer: 429 from {self.PROVIDER_LABEL} "
+                    f"for {self.model}, backing off for {retry_after}s"
+                )
+                return None
+            else:
+                raise
+        except Exception as e:
+            logger.warning(f"{type(self).__name__}._infer error for {self.model}: {e}")
+            return None
+
+    @classmethod
+    def models(cls) -> List[ModelDescription]:
+        """Return the configured Azure deployments as ModelDescriptions.
+
+        Returns an empty list (the backend is effectively disabled) unless both
+        the API key and endpoint environment variables are set.
+        """
+        # The shared base carries no configuration of its own.
+        if not cls.API_KEY_ENV or not cls.ENDPOINT_ENV:
+            return []
+        if not os.getenv(cls.API_KEY_ENV):
+            logger.debug(f"{cls.__name__}.models: {cls.API_KEY_ENV} not set, skipping")
+            return []
+        if not os.getenv(cls.ENDPOINT_ENV):
+            logger.debug(
+                f"{cls.__name__}.models: {cls.API_KEY_ENV} set but "
+                f"{cls.ENDPOINT_ENV} missing; skipping"
+            )
+            return []
+
+        return [
+            ModelDescription(
+                cost=cost,
+                name=f"{cls.NAME_PREFIX}/{deployment}",
+                internal_name=deployment,
+            )
+            for deployment, cost, _tier in cls._configured_deployments()
+        ]
+
+    def model_is_ok(self) -> bool:
+        """Check the model is available (env configured and not rate limited).
+
+        We don't query the ``/models`` endpoint: Azure's OpenAI-compatible
+        layer support varies, and we'd rather fail fast on actual inference
+        than block startup.
+        """
+        if self.API_KEY_ENV and not os.getenv(self.API_KEY_ENV):
+            return False
+        if self.ENDPOINT_ENV and not os.getenv(self.ENDPOINT_ENV):
+            return False
+        return self.rate_limiter.can_request()
+
+
+class RemoteAzureOpenAI(RemoteAzureOpenLike):
+    """
+    Azure OpenAI Service backend (OpenAI GPT-family models hosted on Azure).
+
+    Uses the Azure OpenAI v1 (OpenAI-compatible) endpoint, e.g.
+    ``https://<resource>.openai.azure.com/openai/v1/chat/completions`` with
+    Bearer-token auth. The ``model`` sent on the wire is the Azure *deployment*
+    name; by default we assume deployments are named after the model id, but
+    that can be overridden with ``AZURE_OPENAI_MODELS``.
+
+    Environment variables:
+    - AZURE_OPENAI_API_KEY:  API key for the Azure OpenAI resource (required)
+    - AZURE_OPENAI_ENDPOINT: Base URL incl. ``/openai/v1`` (required)
+    - AZURE_OPENAI_MODELS:   Optional comma-separated deployment names
+    """
+
+    API_KEY_ENV: ClassVar[str] = "AZURE_OPENAI_API_KEY"
+    ENDPOINT_ENV: ClassVar[str] = "AZURE_OPENAI_ENDPOINT"
+    MODELS_ENV: ClassVar[str] = "AZURE_OPENAI_MODELS"
+    NAME_PREFIX: ClassVar[str] = "azure-openai"
+    PROVIDER_LABEL: ClassVar[str] = "Azure OpenAI"
+    MAX_LEN: ClassVar[int] = 128000
+
+    # Latest broadly-available Azure OpenAI deployments (cheapest -> premium).
+    DEFAULT_MODELS: ClassVar[List[Tuple[str, int, str]]] = [
+        ("gpt-4.1-mini", 55, "speed"),
+        ("gpt-5-mini", 75, "quality"),
+        ("gpt-5", 135, "premium"),
+    ]
+
+    # Per-subclass rate-limit state (do not share across providers).
+    _rate_limiters: ClassVar[dict[str, RateLimiter]] = {}
+    _rate_limiter_lock: ClassVar[threading.Lock] = threading.Lock()
+
+
+class RemoteAzureClaude(RemoteAzureOpenLike):
+    """
+    Anthropic Claude models hosted on Azure AI Foundry (Microsoft Foundry).
+
+    Uses Foundry's OpenAI-compatible chat-completions surface with Bearer-token
+    auth. Friendly names are prefixed ``azure-anthropic/`` so usage tracking in
+    the chooser and regular workflows clearly distinguishes Azure-hosted Claude
+    from the direct Anthropic API (``anthropic/...``).
+
+    Environment variables:
+    - AZURE_ANTHROPIC_API_KEY:  API key for the Foundry resource (required)
+    - AZURE_ANTHROPIC_ENDPOINT: Base URL for the OpenAI-compatible endpoint
+        (required), e.g. ``https://<resource>.services.ai.azure.com/openai/v1``
+    - AZURE_ANTHROPIC_MODELS:   Optional comma-separated deployment names
+    """
+
+    API_KEY_ENV: ClassVar[str] = "AZURE_ANTHROPIC_API_KEY"
+    ENDPOINT_ENV: ClassVar[str] = "AZURE_ANTHROPIC_ENDPOINT"
+    MODELS_ENV: ClassVar[str] = "AZURE_ANTHROPIC_MODELS"
+    NAME_PREFIX: ClassVar[str] = "azure-anthropic"
+    PROVIDER_LABEL: ClassVar[str] = "Azure AI Foundry (Claude)"
+    MAX_LEN: ClassVar[int] = 200000
+
+    # Latest Claude models (cheapest -> premium). Deployment names default to
+    # the canonical model ids; override with AZURE_ANTHROPIC_MODELS if your
+    # Foundry deployments use different names.
+    DEFAULT_MODELS: ClassVar[List[Tuple[str, int, str]]] = [
+        ("claude-haiku-4-5", 55, "speed"),
+        ("claude-sonnet-4-6", 95, "quality"),
+        ("claude-opus-4-8", 135, "premium"),
+    ]
+
+    # Per-subclass rate-limit state (do not share across providers).
+    _rate_limiters: ClassVar[dict[str, RateLimiter]] = {}
+    _rate_limiter_lock: ClassVar[threading.Lock] = threading.Lock()
 
 
 class TailscaleModelBackend(RemoteFullOpenLike):
