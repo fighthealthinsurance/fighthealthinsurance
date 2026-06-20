@@ -34,6 +34,7 @@ AZURE_CLAUDE_ENV = {
 
 
 def _clear_azure_env():
+    """Remove all Azure/allow-list env vars so tests start from a clean slate."""
     for k in (
         "AZURE_OPENAI_API_KEY",
         "AZURE_OPENAI_ENDPOINT",
@@ -50,15 +51,18 @@ class TestAzureBackends(unittest.TestCase):
     """Config, model registration, and endpoint handling for both providers."""
 
     def setUp(self):
+        """Reset rate-limiter state and Azure env vars before each test."""
         RemoteAzureOpenAI._rate_limiters.clear()
         RemoteAzureClaude._rate_limiters.clear()
         _clear_azure_env()
 
     def tearDown(self):
+        """Clear Azure env vars set during the test."""
         _clear_azure_env()
 
     @patch.dict(os.environ, AZURE_OPENAI_ENV)
     def test_openai_init(self):
+        """Azure OpenAI init wires model, external/system flags, context, tier."""
         m = RemoteAzureOpenAI(model="gpt-5")
         self.assertEqual(m.model, "gpt-5")
         self.assertTrue(m.external)
@@ -68,6 +72,7 @@ class TestAzureBackends(unittest.TestCase):
 
     @patch.dict(os.environ, AZURE_CLAUDE_ENV)
     def test_claude_init(self):
+        """Azure Claude init is external and uses the 200K context window."""
         m = RemoteAzureClaude(model="claude-opus-4-8")
         self.assertTrue(m.external)
         self.assertEqual(m.get_max_context(), 200000)
@@ -78,12 +83,14 @@ class TestAzureBackends(unittest.TestCase):
         clear=True,
     )
     def test_missing_key_raises(self):
+        """Missing API key raises EnvironmentError naming the key env var."""
         with self.assertRaises(EnvironmentError) as ctx:
             RemoteAzureOpenAI(model="gpt-5")
         self.assertIn("AZURE_OPENAI_API_KEY", str(ctx.exception))
 
     @patch.dict(os.environ, {"AZURE_ANTHROPIC_API_KEY": "k"}, clear=True)
     def test_missing_endpoint_raises(self):
+        """Missing endpoint raises EnvironmentError naming the endpoint env var."""
         with self.assertRaises(EnvironmentError) as ctx:
             RemoteAzureClaude(model="claude-opus-4-8")
         self.assertIn("AZURE_ANTHROPIC_ENDPOINT", str(ctx.exception))
@@ -97,11 +104,13 @@ class TestAzureBackends(unittest.TestCase):
         },
     )
     def test_endpoint_normalized(self):
+        """A pasted /chat/completions URL is normalized back to the base."""
         m = RemoteAzureOpenAI(model="gpt-5")
         self.assertEqual(m.api_base, "https://res.openai.azure.com/openai/v1")
 
     @patch.dict(os.environ, AZURE_OPENAI_ENV)
     def test_openai_models_prefixed_and_cost_ordered(self):
+        """models() yields azure-openai/-prefixed entries, cheapest first."""
         models = RemoteAzureOpenAI.models()
         self.assertEqual(len(models), 3)
         self.assertTrue(all(m.name.startswith("azure-openai/") for m in models))
@@ -110,6 +119,7 @@ class TestAzureBackends(unittest.TestCase):
 
     @patch.dict(os.environ, AZURE_CLAUDE_ENV)
     def test_claude_models_use_latest_ids(self):
+        """Azure Claude exposes the latest Haiku/Sonnet/Opus-4.8 deployments."""
         names = {m.name for m in RemoteAzureClaude.models()}
         self.assertEqual(
             names,
@@ -121,6 +131,7 @@ class TestAzureBackends(unittest.TestCase):
         )
 
     def test_models_disabled_without_env(self):
+        """Without env config, providers (and the base) register no models."""
         # No key/endpoint -> providers register nothing; base never registers.
         self.assertEqual(RemoteAzureOpenAI.models(), [])
         self.assertEqual(RemoteAzureClaude.models(), [])
@@ -131,6 +142,7 @@ class TestAzureBackends(unittest.TestCase):
         {**AZURE_OPENAI_ENV, "AZURE_OPENAI_MODELS": "gpt-5, my-deploy "},
     )
     def test_models_env_override(self):
+        """AZURE_OPENAI_MODELS overrides the deployment list (tier=custom)."""
         models = RemoteAzureOpenAI.models()
         self.assertEqual([m.internal_name for m in models], ["gpt-5", "my-deploy"])
         self.assertEqual(
@@ -142,6 +154,7 @@ class TestAzureBackends(unittest.TestCase):
 
     @patch.dict(os.environ, AZURE_OPENAI_ENV)
     def test_model_is_ok(self):
+        """model_is_ok() is True when configured, False once rate limited."""
         m = RemoteAzureOpenAI(model="gpt-5")
         self.assertTrue(m.model_is_ok())
         m.rate_limiter.mark_exhausted(60.0)
@@ -152,15 +165,20 @@ class TestAzureInfer(unittest.TestCase):
     """Rate-limit and 429 handling for Azure backends."""
 
     def setUp(self):
+        """Reset rate-limiter state and Azure env vars before each test."""
         RemoteAzureOpenAI._rate_limiters.clear()
         _clear_azure_env()
 
     def tearDown(self):
+        """Clear Azure env vars set during the test."""
         _clear_azure_env()
 
     @patch.dict(os.environ, AZURE_OPENAI_ENV)
     def test_skips_when_rate_limited(self):
+        """_infer short-circuits to None while the limiter is backing off."""
+
         async def run():
+            """Exhaust the limiter, then assert _infer returns None."""
             m = RemoteAzureOpenAI(model="gpt-5")
             m.rate_limiter.mark_exhausted(60.0)
             self.assertIsNone(await m._infer(system_prompts=["x"], prompt="y"))
@@ -169,7 +187,10 @@ class TestAzureInfer(unittest.TestCase):
 
     @patch.dict(os.environ, AZURE_OPENAI_ENV)
     def test_429_backs_off(self):
+        """A 429 marks the limiter exhausted (honoring Retry-After)."""
+
         async def run():
+            """Force a 429 from the parent _infer and assert back-off."""
             m = RemoteAzureOpenAI(model="gpt-5")
             error = aiohttp.ClientResponseError(
                 request_info=MagicMock(),
@@ -189,7 +210,10 @@ class TestAzureInfer(unittest.TestCase):
 
     @patch.dict(os.environ, AZURE_OPENAI_ENV)
     def test_non_429_propagates(self):
+        """Non-429 HTTP errors propagate rather than being swallowed."""
+
         async def run():
+            """Force a 500 from the parent _infer and assert it raises."""
             m = RemoteAzureOpenAI(model="gpt-5")
             error = aiohttp.ClientResponseError(
                 request_info=MagicMock(),
@@ -216,19 +240,23 @@ class _FakeModel(RemoteModelLike):
     """Minimal concrete model used to drive MLRouter in tests."""
 
     def __init__(self, model, external=False, context_only=False):
+        """Build a fake model with configurable external/context_only flags."""
         self.model = model
         self._external = external
         self._context_only = context_only
 
     @property
     def external(self):
+        """Whether this fake is treated as an external (remote) model."""
         return self._external
 
     @property
     def context_only(self):
+        """Whether this fake is a context-only (citation) model."""
         return self._context_only
 
     async def _infer(self, *args, **kwargs):
+        """No-op inference; the router tests never call it."""
         return None
 
 
@@ -237,6 +265,7 @@ class _FakeBackend:
 
     @classmethod
     def models(cls):
+        """Return two local (internal) fake models."""
         return [
             ModelDescription(
                 cost=10,
@@ -260,6 +289,7 @@ class _FakeMixedBackend:
 
     @classmethod
     def models(cls):
+        """Return two remote, one local, and one context-only fake model."""
         return [
             ModelDescription(
                 cost=10,
@@ -292,12 +322,15 @@ class TestModelNameTracking(unittest.TestCase):
     """The router must stamp friendly names so the chooser records them."""
 
     def setUp(self):
+        """Clear ENABLED_REMOTE_MODELS before each test."""
         os.environ.pop("ENABLED_REMOTE_MODELS", None)
 
     def tearDown(self):
+        """Clear ENABLED_REMOTE_MODELS set during the test."""
         os.environ.pop("ENABLED_REMOTE_MODELS", None)
 
     def test_router_stamps_friendly_name_on_instances(self):
+        """The router stamps each model instance with its friendly name."""
         with patch(
             "fighthealthinsurance.ml.ml_router.candidate_model_backends",
             [_FakeBackend],
@@ -329,11 +362,13 @@ class TestModelNameTracking(unittest.TestCase):
         self.assertNotIn("object at 0x", recorded)
 
     def test_str_returns_friendly_name_when_stamped(self):
+        """str(model) returns the stamped friendly name."""
         stamped = _FakeModel("alpha-int")
         stamped.name = "fake/alpha"
         self.assertEqual(str(stamped), "fake/alpha")
 
     def test_str_descriptive_when_unstamped(self):
+        """An unstamped model still renders a descriptive (non-repr) string."""
         unstamped = _FakeModel("alpha-int")
         rendered = str(unstamped)
         self.assertNotIn("object at 0x", rendered)
@@ -345,12 +380,15 @@ class TestEnabledRemoteModels(unittest.TestCase):
     models are always enabled."""
 
     def setUp(self):
+        """Clear ENABLED_REMOTE_MODELS before each test."""
         os.environ.pop("ENABLED_REMOTE_MODELS", None)
 
     def tearDown(self):
+        """Clear ENABLED_REMOTE_MODELS set during the test."""
         os.environ.pop("ENABLED_REMOTE_MODELS", None)
 
     def _build(self):
+        """Build an MLRouter backed only by the mixed fake backend."""
         with patch(
             "fighthealthinsurance.ml.ml_router.candidate_model_backends",
             [_FakeMixedBackend],
@@ -358,6 +396,7 @@ class TestEnabledRemoteModels(unittest.TestCase):
             return MLRouter()
 
     def test_unset_enables_all(self):
+        """With the var unset, every model (remote and local) is enabled."""
         self.assertIsNone(MLRouter._enabled_model_names())
         router = self._build()
         self.assertIn("remote/alpha", router.models_by_name)
@@ -366,6 +405,7 @@ class TestEnabledRemoteModels(unittest.TestCase):
 
     @patch.dict(os.environ, {"ENABLED_REMOTE_MODELS": "remote/alpha"})
     def test_allow_list_filters_remote_by_friendly_name(self):
+        """The allow-list drops unlisted remote models but keeps locals."""
         router = self._build()
         self.assertIn("remote/alpha", router.models_by_name)
         self.assertNotIn("remote/beta", router.models_by_name)
@@ -374,6 +414,7 @@ class TestEnabledRemoteModels(unittest.TestCase):
 
     @patch.dict(os.environ, {"ENABLED_REMOTE_MODELS": "rbeta-int"})
     def test_allow_list_also_matches_internal_name(self):
+        """The allow-list matches a model's internal name too, not just friendly."""
         router = self._build()
         self.assertIn("remote/beta", router.models_by_name)
         self.assertNotIn("remote/alpha", router.models_by_name)
@@ -391,6 +432,7 @@ class TestEnabledRemoteModels(unittest.TestCase):
 
     @patch.dict(os.environ, {"ENABLED_REMOTE_MODELS": "  "})
     def test_blank_value_enables_all(self):
+        """A blank/whitespace value is treated as 'no restriction' (None)."""
         self.assertIsNone(MLRouter._enabled_model_names())
 
 

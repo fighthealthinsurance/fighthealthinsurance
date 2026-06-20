@@ -469,9 +469,9 @@ class RemoteModelLike(DenialBase):
     ]
 
     def __str__(self) -> str:
-        # Prefer the friendly tracking name (stamped by MLRouter). Fall back to
-        # a class+model descriptor so logs and any consumer that calls
-        # ``str(model)`` never surface an opaque ``<...object at 0x...>`` repr.
+        """Render as the friendly tracking name (stamped by MLRouter), falling
+        back to a ``Class(model)`` descriptor so logs and any ``str(model)``
+        consumer never surface an opaque ``<...object at 0x...>`` repr."""
         name = getattr(self, "name", None)
         if name:
             return str(name)
@@ -481,6 +481,7 @@ class RemoteModelLike(DenialBase):
         return type(self).__name__
 
     def __repr__(self) -> str:
+        """Same as ``__str__`` (friendly name / descriptor, never an object id)."""
         return self.__str__()
 
     def quality(self) -> int:
@@ -3242,6 +3243,9 @@ class RemoteAzureOpenLike(RateLimitedRemoteOpenLike):
     DEFAULT_MODELS: ClassVar[List[Tuple[str, int, str]]] = []
 
     def __init__(self, model: str, dual_mode: bool = False):
+        """Configure the backend from the subclass's env vars (API key +
+        endpoint), normalize the endpoint, and create the rate limiter.
+        Raises EnvironmentError if the key or endpoint is missing."""
         api_key = os.getenv(self.API_KEY_ENV) if self.API_KEY_ENV else None
         endpoint = os.getenv(self.ENDPOINT_ENV) if self.ENDPOINT_ENV else None
         if not api_key:
@@ -3293,10 +3297,12 @@ class RemoteAzureOpenLike(RateLimitedRemoteOpenLike):
 
     @property
     def supports_system(self):
+        """Azure GPT/Claude deployments accept the OpenAI ``system`` role."""
         return True
 
     @property
     def external(self):
+        """Azure-hosted models are external (paid) backends."""
         return True
 
     def get_tier(self) -> str:
