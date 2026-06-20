@@ -1756,8 +1756,9 @@ section:not(.slider) .share-subcopy {
     resize: vertical;
 }
 
-/* Keep the legacy fixed-width textareas inside the card (these classes are
-   only used by this form). */
+/* These textarea classes carry fixed em widths elsewhere in this file
+   (e.g. .form-textarea-wide is 50em, .comments is 80em); override them to
+   100% here so the fields stay inside the card. Used only by this form. */
 .pro-interest-form .form-textarea-medium,
 .pro-interest-form .most_common_denial {
     width: 100%;
