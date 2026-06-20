@@ -75,13 +75,44 @@ class ProVersionSignupSuccessTest(TestCase):
         )
 
 
+class ProVersionSignupInvalidSubmissionTest(TestCase):
+    """A submission missing the required email is rejected, not saved.
+
+    Email is the only required field on the interest form, so an otherwise
+    empty POST exercises the form_invalid path -- which must re-render the
+    page (with the per-field error markup the template emits) instead of
+    redirecting, creating a record, or sending any mail.
+    """
+
+    def setUp(self):
+        self.response = self.client.post(
+            reverse("pro_version"), {"name": "No Email", "email": ""}
+        )
+
+    def test_does_not_redirect(self):
+        # form_invalid re-renders in place rather than redirecting to thankyou.
+        self.assertEqual(self.response.status_code, 200)
+
+    def test_rerenders_form_with_field_error(self):
+        # Confirms the template surfaces validation errors to the user.
+        self.assertContains(self.response, "This field is required.")
+
+    def test_creates_no_record(self):
+        self.assertFalse(InterestedProfessional.objects.exists())
+
+    def test_sends_no_email(self):
+        # Neither the team notification nor the thank-you fire on a rejected
+        # submission (both live on the form_valid path).
+        self.assertEqual(mail.outbox, [])
+
+
 class ProVersionSignupEdgeCaseTest(TestCase):
     """Rendering, failure-mode, and security guards for the signup form."""
 
     def test_get_renders_signup_form(self):
         response = self.client.get(reverse("pro_version"))
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "New Updated Professional Version Coming Soon")
+        self.assertContains(response, "New Updated Professional Version Available")
         self.assertContains(response, 'method="post"')
         # Pay-to-express-interest has been dropped.
         self.assertNotContains(response, "Pay $10")

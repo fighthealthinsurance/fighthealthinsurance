@@ -5,68 +5,79 @@ Fight Health Insurance Professional Version
 {% load static %}
 {% load absolute %}
 {% block content %}
-<section id="contact">
+<section id="contact" class="pro-interest-section">
     <div class="container">
-      <div class="section-header text-align-center">
-	<h3 class="pro-version-header" style="text-align: center; padding: 15px; margin-top: 10vh;">New Updated Professional Version Available</h3>
-      </div>
-      <p>
-	We have an exciting new option for professionals (providers, revenue cycle management, pharma, etc.) and we'd love to tell you more! Let us know a little bit about you, your common denials, and we'll be in touch to see how we can best help.
-      </p>
-      <p>
-	Not a professional (e.g. providers office, appeal specialist, lawyer, etc.) but still ended up here? Don't worry!
-      <a href="{% url 'scan' %}">You can try the regular appeal generator here.</a>
-      </p>
-      <p>
-	<div class="main-form">
-	<form method="post">
-	  {% csrf_token %}
-          <div class="together-form-group">
-	    <div>
-              <label for="id_name">Name:</label>
+      <div class="pro-interest-card">
+        <h1 class="pro-interest-title">New Updated Professional Version Available</h1>
+        <p class="pro-interest-lead">
+          We have an exciting new option for professionals (providers, revenue cycle management, pharma, etc.) and we'd love to tell you more! Let us know a little bit about you, your common denials, and we'll be in touch to see how we can best help.
+        </p>
+        <p class="pro-interest-note">
+          Not a professional (e.g. provider's office, appeal specialist, lawyer, etc.) but still ended up here? Don't worry!
+          <a href="{% url 'scan' %}">You can try the regular appeal generator here.</a>
+        </p>
+
+        <form method="post" class="pro-interest-form">
+          {% csrf_token %}
+          {% if form.non_field_errors %}
+          <div class="alert alert-danger" role="alert">{{ form.non_field_errors }}</div>
+          {% endif %}
+
+          <div class="pro-row">
+            <div class="pro-field">
+              <label for="id_name">Name</label>
               {{ form.name }}
-	    </div>
-	    <div>
-              <label for="id_job_title_or_provider_type">Job title or Provider type:</label>
-              {{ form.job_title_or_provider_type}}
-	    </div>
+              {{ form.name.errors }}
+            </div>
+            <div class="pro-field">
+              <label for="id_job_title_or_provider_type">Job title or provider type</label>
+              {{ form.job_title_or_provider_type }}
+              {{ form.job_title_or_provider_type.errors }}
+            </div>
           </div>
-          <div class="together-form-group">
-	    <div>
-              <label for="id_email">Email:</label>
+
+          <div class="pro-row">
+            <div class="pro-field">
+              <label for="id_email">Email</label>
               {{ form.email }}
-	    </div>
-	    <div>
-              <label for="id_phone">Phone number:</label>
+              {{ form.email.errors }}
+            </div>
+            <div class="pro-field">
+              <label for="id_phone_number">Phone number</label>
               {{ form.phone_number }}
-	    </div>
+              {{ form.phone_number.errors }}
+            </div>
           </div>
-          <div class="form-group business_name">
-            <label for="id_business_name" style="display: block;">Business name:</label>
+
+          <div class="pro-field">
+            <label for="id_business_name">Business name</label>
             {{ form.business_name }}
-          </div><br>
-
-          <div class="form-group address">
-            <label for="id_address" style="display: block;">Address:</label>
-            {{ form.address}}
-          </div><br>
-
-          <div class="form-group most_common_denial">
-            <label for="id_most_common_denial">Most common denial:</label>
-            {{ form.most_common_denial}}
+            {{ form.business_name.errors }}
           </div>
 
-          <div class="form-group">
-            <label for="id_comments">Comments:</label>
-            {{ form.comments}}
+          <div class="pro-field">
+            <label for="id_address">Address</label>
+            {{ form.address }}
+            {{ form.address.errors }}
           </div>
 
-          <div class="form-group">
-	    <input class="pro-submit-btn" type="submit" value="Submit">
+          <div class="pro-field">
+            <label for="id_most_common_denial">Most common denial</label>
+            {{ form.most_common_denial }}
+            {{ form.most_common_denial.errors }}
           </div>
-	</form>
-	</div>
-      </p>
+
+          <div class="pro-field">
+            <label for="id_comments">Comments</label>
+            {{ form.comments }}
+            {{ form.comments.errors }}
+          </div>
+
+          <div class="pro-interest-actions">
+            <input class="pro-submit-btn" type="submit" value="Submit">
+          </div>
+        </form>
+      </div>
     </div>
 </section>
 {% endblock content %}
