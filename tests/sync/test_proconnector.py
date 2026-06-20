@@ -264,6 +264,13 @@ class QueueFilteringTest(TestCase):
         self.assertIsNone(get_next_interested_professional())
         self.assertEqual(proconnector.remaining_interested_professionals_count(), 0)
 
+    def test_filters_out_internal_test_accounts(self):
+        # FHI's own internal test accounts must never be introduced to Cofactor.
+        _make_pro(email="farts@farts.com")
+        _make_pro(email="holden@pigscanfly.ca")
+        self.assertIsNone(get_next_interested_professional())
+        self.assertEqual(proconnector.remaining_interested_professionals_count(), 0)
+
     def test_legit_record_still_returned_alongside_filtered(self):
         _make_pro(email="testing@example.com")
         _make_pro(name="http://x", email="spam@elsewhere.biz")
@@ -818,3 +825,16 @@ class ProExtractCSVTest(TestCase):
         pro.save()
         _, content = self._get_csv()
         self.assertIn("done@realclinic.org", content)
+
+    def test_csv_neutralizes_formula_injection(self):
+        # Free-text fields come from the public signup form; a value starting
+        # with =/+/-/@ must be prefixed so spreadsheet apps treat it as text.
+        # (Payload avoids "http" so it isn't dropped by the spam filter.)
+        _login(self.client, is_staff=True)
+        _make_pro(name="=SUM(1+2)", email="inject@realclinic.org")
+        _, content = self._get_csv()
+        # Raw formula must never sit at a cell boundary (delimiter/newline).
+        self.assertNotIn(",=SUM(1+2)", content)
+        self.assertNotIn("\n=SUM(1+2)", content)
+        # It is prefixed with a quote so spreadsheets render it as text.
+        self.assertIn("'=SUM(1+2)", content)

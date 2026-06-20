@@ -621,6 +621,22 @@ class _CSVEcho:
         return value
 
 
+def _csv_safe(value: Any) -> str:
+    """Neutralize CSV formula injection in user-controlled fields.
+
+    Spreadsheet apps (Excel/Sheets) interpret a cell beginning with =, +, -, @
+    (or a leading tab/CR) as a formula. Several exported fields come from the
+    public, unauthenticated signup form, so prefix any such value with a single
+    quote to force it to render as text. ``None`` becomes an empty cell.
+    """
+    if value is None:
+        return ""
+    text = str(value)
+    if text[:1] in ("=", "+", "-", "@", "\t", "\r"):
+        return "'" + text
+    return text
+
+
 class ProConnectorExtractCSVView(View):
     """Staff CSV export of interested professionals, excluding test/spam signups.
 
@@ -657,7 +673,9 @@ class ProConnectorExtractCSVView(View):
         def rows():
             yield writer.writerow(self.columns)
             for pro in qs.iterator():
-                yield writer.writerow([getattr(pro, column) for column in self.columns])
+                yield writer.writerow(
+                    [_csv_safe(getattr(pro, column)) for column in self.columns]
+                )
 
         response = StreamingHttpResponse(rows(), content_type="text/csv")
         response["Content-Disposition"] = (

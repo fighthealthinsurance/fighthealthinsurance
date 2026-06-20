@@ -41,8 +41,16 @@ DEFAULT_PROFESSIONAL_CC_EMAIL = "professional@fighthealthinsurance.com"
 
 # Obvious test / spam signups we never introduce. These are filtered out of the
 # processing queue and the CSV export entirely (never shown, never counted)
-# rather than skipped, so they don't clutter the staff workflow.
-FILTERED_EMAILS: frozenset[str] = frozenset({"testing@example.com"})
+# rather than skipped, so they don't clutter the staff workflow. Includes FHI's
+# own internal test accounts (mirroring charts' signup-analytics exclusion) so
+# outreach and the export never target ourselves.
+FILTERED_EMAILS: frozenset[str] = frozenset(
+    {
+        "testing@example.com",
+        "farts@farts.com",
+        "holden@pigscanfly.ca",
+    }
+)
 # Signups on these TLDs are treated as spam / out of scope and filtered out.
 SPAM_EMAIL_TLDS: tuple[str, ...] = (".ru", ".ua")
 
