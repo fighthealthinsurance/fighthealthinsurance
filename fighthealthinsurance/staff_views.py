@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional
 from django.db import transaction
 from django.db.models import Count
 from django.http import HttpResponse
+from django.shortcuts import redirect, render
 from django.utils import timezone
 from django.views import View, generic
 
@@ -27,6 +28,7 @@ from fighthealthinsurance.models import (
     ChooserVote,
     Denial,
     FollowUpSched,
+    InterestedProfessional,
     MailingListSubscriber,
     ProfessionalDomainRelation,
     ProfessionalUser,
@@ -34,6 +36,15 @@ from fighthealthinsurance.models import (
     UserDomain,
 )
 from fighthealthinsurance.email_utils import is_sendable_email
+from fighthealthinsurance.partner_intro import (
+    PARTNER_INTRO_SUBJECT,
+    build_search_links,
+    generate_intro_email,
+    get_next_interested_professional,
+    get_professional_cc_email,
+    remaining_interested_professionals_count,
+    send_partner_intro_email,
+)
 from fighthealthinsurance.type_utils import User
 from fighthealthinsurance.utils import mask_email_for_logging
 
@@ -453,3 +464,139 @@ class ModelUsageDashboardView(generic.TemplateView):
             if mn:
                 presented[mn] += n
         return _merge_stats(chosen, dict(presented))
+
+
+class PartnerIntroProcessView(View):
+    """Staff workflow to introduce interested professionals to Cofactor AI.
+
+    After refocusing FHI on its consumer mission, we have a sourcing agreement
+    to introduce interested professionals (who may be a fit) to Cofactor AI.
+    This view shows one unprocessed ``InterestedProfessional`` at a time with all
+    known details, research links, and an AI-drafted (editable) intro email.
+    Staff either send the (edited) email -- which CCs the professional contact
+    address and records the send -- or skip the record. Either action advances to
+    the next unprocessed record. Nothing is sent automatically.
+    """
+
+    template_name = "partner_intro.html"
+
+    def _render_record(
+        self,
+        request,
+        pro: InterestedProfessional,
+        *,
+        draft: Optional[str] = None,
+        subject: Optional[str] = None,
+        skip_reason: str = "",
+        error: Optional[str] = None,
+        status: int = 200,
+    ) -> HttpResponse:
+        """Render the processing page for a single record.
+
+        ``draft`` is generated via AI only when not supplied so that re-renders
+        after a validation/send error preserve the staff member's edits.
+        """
+        if draft is None:
+            draft = generate_intro_email(pro)
+        links = build_search_links(pro)
+        context = {
+            "title": "Partner Introduction",
+            "pro": pro,
+            "email_body": draft,
+            "subject": subject or PARTNER_INTRO_SUBJECT,
+            "cc_email": get_professional_cc_email(),
+            "google_search_url": links["google"],
+            "linkedin_search_url": links["linkedin"],
+            "skip_reason": skip_reason,
+            "error": error,
+            "remaining_count": remaining_interested_professionals_count(),
+        }
+        return render(request, self.template_name, context, status=status)
+
+    def get(self, request) -> HttpResponse:
+        pro = get_next_interested_professional()
+        if pro is None:
+            return render(
+                request,
+                self.template_name,
+                {"title": "Partner Introduction", "pro": None, "remaining_count": 0},
+            )
+        return self._render_record(request, pro)
+
+    def post(self, request) -> HttpResponse:
+        action = request.POST.get("action")
+        pro_id = request.POST.get("interested_professional_id")
+        pro = (
+            InterestedProfessional.objects.filter(pk=pro_id).first() if pro_id else None
+        )
+        if pro is None:
+            # The record vanished (deleted, or already processed in another
+            # tab). Just advance to whatever is next.
+            return redirect("partner_intro_process")
+
+        if action == "skip":
+            skip_reason = (request.POST.get("skip_reason") or "").strip()
+            pro.partner_intro_skipped = True
+            pro.partner_intro_skip_reason = skip_reason or None
+            pro.save()
+            logger.info(
+                f"Staff user {request.user.username} skipped partner intro for "
+                f"InterestedProfessional {pro.id}"
+            )
+            return redirect("partner_intro_process")
+
+        if action == "send":
+            body = (request.POST.get("email_body") or "").strip()
+            subject = (
+                request.POST.get("subject") or ""
+            ).strip() or PARTNER_INTRO_SUBJECT
+            skip_reason = (request.POST.get("skip_reason") or "").strip()
+            if not body:
+                return self._render_record(
+                    request,
+                    pro,
+                    draft=request.POST.get("email_body", ""),
+                    subject=subject,
+                    skip_reason=skip_reason,
+                    error="Email body cannot be empty.",
+                    status=400,
+                )
+            if not is_sendable_email(pro.email):
+                return self._render_record(
+                    request,
+                    pro,
+                    draft=body,
+                    subject=subject,
+                    skip_reason=skip_reason,
+                    error=f"{pro.email} is not a sendable address; cannot send.",
+                    status=400,
+                )
+            try:
+                send_partner_intro_email(pro, subject=subject, body=body)
+            except Exception as e:
+                logger.opt(exception=True).error(
+                    f"Failed to send partner intro to "
+                    f"{mask_email_for_logging(pro.email)}: {e}"
+                )
+                # Do NOT mark attempted on failure; let staff retry the record.
+                return self._render_record(
+                    request,
+                    pro,
+                    draft=body,
+                    subject=subject,
+                    skip_reason=skip_reason,
+                    error=f"Failed to send email: {e}",
+                    status=500,
+                )
+            pro.partner_intro_email_body = body
+            pro.partner_intro_attempted = True
+            pro.partner_intro_sent_at = timezone.now()
+            pro.save()
+            logger.info(
+                f"Staff user {request.user.username} sent partner intro to "
+                f"InterestedProfessional {pro.id}"
+            )
+            return redirect("partner_intro_process")
+
+        # Unknown / missing action -- re-render the current record.
+        return self._render_record(request, pro, error="Unknown action.", status=400)
