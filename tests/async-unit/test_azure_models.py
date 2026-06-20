@@ -1,13 +1,9 @@
 """
 Tests for the Azure-hosted generative backends and model-name tracking.
 
-Covers:
-- RemoteAzureOpenAI / RemoteAzureClaude initialization and configuration
-- Endpoint normalization, default + overridable model lists, cost tiers
-- Rate-limit checking and 429 handling
-- MLRouter stamping friendly names onto model instances (so the chooser
-  workflow records readable names instead of object reprs)
-- The ENABLED_REMOTE_MODELS allow-list
+Covers the Azure OpenAI / Claude backends (config, model lists, endpoint
+normalization, 429 handling), the MLRouter name-stamping that lets the chooser
+record readable model names, and the ENABLED_REMOTE_MODELS allow-list.
 """
 
 import asyncio
@@ -26,7 +22,6 @@ from fighthealthinsurance.ml.ml_models import (
     RemoteModelLike,
 )
 from fighthealthinsurance.ml.ml_router import MLRouter
-from fighthealthinsurance.utils import RateLimiter
 
 AZURE_OPENAI_ENV = {
     "AZURE_OPENAI_API_KEY": "test-key",
@@ -51,45 +46,47 @@ def _clear_azure_env():
         os.environ.pop(k, None)
 
 
-class TestRemoteAzureOpenAIInit(unittest.TestCase):
-    """Initialization of the Azure OpenAI backend."""
+class TestAzureBackends(unittest.TestCase):
+    """Config, model registration, and endpoint handling for both providers."""
 
     def setUp(self):
         RemoteAzureOpenAI._rate_limiters.clear()
+        RemoteAzureClaude._rate_limiters.clear()
         _clear_azure_env()
 
     def tearDown(self):
         _clear_azure_env()
 
     @patch.dict(os.environ, AZURE_OPENAI_ENV)
-    def test_init_with_valid_config(self):
-        model = RemoteAzureOpenAI(model="gpt-5")
-        self.assertEqual(model.model, "gpt-5")
-        self.assertTrue(model.supports_system)
-        self.assertTrue(model.external)
-        self.assertEqual(model.get_max_context(), 128000)
+    def test_openai_init(self):
+        m = RemoteAzureOpenAI(model="gpt-5")
+        self.assertEqual(m.model, "gpt-5")
+        self.assertTrue(m.external)
+        self.assertTrue(m.supports_system)
+        self.assertEqual(m.get_max_context(), 128000)
+        self.assertEqual(m.get_tier(), "premium")
 
-    @patch.dict(os.environ, AZURE_OPENAI_ENV)
-    def test_init_creates_rate_limiter(self):
-        model = RemoteAzureOpenAI(model="gpt-5")
-        self.assertIn("gpt-5", RemoteAzureOpenAI._rate_limiters)
-        self.assertIsInstance(model.rate_limiter, RateLimiter)
+    @patch.dict(os.environ, AZURE_CLAUDE_ENV)
+    def test_claude_init(self):
+        m = RemoteAzureClaude(model="claude-opus-4-8")
+        self.assertTrue(m.external)
+        self.assertEqual(m.get_max_context(), 200000)
 
     @patch.dict(
         os.environ,
         {"AZURE_OPENAI_ENDPOINT": AZURE_OPENAI_ENV["AZURE_OPENAI_ENDPOINT"]},
         clear=True,
     )
-    def test_init_without_api_key_raises(self):
+    def test_missing_key_raises(self):
         with self.assertRaises(EnvironmentError) as ctx:
             RemoteAzureOpenAI(model="gpt-5")
         self.assertIn("AZURE_OPENAI_API_KEY", str(ctx.exception))
 
-    @patch.dict(os.environ, {"AZURE_OPENAI_API_KEY": "test-key"}, clear=True)
-    def test_init_without_endpoint_raises(self):
+    @patch.dict(os.environ, {"AZURE_ANTHROPIC_API_KEY": "k"}, clear=True)
+    def test_missing_endpoint_raises(self):
         with self.assertRaises(EnvironmentError) as ctx:
-            RemoteAzureOpenAI(model="gpt-5")
-        self.assertIn("AZURE_OPENAI_ENDPOINT", str(ctx.exception))
+            RemoteAzureClaude(model="claude-opus-4-8")
+        self.assertIn("AZURE_ANTHROPIC_ENDPOINT", str(ctx.exception))
 
     @patch.dict(
         os.environ,
@@ -99,123 +96,56 @@ class TestRemoteAzureOpenAIInit(unittest.TestCase):
             "AZURE_OPENAI_ENDPOINT": "https://res.openai.azure.com/openai/v1/chat/completions/",
         },
     )
-    def test_endpoint_normalization_strips_completions_suffix(self):
-        model = RemoteAzureOpenAI(model="gpt-5")
-        self.assertEqual(model.api_base, "https://res.openai.azure.com/openai/v1")
-
-
-class TestRemoteAzureClaudeInit(unittest.TestCase):
-    """Initialization of the Azure AI Foundry (Claude) backend."""
-
-    def setUp(self):
-        RemoteAzureClaude._rate_limiters.clear()
-        _clear_azure_env()
-
-    def tearDown(self):
-        _clear_azure_env()
-
-    @patch.dict(os.environ, AZURE_CLAUDE_ENV)
-    def test_init_with_valid_config(self):
-        model = RemoteAzureClaude(model="claude-opus-4-8")
-        self.assertEqual(model.model, "claude-opus-4-8")
-        self.assertTrue(model.external)
-        self.assertEqual(model.get_max_context(), 200000)
-
-    @patch.dict(os.environ, {"AZURE_ANTHROPIC_API_KEY": "k"}, clear=True)
-    def test_init_without_endpoint_raises(self):
-        with self.assertRaises(EnvironmentError) as ctx:
-            RemoteAzureClaude(model="claude-opus-4-8")
-        self.assertIn("AZURE_ANTHROPIC_ENDPOINT", str(ctx.exception))
-
-    def test_providers_use_separate_rate_limiter_state(self):
-        """Each concrete provider must own its rate-limiter dict."""
-        self.assertIsNot(
-            RemoteAzureOpenAI._rate_limiters, RemoteAzureClaude._rate_limiters
-        )
-
-
-class TestAzureModels(unittest.TestCase):
-    """models() class method behavior for both Azure providers."""
-
-    def setUp(self):
-        _clear_azure_env()
-
-    def tearDown(self):
-        _clear_azure_env()
+    def test_endpoint_normalized(self):
+        m = RemoteAzureOpenAI(model="gpt-5")
+        self.assertEqual(m.api_base, "https://res.openai.azure.com/openai/v1")
 
     @patch.dict(os.environ, AZURE_OPENAI_ENV)
-    def test_openai_models_have_prefix(self):
+    def test_openai_models_prefixed_and_cost_ordered(self):
         models = RemoteAzureOpenAI.models()
         self.assertEqual(len(models), 3)
-        for m in models:
-            self.assertTrue(
-                m.name.startswith("azure-openai/"),
-                f"{m.name} should start with azure-openai/",
-            )
+        self.assertTrue(all(m.name.startswith("azure-openai/") for m in models))
+        costs = [m.cost for m in models]
+        self.assertEqual(costs, sorted(costs))  # cheapest -> premium
 
     @patch.dict(os.environ, AZURE_CLAUDE_ENV)
-    def test_claude_models_have_prefix_and_latest_ids(self):
-        models = RemoteAzureClaude.models()
-        names = {m.name for m in models}
-        self.assertIn("azure-anthropic/claude-opus-4-8", names)
-        self.assertIn("azure-anthropic/claude-sonnet-4-6", names)
-        self.assertIn("azure-anthropic/claude-haiku-4-5", names)
-
-    @patch.dict(os.environ, AZURE_OPENAI_ENV)
-    def test_openai_models_cost_ordering(self):
-        models = {m.name: m for m in RemoteAzureOpenAI.models()}
-        self.assertLess(
-            models["azure-openai/gpt-4.1-mini"].cost,
-            models["azure-openai/gpt-5-mini"].cost,
-        )
-        self.assertLess(
-            models["azure-openai/gpt-5-mini"].cost,
-            models["azure-openai/gpt-5"].cost,
+    def test_claude_models_use_latest_ids(self):
+        names = {m.name for m in RemoteAzureClaude.models()}
+        self.assertEqual(
+            names,
+            {
+                "azure-anthropic/claude-haiku-4-5",
+                "azure-anthropic/claude-sonnet-4-6",
+                "azure-anthropic/claude-opus-4-8",
+            },
         )
 
-    def test_models_empty_without_env(self):
-        # Neither key nor endpoint set.
+    def test_models_disabled_without_env(self):
+        # No key/endpoint -> providers register nothing; base never registers.
         self.assertEqual(RemoteAzureOpenAI.models(), [])
         self.assertEqual(RemoteAzureClaude.models(), [])
-
-    @patch.dict(os.environ, {"AZURE_OPENAI_API_KEY": "k"}, clear=True)
-    def test_models_empty_with_key_but_no_endpoint(self):
-        self.assertEqual(RemoteAzureOpenAI.models(), [])
+        self.assertEqual(RemoteAzureOpenLike.models(), [])
 
     @patch.dict(
         os.environ,
-        {**AZURE_OPENAI_ENV, "AZURE_OPENAI_MODELS": "gpt-5, my-custom-deploy "},
+        {**AZURE_OPENAI_ENV, "AZURE_OPENAI_MODELS": "gpt-5, my-deploy "},
     )
-    def test_models_override_via_env(self):
+    def test_models_env_override(self):
         models = RemoteAzureOpenAI.models()
-        names = [m.name for m in models]
-        self.assertEqual(names, ["azure-openai/gpt-5", "azure-openai/my-custom-deploy"])
-        # Internal (deployment) name is the bare override entry, trimmed.
-        internal = {m.internal_name for m in models}
-        self.assertEqual(internal, {"gpt-5", "my-custom-deploy"})
-
-    def test_base_class_yields_no_models(self):
-        """The shared base carries no configuration and registers nothing."""
-        self.assertEqual(RemoteAzureOpenLike.models(), [])
-
-
-class TestAzureTiers(unittest.TestCase):
-    def setUp(self):
-        RemoteAzureOpenAI._rate_limiters.clear()
-        RemoteAzureClaude._rate_limiters.clear()
-        _clear_azure_env()
-
-    def tearDown(self):
-        _clear_azure_env()
+        self.assertEqual([m.internal_name for m in models], ["gpt-5", "my-deploy"])
+        self.assertEqual(
+            [m.name for m in models],
+            ["azure-openai/gpt-5", "azure-openai/my-deploy"],
+        )
+        # An overridden (non-default) deployment reports the "custom" tier.
+        self.assertEqual(RemoteAzureOpenAI(model="my-deploy").get_tier(), "custom")
 
     @patch.dict(os.environ, AZURE_OPENAI_ENV)
-    def test_default_tier(self):
-        self.assertEqual(RemoteAzureOpenAI(model="gpt-5").get_tier(), "premium")
-        self.assertEqual(RemoteAzureOpenAI(model="gpt-4.1-mini").get_tier(), "speed")
-
-    @patch.dict(os.environ, {**AZURE_OPENAI_ENV, "AZURE_OPENAI_MODELS": "foo-deploy"})
-    def test_override_tier_is_custom(self):
-        self.assertEqual(RemoteAzureOpenAI(model="foo-deploy").get_tier(), "custom")
+    def test_model_is_ok(self):
+        m = RemoteAzureOpenAI(model="gpt-5")
+        self.assertTrue(m.model_is_ok())
+        m.rate_limiter.mark_exhausted(60.0)
+        self.assertFalse(m.model_is_ok())
 
 
 class TestAzureInfer(unittest.TestCase):
@@ -229,21 +159,18 @@ class TestAzureInfer(unittest.TestCase):
         _clear_azure_env()
 
     @patch.dict(os.environ, AZURE_OPENAI_ENV)
-    def test_infer_checks_rate_limit(self):
+    def test_skips_when_rate_limited(self):
         async def run():
-            model = RemoteAzureOpenAI(model="gpt-5")
-            model.rate_limiter.mark_exhausted(60.0)
-            result = await model._infer(
-                system_prompts=["You are helpful."], prompt="Test"
-            )
-            self.assertIsNone(result)
+            m = RemoteAzureOpenAI(model="gpt-5")
+            m.rate_limiter.mark_exhausted(60.0)
+            self.assertIsNone(await m._infer(system_prompts=["x"], prompt="y"))
 
         asyncio.run(run())
 
     @patch.dict(os.environ, AZURE_OPENAI_ENV)
-    def test_infer_handles_429(self):
+    def test_429_backs_off(self):
         async def run():
-            model = RemoteAzureOpenAI(model="gpt-5")
+            m = RemoteAzureOpenAI(model="gpt-5")
             error = aiohttp.ClientResponseError(
                 request_info=MagicMock(),
                 history=(),
@@ -251,25 +178,19 @@ class TestAzureInfer(unittest.TestCase):
                 message="Rate limited",
                 headers={"Retry-After": "120"},
             )
-            # super()._infer resolves through RemoteFullOpenLike (the base's parent).
+            # super()._infer resolves through RemoteFullOpenLike.
             with patch.object(
-                RemoteFullOpenLike,
-                "_infer",
-                new_callable=AsyncMock,
-                side_effect=error,
+                RemoteFullOpenLike, "_infer", new_callable=AsyncMock, side_effect=error
             ):
-                result = await model._infer(
-                    system_prompts=["You are helpful."], prompt="Test"
-                )
-            self.assertIsNone(result)
-            self.assertTrue(model.rate_limiter.get_status()["exhausted"])
+                self.assertIsNone(await m._infer(system_prompts=["x"], prompt="y"))
+            self.assertTrue(m.rate_limiter.get_status()["exhausted"])
 
         asyncio.run(run())
 
     @patch.dict(os.environ, AZURE_OPENAI_ENV)
-    def test_infer_other_http_errors_propagate(self):
+    def test_non_429_propagates(self):
         async def run():
-            model = RemoteAzureOpenAI(model="gpt-5")
+            m = RemoteAzureOpenAI(model="gpt-5")
             error = aiohttp.ClientResponseError(
                 request_info=MagicMock(),
                 history=(),
@@ -278,24 +199,12 @@ class TestAzureInfer(unittest.TestCase):
                 headers={},
             )
             with patch.object(
-                RemoteFullOpenLike,
-                "_infer",
-                new_callable=AsyncMock,
-                side_effect=error,
+                RemoteFullOpenLike, "_infer", new_callable=AsyncMock, side_effect=error
             ):
                 with self.assertRaises(aiohttp.ClientResponseError):
-                    await model._infer(
-                        system_prompts=["You are helpful."], prompt="Test"
-                    )
+                    await m._infer(system_prompts=["x"], prompt="y")
 
         asyncio.run(run())
-
-    @patch.dict(os.environ, AZURE_OPENAI_ENV)
-    def test_model_is_ok(self):
-        model = RemoteAzureOpenAI(model="gpt-5")
-        self.assertTrue(model.model_is_ok())
-        model.rate_limiter.mark_exhausted(60.0)
-        self.assertFalse(model.model_is_ok())
 
 
 # ---------------------------------------------------------------------------

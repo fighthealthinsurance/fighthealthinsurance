@@ -3302,37 +3302,15 @@ class RemoteAnthropic(RemoteFullOpenLike):
 
 
 class RemoteAzureOpenLike(RemoteFullOpenLike):
-    """
-    Shared base for Azure-hosted, OpenAI-compatible generative backends.
+    """Shared base for Azure-hosted, OpenAI-compatible backends.
 
-    Microsoft Azure serves both Azure OpenAI Service (GPT-family models) and,
-    via Azure AI Foundry, Anthropic Claude models through an OpenAI-compatible
-    ``/chat/completions`` surface that accepts Bearer-token authentication —
-    the same wire format ``RemoteOpenLike`` already speaks, so no SDK is
-    required.
-
-    Two things differ from the fixed public Anthropic/Groq endpoints:
-
-    * Azure resources are tenant-specific, so the endpoint *and* the API key
-      are read from environment variables rather than hard-coded.
-    * The set of available models is operator-specific (Azure "deployments"
-      are named by whoever provisions the resource), so each provider ships a
-      latest-models default that can be overridden with an environment
-      variable listing the deployment names to expose.
-
-    Subclasses configure a provider by setting the ``*_ENV`` names, the
-    friendly-name ``NAME_PREFIX`` (used for tracking, e.g. ``azure-openai``),
-    the ``MAX_LEN`` context window, and the ``DEFAULT_MODELS`` spec. Each
-    concrete subclass MUST also declare its own ``_rate_limiters`` /
-    ``_rate_limiter_lock`` so providers don't share rate-limit state.
-
-    Environment variables (names are subclass-specific):
-    - <API_KEY_ENV>:  API key for the Azure resource (required to enable)
-    - <ENDPOINT_ENV>: Base URL up to and including the OpenAI-compatible
-        version segment, e.g.
-        ``https://my-resource.openai.azure.com/openai/v1`` (required)
-    - <MODELS_ENV>:   Optional comma-separated list of deployment names to
-        expose instead of the latest-models default.
+    Azure serves both Azure OpenAI (GPT) and, via Azure AI Foundry, Claude
+    through an OpenAI-compatible ``/chat/completions`` surface with Bearer auth
+    — the wire format ``RemoteOpenLike`` already speaks. Azure resources and
+    deployments are tenant-specific, so the endpoint, key, and (latest-default)
+    model list come from environment variables. Concrete subclasses set the
+    ``*_ENV`` names, ``NAME_PREFIX``, ``MAX_LEN`` and ``DEFAULT_MODELS``, and
+    each declares its own ``_rate_limiters``/``_rate_limiter_lock``.
     """
 
     # --- Subclass configuration (overridden by concrete providers) --------
@@ -3385,12 +3363,8 @@ class RemoteAzureOpenLike(RemoteFullOpenLike):
 
     @staticmethod
     def _normalize_endpoint(endpoint: str) -> str:
-        """Trim trailing slashes and a trailing ``/chat/completions`` so the
-        operator can paste either the base URL or the full completions URL.
-
-        ``__infer`` appends ``/chat/completions`` to ``api_base``; stripping it
-        here keeps both forms working.
-        """
+        """Strip trailing slashes and a trailing ``/chat/completions`` (which
+        ``__infer`` re-appends) so either form of the URL works."""
         e = endpoint.strip().rstrip("/")
         suffix = "/chat/completions"
         if e.endswith(suffix):
@@ -3399,9 +3373,8 @@ class RemoteAzureOpenLike(RemoteFullOpenLike):
 
     @classmethod
     def _configured_deployments(cls) -> List[Tuple[str, int, str]]:
-        """Resolve the (deployment, cost, tier) list, honoring the optional
-        ``MODELS_ENV`` override. Overridden deployments inherit incrementing
-        costs from the cheapest default and a ``custom`` tier."""
+        """(deployment, cost, tier) list, honoring the optional ``MODELS_ENV``
+        override (overrides inherit incrementing costs and a ``custom`` tier)."""
         override = os.getenv(cls.MODELS_ENV) if cls.MODELS_ENV else None
         if override and override.strip():
             names = [n.strip() for n in override.split(",") if n.strip()]
@@ -3451,12 +3424,8 @@ class RemoteAzureOpenLike(RemoteFullOpenLike):
         history: Optional[List[dict[str, str]]] = None,
         temperature: float = 0.7,
     ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
-        """Perform inference with rate-limit checking and 429 handling.
-
-        Mirrors the public Anthropic/Groq backends: skip when backing off, and
-        on a 429 mark the limiter exhausted (honoring Retry-After) so other
-        backends can take over.
-        """
+        """Inference with rate-limit/429 handling (mirrors Anthropic/Groq:
+        skip when backing off; on 429 back off honoring Retry-After)."""
         if not self.rate_limiter.can_request():
             logger.debug(
                 f"{type(self).__name__}._infer: Skipping {self.model} - backing off"
@@ -3505,21 +3474,14 @@ class RemoteAzureOpenLike(RemoteFullOpenLike):
 
     @classmethod
     def models(cls) -> List[ModelDescription]:
-        """Return the configured Azure deployments as ModelDescriptions.
-
-        Returns an empty list (the backend is effectively disabled) unless both
-        the API key and endpoint environment variables are set.
-        """
-        # The shared base carries no configuration of its own.
+        """Configured Azure deployments; empty (disabled) unless the base class
+        is subclassed and both the key and endpoint env vars are set."""
         if not cls.API_KEY_ENV or not cls.ENDPOINT_ENV:
-            return []
-        if not os.getenv(cls.API_KEY_ENV):
-            logger.debug(f"{cls.__name__}.models: {cls.API_KEY_ENV} not set, skipping")
-            return []
-        if not os.getenv(cls.ENDPOINT_ENV):
+            return []  # the shared base carries no configuration of its own
+        if not os.getenv(cls.API_KEY_ENV) or not os.getenv(cls.ENDPOINT_ENV):
             logger.debug(
-                f"{cls.__name__}.models: {cls.API_KEY_ENV} set but "
-                f"{cls.ENDPOINT_ENV} missing; skipping"
+                f"{cls.__name__}.models: {cls.API_KEY_ENV}/{cls.ENDPOINT_ENV} "
+                f"not both set, skipping"
             )
             return []
 
@@ -3533,12 +3495,8 @@ class RemoteAzureOpenLike(RemoteFullOpenLike):
         ]
 
     def model_is_ok(self) -> bool:
-        """Check the model is available (env configured and not rate limited).
-
-        We don't query the ``/models`` endpoint: Azure's OpenAI-compatible
-        layer support varies, and we'd rather fail fast on actual inference
-        than block startup.
-        """
+        """Available if env is configured and not rate limited. (No ``/models``
+        query — Azure's compat-layer support varies; fail fast on inference.)"""
         if self.API_KEY_ENV and not os.getenv(self.API_KEY_ENV):
             return False
         if self.ENDPOINT_ENV and not os.getenv(self.ENDPOINT_ENV):
@@ -3547,19 +3505,11 @@ class RemoteAzureOpenLike(RemoteFullOpenLike):
 
 
 class RemoteAzureOpenAI(RemoteAzureOpenLike):
-    """
-    Azure OpenAI Service backend (OpenAI GPT-family models hosted on Azure).
+    """Azure OpenAI Service (GPT family). Registers as ``azure-openai/<deploy>``.
 
-    Uses the Azure OpenAI v1 (OpenAI-compatible) endpoint, e.g.
-    ``https://<resource>.openai.azure.com/openai/v1/chat/completions`` with
-    Bearer-token auth. The ``model`` sent on the wire is the Azure *deployment*
-    name; by default we assume deployments are named after the model id, but
-    that can be overridden with ``AZURE_OPENAI_MODELS``.
-
-    Environment variables:
-    - AZURE_OPENAI_API_KEY:  API key for the Azure OpenAI resource (required)
-    - AZURE_OPENAI_ENDPOINT: Base URL incl. ``/openai/v1`` (required)
-    - AZURE_OPENAI_MODELS:   Optional comma-separated deployment names
+    Configure AZURE_OPENAI_API_KEY + AZURE_OPENAI_ENDPOINT (the ``/openai/v1``
+    base URL); optionally override the deployment list with AZURE_OPENAI_MODELS.
+    The wire ``model`` is the Azure deployment name. See README / .env.example.
     """
 
     API_KEY_ENV: ClassVar[str] = "AZURE_OPENAI_API_KEY"
@@ -3582,19 +3532,10 @@ class RemoteAzureOpenAI(RemoteAzureOpenLike):
 
 
 class RemoteAzureClaude(RemoteAzureOpenLike):
-    """
-    Anthropic Claude models hosted on Azure AI Foundry (Microsoft Foundry).
-
-    Uses Foundry's OpenAI-compatible chat-completions surface with Bearer-token
-    auth. Friendly names are prefixed ``azure-anthropic/`` so usage tracking in
-    the chooser and regular workflows clearly distinguishes Azure-hosted Claude
-    from the direct Anthropic API (``anthropic/...``).
-
-    Environment variables:
-    - AZURE_ANTHROPIC_API_KEY:  API key for the Foundry resource (required)
-    - AZURE_ANTHROPIC_ENDPOINT: Base URL for the OpenAI-compatible endpoint
-        (required), e.g. ``https://<resource>.services.ai.azure.com/openai/v1``
-    - AZURE_ANTHROPIC_MODELS:   Optional comma-separated deployment names
+    """Claude on Azure AI Foundry. Registers as ``azure-anthropic/<deploy>``
+    (distinct from the direct ``anthropic/`` API so usage tracking can tell them
+    apart). Configure AZURE_ANTHROPIC_API_KEY + AZURE_ANTHROPIC_ENDPOINT;
+    optionally override the deployment list with AZURE_ANTHROPIC_MODELS.
     """
 
     API_KEY_ENV: ClassVar[str] = "AZURE_ANTHROPIC_API_KEY"
