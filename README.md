@@ -77,7 +77,7 @@ The router auto-discovers any external backend whose API key (and, for Azure,
 endpoint) is configured. Each model is registered under a friendly name that is
 recorded for usage tracking in both the regular appeal workflow and the chooser
 (e.g. `azure-openai/gpt-5`, `azure-anthropic/claude-opus-4-8`,
-`anthropic/claude-opus-4-7`). Configured names are printed in the
+`anthropic/claude-opus-4-8`). Configured names are printed in the
 `All loaded models` line at startup.
 
 | Provider | Required env vars | Friendly name prefix |
@@ -115,11 +115,14 @@ recorded for usage tracking in both the regular appeal workflow and the chooser
    ids, list them explicitly with `AZURE_OPENAI_MODELS` /
    `AZURE_ANTHROPIC_MODELS` (comma-separated).
 
-**Restricting which models load:** Set `ENABLED_REMOTE_MODELS` to a
-comma-separated list of friendly names to enable *only* those models. When the
-variable is unset (the default), every configured model is enabled.
+**Restricting which remote models load:** Set `ENABLED_REMOTE_MODELS` to a
+comma-separated list of friendly names to enable *only* those **remote**
+(external) models. Local/internal models (e.g. `fhi-legacy`, the self-hosted
+backends) are **always enabled** regardless of this setting. When the variable
+is unset (the default), every configured model is enabled.
 ```bash
-# Only load Azure Opus and Azure GPT-5, nothing else:
+# Of the remote providers, load only Azure Opus and Azure GPT-5
+# (local models still load):
 export ENABLED_REMOTE_MODELS="azure-anthropic/claude-opus-4-8,azure-openai/gpt-5"
 ```
 

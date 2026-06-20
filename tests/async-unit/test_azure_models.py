@@ -306,12 +306,13 @@ class TestAzureInfer(unittest.TestCase):
 class _FakeModel(RemoteModelLike):
     """Minimal concrete model used to drive MLRouter in tests."""
 
-    def __init__(self, model):
+    def __init__(self, model, external=False):
         self.model = model
+        self._external = external
 
     @property
     def external(self):
-        return False
+        return self._external
 
     @property
     def context_only(self):
@@ -322,7 +323,7 @@ class _FakeModel(RemoteModelLike):
 
 
 class _FakeBackend:
-    """Backend stub whose models() returns pre-built _FakeModel instances."""
+    """Backend stub of local/internal models (for name-tracking tests)."""
 
     @classmethod
     def models(cls):
@@ -331,13 +332,41 @@ class _FakeBackend:
                 cost=10,
                 name="fake/alpha",
                 internal_name="alpha-int",
-                model=_FakeModel("alpha-int"),
+                model=_FakeModel("alpha-int", external=False),
             ),
             ModelDescription(
                 cost=20,
                 name="fake/beta",
                 internal_name="beta-int",
-                model=_FakeModel("beta-int"),
+                model=_FakeModel("beta-int", external=False),
+            ),
+        ]
+
+
+class _FakeMixedBackend:
+    """Backend stub with two remote (external) models plus one local model,
+    used to verify ENABLED_REMOTE_MODELS gates remote models only."""
+
+    @classmethod
+    def models(cls):
+        return [
+            ModelDescription(
+                cost=10,
+                name="remote/alpha",
+                internal_name="ralpha-int",
+                model=_FakeModel("ralpha-int", external=True),
+            ),
+            ModelDescription(
+                cost=20,
+                name="remote/beta",
+                internal_name="rbeta-int",
+                model=_FakeModel("rbeta-int", external=True),
+            ),
+            ModelDescription(
+                cost=5,
+                name="local/keep",
+                internal_name="lkeep-int",
+                model=_FakeModel("lkeep-int", external=False),
             ),
         ]
 
@@ -395,7 +424,8 @@ class TestModelNameTracking(unittest.TestCase):
 
 
 class TestEnabledRemoteModels(unittest.TestCase):
-    """ENABLED_REMOTE_MODELS restricts which models load."""
+    """ENABLED_REMOTE_MODELS restricts which *remote* models load; local
+    models are always enabled."""
 
     def setUp(self):
         os.environ.pop("ENABLED_REMOTE_MODELS", None)
@@ -403,35 +433,43 @@ class TestEnabledRemoteModels(unittest.TestCase):
     def tearDown(self):
         os.environ.pop("ENABLED_REMOTE_MODELS", None)
 
+    def _build(self):
+        with patch(
+            "fighthealthinsurance.ml.ml_router.candidate_model_backends",
+            [_FakeMixedBackend],
+        ):
+            return MLRouter()
+
     def test_unset_enables_all(self):
         self.assertIsNone(MLRouter._enabled_model_names())
-        with patch(
-            "fighthealthinsurance.ml.ml_router.candidate_model_backends",
-            [_FakeBackend],
-        ):
-            router = MLRouter()
-        self.assertIn("fake/alpha", router.models_by_name)
-        self.assertIn("fake/beta", router.models_by_name)
+        router = self._build()
+        self.assertIn("remote/alpha", router.models_by_name)
+        self.assertIn("remote/beta", router.models_by_name)
+        self.assertIn("local/keep", router.models_by_name)
 
-    @patch.dict(os.environ, {"ENABLED_REMOTE_MODELS": "fake/alpha"})
-    def test_allow_list_filters_by_friendly_name(self):
-        with patch(
-            "fighthealthinsurance.ml.ml_router.candidate_model_backends",
-            [_FakeBackend],
-        ):
-            router = MLRouter()
-        self.assertIn("fake/alpha", router.models_by_name)
-        self.assertNotIn("fake/beta", router.models_by_name)
+    @patch.dict(os.environ, {"ENABLED_REMOTE_MODELS": "remote/alpha"})
+    def test_allow_list_filters_remote_by_friendly_name(self):
+        router = self._build()
+        self.assertIn("remote/alpha", router.models_by_name)
+        self.assertNotIn("remote/beta", router.models_by_name)
+        # Local models load regardless of the allow-list.
+        self.assertIn("local/keep", router.models_by_name)
 
-    @patch.dict(os.environ, {"ENABLED_REMOTE_MODELS": "beta-int"})
+    @patch.dict(os.environ, {"ENABLED_REMOTE_MODELS": "rbeta-int"})
     def test_allow_list_also_matches_internal_name(self):
-        with patch(
-            "fighthealthinsurance.ml.ml_router.candidate_model_backends",
-            [_FakeBackend],
-        ):
-            router = MLRouter()
-        self.assertIn("fake/beta", router.models_by_name)
-        self.assertNotIn("fake/alpha", router.models_by_name)
+        router = self._build()
+        self.assertIn("remote/beta", router.models_by_name)
+        self.assertNotIn("remote/alpha", router.models_by_name)
+        self.assertIn("local/keep", router.models_by_name)
+
+    @patch.dict(os.environ, {"ENABLED_REMOTE_MODELS": "nonexistent/model"})
+    def test_local_models_always_enabled_even_when_not_listed(self):
+        """A local model loads even though it is not in the allow-list, while
+        unlisted remote models are dropped."""
+        router = self._build()
+        self.assertIn("local/keep", router.models_by_name)
+        self.assertNotIn("remote/alpha", router.models_by_name)
+        self.assertNotIn("remote/beta", router.models_by_name)
 
     @patch.dict(os.environ, {"ENABLED_REMOTE_MODELS": "  "})
     def test_blank_value_enables_all(self):

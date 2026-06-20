@@ -3122,9 +3122,9 @@ class RemoteAnthropic(RemoteFullOpenLike):
             "tier": "quality",
             "description": "Claude Sonnet 4.6 - balanced quality and speed",
         },
-        "claude-opus-4-7": {
+        "claude-opus-4-8": {
             "tier": "premium",
-            "description": "Claude Opus 4.7 - highest quality, most capable",
+            "description": "Claude Opus 4.8 - highest quality, most capable",
         },
     }
 
@@ -3283,8 +3283,8 @@ class RemoteAnthropic(RemoteFullOpenLike):
             ),
             ModelDescription(
                 cost=130,
-                name="anthropic/claude-opus-4-7",
-                internal_name="claude-opus-4-7",
+                name="anthropic/claude-opus-4-8",
+                internal_name="claude-opus-4-8",
             ),
         ]
 

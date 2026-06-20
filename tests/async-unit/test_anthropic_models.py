@@ -103,7 +103,7 @@ class TestRemoteAnthropicModels(unittest.TestCase):
 
         haiku_cost = models_by_name["anthropic/claude-haiku-4-5"].cost
         sonnet_cost = models_by_name["anthropic/claude-sonnet-4-6"].cost
-        opus_cost = models_by_name["anthropic/claude-opus-4-7"].cost
+        opus_cost = models_by_name["anthropic/claude-opus-4-8"].cost
 
         self.assertLess(haiku_cost, sonnet_cost)
         self.assertLess(sonnet_cost, opus_cost)
@@ -143,7 +143,7 @@ class TestRemoteAnthropicTiers(unittest.TestCase):
     @patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"})
     def test_opus_is_premium_tier(self):
         """Test Opus is in premium tier."""
-        model = RemoteAnthropic(model="claude-opus-4-7")
+        model = RemoteAnthropic(model="claude-opus-4-8")
 
         self.assertEqual(model.get_tier(), "premium")
 

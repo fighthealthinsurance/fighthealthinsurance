@@ -43,19 +43,24 @@ class MLRouter(object):
                 models = backend.models()
                 logger.debug(f"MLRouter: {backend} provided {len(models)} models")
                 for m in models:
+                    if m.model is None:
+                        m.model = backend(model=m.internal_name)
                     # Honor the ENABLED_REMOTE_MODELS allow-list (if set): only
-                    # register models whose friendly name (or internal name) is
-                    # listed. When unset, every model is enabled.
-                    if enabled_models is not None and not (
-                        m.name in enabled_models or m.internal_name in enabled_models
+                    # register a *remote* (external) model whose friendly name
+                    # (or internal name) is listed. Local/internal models are
+                    # always enabled regardless of the allow-list, and when the
+                    # variable is unset every model is enabled.
+                    if (
+                        enabled_models is not None
+                        and m.model.external
+                        and m.name not in enabled_models
+                        and m.internal_name not in enabled_models
                     ):
                         logger.debug(
-                            f"MLRouter: skipping disabled model {m.name} "
+                            f"MLRouter: skipping disabled remote model {m.name} "
                             f"(not in ENABLED_REMOTE_MODELS)"
                         )
                         continue
-                    if m.model is None:
-                        m.model = backend(model=m.internal_name)
                     # Stamp the friendly tracking name onto the instance so
                     # consumers that hold a model *instance* (e.g. the chooser
                     # in chooser_tasks.py) record this stable, human-readable
@@ -124,11 +129,14 @@ class MLRouter(object):
     def _enabled_model_names() -> Optional[set[str]]:
         """Parse the ``ENABLED_REMOTE_MODELS`` allow-list.
 
-        Returns a set of enabled model names (friendly names as shown in the
-        "All loaded models" log, and/or internal names) when the environment
-        variable is set and non-empty, or ``None`` to mean "enable all models"
-        (the default when the variable is absent/blank). Entries are
-        comma-separated; surrounding whitespace is ignored.
+        Returns a set of enabled *remote* model names (friendly names as shown
+        in the "All loaded models" log, and/or internal names) when the
+        environment variable is set and non-empty, or ``None`` to mean "no
+        restriction" (the default when the variable is absent/blank). Entries
+        are comma-separated; surrounding whitespace is ignored.
+
+        The allow-list only gates remote (external) models — local/internal
+        models are always enabled regardless of this setting.
         """
         raw = os.getenv("ENABLED_REMOTE_MODELS")
         if not raw or not raw.strip():
