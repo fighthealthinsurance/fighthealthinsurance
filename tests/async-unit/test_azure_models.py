@@ -251,9 +251,9 @@ class TestAzureInfer(unittest.TestCase):
                 message="Rate limited",
                 headers={"Retry-After": "120"},
             )
-            # super()._infer resolves to RemoteFullOpenLike (the base's parent).
+            # super()._infer resolves through RemoteFullOpenLike (the base's parent).
             with patch.object(
-                RemoteAzureOpenLike.__bases__[0],
+                RemoteFullOpenLike,
                 "_infer",
                 new_callable=AsyncMock,
                 side_effect=error,
@@ -278,7 +278,7 @@ class TestAzureInfer(unittest.TestCase):
                 headers={},
             )
             with patch.object(
-                RemoteAzureOpenLike.__bases__[0],
+                RemoteFullOpenLike,
                 "_infer",
                 new_callable=AsyncMock,
                 side_effect=error,
