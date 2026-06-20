@@ -29,7 +29,7 @@ AZURE_OPENAI_ENV = {
 }
 AZURE_CLAUDE_ENV = {
     "AZURE_ANTHROPIC_API_KEY": "test-key",
-    "AZURE_ANTHROPIC_ENDPOINT": "https://res.services.ai.azure.com/openai/v1",
+    "AZURE_ANTHROPIC_ENDPOINT": "https://res.services.ai.azure.com/anthropic",
 }
 
 
@@ -45,6 +45,63 @@ def _clear_azure_env():
         "ENABLED_REMOTE_MODELS",
     ):
         os.environ.pop(k, None)
+
+
+class _FakeAiohttpResponse:
+    """Minimal async-context-manager stand-in for an aiohttp response."""
+
+    def __init__(self, json_data=None, status=200, headers=None):
+        """Capture the canned JSON body, HTTP status, and response headers."""
+        self._json_data = json_data or {}
+        self.status = status
+        self._headers = headers or {}
+
+    async def __aenter__(self):
+        """Enter the ``async with`` response context."""
+        return self
+
+    async def __aexit__(self, *exc):
+        """Exit the response context without suppressing exceptions."""
+        return False
+
+    async def json(self):
+        """Return the canned JSON body."""
+        return self._json_data
+
+    def raise_for_status(self):
+        """Raise ClientResponseError for >=400 statuses (like aiohttp)."""
+        if self.status >= 400:
+            raise aiohttp.ClientResponseError(
+                request_info=MagicMock(),
+                history=(),
+                status=self.status,
+                message="error",
+                headers=self._headers,
+            )
+
+
+class _FakeAiohttpSession:
+    """Stand-in for aiohttp.ClientSession that records the POST arguments."""
+
+    def __init__(self, response, capture=None):
+        """Wrap the response to return and an optional dict to record args in."""
+        self._response = response
+        self._capture = capture if capture is not None else {}
+
+    async def __aenter__(self):
+        """Enter the ``async with`` session context."""
+        return self
+
+    async def __aexit__(self, *exc):
+        """Exit the session context without suppressing exceptions."""
+        return False
+
+    def post(self, url, headers=None, json=None):
+        """Record the request and return the canned response context manager."""
+        self._capture["url"] = url
+        self._capture["headers"] = headers
+        self._capture["json"] = json
+        return self._response
 
 
 class TestAzureBackends(unittest.TestCase):
@@ -238,6 +295,99 @@ class TestAzureInfer(unittest.TestCase):
             with patch.object(
                 RemoteFullOpenLike, "_infer", new_callable=AsyncMock, side_effect=error
             ):
+                with self.assertRaises(aiohttp.ClientResponseError):
+                    await m._infer(system_prompts=["x"], prompt="y")
+
+        asyncio.run(run())
+
+
+class TestAzureClaudeMessages(unittest.TestCase):
+    """RemoteAzureClaude's Anthropic Messages API transport (Foundry)."""
+
+    def setUp(self):
+        """Reset Claude rate-limiter state and Azure env before each test."""
+        RemoteAzureClaude._rate_limiters.clear()
+        _clear_azure_env()
+
+    def tearDown(self):
+        """Clear Azure env vars set during the test."""
+        _clear_azure_env()
+
+    def test_normalize_endpoint_variants(self):
+        """Endpoint normalization yields the …/anthropic base for every form."""
+        norm = RemoteAzureClaude._normalize_endpoint
+        base = "https://res.services.ai.azure.com/anthropic"
+        self.assertEqual(norm(base), base)
+        self.assertEqual(norm(base + "/"), base)
+        # A pasted full target URI is trimmed back to the base.
+        self.assertEqual(norm(base + "/v1/messages"), base)
+        # A bare resource host gets the /anthropic segment appended.
+        self.assertEqual(norm("https://res.services.ai.azure.com"), base)
+
+    @patch.dict(os.environ, AZURE_CLAUDE_ENV)
+    def test_messages_api_success(self):
+        """_infer posts the Messages wire format to /anthropic/v1/messages and
+        concatenates text content blocks from the response."""
+
+        async def run():
+            """Drive _infer against a fake 200 response and inspect the request."""
+            m = RemoteAzureClaude(model="claude-sonnet-4-6")
+            capture: dict = {}
+            response = _FakeAiohttpResponse(
+                {
+                    "content": [
+                        {"type": "text", "text": "Dear "},
+                        {"type": "text", "text": "insurer"},
+                    ]
+                }
+            )
+            session = _FakeAiohttpSession(response, capture)
+            with patch.object(aiohttp, "ClientSession", return_value=session):
+                result = await m._infer(
+                    system_prompts=["be helpful"], prompt="write an appeal"
+                )
+            self.assertEqual(result, ("Dear insurer", []))
+            self.assertEqual(
+                capture["url"],
+                "https://res.services.ai.azure.com/anthropic/v1/messages",
+            )
+            self.assertEqual(capture["headers"]["x-api-key"], "test-key")
+            self.assertEqual(capture["headers"]["anthropic-version"], "2023-06-01")
+            self.assertEqual(capture["json"]["model"], "claude-sonnet-4-6")
+            # System prompt is a top-level field, not a system-role message.
+            self.assertEqual(capture["json"]["system"], "be helpful")
+            self.assertIn("max_tokens", capture["json"])
+            self.assertTrue(
+                all(msg["role"] != "system" for msg in capture["json"]["messages"])
+            )
+
+        asyncio.run(run())
+
+    @patch.dict(os.environ, AZURE_CLAUDE_ENV)
+    def test_messages_api_429_backs_off(self):
+        """A 429 from the Messages endpoint marks the limiter exhausted."""
+
+        async def run():
+            """Force a 429 response and assert back-off + None result."""
+            m = RemoteAzureClaude(model="claude-sonnet-4-6")
+            response = _FakeAiohttpResponse(status=429, headers={"Retry-After": "90"})
+            session = _FakeAiohttpSession(response)
+            with patch.object(aiohttp, "ClientSession", return_value=session):
+                self.assertIsNone(await m._infer(system_prompts=["x"], prompt="y"))
+            self.assertTrue(m.rate_limiter.get_status()["exhausted"])
+
+        asyncio.run(run())
+
+    @patch.dict(os.environ, AZURE_CLAUDE_ENV)
+    def test_messages_api_non_429_propagates(self):
+        """Non-429 HTTP errors propagate rather than being swallowed."""
+
+        async def run():
+            """Force a 500 response and assert it raises ClientResponseError."""
+            m = RemoteAzureClaude(model="claude-sonnet-4-6")
+            response = _FakeAiohttpResponse(status=500, headers={})
+            session = _FakeAiohttpSession(response)
+            with patch.object(aiohttp, "ClientSession", return_value=session):
                 with self.assertRaises(aiohttp.ClientResponseError):
                     await m._infer(system_prompts=["x"], prompt="y")
 

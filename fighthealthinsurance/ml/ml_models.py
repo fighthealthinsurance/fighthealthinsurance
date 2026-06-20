@@ -1995,21 +1995,12 @@ class RemoteOpenLike(RemoteModel):
         json_result = {}
         try:
             async with aiohttp.ClientSession() as s:
-                context_extra = ""
-                if patient_context is not None and len(patient_context) > 3:
-                    patient_context_max = int(self.max_len / 2)
-                    max_len = self.max_len - min(
-                        len(patient_context), patient_context_max
-                    )
-                    context_extra = f"When answering the following question you can use the patient context {patient_context[0:patient_context_max]}."
-                if pubmed_context is not None:
-                    context_extra += f"You can also use this context from pubmed: {pubmed_context} and you can include the DOI number in the appeal."
-                if plan_context is not None and len(plan_context) > 3:
-                    context_extra += f"For answering the question you can use this context about the plan {plan_context}"
-                if ml_citations_context is not None:
-                    context_extra += f"You can also use this context from citations: {ml_citations_context}."
-                if len(context_extra) > 0:
-                    context_extra = f"System context: {context_extra}\n\n"
+                context_extra = self._build_context_extra(
+                    patient_context,
+                    pubmed_context,
+                    plan_context,
+                    ml_citations_context,
+                )
 
                 # Detect if backend supports system messages
                 # Some backends (e.g., Mistral VLLM) do not support the system role; in those cases, embed the system prompt in the user message.
@@ -2179,6 +2170,33 @@ class RemoteOpenLike(RemoteModel):
             formatted_citations.append(str(citation))
 
         return formatted_citations
+
+    def _build_context_extra(
+        self,
+        patient_context: Optional[str] = None,
+        pubmed_context: Optional[str] = None,
+        plan_context: Optional[str] = None,
+        ml_citations_context: Optional[List[str]] = None,
+    ) -> str:
+        """Assemble the optional ``System context: …`` preamble injected into the
+        user turn. Shared by the OpenAI-compatible path and the Anthropic
+        Messages path (``RemoteAzureClaude``) so context handling stays in one
+        place."""
+        context_extra = ""
+        if patient_context is not None and len(patient_context) > 3:
+            patient_context_max = int(self.max_len / 2)
+            context_extra = f"When answering the following question you can use the patient context {patient_context[0:patient_context_max]}."
+        if pubmed_context is not None:
+            context_extra += f"You can also use this context from pubmed: {pubmed_context} and you can include the DOI number in the appeal."
+        if plan_context is not None and len(plan_context) > 3:
+            context_extra += f"For answering the question you can use this context about the plan {plan_context}"
+        if ml_citations_context is not None:
+            context_extra += (
+                f"You can also use this context from citations: {ml_citations_context}."
+            )
+        if len(context_extra) > 0:
+            context_extra = f"System context: {context_extra}\n\n"
+        return context_extra
 
 
 class RemoteFullOpenLike(RemoteOpenLike):
@@ -2895,7 +2913,7 @@ class RateLimitedRemoteOpenLike(RemoteFullOpenLike):
             )
             return None
         try:
-            return await super()._infer(
+            return await self._do_infer(
                 system_prompts=system_prompts,
                 prompt=prompt,
                 patient_context=patient_context,
@@ -2918,6 +2936,37 @@ class RateLimitedRemoteOpenLike(RemoteFullOpenLike):
         except Exception as e:
             logger.warning(f"{type(self).__name__}._infer error for {self.model}: {e}")
             return None
+
+    async def _do_infer(
+        self,
+        system_prompts: list[str],
+        prompt: str,
+        patient_context: Optional[str] = None,
+        plan_context: Optional[str] = None,
+        pubmed_context: Optional[str] = None,
+        ml_citations_context: Optional[List[str]] = None,
+        history: Optional[List[dict[str, str]]] = None,
+        temperature: float = 0.7,
+    ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
+        """The actual transport call wrapped by ``_infer``'s rate-limit gating
+        and 429 back-off.
+
+        Defaults to the OpenAI-compatible path (``RemoteOpenLike._infer``).
+        Subclasses whose provider speaks a different wire format (e.g.
+        ``RemoteAzureClaude`` with the Anthropic Messages API) override this and
+        raise ``aiohttp.ClientResponseError`` on HTTP errors so the shared 429
+        handling in ``_infer`` still applies.
+        """
+        return await super()._infer(
+            system_prompts=system_prompts,
+            prompt=prompt,
+            patient_context=patient_context,
+            plan_context=plan_context,
+            pubmed_context=pubmed_context,
+            ml_citations_context=ml_citations_context,
+            history=history,
+            temperature=temperature,
+        )
 
 
 class RemoteGroq(RateLimitedRemoteOpenLike):
@@ -3221,15 +3270,19 @@ class RemoteAnthropic(RateLimitedRemoteOpenLike):
 
 
 class RemoteAzureOpenLike(RateLimitedRemoteOpenLike):
-    """Shared base for Azure-hosted, OpenAI-compatible backends.
+    """Shared base for Azure-hosted backends configured from environment vars.
 
-    Azure serves both Azure OpenAI (GPT) and, via Azure AI Foundry, Claude
-    through an OpenAI-compatible ``/chat/completions`` surface with Bearer auth
-    — the wire format ``RemoteOpenLike`` already speaks. Azure resources and
-    deployments are tenant-specific, so the endpoint, key, and (latest-default)
-    model list come from environment variables. Concrete subclasses set the
-    ``*_ENV`` names, ``NAME_PREFIX``, ``MAX_LEN`` and ``DEFAULT_MODELS``, and
-    each declares its own ``_rate_limiters``/``_rate_limiter_lock``.
+    Azure OpenAI (GPT) deployments speak an OpenAI-compatible
+    ``/chat/completions`` surface with Bearer auth — the wire format
+    ``RemoteOpenLike`` already speaks — so ``RemoteAzureOpenAI`` uses this base
+    as-is. Claude on Azure AI Foundry instead answers only the native Anthropic
+    Messages API, so ``RemoteAzureClaude`` reuses the shared configuration and
+    rate limiting here but overrides the transport (``_do_infer``). Azure
+    resources and deployments are tenant-specific, so the endpoint, key, and
+    (latest-default) model list come from environment variables. Concrete
+    subclasses set the ``*_ENV`` names, ``NAME_PREFIX``, ``MAX_LEN`` and
+    ``DEFAULT_MODELS``, and each declares its own
+    ``_rate_limiters``/``_rate_limiter_lock``.
     """
 
     # --- Subclass configuration (overridden by concrete providers) --------
@@ -3310,7 +3363,9 @@ class RemoteAzureOpenLike(RateLimitedRemoteOpenLike):
 
     @property
     def supports_system(self):
-        """Azure GPT/Claude deployments accept the OpenAI ``system`` role."""
+        """Azure OpenAI (GPT) deployments accept the OpenAI ``system`` role.
+        (``RemoteAzureClaude`` overrides the transport and passes the system
+        prompt as a top-level Messages field instead.)"""
         return True
 
     @property
@@ -3390,6 +3445,16 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
     (distinct from the direct ``anthropic/`` API so usage tracking can tell them
     apart). Configure AZURE_ANTHROPIC_API_KEY + AZURE_ANTHROPIC_ENDPOINT;
     optionally override the deployment list with AZURE_ANTHROPIC_MODELS.
+
+    Unlike Azure OpenAI, Foundry's Claude deployments are **not** exposed over an
+    OpenAI ``/chat/completions`` surface — they answer only the native Anthropic
+    Messages API at ``{endpoint}/v1/messages`` (``x-api-key`` +
+    ``anthropic-version`` auth), per Microsoft's docs. So this subclass keeps the
+    shared config/model-list/rate-limit machinery but overrides the transport
+    (:meth:`_do_infer`) to speak the Messages wire format (system prompt as a
+    top-level field; text returned in ``content`` blocks). HTTP errors still
+    surface as ``aiohttp.ClientResponseError`` so the inherited 429 back-off
+    applies unchanged.
     """
 
     API_KEY_ENV: ClassVar[str] = "AZURE_ANTHROPIC_API_KEY"
@@ -3397,7 +3462,15 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
     MODELS_ENV: ClassVar[str] = "AZURE_ANTHROPIC_MODELS"
     NAME_PREFIX: ClassVar[str] = "azure-anthropic"
     PROVIDER_LABEL: ClassVar[str] = "Azure AI Foundry (Claude)"
+    ENDPOINT_EXAMPLE: ClassVar[str] = (
+        "https://my-resource.services.ai.azure.com/anthropic"
+    )
     MAX_LEN: ClassVar[int] = 200000
+
+    # Anthropic Messages API wire constants.
+    ANTHROPIC_VERSION: ClassVar[str] = "2023-06-01"
+    # The Messages API requires an explicit max output token budget.
+    MAX_OUTPUT_TOKENS: ClassVar[int] = 8192
 
     # Latest Claude models (cheapest -> premium). Deployment names default to
     # the canonical model ids; override with AZURE_ANTHROPIC_MODELS if your
@@ -3411,6 +3484,125 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
     # Per-subclass rate-limit state (do not share across providers).
     _rate_limiters: ClassVar[dict[str, RateLimiter]] = {}
     _rate_limiter_lock: ClassVar[threading.Lock] = threading.Lock()
+
+    @staticmethod
+    def _normalize_endpoint(endpoint: str) -> str:
+        """Normalize to the Foundry Anthropic base (``…/anthropic``); the
+        Messages path ``/v1/messages`` is appended at request time. Accepts the
+        endpoint with or without a trailing ``/v1/messages``, and appends the
+        ``/anthropic`` segment when only the bare resource host was supplied."""
+        e = endpoint.strip().rstrip("/")
+        suffix = "/v1/messages"
+        if e.endswith(suffix):
+            e = e[: -len(suffix)].rstrip("/")
+        if not e.endswith("/anthropic"):
+            e = f"{e}/anthropic"
+        return e
+
+    async def _do_infer(
+        self,
+        system_prompts: list[str],
+        prompt: str,
+        patient_context: Optional[str] = None,
+        plan_context: Optional[str] = None,
+        pubmed_context: Optional[str] = None,
+        ml_citations_context: Optional[List[str]] = None,
+        history: Optional[List[dict[str, str]]] = None,
+        temperature: float = 0.7,
+    ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
+        """Inference via the Anthropic Messages API exposed by Azure AI Foundry.
+
+        Returns the first non-empty completion across ``system_prompts``. HTTP
+        error statuses raise ``aiohttp.ClientResponseError`` (so the caller's
+        429 back-off applies); transport/parse failures return ``None``.
+        """
+        if prompt is None:
+            logger.debug("No prompt supplied; skipping inference")
+            return None
+        context_extra = self._build_context_extra(
+            patient_context,
+            pubmed_context,
+            plan_context,
+            ml_citations_context,
+        )
+        url = f"{self.api_base}/v1/messages"
+        headers = {
+            "x-api-key": self.token or "",
+            "anthropic-version": self.ANTHROPIC_VERSION,
+            "content-type": "application/json",
+        }
+        for system_prompt in system_prompts:
+            messages: List[dict[str, str]] = []
+            if history:
+                messages.extend(history)
+            messages.append(
+                {
+                    "role": "user",
+                    "content": f"{context_extra}\n\n User prompt: {prompt}",
+                }
+            )
+            messages = ensure_message_alternation(messages)
+            cleaned_messages = [
+                {"role": m.get("role"), "content": m.get("content")} for m in messages
+            ]
+            body = {
+                "model": self.model,
+                "max_tokens": self.MAX_OUTPUT_TOKENS,
+                "system": system_prompt,
+                "messages": cleaned_messages,
+                "temperature": temperature,
+            }
+            result = await self.__messages_request(url, headers, body)
+            if result and result[0]:
+                return result
+        return None
+
+    async def __messages_request(
+        self, url: str, headers: dict, body: dict
+    ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
+        """POST a single Messages API request (honoring ``self._timeout``) and
+        parse the response. ``raise_for_status`` surfaces HTTP errors as
+        ``aiohttp.ClientResponseError`` so 429s reach the shared back-off."""
+
+        async def _post() -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, headers=headers, json=body) as response:
+                    response.raise_for_status()
+                    json_result = await response.json()
+            return self._parse_messages_response(json_result)
+
+        if self._timeout is not None:
+            try:
+                async with async_timeout(self._timeout):
+                    return await _post()
+            except asyncio.TimeoutError:
+                logger.warning(f"Timed out querying {self}")
+                return None
+        return await _post()
+
+    def _parse_messages_response(
+        self, json_result: dict
+    ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
+        """Extract text from a Messages API response by concatenating its
+        ``text`` content blocks, then apply the same validity check and
+        reasoning-answer extraction as the OpenAI path."""
+        blocks = json_result.get("content") or []
+        text = "".join(
+            block.get("text", "")
+            for block in blocks
+            if isinstance(block, dict) and block.get("type") == "text"
+        )
+        if not text:
+            logger.debug(f"Messages response from {self.model} had no text content")
+            return None
+        if not LLMResponseUtils.is_valid_text(text):
+            logger.error(f"Received non-text response from {self.model}")
+            return None
+        if LLMResponseUtils.is_well_formatted_for_reasoning(text):
+            extracted = LLMResponseUtils.extract_answer(text)
+            if extracted:
+                text = extracted.strip()
+        return (text, [])
 
 
 class TailscaleModelBackend(RemoteFullOpenLike):

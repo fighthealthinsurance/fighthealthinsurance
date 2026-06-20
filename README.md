@@ -95,10 +95,15 @@ recorded for usage tracking in both the regular appeal workflow and the chooser
    a resource and **deploy** the model(s) you want (e.g. `gpt-5`,
    `claude-opus-4-8`). Note the *deployment name* — that is the model id sent on
    the wire.
-2. Copy the resource's **API key** and its **OpenAI-compatible v1 endpoint**.
-   The endpoint is the base URL *without* a trailing `/chat/completions`, e.g.
-   `https://my-resource.openai.azure.com/openai/v1` (Azure OpenAI) or
-   `https://my-resource.services.ai.azure.com/openai/v1` (Foundry/Claude).
+2. Copy the resource's **API key** and endpoint. The two providers use different
+   API surfaces:
+   - **Azure OpenAI (GPT)** is OpenAI-compatible — use the v1 base URL *without*
+     a trailing `/chat/completions`, e.g.
+     `https://my-resource.openai.azure.com/openai/v1`.
+   - **Azure AI Foundry (Claude)** uses the native Anthropic **Messages API** —
+     use the base URL ending in `/anthropic`, e.g.
+     `https://my-resource.services.ai.azure.com/anthropic` (the `/v1/messages`
+     path is appended automatically).
 3. Export the variables (or add them to `.env`):
    ```bash
    # Azure OpenAI (GPT family)
@@ -107,7 +112,7 @@ recorded for usage tracking in both the regular appeal workflow and the chooser
 
    # Azure AI Foundry (Claude family)
    export AZURE_ANTHROPIC_API_KEY=...
-   export AZURE_ANTHROPIC_ENDPOINT=https://my-resource.services.ai.azure.com/openai/v1
+   export AZURE_ANTHROPIC_ENDPOINT=https://my-resource.services.ai.azure.com/anthropic
    ```
 4. By default the latest models are exposed (Azure OpenAI: `gpt-4.1-mini`,
    `gpt-5-mini`, `gpt-5`; Azure Claude: `claude-haiku-4-5`, `claude-sonnet-4-6`,
