@@ -172,5 +172,23 @@
   {% endif %}
 
   <a class="back" href="{% url 'staff_dashboard' %}">&larr; Back to staff dashboard</a>
+
+  <script>
+    // Guard against a double-click / double-submit sending the intro twice.
+    // We only block a second submit of the same form; the first submit (with
+    // the clicked button's action) goes through normally.
+    (function () {
+      var form = document.querySelector("form");
+      if (!form) return;
+      var submitted = false;
+      form.addEventListener("submit", function (e) {
+        if (submitted) {
+          e.preventDefault();
+          return;
+        }
+        submitted = true;
+      });
+    })();
+  </script>
 </body>
 </html>

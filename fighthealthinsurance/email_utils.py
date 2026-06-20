@@ -28,8 +28,11 @@ def get_email_domain(email: Optional[str]) -> Optional[str]:
     email = email.strip().lower()
     if "@" not in email:
         return None
-    domain = email.rsplit("@", 1)[1].strip()
-    return domain or None
+    local_part, domain = email.rsplit("@", 1)
+    # Require a non-empty local part too, so "@example.com" is unparseable.
+    if not local_part.strip() or not domain.strip():
+        return None
+    return domain.strip()
 
 
 def is_blocked_email(email: str) -> bool:

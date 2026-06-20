@@ -114,9 +114,14 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         name="model_usage_dashboard",
     ),
     path(
-        "timbit/help/partner_intro",
-        staff_member_required(staff_views.PartnerIntroProcessView.as_view()),
-        name="partner_intro_process",
+        "timbit/help/proconnector",
+        staff_member_required(staff_views.ProConnectorProcessView.as_view()),
+        name="proconnector_process",
+    ),
+    path(
+        "timbit/help/proconnector_extract.csv",
+        staff_member_required(staff_views.ProConnectorExtractCSVView.as_view()),
+        name="proconnector_extract_csv",
     ),
     # Authentication
     path("v0/auth/", include("fhi_users.urls")),

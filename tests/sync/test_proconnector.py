@@ -1,4 +1,4 @@
-"""Tests for the partner-introduction (Cofactor AI) staff workflow.
+"""Tests for the pro-connector (Cofactor AI) staff workflow.
 
 Covers migration/field defaults, access control, next-record selection, AI
 draft generation with safe fallback, the send / send-failure / skip flows, and
@@ -14,9 +14,9 @@ from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
-from fighthealthinsurance import partner_intro
+from fighthealthinsurance import proconnector
 from fighthealthinsurance.models import InterestedProfessional
-from fighthealthinsurance.partner_intro import (
+from fighthealthinsurance.proconnector import (
     BASE_INTRO_EMAIL,
     _is_safe_intro_draft,
     build_base_intro_email,
@@ -74,7 +74,7 @@ def _fake_router(models):
 # Migration / field defaults
 # ---------------------------------------------------------------------------
 class MigrationDefaultsTest(TestCase):
-    def test_new_record_has_partner_intro_defaults(self):
+    def test_new_record_has_proconnector_defaults(self):
         """Records default to not-attempted / not-skipped with empty intro fields.
 
         These field defaults are exactly what the migration backfills onto
@@ -82,34 +82,41 @@ class MigrationDefaultsTest(TestCase):
         """
         pro = InterestedProfessional.objects.create(email="x@xclinic.com")
         pro.refresh_from_db()
-        self.assertFalse(pro.partner_intro_attempted)
-        self.assertFalse(pro.partner_intro_skipped)
-        self.assertIsNone(pro.partner_intro_sent_at)
-        self.assertIsNone(pro.partner_intro_skip_reason)
-        self.assertIsNone(pro.partner_intro_email_body)
+        self.assertFalse(pro.proconnector_attempted)
+        self.assertFalse(pro.proconnector_skipped)
+        self.assertIsNone(pro.proconnector_sent_at)
+        self.assertIsNone(pro.proconnector_skip_reason)
+        self.assertIsNone(pro.proconnector_email_body)
 
 
 # ---------------------------------------------------------------------------
 # Access control
 # ---------------------------------------------------------------------------
+def _login(client, *, is_staff: bool, username: str = "u") -> None:
+    """Create a user with the given staff flag and log them in."""
+    User.objects.create_user(username=username, password="pw123", is_staff=is_staff)
+    client.login(username=username, password="pw123")
+
+
 class AccessControlTest(TestCase):
     def setUp(self):
-        self.url = reverse("partner_intro_process")
+        self.url = reverse("proconnector_process")
 
     def test_anonymous_redirected(self):
         response = self.client.get(self.url)
-        self.assertEqual(response.status_code, 302)
-        self.assertIn("login", response.url)
+        self.assertRedirects(
+            response,
+            f"{reverse('admin:login')}?next={self.url}",
+            fetch_redirect_response=False,
+        )
 
     def test_non_staff_get_redirected(self):
-        User.objects.create_user(username="u", password="pw123", is_staff=False)
-        self.client.login(username="u", password="pw123")
+        _login(self.client, is_staff=False)
         response = self.client.get(self.url)
         self.assertEqual(response.status_code, 302)
 
     def test_non_staff_post_redirected(self):
-        User.objects.create_user(username="u", password="pw123", is_staff=False)
-        self.client.login(username="u", password="pw123")
+        _login(self.client, is_staff=False)
         pro = _make_pro()
         response = self.client.post(
             self.url,
@@ -117,15 +124,14 @@ class AccessControlTest(TestCase):
         )
         self.assertEqual(response.status_code, 302)
         pro.refresh_from_db()
-        self.assertFalse(pro.partner_intro_skipped)
+        self.assertFalse(pro.proconnector_skipped)
 
     @patch(
         "fighthealthinsurance.staff_views.generate_intro_email",
         return_value="A draft body with compensation disclosure.",
     )
     def test_staff_can_access(self, _mock_gen):
-        User.objects.create_user(username="s", password="pw123", is_staff=True)
-        self.client.login(username="s", password="pw123")
+        _login(self.client, is_staff=True)
         _make_pro()
         response = self.client.get(self.url)
         self.assertEqual(response.status_code, 200)
@@ -134,8 +140,7 @@ class AccessControlTest(TestCase):
         self.assertContains(response, "A draft body with compensation disclosure.")
 
     def test_staff_sees_done_when_no_records(self):
-        User.objects.create_user(username="s", password="pw123", is_staff=True)
-        self.client.login(username="s", password="pw123")
+        _login(self.client, is_staff=True)
         response = self.client.get(self.url)
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "All caught up")
@@ -157,29 +162,29 @@ class NextRecordQueryTest(TestCase):
         self.assertEqual(get_next_interested_professional().pk, p1.pk)
 
         # Skip p1 -> p2 is next.
-        p1.partner_intro_skipped = True
+        p1.proconnector_skipped = True
         p1.save()
         self.assertEqual(get_next_interested_professional().pk, p2.pk)
 
         # Attempt p2 -> p3 is next.
-        p2.partner_intro_attempted = True
+        p2.proconnector_attempted = True
         p2.save()
         self.assertEqual(get_next_interested_professional().pk, p3.pk)
 
         # Attempt p3 -> nothing left.
-        p3.partner_intro_attempted = True
+        p3.proconnector_attempted = True
         p3.save()
         self.assertIsNone(get_next_interested_professional())
 
     def test_remaining_count(self):
         _make_pro(email="a@aclinic.com")
         done = _make_pro(email="b@bclinic.com")
-        done.partner_intro_attempted = True
+        done.proconnector_attempted = True
         done.save()
         skipped = _make_pro(email="c@cclinic.com")
-        skipped.partner_intro_skipped = True
+        skipped.proconnector_skipped = True
         skipped.save()
-        self.assertEqual(partner_intro.remaining_interested_professionals_count(), 1)
+        self.assertEqual(proconnector.remaining_interested_professionals_count(), 1)
 
 
 # ---------------------------------------------------------------------------
@@ -232,7 +237,7 @@ class DomainPriorityTest(TestCase):
         for _ in range(4):
             nxt = get_next_interested_professional()
             order.append(nxt.pk)
-            nxt.partner_intro_attempted = True
+            nxt.proconnector_attempted = True
             nxt.save()
 
         self.assertEqual(order, [biz_old.pk, biz_new.pk, pers_old.pk, pers_new.pk])
@@ -245,56 +250,56 @@ class QueueFilteringTest(TestCase):
     def test_filters_out_test_address(self):
         _make_pro(email="testing@example.com")
         self.assertIsNone(get_next_interested_professional())
-        self.assertEqual(partner_intro.remaining_interested_professionals_count(), 0)
+        self.assertEqual(proconnector.remaining_interested_professionals_count(), 0)
 
     def test_filters_out_ru_and_ua_domains(self):
         _make_pro(email="spammer@somewhere.ru")
         _make_pro(email="spammer@somewhere.ua")
         self.assertIsNone(get_next_interested_professional())
-        self.assertEqual(partner_intro.remaining_interested_professionals_count(), 0)
+        self.assertEqual(proconnector.remaining_interested_professionals_count(), 0)
 
     def test_filters_out_http_in_name(self):
         _make_pro(name="http://buy-now.example", email="spam@elsewhere.biz")
         _make_pro(name="visit https://spam.example today", email="spam2@elsewhere.biz")
         self.assertIsNone(get_next_interested_professional())
-        self.assertEqual(partner_intro.remaining_interested_professionals_count(), 0)
+        self.assertEqual(proconnector.remaining_interested_professionals_count(), 0)
 
     def test_legit_record_still_returned_alongside_filtered(self):
         _make_pro(email="testing@example.com")
         _make_pro(name="http://x", email="spam@elsewhere.biz")
         legit = _make_pro(email="real@clinic.org")
         self.assertEqual(get_next_interested_professional().pk, legit.pk)
-        self.assertEqual(partner_intro.remaining_interested_professionals_count(), 1)
+        self.assertEqual(proconnector.remaining_interested_professionals_count(), 1)
 
     def test_count_is_unique_by_email(self):
         _make_pro(email="dup@clinic.org")
         _make_pro(email="dup@clinic.org")
         _make_pro(email="other@clinic.org")
         # Two distinct emails despite three records.
-        self.assertEqual(partner_intro.remaining_interested_professionals_count(), 2)
+        self.assertEqual(proconnector.remaining_interested_professionals_count(), 2)
 
     def test_mark_email_sent_resolves_all_duplicates(self):
         a = _make_pro(email="dup@clinic.org")
         b = _make_pro(email="dup@clinic.org")
-        updated = partner_intro.mark_email_sent("dup@clinic.org", "the body")
+        updated = proconnector.mark_email_sent("dup@clinic.org", "the body")
         self.assertEqual(updated, 2)
         for rec in (a, b):
             rec.refresh_from_db()
-            self.assertTrue(rec.partner_intro_attempted)
-            self.assertIsNotNone(rec.partner_intro_sent_at)
-            self.assertEqual(rec.partner_intro_email_body, "the body")
+            self.assertTrue(rec.proconnector_attempted)
+            self.assertIsNotNone(rec.proconnector_sent_at)
+            self.assertEqual(rec.proconnector_email_body, "the body")
         # Neither resurfaces in the queue.
         self.assertIsNone(get_next_interested_professional())
 
     def test_mark_email_skipped_resolves_all_duplicates(self):
         a = _make_pro(email="dup@clinic.org")
         b = _make_pro(email="dup@clinic.org")
-        updated = partner_intro.mark_email_skipped("dup@clinic.org", "not a fit")
+        updated = proconnector.mark_email_skipped("dup@clinic.org", "not a fit")
         self.assertEqual(updated, 2)
         for rec in (a, b):
             rec.refresh_from_db()
-            self.assertTrue(rec.partner_intro_skipped)
-            self.assertEqual(rec.partner_intro_skip_reason, "not a fit")
+            self.assertTrue(rec.proconnector_skipped)
+            self.assertEqual(rec.proconnector_skip_reason, "not a fit")
         self.assertIsNone(get_next_interested_professional())
 
 
@@ -348,7 +353,7 @@ class AIDraftFallbackTest(TestCase):
         self.pro = _make_pro(name="Dr. Smith", email="d@dclinic.com")
 
     def test_fallback_when_no_external_models(self):
-        with patch.object(partner_intro, "ml_router", _fake_router([])):
+        with patch.object(proconnector, "ml_router", _fake_router([])):
             draft = generate_intro_email(self.pro)
         self.assertEqual(draft, build_base_intro_email(self.pro))
         # Base email satisfies the wording constraints.
@@ -362,13 +367,13 @@ class AIDraftFallbackTest(TestCase):
             def external_models_by_cost(self):
                 raise RuntimeError("router down")
 
-        with patch.object(partner_intro, "ml_router", _Boom()):
+        with patch.object(proconnector, "ml_router", _Boom()):
             draft = generate_intro_email(self.pro)
         self.assertEqual(draft, build_base_intro_email(self.pro))
 
     def test_fallback_when_model_raises(self):
         fake = _FakeModel(exc=RuntimeError("inference boom"))
-        with patch.object(partner_intro, "ml_router", _fake_router([fake])):
+        with patch.object(proconnector, "ml_router", _fake_router([fake])):
             draft = generate_intro_email(self.pro)
         self.assertEqual(draft, build_base_intro_email(self.pro))
         self.assertEqual(fake.calls, 1)
@@ -376,7 +381,7 @@ class AIDraftFallbackTest(TestCase):
     def test_unsafe_partner_draft_rejected_falls_back(self):
         unsafe = "We have partnered with Cofactor AI! compensation " + "x" * 200
         fake = _FakeModel(result=unsafe)
-        with patch.object(partner_intro, "ml_router", _fake_router([fake])):
+        with patch.object(proconnector, "ml_router", _fake_router([fake])):
             draft = generate_intro_email(self.pro)
         self.assertEqual(draft, build_base_intro_email(self.pro))
 
@@ -385,7 +390,7 @@ class AIDraftFallbackTest(TestCase):
             "A warm sourcing agreement introduction to Cofactor AI. " + "y" * 200
         )
         fake = _FakeModel(result=no_disclosure)
-        with patch.object(partner_intro, "ml_router", _fake_router([fake])):
+        with patch.object(proconnector, "ml_router", _fake_router([fake])):
             draft = generate_intro_email(self.pro)
         self.assertEqual(draft, build_base_intro_email(self.pro))
 
@@ -397,7 +402,7 @@ class AIDraftFallbackTest(TestCase):
             "consumer mission. " + "z" * 100
         )
         fake = _FakeModel(result=safe)
-        with patch.object(partner_intro, "ml_router", _fake_router([fake])):
+        with patch.object(proconnector, "ml_router", _fake_router([fake])):
             draft = generate_intro_email(self.pro)
         self.assertEqual(draft, safe.strip())
 
@@ -410,7 +415,7 @@ class AIDraftFallbackTest(TestCase):
             "AI. FHI may receive compensation. " + "q" * 100
         )
         good = _FakeModel(result=good_text)
-        with patch.object(partner_intro, "ml_router", _fake_router([bad, good])):
+        with patch.object(proconnector, "ml_router", _fake_router([bad, good])):
             draft = generate_intro_email(self.pro)
         self.assertEqual(draft, good_text.strip())
         self.assertEqual(bad.calls, 1)
@@ -422,11 +427,11 @@ class AIDraftFallbackTest(TestCase):
 # ---------------------------------------------------------------------------
 class SendFlowTest(TestCase):
     def setUp(self):
-        self.url = reverse("partner_intro_process")
+        self.url = reverse("proconnector_process")
         User.objects.create_user(username="s", password="pw123", is_staff=True)
         self.client.login(username="s", password="pw123")
 
-    @patch("fighthealthinsurance.staff_views.send_partner_intro_email")
+    @patch("fighthealthinsurance.staff_views.send_proconnector_intro_email")
     def test_send_marks_attempted_stores_body_and_advances(self, mock_send):
         pro = _make_pro(email="jane@janeclinic.com")
         body = "Edited intro body mentioning the compensation disclosure."
@@ -441,7 +446,7 @@ class SendFlowTest(TestCase):
         )
         # Advances via redirect to the next record.
         self.assertEqual(response.status_code, 302)
-        self.assertEqual(response.url, reverse("partner_intro_process"))
+        self.assertEqual(response.url, reverse("proconnector_process"))
 
         mock_send.assert_called_once()
         args, kwargs = mock_send.call_args
@@ -450,12 +455,12 @@ class SendFlowTest(TestCase):
         self.assertEqual(kwargs["subject"], "Intro to Cofactor AI")
 
         pro.refresh_from_db()
-        self.assertTrue(pro.partner_intro_attempted)
-        self.assertIsNotNone(pro.partner_intro_sent_at)
-        self.assertEqual(pro.partner_intro_email_body, body)
-        self.assertFalse(pro.partner_intro_skipped)
+        self.assertTrue(pro.proconnector_attempted)
+        self.assertIsNotNone(pro.proconnector_sent_at)
+        self.assertEqual(pro.proconnector_email_body, body)
+        self.assertFalse(pro.proconnector_skipped)
 
-    @patch("fighthealthinsurance.staff_views.send_partner_intro_email")
+    @patch("fighthealthinsurance.staff_views.send_proconnector_intro_email")
     def test_send_empty_body_rejected(self, mock_send):
         pro = _make_pro()
         response = self.client.post(
@@ -470,9 +475,9 @@ class SendFlowTest(TestCase):
         self.assertContains(response, "cannot be empty", status_code=400)
         mock_send.assert_not_called()
         pro.refresh_from_db()
-        self.assertFalse(pro.partner_intro_attempted)
+        self.assertFalse(pro.proconnector_attempted)
 
-    @patch("fighthealthinsurance.staff_views.send_partner_intro_email")
+    @patch("fighthealthinsurance.staff_views.send_proconnector_intro_email")
     def test_send_to_unsendable_address_rejected(self, mock_send):
         # example.com is a blocked domain -> not sendable.
         pro = _make_pro(email="blocked@example.com")
@@ -487,9 +492,9 @@ class SendFlowTest(TestCase):
         self.assertEqual(response.status_code, 400)
         mock_send.assert_not_called()
         pro.refresh_from_db()
-        self.assertFalse(pro.partner_intro_attempted)
+        self.assertFalse(pro.proconnector_attempted)
 
-    @patch("fighthealthinsurance.staff_views.send_partner_intro_email")
+    @patch("fighthealthinsurance.staff_views.send_proconnector_intro_email")
     def test_send_resolves_all_records_with_same_email(self, mock_send):
         # Two signups share an email; sending once marks both and emails once.
         a = _make_pro(email="dup@clinic.org")
@@ -506,10 +511,10 @@ class SendFlowTest(TestCase):
         mock_send.assert_called_once()  # one email, not one per duplicate
         for rec in (a, b):
             rec.refresh_from_db()
-            self.assertTrue(rec.partner_intro_attempted)
+            self.assertTrue(rec.proconnector_attempted)
         self.assertIsNone(get_next_interested_professional())
 
-    @patch("fighthealthinsurance.staff_views.send_partner_intro_email")
+    @patch("fighthealthinsurance.staff_views.send_proconnector_intro_email")
     def test_non_numeric_id_advances_without_error(self, mock_send):
         # A tampered/garbage hidden id must not 500; it just advances.
         response = self.client.post(
@@ -517,14 +522,14 @@ class SendFlowTest(TestCase):
             {"action": "send", "interested_professional_id": "abc", "email_body": "x"},
         )
         self.assertEqual(response.status_code, 302)
-        self.assertEqual(response.url, reverse("partner_intro_process"))
+        self.assertEqual(response.url, reverse("proconnector_process"))
         mock_send.assert_not_called()
 
-    @patch("fighthealthinsurance.staff_views.send_partner_intro_email")
+    @patch("fighthealthinsurance.staff_views.send_proconnector_intro_email")
     def test_already_attempted_record_is_not_resent(self, mock_send):
         # Stale tab / double submit: record already processed -> no resend.
         pro = _make_pro(email="done@clinic.org")
-        pro.partner_intro_attempted = True
+        pro.proconnector_attempted = True
         pro.save()
         response = self.client.post(
             self.url,
@@ -543,12 +548,12 @@ class SendFlowTest(TestCase):
 # ---------------------------------------------------------------------------
 class SendFailureTest(TestCase):
     def setUp(self):
-        self.url = reverse("partner_intro_process")
+        self.url = reverse("proconnector_process")
         User.objects.create_user(username="s", password="pw123", is_staff=True)
         self.client.login(username="s", password="pw123")
 
     @patch(
-        "fighthealthinsurance.staff_views.send_partner_intro_email",
+        "fighthealthinsurance.staff_views.send_proconnector_intro_email",
         side_effect=Exception("smtp boom"),
     )
     def test_send_failure_does_not_mark_attempted(self, _mock_send):
@@ -569,9 +574,9 @@ class SendFailureTest(TestCase):
         self.assertContains(response, body, status_code=500)
 
         pro.refresh_from_db()
-        self.assertFalse(pro.partner_intro_attempted)
-        self.assertIsNone(pro.partner_intro_sent_at)
-        self.assertIsNone(pro.partner_intro_email_body)
+        self.assertFalse(pro.proconnector_attempted)
+        self.assertIsNone(pro.proconnector_sent_at)
+        self.assertIsNone(pro.proconnector_email_body)
 
 
 # ---------------------------------------------------------------------------
@@ -579,7 +584,7 @@ class SendFailureTest(TestCase):
 # ---------------------------------------------------------------------------
 class SkipFlowTest(TestCase):
     def setUp(self):
-        self.url = reverse("partner_intro_process")
+        self.url = reverse("proconnector_process")
         User.objects.create_user(username="s", password="pw123", is_staff=True)
         self.client.login(username="s", password="pw123")
 
@@ -594,12 +599,12 @@ class SkipFlowTest(TestCase):
             },
         )
         self.assertEqual(response.status_code, 302)
-        self.assertEqual(response.url, reverse("partner_intro_process"))
+        self.assertEqual(response.url, reverse("proconnector_process"))
         pro.refresh_from_db()
-        self.assertTrue(pro.partner_intro_skipped)
-        self.assertEqual(pro.partner_intro_skip_reason, "Not a fit for Cofactor AI")
-        self.assertFalse(pro.partner_intro_attempted)
-        self.assertIsNone(pro.partner_intro_sent_at)
+        self.assertTrue(pro.proconnector_skipped)
+        self.assertEqual(pro.proconnector_skip_reason, "Not a fit for Cofactor AI")
+        self.assertFalse(pro.proconnector_attempted)
+        self.assertIsNone(pro.proconnector_sent_at)
         self.assertEqual(len(mail.outbox), 0)
 
     def test_skip_without_reason_stores_none(self):
@@ -610,8 +615,8 @@ class SkipFlowTest(TestCase):
         )
         self.assertEqual(response.status_code, 302)
         pro.refresh_from_db()
-        self.assertTrue(pro.partner_intro_skipped)
-        self.assertIsNone(pro.partner_intro_skip_reason)
+        self.assertTrue(pro.proconnector_skipped)
+        self.assertIsNone(pro.proconnector_skip_reason)
 
     def test_post_for_missing_record_just_advances(self):
         response = self.client.post(
@@ -619,16 +624,16 @@ class SkipFlowTest(TestCase):
             {"action": "skip", "interested_professional_id": 999999},
         )
         self.assertEqual(response.status_code, 302)
-        self.assertEqual(response.url, reverse("partner_intro_process"))
+        self.assertEqual(response.url, reverse("proconnector_process"))
 
 
 # ---------------------------------------------------------------------------
 # Email send helper (CC professional@)
 # ---------------------------------------------------------------------------
 class SendHelperTest(TestCase):
-    def test_send_partner_intro_email_ccs_professional(self):
+    def test_send_proconnector_intro_email_ccs_professional(self):
         pro = _make_pro(email="jane@janeclinic.com")
-        partner_intro.send_partner_intro_email(
+        proconnector.send_proconnector_intro_email(
             pro,
             subject="Intro to Cofactor AI",
             body="Hello, here is the intro with a compensation disclosure.",
@@ -649,7 +654,7 @@ class SendHelperTest(TestCase):
         # ampersands (common in the base email: "We're", "you've") turn into
         # &#x27; / &amp; garbage in the plaintext part.
         pro = _make_pro(email="jane@janeclinic.com")
-        partner_intro.send_partner_intro_email(
+        proconnector.send_proconnector_intro_email(
             pro,
             subject="Intro",
             body="We're glad & ready; compensation disclosure included.",
@@ -663,7 +668,7 @@ class SendHelperTest(TestCase):
         # The professional address is always CC'd; caller-supplied cc is added
         # (deduplicated), never replacing the professional address.
         pro = _make_pro(email="jane@janeclinic.com")
-        partner_intro.send_partner_intro_email(
+        proconnector.send_proconnector_intro_email(
             pro,
             subject="Intro",
             body="Body with compensation disclosure.",
@@ -743,7 +748,7 @@ class MissingInfoTest(TestCase):
         User.objects.create_user(username="s", password="pw123", is_staff=True)
         self.client.login(username="s", password="pw123")
         _make_pro(name="", business_name="", email="x@xclinic.com")
-        response = self.client.get(reverse("partner_intro_process"))
+        response = self.client.get(reverse("proconnector_process"))
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "(none)")
 
@@ -758,3 +763,58 @@ class BaseEmailWordingTest(TestCase):
         # Uses the agreed framing and includes the compensation disclosure.
         self.assertIn("sourcing agreement", BASE_INTRO_EMAIL)
         self.assertIn("compensation", BASE_INTRO_EMAIL)
+
+
+# ---------------------------------------------------------------------------
+# CSV extract / dump page
+# ---------------------------------------------------------------------------
+class ProExtractCSVTest(TestCase):
+    def setUp(self):
+        self.url = reverse("proconnector_extract_csv")
+
+    def _get_csv(self):
+        response = self.client.get(self.url)
+        content = b"".join(response.streaming_content).decode()
+        return response, content
+
+    def test_requires_staff(self):
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 302)
+
+    def test_csv_headers_and_disposition(self):
+        _login(self.client, is_staff=True)
+        _make_pro(name="Dr. Jane Smith", email="jane@janeclinic.com")
+        response, content = self._get_csv()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "text/csv")
+        self.assertIn("attachment", response["Content-Disposition"])
+        self.assertIn(".csv", response["Content-Disposition"])
+        # Header row plus the record's data.
+        self.assertIn("email", content)
+        self.assertIn("proconnector_attempted", content)
+        self.assertIn("jane@janeclinic.com", content)
+        self.assertIn("Dr. Jane Smith", content)
+
+    def test_csv_excludes_spam_and_test_records(self):
+        _login(self.client, is_staff=True)
+        _make_pro(name="Good Doc", email="good@realclinic.org")
+        _make_pro(name="", email="testing@example.com")
+        _make_pro(name="", email="spam@bad.ru")
+        _make_pro(name="", email="spam@bad.ua")
+        _make_pro(name="http://spam.example buy now", email="spam@elsewhere.biz")
+        _, content = self._get_csv()
+        self.assertIn("good@realclinic.org", content)
+        self.assertNotIn("testing@example.com", content)
+        self.assertNotIn("spam@bad.ru", content)
+        self.assertNotIn("spam@bad.ua", content)
+        self.assertNotIn("spam@elsewhere.biz", content)
+
+    def test_csv_includes_already_processed_records(self):
+        # The extract is a data dump: it includes records regardless of whether
+        # they've been introduced yet (unlike the processing queue).
+        _login(self.client, is_staff=True)
+        pro = _make_pro(name="Done Doc", email="done@realclinic.org")
+        pro.proconnector_attempted = True
+        pro.save()
+        _, content = self._get_csv()
+        self.assertIn("done@realclinic.org", content)

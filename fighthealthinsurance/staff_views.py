@@ -1,3 +1,4 @@
+import csv
 import datetime
 import json
 from collections import Counter, defaultdict
@@ -5,7 +6,7 @@ from typing import Any, Dict, List, Optional
 
 from django.db import transaction
 from django.db.models import Count
-from django.http import HttpResponse
+from django.http import HttpResponse, StreamingHttpResponse
 from django.shortcuts import redirect, render
 from django.utils import timezone
 from django.views import View, generic
@@ -36,16 +37,17 @@ from fighthealthinsurance.models import (
     UserDomain,
 )
 from fighthealthinsurance.email_utils import is_sendable_email
-from fighthealthinsurance.partner_intro import (
-    PARTNER_INTRO_SUBJECT,
+from fighthealthinsurance.proconnector import (
+    PROCONNECTOR_INTRO_SUBJECT,
     build_search_links,
     generate_intro_email,
     get_next_interested_professional,
     get_professional_cc_email,
     mark_email_sent,
     mark_email_skipped,
+    non_spam_interested_professionals,
     remaining_interested_professionals_count,
-    send_partner_intro_email,
+    send_proconnector_intro_email,
 )
 from fighthealthinsurance.type_utils import User
 from fighthealthinsurance.utils import mask_email_for_logging
@@ -468,7 +470,7 @@ class ModelUsageDashboardView(generic.TemplateView):
         return _merge_stats(chosen, dict(presented))
 
 
-class PartnerIntroProcessView(View):
+class ProConnectorProcessView(View):
     """Staff workflow to introduce interested professionals to Cofactor AI.
 
     After refocusing FHI on its consumer mission, we have a sourcing agreement
@@ -480,7 +482,7 @@ class PartnerIntroProcessView(View):
     the next unprocessed record. Nothing is sent automatically.
     """
 
-    template_name = "partner_intro.html"
+    template_name = "proconnector.html"
 
     def _render_record(
         self,
@@ -502,10 +504,10 @@ class PartnerIntroProcessView(View):
             draft = generate_intro_email(pro)
         links = build_search_links(pro)
         context = {
-            "title": "Partner Introduction",
+            "title": "Pro Connector",
             "pro": pro,
             "email_body": draft,
-            "subject": subject or PARTNER_INTRO_SUBJECT,
+            "subject": subject or PROCONNECTOR_INTRO_SUBJECT,
             "cc_email": get_professional_cc_email(),
             "google_search_url": links["google"],
             "linkedin_search_url": links["linkedin"],
@@ -521,7 +523,7 @@ class PartnerIntroProcessView(View):
             return render(
                 request,
                 self.template_name,
-                {"title": "Partner Introduction", "pro": None, "remaining_count": 0},
+                {"title": "Pro Connector", "pro": None, "remaining_count": 0},
             )
         return self._render_record(request, pro)
 
@@ -537,28 +539,28 @@ class PartnerIntroProcessView(View):
         if pro is None:
             # The record vanished (deleted, bad id, or already processed in
             # another tab). Just advance to whatever is next.
-            return redirect("partner_intro_process")
+            return redirect("proconnector_process")
 
-        if pro.partner_intro_attempted or pro.partner_intro_skipped:
+        if pro.proconnector_attempted or pro.proconnector_skipped:
             # Already processed (stale tab, back button, or double submit). Don't
             # re-send or overwrite; just advance.
-            return redirect("partner_intro_process")
+            return redirect("proconnector_process")
 
         if action == "skip":
             skip_reason = (request.POST.get("skip_reason") or "").strip()
             # Resolve every signup sharing this email so duplicates don't return.
             mark_email_skipped(pro.email, skip_reason)
             logger.info(
-                f"Staff user {request.user.username} skipped partner intro for "
+                f"Staff user {request.user.username} skipped pro-connector intro for "
                 f"InterestedProfessional {pro.id} ({mask_email_for_logging(pro.email)})"
             )
-            return redirect("partner_intro_process")
+            return redirect("proconnector_process")
 
         if action == "send":
             body = (request.POST.get("email_body") or "").strip()
             subject = (
                 request.POST.get("subject") or ""
-            ).strip() or PARTNER_INTRO_SUBJECT
+            ).strip() or PROCONNECTOR_INTRO_SUBJECT
             skip_reason = (request.POST.get("skip_reason") or "").strip()
             if not body:
                 return self._render_record(
@@ -581,10 +583,10 @@ class PartnerIntroProcessView(View):
                     status=400,
                 )
             try:
-                send_partner_intro_email(pro, subject=subject, body=body)
+                send_proconnector_intro_email(pro, subject=subject, body=body)
             except Exception as e:
                 logger.opt(exception=True).error(
-                    f"Failed to send partner intro to "
+                    f"Failed to send pro-connector intro to "
                     f"{mask_email_for_logging(pro.email)}: {e}"
                 )
                 # Do NOT mark attempted on failure; let staff retry the record.
@@ -603,10 +605,62 @@ class PartnerIntroProcessView(View):
             # records are resolved together and never resurface in the queue.
             mark_email_sent(pro.email, body)
             logger.info(
-                f"Staff user {request.user.username} sent partner intro to "
+                f"Staff user {request.user.username} sent pro-connector intro to "
                 f"InterestedProfessional {pro.id} ({mask_email_for_logging(pro.email)})"
             )
-            return redirect("partner_intro_process")
+            return redirect("proconnector_process")
 
         # Unknown / missing action -- re-render the current record.
         return self._render_record(request, pro, error="Unknown action.", status=400)
+
+
+class _CSVEcho:
+    """A file-like object that returns each written row, for CSV streaming."""
+
+    def write(self, value: str) -> str:
+        return value
+
+
+class ProConnectorExtractCSVView(View):
+    """Staff CSV export of interested professionals, excluding test/spam signups.
+
+    Dumps the info we have on each (non-filtered) interested professional --
+    including pro-connector processing state -- streamed as CSV. The same
+    test/spam filter used by the processing queue (testing@, .ru/.ua, names
+    containing a URL) is applied here.
+    """
+
+    columns = [
+        "id",
+        "name",
+        "email",
+        "business_name",
+        "phone_number",
+        "address",
+        "job_title_or_provider_type",
+        "most_common_denial",
+        "comments",
+        "paid",
+        "clicked_for_paid",
+        "signup_date",
+        "mod_date",
+        "proconnector_attempted",
+        "proconnector_sent_at",
+        "proconnector_skipped",
+        "proconnector_skip_reason",
+    ]
+
+    def get(self, request) -> StreamingHttpResponse:
+        qs = non_spam_interested_professionals().order_by("signup_date", "id")
+        writer = csv.writer(_CSVEcho())
+
+        def rows():
+            yield writer.writerow(self.columns)
+            for pro in qs.iterator():
+                yield writer.writerow([getattr(pro, column) for column in self.columns])
+
+        response = StreamingHttpResponse(rows(), content_type="text/csv")
+        response["Content-Disposition"] = (
+            'attachment; filename="interested_professionals.csv"'
+        )
+        return response
