@@ -7,6 +7,7 @@ from django_recaptcha.fields import ReCaptchaField
 from fighthealthinsurance.forms import (
     DeleteDataForm,
     PublicDeleteDataForm,
+    InterestedProfessionalForm,
     ShareAppealForm,
     BaseDenialForm,
     DenialForm,
@@ -102,6 +103,58 @@ class TestPublicDeleteDataFormReCaptchaEnabled(TestCase):
     def test_form_without_captcha_fails(self):
         """Without a captcha token, validation should fail."""
         form = PublicDeleteDataForm(data={"email": "test@test-fhi.com"})
+        self.assertFalse(form.is_valid())
+        self.assertIn("captcha", form.errors)
+
+
+class TestInterestedProfessionalFormTestingMode(TestCase):
+    """In testing/dev mode the captcha is a hidden no-op CharField."""
+
+    @override_settings(RECAPTCHA_TESTING=True)
+    def test_captcha_is_hidden_char_field(self):
+        form = InterestedProfessionalForm()
+        captcha_field = form.fields["captcha"]
+        self.assertIsInstance(captcha_field, django_forms.CharField)
+        self.assertNotIsInstance(captcha_field, ReCaptchaField)
+        self.assertIsInstance(captcha_field.widget, django_forms.HiddenInput)
+
+    @override_settings(RECAPTCHA_TESTING=True)
+    def test_form_validates_without_captcha(self):
+        """Without reCAPTCHA, an email-only signup should validate."""
+        form = InterestedProfessionalForm(data={"email": "pro@clinic.example"})
+        self.assertTrue(form.is_valid(), form.errors)
+
+    @override_settings(
+        RECAPTCHA_TESTING=False,
+        RECAPTCHA_PUBLIC_KEY="",
+        RECAPTCHA_PRIVATE_KEY="",
+    )
+    def test_captcha_hidden_when_keys_empty(self):
+        """Empty keys should NOT enable the ReCaptchaField."""
+        form = InterestedProfessionalForm()
+        self.assertNotIsInstance(form.fields["captcha"], ReCaptchaField)
+
+
+class TestInterestedProfessionalFormReCaptchaEnabled(TestCase):
+    """When both reCAPTCHA keys are set and testing is off, use ReCaptchaField."""
+
+    @override_settings(
+        RECAPTCHA_TESTING=False,
+        RECAPTCHA_PUBLIC_KEY="test-public-key",
+        RECAPTCHA_PRIVATE_KEY="test-private-key",
+    )
+    def test_captcha_is_recaptcha_field(self):
+        form = InterestedProfessionalForm()
+        self.assertIsInstance(form.fields["captcha"], ReCaptchaField)
+
+    @override_settings(
+        RECAPTCHA_TESTING=False,
+        RECAPTCHA_PUBLIC_KEY="test-public-key",
+        RECAPTCHA_PRIVATE_KEY="test-private-key",
+    )
+    def test_form_without_captcha_fails(self):
+        """Without a captcha token, an otherwise-valid signup should fail."""
+        form = InterestedProfessionalForm(data={"email": "pro@clinic.example"})
         self.assertFalse(form.is_valid())
         self.assertIn("captcha", form.errors)
 
