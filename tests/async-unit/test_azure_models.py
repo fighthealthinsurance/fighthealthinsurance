@@ -364,6 +364,25 @@ class TestAzureClaudeMessages(unittest.TestCase):
         asyncio.run(run())
 
     @patch.dict(os.environ, AZURE_CLAUDE_ENV)
+    def test_messages_api_clamps_temperature(self):
+        """Temperature is clamped to the Messages API's [0, 1] range so a shared
+        router value that's valid on the OpenAI surface (up to 2.0) can't 400."""
+
+        async def run():
+            """Pass an out-of-range temperature and inspect the request body."""
+            m = RemoteAzureClaude(model="claude-sonnet-4-6")
+            capture: dict = {}
+            response = _FakeAiohttpResponse(
+                {"content": [{"type": "text", "text": "ok"}]}
+            )
+            session = _FakeAiohttpSession(response, capture)
+            with patch.object(aiohttp, "ClientSession", return_value=session):
+                await m._infer(system_prompts=["x"], prompt="y", temperature=1.8)
+            self.assertEqual(capture["json"]["temperature"], 1.0)
+
+        asyncio.run(run())
+
+    @patch.dict(os.environ, AZURE_CLAUDE_ENV)
     def test_messages_api_429_backs_off(self):
         """A 429 from the Messages endpoint marks the limiter exhausted."""
 

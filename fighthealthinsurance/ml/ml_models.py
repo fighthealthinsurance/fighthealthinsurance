@@ -3519,6 +3519,10 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
         if prompt is None:
             logger.debug("No prompt supplied; skipping inference")
             return None
+        # The native Anthropic Messages API caps temperature at 1.0 (vs the
+        # OpenAI surface's 2.0); clamp so a shared router temperature that's
+        # valid for other providers can't trigger a 400 here.
+        temperature = max(0.0, min(temperature, 1.0))
         context_extra = self._build_context_extra(
             patient_context,
             pubmed_context,
@@ -3552,12 +3556,12 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
                 "messages": cleaned_messages,
                 "temperature": temperature,
             }
-            result = await self.__messages_request(url, headers, body)
+            result = await self._messages_request(url, headers, body)
             if result and result[0]:
                 return result
         return None
 
-    async def __messages_request(
+    async def _messages_request(
         self, url: str, headers: dict, body: dict
     ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
         """POST a single Messages API request (honoring ``self._timeout``) and
