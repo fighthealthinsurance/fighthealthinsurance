@@ -42,10 +42,18 @@ REFERRAL_SOURCE_CHOICES = [
 class ReCaptchaOptionalMixin(_ReCaptchaMixinBase):
     """Adds an optionally-enforced reCAPTCHA field to a form.
 
-    Forms using this mixin must declare a placeholder ``captcha`` field so the
-    form metaclass collects it::
+    Order matters: list this mixin **before** ``forms.Form`` /
+    ``forms.ModelForm`` in the base classes, and declare a placeholder
+    ``captcha`` field so the form metaclass collects it::
 
-        captcha = forms.CharField(required=False, widget=forms.HiddenInput())
+        class MyForm(ReCaptchaOptionalMixin, forms.ModelForm):
+            captcha = forms.CharField(required=False, widget=forms.HiddenInput())
+
+    The real ReCaptchaField is swapped in by this mixin's ``__init__``. Django's
+    ``BaseForm.__init__`` does not call ``super().__init__()``, so the mixin
+    must precede the form base in the MRO for its ``__init__`` to run at all;
+    listing it *after* the form base silently leaves the hidden no-op field in
+    place and disables the captcha.
 
     The placeholder is a hidden no-op CharField and is swapped to a real
     ReCaptchaField at instance construction time when Django settings have both
