@@ -118,6 +118,11 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         staff_member_required(staff_views.ModelUsageDashboardView.as_view()),
         name="model_usage_dashboard",
     ),
+    path(
+        "timbit/help/partner_intro",
+        staff_member_required(staff_views.PartnerIntroProcessView.as_view()),
+        name="partner_intro_process",
+    ),
     # Authentication
     path("v0/auth/", include("fhi_users.urls")),
     # stripe integration (TODO webhooks go here)
