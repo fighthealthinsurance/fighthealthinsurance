@@ -72,9 +72,10 @@ class MLRouter(object):
                     if getattr(m.model, "name", None) is None:
                         try:
                             m.model.name = m.name
-                        except Exception:
+                        except Exception as e:
                             logger.debug(
-                                f"MLRouter: could not stamp name on {m.internal_name}"
+                                f"MLRouter: could not stamp name on "
+                                f"{m.internal_name}: {e}"
                             )
                     # Context-only models (e.g. Perplexity) are reserved for
                     # building context such as citations and must never appear

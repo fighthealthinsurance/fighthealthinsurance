@@ -152,6 +152,19 @@ class TestAzureBackends(unittest.TestCase):
         # An overridden (non-default) deployment reports the "custom" tier.
         self.assertEqual(RemoteAzureOpenAI(model="my-deploy").get_tier(), "custom")
 
+    @patch.dict(
+        os.environ,
+        {**AZURE_OPENAI_ENV, "AZURE_OPENAI_MODELS": " , , "},
+    )
+    def test_models_env_override_blank_falls_back_to_defaults(self):
+        """A separators-only AZURE_OPENAI_MODELS (no real names) falls back to
+        the defaults instead of silently disabling the provider."""
+        models = RemoteAzureOpenAI.models()
+        self.assertEqual(
+            [m.internal_name for m in models],
+            ["gpt-4.1-mini", "gpt-5-mini", "gpt-5"],
+        )
+
     @patch.dict(os.environ, AZURE_OPENAI_ENV)
     def test_model_is_ok(self):
         """model_is_ok() is True when configured, False once rate limited."""

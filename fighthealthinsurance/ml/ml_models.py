@@ -3238,6 +3238,9 @@ class RemoteAzureOpenLike(RateLimitedRemoteOpenLike):
     MODELS_ENV: ClassVar[str] = ""
     NAME_PREFIX: ClassVar[str] = "azure"
     PROVIDER_LABEL: ClassVar[str] = "Azure"
+    # Example endpoint shown in the "missing endpoint" error; each provider
+    # overrides this since Azure OpenAI and Azure AI Foundry use different hosts.
+    ENDPOINT_EXAMPLE: ClassVar[str] = "https://my-resource.services.ai.azure.com"
     MAX_LEN: ClassVar[int] = 128000
     # Ordered cheapest -> most expensive: (deployment_name, cost, tier).
     DEFAULT_MODELS: ClassVar[List[Tuple[str, int, str]]] = []
@@ -3258,7 +3261,7 @@ class RemoteAzureOpenLike(RateLimitedRemoteOpenLike):
             raise EnvironmentError(
                 f"No endpoint found for {self.PROVIDER_LABEL}. Please set the "
                 f"{self.ENDPOINT_ENV} environment variable (e.g. "
-                f"https://my-resource.openai.azure.com/openai/v1)."
+                f"{self.ENDPOINT_EXAMPLE})."
             )
 
         api_base = self._normalize_endpoint(endpoint)
@@ -3277,7 +3280,7 @@ class RemoteAzureOpenLike(RateLimitedRemoteOpenLike):
     @staticmethod
     def _normalize_endpoint(endpoint: str) -> str:
         """Strip trailing slashes and a trailing ``/chat/completions`` (which
-        ``__infer`` re-appends) so either form of the URL works."""
+        ``_infer`` re-appends) so either form of the URL works."""
         e = endpoint.strip().rstrip("/")
         suffix = "/chat/completions"
         if e.endswith(suffix):
@@ -3291,6 +3294,16 @@ class RemoteAzureOpenLike(RateLimitedRemoteOpenLike):
         override = os.getenv(cls.MODELS_ENV) if cls.MODELS_ENV else None
         if override and override.strip():
             names = [n.strip() for n in override.split(",") if n.strip()]
+            if not names:
+                # e.g. AZURE_*_MODELS="," — separators only, no real names.
+                # Fall back to defaults rather than silently disabling the
+                # provider with an empty deployment list.
+                logger.warning(
+                    f"{cls.__name__}._configured_deployments: {cls.MODELS_ENV} is "
+                    f"set but contains no valid deployment names; falling back to "
+                    f"defaults"
+                )
+                return list(cls.DEFAULT_MODELS)
             base_cost = cls.DEFAULT_MODELS[0][1] if cls.DEFAULT_MODELS else 60
             return [(n, base_cost + i * 10, "custom") for i, n in enumerate(names)]
         return list(cls.DEFAULT_MODELS)
@@ -3357,6 +3370,7 @@ class RemoteAzureOpenAI(RemoteAzureOpenLike):
     MODELS_ENV: ClassVar[str] = "AZURE_OPENAI_MODELS"
     NAME_PREFIX: ClassVar[str] = "azure-openai"
     PROVIDER_LABEL: ClassVar[str] = "Azure OpenAI"
+    ENDPOINT_EXAMPLE: ClassVar[str] = "https://my-resource.openai.azure.com/openai/v1"
     MAX_LEN: ClassVar[int] = 128000
 
     # Latest broadly-available Azure OpenAI deployments (cheapest -> premium).
