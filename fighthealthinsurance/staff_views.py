@@ -42,6 +42,8 @@ from fighthealthinsurance.partner_intro import (
     generate_intro_email,
     get_next_interested_professional,
     get_professional_cc_email,
+    mark_email_sent,
+    mark_email_skipped,
     remaining_interested_professionals_count,
     send_partner_intro_email,
 )
@@ -526,22 +528,29 @@ class PartnerIntroProcessView(View):
     def post(self, request) -> HttpResponse:
         action = request.POST.get("action")
         pro_id = request.POST.get("interested_professional_id")
-        pro = (
-            InterestedProfessional.objects.filter(pk=pro_id).first() if pro_id else None
-        )
+        pro = None
+        if pro_id:
+            try:
+                pro = InterestedProfessional.objects.filter(pk=int(pro_id)).first()
+            except (TypeError, ValueError):
+                pro = None
         if pro is None:
-            # The record vanished (deleted, or already processed in another
-            # tab). Just advance to whatever is next.
+            # The record vanished (deleted, bad id, or already processed in
+            # another tab). Just advance to whatever is next.
+            return redirect("partner_intro_process")
+
+        if pro.partner_intro_attempted or pro.partner_intro_skipped:
+            # Already processed (stale tab, back button, or double submit). Don't
+            # re-send or overwrite; just advance.
             return redirect("partner_intro_process")
 
         if action == "skip":
             skip_reason = (request.POST.get("skip_reason") or "").strip()
-            pro.partner_intro_skipped = True
-            pro.partner_intro_skip_reason = skip_reason or None
-            pro.save()
+            # Resolve every signup sharing this email so duplicates don't return.
+            mark_email_skipped(pro.email, skip_reason)
             logger.info(
                 f"Staff user {request.user.username} skipped partner intro for "
-                f"InterestedProfessional {pro.id}"
+                f"InterestedProfessional {pro.id} ({mask_email_for_logging(pro.email)})"
             )
             return redirect("partner_intro_process")
 
@@ -588,13 +597,12 @@ class PartnerIntroProcessView(View):
                     error=f"Failed to send email: {e}",
                     status=500,
                 )
-            pro.partner_intro_email_body = body
-            pro.partner_intro_attempted = True
-            pro.partner_intro_sent_at = timezone.now()
-            pro.save()
+            # Record the send on every signup sharing this email so duplicate
+            # records are resolved together and never resurface in the queue.
+            mark_email_sent(pro.email, body)
             logger.info(
                 f"Staff user {request.user.username} sent partner intro to "
-                f"InterestedProfessional {pro.id}"
+                f"InterestedProfessional {pro.id} ({mask_email_for_logging(pro.email)})"
             )
             return redirect("partner_intro_process")
 
