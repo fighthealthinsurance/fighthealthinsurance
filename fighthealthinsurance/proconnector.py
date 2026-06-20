@@ -1,4 +1,4 @@
-"""Partner-introduction (Cofactor AI sourcing agreement) workflow helpers.
+"""Pro-connector (Cofactor AI sourcing agreement) workflow helpers.
 
 Fight Health Insurance initially launched a professional product (Fight
 Paperwork) but has since refocused on its consumer mission. Under a sourcing
@@ -30,7 +30,7 @@ from django.utils import timezone
 
 from loguru import logger
 
-from fighthealthinsurance.email_utils import get_email_domain
+from fighthealthinsurance.email_utils import get_email_domain, is_blocked_email
 from fighthealthinsurance.ml.ml_inference import infer_with_fallback
 from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance.models import InterestedProfessional
@@ -40,8 +40,8 @@ from fighthealthinsurance.utils import send_fallback_email
 DEFAULT_PROFESSIONAL_CC_EMAIL = "professional@fighthealthinsurance.com"
 
 # Obvious test / spam signups we never introduce. These are filtered out of the
-# processing queue entirely (never shown, never counted) rather than skipped, so
-# they don't clutter the staff workflow.
+# processing queue and the CSV export entirely (never shown, never counted)
+# rather than skipped, so they don't clutter the staff workflow.
 FILTERED_EMAILS: frozenset[str] = frozenset({"testing@example.com"})
 # Signups on these TLDs are treated as spam / out of scope and filtered out.
 SPAM_EMAIL_TLDS: tuple[str, ...] = (".ru", ".ua")
@@ -86,7 +86,9 @@ PERSONAL_EMAIL_DOMAINS: frozenset[str] = frozenset(
     }
 )
 
-PARTNER_INTRO_SUBJECT = "An introduction to Cofactor AI from Fight Health Insurance"
+PROCONNECTOR_INTRO_SUBJECT = (
+    "An introduction to Cofactor AI from Fight Health Insurance"
+)
 
 # The approved base email. Staff can edit it before sending, the AI draft is
 # personalized from it, and it is the always-safe fallback when AI drafting is
@@ -195,7 +197,7 @@ def describe_known_info(pro: InterestedProfessional) -> str:
     return "\n".join(lines)
 
 
-def _claims_cofactor_partnership(text: str) -> bool:
+def _claims_cofactor_relationship(text: str) -> bool:
     """True if the draft uses "partner" wording close to a "Cofactor" mention.
 
     The prohibition is specifically about describing *Cofactor AI* as a partner
@@ -225,7 +227,7 @@ def _is_safe_intro_draft(text: Optional[str]) -> bool:
     if len(stripped) < 100:
         return False
     lowered = stripped.lower()
-    if _claims_cofactor_partnership(lowered):
+    if _claims_cofactor_relationship(lowered):
         return False
     if "compensat" not in lowered:  # compensation / compensated
         return False
@@ -245,11 +247,11 @@ async def agenerate_intro_email(pro: InterestedProfessional) -> str:
         models = list(ml_router.external_models_by_cost)
     except Exception as e:
         logger.opt(exception=True).warning(
-            f"Partner intro: external model lookup failed, using base email: {e}"
+            f"Proconnector: external model lookup failed, using base email: {e}"
         )
         return base
     if not models:
-        logger.info("Partner intro: no external models available, using base email")
+        logger.info("Proconnector: no external models available, using base email")
         return base
 
     prompt = (
@@ -266,7 +268,7 @@ async def agenerate_intro_email(pro: InterestedProfessional) -> str:
         prompt=prompt,
         temperature=0.4,
         timeout=30.0,
-        label="partner intro",
+        label="proconnector intro",
         validator=_is_safe_intro_draft,
         models=models[:4],
     )
@@ -278,7 +280,7 @@ def generate_intro_email(pro: InterestedProfessional) -> str:
     return async_to_sync(agenerate_intro_email)(pro)
 
 
-def send_partner_intro_email(
+def send_proconnector_intro_email(
     pro: InterestedProfessional,
     subject: str,
     body: str,
@@ -289,16 +291,21 @@ def send_partner_intro_email(
 
     The professional/support address is always included; any caller-supplied
     ``cc`` is treated as *additional* recipients, deduplicated while preserving
-    order. Raises on send failure so the caller can avoid marking the record
-    attempted.
+    order. Raises on send failure -- including a blocked/unsendable recipient,
+    which ``send_fallback_email`` would otherwise skip silently -- so the caller
+    can avoid marking the record attempted.
     """
+    if is_blocked_email(pro.email):
+        # send_fallback_email silently skips blocked recipients; fail closed so
+        # the caller doesn't record a send that never actually happened.
+        raise ValueError("Recipient email is blocked or unsendable")
     recipients = [get_professional_cc_email()]
     for addr in cc or []:
         if addr not in recipients:
             recipients.append(addr)
     send_fallback_email(
         subject=subject,
-        template_name="partner_intro",
+        template_name="proconnector_intro",
         context={"body": body, "name": pro.name},
         to_email=pro.email,
         cc=recipients,
@@ -322,23 +329,44 @@ def _personal_domain_q() -> Q:
     return q
 
 
-def processable_queryset() -> "QuerySet[InterestedProfessional]":
-    """Interested professionals eligible for partner introduction.
+def _exclude_filtered(
+    qs: "QuerySet[InterestedProfessional]",
+) -> "QuerySet[InterestedProfessional]":
+    """Drop obvious test/spam signups from a queryset.
 
-    Excludes already attempted/skipped records and obvious test/spam signups:
-    a known test address, spam-associated TLDs (.ru/.ua), and records whose
-    name field contains a URL ("http", catching http:// and https://) -- a
-    reliable spam signal.
+    Shared by the processing queue and the CSV export: excludes a known test
+    address, spam-associated TLDs (.ru/.ua), and records whose name field
+    contains a URL ("http", catching http:// and https://) -- a reliable spam
+    signal.
     """
-    qs = InterestedProfessional.objects.filter(
-        partner_intro_attempted=False,
-        partner_intro_skipped=False,
-    ).exclude(name__icontains="http")
+    qs = qs.exclude(name__icontains="http")
     for email in FILTERED_EMAILS:
         qs = qs.exclude(email__iexact=email)
     for tld in SPAM_EMAIL_TLDS:
         qs = qs.exclude(email__iendswith=tld)
     return qs
+
+
+def non_spam_interested_professionals() -> "QuerySet[InterestedProfessional]":
+    """All interested professionals except filtered test/spam signups.
+
+    Used by the CSV export -- includes records regardless of whether they have
+    been introduced yet.
+    """
+    return _exclude_filtered(InterestedProfessional.objects.all())
+
+
+def processable_queryset() -> "QuerySet[InterestedProfessional]":
+    """Interested professionals eligible for pro-connector processing.
+
+    Excludes already attempted/skipped records and filtered test/spam signups.
+    """
+    return _exclude_filtered(
+        InterestedProfessional.objects.filter(
+            proconnector_attempted=False,
+            proconnector_skipped=False,
+        )
+    )
 
 
 def get_next_interested_professional() -> Optional[InterestedProfessional]:
@@ -366,7 +394,7 @@ def get_next_interested_professional() -> Optional[InterestedProfessional]:
 
 
 def remaining_interested_professionals_count() -> int:
-    """Count of distinct unprocessed emails still awaiting partner introduction.
+    """Count of distinct unprocessed emails still awaiting an introduction.
 
     Counted by unique (case-insensitive) email since duplicate signups for the
     same address are processed as one.
@@ -387,15 +415,15 @@ def mark_email_sent(email: str, body: str) -> int:
     so the address never resurfaces in the queue. Returns the number updated.
     """
     return InterestedProfessional.objects.filter(email__iexact=email).update(
-        partner_intro_attempted=True,
-        partner_intro_sent_at=timezone.now(),
-        partner_intro_email_body=body,
+        proconnector_attempted=True,
+        proconnector_sent_at=timezone.now(),
+        proconnector_email_body=body,
     )
 
 
 def mark_email_skipped(email: str, reason: Optional[str]) -> int:
     """Mark every record sharing ``email`` as skipped. Returns the number updated."""
     return InterestedProfessional.objects.filter(email__iexact=email).update(
-        partner_intro_skipped=True,
-        partner_intro_skip_reason=reason or None,
+        proconnector_skipped=True,
+        proconnector_skip_reason=reason or None,
     )

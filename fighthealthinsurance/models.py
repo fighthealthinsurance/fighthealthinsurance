@@ -245,17 +245,17 @@ class InterestedProfessional(ExportModelOperationsMixin("InterestedProfessional"
     mod_date = models.DateField(auto_now=True)
     thankyou_email_sent = models.BooleanField(default=False)
 
-    # Partner-introduction (Cofactor AI sourcing agreement) workflow.
+    # Pro-connector (Cofactor AI sourcing agreement) workflow.
     # After refocusing FHI on its consumer mission, staff review and send a
     # one-at-a-time introduction email to interested professionals who may be a
     # fit for Cofactor AI's AI-powered support for appeals / prior auth / backend
     # workflows. These fields track that per-record processing state so each
     # professional is only ever considered once.
-    partner_intro_attempted = models.BooleanField(default=False)
-    partner_intro_sent_at = models.DateTimeField(null=True, blank=True)
-    partner_intro_skipped = models.BooleanField(default=False)
-    partner_intro_skip_reason = models.TextField(null=True, blank=True)
-    partner_intro_email_body = models.TextField(null=True, blank=True)
+    proconnector_attempted = models.BooleanField(default=False)
+    proconnector_sent_at = models.DateTimeField(null=True, blank=True)
+    proconnector_skipped = models.BooleanField(default=False)
+    proconnector_skip_reason = models.TextField(null=True, blank=True)
+    proconnector_email_body = models.TextField(null=True, blank=True)
 
 
 # Everyone else:
