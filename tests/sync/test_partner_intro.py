@@ -659,6 +659,22 @@ class SendHelperTest(TestCase):
         self.assertNotIn("&#x27;", msg.body)
         self.assertNotIn("&amp;", msg.body)
 
+    def test_extra_cc_is_additional_and_professional_always_included(self):
+        # The professional address is always CC'd; caller-supplied cc is added
+        # (deduplicated), never replacing the professional address.
+        pro = _make_pro(email="jane@janeclinic.com")
+        partner_intro.send_partner_intro_email(
+            pro,
+            subject="Intro",
+            body="Body with compensation disclosure.",
+            cc=["watcher@watch.org", get_professional_cc_email()],
+        )
+        msg = mail.outbox[0]
+        self.assertIn(get_professional_cc_email(), msg.cc)
+        self.assertIn("watcher@watch.org", msg.cc)
+        # No duplicate professional address despite being passed in cc too.
+        self.assertEqual(msg.cc.count(get_professional_cc_email()), 1)
+
 
 # ---------------------------------------------------------------------------
 # Missing name / organization handling

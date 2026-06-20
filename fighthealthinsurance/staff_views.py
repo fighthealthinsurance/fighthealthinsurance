@@ -748,13 +748,15 @@ class PartnerIntroProcessView(View):
                     f"{mask_email_for_logging(pro.email)}: {e}"
                 )
                 # Do NOT mark attempted on failure; let staff retry the record.
+                # Keep the exception detail in the logs (above) and show a
+                # generic message so internal details aren't surfaced in the UI.
                 return self._render_record(
                     request,
                     pro,
                     draft=body,
                     subject=subject,
                     skip_reason=skip_reason,
-                    error=f"Failed to send email: {e}",
+                    error="Failed to send the email. The error has been logged; please try again.",
                     status=500,
                 )
             # Record the send on every signup sharing this email so duplicate
