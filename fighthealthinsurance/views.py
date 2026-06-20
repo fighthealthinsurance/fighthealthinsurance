@@ -280,7 +280,7 @@ class ProVersionView(generic.FormView):
         interested_pro = form.save(commit=False)
         interested_pro.clicked_for_paid = False
         interested_pro.save()
-        self._notify_support_of_signup(interested_pro)
+        self._notify_professional_signup(interested_pro)
         # Send the thank-you email synchronously so the signer gets it right
         # away. The batched ThankyouEmailSender will skip records where
         # thankyou_email_sent=True, which dosend() sets on success.
@@ -294,7 +294,7 @@ class ProVersionView(generic.FormView):
         return super().form_valid(form)
 
     @staticmethod
-    def _notify_support_of_signup(
+    def _notify_professional_signup(
         interested_pro: "models.InterestedProfessional",
     ) -> None:
         admin_path = reverse(

@@ -409,8 +409,12 @@ def notify_professional_signup(subject: str, body: str) -> None:
     try:
         send_mail(subject, body, settings.DEFAULT_FROM_EMAIL, recipients)
     except Exception:
+        # Don't interpolate `subject`/`body`: for REST signups the subject
+        # embeds the professional's email and the body is full of PII. The
+        # recipients are configured internal inboxes, so they're safe to log,
+        # and logger.opt(exception=True) attaches the SMTP traceback.
         logger.opt(exception=True).error(
-            f"Error sending professional signup notification email: {subject}"
+            f"Error sending professional signup notification email to {recipients}"
         )
 
 
