@@ -49,8 +49,10 @@ class ProVersionSignupSuccessTest(TestCase):
         # Pay-to-express-interest is no longer collected.
         self.assertFalse(self.pro.clicked_for_paid)
 
-    def test_sends_team_notification_to_support(self):
-        self.assertEqual(self._team_email().to, ["support42@fighthealthinsurance.com"])
+    def test_sends_team_notification_to_professional_inbox(self):
+        self.assertEqual(
+            self._team_email().to, ["professional@fighthealthinsurance.com"]
+        )
 
     def test_team_notification_includes_captured_fields(self):
         body = self._team_email().body
@@ -120,7 +122,7 @@ class ProVersionSignupEdgeCaseTest(TestCase):
 
     def test_team_notification_failure_does_not_block_signup(self):
         with patch(
-            "fighthealthinsurance.views.send_mail", side_effect=Exception("smtp down")
+            "fighthealthinsurance.utils.send_mail", side_effect=Exception("smtp down")
         ):
             response = self.client.post(
                 reverse("pro_version"),
