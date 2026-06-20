@@ -1,10 +1,19 @@
 import os
+from typing import TYPE_CHECKING
 
 from django import forms
 from django.conf import settings
 from django.forms import CheckboxInput, ModelForm, Textarea
 
 from django_recaptcha.fields import ReCaptchaField, ReCaptchaV2Checkbox
+
+if TYPE_CHECKING:
+    # Typing-only base so mypy knows ``self.fields`` exists. At runtime the
+    # mixin stays a plain ``object`` so it doesn't interfere with the form
+    # metaclass or MRO of the concrete forms that use it.
+    from django.forms import BaseForm as _ReCaptchaMixinBase
+else:
+    _ReCaptchaMixinBase = object
 
 from fighthealthinsurance.form_utils import *
 from fighthealthinsurance.models import (
@@ -30,8 +39,53 @@ REFERRAL_SOURCE_CHOICES = [
 ]
 
 
+class ReCaptchaOptionalMixin(_ReCaptchaMixinBase):
+    """Adds an optionally-enforced reCAPTCHA field to a form.
+
+    Order matters: list this mixin **before** ``forms.Form`` /
+    ``forms.ModelForm`` in the base classes, and declare a placeholder
+    ``captcha`` field so the form metaclass collects it::
+
+        class MyForm(ReCaptchaOptionalMixin, forms.ModelForm):
+            captcha = forms.CharField(required=False, widget=forms.HiddenInput())
+
+    The real ReCaptchaField is swapped in by this mixin's ``__init__``. Django's
+    ``BaseForm.__init__`` does not call ``super().__init__()``, so the mixin
+    must precede the form base in the MRO for its ``__init__`` to run at all;
+    listing it *after* the form base silently leaves the hidden no-op field in
+    place and disables the captcha.
+
+    The placeholder is a hidden no-op CharField and is swapped to a real
+    ReCaptchaField at instance construction time when Django settings have both
+    RECAPTCHA_PUBLIC_KEY and RECAPTCHA_PRIVATE_KEY configured and
+    RECAPTCHA_TESTING is not enabled. Gating on django.conf.settings (rather
+    than os.environ at import time) keeps a single source of truth and makes
+    the behavior testable via override_settings.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self._is_recaptcha_enabled():
+            self.fields["captcha"] = ReCaptchaField(widget=ReCaptchaV2Checkbox())
+
+    @staticmethod
+    def _is_recaptcha_enabled() -> bool:
+        """Return True when reCAPTCHA should be enforced.
+
+        Requires both RECAPTCHA_PUBLIC_KEY and RECAPTCHA_PRIVATE_KEY to be
+        set (non-empty) and RECAPTCHA_TESTING to not be enabled.
+        """
+        if getattr(settings, "RECAPTCHA_TESTING", False):
+            return False
+        return bool(
+            getattr(settings, "RECAPTCHA_PUBLIC_KEY", "")
+            and getattr(settings, "RECAPTCHA_PRIVATE_KEY", "")
+        )
+
+
 # Actual forms
-class InterestedProfessionalForm(forms.ModelForm):
+class InterestedProfessionalForm(ReCaptchaOptionalMixin, forms.ModelForm):
+    captcha = forms.CharField(required=False, widget=forms.HiddenInput())
     business_name = forms.CharField(required=False)
     address = forms.CharField(
         required=False,
@@ -80,39 +134,15 @@ class DeleteDataForm(forms.Form):
     email = forms.EmailField(required=True)
 
 
-class PublicDeleteDataForm(DeleteDataForm):
+class PublicDeleteDataForm(ReCaptchaOptionalMixin, DeleteDataForm):
     """Public-facing delete data form with reCAPTCHA protection.
 
     Used by the unauthenticated public deletion request flow to prevent
-    bots from spamming deletion request emails. The captcha field defaults
-    to a hidden CharField and is swapped to a real ReCaptchaField at
-    instance construction time when Django settings have both
-    RECAPTCHA_PUBLIC_KEY and RECAPTCHA_PRIVATE_KEY configured and
-    RECAPTCHA_TESTING is not enabled. Gating on django.conf.settings
-    (rather than os.environ at import time) keeps a single source of
-    truth and makes the behavior testable via override_settings.
+    bots from spamming deletion request emails. See ReCaptchaOptionalMixin
+    for how the captcha field is conditionally enforced.
     """
 
     captcha = forms.CharField(required=False, widget=forms.HiddenInput())
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        if self._is_recaptcha_enabled():
-            self.fields["captcha"] = ReCaptchaField(widget=ReCaptchaV2Checkbox())
-
-    @staticmethod
-    def _is_recaptcha_enabled() -> bool:
-        """Return True when reCAPTCHA should be enforced.
-
-        Requires both RECAPTCHA_PUBLIC_KEY and RECAPTCHA_PRIVATE_KEY to be
-        set (non-empty) and RECAPTCHA_TESTING to not be enabled.
-        """
-        if getattr(settings, "RECAPTCHA_TESTING", False):
-            return False
-        return bool(
-            getattr(settings, "RECAPTCHA_PUBLIC_KEY", "")
-            and getattr(settings, "RECAPTCHA_PRIVATE_KEY", "")
-        )
 
 
 class ShareAppealForm(forms.Form):
