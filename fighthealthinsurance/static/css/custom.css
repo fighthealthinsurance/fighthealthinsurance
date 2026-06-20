@@ -718,9 +718,6 @@ a.link:hover::after {
     border: 1px solid #ced4da;
 }
 
-#id_address, #id_business_name{
-    width: 30em;
-}
 /* Featured In Section */
 .featured-section {
     padding: 3rem 0;
@@ -1670,5 +1667,140 @@ section:not(.slider) .share-subcopy {
         flex: 0 0 auto;
         scroll-snap-align: start;
         min-width: 120px;
+    }
+}
+
+/* ===== Professional interest ("pro version") signup page ===== */
+.pro-interest-section {
+    padding: 3rem 0 4rem;
+}
+
+.pro-interest-card {
+    max-width: 780px;
+    margin: 0 auto;
+    background: #fff;
+    border: 1px solid #e8e8e8;
+    border-radius: 14px;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.07);
+    padding: 2.75rem 3rem;
+}
+
+.pro-interest-title {
+    text-align: center;
+    font-size: 1.9rem;
+    font-weight: 700;
+    color: #2e7d32;
+    margin: 0 0 1.25rem;
+    padding-bottom: 1rem;
+    border-bottom: 2px solid #4caf50;
+}
+
+.pro-interest-lead,
+.pro-interest-note {
+    color: #555;
+    line-height: 1.65;
+    margin-bottom: 1rem;
+}
+
+.pro-interest-note {
+    margin-bottom: 2rem;
+}
+
+.pro-interest-form {
+    width: 100%;
+}
+
+/* Two fields side-by-side on desktop, stacked on mobile. Uses its own row
+   helper (rather than the shared .together-form-group) so the de-jank here
+   doesn't affect the appeal-generator forms that also use that class. */
+.pro-interest-form .pro-row {
+    display: flex;
+    gap: 1.25rem;
+}
+
+.pro-interest-form .pro-row > .pro-field {
+    flex: 1;
+    min-width: 0;
+}
+
+.pro-interest-form .pro-field {
+    margin-bottom: 1.25rem;
+}
+
+.pro-interest-form label {
+    display: block;
+    font-weight: 600;
+    color: #333;
+    margin-bottom: 0.4rem;
+}
+
+.pro-interest-form input[type="text"],
+.pro-interest-form input[type="email"],
+.pro-interest-form input[type="tel"],
+.pro-interest-form textarea {
+    width: 100%;
+    font-size: inherit;
+    font-family: inherit;
+    box-sizing: border-box;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.pro-interest-form input:focus,
+.pro-interest-form textarea:focus {
+    outline: none;
+    border-color: #a5c422;
+    box-shadow: 0 0 0 3px rgba(165, 196, 34, 0.18);
+}
+
+.pro-interest-form textarea {
+    resize: vertical;
+}
+
+/* Keep the legacy fixed-width textareas inside the card (these classes are
+   only used by this form). */
+.pro-interest-form .form-textarea-medium,
+.pro-interest-form .most_common_denial {
+    width: 100%;
+    height: 5em;
+}
+
+.pro-interest-form .form-textarea-wide,
+.pro-interest-form .comments {
+    width: 100%;
+    height: 8em;
+}
+
+.pro-interest-form .errorlist {
+    list-style: none;
+    padding: 0;
+    margin: 0.35rem 0 0;
+    color: #c0392b;
+    font-size: 1.3rem;
+}
+
+.pro-interest-actions {
+    margin-top: 1.75rem;
+}
+
+.pro-interest-form .pro-submit-btn {
+    width: 100%;
+    margin: 0;
+    padding: 0.8rem 1.5rem;
+    font-size: 1.6rem;
+    font-weight: 600;
+}
+
+@media (max-width: 768px) {
+    .pro-interest-card {
+        padding: 1.75rem 1.25rem;
+    }
+
+    .pro-interest-title {
+        font-size: 1.5rem;
+    }
+
+    .pro-interest-form .pro-row {
+        flex-direction: column;
+        gap: 0;
     }
 }

@@ -81,7 +81,7 @@ class ProVersionSignupEdgeCaseTest(TestCase):
     def test_get_renders_signup_form(self):
         response = self.client.get(reverse("pro_version"))
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "New Updated Professional Version Coming Soon")
+        self.assertContains(response, "New Updated Professional Version Available")
         self.assertContains(response, 'method="post"')
         # Pay-to-express-interest has been dropped.
         self.assertNotContains(response, "Pay $10")
