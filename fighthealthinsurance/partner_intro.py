@@ -284,17 +284,24 @@ def send_partner_intro_email(
     body: str,
     cc: Optional[list[str]] = None,
 ) -> None:
-    """Send the (edited) intro email to ``pro``, CC'ing the professional address.
+    """Send the (edited) intro email to ``pro``, always CC'ing the professional
+    address.
 
-    Raises on send failure so the caller can avoid marking the record attempted.
+    The professional/support address is always included; any caller-supplied
+    ``cc`` is treated as *additional* recipients, deduplicated while preserving
+    order. Raises on send failure so the caller can avoid marking the record
+    attempted.
     """
-    cc_list = cc if cc is not None else [get_professional_cc_email()]
+    recipients = [get_professional_cc_email()]
+    for addr in cc or []:
+        if addr not in recipients:
+            recipients.append(addr)
     send_fallback_email(
         subject=subject,
         template_name="partner_intro",
         context={"body": body, "name": pro.name},
         to_email=pro.email,
-        cc=cc_list,
+        cc=recipients,
     )
 
 
