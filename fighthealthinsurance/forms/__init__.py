@@ -1,10 +1,19 @@
 import os
+from typing import TYPE_CHECKING
 
 from django import forms
 from django.conf import settings
 from django.forms import CheckboxInput, ModelForm, Textarea
 
 from django_recaptcha.fields import ReCaptchaField, ReCaptchaV2Checkbox
+
+if TYPE_CHECKING:
+    # Typing-only base so mypy knows ``self.fields`` exists. At runtime the
+    # mixin stays a plain ``object`` so it doesn't interfere with the form
+    # metaclass or MRO of the concrete forms that use it.
+    from django.forms import BaseForm as _ReCaptchaMixinBase
+else:
+    _ReCaptchaMixinBase = object
 
 from fighthealthinsurance.form_utils import *
 from fighthealthinsurance.models import (
@@ -30,7 +39,7 @@ REFERRAL_SOURCE_CHOICES = [
 ]
 
 
-class ReCaptchaOptionalMixin:
+class ReCaptchaOptionalMixin(_ReCaptchaMixinBase):
     """Adds an optionally-enforced reCAPTCHA field to a form.
 
     Forms using this mixin must declare a placeholder ``captcha`` field so the
