@@ -2566,7 +2566,7 @@ class RemoteHealthInsurance(RemoteFullOpenLike):
     @classmethod
     def models(cls) -> List[ModelDescription]:
         model_name = os.getenv(
-            "HEALTH_BACKEND_MODEL", "TotallyLegitCo/fighthealthinsurance_model_v0.5"
+            "HEALTH_BACKEND_MODEL", "totallyLegitCo/fighthealthinsurance_model_v0.5"
         )
         return [
             ModelDescription(cost=1, name="fhi-legacy", internal_name=model_name),
