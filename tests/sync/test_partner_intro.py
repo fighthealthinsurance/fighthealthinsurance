@@ -25,6 +25,7 @@ from fighthealthinsurance.partner_intro import (
     generate_intro_email,
     get_next_interested_professional,
     get_professional_cc_email,
+    is_personal_email_domain,
 )
 
 User = get_user_model()
@@ -182,6 +183,122 @@ class NextRecordQueryTest(TestCase):
 
 
 # ---------------------------------------------------------------------------
+# Domain prioritization (business domains before personal/free-email)
+# ---------------------------------------------------------------------------
+class DomainPriorityTest(TestCase):
+    def test_is_personal_email_domain(self):
+        self.assertTrue(is_personal_email_domain("someone@gmail.com"))
+        self.assertTrue(is_personal_email_domain("Someone@Outlook.com"))
+        self.assertTrue(is_personal_email_domain("a@yahoo.com"))
+        self.assertFalse(is_personal_email_domain("doctor@stanfordhealth.org"))
+        # Anchored on "@": a business domain merely ending in a personal one
+        # is not treated as personal.
+        self.assertFalse(is_personal_email_domain("billing@notgmail.com"))
+        self.assertFalse(is_personal_email_domain(""))
+        self.assertFalse(is_personal_email_domain("not-an-email"))
+
+    def test_business_domain_prioritized_over_older_personal(self):
+        # Personal-domain record is OLDER, business-domain record is NEWER.
+        personal = _make_pro(email="older@gmail.com")
+        business = _make_pro(email="newer@bigclinic.org")
+        _set_signup(personal, days_ago=10)
+        _set_signup(business, days_ago=1)
+        # Business wins despite being newer.
+        self.assertEqual(get_next_interested_professional().pk, business.pk)
+
+    def test_personal_domains_still_returned_when_only_option(self):
+        personal = _make_pro(email="solo@gmail.com")
+        self.assertEqual(get_next_interested_professional().pk, personal.pk)
+
+    def test_oldest_first_within_same_domain_class(self):
+        # Two personal-domain records: oldest first.
+        older = _make_pro(email="older@gmail.com")
+        newer = _make_pro(email="newer@outlook.com")
+        _set_signup(older, days_ago=5)
+        _set_signup(newer, days_ago=1)
+        self.assertEqual(get_next_interested_professional().pk, older.pk)
+
+    def test_full_ordering_business_then_personal_each_oldest_first(self):
+        biz_old = _make_pro(email="a@clinic.org")
+        biz_new = _make_pro(email="b@hospital.org")
+        pers_old = _make_pro(email="c@gmail.com")
+        pers_new = _make_pro(email="d@yahoo.com")
+        _set_signup(biz_old, days_ago=4)
+        _set_signup(biz_new, days_ago=2)
+        _set_signup(pers_old, days_ago=10)
+        _set_signup(pers_new, days_ago=8)
+
+        order = []
+        for _ in range(4):
+            nxt = get_next_interested_professional()
+            order.append(nxt.pk)
+            nxt.partner_intro_attempted = True
+            nxt.save()
+
+        self.assertEqual(order, [biz_old.pk, biz_new.pk, pers_old.pk, pers_new.pk])
+
+
+# ---------------------------------------------------------------------------
+# Queue filtering (test/spam records) + dedup by email
+# ---------------------------------------------------------------------------
+class QueueFilteringTest(TestCase):
+    def test_filters_out_test_address(self):
+        _make_pro(email="testing@example.com")
+        self.assertIsNone(get_next_interested_professional())
+        self.assertEqual(partner_intro.remaining_interested_professionals_count(), 0)
+
+    def test_filters_out_ru_and_ua_domains(self):
+        _make_pro(email="spammer@somewhere.ru")
+        _make_pro(email="spammer@somewhere.ua")
+        self.assertIsNone(get_next_interested_professional())
+        self.assertEqual(partner_intro.remaining_interested_professionals_count(), 0)
+
+    def test_filters_out_http_in_name(self):
+        _make_pro(name="http://buy-now.example", email="spam@elsewhere.biz")
+        _make_pro(name="visit https://spam.example today", email="spam2@elsewhere.biz")
+        self.assertIsNone(get_next_interested_professional())
+        self.assertEqual(partner_intro.remaining_interested_professionals_count(), 0)
+
+    def test_legit_record_still_returned_alongside_filtered(self):
+        _make_pro(email="testing@example.com")
+        _make_pro(name="http://x", email="spam@elsewhere.biz")
+        legit = _make_pro(email="real@clinic.org")
+        self.assertEqual(get_next_interested_professional().pk, legit.pk)
+        self.assertEqual(partner_intro.remaining_interested_professionals_count(), 1)
+
+    def test_count_is_unique_by_email(self):
+        _make_pro(email="dup@clinic.org")
+        _make_pro(email="dup@clinic.org")
+        _make_pro(email="other@clinic.org")
+        # Two distinct emails despite three records.
+        self.assertEqual(partner_intro.remaining_interested_professionals_count(), 2)
+
+    def test_mark_email_sent_resolves_all_duplicates(self):
+        a = _make_pro(email="dup@clinic.org")
+        b = _make_pro(email="dup@clinic.org")
+        updated = partner_intro.mark_email_sent("dup@clinic.org", "the body")
+        self.assertEqual(updated, 2)
+        for rec in (a, b):
+            rec.refresh_from_db()
+            self.assertTrue(rec.partner_intro_attempted)
+            self.assertIsNotNone(rec.partner_intro_sent_at)
+            self.assertEqual(rec.partner_intro_email_body, "the body")
+        # Neither resurfaces in the queue.
+        self.assertIsNone(get_next_interested_professional())
+
+    def test_mark_email_skipped_resolves_all_duplicates(self):
+        a = _make_pro(email="dup@clinic.org")
+        b = _make_pro(email="dup@clinic.org")
+        updated = partner_intro.mark_email_skipped("dup@clinic.org", "not a fit")
+        self.assertEqual(updated, 2)
+        for rec in (a, b):
+            rec.refresh_from_db()
+            self.assertTrue(rec.partner_intro_skipped)
+            self.assertEqual(rec.partner_intro_skip_reason, "not a fit")
+        self.assertIsNone(get_next_interested_professional())
+
+
+# ---------------------------------------------------------------------------
 # AI draft generation + safe fallback
 # ---------------------------------------------------------------------------
 class SafetyValidatorTest(TestCase):
@@ -204,6 +321,24 @@ class SafetyValidatorTest(TestCase):
             "A warm note. We have a sourcing agreement to introduce you to "
             "Cofactor AI. FHI may receive compensation if you work with them. "
             + "x" * 100
+        )
+        self.assertTrue(_is_safe_intro_draft(text))
+
+    def test_rejects_partnership_claim_near_cofactor(self):
+        text = (
+            "We're delighted to be in partnership with Cofactor AI. FHI may "
+            "receive compensation. " + "x" * 100
+        )
+        self.assertFalse(_is_safe_intro_draft(text))
+
+    def test_accepts_benign_partner_word_far_from_cofactor(self):
+        # "partner" used in an unrelated, benign way (a practice named
+        # "... Partners") should NOT trip the guard even when the draft also
+        # mentions Cofactor, as long as the two are not adjacent.
+        text = (
+            "Thank you for your work at Cardiology Partners. We have a sourcing "
+            "agreement to introduce you to Cofactor AI; FHI may receive "
+            "compensation if you choose to work with them. " + "x" * 100
         )
         self.assertTrue(_is_safe_intro_draft(text))
 
@@ -267,7 +402,9 @@ class AIDraftFallbackTest(TestCase):
         self.assertEqual(draft, safe.strip())
 
     def test_second_model_used_when_first_unsafe(self):
-        bad = _FakeModel(result="partnered " + "x" * 200 + " compensation")
+        bad = _FakeModel(
+            result="We partnered with Cofactor AI. compensation " + "x" * 200
+        )
         good_text = (
             "A warm note with a sourcing agreement to introduce you to Cofactor "
             "AI. FHI may receive compensation. " + "q" * 100
@@ -351,6 +488,54 @@ class SendFlowTest(TestCase):
         mock_send.assert_not_called()
         pro.refresh_from_db()
         self.assertFalse(pro.partner_intro_attempted)
+
+    @patch("fighthealthinsurance.staff_views.send_partner_intro_email")
+    def test_send_resolves_all_records_with_same_email(self, mock_send):
+        # Two signups share an email; sending once marks both and emails once.
+        a = _make_pro(email="dup@clinic.org")
+        b = _make_pro(email="dup@clinic.org")
+        response = self.client.post(
+            self.url,
+            {
+                "action": "send",
+                "interested_professional_id": a.id,
+                "email_body": "Body with the compensation disclosure.",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        mock_send.assert_called_once()  # one email, not one per duplicate
+        for rec in (a, b):
+            rec.refresh_from_db()
+            self.assertTrue(rec.partner_intro_attempted)
+        self.assertIsNone(get_next_interested_professional())
+
+    @patch("fighthealthinsurance.staff_views.send_partner_intro_email")
+    def test_non_numeric_id_advances_without_error(self, mock_send):
+        # A tampered/garbage hidden id must not 500; it just advances.
+        response = self.client.post(
+            self.url,
+            {"action": "send", "interested_professional_id": "abc", "email_body": "x"},
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.url, reverse("partner_intro_process"))
+        mock_send.assert_not_called()
+
+    @patch("fighthealthinsurance.staff_views.send_partner_intro_email")
+    def test_already_attempted_record_is_not_resent(self, mock_send):
+        # Stale tab / double submit: record already processed -> no resend.
+        pro = _make_pro(email="done@clinic.org")
+        pro.partner_intro_attempted = True
+        pro.save()
+        response = self.client.post(
+            self.url,
+            {
+                "action": "send",
+                "interested_professional_id": pro.id,
+                "email_body": "Body with the compensation disclosure.",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        mock_send.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -458,6 +643,21 @@ class SendHelperTest(TestCase):
     @override_settings(PROFESSIONAL_CC_EMAIL="custom-pro@example-host.com")
     def test_cc_uses_configured_setting(self):
         self.assertEqual(get_professional_cc_email(), "custom-pro@example-host.com")
+
+    def test_plaintext_body_is_not_html_escaped(self):
+        # The .txt template must not HTML-escape the body, or apostrophes and
+        # ampersands (common in the base email: "We're", "you've") turn into
+        # &#x27; / &amp; garbage in the plaintext part.
+        pro = _make_pro(email="jane@janeclinic.com")
+        partner_intro.send_partner_intro_email(
+            pro,
+            subject="Intro",
+            body="We're glad & ready; compensation disclosure included.",
+        )
+        msg = mail.outbox[0]
+        self.assertIn("We're glad & ready", msg.body)
+        self.assertNotIn("&#x27;", msg.body)
+        self.assertNotIn("&amp;", msg.body)
 
 
 # ---------------------------------------------------------------------------

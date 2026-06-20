@@ -18,22 +18,73 @@ Wording constraints (enforced by ``_is_safe_intro_draft``):
   * Always include the plain-language compensation disclosure.
 """
 
-import asyncio
 import re
 import urllib.parse
 from typing import Optional
 
 from asgiref.sync import async_to_sync
 from django.conf import settings
+from django.db.models import Case, IntegerField, Q, QuerySet, Value, When
+from django.db.models.functions import Lower
+from django.utils import timezone
 
 from loguru import logger
 
+from fighthealthinsurance.email_utils import get_email_domain
+from fighthealthinsurance.ml.ml_inference import infer_with_fallback
 from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance.models import InterestedProfessional
 from fighthealthinsurance.utils import send_fallback_email
 
 # Fallback CC address when no professional/support email setting is configured.
 DEFAULT_PROFESSIONAL_CC_EMAIL = "professional@fighthealthinsurance.com"
+
+# Obvious test / spam signups we never introduce. These are filtered out of the
+# processing queue entirely (never shown, never counted) rather than skipped, so
+# they don't clutter the staff workflow.
+FILTERED_EMAILS: frozenset[str] = frozenset({"testing@example.com"})
+# Signups on these TLDs are treated as spam / out of scope and filtered out.
+SPAM_EMAIL_TLDS: tuple[str, ...] = (".ru", ".ua")
+
+# Known personal / free-email provider domains. Professionals using a business
+# or organizational domain tend to be the strongest fit for Cofactor AI, so the
+# processing queue prioritizes them; these personal domains are still processed,
+# just later in the order (see get_next_interested_professional). This is purely
+# a sort signal -- nobody is excluded.
+PERSONAL_EMAIL_DOMAINS: frozenset[str] = frozenset(
+    {
+        "gmail.com",
+        "googlemail.com",
+        "outlook.com",
+        "hotmail.com",
+        "hotmail.co.uk",
+        "live.com",
+        "msn.com",
+        "yahoo.com",
+        "yahoo.co.uk",
+        "ymail.com",
+        "rocketmail.com",
+        "aol.com",
+        "icloud.com",
+        "me.com",
+        "mac.com",
+        "proton.me",
+        "protonmail.com",
+        "pm.me",
+        "gmx.com",
+        "gmx.net",
+        "mail.com",
+        "zoho.com",
+        "yandex.com",
+        "fastmail.com",
+        "comcast.net",
+        "verizon.net",
+        "att.net",
+        "sbcglobal.net",
+        "bellsouth.net",
+        "cox.net",
+    }
+)
 
 PARTNER_INTRO_SUBJECT = "An introduction to Cofactor AI from Fight Health Insurance"
 
@@ -85,17 +136,10 @@ INTRO_SYSTEM_PROMPT = (
 
 
 def get_professional_cc_email() -> str:
-    """CC address for intro emails.
-
-    Prefer an existing configured professional/support setting; otherwise fall
-    back to ``professional@``. We check a couple of likely setting names so a
-    later standardization on either picks up automatically.
-    """
-    for attr in ("PROFESSIONAL_CC_EMAIL", "PROFESSIONAL_EMAIL"):
-        value = getattr(settings, attr, None)
-        if value:
-            return str(value)
-    return DEFAULT_PROFESSIONAL_CC_EMAIL
+    """CC address for intro emails: the configured ``PROFESSIONAL_CC_EMAIL``
+    setting if set, otherwise the ``professional@`` default."""
+    value = getattr(settings, "PROFESSIONAL_CC_EMAIL", None)
+    return str(value) if value else DEFAULT_PROFESSIONAL_CC_EMAIL
 
 
 def _greeting_name(pro: InterestedProfessional) -> str:
@@ -151,12 +195,29 @@ def describe_known_info(pro: InterestedProfessional) -> str:
     return "\n".join(lines)
 
 
+def _claims_cofactor_partnership(text: str) -> bool:
+    """True if the draft uses "partner" wording close to a "Cofactor" mention.
+
+    The prohibition is specifically about describing *Cofactor AI* as a partner
+    / saying FHI "partnered" with them. We flag any ``partner*`` token within a
+    few words of a ``cofactor`` token (either order). Proximity matching means
+    benign, unrelated uses -- a practice named "... Partners", a "billing
+    partner" -- don't needlessly discard an otherwise-good draft.
+    """
+    tokens = re.findall(r"[a-z]+", text.lower())
+    partner_positions = [i for i, t in enumerate(tokens) if t.startswith("partner")]
+    if not partner_positions:
+        return False
+    cofactor_positions = [i for i, t in enumerate(tokens) if t == "cofactor"]
+    return any(abs(p - c) <= 6 for p in partner_positions for c in cofactor_positions)
+
+
 def _is_safe_intro_draft(text: Optional[str]) -> bool:
     """Guard an AI draft against the two hard wording requirements.
 
-    Rejects drafts that (a) use any form of "partner" (we are NOT announcing a
-    partnership) or (b) omit the plain-language compensation disclosure. A
-    rejected draft falls back to the always-safe base email.
+    Rejects drafts that (a) describe Cofactor AI as a "partner" / claim a
+    partnership with them, or (b) omit the plain-language compensation
+    disclosure. A rejected draft falls back to the always-safe base email.
     """
     if not text:
         return False
@@ -164,7 +225,7 @@ def _is_safe_intro_draft(text: Optional[str]) -> bool:
     if len(stripped) < 100:
         return False
     lowered = stripped.lower()
-    if re.search(r"partner", lowered):  # partner / partnered / partnership
+    if _claims_cofactor_partnership(lowered):
         return False
     if "compensat" not in lowered:  # compensation / compensated
         return False
@@ -197,24 +258,19 @@ async def agenerate_intro_email(pro: InterestedProfessional) -> str:
         f"Known information:\n{describe_known_info(pro)}\n\n"
         f"Base email:\n{base}\n"
     )
-    for model in models[:3]:
-        try:
-            result = await asyncio.wait_for(
-                model._infer_no_context(
-                    system_prompts=[INTRO_SYSTEM_PROMPT],
-                    prompt=prompt,
-                    temperature=0.4,
-                ),
-                timeout=30.0,
-            )
-        except Exception as e:
-            logger.debug(f"Partner intro draft failed with {model}: {e}")
-            continue
-        text = (result or "").strip()
-        if _is_safe_intro_draft(text):
-            return text
-        logger.debug("Partner intro draft rejected by safety check; trying next model")
-    return base
+    # Reuse the shared model-fallback helper (timeout + per-model retry +
+    # validator), pointing it at external models and our safety validator. It
+    # returns the first safe draft, or None if every model fails -> base email.
+    result = await infer_with_fallback(
+        system_prompts=[INTRO_SYSTEM_PROMPT],
+        prompt=prompt,
+        temperature=0.4,
+        timeout=30.0,
+        label="partner intro",
+        validator=_is_safe_intro_draft,
+        models=models[:4],
+    )
+    return result or base
 
 
 def generate_intro_email(pro: InterestedProfessional) -> str:
@@ -242,21 +298,97 @@ def send_partner_intro_email(
     )
 
 
+def is_personal_email_domain(email: Optional[str]) -> bool:
+    """Whether ``email`` uses a known personal / free-email provider domain."""
+    return get_email_domain(email) in PERSONAL_EMAIL_DOMAINS
+
+
+def _personal_domain_q() -> Q:
+    """Q matching records whose email is on a personal/free-email domain.
+
+    Anchored on the ``@`` so e.g. ``foo@notgmail.com`` does not match
+    ``gmail.com``. Kept in sync with :data:`PERSONAL_EMAIL_DOMAINS`.
+    """
+    q = Q()
+    for domain in PERSONAL_EMAIL_DOMAINS:
+        q |= Q(email__iendswith=f"@{domain}")
+    return q
+
+
+def processable_queryset() -> "QuerySet[InterestedProfessional]":
+    """Interested professionals eligible for partner introduction.
+
+    Excludes already attempted/skipped records and obvious test/spam signups:
+    a known test address, spam-associated TLDs (.ru/.ua), and records whose
+    name field contains a URL ("http", catching http:// and https://) -- a
+    reliable spam signal.
+    """
+    qs = InterestedProfessional.objects.filter(
+        partner_intro_attempted=False,
+        partner_intro_skipped=False,
+    ).exclude(name__icontains="http")
+    for email in FILTERED_EMAILS:
+        qs = qs.exclude(email__iexact=email)
+    for tld in SPAM_EMAIL_TLDS:
+        qs = qs.exclude(email__iendswith=tld)
+    return qs
+
+
 def get_next_interested_professional() -> Optional[InterestedProfessional]:
-    """Oldest interested professional not yet attempted or skipped, or ``None``."""
+    """Next interested professional to process, or ``None``.
+
+    Non-personal (business / organizational) email domains are prioritized
+    because they tend to be the strongest fit for Cofactor AI; personal
+    free-email domains (gmail, outlook, etc.) still appear, just later. Within
+    each group we go oldest-first. Records sharing an email are collapsed by
+    processing them together (see mark_email_sent / mark_email_skipped), so the
+    same address is never shown twice.
+    """
     return (
-        InterestedProfessional.objects.filter(
-            partner_intro_attempted=False,
-            partner_intro_skipped=False,
+        processable_queryset()
+        .annotate(
+            _personal_domain=Case(
+                When(_personal_domain_q(), then=Value(1)),
+                default=Value(0),
+                output_field=IntegerField(),
+            )
         )
-        .order_by("signup_date", "id")
+        .order_by("_personal_domain", "signup_date", "id")
         .first()
     )
 
 
 def remaining_interested_professionals_count() -> int:
-    """Count of interested professionals still awaiting partner-intro processing."""
-    return InterestedProfessional.objects.filter(
-        partner_intro_attempted=False,
-        partner_intro_skipped=False,
-    ).count()
+    """Count of distinct unprocessed emails still awaiting partner introduction.
+
+    Counted by unique (case-insensitive) email since duplicate signups for the
+    same address are processed as one.
+    """
+    return (
+        processable_queryset()
+        .annotate(_lower_email=Lower("email"))
+        .values("_lower_email")
+        .distinct()
+        .count()
+    )
+
+
+def mark_email_sent(email: str, body: str) -> int:
+    """Mark every record sharing ``email`` as sent (attempted) with ``body``.
+
+    Duplicate signups for the same address are all resolved by a single send,
+    so the address never resurfaces in the queue. Returns the number updated.
+    """
+    return InterestedProfessional.objects.filter(email__iexact=email).update(
+        partner_intro_attempted=True,
+        partner_intro_sent_at=timezone.now(),
+        partner_intro_email_body=body,
+    )
+
+
+def mark_email_skipped(email: str, reason: Optional[str]) -> int:
+    """Mark every record sharing ``email`` as skipped. Returns the number updated."""
+    return InterestedProfessional.objects.filter(email__iexact=email).update(
+        partner_intro_skipped=True,
+        partner_intro_skip_reason=reason or None,
+    )

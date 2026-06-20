@@ -22,15 +22,20 @@ async def infer_with_fallback(
     min_length: int = 0,
     label: str = "",
     validator: Optional[Callable[[str], bool]] = None,
+    models: Optional[list] = None,
 ) -> Optional[str]:
     """
-    Try inference across multiple internal models with timeout.
+    Try inference across multiple models with timeout.
 
     Returns the first successful result or None if all models fail.
     If validator is provided, the result must also pass validation;
     otherwise the next model is tried.
+
+    By default the cheapest internal models are used; pass ``models`` to run
+    against a specific list (e.g. external models) instead.
     """
-    models = ml_router.internal_models_by_cost[:model_count]
+    if models is None:
+        models = ml_router.internal_models_by_cost[:model_count]
     for model in models:
         try:
             result = await asyncio.wait_for(
