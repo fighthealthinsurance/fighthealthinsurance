@@ -2817,7 +2817,109 @@ class DeepInfra(RemoteFullOpenLike):
         ]
 
 
-class RemoteGroq(RemoteFullOpenLike):
+class RateLimitedRemoteOpenLike(RemoteFullOpenLike):
+    """``RemoteFullOpenLike`` with shared per-model rate limiting and 429
+    back-off, used by the external paid backends (Groq, Anthropic, Azure).
+
+    Concrete subclasses declare their own ``_rate_limiters`` dict and
+    ``_rate_limiter_lock`` (so providers keep separate rate-limit state) and set
+    ``PROVIDER_LABEL`` for rate-limiter names and 429 log messages.
+    """
+
+    # Subclasses override these with their own instances.
+    _rate_limiters: ClassVar[dict[str, RateLimiter]] = {}
+    _rate_limiter_lock: ClassVar[threading.Lock] = threading.Lock()
+    PROVIDER_LABEL: ClassVar[str] = "remote"
+
+    # Re-raise ClientResponseError from the parent _infer so we can detect 429.
+    _propagate_http_errors: ClassVar[bool] = True
+
+    @classmethod
+    def _ensure_rate_limiter(cls, model: str) -> None:
+        """Lazily create a per-model rate limiter (thread-safe)."""
+        if model not in cls._rate_limiters:
+            with cls._rate_limiter_lock:
+                if model not in cls._rate_limiters:
+                    cls._rate_limiters[model] = RateLimiter(
+                        name=f"{cls.PROVIDER_LABEL}-{model}",
+                    )
+                    logger.info(
+                        f"Created rate limiter for {cls.PROVIDER_LABEL}-{model}"
+                    )
+
+    @property
+    def rate_limiter(self) -> RateLimiter:
+        """Get the rate limiter for this model instance."""
+        return self._rate_limiters[self.model]
+
+    def _retry_after_seconds(
+        self, e: aiohttp.ClientResponseError, default: float = 60.0
+    ) -> float:
+        """Parse and clamp (1-600s) a Retry-After header from a 429 response."""
+        retry_after = default
+        headers = getattr(e, "headers", None)
+        if headers:
+            retry_header = headers.get("Retry-After", "")
+            if retry_header:
+                try:
+                    retry_after = float(retry_header)
+                except ValueError:
+                    logger.debug(
+                        f"{type(self).__name__}._infer: Non-numeric Retry-After "
+                        f"header '{retry_header}' for {self.model}; using default "
+                        f"{retry_after}s"
+                    )
+        return max(1.0, min(retry_after, 600.0))
+
+    async def _infer(
+        self,
+        system_prompts: list[str],
+        prompt: str,
+        patient_context: Optional[str] = None,
+        plan_context: Optional[str] = None,
+        pubmed_context: Optional[str] = None,
+        ml_citations_context: Optional[List[str]] = None,
+        history: Optional[List[dict[str, str]]] = None,
+        temperature: float = 0.7,
+    ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
+        """Inference with rate-limit gating and 429 back-off.
+
+        Skips (returns None) when backing off; on a 429 marks the limiter
+        exhausted honoring Retry-After so other backends can take over; other
+        HTTP errors propagate.
+        """
+        if not self.rate_limiter.can_request():
+            logger.debug(
+                f"{type(self).__name__}._infer: Skipping {self.model} - backing off"
+            )
+            return None
+        try:
+            return await super()._infer(
+                system_prompts=system_prompts,
+                prompt=prompt,
+                patient_context=patient_context,
+                plan_context=plan_context,
+                pubmed_context=pubmed_context,
+                ml_citations_context=ml_citations_context,
+                history=history,
+                temperature=temperature,
+            )
+        except aiohttp.ClientResponseError as e:
+            if e.status == 429:
+                retry_after = self._retry_after_seconds(e)
+                self.rate_limiter.mark_exhausted(retry_after)
+                logger.warning(
+                    f"{type(self).__name__}._infer: 429 from {self.PROVIDER_LABEL} "
+                    f"for {self.model}, backing off for {retry_after}s"
+                )
+                return None
+            raise
+        except Exception as e:
+            logger.warning(f"{type(self).__name__}._infer error for {self.model}: {e}")
+            return None
+
+
+class RemoteGroq(RateLimitedRemoteOpenLike):
     """
     Groq API backend for ultra-fast LLM inference.
 
@@ -2853,12 +2955,11 @@ class RemoteGroq(RemoteFullOpenLike):
         },
     }
 
-    # Shared rate limiters per model (class-level, initialized lazily)
+    # Per-provider rate-limit state (separate from other providers); the
+    # limiter logic and 429 back-off live in RateLimitedRemoteOpenLike.
     _rate_limiters: ClassVar[dict[str, RateLimiter]] = {}
     _rate_limiter_lock: ClassVar[threading.Lock] = threading.Lock()
-
-    # Re-raise ClientResponseError from the parent _infer so we can detect 429.
-    _propagate_http_errors: ClassVar[bool] = True
+    PROVIDER_LABEL: ClassVar[str] = "Groq"
 
     def __init__(self, model: str, dual_mode: bool = False):
         """
@@ -2889,26 +2990,6 @@ class RemoteGroq(RemoteFullOpenLike):
             f"RemoteGroq initialized: model={model}, "
             f"tier={model_spec.get('tier', 'unknown')}"
         )
-
-    @classmethod
-    def _ensure_rate_limiter(cls, model: str) -> None:
-        """
-        Ensure a rate limiter exists for the given model.
-        Creates one if it doesn't exist (thread-safe).
-        """
-        if model not in cls._rate_limiters:
-            with cls._rate_limiter_lock:
-                # Double-check after acquiring lock
-                if model not in cls._rate_limiters:
-                    cls._rate_limiters[model] = RateLimiter(
-                        name=f"groq-{model}",
-                    )
-                    logger.info(f"Created rate limiter for groq-{model}")
-
-    @property
-    def rate_limiter(self) -> RateLimiter:
-        """Get the rate limiter for this model instance."""
-        return self._rate_limiters[self.model]
 
     @property
     def supports_system(self):
@@ -2975,88 +3056,6 @@ class RemoteGroq(RemoteFullOpenLike):
         logger.warning("Groq model selection: No models available (all rate limited)")
         return None
 
-    async def _infer(
-        self,
-        system_prompts: list[str],
-        prompt: str,
-        patient_context: Optional[str] = None,
-        plan_context: Optional[str] = None,
-        pubmed_context: Optional[str] = None,
-        ml_citations_context: Optional[List[str]] = None,
-        history: Optional[List[dict[str, str]]] = None,
-        temperature: float = 0.7,
-    ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
-        """
-        Perform inference with rate limit checking and 429 handling.
-
-        Checks the rate limiter before making the API call. If rate limited,
-        returns None immediately to allow fallback to other backends.
-        On 429 response, marks the limiter as exhausted and returns None.
-
-        Args:
-            system_prompts: System prompts for the model
-            prompt: User prompt
-            patient_context: Optional patient health context
-            plan_context: Optional insurance plan context
-            pubmed_context: Optional PubMed citations context
-            ml_citations_context: Optional ML-generated citations
-            history: Optional conversation history
-            temperature: Optional temperature override
-
-        Returns:
-            Tuple of (response_text, context_parts) or None if rate limited/failed
-        """
-        # Check if we're backing off from a previous 429
-        if not self.rate_limiter.can_request():
-            logger.debug(f"RemoteGroq._infer: Skipping {self.model} - backing off")
-            return None
-
-        try:
-            # Call parent implementation
-            result = await super()._infer(
-                system_prompts=system_prompts,
-                prompt=prompt,
-                patient_context=patient_context,
-                plan_context=plan_context,
-                pubmed_context=pubmed_context,
-                ml_citations_context=ml_citations_context,
-                history=history,
-                temperature=temperature,
-            )
-            return result
-
-        except aiohttp.ClientResponseError as e:
-            if e.status == 429:
-                # Rate limited by Groq - parse Retry-After if available
-                retry_after = 60.0  # Default fallback
-                if hasattr(e, "headers") and e.headers:
-                    retry_header = e.headers.get("Retry-After", "")
-                    if retry_header:
-                        try:
-                            # Most APIs send delay-seconds (e.g., "30")
-                            retry_after = float(retry_header)
-                        except ValueError:
-                            # If not a number, use default (HTTP-date format is rare)
-                            logger.debug(
-                                f"RemoteGroq._infer: Non-numeric Retry-After header "
-                                f"'{retry_header}' for {self.model}; using default {retry_after}s"
-                            )
-
-                retry_after = max(1.0, min(retry_after, 600.0))
-
-                self.rate_limiter.mark_exhausted(retry_after)
-                logger.warning(
-                    f"RemoteGroq._infer: 429 from Groq for {self.model}, "
-                    f"backing off for {retry_after}s"
-                )
-                return None
-            else:
-                # Re-raise other HTTP errors
-                raise
-        except Exception as e:
-            logger.warning(f"RemoteGroq._infer error for {self.model}: {e}")
-            return None
-
     @classmethod
     def models(cls) -> List[ModelDescription]:
         """
@@ -3095,7 +3094,7 @@ class RemoteGroq(RemoteFullOpenLike):
         return self.rate_limiter.can_request()
 
 
-class RemoteAnthropic(RemoteFullOpenLike):
+class RemoteAnthropic(RateLimitedRemoteOpenLike):
     """
     Anthropic Claude API backend.
 
@@ -3128,12 +3127,11 @@ class RemoteAnthropic(RemoteFullOpenLike):
         },
     }
 
-    # Shared rate limiters per model (class-level, initialized lazily)
+    # Per-provider rate-limit state (separate from other providers); the
+    # limiter logic and 429 back-off live in RateLimitedRemoteOpenLike.
     _rate_limiters: ClassVar[dict[str, RateLimiter]] = {}
     _rate_limiter_lock: ClassVar[threading.Lock] = threading.Lock()
-
-    # Re-raise ClientResponseError from the parent _infer so we can detect 429.
-    _propagate_http_errors: ClassVar[bool] = True
+    PROVIDER_LABEL: ClassVar[str] = "Anthropic"
 
     def __init__(self, model: str, dual_mode: bool = False):
         """
@@ -3164,25 +3162,6 @@ class RemoteAnthropic(RemoteFullOpenLike):
             f"tier={model_spec.get('tier', 'unknown')}"
         )
 
-    @classmethod
-    def _ensure_rate_limiter(cls, model: str) -> None:
-        """
-        Ensure a rate limiter exists for the given model.
-        Creates one if it doesn't exist (thread-safe).
-        """
-        if model not in cls._rate_limiters:
-            with cls._rate_limiter_lock:
-                if model not in cls._rate_limiters:
-                    cls._rate_limiters[model] = RateLimiter(
-                        name=f"anthropic-{model}",
-                    )
-                    logger.info(f"Created rate limiter for anthropic-{model}")
-
-    @property
-    def rate_limiter(self) -> RateLimiter:
-        """Get the rate limiter for this model instance."""
-        return self._rate_limiters[self.model]
-
     @property
     def supports_system(self):
         return True
@@ -3194,67 +3173,6 @@ class RemoteAnthropic(RemoteFullOpenLike):
     def get_tier(self) -> str:
         """Get the tier (speed/quality/premium) for this model."""
         return self.MODEL_SPECS.get(self.model, {}).get("tier", "unknown")
-
-    async def _infer(
-        self,
-        system_prompts: list[str],
-        prompt: str,
-        patient_context: Optional[str] = None,
-        plan_context: Optional[str] = None,
-        pubmed_context: Optional[str] = None,
-        ml_citations_context: Optional[List[str]] = None,
-        history: Optional[List[dict[str, str]]] = None,
-        temperature: float = 0.7,
-    ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
-        """
-        Perform inference with rate limit checking and 429 handling.
-
-        Checks the rate limiter before making the API call. If rate limited,
-        returns None immediately to allow fallback to other backends.
-        On 429 response, marks the limiter as exhausted and returns None.
-        """
-        if not self.rate_limiter.can_request():
-            logger.debug(f"RemoteAnthropic._infer: Skipping {self.model} - backing off")
-            return None
-
-        try:
-            return await super()._infer(
-                system_prompts=system_prompts,
-                prompt=prompt,
-                patient_context=patient_context,
-                plan_context=plan_context,
-                pubmed_context=pubmed_context,
-                ml_citations_context=ml_citations_context,
-                history=history,
-                temperature=temperature,
-            )
-        except aiohttp.ClientResponseError as e:
-            if e.status == 429:
-                retry_after = 60.0
-                if hasattr(e, "headers") and e.headers:
-                    retry_header = e.headers.get("Retry-After", "")
-                    if retry_header:
-                        try:
-                            retry_after = float(retry_header)
-                        except ValueError:
-                            logger.debug(
-                                f"RemoteAnthropic._infer: Non-numeric Retry-After header "
-                                f"'{retry_header}' for {self.model}; using default {retry_after}s"
-                            )
-
-                retry_after = max(1.0, min(retry_after, 600.0))
-
-                self.rate_limiter.mark_exhausted(retry_after)
-                logger.warning(
-                    f"RemoteAnthropic._infer: 429 from Anthropic for {self.model}, "
-                    f"backing off for {retry_after}s"
-                )
-                return None
-            else:
-                raise
-        except Exception as e:
-            logger.warning(f"RemoteAnthropic._infer error for {self.model}: {e}")
-            return None
 
     @classmethod
     def models(cls) -> List[ModelDescription]:
@@ -3301,7 +3219,7 @@ class RemoteAnthropic(RemoteFullOpenLike):
         return self.rate_limiter.can_request()
 
 
-class RemoteAzureOpenLike(RemoteFullOpenLike):
+class RemoteAzureOpenLike(RateLimitedRemoteOpenLike):
     """Shared base for Azure-hosted, OpenAI-compatible backends.
 
     Azure serves both Azure OpenAI (GPT) and, via Azure AI Foundry, Claude
@@ -3322,15 +3240,6 @@ class RemoteAzureOpenLike(RemoteFullOpenLike):
     MAX_LEN: ClassVar[int] = 128000
     # Ordered cheapest -> most expensive: (deployment_name, cost, tier).
     DEFAULT_MODELS: ClassVar[List[Tuple[str, int, str]]] = []
-
-    # Per-provider rate-limit state. Declared here for type-safety; each
-    # concrete subclass overrides these with its own dict/lock so providers do
-    # not share rate-limit state.
-    _rate_limiters: ClassVar[dict[str, RateLimiter]] = {}
-    _rate_limiter_lock: ClassVar[threading.Lock] = threading.Lock()
-
-    # Re-raise ClientResponseError from the parent _infer so we can detect 429.
-    _propagate_http_errors: ClassVar[bool] = True
 
     def __init__(self, model: str, dual_mode: bool = False):
         api_key = os.getenv(self.API_KEY_ENV) if self.API_KEY_ENV else None
@@ -3382,22 +3291,6 @@ class RemoteAzureOpenLike(RemoteFullOpenLike):
             return [(n, base_cost + i * 10, "custom") for i, n in enumerate(names)]
         return list(cls.DEFAULT_MODELS)
 
-    @classmethod
-    def _ensure_rate_limiter(cls, model: str) -> None:
-        """Ensure a rate limiter exists for the given model (thread-safe)."""
-        if model not in cls._rate_limiters:
-            with cls._rate_limiter_lock:
-                if model not in cls._rate_limiters:
-                    cls._rate_limiters[model] = RateLimiter(
-                        name=f"{cls.NAME_PREFIX}-{model}",
-                    )
-                    logger.info(f"Created rate limiter for {cls.NAME_PREFIX}-{model}")
-
-    @property
-    def rate_limiter(self) -> RateLimiter:
-        """Get the rate limiter for this model instance."""
-        return self._rate_limiters[self.model]
-
     @property
     def supports_system(self):
         return True
@@ -3412,65 +3305,6 @@ class RemoteAzureOpenLike(RemoteFullOpenLike):
             if deployment == self.model:
                 return tier
         return "unknown"
-
-    async def _infer(
-        self,
-        system_prompts: list[str],
-        prompt: str,
-        patient_context: Optional[str] = None,
-        plan_context: Optional[str] = None,
-        pubmed_context: Optional[str] = None,
-        ml_citations_context: Optional[List[str]] = None,
-        history: Optional[List[dict[str, str]]] = None,
-        temperature: float = 0.7,
-    ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
-        """Inference with rate-limit/429 handling (mirrors Anthropic/Groq:
-        skip when backing off; on 429 back off honoring Retry-After)."""
-        if not self.rate_limiter.can_request():
-            logger.debug(
-                f"{type(self).__name__}._infer: Skipping {self.model} - backing off"
-            )
-            return None
-
-        try:
-            return await super()._infer(
-                system_prompts=system_prompts,
-                prompt=prompt,
-                patient_context=patient_context,
-                plan_context=plan_context,
-                pubmed_context=pubmed_context,
-                ml_citations_context=ml_citations_context,
-                history=history,
-                temperature=temperature,
-            )
-        except aiohttp.ClientResponseError as e:
-            if e.status == 429:
-                retry_after = 60.0
-                if hasattr(e, "headers") and e.headers:
-                    retry_header = e.headers.get("Retry-After", "")
-                    if retry_header:
-                        try:
-                            retry_after = float(retry_header)
-                        except ValueError:
-                            logger.debug(
-                                f"{type(self).__name__}._infer: Non-numeric "
-                                f"Retry-After header '{retry_header}' for "
-                                f"{self.model}; using default {retry_after}s"
-                            )
-
-                retry_after = max(1.0, min(retry_after, 600.0))
-
-                self.rate_limiter.mark_exhausted(retry_after)
-                logger.warning(
-                    f"{type(self).__name__}._infer: 429 from {self.PROVIDER_LABEL} "
-                    f"for {self.model}, backing off for {retry_after}s"
-                )
-                return None
-            else:
-                raise
-        except Exception as e:
-            logger.warning(f"{type(self).__name__}._infer error for {self.model}: {e}")
-            return None
 
     @classmethod
     def models(cls) -> List[ModelDescription]:

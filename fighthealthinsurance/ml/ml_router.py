@@ -46,13 +46,16 @@ class MLRouter(object):
                     if m.model is None:
                         m.model = backend(model=m.internal_name)
                     # Honor the ENABLED_REMOTE_MODELS allow-list (if set): only
-                    # register a *remote* (external) model whose friendly name
-                    # (or internal name) is listed. Local/internal models are
-                    # always enabled regardless of the allow-list, and when the
-                    # variable is unset every model is enabled.
+                    # register a *remote* generation model whose friendly name
+                    # (or internal name) is listed. Always-enabled regardless of
+                    # the allow-list: local/internal models, and context-only
+                    # models (e.g. Perplexity citations) which are a separate
+                    # special-purpose pool. When the variable is unset, every
+                    # model is enabled.
                     if (
                         enabled_models is not None
                         and m.model.external
+                        and not m.model.context_only
                         and m.name not in enabled_models
                         and m.internal_name not in enabled_models
                     ):
@@ -135,8 +138,9 @@ class MLRouter(object):
         restriction" (the default when the variable is absent/blank). Entries
         are comma-separated; surrounding whitespace is ignored.
 
-        The allow-list only gates remote (external) models — local/internal
-        models are always enabled regardless of this setting.
+        The allow-list only gates remote (external) generation models.
+        Local/internal models and context-only models (e.g. Perplexity
+        citations) are always enabled regardless of this setting.
         """
         raw = os.getenv("ENABLED_REMOTE_MODELS")
         if not raw or not raw.strip():

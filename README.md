@@ -117,9 +117,10 @@ recorded for usage tracking in both the regular appeal workflow and the chooser
 
 **Restricting which remote models load:** Set `ENABLED_REMOTE_MODELS` to a
 comma-separated list of friendly names to enable *only* those **remote**
-(external) models. Local/internal models (e.g. `fhi-legacy`, the self-hosted
-backends) are **always enabled** regardless of this setting. When the variable
-is unset (the default), every configured model is enabled.
+generation models. **Always enabled** regardless of this setting: local/internal
+models (e.g. `fhi-legacy`, the self-hosted backends) and context-only models
+(e.g. Perplexity `sonar` used for citations). When the variable is unset (the
+default), every configured model is enabled.
 ```bash
 # Of the remote providers, load only Azure Opus and Azure GPT-5
 # (local models still load):

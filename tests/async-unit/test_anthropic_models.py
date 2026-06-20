@@ -19,7 +19,7 @@ import aiohttp
 # Set up environment before importing RemoteAnthropic
 os.environ.setdefault("ANTHROPIC_API_KEY", "test-api-key")
 
-from fighthealthinsurance.ml.ml_models import RemoteAnthropic
+from fighthealthinsurance.ml.ml_models import RemoteAnthropic, RemoteFullOpenLike
 from fighthealthinsurance.utils import RateLimiter
 
 
@@ -186,7 +186,7 @@ class TestRemoteAnthropicInfer(unittest.TestCase):
         )
 
         with patch.object(
-            RemoteAnthropic.__bases__[0],
+            RemoteFullOpenLike,
             "_infer",
             new_callable=AsyncMock,
             side_effect=error,
@@ -218,7 +218,7 @@ class TestRemoteAnthropicInfer(unittest.TestCase):
         )
 
         with patch.object(
-            RemoteAnthropic.__bases__[0],
+            RemoteFullOpenLike,
             "_infer",
             new_callable=AsyncMock,
             side_effect=error,
@@ -252,7 +252,7 @@ class TestRemoteAnthropicInfer(unittest.TestCase):
         )
 
         with patch.object(
-            RemoteAnthropic.__bases__[0],
+            RemoteFullOpenLike,
             "_infer",
             new_callable=AsyncMock,
             side_effect=error,

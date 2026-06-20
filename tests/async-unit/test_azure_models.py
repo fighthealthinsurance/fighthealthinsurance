@@ -215,9 +215,10 @@ class TestAzureInfer(unittest.TestCase):
 class _FakeModel(RemoteModelLike):
     """Minimal concrete model used to drive MLRouter in tests."""
 
-    def __init__(self, model, external=False):
+    def __init__(self, model, external=False, context_only=False):
         self.model = model
         self._external = external
+        self._context_only = context_only
 
     @property
     def external(self):
@@ -225,7 +226,7 @@ class _FakeModel(RemoteModelLike):
 
     @property
     def context_only(self):
-        return False
+        return self._context_only
 
     async def _infer(self, *args, **kwargs):
         return None
@@ -253,8 +254,9 @@ class _FakeBackend:
 
 
 class _FakeMixedBackend:
-    """Backend stub with two remote (external) models plus one local model,
-    used to verify ENABLED_REMOTE_MODELS gates remote models only."""
+    """Backend stub with remote (external) generation models, a local model,
+    and a context-only model -- to verify ENABLED_REMOTE_MODELS gates only
+    remote generation models."""
 
     @classmethod
     def models(cls):
@@ -276,6 +278,12 @@ class _FakeMixedBackend:
                 name="local/keep",
                 internal_name="lkeep-int",
                 model=_FakeModel("lkeep-int", external=False),
+            ),
+            ModelDescription(
+                cost=5,
+                name="ctx/cite",
+                internal_name="ctx-int",
+                model=_FakeModel("ctx-int", external=True, context_only=True),
             ),
         ]
 
@@ -372,11 +380,12 @@ class TestEnabledRemoteModels(unittest.TestCase):
         self.assertIn("local/keep", router.models_by_name)
 
     @patch.dict(os.environ, {"ENABLED_REMOTE_MODELS": "nonexistent/model"})
-    def test_local_models_always_enabled_even_when_not_listed(self):
-        """A local model loads even though it is not in the allow-list, while
-        unlisted remote models are dropped."""
+    def test_local_and_context_only_always_enabled_when_not_listed(self):
+        """Local and context-only (citation) models load even though they are
+        not in the allow-list, while unlisted remote models are dropped."""
         router = self._build()
         self.assertIn("local/keep", router.models_by_name)
+        self.assertIn("ctx/cite", router.models_by_name)  # context-only, always on
         self.assertNotIn("remote/alpha", router.models_by_name)
         self.assertNotIn("remote/beta", router.models_by_name)
 
