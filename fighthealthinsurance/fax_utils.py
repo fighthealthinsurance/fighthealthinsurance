@@ -75,13 +75,13 @@ class FaxSenderBase(object):
     ) -> bool:
         return True
 
-    def check_health(self) -> bool:
+    def check_health(self, timeout: Optional[float] = None) -> bool:
         """Return whether this backend is healthy.
 
         Base backends are assumed healthy once configured; only backends that
         support a cheap liveness probe (e.g. :class:`SonicFax`, which can do a
-        login round-trip) override this. Callers should wrap this in a timeout
-        since an override may make a network call.
+        login round-trip) override this. ``timeout`` is accepted (and ignored
+        here) so callers can pass a probe budget uniformly to any backend.
         """
         return True
 

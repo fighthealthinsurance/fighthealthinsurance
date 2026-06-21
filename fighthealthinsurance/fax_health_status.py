@@ -36,7 +36,10 @@ def _probe_backend(backend: Any, timeout: float) -> tuple[bool, Optional[str]]:
     """
     ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     try:
-        future = ex.submit(backend.check_health)
+        # Pass the probe budget through so a backend's own per-request default
+        # (e.g. SonicFax's 3s) doesn't report it down under latency well within
+        # `timeout`.
+        future = ex.submit(backend.check_health, timeout=timeout)
         ok = bool(future.result(timeout=timeout))
         return (ok, None if ok else "health check returned False")
     except concurrent.futures.TimeoutError:

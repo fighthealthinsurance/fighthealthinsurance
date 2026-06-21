@@ -50,8 +50,15 @@ def _ok_fax_backends():
 
 
 class AdminStatusAccessTest(TestCase):
-    def test_non_staff_redirected(self):
+    def test_anonymous_user_redirected(self):
         # staff_member_required redirects anonymous users to the admin login.
+        response = self.client.get(reverse("admin_status"))
+        self.assertEqual(response.status_code, 302)
+
+    def test_authenticated_non_staff_user_redirected(self):
+        # An authenticated but non-staff user is also bounced (not just anon).
+        User.objects.create_user(username="plain", password="pw123", is_staff=False)
+        self.client.login(username="plain", password="pw123")
         response = self.client.get(reverse("admin_status"))
         self.assertEqual(response.status_code, 302)
 
@@ -189,6 +196,19 @@ class ComputeModelHealthDetailsTest(TestCase):
         with mock.patch("fighthealthinsurance.ml.ml_router.ml_router", fake_router):
             self.assertEqual(compute_model_health_details(), [])
 
+    def test_enumeration_failure_propagates(self):
+        """A broken router must raise, not mask the failure as 0 backends."""
+        from fighthealthinsurance.ml.health_status import compute_model_health_details
+
+        class BrokenRouter:
+            @property
+            def all_models_by_cost(self):
+                raise RuntimeError("router not ready")
+
+        with mock.patch("fighthealthinsurance.ml.ml_router.ml_router", BrokenRouter()):
+            with self.assertRaisesRegex(RuntimeError, "router not ready"):
+                compute_model_health_details()
+
     def test_returns_at_deadline_without_blocking_on_hung_probe(self):
         """A hung model_is_ok() must not stall the call past the deadline.
 
@@ -325,11 +345,11 @@ class SonicCheckHealthTest(TestCase):
         mock_login.assert_called_once()
 
     @mock.patch.dict(os.environ, _SONIC_ENV)
-    @mock.patch(_LOGIN, side_effect=Exception("login rejected"))
+    @mock.patch(_LOGIN, side_effect=RuntimeError("login rejected"))
     def test_check_health_propagates_login_failure(self, mock_login):
         from fighthealthinsurance.fax_utils import SonicFax
 
-        with self.assertRaises(Exception):
+        with self.assertRaisesRegex(RuntimeError, "login rejected"):
             SonicFax().check_health()
 
     @mock.patch.dict(os.environ, _SONIC_ENV)
@@ -351,5 +371,5 @@ class SonicCheckHealthTest(TestCase):
         from fighthealthinsurance.fax_utils import SonicFax
 
         mock_get.return_value = _members_response(text="Please Member Login")
-        with self.assertRaises(Exception):
+        with self.assertRaisesRegex(Exception, "not authenticated"):
             SonicFax().check_health()

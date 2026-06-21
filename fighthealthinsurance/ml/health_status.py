@@ -321,9 +321,14 @@ def compute_model_health_details(timeout_seconds: int = 8) -> List[Dict[str, Any
     """
     try:
         candidates = list(ml_router_module.ml_router.all_models_by_cost)
-    except Exception as e:
-        logger.warning(f"compute_model_health_details could not enumerate models: {e}")
-        return []
+    except Exception:
+        # Propagate rather than returning [] — an empty list is indistinguishable
+        # from "no models registered" and would let the caller (_model_status)
+        # report a broken router as a healthy "0 backends" instead of an error.
+        logger.opt(exception=True).warning(
+            "compute_model_health_details could not enumerate models"
+        )
+        raise
 
     results: List[Dict[str, Any]] = []
     if not candidates:
