@@ -8,10 +8,23 @@ the free per-request liveness check (``model_is_ok``).
 import asyncio
 from unittest.mock import AsyncMock, patch
 
+import aiohttp
 import pytest
+from multidict import CIMultiDict, CIMultiDictProxy
+from yarl import URL
 
 from fighthealthinsurance.ml.ml_models import RemoteFullOpenLike
 from fighthealthinsurance.ml.ml_router import MLRouter
+
+
+def _client_response_error(status: int, message: str) -> aiohttp.ClientResponseError:
+    url = URL("https://api.test/chat/completions")
+    request_info = aiohttp.RequestInfo(
+        url, "POST", CIMultiDictProxy(CIMultiDict()), url
+    )
+    return aiohttp.ClientResponseError(
+        request_info=request_info, history=(), status=status, message=message
+    )
 
 
 class _FakeModel:
@@ -90,6 +103,27 @@ class TestRemoteModelProbe:
             ok, err = await model.probe(timeout=0.01)
         assert ok is False
         assert "timeout" in err
+
+    @pytest.mark.asyncio
+    async def test_probe_surfaces_http_status_end_to_end(self):
+        """A 401 (e.g. swapped/invalid key) is reported as 'HTTP 401', not 'empty'.
+
+        Drives the real inference path: raise_http_errors must propagate from
+        probe -> _infer_no_context -> _infer so the status reaches probe()
+        instead of being swallowed into 'empty or no response'.
+        """
+        model = self._model()
+        err = _client_response_error(401, "Unauthorized")
+        with patch.object(
+            model,
+            "_RemoteOpenLike__timeout_infer",
+            new_callable=AsyncMock,
+            side_effect=err,
+        ):
+            ok, errstr = await model.probe(timeout=5)
+        assert ok is False
+        assert "401" in errstr
+        assert "Unauthorized" in errstr
 
 
 class TestProbeAllModels:

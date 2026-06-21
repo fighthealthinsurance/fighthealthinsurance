@@ -588,6 +588,7 @@ class RemoteModelLike(DenialBase):
         ml_citations_context=None,
         history: Optional[List[dict[str, str]]] = None,
         temperature=0.7,
+        raise_http_errors: bool = False,
     ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
         """Do inference on a remote model."""
         await asyncio.sleep(0)  # yield
@@ -602,6 +603,7 @@ class RemoteModelLike(DenialBase):
         pubmed_context=None,
         ml_citations_context=None,
         temperature=0.7,
+        raise_http_errors: bool = False,
     ) -> Optional[str]:
         result = await self._infer(
             system_prompts=system_prompts,
@@ -611,6 +613,7 @@ class RemoteModelLike(DenialBase):
             pubmed_context=pubmed_context,
             ml_citations_context=ml_citations_context,
             temperature=temperature,
+            raise_http_errors=raise_http_errors,
         )
         if result:
             return result[0]
@@ -628,6 +631,13 @@ class RemoteModelLike(DenialBase):
         Returns ``(ok, error)`` where ``ok`` is True when the backend returned
         non-empty text and ``error`` is a short reason string otherwise. Never
         raises.
+
+        ``raise_http_errors=True`` is passed through so that an auth/quota/
+        rate-limit response surfaces its real HTTP status here (e.g.
+        "HTTP 401 Unauthorized") instead of being swallowed into the generic
+        "empty or no response" -- that distinction is the whole point of the
+        probe, since it tells a swapped/invalid key apart from a model that
+        merely returned nothing.
         """
         try:
             result = await asyncio.wait_for(
@@ -636,11 +646,14 @@ class RemoteModelLike(DenialBase):
                         "You are a helpful assistant. Reply with a short greeting."
                     ],
                     prompt="Hello",
+                    raise_http_errors=True,
                 ),
                 timeout=timeout,
             )
         except asyncio.TimeoutError:
             return (False, f"timeout>{timeout}s")
+        except aiohttp.ClientResponseError as e:
+            return (False, f"HTTP {e.status} {e.message}".strip())
         except Exception as e:
             return (False, f"{type(e).__name__}: {e}")
         if result and result.strip():
@@ -1887,6 +1900,7 @@ class RemoteOpenLike(RemoteModel):
         ml_citations_context=None,
         history: Optional[List[dict[str, str]]] = None,
         temperature=0.7,
+        raise_http_errors: bool = False,
     ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
         """
         Try and infer on a given model falling back to fallback in primary fails.
@@ -1981,9 +1995,11 @@ class RemoteOpenLike(RemoteModel):
         except aiohttp.ClientResponseError as e:
             # Subclasses that opt in (via _propagate_http_errors) handle
             # status-specific HTTP errors themselves (e.g. 429 backoff in
-            # RemoteGroq / RemoteAnthropic). Otherwise preserve the original
-            # contract of returning None on transport errors.
-            if self._propagate_http_errors:
+            # RemoteGroq / RemoteAnthropic). The probe path
+            # (raise_http_errors=True) also wants the raw status surfaced so it
+            # can report *why* a backend is unreachable. Otherwise preserve the
+            # original contract of returning None on transport errors.
+            if self._propagate_http_errors or raise_http_errors:
                 raise
             if _http_status_is_expected(e.status):
                 # Quota/auth/rate-limit conditions are an operational state of
@@ -2970,12 +2986,17 @@ class RateLimitedRemoteOpenLike(RemoteFullOpenLike):
         ml_citations_context: Optional[List[str]] = None,
         history: Optional[List[dict[str, str]]] = None,
         temperature: float = 0.7,
+        raise_http_errors: bool = False,
     ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
         """Inference with rate-limit gating and 429 back-off.
 
         Skips (returns None) when backing off; on a 429 marks the limiter
         exhausted honoring Retry-After so other backends can take over; other
         HTTP errors propagate.
+
+        ``raise_http_errors=True`` (used by the startup probe) re-raises any
+        HTTP error -- including 429/quota/auth -- so the probe can report the
+        real status instead of a generic "no response".
         """
         if not self.rate_limiter.can_request():
             logger.debug(
@@ -2994,6 +3015,8 @@ class RateLimitedRemoteOpenLike(RemoteFullOpenLike):
                 temperature=temperature,
             )
         except aiohttp.ClientResponseError as e:
+            if raise_http_errors:
+                raise
             if e.status == 429:
                 retry_after = self._retry_after_seconds(e)
                 self.rate_limiter.mark_exhausted(retry_after)
