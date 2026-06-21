@@ -524,6 +524,22 @@ class RemoteModelLike(DenialBase):
         """
         return True
 
+    @property
+    def health_checked_live(self) -> bool:
+        """Whether ``is_available()`` is a complete, current health signal the
+        router can trust directly (cheap and in-memory), versus relying on the
+        periodic ``health_status`` sweep for reachability.
+
+        Defaults to ``False``: most backends have no cheap live probe, so the
+        router consults the last cached sweep result for them (e.g. DeepInfra,
+        which the sweep checks over the network). Backends that track their own
+        state in memory (rate-limited paid providers) override this to ``True``
+        so the router trusts ``is_available()`` and skips the sweep result —
+        whose hourly snapshot would otherwise pin a transient rate-limit for an
+        hour.
+        """
+        return False
+
     def infer(
         self,
         prompt,
@@ -3015,6 +3031,14 @@ class RateLimitedRemoteOpenLike(RemoteFullOpenLike):
         in-memory (API key/endpoint presence + rate-limit state) and never hits
         the network, so it is safe to consult on the request path."""
         return bool(self.model_is_ok())
+
+    @property
+    def health_checked_live(self) -> bool:
+        """Paid providers track availability live in memory (config + rate-limit
+        back-off), so the router trusts ``is_available()`` and skips the cached
+        sweep result for them (an hourly snapshot would otherwise pin a
+        transient 429 back-off for up to an hour)."""
+        return True
 
     @classmethod
     def _ensure_rate_limiter(cls, model: str) -> None:

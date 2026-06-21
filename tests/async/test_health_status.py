@@ -130,6 +130,21 @@ class TestHealthStatus(TestCase):
         assert snap["alive_models"] == 1
 
     @mock.patch("fighthealthinsurance.ml.ml_router.ml_router")
+    def test_model_ok_reflects_last_sweep(self, fake_router):
+        """model_ok() returns each backend's result from the last sweep, and
+        None for a backend that was never swept (so the router fails open)."""
+        fake_router.all_models_by_cost = [_ExternalGood(), _ExternalBad()]
+        from fighthealthinsurance.ml.health_status import _HealthStatus
+
+        _HealthStatus._refresh(health_status)
+
+        # Patch ensure_started so reading the cache doesn't spawn a real sweep.
+        with mock.patch.object(health_status, "ensure_started"):
+            assert health_status.model_ok(_ExternalGood()) is True
+            assert health_status.model_ok(_ExternalBad()) is False
+            assert health_status.model_ok(_InternalGood()) is None
+
+    @mock.patch("fighthealthinsurance.ml.ml_router.ml_router")
     def test_all_internal_dead_sends_alert(self, fake_router):
         """All internal backends failing triggers email + error log."""
         fake_router.all_models_by_cost = [_InternalBad(), _ExternalGood()]

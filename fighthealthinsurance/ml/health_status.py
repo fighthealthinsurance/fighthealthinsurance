@@ -26,6 +26,24 @@ REFRESH_INTERVAL_SECONDS = 60 * 60  # hourly
 ALERT_THROTTLE_SECONDS = 60 * 60  # at most one alert email per hour
 
 
+def _model_key(model: Any) -> str:
+    """Stable identifier for a backend instance, shared by the health sweep
+    (which records per-model results) and the router (which looks them up).
+
+    Prefers the unique friendly ``name`` the router stamps onto each registered
+    model (so two providers exposing the same wire ``model`` id — e.g. the
+    direct Anthropic API vs Azure Claude — don't collide), then the wire
+    ``model`` id, then the class name.
+    """
+    name = getattr(model, "name", None)
+    if name:
+        return str(name)
+    model_id = getattr(model, "model", None)
+    if model_id:
+        return str(model_id)
+    return type(model).__name__
+
+
 @dataclass
 class BackendHealthDetail:
     name: str
@@ -43,6 +61,11 @@ class HealthSnapshot:
 class _HealthStatus:
     def __init__(self):
         self._snapshot: HealthSnapshot = HealthSnapshot()
+        # Per-model result of the last sweep, keyed by ``_model_key``. Rebound
+        # atomically on each refresh and read lock-free by ``model_ok`` so the
+        # router can consult it on the request path without ever blocking on the
+        # sweep lock.
+        self._health_map: Dict[str, bool] = {}
         self._timer: Optional[threading.Timer] = None
         self._initialized = False
         # Use RLock to allow reentrant locking and reduce deadlock chances
@@ -75,6 +98,37 @@ class _HealthStatus:
                 for d in self._snapshot.details
             ],
         }
+
+    def model_ok(self, model: Any) -> Optional[bool]:
+        """Return the last sweep's result for ``model`` — ``True``/``False`` —
+        or ``None`` if it hasn't been checked yet.
+
+        Lock-free and non-blocking: it reads the atomically-rebound health map
+        and never triggers a probe, so the router can call it on the request
+        path. It does ensure the periodic sweep is running (in the background)
+        so the cache gets populated, but returns immediately regardless.
+        """
+        self.ensure_started()
+        return self._health_map.get(_model_key(model))
+
+    def ensure_started(self) -> None:
+        """Start the periodic health sweep exactly once, in the background, so
+        cached results get populated without any caller blocking on the initial
+        probe.
+
+        The common (already-started) path is a lock-free flag read, so callers
+        on the request path don't contend on the sweep lock. Shares the
+        ``_initialized`` guard with :meth:`get_snapshot`, so whichever runs
+        first does the one-time start and only a single refresh timer is ever
+        scheduled.
+        """
+        if self._initialized:
+            return
+        with self._lock:
+            if self._initialized:
+                return
+            self._initialized = True
+        threading.Thread(target=self._refresh, daemon=True, name="health-init").start()
 
     def _schedule_refresh(self):
         """Schedule the next refresh."""
@@ -127,6 +181,7 @@ class _HealthStatus:
         # dropped from both buckets, which could otherwise fire a false "all
         # internal models are dead" page for a slow-but-healthy backend.
         details: List[BackendHealthDetail] = []
+        new_health: Dict[str, bool] = {}
         timeout_seconds = 10
         if candidates:
             with concurrent.futures.ThreadPoolExecutor(
@@ -155,6 +210,7 @@ class _HealthStatus:
                         details.append(
                             BackendHealthDetail(name=name, ok=False, error=err)
                         )
+                    new_health[_model_key(m)] = bool(ok)
                     if ok:
                         alive_count += 1
                         if is_internal:
@@ -173,6 +229,11 @@ class _HealthStatus:
         )
 
         self._snapshot = snapshot
+        if candidates:
+            # Only replace the cached per-model health when we actually ran a
+            # sweep; on an enumeration failure (no candidates) keep the last
+            # known-good map rather than wiping it to "unknown".
+            self._health_map = new_health
 
         return internal_total, internal_alive, internal_failures, enumeration_error
 

@@ -171,21 +171,47 @@ class MLRouter(object):
 
         "Best" means highest ``quality()`` (descending); because
         ``external_models_by_cost`` is cost-ordered and the sort is stable,
-        cheaper models win ties. Availability uses each model's cheap,
-        non-blocking ``is_available()`` signal, so paid providers that are
-        unconfigured or rate-limited (backing off) are skipped, while backends
-        without a cheap health signal fail open and rely on per-inference
-        fallback. At most one Groq backend is kept (matching the rest of the
-        router) to avoid double fan-out.
+        cheaper models win ties. Availability is judged from cheap, non-blocking
+        signals only — never a live network probe on the request path (see
+        :meth:`_external_selectable`): the model's in-memory ``is_available()``
+        plus, for backends without a live signal, the last cached
+        ``health_status`` sweep. At most one Groq backend is kept (matching the
+        rest of the router) to avoid double fan-out.
 
         Replaces the previous "cheapest N external" slices so that, instead of
         fanning out across every external backend, we route to the strongest
         few that are up.
         """
-        available = [m for m in self.external_models_by_cost if m.is_available()]
+        available = [
+            m for m in self.external_models_by_cost if self._external_selectable(m)
+        ]
         available = self._keep_single_groq(available)
         best = sorted(available, key=lambda m: -m.quality())
         return best[:limit]
+
+    def _external_selectable(self, model: RemoteModelLike) -> bool:
+        """Whether an external model should be offered for fan-out, using only
+        cheap, non-blocking signals — no live network calls in the router.
+
+        * ``is_available()`` — the model's own in-memory signal (paid providers
+          report config + rate-limit back-off; others fail open).
+        * the last cached ``health_status`` sweep — consulted only for models
+          that lack a live signal (``health_checked_live`` is False, e.g.
+          DeepInfra, which the sweep probes over the network). Models the last
+          sweep marked unhealthy are skipped; ones it hasn't checked yet fail
+          open, so we assume a backend is available until a real check says
+          otherwise.
+        """
+        if not model.is_available():
+            return False
+        if not model.health_checked_live:
+            # Imported lazily to avoid a circular import (health_status imports
+            # the router). model_ok() is a lock-free cache read.
+            from fighthealthinsurance.ml.health_status import health_status
+
+            if health_status.model_ok(model) is False:
+                return False
+        return True
 
     def _get_forced_models(
         self, task_description: str = "", *, use_external: bool = True

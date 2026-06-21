@@ -14,16 +14,21 @@ from fighthealthinsurance.ml.ml_models import (
 )
 
 
-def make_external_mock(quality: int = 100, available: bool = True) -> MagicMock:
+def make_external_mock(
+    quality: int = 100, available: bool = True, health_checked_live: bool = True
+) -> MagicMock:
     """Build a mock external ``RemoteModelLike`` for router-selection tests.
 
-    Centralizes the ``external`` / ``quality`` / ``is_available`` triple that
-    ``MLRouter.best_external_models`` reads, so tests don't hand-roll it.
+    Centralizes the attributes ``MLRouter.best_external_models`` reads, so tests
+    don't hand-roll them. Defaults to ``health_checked_live=True`` so selection
+    relies on ``is_available`` and does not consult the health sweep unless a
+    test opts in (by passing ``health_checked_live=False``).
     """
     model = MagicMock(spec=RemoteModelLike)
     model.external = True
     model.quality.return_value = quality
     model.is_available.return_value = available
+    model.health_checked_live = health_checked_live
     return model
 
 
@@ -277,6 +282,47 @@ class TestMLRouterBestExternalModels(unittest.TestCase):
         groqs = [m for m in result if isinstance(m, RemoteGroq)]
         self.assertEqual(len(groqs), 1)
         self.assertIs(groqs[0], versatile)
+
+    def test_skips_sweep_for_live_checked_models(self):
+        """Live-checked models (paid providers) are gated by is_available only;
+        the stale sweep result is not consulted for them."""
+        from fighthealthinsurance.ml.health_status import health_status
+
+        model = make_external_mock(quality=80, health_checked_live=True)
+        self.router.external_models_by_cost = [model]
+        with patch.object(health_status, "model_ok", return_value=False) as model_ok:
+            result = self.router.best_external_models(limit=3)
+
+        self.assertEqual(result, [model])
+        model_ok.assert_not_called()
+
+    def test_excludes_models_failing_cached_health_check(self):
+        """A sweep-checked model (e.g. DeepInfra) that the last health check
+        marked down is skipped, using the cached result (no live probe)."""
+        from fighthealthinsurance.ml.health_status import health_status
+
+        healthy = make_external_mock(quality=80, health_checked_live=False)
+        down = make_external_mock(quality=99, health_checked_live=False)
+        self.router.external_models_by_cost = [down, healthy]
+        with patch.object(
+            health_status, "model_ok", side_effect=lambda m: m is not down
+        ):
+            result = self.router.best_external_models(limit=3)
+
+        self.assertIn(healthy, result)
+        self.assertNotIn(down, result)
+
+    def test_unknown_cached_health_fails_open(self):
+        """A sweep-checked model the last sweep hasn't probed yet (model_ok is
+        None) is still offered — assume available until a real check says no."""
+        from fighthealthinsurance.ml.health_status import health_status
+
+        model = make_external_mock(quality=80, health_checked_live=False)
+        self.router.external_models_by_cost = [model]
+        with patch.object(health_status, "model_ok", return_value=None):
+            result = self.router.best_external_models(limit=3)
+
+        self.assertEqual(result, [model])
 
     def test_empty_when_no_external_models(self):
         """No external models registered yields an empty list."""
