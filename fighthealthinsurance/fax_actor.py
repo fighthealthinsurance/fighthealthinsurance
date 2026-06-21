@@ -81,7 +81,17 @@ class FaxActor:
             call_command("migrate")
 
     def send_delayed_faxes(self) -> Tuple[int, int]:
+        from django.conf import settings
+
         from fighthealthinsurance.models import FaxesToSend
+
+        if getattr(settings, "TEMPORAL_ENABLED", False):
+            # Temporal's SendFaxWorkflow (delay_send timer) owns delayed sending;
+            # the polling actor stays idle to avoid duplicate work.
+            self._logger.debug(
+                "TEMPORAL_ENABLED: skipping Ray delayed-fax sweep (Temporal owns it)"
+            )
+            return (0, 0)
 
         target_time = timezone.now() - timedelta(hours=1)
         self._logger.info(f"Sending faxes older than target: {target_time}")

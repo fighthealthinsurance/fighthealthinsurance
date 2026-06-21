@@ -7,7 +7,7 @@ or touch the network. When ``settings.TEMPORAL_ENABLED`` is False -- the default
 leaving the existing Ray path entirely untouched.
 """
 
-from typing import Any
+from typing import Any, Optional
 
 from asgiref.sync import async_to_sync
 from django.conf import settings
@@ -69,6 +69,45 @@ async def start_send_fax_workflow(
     )
     logger.info(f"Started SendFaxWorkflow {handle.id} for fax {fax_uuid}")
     return str(handle.id)
+
+
+async def execute_send_fax_workflow(
+    hashed_email: str, fax_uuid: str, delay_send: bool = False
+) -> bool:
+    """Start ``SendFaxWorkflow`` and wait for it to finish; returns the result."""
+    from fighthealthinsurance.workflows.types import SendFaxInput
+
+    client = await get_temporal_client()
+    return bool(
+        await client.execute_workflow(
+            "SendFaxWorkflow",
+            SendFaxInput(
+                hashed_email=hashed_email,
+                fax_uuid=str(fax_uuid),
+                delay_send=delay_send,
+            ),
+            id=f"send-fax-{fax_uuid}",
+            task_queue=settings.TEMPORAL_TASK_QUEUE,
+        )
+    )
+
+
+def dispatch_fax_send_blocking(hashed_email: str, fax_uuid: str) -> Optional[bool]:
+    """Run a fax send via Temporal and block until it finishes.
+
+    Returns the send result (True/False) when handled by Temporal, or None when
+    Temporal is disabled or the dispatch failed -- in which case the caller
+    should fall back to the blocking Ray path.
+    """
+    if not getattr(settings, "TEMPORAL_ENABLED", False):
+        return None
+    try:
+        return async_to_sync(execute_send_fax_workflow)(hashed_email, str(fax_uuid))
+    except Exception:
+        logger.opt(exception=True).error(
+            "Failed to execute SendFaxWorkflow; falling back to Ray"
+        )
+        return None
 
 
 def dispatch_fax_send(

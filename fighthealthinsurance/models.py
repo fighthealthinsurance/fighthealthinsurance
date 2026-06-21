@@ -1766,6 +1766,10 @@ class FaxesToSend(ExportModelOperationsMixin("FaxesToSend"), models.Model):  # t
     denial_id = models.ForeignKey("Denial", on_delete=models.CASCADE, null=True)
     destination = models.CharField(max_length=20, null=True)
     should_send = models.BooleanField(default=False)
+    # Set True once the document has been handed to the fax vendor successfully.
+    # Idempotency guard so a retried send (e.g. Temporal's at-least-once activity
+    # execution) never faxes the recipient twice.
+    vendor_send_completed = models.BooleanField(default=False)
     # Professional we may use different backends.
     professional = models.BooleanField(default=False)
     for_appeal = models.ForeignKey(

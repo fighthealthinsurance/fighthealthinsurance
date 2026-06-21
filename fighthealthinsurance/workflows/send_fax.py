@@ -16,6 +16,7 @@ from datetime import timedelta
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
+from temporalio.exceptions import ActivityError, is_cancelled_exception
 
 from fighthealthinsurance.fax_status import (
     STATUS_ALREADY_SENT,
@@ -62,18 +63,23 @@ class SendFaxWorkflow:
             )
             return False
 
-        # status == STATUS_OK: send, then record the outcome.
-        success = await workflow.execute_activity(
-            fax_activities.send_fax_via_vendor,
-            args=[input.hashed_email, input.fax_uuid],
-            start_to_close_timeout=timedelta(minutes=10),
-            # The vendor send is not yet idempotent, so we do not auto-retry it
-            # -- a retry could fax the recipient twice. The activity catches
-            # transport errors internally and reports a failed send instead.
-            # Making this safely retryable (vendor idempotency key) is the
-            # natural next improvement.
-            retry_policy=RetryPolicy(maximum_attempts=1),
-        )
+        # status == STATUS_OK: send (with retries), then record the outcome.
+        # The send is idempotent (vendor_send_completed marker), so retrying is
+        # safe -- a re-run after a crash short-circuits instead of re-faxing.
+        try:
+            success = await workflow.execute_activity(
+                fax_activities.send_fax_via_vendor,
+                args=[input.hashed_email, input.fax_uuid],
+                start_to_close_timeout=timedelta(minutes=10),
+                retry_policy=RetryPolicy(maximum_attempts=3),
+            )
+        except ActivityError as e:
+            # Let cancellation cancel the workflow; otherwise record a failed
+            # send and still run finalize so the user is notified.
+            if is_cancelled_exception(e):
+                raise
+            workflow.logger.warning("Vendor fax send failed after retries")
+            success = False
 
         await workflow.execute_activity(
             fax_activities.finalize_fax,

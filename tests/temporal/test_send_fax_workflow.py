@@ -13,6 +13,7 @@ import uuid
 import pytest
 
 from temporalio import activity
+from temporalio.exceptions import ApplicationError
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
 
@@ -29,9 +30,15 @@ from fighthealthinsurance.workflows.types import SendFaxInput
 class _Recorder:
     """Builds mock fax activities that record calls and return canned values."""
 
-    def __init__(self, precheck_status: str = STATUS_OK, send_result: bool = True):
+    def __init__(
+        self,
+        precheck_status: str = STATUS_OK,
+        send_result: bool = True,
+        send_raises: bool = False,
+    ):
         self.precheck_status = precheck_status
         self.send_result = send_result
+        self.send_raises = send_raises
         self.calls: list = []
 
     def activities(self):
@@ -45,6 +52,8 @@ class _Recorder:
         @activity.defn(name="send_fax_via_vendor")
         async def send_fax_via_vendor(hashed_email: str, fax_uuid: str) -> bool:
             rec.calls.append(("send", hashed_email, fax_uuid))
+            if rec.send_raises:
+                raise ApplicationError("simulated vendor failure")
             return rec.send_result
 
         @activity.defn(name="finalize_fax")
@@ -131,3 +140,15 @@ async def test_delay_send_waits_then_sends():
         result = await _run(env, rec, delay_send=True)
     assert result is True
     assert [c[0] for c in rec.calls] == ["precheck", "send", "finalize"]
+
+
+@pytest.mark.asyncio
+async def test_send_raising_is_finalized_as_failure_after_retries():
+    """A send that keeps raising is retried, then recorded as a failed send."""
+    rec = _Recorder(precheck_status=STATUS_OK, send_raises=True)
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        result = await _run(env, rec)
+    assert result is False
+    # The send was retried (more than one attempt) and then finalized as failure.
+    assert rec.calls.count(("send", "h", "u")) >= 2
+    assert rec.calls[-1] == ("finalize", False, False)

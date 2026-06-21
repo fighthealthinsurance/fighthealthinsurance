@@ -11,7 +11,10 @@ import ray
 
 from fighthealthinsurance.fax_actor_ref import fax_actor_ref
 from fighthealthinsurance.models import Appeal, Denial, FaxesToSend
-from fighthealthinsurance.temporal_client import dispatch_fax_send
+from fighthealthinsurance.temporal_client import (
+    dispatch_fax_send,
+    dispatch_fax_send_blocking,
+)
 
 
 def _dispatch_or_ray_fax(hashed_email: str, fax_uuid: str) -> None:
@@ -23,6 +26,12 @@ def _dispatch_or_ray_fax(hashed_email: str, fax_uuid: str) -> None:
     """
     if not dispatch_fax_send(hashed_email, str(fax_uuid)):
         fax_actor_ref.get.do_send_fax.remote(hashed_email, str(fax_uuid))
+
+
+def _blocking_dispatch_or_ray_fax(hashed_email: str, fax_uuid: str) -> None:
+    """Send a fax and block until it finishes, via Temporal when enabled else Ray."""
+    if dispatch_fax_send_blocking(hashed_email, str(fax_uuid)) is None:
+        ray.get(fax_actor_ref.get.do_send_fax.remote(hashed_email, str(fax_uuid)))
 
 
 @dataclass
@@ -98,8 +107,7 @@ class SendFaxHelper:
         faxes = FaxesToSend.objects.filter(email=email, sent=False)
         c = 0
         for f in faxes:
-            future = fax_actor_ref.get.do_send_fax.remote(f.hashed_email, f.uuid)
-            ray.get(future)
+            _blocking_dispatch_or_ray_fax(f.hashed_email, str(f.uuid))
             c = c + 1
         return c
 
@@ -117,8 +125,7 @@ class SendFaxHelper:
         faxes = FaxesToSend.objects.filter(sent=False)[0:count]
         c = 0
         for fax in faxes:
-            future = fax_actor_ref.get.do_send_fax.remote(fax.hashed_email, fax.uuid)
-            ray.get(future)
+            _blocking_dispatch_or_ray_fax(fax.hashed_email, str(fax.uuid))
             c = c + 1
         return c
 

@@ -114,10 +114,18 @@ def precheck_fax(fax: "FaxesToSend") -> str:
 def send_fax_via_vendor(fax: "FaxesToSend") -> bool:
     """Send the fax document through the fax vendor. Returns success.
 
-    Vendor/transport errors are caught and reported as a failed send (matching
-    the original actor behavior) rather than raised, so the caller records a
-    definitive outcome instead of retrying a possibly-half-sent fax.
+    Idempotent on success: once a send has been handed to the vendor we record
+    ``vendor_send_completed`` and short-circuit any later call, so a retry (e.g.
+    Temporal re-running the activity after a worker crash) never double-faxes.
+
+    Transport errors are *not* swallowed here -- they propagate so a caller with
+    a retry policy (the Temporal workflow) can retry a genuinely failed send. The
+    Ray orchestrator in :func:`do_send_fax_object` catches them instead, matching
+    the prior actor behavior.
     """
+    if fax.vendor_send_completed:
+        logger.info(f"Fax uuid={fax.uuid} already handed to vendor; not re-sending")
+        return True
     destination = fax.destination
     if destination is None:
         # precheck_fax already screens this out; guard here too so a direct
@@ -131,19 +139,19 @@ def send_fax_via_vendor(fax: "FaxesToSend") -> bool:
     if fax.name is not None and len(fax.name) > 2:
         extra += f"This fax is sent on behalf of {fax.name}."
     logger.debug(f"Kicking off fax sending for uuid={fax.uuid}")
-    try:
-        return asyncio.run(
-            flexible_fax_magic.send_fax(
-                input_paths=[fax.get_temporary_document_path()],
-                extra=extra,
-                destination=destination,
-                blocking=True,
-                professional=fax.professional,
-            )
+    result = asyncio.run(
+        flexible_fax_magic.send_fax(
+            input_paths=[fax.get_temporary_document_path()],
+            extra=extra,
+            destination=destination,
+            blocking=True,
+            professional=fax.professional,
         )
-    except Exception:
-        logger.opt(exception=True).error("Error running async send_fax")
-        return False
+    )
+    if result:
+        fax.vendor_send_completed = True
+        fax.save(update_fields=["vendor_send_completed"])
+    return result
 
 
 def finalize_fax(
@@ -232,6 +240,12 @@ def do_send_fax_object(fax: "FaxesToSend") -> bool:
         return False
     if status in (STATUS_ALREADY_SENT, STATUS_NOT_FOUND):
         return False
-    success = send_fax_via_vendor(fax)
+    try:
+        success = send_fax_via_vendor(fax)
+    except Exception:
+        # The Temporal workflow retries the send activity via its retry policy;
+        # the Ray path records a failed send and notifies, as it did before.
+        logger.opt(exception=True).error(f"Error sending fax uuid={fax.uuid}")
+        success = False
     finalize_fax(fax, success, missing_destination=False)
     return success
