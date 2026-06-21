@@ -15,7 +15,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from fighthealthinsurance import proconnector
-from fighthealthinsurance.models import InterestedProfessional
+from fighthealthinsurance.models import InterestedProfessional, ScheduledEmail
 from fighthealthinsurance.proconnector import (
     BASE_INTRO_EMAIL,
     _is_safe_intro_draft,
@@ -26,6 +26,7 @@ from fighthealthinsurance.proconnector import (
     get_next_interested_professional,
     get_professional_cc_email,
     is_personal_email_domain,
+    queue_proconnector_intro_email,
 )
 
 User = get_user_model()
@@ -701,6 +702,129 @@ class MissingInfoTest(TestCase):
         pro = _make_pro(name="", email="x@xclinic.com")
         draft = build_base_intro_email(pro)
         self.assertIn("Dear there,", draft)
+
+
+# ---------------------------------------------------------------------------
+# "Send during business hours" queue flow
+# ---------------------------------------------------------------------------
+class QueueFlowTest(TestCase):
+    def setUp(self):
+        self.url = reverse("proconnector_process")
+        _login(self.client, is_staff=True)
+
+    @patch("fighthealthinsurance.staff_views.queue_proconnector_intro_email")
+    def test_queue_marks_attempted_without_sent_at_and_advances(self, mock_queue):
+        pro = _make_pro(email="jane@janeclinic.com")
+        body = "Edited intro body with the compensation disclosure."
+        response = self.client.post(
+            self.url,
+            {
+                "action": "queue",
+                "interested_professional_id": pro.id,
+                "subject": "Intro to Cofactor AI",
+                "email_body": body,
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.url, reverse("proconnector_process"))
+
+        mock_queue.assert_called_once()
+        args, kwargs = mock_queue.call_args
+        self.assertEqual(args[0].pk, pro.pk)
+        self.assertEqual(kwargs["body"], body)
+
+        pro.refresh_from_db()
+        self.assertTrue(pro.proconnector_attempted)
+        # Queued, not yet delivered -> sent_at stays null (distinguishes from a
+        # completed immediate send).
+        self.assertIsNone(pro.proconnector_sent_at)
+        self.assertEqual(pro.proconnector_email_body, body)
+
+    @patch("fighthealthinsurance.staff_views.queue_proconnector_intro_email")
+    def test_queue_empty_body_rejected(self, mock_queue):
+        pro = _make_pro()
+        response = self.client.post(
+            self.url,
+            {
+                "action": "queue",
+                "interested_professional_id": pro.id,
+                "email_body": "  ",
+            },
+        )
+        self.assertEqual(response.status_code, 400)
+        mock_queue.assert_not_called()
+        pro.refresh_from_db()
+        self.assertFalse(pro.proconnector_attempted)
+
+    @patch(
+        "fighthealthinsurance.staff_views.queue_proconnector_intro_email",
+        side_effect=RuntimeError("queue boom"),
+    )
+    def test_queue_failure_does_not_mark_attempted(self, _mock_queue):
+        pro = _make_pro(email="jane@janeclinic.com")
+        response = self.client.post(
+            self.url,
+            {
+                "action": "queue",
+                "interested_professional_id": pro.id,
+                "email_body": "Body with compensation disclosure.",
+            },
+        )
+        self.assertEqual(response.status_code, 500)
+        pro.refresh_from_db()
+        self.assertFalse(pro.proconnector_attempted)
+
+    @patch(
+        "fighthealthinsurance.staff_views.generate_intro_email",
+        return_value="A draft body with compensation disclosure.",
+    )
+    def test_queue_button_and_window_hint_shown(self, _mock_gen):
+        _make_pro(email="jane@janeclinic.com", phone_number="212-555-1234")
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'value="queue"')
+        self.assertContains(response, "Send during business hours")
+        # Hint reflects the phone's (Eastern) timezone.
+        self.assertContains(response, "Eastern")
+
+
+class QueueHelperTest(TestCase):
+    def test_queue_enqueues_with_phone_timezone(self):
+        pro = _make_pro(email="jane@janeclinic.com", phone_number="212-555-1234")
+        se = queue_proconnector_intro_email(
+            pro, subject="Intro", body="Body with compensation disclosure."
+        )
+        self.assertEqual(ScheduledEmail.objects.count(), 1)
+        self.assertEqual(se.to_email, "jane@janeclinic.com")
+        self.assertEqual(se.template_name, "proconnector_intro")
+        self.assertEqual(se.purpose, "proconnector_intro")
+        self.assertEqual(se.send_timezone, "America/New_York")
+        self.assertTrue(se.timezone_is_specific)
+        self.assertIn(get_professional_cc_email(), se.cc)
+        self.assertEqual(se.context["body"], "Body with compensation disclosure.")
+        self.assertFalse(se.sent)
+
+    def test_queue_without_phone_uses_conservative_default(self):
+        pro = _make_pro(email="jane@janeclinic.com", phone_number="")
+        se = queue_proconnector_intro_email(pro, subject="Intro", body="Body here.")
+        self.assertEqual(se.send_timezone, "America/Los_Angeles")
+        self.assertFalse(se.timezone_is_specific)
+
+    def test_queue_blocked_email_raises(self):
+        pro = _make_pro(email="blocked@example.com")
+        with self.assertRaises(ValueError):
+            queue_proconnector_intro_email(pro, subject="Intro", body="Body here.")
+        self.assertEqual(ScheduledEmail.objects.count(), 0)
+
+
+class DashboardLinkTest(TestCase):
+    def test_staff_dashboard_links_to_proconnector(self):
+        # The feature must be reachable from timbit/help (the staff dashboard).
+        _login(self.client, is_staff=True)
+        response = self.client.get(reverse("staff_dashboard"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, reverse("proconnector_process"))
+        self.assertContains(response, "Pro Connector")
 
     def test_base_email_uses_name_when_present(self):
         pro = _make_pro(name="Dr. Jane", email="x@xclinic.com")
