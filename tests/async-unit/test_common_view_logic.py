@@ -10,7 +10,11 @@ from fighthealthinsurance.common_view_logic import (
     NextStepInfo,
     DenialCreatorHelper,
 )
-from fighthealthinsurance.utils import MIN_APPEAL_CHARS, is_real_appeal
+from fighthealthinsurance.utils import (
+    MIN_APPEAL_CHARS,
+    is_real_appeal,
+    warn_too_short_appeal,
+)
 from fighthealthinsurance.helpers import SendFaxHelper, RemoveDataHelper
 from fighthealthinsurance.models import Denial, DenialTypes, Appeal, FaxesToSend
 import pytest
@@ -683,7 +687,8 @@ class TestCommonViewLogic(TestCase):
         ("", False),
         ("   \t\n  ", False),  # whitespace-only
         ("ok", False),  # below threshold
-        ("a" * MIN_APPEAL_CHARS, False),  # at threshold (strict >)
+        ("a" * (MIN_APPEAL_CHARS - 1), False),  # just below threshold
+        ("a" * MIN_APPEAL_CHARS, True),  # at threshold (inclusive >=)
         (123, False),  # non-string
         (["a"] * 100, False),  # non-string
         ("          short          ", False),  # strip-then-measure
@@ -693,3 +698,35 @@ class TestCommonViewLogic(TestCase):
 )
 def test_is_real_appeal(value, expected):
     assert is_real_appeal(value) is expected
+
+
+def test_warn_too_short_appeal_logs_length_and_context():
+    """The shared drop-site warning reports the measured length, the
+    threshold, and the caller-supplied context."""
+    from loguru import logger as loguru_logger
+
+    sink = io.StringIO()
+    handler_id = loguru_logger.add(sink, level="WARNING")
+    try:
+        warn_too_short_appeal("abc", "model='m' for denial 7")
+    finally:
+        loguru_logger.remove(handler_id)
+    output = sink.getvalue()
+    assert "too-short appeal" in output
+    assert "len=3" in output
+    assert f"< {MIN_APPEAL_CHARS} chars" in output
+    assert "model='m' for denial 7" in output
+
+
+def test_warn_too_short_appeal_handles_non_string():
+    """A non-string (e.g. None) is reported as length 0 without raising."""
+    from loguru import logger as loguru_logger
+
+    sink = io.StringIO()
+    handler_id = loguru_logger.add(sink, level="WARNING")
+    try:
+        warn_too_short_appeal(None, "some context")
+    finally:
+        loguru_logger.remove(handler_id)
+    output = sink.getvalue()
+    assert "len=0" in output

@@ -24,6 +24,7 @@ from typing import (
     Optional,
     Sequence,
     Tuple,
+    TypeGuard,
     TypeVar,
     Union,
     cast,
@@ -35,15 +36,24 @@ from django.conf import settings
 from django.core.mail import EmailMultiAlternatives
 from django.template.loader import render_to_string
 
-# Shared by the generation-side filter (drop runt outputs before save) and
-# the streaming-side counter (so generation rejection and delivery counting
-# agree). Also used by make_appeals to decide when to trigger the fallback
-# path — a runt first item means the user gets nothing, so fall back.
-MIN_APPEAL_CHARS = 10
+# Minimum number of (stripped) characters an appeal must have to be
+# considered "real" and worth delivering/saving: appeals must be at least
+# MIN_APPEAL_CHARS characters long. Shared by the generation-side filter
+# (drop runt outputs before save) and the streaming-side counter (so
+# generation rejection and delivery counting agree). Also used by
+# make_appeals to decide when to trigger the fallback path — a runt first
+# item means the user gets nothing, so fall back.
+MIN_APPEAL_CHARS = 15
 
 
-def is_real_appeal(x: Optional[str]) -> bool:
-    return isinstance(x, str) and len(x.strip()) > MIN_APPEAL_CHARS
+def is_real_appeal(x: Optional[str]) -> TypeGuard[str]:
+    """True when ``x`` is a deliverable appeal: a string at least
+    ``MIN_APPEAL_CHARS`` characters long (after stripping whitespace).
+
+    Typed as a ``TypeGuard[str]`` so callers narrow ``Optional[str]`` to
+    ``str`` inside the truthy branch (e.g. when building the streamed
+    appeal payload)."""
+    return isinstance(x, str) and len(x.strip()) >= MIN_APPEAL_CHARS
 
 
 import asyncstdlib
@@ -63,6 +73,21 @@ _NCBI_API_KEY = os.environ.get("NCBI_API_KEY") or None
 pubmed_fetcher = (
     PubMedFetcher(api_key=_NCBI_API_KEY) if _NCBI_API_KEY else PubMedFetcher()
 )
+
+
+def warn_too_short_appeal(text: Optional[str], context: str) -> None:
+    """Log a warning that a too-short appeal is being filtered out.
+
+    Centralizes the message format shared by the generation, streaming, and
+    synthesis drop sites so a runt appeal is reported consistently wherever
+    it is dropped. ``context`` identifies the source (e.g. the model name,
+    a saved-appeal id, or "synthesis output") plus the denial id.
+    """
+    length = len(text.strip()) if isinstance(text, str) else 0
+    logger.warning(
+        f"Filtering out too-short appeal "
+        f"(len={length} < {MIN_APPEAL_CHARS} chars): {context}"
+    )
 
 
 class RateLimiter:
