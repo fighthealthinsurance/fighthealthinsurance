@@ -452,6 +452,20 @@ let hardTimeoutHandle: ReturnType<typeof setTimeout> | null = null;
 // handler can close it when it decides to hand off to REST.
 let activeWebSocket: WebSocket | null = null;
 
+// Best-effort close + forget of the live socket. close() can throw on a
+// still-CONNECTING socket, hence the try/catch. Used by the give-up paths
+// to abandon a socket we've decided not to wait on.
+function closeActiveWebSocket(): void {
+  if (activeWebSocket) {
+    try {
+      activeWebSocket.close();
+    } catch (e) {
+      /* ignore */
+    }
+    activeWebSocket = null;
+  }
+}
+
 // Hand generation off from the WebSocket to the REST fallback. Returns
 // true if it actually escalated. Idempotent and safe to call from any of
 // the give-up paths (inactivity timeout, hard cap, exhausted retries):
@@ -479,14 +493,7 @@ function escalateToRest(reason: string): boolean {
   // Close the live socket so it can't keep streaming into the parser or
   // re-arm the inactivity timer after we've moved on. ws.onclose/onerror
   // short-circuit on handingOffToRest.
-  if (activeWebSocket) {
-    try {
-      activeWebSocket.close();
-    } catch (e) {
-      /* ignore */
-    }
-    activeWebSocket = null;
-  }
+  closeActiveWebSocket();
   // Drop any half-received line from the dead socket so it can't get
   // concatenated onto (and corrupt) the first frame of the REST stream.
   respBuffer = '';
@@ -517,21 +524,12 @@ function armHardTimeout(): void {
     // letting slow WS attempts keep the user waiting indefinitely.
     if (!usingRestFallback && !handingOffToRest) {
       retries = maxRetries;
-      if (activeWebSocket) {
-        try {
-          activeWebSocket.close();
-        } catch (e) {
-          /* ignore */
-        }
-        activeWebSocket = null;
-      }
+      closeActiveWebSocket();
       endCurrentAttempt();
-      const statusMessage = document.getElementById('status-message');
-      if (statusMessage) {
-        statusMessage.textContent =
-          'This is taking longer than expected. Please try refreshing the page.';
-        statusMessage.style.color = '#dc3545';
-      }
+      fadeStatusMessage(
+        'This is taking longer than expected. Please try refreshing the page.',
+        '#dc3545',
+      );
       done();
     }
   }, WS_HARD_TIMEOUT_MS);
@@ -1015,6 +1013,12 @@ function connectWebSocket(
     // Start the per-attempt wait timer. connectWebSocket is called
     // recursively for retries, so each invocation gets its own start.
     beginAttempt();
+    // Clear any inactivity timer left over from a previous attempt so it
+    // can't fire stale during this one and end the wrong attempt's clock.
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle);
+      timeoutHandle = null;
+    }
     // Per-attempt flag: ws.onerror or the inactivity-timeout path may
     // decide to retry or hand off to REST. The same socket's
     // ws.onclose then fires on the normal error->close (or
@@ -1028,6 +1032,21 @@ function connectWebSocket(
     // Track the live socket so the module-level hard-timeout handler can
     // close it when it hands off to REST.
     activeWebSocket = ws;
+
+    // Queue the next WS attempt after a short delay. Marks retryScheduled
+    // so this attempt's ws.onclose won't also call done(). Shared by the
+    // error and inactivity-timeout (no-REST) paths.
+    const scheduleReconnect = () => {
+      retries = retries + 1;
+      retryScheduled = true;
+      console.log(
+        `Retrying WebSocket connection (${retries}/${maxRetries})...`,
+      );
+      setTimeout(
+        () => connectWebSocket(websocketUrl, data, processResponseChunk, done),
+        1000,
+      );
+    };
 
     // Defined inside startWebSocket so it can close `ws` and mark
     // `retryScheduled` on the right per-attempt closure.
@@ -1057,12 +1076,7 @@ function connectWebSocket(
         // No REST fallback configured: fall back to the old retry/give-up
         // behaviour so we still terminate.
         if (retries < maxRetries) {
-          retries++;
-          setTimeout(
-            () =>
-              connectWebSocket(websocketUrl, data, processResponseChunk, done),
-            1000,
-          );
+          scheduleReconnect();
         } else {
           console.error("Max retries reached. Closing connection.");
           done();
@@ -1123,25 +1137,15 @@ function connectWebSocket(
       // take next (retry / fallback / give up).
       endCurrentAttempt();
       if (retries < maxRetries) {
-        console.log(
-          `Retrying WebSocket connection (${retries + 1}/${maxRetries})...`,
-        );
-        retries = retries + 1;
-        retryScheduled = true;
-        setTimeout(
-          () =>
-            connectWebSocket(websocketUrl, data, processResponseChunk, done),
-          1000,
-        );
+        scheduleReconnect();
       } else if (escalateToRest('websocket errored, retries exhausted')) {
         // REST fallback now owns the stream.
       } else {
         console.error("Max retries reached. Closing connection.");
-        const statusMessage = document.getElementById('status-message');
-        if (statusMessage) {
-          statusMessage.textContent = 'Our AI took too many coffee breaks. Try refreshing the page.';
-          statusMessage.style.color = '#dc3545';
-        }
+        fadeStatusMessage(
+          'Our AI took too many coffee breaks. Try refreshing the page.',
+          '#dc3545',
+        );
         done();
       }
     };
