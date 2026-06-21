@@ -113,7 +113,11 @@ class AccessControlTest(TestCase):
     def test_non_staff_get_redirected(self):
         _login(self.client, is_staff=False)
         response = self.client.get(self.url)
-        self.assertEqual(response.status_code, 302)
+        self.assertRedirects(
+            response,
+            f"{reverse('admin:login')}?next={self.url}",
+            fetch_redirect_response=False,
+        )
 
     def test_non_staff_post_redirected(self):
         _login(self.client, is_staff=False)
@@ -122,7 +126,11 @@ class AccessControlTest(TestCase):
             self.url,
             {"action": "skip", "interested_professional_id": pro.id},
         )
-        self.assertEqual(response.status_code, 302)
+        self.assertRedirects(
+            response,
+            f"{reverse('admin:login')}?next={self.url}",
+            fetch_redirect_response=False,
+        )
         pro.refresh_from_db()
         self.assertFalse(pro.proconnector_skipped)
 
@@ -435,8 +443,7 @@ class AIDraftFallbackTest(TestCase):
 class SendFlowTest(TestCase):
     def setUp(self):
         self.url = reverse("proconnector_process")
-        User.objects.create_user(username="s", password="pw123", is_staff=True)
-        self.client.login(username="s", password="pw123")
+        _login(self.client, is_staff=True)
 
     @patch("fighthealthinsurance.staff_views.send_proconnector_intro_email")
     def test_send_marks_attempted_stores_body_and_advances(self, mock_send):
@@ -556,8 +563,7 @@ class SendFlowTest(TestCase):
 class SendFailureTest(TestCase):
     def setUp(self):
         self.url = reverse("proconnector_process")
-        User.objects.create_user(username="s", password="pw123", is_staff=True)
-        self.client.login(username="s", password="pw123")
+        _login(self.client, is_staff=True)
 
     @patch(
         "fighthealthinsurance.staff_views.send_proconnector_intro_email",
@@ -592,8 +598,7 @@ class SendFailureTest(TestCase):
 class SkipFlowTest(TestCase):
     def setUp(self):
         self.url = reverse("proconnector_process")
-        User.objects.create_user(username="s", password="pw123", is_staff=True)
-        self.client.login(username="s", password="pw123")
+        _login(self.client, is_staff=True)
 
     def test_skip_records_reason_and_advances_without_email(self):
         pro = _make_pro()
@@ -752,8 +757,7 @@ class MissingInfoTest(TestCase):
         return_value="A draft with compensation disclosure.",
     )
     def test_view_renders_with_missing_name_and_org(self, _mock_gen):
-        User.objects.create_user(username="s", password="pw123", is_staff=True)
-        self.client.login(username="s", password="pw123")
+        _login(self.client, is_staff=True)
         _make_pro(name="", business_name="", email="x@xclinic.com")
         response = self.client.get(reverse("proconnector_process"))
         self.assertEqual(response.status_code, 200)
@@ -786,7 +790,11 @@ class ProExtractCSVTest(TestCase):
 
     def test_requires_staff(self):
         response = self.client.get(self.url)
-        self.assertEqual(response.status_code, 302)
+        self.assertRedirects(
+            response,
+            f"{reverse('admin:login')}?next={self.url}",
+            fetch_redirect_response=False,
+        )
 
     def test_csv_headers_and_disposition(self):
         _login(self.client, is_staff=True)
