@@ -143,6 +143,17 @@ class TestRemoteGroqTiers(unittest.TestCase):
             )
 
     @patch.dict(os.environ, {"GROQ_API_KEY": "test-key"})
+    def test_quality_versatile_above_instant(self):
+        """Quality tier (versatile) outranks speed tier (instant) so the router's
+        best_external_models prefers the stronger Groq model."""
+        versatile = RemoteGroq(model="llama-3.3-70b-versatile")
+        instant = RemoteGroq(model="llama-3.1-8b-instant")
+
+        self.assertGreater(versatile.quality(), instant.quality())
+        # External models stay below the internal models' range (>=101).
+        self.assertLess(versatile.quality(), 101)
+
+    @patch.dict(os.environ, {"GROQ_API_KEY": "test-key"})
     def test_speed_tier_model(self):
         """Test speed tier model is correctly identified."""
         model = RemoteGroq(model="llama-3.1-8b-instant")

@@ -111,21 +111,21 @@ class TestMLRouterChatBackends(unittest.TestCase):
         mock_ext_model1 = MagicMock(spec=RemoteModelLike)
         mock_ext_model1.external = True
         mock_ext_model1.quality.return_value = 80
+        mock_ext_model1.is_available.return_value = True
 
         mock_ext_model2 = MagicMock(spec=RemoteModelLike)
         mock_ext_model2.external = True
         mock_ext_model2.quality.return_value = 90
+        mock_ext_model2.is_available.return_value = True
 
         mock_ext_model3 = MagicMock(spec=RemoteModelLike)
         mock_ext_model3.external = True
         mock_ext_model3.quality.return_value = 70
+        mock_ext_model3.is_available.return_value = True
 
-        mock_int_model = MagicMock(spec=RemoteModelLike)
-        mock_int_model.external = False
-
-        # Set up router with mixed models
-        self.router.all_models_by_cost = [
-            mock_int_model,
+        # Set up router with external models (best_external_models reads
+        # external_models_by_cost).
+        self.router.external_models_by_cost = [
             mock_ext_model1,
             mock_ext_model2,
             mock_ext_model3,
@@ -149,17 +149,20 @@ class TestMLRouterChatBackends(unittest.TestCase):
         mock_ext_model1 = MagicMock(spec=RemoteModelLike)
         mock_ext_model1.external = True
         mock_ext_model1.quality.return_value = 60
+        mock_ext_model1.is_available.return_value = True
 
         mock_ext_model2 = MagicMock(spec=RemoteModelLike)
         mock_ext_model2.external = True
         mock_ext_model2.quality.return_value = 95
+        mock_ext_model2.is_available.return_value = True
 
         mock_ext_model3 = MagicMock(spec=RemoteModelLike)
         mock_ext_model3.external = True
         mock_ext_model3.quality.return_value = 75
+        mock_ext_model3.is_available.return_value = True
 
         # Set up router with external models
-        self.router.all_models_by_cost = [
+        self.router.external_models_by_cost = [
             mock_ext_model1,
             mock_ext_model2,
             mock_ext_model3,
@@ -174,24 +177,25 @@ class TestMLRouterChatBackends(unittest.TestCase):
             qualities = [m.quality() for m in fallback_models]
             self.assertEqual(qualities, sorted(qualities, reverse=True))
 
-    def test_get_chat_backends_with_fallback_limits_to_four(self):
-        """Test that fallback models are limited to 4 models."""
+    def test_get_chat_backends_with_fallback_limits_to_three(self):
+        """Test that fallback models are limited to the best ~3 models."""
         # Create many mock external models
         mock_models = []
         for i in range(10):
             mock_model = MagicMock(spec=RemoteModelLike)
             mock_model.external = True
             mock_model.quality.return_value = 50 + i
+            mock_model.is_available.return_value = True
             mock_models.append(mock_model)
 
-        self.router.all_models_by_cost = mock_models
+        self.router.external_models_by_cost = mock_models
 
         _, fallback_models = self.router.get_chat_backends_with_fallback(
             use_external=True
         )
 
-        # Should limit to 4 models
-        self.assertLessEqual(len(fallback_models), 4)
+        # Should limit to the best 3 models
+        self.assertEqual(len(fallback_models), 3)
 
     def test_get_chat_backends_with_fallback_no_external_available(self):
         """Test behavior when no external models are available."""
@@ -203,6 +207,7 @@ class TestMLRouterChatBackends(unittest.TestCase):
         mock_int_model2.external = False
 
         self.router.all_models_by_cost = [mock_int_model1, mock_int_model2]
+        self.router.external_models_by_cost = []
 
         primary_models, fallback_models = self.router.get_chat_backends_with_fallback(
             use_external=True
@@ -225,6 +230,60 @@ class TestMLRouterChatBackends(unittest.TestCase):
             # Verify get_chat_backends was called with use_external=False
             mock_get_chat.assert_called_once_with(use_external=False)
             self.assertEqual(primary_models, ["mock_model"])
+
+
+class TestMLRouterBestExternalModels(unittest.TestCase):
+    """Tests for MLRouter.best_external_models (quality + health selection)."""
+
+    def setUp(self):
+        self.router = MLRouter()
+
+    def _ext(self, quality, available=True):
+        m = MagicMock(spec=RemoteModelLike)
+        m.external = True
+        m.quality.return_value = quality
+        m.is_available.return_value = available
+        return m
+
+    def test_orders_by_quality_and_limits(self):
+        """Returns the highest-quality models, capped at the limit."""
+        # external_models_by_cost is cost-ordered; selection re-sorts by quality.
+        self.router.external_models_by_cost = [
+            self._ext(70),
+            self._ext(95),
+            self._ext(60),
+            self._ext(88),
+            self._ext(99),
+        ]
+
+        result = self.router.best_external_models(limit=3)
+
+        self.assertEqual([m.quality() for m in result], [99, 95, 88])
+
+    def test_defaults_to_three(self):
+        """The default limit is ~3 external models."""
+        self.router.external_models_by_cost = [self._ext(50 + i) for i in range(8)]
+
+        result = self.router.best_external_models()
+
+        self.assertEqual(len(result), 3)
+
+    def test_excludes_unavailable_models(self):
+        """Models failing the availability check are skipped."""
+        up = self._ext(80, available=True)
+        down = self._ext(99, available=False)
+        self.router.external_models_by_cost = [down, up]
+
+        result = self.router.best_external_models(limit=3)
+
+        self.assertIn(up, result)
+        self.assertNotIn(down, result)
+
+    def test_empty_when_no_external_models(self):
+        """No external models registered yields an empty list."""
+        self.router.external_models_by_cost = []
+
+        self.assertEqual(self.router.best_external_models(), [])
 
 
 class TestContextOnlyModelFlag(unittest.TestCase):

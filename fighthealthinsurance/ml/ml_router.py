@@ -165,6 +165,28 @@ class MLRouter(object):
             filtered.append(m)
         return filtered
 
+    def best_external_models(self, limit: int = 3) -> list[RemoteModelLike]:
+        """Return up to ``limit`` external models, best-quality first, limited to
+        those currently available.
+
+        "Best" means highest ``quality()`` (descending); because
+        ``external_models_by_cost`` is cost-ordered and the sort is stable,
+        cheaper models win ties. Availability uses each model's cheap,
+        non-blocking ``is_available()`` signal, so paid providers that are
+        unconfigured or rate-limited (backing off) are skipped, while backends
+        without a cheap health signal fail open and rely on per-inference
+        fallback. At most one Groq backend is kept (matching the rest of the
+        router) to avoid double fan-out.
+
+        Replaces the previous "cheapest N external" slices so that, instead of
+        fanning out across every external backend, we route to the strongest
+        few that are up.
+        """
+        available = [m for m in self.external_models_by_cost if m.is_available()]
+        available = self._keep_single_groq(available)
+        best = sorted(available, key=lambda m: -m.quality())
+        return best[:limit]
+
     def _get_forced_models(
         self, task_description: str = "", *, use_external: bool = True
     ) -> Optional[list[RemoteModelLike]]:
@@ -257,8 +279,8 @@ class MLRouter(object):
         models: list[RemoteModelLike] = []
         if self.internal_models_by_cost:
             models += self.internal_models_by_cost[:6]
-        if use_external and self.external_models_by_cost:
-            models += self.external_models_by_cost[:4]
+        if use_external:
+            models += self.best_external_models()
         # Only fall back to all_models if use_external is True
         if not models and use_external:
             models = self.all_models_by_cost[:6] if self.all_models_by_cost else []
@@ -349,10 +371,11 @@ class MLRouter(object):
             return False
 
         if use_external:
-            # Internal + external: take internal first, then external
+            # Internal + external: take internal first, then the best
+            # available external models.
             for model in self.internal_models_by_cost[:6]:
                 add_model_name(model)
-            for model in self.external_models_by_cost[:4]:
+            for model in self.best_external_models():
                 add_model_name(model)
         else:
             # Internal only
@@ -474,8 +497,7 @@ class MLRouter(object):
         if fhi_models:
             models += self.models_by_name[fhi_models[0]] * 2
         if use_external:
-            external_to_add = self._keep_single_groq(self.external_models_by_cost[:2])
-            models += external_to_add
+            models += self.best_external_models()
         internal_to_add = self.internal_models_by_cost[:6]
         models += internal_to_add
         logger.debug(
@@ -508,12 +530,8 @@ class MLRouter(object):
 
         fallback_models: list[RemoteModelLike] = []
         if use_external:
-            # Get external models sorted by quality for fallback
-            external_models = self._keep_single_groq(
-                [m for m in self.all_models_by_cost if m.external]
-            )
-            # Prefer higher quality models for chat fallback
-            fallback_models = sorted(external_models, key=lambda m: -m.quality())[:4]
+            # Prefer the best available external models for chat fallback.
+            fallback_models = self.best_external_models()
 
         return primary_models, fallback_models
 

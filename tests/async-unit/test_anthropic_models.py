@@ -147,6 +147,19 @@ class TestRemoteAnthropicTiers(unittest.TestCase):
 
         self.assertEqual(model.get_tier(), "premium")
 
+    @patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"})
+    def test_quality_orders_opus_above_sonnet_above_haiku(self):
+        """Premium (Opus) outranks quality (Sonnet) outranks speed (Haiku) so the
+        router's best_external_models picks the strongest Claude first."""
+        opus = RemoteAnthropic(model="claude-opus-4-8")
+        sonnet = RemoteAnthropic(model="claude-sonnet-4-6")
+        haiku = RemoteAnthropic(model="claude-haiku-4-5-20251001")
+
+        self.assertGreater(opus.quality(), sonnet.quality())
+        self.assertGreater(sonnet.quality(), haiku.quality())
+        # External models stay below the internal models' range (>=101).
+        self.assertLess(opus.quality(), 101)
+
 
 class TestRemoteAnthropicInfer(unittest.TestCase):
     """Tests for RemoteAnthropic._infer method."""

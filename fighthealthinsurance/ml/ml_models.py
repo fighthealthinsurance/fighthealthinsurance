@@ -511,6 +511,19 @@ class RemoteModelLike(DenialBase):
     def model_is_ok(self):
         return False
 
+    def is_available(self) -> bool:
+        """Cheap, non-blocking availability signal used when *selecting* which
+        backends to fan out to (see ``MLRouter.best_external_models``).
+
+        Defaults to ``True`` (fail-open). Unlike ``model_is_ok()`` this must not
+        perform network I/O: it runs on the request path, so a slow check would
+        add latency to every call. Subclasses with an in-memory health signal
+        (e.g. paid providers that track API-key presence and rate-limit
+        back-off) override this; deeper reachability checks remain the job of
+        the periodic ``health_status`` sweep and per-inference fallback.
+        """
+        return True
+
     def infer(
         self,
         prompt,
@@ -2863,6 +2876,20 @@ class DeepInfra(RemoteFullOpenLike):
         "deepseek-ai/DeepSeek-V4-Pro": 1048000,
     }
 
+    # Routing quality per model, kept below the internal models' range (>=101)
+    # so internal backends stay preferred. Used to rank the "best" external
+    # models for fan-out (MLRouter.best_external_models). Unknown models fall
+    # back to a mid value.
+    _MODEL_QUALITY: ClassVar[dict[str, int]] = {
+        "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8": 90,
+        "meta-llama/Llama-4-Scout-17B-16E-Instruct": 85,
+        "google/gemma-3-27b-it": 80,
+        "meta-llama/Meta-Llama-3.1-70B-Instruct": 84,
+        "meta-llama/Llama-3.2-3B-Instruct": 68,
+        "meta-llama/Llama-3.3-70B-Instruct-Turbo": 84,
+        "deepseek-ai/DeepSeek-R1-0528-Turbo": 90,
+    }
+
     def __init__(self, model: str, dual_mode: bool = False):
         api_base = "https://api.deepinfra.com/v1/openai"
         token = os.getenv("DEEPINFRA_API")
@@ -2877,6 +2904,11 @@ class DeepInfra(RemoteFullOpenLike):
     @property
     def supports_system(self):
         return True
+
+    def quality(self) -> int:
+        """Routing quality derived from the specific model (see
+        ``_MODEL_QUALITY``)."""
+        return self._MODEL_QUALITY.get(self.model, 82)
 
     @classmethod
     def models(cls) -> List[ModelDescription]:
@@ -2955,6 +2987,34 @@ class RateLimitedRemoteOpenLike(RemoteFullOpenLike):
 
     # Re-raise ClientResponseError from the parent _infer so we can detect 429.
     _propagate_http_errors: ClassVar[bool] = True
+
+    # Routing quality by provider tier, kept below the internal models' range
+    # (>=101) so internal backends stay preferred. Used to rank the "best"
+    # external models for fan-out (MLRouter.best_external_models). Subclasses
+    # expose each model's tier via get_tier().
+    _TIER_QUALITY: ClassVar[dict[str, int]] = {
+        "premium": 98,
+        "quality": 92,
+        "speed": 80,
+        "custom": 88,
+    }
+
+    def get_tier(self) -> str:
+        """Provider tier (speed/quality/premium/custom). Concrete subclasses
+        override with their own per-model mapping; this default keeps
+        ``quality()`` robust if a subclass omits it."""
+        return "unknown"
+
+    def quality(self) -> int:
+        """Routing quality derived from the model's tier (see ``_TIER_QUALITY``)."""
+        return self._TIER_QUALITY.get(self.get_tier(), 85)
+
+    def is_available(self) -> bool:
+        """Available when configured and not currently backing off. This mirrors
+        ``model_is_ok()`` for the paid providers, whose health signal is already
+        in-memory (API key/endpoint presence + rate-limit state) and never hits
+        the network, so it is safe to consult on the request path."""
+        return bool(self.model_is_ok())
 
     @classmethod
     def _ensure_rate_limiter(cls, model: str) -> None:
