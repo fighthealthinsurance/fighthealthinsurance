@@ -2773,8 +2773,8 @@ class DeepInfra(RemoteFullOpenLike):
         "meta-llama/Llama-3.2-3B-Instruct": 128000,
         "meta-llama/Llama-3.3-70B-Instruct-Turbo": 128000,
         "deepseek-ai/DeepSeek-R1-Turbo": 64000,
-        "google/gemma-4-26B-A4B-it": 128000,
-        "deepseek-ai/DeepSeek-V4-Pro": 128000,
+        "google/gemma-4-26B-A4B-it": 260000,
+        "deepseek-ai/DeepSeek-V4-Pro": 1048000,
     }
 
     def __init__(self, model: str, dual_mode: bool = False):
