@@ -36,9 +36,11 @@ class EmailPollingActor:
             FollowUpEmailSender,
             ThankyouEmailSender,
         )
+        from fighthealthinsurance.scheduled_emails import ScheduledEmailSender
 
         self.followup_sender = FollowUpEmailSender()
         self.thankyou_sender = ThankyouEmailSender()
+        self.scheduled_sender = ScheduledEmailSender()
         self.last_email_clear_check = timezone.now()
         self._logger.info("EmailPollingActor senders initialized")
 
@@ -64,6 +66,19 @@ class EmailPollingActor:
                     )
                     self._logger.info(f"Sent {sent_count} follow-up emails")
                     await self._jittered_send_delay(sent_count)
+
+                # Send queued emails whose business-hours window is now open.
+                # asend_all already paces sends (1-3s each); no big jittered
+                # delay here so a batch can't spill past the sending window.
+                self._logger.debug("Getting scheduled email candidates")
+                scheduled_candidates = await self.scheduled_sender.afind_candidates()
+                scheduled_count = len(scheduled_candidates)
+                self._logger.debug(f"Scheduled email candidates: {scheduled_count}")
+                if scheduled_count > 0:
+                    scheduled_sent = await self.scheduled_sender.asend_all(
+                        count=10, candidates=scheduled_candidates
+                    )
+                    self._logger.info(f"Sent {scheduled_sent} scheduled emails")
 
                 if False:
                     # Send thank-you emails to professionals

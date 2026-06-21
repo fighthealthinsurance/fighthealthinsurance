@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>{{ title|default:"Partner Introduction" }}</title>
+  <title>{{ title|default:"Pro Connector" }}</title>
   <style>
     body {
       font-family: Arial, sans-serif;
@@ -79,8 +79,19 @@
     }
     button.send { background-color: #28a745; color: white; }
     button.send:hover { background-color: #218838; }
+    button.queue { background-color: #007bff; color: white; }
+    button.queue:hover { background-color: #0069d9; }
     button.skip { background-color: #6c757d; color: white; }
     button.skip:hover { background-color: #5a6268; }
+    .send-window {
+      background: #e7f3ff;
+      border: 1px solid #b6d8ff;
+      border-radius: 4px;
+      padding: 8px 12px;
+      margin: 14px 0 0;
+      font-size: 0.9em;
+      color: #0b4f8a;
+    }
     .error {
       background: #f8d7da;
       border: 1px solid #f5c2c7;
@@ -94,7 +105,7 @@
   </style>
 </head>
 <body>
-  <h1>Partner Introduction &mdash; Cofactor AI</h1>
+  <h1>{{ title|default:"Pro Connector" }} &mdash; Cofactor AI Introduction</h1>
 
   {% if error %}
     <div class="error">{{ error }}</div>
@@ -159,8 +170,13 @@
         <label for="skip_reason">Skip reason (optional, only used when skipping)</label>
         <input type="text" id="skip_reason" name="skip_reason" value="{{ skip_reason }}">
 
+        {% if send_window_hint %}
+          <p class="send-window">⏰ {{ send_window_hint }}</p>
+        {% endif %}
+
         <div class="actions">
-          <button type="submit" class="send" name="action" value="send">Send intro email</button>
+          <button type="submit" class="send" name="action" value="send">Send intro email now</button>
+          <button type="submit" class="queue" name="action" value="queue">Send during business hours</button>
           <button type="submit" class="skip" name="action" value="skip" formnovalidate>Skip</button>
         </div>
       </form>

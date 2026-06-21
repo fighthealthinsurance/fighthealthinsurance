@@ -33,7 +33,8 @@ from loguru import logger
 from fighthealthinsurance.email_utils import get_email_domain, is_blocked_email
 from fighthealthinsurance.ml.ml_inference import infer_with_fallback
 from fighthealthinsurance.ml.ml_router import ml_router
-from fighthealthinsurance.models import InterestedProfessional
+from fighthealthinsurance.models import InterestedProfessional, ScheduledEmail
+from fighthealthinsurance.scheduled_emails import enqueue_scheduled_email
 from fighthealthinsurance.utils import send_fallback_email
 
 # Fallback CC address when no professional/support email setting is configured.
@@ -288,14 +289,27 @@ def generate_intro_email(pro: InterestedProfessional) -> str:
     return async_to_sync(agenerate_intro_email)(pro)
 
 
+def _intro_cc_recipients(extra_cc: Optional[list[str]] = None) -> list[str]:
+    """CC list for an intro email: the professional contact address first, then
+    any caller-supplied extras, deduplicated case-insensitively in order."""
+    professional_cc = get_professional_cc_email()
+    recipients = [professional_cc]
+    seen = {professional_cc.lower()}
+    for addr in extra_cc or []:
+        if addr.lower() not in seen:
+            seen.add(addr.lower())
+            recipients.append(addr)
+    return recipients
+
+
 def send_proconnector_intro_email(
     pro: InterestedProfessional,
     subject: str,
     body: str,
     cc: Optional[list[str]] = None,
 ) -> None:
-    """Send the (edited) intro email to ``pro``, always CC'ing the professional
-    address.
+    """Send the (edited) intro email to ``pro`` now, always CC'ing the
+    professional address.
 
     The professional/support address is always included; any caller-supplied
     ``cc`` is treated as *additional* recipients, deduplicated while preserving
@@ -307,19 +321,41 @@ def send_proconnector_intro_email(
         # send_fallback_email silently skips blocked recipients; fail closed so
         # the caller doesn't record a send that never actually happened.
         raise ValueError("Recipient email is blocked or unsendable")
-    professional_cc = get_professional_cc_email()
-    recipients = [professional_cc]
-    seen = {professional_cc.lower()}
-    for addr in cc or []:
-        if addr.lower() not in seen:
-            seen.add(addr.lower())
-            recipients.append(addr)
     send_fallback_email(
         subject=subject,
         template_name="proconnector_intro",
         context={"body": body, "name": pro.name},
         to_email=pro.email,
-        cc=recipients,
+        cc=_intro_cc_recipients(cc),
+    )
+
+
+def queue_proconnector_intro_email(
+    pro: InterestedProfessional,
+    subject: str,
+    body: str,
+    cc: Optional[list[str]] = None,
+) -> ScheduledEmail:
+    """Queue the (edited) intro email to send during the recipient's likely
+    business hours instead of immediately.
+
+    Mirrors :func:`send_proconnector_intro_email` (same CC handling and blocked
+    check) but enqueues a :class:`ScheduledEmail` gated on the business-hours
+    window derived from the professional's phone area code -- defaulting to the
+    conservative cross-US Pacific overlap when no usable phone is known (see
+    ``business_hours.py``). Raises on a blocked/unsendable recipient so the
+    caller can avoid marking the record attempted.
+    """
+    if is_blocked_email(pro.email):
+        raise ValueError("Recipient email is blocked or unsendable")
+    return enqueue_scheduled_email(
+        to_email=pro.email,
+        subject=subject,
+        template_name="proconnector_intro",
+        context={"body": body, "name": pro.name},
+        cc=_intro_cc_recipients(cc),
+        phone=pro.phone_number,
+        purpose="proconnector_intro",
     )
 
 
@@ -428,6 +464,21 @@ def mark_email_sent(email: str, body: str) -> int:
     return InterestedProfessional.objects.filter(email__iexact=email).update(
         proconnector_attempted=True,
         proconnector_sent_at=timezone.now(),
+        proconnector_email_body=body,
+    )
+
+
+def mark_email_queued(email: str, body: str) -> int:
+    """Mark every record sharing ``email`` as attempted (queued) with ``body``.
+
+    Like :func:`mark_email_sent` but leaves ``proconnector_sent_at`` null: the
+    intro has been handed off to the business-hours send queue but not delivered
+    yet. Setting ``attempted`` removes it from the staff queue so it isn't shown
+    twice; the actual delivery time lives on the ``ScheduledEmail`` row. Returns
+    the number updated.
+    """
+    return InterestedProfessional.objects.filter(email__iexact=email).update(
+        proconnector_attempted=True,
         proconnector_email_body=body,
     )
 
