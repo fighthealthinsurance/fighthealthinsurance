@@ -75,6 +75,16 @@ class FaxSenderBase(object):
     ) -> bool:
         return True
 
+    def check_health(self) -> bool:
+        """Return whether this backend is healthy.
+
+        Base backends are assumed healthy once configured; only backends that
+        support a cheap liveness probe (e.g. :class:`SonicFax`, which can do a
+        login round-trip) override this. Callers should wrap this in a timeout
+        since an override may make a network call.
+        """
+        return True
+
 
 class SonicFax(FaxSenderBase):
     base_cost = 10
@@ -110,6 +120,20 @@ class SonicFax(FaxSenderBase):
             "SONIC_NOTIFICATION_EMAIL", "support42@fighthealthinsurance.com"
         )
 
+    def check_health(self, timeout: float = 4.0) -> bool:
+        """Verify we can authenticate against the Sonic fax service.
+
+        Performs a login round-trip (network call) and returns ``True`` when it
+        succeeds. ``_login`` raises if credentials are rejected or Sonic is
+        unreachable, so any failure surfaces as an exception to the caller.
+
+        ``timeout`` is applied per HTTP request so a hung/slow Sonic can't stall
+        the caller (e.g. the staff status page) indefinitely.
+        """
+        with requests.Session() as s:
+            self._login(s, timeout=timeout)
+            return True
+
     async def send_fax_blocking(
         self, destination: str, path: str, dest_name: Optional[str] = None
     ) -> bool:
@@ -130,14 +154,20 @@ class SonicFax(FaxSenderBase):
                 dest_name=dest_name,
             )
 
-    def _login(self, s: Session) -> dict[str, str]:
+    def _login(self, s: Session, timeout: Optional[float] = None) -> dict[str, str]:
         cookies = {"mt2FAToken": self.token}
-        r = s.get("https://members.sonic.net/", headers=self.headers, cookies=cookies)
+        r = s.get(
+            "https://members.sonic.net/",
+            headers=self.headers,
+            cookies=cookies,
+            timeout=timeout,
+        )
         r = s.post(
             "https://members.sonic.net/",
             data={"login": "login", "user": self.username, "pw": self.password},
             headers=self.headers,
             cookies=cookies,
+            timeout=timeout,
         )
         if "Member Login" in r.text:
             raise Exception(f"Error logging into sonic got back {r.text}")
