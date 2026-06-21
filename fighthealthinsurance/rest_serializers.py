@@ -865,3 +865,39 @@ class ChooserSkipResponseSerializer(serializers.Serializer):
 
     success = serializers.BooleanField()
     message = serializers.CharField()
+
+
+class CallScriptRequestSerializer(serializers.Serializer):
+    """Request to generate a phone call script for a denial (issue #568)."""
+
+    denial_id = serializers.CharField(required=True)
+    goal = serializers.ChoiceField(
+        choices=["info_gathering", "escalation"], required=True
+    )
+    # max_length values mirror GenericCallScript / CallScript columns so a
+    # too-long override is rejected at validation time rather than 500ing
+    # during persistence.
+    insurer_name = serializers.CharField(
+        required=False, allow_blank=True, max_length=300
+    )
+    denial_reason = serializers.CharField(
+        required=False, allow_blank=True, max_length=600
+    )
+
+    def validate_denial_id(self, value: str) -> str:
+        if not is_valid_denial_id(value):
+            raise serializers.ValidationError("Invalid denial_id format")
+        return value
+
+
+class CallScriptResponseSerializer(serializers.Serializer):
+    """Generated phone call script + printable HTML."""
+
+    script_id = serializers.CharField()
+    denial_id = serializers.IntegerField()
+    goal = serializers.CharField()
+    insurer_name = serializers.CharField()
+    denial_reason = serializers.CharField()
+    script_text = serializers.CharField()
+    script_html = serializers.CharField()
+    created_at = serializers.DateTimeField()

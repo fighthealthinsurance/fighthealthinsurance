@@ -48,6 +48,7 @@ from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance.models import (
     Appeal,
     AppealAttachment,
+    CallScript,
     ChooserCandidate,
     ChooserSkip,
     ChooserTask,
@@ -2469,4 +2470,96 @@ class ChooserViewSet(viewsets.ViewSet):
                 }
             ).data,
             status=status.HTTP_200_OK,
+        )
+
+
+class CallScriptViewSet(viewsets.ViewSet, SerializerMixin):
+    """Generate phone call scripts patients can read aloud to insurers.
+
+    Implements issue #568 "What to Say on the Phone". Scripts are tailored to
+    insurer + denial reason + goal (info gathering vs escalation), backed by
+    the ML router with a non-PHI cache.
+    """
+
+    def get_serializer_class(self):
+        if self.action == "generate":
+            return serializers.CallScriptRequestSerializer
+        return serializers.CallScriptResponseSerializer
+
+    @staticmethod
+    def _serialize(call_script: CallScript, script_html: str) -> dict:
+        return {
+            "script_id": str(call_script.id),
+            "denial_id": call_script.for_denial_id,
+            "goal": call_script.goal,
+            "insurer_name": call_script.insurer_name,
+            "denial_reason": call_script.denial_reason,
+            "script_text": call_script.script_text,
+            "script_html": script_html,
+            "created_at": call_script.created_at,
+        }
+
+    @extend_schema(
+        request=serializers.CallScriptRequestSerializer,
+        responses={201: serializers.CallScriptResponseSerializer},
+    )
+    @action(detail=False, methods=["post"])
+    def generate(self, request: Request) -> Response:
+        """Generate (or fetch from generic cache) a call script for a denial."""
+        from fighthealthinsurance.call_script_helper import CallScriptHelper
+
+        current_user: User = request.user  # type: ignore
+        serializer = self.deserialize(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        denial = get_object_or_404(
+            Denial.filter_to_allowed_denials(current_user),
+            denial_id=int(serializer.validated_data["denial_id"]),
+        )
+
+        result = async_to_sync(CallScriptHelper.generate_call_script)(
+            denial=denial,
+            goal=serializer.validated_data["goal"],
+            insurer_override=serializer.validated_data.get("insurer_name") or None,
+            denial_reason_override=serializer.validated_data.get("denial_reason")
+            or None,
+        )
+
+        if result is None:
+            return Response(
+                {"error": "Unable to generate call script at this time."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        return Response(
+            serializers.CallScriptResponseSerializer(
+                self._serialize(result.call_script, result.script_html)
+            ).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+    @extend_schema(responses=serializers.CallScriptResponseSerializer)
+    def retrieve(self, request: Request, pk=None) -> Response:
+        """Fetch a previously generated call script (also re-renders printable)."""
+        from fighthealthinsurance.call_script_helper import CallScriptHelper
+
+        current_user: User = request.user  # type: ignore
+        call_script = get_object_or_404(CallScript, id=pk)
+        # Access control derives from the parent denial: a user can read a
+        # script if (and only if) they could read the underlying denial.
+        get_object_or_404(
+            Denial.filter_to_allowed_denials(current_user),
+            denial_id=call_script.for_denial_id,
+        )
+
+        script_html = CallScriptHelper.render_printable_html(
+            script_text=call_script.script_text,
+            denial=call_script.for_denial,
+            goal=call_script.goal,
+            insurer_name=call_script.insurer_name,
+        )
+        return Response(
+            serializers.CallScriptResponseSerializer(
+                self._serialize(call_script, script_html)
+            ).data
         )
