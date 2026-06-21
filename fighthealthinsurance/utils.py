@@ -6,6 +6,7 @@ import re
 import string
 import threading
 import time
+import unicodedata
 from concurrent.futures import Future, ThreadPoolExecutor
 from functools import reduce
 from inspect import isabstract
@@ -36,24 +37,44 @@ from django.conf import settings
 from django.core.mail import EmailMultiAlternatives
 from django.template.loader import render_to_string
 
-# Minimum number of (stripped) characters an appeal must have to be
-# considered "real" and worth delivering/saving: appeals must be at least
-# MIN_APPEAL_CHARS characters long. Shared by the generation-side filter
-# (drop runt outputs before save) and the streaming-side counter (so
-# generation rejection and delivery counting agree). Also used by
-# make_appeals to decide when to trigger the fallback path — a runt first
-# item means the user gets nothing, so fall back.
+# Minimum number of meaningful characters an appeal must have to be
+# considered "real" and worth delivering/saving: appeals must contain at
+# least MIN_APPEAL_CHARS non-whitespace, non-control characters (see
+# meaningful_appeal_length). Shared by the generation-side filter (drop runt
+# outputs before save) and the streaming-side counter (so generation
+# rejection and delivery counting agree). Also used by make_appeals to
+# decide when to trigger the fallback path — a runt first item means the
+# user gets nothing, so fall back.
 MIN_APPEAL_CHARS = 15
 
 
+def meaningful_appeal_length(text: Optional[str]) -> int:
+    """Count the characters in ``text`` that actually carry content.
+
+    Whitespace and control characters are excluded so an appeal can't meet
+    the minimum-length requirement by padding with spaces, newlines, or
+    non-printing control characters. A non-string returns 0.
+    """
+    if not isinstance(text, str):
+        return 0
+    return sum(
+        1
+        for ch in text
+        # ``isspace`` covers spaces/tabs/newlines (incl. Unicode whitespace);
+        # the category check drops control/format/surrogate/private-use/
+        # unassigned characters (Unicode "Other", whose category starts "C").
+        if not ch.isspace() and unicodedata.category(ch)[0] != "C"
+    )
+
+
 def is_real_appeal(x: Optional[str]) -> TypeGuard[str]:
-    """True when ``x`` is a deliverable appeal: a string at least
-    ``MIN_APPEAL_CHARS`` characters long (after stripping whitespace).
+    """True when ``x`` is a deliverable appeal: a string with at least
+    ``MIN_APPEAL_CHARS`` non-whitespace, non-control characters.
 
     Typed as a ``TypeGuard[str]`` so callers narrow ``Optional[str]`` to
     ``str`` inside the truthy branch (e.g. when building the streamed
     appeal payload)."""
-    return isinstance(x, str) and len(x.strip()) >= MIN_APPEAL_CHARS
+    return isinstance(x, str) and meaningful_appeal_length(x) >= MIN_APPEAL_CHARS
 
 
 import asyncstdlib
@@ -81,9 +102,11 @@ def warn_too_short_appeal(text: Optional[str], context: str) -> None:
     Centralizes the message format shared by the generation, streaming, and
     synthesis drop sites so a runt appeal is reported consistently wherever
     it is dropped. ``context`` identifies the source (e.g. the model name,
-    a saved-appeal id, or "synthesis output") plus the denial id.
+    a saved-appeal id, or "synthesis output") plus the denial id. The logged
+    length is the meaningful (non-whitespace, non-control) count actually
+    used by the filter.
     """
-    length = len(text.strip()) if isinstance(text, str) else 0
+    length = meaningful_appeal_length(text)
     logger.warning(
         f"Filtering out too-short appeal "
         f"(len={length} < {MIN_APPEAL_CHARS} chars): {context}"
