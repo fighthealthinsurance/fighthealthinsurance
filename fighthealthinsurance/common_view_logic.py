@@ -80,6 +80,7 @@ from fighthealthinsurance.utils import (
     is_real_appeal,
     MIN_APPEAL_CHARS,
     sync_iterator_to_async,
+    warn_too_short_appeal,
 )
 from .clinicaltrials_tools import ClinicalTrialsTools
 from .pubmed_tools import PubMedTools
@@ -2667,13 +2668,22 @@ class AppealsBackendHelper:
         # Yield the existing appeals first
         old = 0
         async for appeal in existing_appeals:
-            if appeal.appeal_text is not None:
+            # Enforce the minimum-length rule on previously-saved appeals too:
+            # the DB may hold short drafts saved before this threshold existed
+            # (or by paths that skipped the filter), and we must not re-deliver
+            # them.
+            if is_real_appeal(appeal.appeal_text):
                 old = old + 1
                 logger.debug(f"Found existing appeal {appeal}, yielding")
                 existing_appeal_dict = await sub_in_appeals(
                     {"id": str(appeal.id), "content": appeal.appeal_text}
                 )
                 yield await format_response(existing_appeal_dict)
+            elif appeal.appeal_text is not None and str(appeal.appeal_text).strip():
+                warn_too_short_appeal(
+                    appeal.appeal_text,
+                    f"saved appeal id={appeal.id} for denial {denial_id}",
+                )
 
         # Yield status after any previously saved appeals have been sent
         yield json.dumps(
@@ -3370,6 +3380,10 @@ class AppealsBackendHelper:
                 return True
             if isinstance(text, str) and text.strip():
                 runts += 1
+                warn_too_short_appeal(
+                    text,
+                    f"model={item.model_name!r} for denial {denial_id}",
+                )
             return False
 
         filtered_appeals: Iterator[GeneratedAppeal] = filter(keep, appeals)
@@ -3470,7 +3484,15 @@ class AppealsBackendHelper:
                     logger.warning(f"Synthesis timed out after {SYNTHESIS_TIMEOUT}s")
                 else:
                     synthesized = synthesis_task.result()
-                    if synthesized:
+                    if synthesized and not is_real_appeal(synthesized):
+                        # Non-empty but below the deliverable threshold: filter
+                        # it out so synthesis can't bypass the minimum-length
+                        # rule that the streaming path enforces.
+                        warn_too_short_appeal(
+                            synthesized,
+                            f"synthesis output for denial {denial_id}",
+                        )
+                    elif synthesized:
                         # Belt-and-suspenders: even with >=2 drafts a model
                         # can still pick one verbatim. Skip the yield in
                         # that case rather than ship a known duplicate.
