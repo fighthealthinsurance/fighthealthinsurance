@@ -120,7 +120,7 @@ class SonicFax(FaxSenderBase):
             "SONIC_NOTIFICATION_EMAIL", "support42@fighthealthinsurance.com"
         )
 
-    def check_health(self, timeout: float = 3.0) -> bool:
+    def check_health(self, timeout: Optional[float] = None) -> bool:
         """Verify we can authenticate against the Sonic fax service.
 
         Logs in and then confirms the session can actually reach a
@@ -132,8 +132,13 @@ class SonicFax(FaxSenderBase):
         only reports Sonic healthy when it genuinely is.
 
         ``timeout`` is applied per HTTP request so a hung/slow Sonic can't
-        stall the caller (e.g. the staff status page) indefinitely.
+        stall the caller (e.g. the staff status page) indefinitely; it
+        defaults to 3s when not supplied. The signature matches
+        ``FaxSenderBase.check_health`` (``Optional[float]``) so the probe can
+        pass its budget uniformly to any backend.
         """
+        if timeout is None:
+            timeout = 3.0
         with requests.Session() as s:
             cookies = self._login(s, timeout=timeout)
             r = s.get(
