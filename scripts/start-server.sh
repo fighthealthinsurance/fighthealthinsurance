@@ -20,6 +20,10 @@ if [ -n "$MIGRATIONS" ]; then
 elif [ -n "$POLLING_ACTORS" ]; then
   # Some for polling actors
   python manage.py launch_polling_actors || (echo "Error starting ray actor?" && sleep 480)
+  # Probe model backends once per deploy from this single container and email a
+  # report of any unreachable backends to support. Non-blocking: a probe
+  # failure must never fail the actor container's deploy.
+  python manage.py probe_models || echo "Model probe failed (non-blocking)"
   sleep 10
   exit 0
 elif [ -n "$PREFETCH_EXTRALINKS" ]; then

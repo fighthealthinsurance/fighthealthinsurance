@@ -1,8 +1,10 @@
 """Tests for the deployment-time model probe and dead-models email report."""
 
+from io import StringIO
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from django.core.management import call_command
 
 from fighthealthinsurance.ml.startup_probe import (
     SUPPORT_EMAIL,
@@ -108,3 +110,29 @@ class TestRunStartupModelProbe:
 
         assert returned is None
         assert mailoutbox == []
+
+
+class TestProbeModelsCommand:
+    """The standalone `probe_models` management command (run once per deploy)."""
+
+    def _run(self, results):
+        out = StringIO()
+        with patch(
+            "fighthealthinsurance.ml.startup_probe.run_startup_model_probe",
+            return_value=results,
+        ):
+            call_command("probe_models", stdout=out)
+        return out.getvalue()
+
+    def test_reports_unreachable_backends(self):
+        output = self._run([("good", True, None), ("dead", False, "HTTP 401")])
+        assert "1/2" in output
+        assert "unreachable" in output
+
+    def test_reports_all_healthy(self):
+        output = self._run([("a", True, None), ("b", True, None)])
+        assert "all 2 backend(s) responded" in output
+
+    def test_reports_skipped(self):
+        output = self._run(None)
+        assert "skipped" in output.lower()
