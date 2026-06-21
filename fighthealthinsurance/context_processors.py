@@ -2,6 +2,8 @@
 
 from django.urls import reverse
 
+from loguru import logger
+
 
 def form_persistence_context(request):
     """
@@ -71,3 +73,25 @@ def canonical_url_context(request):
     return {
         "canonical_url": canonical,
     }
+
+
+def site_banner_context(request):
+    """Inject active admin-controlled site banners into every template.
+
+    Banners are managed by staff in the Django admin (``SiteBanner``) and read
+    from the DB so they can be shown or removed without a deploy. They are
+    rendered in the site header by ``partials/site_banner.html``.
+
+    This provides:
+    - site_banners: a list of active, unexpired banner dicts (possibly empty).
+
+    A lookup failure (e.g. an unmigrated DB during a deploy) degrades to "no
+    banner" rather than breaking every page render.
+    """
+    try:
+        from fighthealthinsurance.models import SiteBanner
+
+        return {"site_banners": SiteBanner.get_active_banners()}
+    except Exception:
+        logger.opt(exception=True).debug("Could not load site banners")
+        return {"site_banners": []}

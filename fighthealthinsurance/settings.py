@@ -293,6 +293,7 @@ class Base(Configuration):
                     "django.contrib.messages.context_processors.messages",
                     "fighthealthinsurance.context_processors.form_persistence_context",
                     "fighthealthinsurance.context_processors.canonical_url_context",
+                    "fighthealthinsurance.context_processors.site_banner_context",
                 ],
             },
         },

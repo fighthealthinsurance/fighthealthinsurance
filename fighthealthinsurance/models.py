@@ -10,7 +10,7 @@ import uuid
 from django.conf import settings
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models, transaction
-from django.db.models.signals import post_delete
+from django.db.models.signals import post_delete, post_save
 from django.dispatch import receiver
 from django.db.models import Q
 from django.db.models.functions import Now
@@ -3631,3 +3631,132 @@ class ModelHealthAlertState(models.Model):
 
     def __str__(self) -> str:
         return f"ModelHealthAlertState<{self.key}@{self.last_alert_sent}>"
+
+
+class SiteBanner(models.Model):
+    """Admin-controlled banner shown in the site header to every visitor.
+
+    Lets staff post a temporary notice -- e.g. "Our AI models are having
+    difficulty, please try again tomorrow" -- without a deploy. Rows are
+    managed by staff in the Django admin (see ``admin.SiteBannerAdmin``) and
+    read from the DB at request time by
+    ``context_processors.site_banner_context`` (cached briefly), then rendered
+    by ``partials/site_banner.html`` in ``base.html``.
+    """
+
+    LEVEL_INFO = "info"
+    LEVEL_WARNING = "warning"
+    LEVEL_DANGER = "danger"
+    LEVEL_CHOICES = [
+        (LEVEL_INFO, "Info (blue)"),
+        (LEVEL_WARNING, "Warning (yellow)"),
+        (LEVEL_DANGER, "Critical (red)"),
+    ]
+
+    # Short cache so toggling a banner shows up quickly while still sparing the
+    # DB a query on every page load under traffic. Invalidated on save/delete
+    # (see signal below) so staff changes are effectively immediate.
+    CACHE_KEY = "site_banner:active_v1"
+    CACHE_TTL_SECONDS = 30
+
+    message = models.TextField(
+        help_text=(
+            "Plain-text message shown to every visitor in the site header. "
+            "Line breaks are preserved."
+        ),
+    )
+    level = models.CharField(
+        max_length=16,
+        choices=LEVEL_CHOICES,
+        default=LEVEL_WARNING,
+        help_text="Controls the banner color.",
+    )
+    active = models.BooleanField(
+        default=True,
+        help_text="Uncheck to hide the banner without deleting it.",
+    )
+    dismissible = models.BooleanField(
+        default=True,
+        help_text=(
+            "Let visitors close the banner (it stays closed in their browser "
+            "until you edit the message)."
+        ),
+    )
+    expires_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text=(
+            "Optional. If set, the banner automatically stops showing after "
+            "this time. Leave blank to keep showing until you remove it."
+        ),
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("-updated_at",)
+
+    def __str__(self) -> str:
+        preview = (self.message or "").strip().replace("\n", " ")
+        if len(preview) > 50:
+            preview = preview[:50] + "…"
+        status = "active" if self.active else "inactive"
+        return f"SiteBanner<{self.level}, {status}>: {preview}"
+
+    def is_currently_visible(
+        self, now: typing.Optional[datetime.datetime] = None
+    ) -> bool:
+        """Whether this banner should be shown to visitors right now."""
+        if not self.active:
+            return False
+        if self.expires_at is not None:
+            now = now or timezone.now()
+            if self.expires_at <= now:
+                return False
+        return True
+
+    @classmethod
+    def get_active_banners(cls) -> typing.List[typing.Dict[str, typing.Any]]:
+        """Active, unexpired banners as lightweight dicts, cached briefly.
+
+        Returned newest-first (most recently edited on top). Read by the
+        context processor on every request, so the short cache keeps that
+        cheap; ``clear_cache`` (wired to save/delete) drops it on edits.
+        """
+        from django.core.cache import cache
+
+        cached = cache.get(cls.CACHE_KEY)
+        if cached is not None:
+            return cached
+
+        now = timezone.now()
+        banners = cls.objects.filter(active=True).filter(
+            Q(expires_at__isnull=True) | Q(expires_at__gt=now)
+        )
+        result = [
+            {
+                "id": banner.id,
+                "message": banner.message,
+                "level": banner.level,
+                "dismissible": banner.dismissible,
+                # Changes when the banner is edited, so a visitor who dismissed
+                # an earlier version still sees the updated message.
+                "version": int(banner.updated_at.timestamp()),
+            }
+            for banner in banners
+        ]
+        cache.set(cls.CACHE_KEY, result, cls.CACHE_TTL_SECONDS)
+        return result
+
+    @classmethod
+    def clear_cache(cls) -> None:
+        """Drop the cached active-banner list."""
+        from django.core.cache import cache
+
+        cache.delete(cls.CACHE_KEY)
+
+
+@receiver([post_save, post_delete], sender=SiteBanner)
+def _clear_site_banner_cache(sender, **kwargs) -> None:
+    """Refresh the cached banner list so admin changes show up right away."""
+    SiteBanner.clear_cache()
