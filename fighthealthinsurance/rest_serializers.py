@@ -22,6 +22,7 @@ from fighthealthinsurance.models import (
     ProposedAppeal,
     ProposedPriorAuth,
     PubMedMiniArticle,
+    CallScriptGoal,
 )
 
 # Import common serializers
@@ -871,9 +872,7 @@ class CallScriptRequestSerializer(serializers.Serializer):
     """Request to generate a phone call script for a denial (issue #568)."""
 
     denial_id = serializers.CharField(required=True)
-    goal = serializers.ChoiceField(
-        choices=["info_gathering", "escalation"], required=True
-    )
+    goal = serializers.ChoiceField(choices=CallScriptGoal.choices, required=True)
     # max_length values mirror GenericCallScript / CallScript columns so a
     # too-long override is rejected at validation time rather than 500ing
     # during persistence.
@@ -895,7 +894,7 @@ class CallScriptResponseSerializer(serializers.Serializer):
 
     script_id = serializers.CharField()
     denial_id = serializers.IntegerField()
-    goal = serializers.CharField()
+    goal = serializers.ChoiceField(choices=CallScriptGoal.choices)
     insurer_name = serializers.CharField()
     denial_reason = serializers.CharField()
     script_text = serializers.CharField()

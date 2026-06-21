@@ -76,8 +76,8 @@ class Migration(migrations.Migration):
                     ),
                 ),
                 ("insurer_name", models.CharField(max_length=300)),
-                ("denial_reason", models.CharField(max_length=600)),
-                ("script_text", models.TextField()),
+                ("encrypted_denial_reason", models.BinaryField()),
+                ("encrypted_script_text", models.BinaryField()),
                 ("created_at", models.DateTimeField(auto_now_add=True)),
                 (
                     "for_denial",

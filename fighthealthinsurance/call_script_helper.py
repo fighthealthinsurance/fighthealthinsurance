@@ -224,8 +224,8 @@ class CallScriptHelper:
             for_denial=denial,
             goal=goal,
             insurer_name=insurer,
-            denial_reason=denial_reason,
-            script_text=script_text,
+            encrypted_denial_reason=CallScript.encrypt_text(denial_reason),
+            encrypted_script_text=CallScript.encrypt_text(script_text),
             generic_script=generic,
         )
 

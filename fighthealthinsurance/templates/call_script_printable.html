@@ -47,7 +47,7 @@
         <div><strong>Insurer:</strong> {{ insurer_name }}</div>
         <div><strong>Call goal:</strong> {{ goal_display }}</div>
         {% if denial and denial.claim_id %}<div><strong>Claim ID:</strong> {{ denial.claim_id }}</div>{% endif %}
-        {% if denial and denial.date_of_service %}<div><strong>Date of service:</strong> {{ denial.date_of_service }}</div>{% endif %}
+        {% if denial %}{% if denial.date_of_service %}<div><strong>Date of service:</strong> {{ denial.date_of_service }}</div>{% elif denial.date_of_service_text %}<div><strong>Date of service:</strong> {{ denial.date_of_service_text }}</div>{% endif %}{% endif %}
     </div>
 
     {% if denial %}{% if denial.procedure or denial.diagnosis %}

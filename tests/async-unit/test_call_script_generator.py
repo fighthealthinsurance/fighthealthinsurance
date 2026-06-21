@@ -178,8 +178,23 @@ class TestPrintableHtml(unittest.TestCase):
 
 
 class TestGenerateCallScript(unittest.TestCase):
-    def test_invalid_goal_raises(self):
+    def _base_denial(self, **overrides):
         d = MagicMock()
+        d.insurance_company = "Aetna"
+        d.insurance_company_obj = None
+        d.denial_type_text = "medical necessity"
+        d.denial_text = ""
+        d.claim_id = None
+        d.date_of_service = None
+        d.date_of_service_text = None
+        d.procedure = None
+        d.diagnosis = None
+        for key, value in overrides.items():
+            setattr(d, key, value)
+        return d
+
+    def test_invalid_goal_raises(self):
+        d = self._base_denial()
         with self.assertRaises(ValueError):
             asyncio.run(CallScriptHelper.generate_call_script(denial=d, goal="bogus"))
 
@@ -196,16 +211,7 @@ class TestGenerateCallScript(unittest.TestCase):
         mock_generic_objs.filter.return_value.afirst = AsyncMock(return_value=cached)
         mock_callscript_objs.acreate = AsyncMock(return_value=MagicMock(id="uuid-1"))
 
-        d = MagicMock()
-        d.insurance_company = "Aetna"
-        d.insurance_company_obj = None
-        d.denial_type_text = "medical necessity"
-        d.denial_text = ""
-        d.claim_id = None
-        d.date_of_service = None
-        d.date_of_service_text = None
-        d.procedure = None
-        d.diagnosis = None
+        d = self._base_denial()
 
         result = asyncio.run(
             CallScriptHelper.generate_call_script(denial=d, goal="info_gathering")
@@ -230,16 +236,7 @@ class TestGenerateCallScript(unittest.TestCase):
         mock_callscript_objs.acreate = AsyncMock(return_value=MagicMock(id="uuid-2"))
         mock_infer.return_value = "fresh script that is long enough to pass min_length"
 
-        d = MagicMock()
-        d.insurance_company = "Aetna"
-        d.insurance_company_obj = None
-        d.denial_type_text = "medical necessity"
-        d.denial_text = ""
-        d.claim_id = "X1"
-        d.date_of_service = None
-        d.date_of_service_text = None
-        d.procedure = None
-        d.diagnosis = None
+        d = self._base_denial(claim_id="X1")
 
         result = asyncio.run(
             CallScriptHelper.generate_call_script(denial=d, goal="escalation")
@@ -252,6 +249,11 @@ class TestGenerateCallScript(unittest.TestCase):
         kwargs = mock_generic_objs.aget_or_create.call_args.kwargs
         self.assertEqual(kwargs["prompt_version"], PROMPT_VERSION)
         self.assertEqual(kwargs["goal"], "escalation")
+        create_kwargs = mock_callscript_objs.acreate.await_args.kwargs
+        self.assertIn("encrypted_denial_reason", create_kwargs)
+        self.assertIn("encrypted_script_text", create_kwargs)
+        self.assertNotIn("denial_reason", create_kwargs)
+        self.assertNotIn("script_text", create_kwargs)
         self.assertIsNotNone(result)
 
     @patch("fighthealthinsurance.call_script_helper.GenericCallScript.objects")
@@ -263,16 +265,7 @@ class TestGenerateCallScript(unittest.TestCase):
         mock_generic_objs.filter.return_value.afirst = AsyncMock(return_value=None)
         mock_infer.return_value = None
 
-        d = MagicMock()
-        d.insurance_company = "Aetna"
-        d.insurance_company_obj = None
-        d.denial_type_text = "medical necessity"
-        d.denial_text = ""
-        d.claim_id = None
-        d.date_of_service = None
-        d.date_of_service_text = None
-        d.procedure = None
-        d.diagnosis = None
+        d = self._base_denial()
 
         result = asyncio.run(
             CallScriptHelper.generate_call_script(denial=d, goal="info_gathering")

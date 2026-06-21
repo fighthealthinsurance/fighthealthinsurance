@@ -2,6 +2,7 @@ import asyncio
 import datetime
 import json
 import typing
+import uuid
 from typing import Optional
 
 from django.conf import settings
@@ -2544,7 +2545,11 @@ class CallScriptViewSet(viewsets.ViewSet, SerializerMixin):
         from fighthealthinsurance.call_script_helper import CallScriptHelper
 
         current_user: User = request.user  # type: ignore
-        call_script = get_object_or_404(CallScript, id=pk)
+        try:
+            call_script_id = uuid.UUID(str(pk))
+        except (TypeError, ValueError):
+            return Response(status=status.HTTP_404_NOT_FOUND)
+        call_script = get_object_or_404(CallScript, id=call_script_id)
         # Access control derives from the parent denial: a user can read a
         # script if (and only if) they could read the underlying denial.
         get_object_or_404(

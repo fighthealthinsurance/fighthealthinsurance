@@ -3684,8 +3684,8 @@ class CallScript(ExportModelOperationsMixin("CallScript"), models.Model):  # typ
     )
     goal = models.CharField(max_length=32, choices=CallScriptGoal.choices)
     insurer_name = models.CharField(max_length=300)
-    denial_reason = models.CharField(max_length=600)
-    script_text = models.TextField()
+    encrypted_denial_reason = models.BinaryField()
+    encrypted_script_text = models.BinaryField()
     generic_script = models.ForeignKey(
         GenericCallScript, on_delete=models.SET_NULL, null=True, blank=True
     )
@@ -3698,3 +3698,34 @@ class CallScript(ExportModelOperationsMixin("CallScript"), models.Model):  # typ
 
     def __str__(self) -> str:
         return f"CallScript<{self.id} denial={self.for_denial_id} goal={self.goal}>"
+
+    @staticmethod
+    def encrypt_text(value: str) -> bytes:
+        """Encrypt text for patient-specific call-script storage."""
+        return bytes(Cryptographer.encrypted((value or "").encode("utf-8")))
+
+    @staticmethod
+    def decrypt_text(value: bytes | memoryview | None) -> str:
+        """Decrypt text stored by :meth:`encrypt_text`."""
+        if not value:
+            return ""
+        decrypted = Cryptographer.decrypted(bytes(value))
+        if isinstance(decrypted, str):
+            return decrypted
+        return bytes(decrypted).decode("utf-8")
+
+    @property
+    def denial_reason(self) -> str:
+        return self.decrypt_text(self.encrypted_denial_reason)
+
+    @denial_reason.setter
+    def denial_reason(self, value: str) -> None:
+        self.encrypted_denial_reason = self.encrypt_text(value)
+
+    @property
+    def script_text(self) -> str:
+        return self.decrypt_text(self.encrypted_script_text)
+
+    @script_text.setter
+    def script_text(self, value: str) -> None:
+        self.encrypted_script_text = self.encrypt_text(value)

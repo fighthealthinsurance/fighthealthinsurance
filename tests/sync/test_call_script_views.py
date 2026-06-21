@@ -84,6 +84,10 @@ def _make_denial(creating_pro: ProfessionalUser, **overrides) -> Denial:
     return Denial.objects.create(**defaults)
 
 
+def _post_json(client, url: str, payload: dict):
+    return client.post(url, json.dumps(payload), content_type="application/json")
+
+
 class CallScriptGenerateEndpointTests(APITestCase):
     """POST /ziggy/rest/call-scripts/generate/ behavior."""
 
@@ -100,12 +104,10 @@ class CallScriptGenerateEndpointTests(APITestCase):
     def test_generate_returns_script_and_persists(self, mock_infer):
         mock_infer.return_value = FAKE_SCRIPT
 
-        response = self.client.post(
+        response = _post_json(
+            self.client,
             self.url,
-            json.dumps(
-                {"denial_id": str(self.denial.denial_id), "goal": "info_gathering"}
-            ),
-            content_type="application/json",
+            {"denial_id": str(self.denial.denial_id), "goal": "info_gathering"},
         )
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
@@ -131,6 +133,13 @@ class CallScriptGenerateEndpointTests(APITestCase):
 
         self.assertEqual(CallScript.objects.filter(for_denial=self.denial).count(), 1)
         self.assertEqual(GenericCallScript.objects.count(), 1)
+        call_script = CallScript.objects.get(for_denial=self.denial)
+        self.assertNotIn(b"Which medical policy", call_script.encrypted_script_text)
+        self.assertNotIn(
+            b"medical necessity", call_script.encrypted_denial_reason.lower()
+        )
+        self.assertIn("Which medical policy", call_script.script_text)
+        self.assertEqual(call_script.denial_reason, "medical necessity")
 
     @patch(
         "fighthealthinsurance.call_script_helper.infer_with_fallback",
@@ -138,12 +147,10 @@ class CallScriptGenerateEndpointTests(APITestCase):
     )
     def test_second_call_with_same_inputs_hits_generic_cache(self, mock_infer):
         mock_infer.return_value = FAKE_SCRIPT
-        payload = json.dumps(
-            {"denial_id": str(self.denial.denial_id), "goal": "info_gathering"}
-        )
+        payload = {"denial_id": str(self.denial.denial_id), "goal": "info_gathering"}
 
-        self.client.post(self.url, payload, content_type="application/json")
-        self.client.post(self.url, payload, content_type="application/json")
+        _post_json(self.client, self.url, payload)
+        _post_json(self.client, self.url, payload)
 
         # The LLM was called exactly once even though we generated twice --
         # the second call must come from the GenericCallScript cache.
@@ -158,21 +165,19 @@ class CallScriptGenerateEndpointTests(APITestCase):
     )
     def test_llm_failure_returns_503(self, mock_infer):
         mock_infer.return_value = None
-        response = self.client.post(
+        response = _post_json(
+            self.client,
             self.url,
-            json.dumps(
-                {"denial_id": str(self.denial.denial_id), "goal": "info_gathering"}
-            ),
-            content_type="application/json",
+            {"denial_id": str(self.denial.denial_id), "goal": "info_gathering"},
         )
         self.assertEqual(response.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
         self.assertEqual(CallScript.objects.count(), 0)
 
     def test_invalid_goal_is_rejected_by_serializer(self):
-        response = self.client.post(
+        response = _post_json(
+            self.client,
             self.url,
-            json.dumps({"denial_id": str(self.denial.denial_id), "goal": "bogus"}),
-            content_type="application/json",
+            {"denial_id": str(self.denial.denial_id), "goal": "bogus"},
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
@@ -186,16 +191,14 @@ class CallScriptGenerateEndpointTests(APITestCase):
         # global GenericCallScript cache with it. The CallScript artifact is
         # still persisted per-denial.
         mock_infer.return_value = FAKE_SCRIPT
-        response = self.client.post(
+        response = _post_json(
+            self.client,
             self.url,
-            json.dumps(
-                {
-                    "denial_id": str(self.denial.denial_id),
-                    "goal": "info_gathering",
-                    "denial_reason": "John Doe, claim 99 denied because of XYZ",
-                }
-            ),
-            content_type="application/json",
+            {
+                "denial_id": str(self.denial.denial_id),
+                "goal": "info_gathering",
+                "denial_reason": "John Doe, claim 99 denied because of XYZ",
+            },
         )
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(GenericCallScript.objects.count(), 0)
@@ -204,16 +207,14 @@ class CallScriptGenerateEndpointTests(APITestCase):
     def test_oversized_override_rejected_at_validation(self):
         # Regression for the persistence-500 path: serializer must cap inputs
         # to match the underlying GenericCallScript / CallScript columns.
-        response = self.client.post(
+        response = _post_json(
+            self.client,
             self.url,
-            json.dumps(
-                {
-                    "denial_id": str(self.denial.denial_id),
-                    "goal": "info_gathering",
-                    "insurer_name": "x" * 1000,
-                }
-            ),
-            content_type="application/json",
+            {
+                "denial_id": str(self.denial.denial_id),
+                "goal": "info_gathering",
+                "insurer_name": "x" * 1000,
+            },
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
@@ -236,12 +237,10 @@ class CallScriptAuthIsolationTests(APITestCase):
         mock_infer.return_value = FAKE_SCRIPT
         self.client.login(username=self.user_b.username, password="testpass")
 
-        response = self.client.post(
+        response = _post_json(
+            self.client,
             self.generate_url,
-            json.dumps(
-                {"denial_id": str(self.denial.denial_id), "goal": "info_gathering"}
-            ),
-            content_type="application/json",
+            {"denial_id": str(self.denial.denial_id), "goal": "info_gathering"},
         )
         # filter_to_allowed_denials returns empty for user B -> get_object_or_404.
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
@@ -256,12 +255,10 @@ class CallScriptAuthIsolationTests(APITestCase):
         mock_infer.return_value = FAKE_SCRIPT
         # User A generates a script.
         self.client.login(username=self.user_a.username, password="testpass")
-        gen = self.client.post(
+        gen = _post_json(
+            self.client,
             self.generate_url,
-            json.dumps(
-                {"denial_id": str(self.denial.denial_id), "goal": "info_gathering"}
-            ),
-            content_type="application/json",
+            {"denial_id": str(self.denial.denial_id), "goal": "info_gathering"},
         )
         self.assertEqual(gen.status_code, status.HTTP_201_CREATED)
         script_id = gen.json()["script_id"]
@@ -288,10 +285,10 @@ class CallScriptRetrieveTests(APITestCase):
     )
     def test_retrieve_returns_same_script(self, mock_infer):
         mock_infer.return_value = FAKE_SCRIPT
-        gen = self.client.post(
+        gen = _post_json(
+            self.client,
             reverse("call-scripts-generate"),
-            json.dumps({"denial_id": str(self.denial.denial_id), "goal": "escalation"}),
-            content_type="application/json",
+            {"denial_id": str(self.denial.denial_id), "goal": "escalation"},
         )
         script_id = gen.json()["script_id"]
 
@@ -304,3 +301,26 @@ class CallScriptRetrieveTests(APITestCase):
         self.assertEqual(body["goal"], "escalation")
         self.assertIn("Which medical policy", body["script_text"])
         self.assertIn("<html", body["script_html"].lower())
+
+    def test_malformed_uuid_returns_404(self):
+        response = self.client.get(
+            reverse("call-scripts-detail", kwargs={"pk": "not-a-uuid"})
+        )
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    @patch(
+        "fighthealthinsurance.call_script_helper.infer_with_fallback",
+        new_callable=AsyncMock,
+    )
+    def test_printable_html_uses_date_of_service_text_fallback(self, mock_infer):
+        mock_infer.return_value = FAKE_SCRIPT
+        denial = _make_denial(
+            self.pro, date_of_service="", date_of_service_text="January 15, 2026"
+        )
+        gen = _post_json(
+            self.client,
+            reverse("call-scripts-generate"),
+            {"denial_id": str(denial.denial_id), "goal": "info_gathering"},
+        )
+        self.assertEqual(gen.status_code, status.HTTP_201_CREATED)
+        self.assertIn("January 15, 2026", gen.json()["script_html"])
