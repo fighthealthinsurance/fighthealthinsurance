@@ -1,3 +1,4 @@
+import os
 import unittest
 from unittest.mock import MagicMock, AsyncMock, patch
 import asyncio
@@ -6,10 +7,24 @@ from typing import Optional
 from fighthealthinsurance.ml.ml_router import MLRouter
 from fighthealthinsurance.ml.ml_models import (
     ModelDescription,
+    RemoteGroq,
     RemoteHealthInsurance,
     RemoteModelLike,
     RemotePerplexity,
 )
+
+
+def make_external_mock(quality: int = 100, available: bool = True) -> MagicMock:
+    """Build a mock external ``RemoteModelLike`` for router-selection tests.
+
+    Centralizes the ``external`` / ``quality`` / ``is_available`` triple that
+    ``MLRouter.best_external_models`` reads, so tests don't hand-roll it.
+    """
+    model = MagicMock(spec=RemoteModelLike)
+    model.external = True
+    model.quality.return_value = quality
+    model.is_available.return_value = available
+    return model
 
 
 class TestMLRouterGenerateTextBackendNames(unittest.TestCase):
@@ -107,28 +122,11 @@ class TestMLRouterChatBackends(unittest.TestCase):
 
     def test_get_chat_backends_with_fallback_with_external(self):
         """Test get_chat_backends_with_fallback with use_external=True."""
-        # Create mock external models with different quality levels
-        mock_ext_model1 = MagicMock(spec=RemoteModelLike)
-        mock_ext_model1.external = True
-        mock_ext_model1.quality.return_value = 80
-        mock_ext_model1.is_available.return_value = True
-
-        mock_ext_model2 = MagicMock(spec=RemoteModelLike)
-        mock_ext_model2.external = True
-        mock_ext_model2.quality.return_value = 90
-        mock_ext_model2.is_available.return_value = True
-
-        mock_ext_model3 = MagicMock(spec=RemoteModelLike)
-        mock_ext_model3.external = True
-        mock_ext_model3.quality.return_value = 70
-        mock_ext_model3.is_available.return_value = True
-
-        # Set up router with external models (best_external_models reads
-        # external_models_by_cost).
+        # best_external_models reads external_models_by_cost.
         self.router.external_models_by_cost = [
-            mock_ext_model1,
-            mock_ext_model2,
-            mock_ext_model3,
+            make_external_mock(quality=80),
+            make_external_mock(quality=90),
+            make_external_mock(quality=70),
         ]
 
         primary_models, fallback_models = self.router.get_chat_backends_with_fallback(
@@ -145,27 +143,11 @@ class TestMLRouterChatBackends(unittest.TestCase):
 
     def test_get_chat_backends_with_fallback_sorts_by_quality(self):
         """Test that fallback models are sorted by quality (highest first)."""
-        # Create mock external models with different quality levels
-        mock_ext_model1 = MagicMock(spec=RemoteModelLike)
-        mock_ext_model1.external = True
-        mock_ext_model1.quality.return_value = 60
-        mock_ext_model1.is_available.return_value = True
-
-        mock_ext_model2 = MagicMock(spec=RemoteModelLike)
-        mock_ext_model2.external = True
-        mock_ext_model2.quality.return_value = 95
-        mock_ext_model2.is_available.return_value = True
-
-        mock_ext_model3 = MagicMock(spec=RemoteModelLike)
-        mock_ext_model3.external = True
-        mock_ext_model3.quality.return_value = 75
-        mock_ext_model3.is_available.return_value = True
-
-        # Set up router with external models
+        # Set up router with external models of differing quality.
         self.router.external_models_by_cost = [
-            mock_ext_model1,
-            mock_ext_model2,
-            mock_ext_model3,
+            make_external_mock(quality=60),
+            make_external_mock(quality=95),
+            make_external_mock(quality=75),
         ]
 
         _, fallback_models = self.router.get_chat_backends_with_fallback(
@@ -179,16 +161,9 @@ class TestMLRouterChatBackends(unittest.TestCase):
 
     def test_get_chat_backends_with_fallback_limits_to_three(self):
         """Test that fallback models are limited to the best ~3 models."""
-        # Create many mock external models
-        mock_models = []
-        for i in range(10):
-            mock_model = MagicMock(spec=RemoteModelLike)
-            mock_model.external = True
-            mock_model.quality.return_value = 50 + i
-            mock_model.is_available.return_value = True
-            mock_models.append(mock_model)
-
-        self.router.external_models_by_cost = mock_models
+        self.router.external_models_by_cost = [
+            make_external_mock(quality=50 + i) for i in range(10)
+        ]
 
         _, fallback_models = self.router.get_chat_backends_with_fallback(
             use_external=True
@@ -238,22 +213,15 @@ class TestMLRouterBestExternalModels(unittest.TestCase):
     def setUp(self):
         self.router = MLRouter()
 
-    def _ext(self, quality, available=True):
-        m = MagicMock(spec=RemoteModelLike)
-        m.external = True
-        m.quality.return_value = quality
-        m.is_available.return_value = available
-        return m
-
     def test_orders_by_quality_and_limits(self):
         """Returns the highest-quality models, capped at the limit."""
         # external_models_by_cost is cost-ordered; selection re-sorts by quality.
         self.router.external_models_by_cost = [
-            self._ext(70),
-            self._ext(95),
-            self._ext(60),
-            self._ext(88),
-            self._ext(99),
+            make_external_mock(quality=70),
+            make_external_mock(quality=95),
+            make_external_mock(quality=60),
+            make_external_mock(quality=88),
+            make_external_mock(quality=99),
         ]
 
         result = self.router.best_external_models(limit=3)
@@ -262,7 +230,9 @@ class TestMLRouterBestExternalModels(unittest.TestCase):
 
     def test_defaults_to_three(self):
         """The default limit is ~3 external models."""
-        self.router.external_models_by_cost = [self._ext(50 + i) for i in range(8)]
+        self.router.external_models_by_cost = [
+            make_external_mock(quality=50 + i) for i in range(8)
+        ]
 
         result = self.router.best_external_models()
 
@@ -270,14 +240,43 @@ class TestMLRouterBestExternalModels(unittest.TestCase):
 
     def test_excludes_unavailable_models(self):
         """Models failing the availability check are skipped."""
-        up = self._ext(80, available=True)
-        down = self._ext(99, available=False)
+        up = make_external_mock(quality=80, available=True)
+        down = make_external_mock(quality=99, available=False)
         self.router.external_models_by_cost = [down, up]
 
         result = self.router.best_external_models(limit=3)
 
         self.assertIn(up, result)
         self.assertNotIn(down, result)
+
+    def test_quality_ties_break_by_cost_order(self):
+        """Equal quality preserves cost order (stable sort over the
+        cost-ordered input), so the cheaper model is tried first."""
+        cheaper = make_external_mock(quality=90)
+        pricier = make_external_mock(quality=90)
+        # external_models_by_cost is cost-ordered: cheaper first.
+        self.router.external_models_by_cost = [cheaper, pricier]
+
+        result = self.router.best_external_models(limit=2)
+
+        self.assertEqual(result, [cheaper, pricier])
+
+    @patch.dict(os.environ, {"GROQ_API_KEY": "test-key"})
+    def test_keeps_single_groq(self):
+        """At most one Groq backend survives, and it is the cheaper
+        (quality-tier) one since selection runs on the cost-ordered list."""
+        RemoteGroq._rate_limiters.clear()
+        versatile = RemoteGroq(model="llama-3.3-70b-versatile")  # cost 4
+        instant = RemoteGroq(model="llama-3.1-8b-instant")  # cost 6
+        other = make_external_mock(quality=99)
+        # Cost-ordered: cheaper Groq first, then the pricier Groq.
+        self.router.external_models_by_cost = [versatile, instant, other]
+
+        result = self.router.best_external_models(limit=3)
+
+        groqs = [m for m in result if isinstance(m, RemoteGroq)]
+        self.assertEqual(len(groqs), 1)
+        self.assertIs(groqs[0], versatile)
 
     def test_empty_when_no_external_models(self):
         """No external models registered yields an empty list."""
