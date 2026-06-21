@@ -89,6 +89,30 @@ class Base(Configuration):
     PRO_VERSION_AVAILABLE = (
         os.getenv("PRO_VERSION_AVAILABLE", "false").lower() == "true"
     )
+
+    # --- Temporal (durable workflow execution) ---
+    # Off by default: fax sending stays on the Ray fax actor until
+    # TEMPORAL_ENABLED=true, at which point SendFaxHelper dispatches a durable
+    # SendFaxWorkflow instead. The worker process is run with
+    # `python manage.py run_temporal_worker`.
+    TEMPORAL_ENABLED = os.getenv("TEMPORAL_ENABLED", "false").lower() == "true"
+    TEMPORAL_HOST = os.getenv("TEMPORAL_HOST", "localhost:7233")
+    TEMPORAL_NAMESPACE = os.getenv("TEMPORAL_NAMESPACE", "default")
+    TEMPORAL_TASK_QUEUE = os.getenv("TEMPORAL_TASK_QUEUE", "fhi-fax")
+    # TLS for a self-hosted / Cloud cluster. When TEMPORAL_TLS is true and both
+    # the cert and key paths are set the client uses mTLS; otherwise it uses
+    # server-side TLS.
+    TEMPORAL_TLS = os.getenv("TEMPORAL_TLS", "false").lower() == "true"
+    TEMPORAL_CLIENT_CERT_PATH = os.getenv("TEMPORAL_CLIENT_CERT_PATH", "")
+    TEMPORAL_CLIENT_KEY_PATH = os.getenv("TEMPORAL_CLIENT_KEY_PATH", "")
+    try:
+        TEMPORAL_MAX_ACTIVITY_WORKERS = int(
+            os.getenv("TEMPORAL_MAX_ACTIVITY_WORKERS") or 20
+        )
+    except ValueError:
+        # A misconfigured env var should not block app startup.
+        TEMPORAL_MAX_ACTIVITY_WORKERS = 20
+
     LOGIN_URL = "login"
     LOGIN_REDIRECT_URL = "/"
     THUMBNAIL_DEBUG = True

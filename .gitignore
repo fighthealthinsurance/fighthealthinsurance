@@ -181,3 +181,5 @@ default/
 
 # Claude Code agent worktrees (transient, created by background agents)
 .claude/worktrees/
+# Vendored Claude Code skills (tooling, not product code)
+.claude/skills/

@@ -28,6 +28,11 @@ elif [ -n "$PREFETCH_EXTRALINKS" ]; then
   python manage.py launch_prefetch_actor || echo "Pre-fetch failed (non-blocking)"
   sleep 10
   exit 0
+elif [ -n "$TEMPORAL_WORKER" ]; then
+  # Long-running Temporal worker hosting SendFaxWorkflow + fax activities.
+  # Unlike the Ray launchers above this stays in the foreground; exec so signals
+  # propagate for clean Kubernetes shutdown.
+  exec python manage.py run_temporal_worker
 fi
 # Same for dev _except_ we don't exit when were done since we use the locally created sqllite db to party on.
 if [ "$ENVIRONMENT" == "Dev" ]; then

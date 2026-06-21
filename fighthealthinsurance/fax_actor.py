@@ -1,53 +1,20 @@
-import asyncio
 import time
 import uuid
 from datetime import timedelta
 from typing import Tuple, Union
 
-from django.conf import settings
-from django.core.mail import EmailMultiAlternatives, send_mail
-from django.template.loader import render_to_string
-from django.urls import reverse
 from django.utils import timezone
 
 import ray
 
-from loguru import logger
+from fighthealthinsurance import fax_send_core
 
+# Re-exported for backwards compatibility -- callers (and tests) still import
+# send_fax_status_notification from this module. The implementation now lives in
+# fax_send_core so the Ray actor and the Temporal activities share one copy.
+from fighthealthinsurance.fax_send_core import send_fax_status_notification
 from fighthealthinsurance.fax_utils import *
 from fighthealthinsurance.utils import get_env_variable
-
-
-def send_fax_status_notification(
-    fax, fax_success, missing_destination, missing_denial=False
-):
-    """Send internal notification email about fax status to support."""
-    notify = get_env_variable("FAX_STATUS_NOTIFICATIONS", "true").lower() == "true"
-    if not notify:
-        return
-    status = "SUCCESS" if fax_success else "FAILED"
-    if missing_destination:
-        status = "FAILED (missing destination)"
-    if missing_denial:
-        status = "FAILED (missing denial)"
-    denial_id = getattr(fax.denial_id, "pk", None)
-    body = (
-        f"Fax Status: {status}\n"
-        f"Fax ID: {fax.fax_id}\n"
-        f"UUID: {fax.uuid}\n"
-        f"Destination: {fax.destination or 'N/A'}\n"
-        f"Denial ID: {denial_id}\n"
-        f"Professional: {fax.professional}\n"
-    )
-    try:
-        send_mail(
-            f"Fax {status} - ID {fax.fax_id}",
-            body,
-            settings.DEFAULT_FROM_EMAIL,
-            ["support42@fighthealthinsurance.com"],
-        )
-    except Exception:
-        logger.opt(exception=True).error("Error sending fax status notification")
 
 
 @ray.remote(max_restarts=-1, max_task_retries=-1)
@@ -161,97 +128,8 @@ class FaxActor:
             return False
         return self.do_send_fax_object(fax)
 
-    def _update_fax_for_sending(self, fax):
-        fax.attempting_to_send_as_of = timezone.now()
-        fax.save()
-
-    def _update_fax_for_sent(self, fax, fax_success, missing_destination):
-        email = fax.email
-        fax.sent = True
-        fax.fax_success = fax_success
-        fax.save()
-        send_fax_status_notification(fax, fax_success, missing_destination)
-        self._logger.debug(
-            f"Fax uuid={fax.uuid} sent (success={fax_success}); checking user notification"
-        )
-        if fax.professional:
-            appeal = fax.for_appeal
-            if appeal is not None:
-                appeal.sent = fax_success
-                appeal.save()
-                return True
-            else:
-                self._logger.warning(f"No appeal found for professional {fax}")
-                return True
-        from fighthealthinsurance.email_utils import is_blocked_email
-
-        if is_blocked_email(email):
-            self._logger.info("Skipping fax follow-up email to blocked address")
-            return True
-        fax_redo_link = "https://www.fighthealthinsurance.com" + reverse(
-            "fax-followup",
-            kwargs={
-                "hashed_email": fax.hashed_email,
-                "uuid": fax.uuid,
-            },
-        )
-        context = {
-            "name": fax.name,
-            "success": fax_success,
-            "fax_redo_link": fax_redo_link,
-            "missing_destination": missing_destination,
-        }
-        # First, render the plain text content.
-        text_content = render_to_string(
-            "emails/fax_followup.txt",
-            context=context,
-        )
-
-        # Secondly, render the HTML content.
-        html_content = render_to_string(
-            "emails/fax_followup.html",
-            context=context,
-        )
-        # Then, create a multipart email instance.
-        msg = EmailMultiAlternatives(
-            "Following up from Fight Health Insurance Fax Service",
-            text_content,
-            "support42@fighthealthinsurance.com",
-            [email],
-        )
-        msg.attach_alternative(html_content, "text/html")
-        msg.send()
-        self._logger.info("Fax follow-up email sent")
-
     def do_send_fax_object(self, fax) -> bool:
-        denial = fax.denial_id
-        if denial is None:
-            self._logger.warning(f"Fax {fax} has no denial id")
-            send_fax_status_notification(fax, False, False, missing_denial=True)
-            return False
-        if fax.destination is None:
-            self._logger.warning(f"Fax {fax} has no destination")
-            self._update_fax_for_sent(fax, False, missing_destination=True)
-            return False
-        extra = ""
-        if denial.claim_id is not None and len(denial.claim_id) > 2:
-            extra += f"This is regarding claim id {denial.claim_id}."
-        if fax.name is not None and len(fax.name) > 2:
-            extra += f"This fax is sent on behalf of {fax.name}."
-        self._update_fax_for_sending(fax)
-        self._logger.debug(f"Kicking off fax sending for uuid={fax.uuid}")
-        fax_sent = False
-        try:
-            fax_sent = asyncio.run(
-                flexible_fax_magic.send_fax(
-                    input_paths=[fax.get_temporary_document_path()],
-                    extra=extra,
-                    destination=fax.destination,
-                    blocking=True,
-                    professional=fax.professional,
-                )
-            )
-        except Exception as e:
-            self._logger.opt(exception=True).error("Error running async send_fax")
-        self._update_fax_for_sent(fax, fax_sent, missing_destination=False)
-        return fax_sent
+        # The precheck -> send -> finalize sequence lives in fax_send_core so the
+        # Temporal SendFaxWorkflow can run the exact same steps as separate,
+        # individually-retryable activities.
+        return fax_send_core.do_send_fax_object(fax)

@@ -62,8 +62,8 @@ def test_fax_without_destination(test_denial):
 @pytest.fixture
 def notify_enabled():
     """Patch send_mail and enable fax status notifications."""
-    with patch("fighthealthinsurance.fax_actor.send_mail") as mock_send, patch(
-        "fighthealthinsurance.fax_actor.get_env_variable", return_value="true"
+    with patch("fighthealthinsurance.fax_send_core.send_mail") as mock_send, patch(
+        "fighthealthinsurance.fax_send_core.get_env_variable", return_value="true"
     ):
         yield mock_send
 
@@ -130,8 +130,8 @@ class TestFaxStatusNotification:
         """Test that notifications are not sent when disabled via env var."""
         from fighthealthinsurance.fax_actor import send_fax_status_notification
 
-        with patch("fighthealthinsurance.fax_actor.send_mail") as mock_send, patch(
-            "fighthealthinsurance.fax_actor.get_env_variable", return_value="false"
+        with patch("fighthealthinsurance.fax_send_core.send_mail") as mock_send, patch(
+            "fighthealthinsurance.fax_send_core.get_env_variable", return_value="false"
         ):
             send_fax_status_notification(test_fax_with_destination, True, False)
 
@@ -275,13 +275,13 @@ class TestFaxActorEmailSending:
         includes the missing_destination key, which is required for the template
         to show the correct message.
         """
-        # Import and inspect the actual fax_actor code
+        # Import and inspect the actual fax-send code
         import inspect
         import re
-        from fighthealthinsurance import fax_actor
+        from fighthealthinsurance import fax_send_core
 
-        # Get the source code of _update_fax_for_sent
-        source = inspect.getsource(fax_actor.FaxActor._update_fax_for_sent)
+        # Get the source code of finalize_fax (formerly FaxActor._update_fax_for_sent)
+        source = inspect.getsource(fax_send_core.finalize_fax)
 
         # Find the context dict assignment - look for lines that are NOT comments
         # and contain the key assignment
@@ -316,9 +316,9 @@ class TestFaxActorEmailSending:
         ]
 
         import inspect
-        from fighthealthinsurance import fax_actor
+        from fighthealthinsurance import fax_send_core
 
-        source = inspect.getsource(fax_actor.FaxActor._update_fax_for_sent)
+        source = inspect.getsource(fax_send_core.finalize_fax)
 
         # Check each key is present and not commented out
         lines = source.split("\n")

@@ -1,0 +1,70 @@
+# Helm values for self-hosting Temporal Server on the existing cluster, backed
+# by the existing PostgreSQL (NO Cassandra, NO Elasticsearch). Use with the
+# official chart: https://github.com/temporalio/helm-charts
+#
+#   helm repo add temporal https://go.temporal.io/helm-charts
+#   helm install temporal temporal/temporal -n totallylegitco -f values.yaml
+#
+# PostgreSQL 12+ provides "advanced visibility" on its own, so we do not need a
+# separate Elasticsearch deployment -- a meaningful resource saving on a small
+# cluster. See README.md in this directory for the full walkthrough.
+
+# Single combined server process is plenty for current fax volume. Scale the
+# individual services (frontend/history/matching/worker) later if needed.
+server:
+  replicaCount: 1
+  config:
+    persistence:
+      defaultStore: default
+      visibilityStore: visibility
+      datastores:
+        default:
+          sql:
+            driver: "postgres12"
+            host: "${TEMPORAL_PG_HOST}"      # e.g. your existing Postgres service
+            port: 5432
+            database: "temporal"
+            user: "${TEMPORAL_PG_USER}"
+            existingSecret: "temporal-postgres"  # key: password
+            maxConns: 20
+            maxIdleConns: 20
+            maxConnLifetime: "1h"
+        visibility:
+          sql:
+            driver: "postgres12"
+            host: "${TEMPORAL_PG_HOST}"
+            port: 5432
+            database: "temporal_visibility"
+            user: "${TEMPORAL_PG_USER}"
+            existingSecret: "temporal-postgres"
+            maxConns: 10
+            maxIdleConns: 10
+            maxConnLifetime: "1h"
+
+# We bring our own Postgres -- disable the bundled datastores and ES.
+cassandra:
+  enabled: false
+elasticsearch:
+  enabled: false
+mysql:
+  enabled: false
+postgresql:
+  enabled: false
+
+# Schema setup job runs the DDL against the external Postgres on install/upgrade.
+schema:
+  setup:
+    enabled: true
+  update:
+    enabled: true
+
+# Temporal Web UI (browse/inspect workflows). Expose via the existing ingress.
+web:
+  enabled: true
+
+# Keep the footprint small on a couple-server cluster: skip the bundled
+# monitoring stack (wire Temporal's metrics into existing Prometheus instead).
+prometheus:
+  enabled: false
+grafana:
+  enabled: false

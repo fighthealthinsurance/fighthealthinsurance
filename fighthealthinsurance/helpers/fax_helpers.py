@@ -11,6 +11,18 @@ import ray
 
 from fighthealthinsurance.fax_actor_ref import fax_actor_ref
 from fighthealthinsurance.models import Appeal, Denial, FaxesToSend
+from fighthealthinsurance.temporal_client import dispatch_fax_send
+
+
+def _dispatch_or_ray_fax(hashed_email: str, fax_uuid: str) -> None:
+    """Send a fax via Temporal when enabled, otherwise via the Ray fax actor.
+
+    Keeps a single switch point: when ``TEMPORAL_ENABLED`` is set the send runs
+    as a durable ``SendFaxWorkflow``; otherwise (or if dispatch fails) it falls
+    back to the existing non-blocking Ray ``do_send_fax`` call.
+    """
+    if not dispatch_fax_send(hashed_email, str(fax_uuid)):
+        fax_actor_ref.get.do_send_fax.remote(hashed_email, str(fax_uuid))
 
 
 @dataclass
@@ -69,7 +81,7 @@ class SendFaxHelper:
         appeal.fax = fts
         appeal.save()
         # We call str on fts.uuid since it's a UUID object but when persisted it's a string
-        fax_actor_ref.get.do_send_fax.remote(fts.hashed_email, str(fts.uuid))
+        _dispatch_or_ray_fax(fts.hashed_email, str(fts.uuid))
         return FaxHelperResults(uuid=str(fts.uuid), hashed_email=hashed_email)
 
     @classmethod
@@ -130,7 +142,7 @@ class SendFaxHelper:
             False  # Technically not necessary, but set in case the live actor fails
         )
         f.save()
-        fax_actor_ref.get.do_send_fax.remote(hashed_email, uuid)
+        _dispatch_or_ray_fax(hashed_email, uuid)
         return True
 
     @classmethod
@@ -150,5 +162,5 @@ class SendFaxHelper:
         f.should_send = True
         f.paid = True
         f.save()
-        fax_actor_ref.get.do_send_fax.remote(hashed_email, uuid)
+        _dispatch_or_ray_fax(hashed_email, uuid)
         return True
