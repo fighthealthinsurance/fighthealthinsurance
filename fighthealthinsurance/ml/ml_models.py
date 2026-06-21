@@ -2773,6 +2773,8 @@ class DeepInfra(RemoteFullOpenLike):
         "meta-llama/Llama-3.2-3B-Instruct": 128000,
         "meta-llama/Llama-3.3-70B-Instruct-Turbo": 128000,
         "deepseek-ai/DeepSeek-R1-Turbo": 64000,
+        "google/gemma-4-26B-A4B-it": 128000,
+        "deepseek-ai/DeepSeek-V4-Pro": 128000,
     }
 
     def __init__(self, model: str, dual_mode: bool = False):
@@ -2792,6 +2794,21 @@ class DeepInfra(RemoteFullOpenLike):
 
     @classmethod
     def models(cls) -> List[ModelDescription]:
+        return [
+            ModelDescription(
+                cost=260,
+                name="deepseek-ai/DeepSeek-V4-Pro",
+                internal_name="deepseek-ai/DeepSeek-V4-Pro",
+            ),
+            ModelDescription(
+                cost=35,
+                name="google/gemma-4-26B-A4B-it",
+                internal_name="google/gemma-4-26B-A4B-it",
+            ),
+        ]
+
+    @classmethod
+    def _old_models(cls) -> List[ModelDescription]:
         return [
             ModelDescription(
                 cost=80,
@@ -3607,132 +3624,6 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
             if extracted:
                 text = extracted.strip()
         return (text, [])
-
-
-class TailscaleModelBackend(RemoteFullOpenLike):
-    """
-    Backend that auto-discovers model servers via Tailscale DNS.
-
-    Looks for hosts named 'azure-{model-name}' in the Tailscale network
-    and adds them as available backends.
-    """
-
-    # Models we try to discover via Tailscale DNS
-    DISCOVERABLE_MODELS: ClassVar[List[Tuple[str, str]]] = [
-        ("fhi-legacy", "TotallyLegitCo/fighthealthinsurance_model_v0.5"),
-        ("fhi-new", "/models/fhi-2025-may-0.3-float16-q8-vllm-compressed"),
-        ("llama-scout", "meta-llama/Llama-4-Scout-17B-16E-Instruct"),
-        ("fhi-2025-nov-q8-vllm-compressed", "/app/model"),
-    ]
-
-    _discovered_hosts: ClassVar[dict[str, str]] = {}
-    _resolved_ips: ClassVar[dict[str, str]] = {}  # hostname -> IP mapping
-
-    # Tailscale DNS server
-    TAILSCALE_DNS: ClassVar[str] = "100.100.100.100"
-
-    # DNS resolution timeout in seconds
-    DNS_TIMEOUT: ClassVar[float] = 2.0
-
-    def quality(self) -> int:
-        return 150  # Higher quality since these are dedicated hosts
-
-    def __init__(self, model: str, host: str, port: str = "8000"):
-        self.host = host
-        self.port = port
-        self.url = f"http://{host}:{port}/v1"
-        super().__init__(
-            self.url,
-            token="",
-            model=model,
-            max_len=4096 * 20,
-        )
-
-    @property
-    def external(self):
-        return False
-
-    @classmethod
-    def _resolve_tailscale_host(cls, hostname: str) -> Optional[str]:
-        """
-        Try to resolve a Tailscale hostname via explicit Tailscale DNS with timeout.
-
-        Uses Tailscale DNS (100.100.100.100) explicitly since containers don't
-        automatically use it. Caches resolved IPs.
-
-        Returns:
-            The resolved IP address if successful, None otherwise
-        """
-        import concurrent.futures
-
-        import dns.resolver
-
-        # Check cache first
-        if hostname in cls._resolved_ips:
-            logger.debug(
-                f"Using cached IP for {hostname}: {cls._resolved_ips[hostname]}"
-            )
-            return cls._resolved_ips[hostname]
-
-        try:
-            # Configure resolver to use Tailscale DNS
-            resolver = dns.resolver.Resolver(configure=False)
-            resolver.nameservers = [cls.TAILSCALE_DNS]
-            resolver.timeout = cls.DNS_TIMEOUT
-            resolver.lifetime = cls.DNS_TIMEOUT
-
-            # Use ThreadPoolExecutor to add timeout to blocking DNS call
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(resolver.resolve, hostname, "A")
-                answers = future.result(timeout=cls.DNS_TIMEOUT)
-
-                # Get the first A record
-                ip_address = str(answers[0])
-                logger.info(f"Resolved {hostname} to {ip_address} via Tailscale DNS")
-
-                # Cache the result
-                cls._resolved_ips[hostname] = ip_address
-                return ip_address
-        except (
-            dns.resolver.NXDOMAIN,
-            dns.resolver.NoAnswer,
-            dns.resolver.Timeout,
-            dns.resolver.NoNameservers,
-            concurrent.futures.TimeoutError,
-            TimeoutError,
-        ) as e:
-            logger.debug(f"Skipping {hostname}: {e}")
-            return None
-        except Exception as e:
-            logger.error(f"Skipping {hostname}: unexpected error {e}")
-            return None
-
-    @classmethod
-    def models(cls) -> List[ModelDescription]:
-        """Discover available models via Tailscale DNS."""
-        discovered = []
-
-        for friendly_name, model_path in cls.DISCOVERABLE_MODELS:
-            # Try azure-{name} pattern
-            hostname = f"azure-{friendly_name}"
-            resolved_ip = cls._resolve_tailscale_host(hostname)
-            if resolved_ip:
-                logger.info(
-                    f"Discovered Tailscale model backend: {hostname} -> {resolved_ip}"
-                )
-                cls._discovered_hosts[friendly_name] = hostname
-                discovered.append(
-                    ModelDescription(
-                        cost=5,  # Low cost since it's on credits.
-                        name=f"ts-{friendly_name}",
-                        internal_name=model_path,
-                        model=cls(model=model_path, host=resolved_ip),
-                    )
-                )
-
-        if discovered:
-            logger.info(f"Tailscale discovery found {len(discovered)} model backends")
-        return discovered
 
 
 candidate_model_backends: list[type[RemoteModel]] = all_concrete_subclasses(RemoteModel)  # type: ignore[type-abstract]
