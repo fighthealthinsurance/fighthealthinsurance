@@ -307,9 +307,12 @@ def send_proconnector_intro_email(
         # send_fallback_email silently skips blocked recipients; fail closed so
         # the caller doesn't record a send that never actually happened.
         raise ValueError("Recipient email is blocked or unsendable")
-    recipients = [get_professional_cc_email()]
+    professional_cc = get_professional_cc_email()
+    recipients = [professional_cc]
+    seen = {professional_cc.lower()}
     for addr in cc or []:
-        if addr not in recipients:
+        if addr.lower() not in seen:
+            seen.add(addr.lower())
             recipients.append(addr)
     send_fallback_email(
         subject=subject,
