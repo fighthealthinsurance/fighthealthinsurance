@@ -24,6 +24,7 @@ from fighthealthinsurance.models import (
     ProfessionalUser,
     UserDomain,
 )
+from fighthealthinsurance.rest_serializers import CallScriptResponseSerializer
 
 if typing.TYPE_CHECKING:
     from django.contrib.auth.models import User
@@ -97,42 +98,88 @@ class CallScriptGenerateEndpointTests(APITestCase):
         self.url = reverse("call-scripts-generate")
         self.client.login(username=self.user.username, password="testpass")
 
-    @patch(
-        "fighthealthinsurance.call_script_helper.infer_with_fallback",
-        new_callable=AsyncMock,
-    )
-    def test_generate_returns_script_and_persists(self, mock_infer):
-        mock_infer.return_value = FAKE_SCRIPT
-
-        response = _post_json(
+    def _generate_script(self):
+        return _post_json(
             self.client,
             self.url,
             {"denial_id": str(self.denial.denial_id), "goal": "info_gathering"},
         )
 
+    @patch(
+        "fighthealthinsurance.call_script_helper.infer_with_fallback",
+        new_callable=AsyncMock,
+    )
+    def test_generate_returns_201_created(self, mock_infer):
+        mock_infer.return_value = FAKE_SCRIPT
+
+        response = self._generate_script()
+
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+    @patch(
+        "fighthealthinsurance.call_script_helper.infer_with_fallback",
+        new_callable=AsyncMock,
+    )
+    def test_generate_response_shape_matches_serializer(self, mock_infer):
+        mock_infer.return_value = FAKE_SCRIPT
+
+        response = self._generate_script()
         body = response.json()
-        # Response shape matches CallScriptResponseSerializer.
-        for field in (
-            "script_id",
-            "denial_id",
-            "goal",
-            "insurer_name",
-            "denial_reason",
-            "script_text",
-            "script_html",
-            "created_at",
-        ):
-            self.assertIn(field, body)
+
+        self.assertEqual(
+            set(body.keys()), set(CallScriptResponseSerializer().fields.keys())
+        )
+
+    @patch(
+        "fighthealthinsurance.call_script_helper.infer_with_fallback",
+        new_callable=AsyncMock,
+    )
+    def test_generate_returns_expected_field_values(self, mock_infer):
+        mock_infer.return_value = FAKE_SCRIPT
+
+        response = self._generate_script()
+        body = response.json()
+
         self.assertEqual(body["goal"], "info_gathering")
         self.assertEqual(body["denial_id"], self.denial.denial_id)
         self.assertIn("Aetna", body["insurer_name"])
-        # Placeholder-substituted script text was returned and persisted.
+
+    @patch(
+        "fighthealthinsurance.call_script_helper.infer_with_fallback",
+        new_callable=AsyncMock,
+    )
+    def test_generate_returns_placeholder_substituted_content(self, mock_infer):
+        mock_infer.return_value = FAKE_SCRIPT
+
+        response = self._generate_script()
+        body = response.json()
+
         self.assertIn("Which medical policy", body["script_text"])
         self.assertIn("<html", body["script_html"].lower())
 
+    @patch(
+        "fighthealthinsurance.call_script_helper.infer_with_fallback",
+        new_callable=AsyncMock,
+    )
+    def test_generate_persists_generic_and_per_denial_scripts(self, mock_infer):
+        mock_infer.return_value = FAKE_SCRIPT
+
+        response = self._generate_script()
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(CallScript.objects.filter(for_denial=self.denial).count(), 1)
         self.assertEqual(GenericCallScript.objects.count(), 1)
+
+    @patch(
+        "fighthealthinsurance.call_script_helper.infer_with_fallback",
+        new_callable=AsyncMock,
+    )
+    def test_generate_encrypts_persisted_sensitive_fields(self, mock_infer):
+        mock_infer.return_value = FAKE_SCRIPT
+
+        response = self._generate_script()
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         call_script = CallScript.objects.get(for_denial=self.denial)
         self.assertNotIn(b"Which medical policy", call_script.encrypted_script_text)
         self.assertNotIn(
