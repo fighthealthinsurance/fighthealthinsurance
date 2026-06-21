@@ -634,11 +634,12 @@ function done(): void {
 // surfacing the external-models opt-in for.
 const FEW_APPEALS_THRESHOLD = 2;
 
-// Upper tolerance for the partial-delivery alarm. The happy path targets 3
-// appeals, but external-model reruns and synthesis can push the total higher.
-// Once the client is holding more than this many distinct appeals, a small
-// server/client count mismatch (e.g. the server counted a draft the client
-// deduped) isn't worth paging on — the user already has plenty to work with.
+// Upper tolerance for the partial-delivery alarm. accountedFor already credits
+// appeals the client deduped, so a surviving `total > accountedFor` gap means
+// frames were genuinely lost (dropped on the wire, or an unparseable line).
+// That's worth a page when it leaves the user short — but once they're holding
+// more than this many distinct appeals, a small shortfall is just noise, so we
+// log instead. The happy path targets 3; reruns/synthesis can push higher.
 const PLENTY_APPEALS_THRESHOLD = 4;
 
 // Latched once the user has already opted in. Prevents re-showing the
@@ -855,13 +856,17 @@ function processResponseChunk(chunk: string): void {
             if (total > 0 && appealsSoFar.length === 0 && duplicatesSkipped === 0) {
               console.error(`BUG: Server sent ${total} appeals but client received none!`);
               reportClientError(`Server sent ${total} appeals but client received 0 (lost in transit)`);
-            } else if (total > accountedFor && appealsSoFar.length > PLENTY_APPEALS_THRESHOLD) {
-              // The user already has plenty of appeals, so a small server/client
-              // count discrepancy isn't worth paging on — log it and move on.
-              console.warn(`Partial delivery tolerated: server reported ${total} appeals, client got ${appealsSoFar.length} (>${PLENTY_APPEALS_THRESHOLD}); not reporting`);
             } else if (total > accountedFor) {
-              console.warn(`Partial delivery: server reported ${total} appeals, client got ${appealsSoFar.length} (+${duplicatesSkipped} deduped)`);
-              reportClientError(`Partial delivery: server reported ${total} appeals, client got ${appealsSoFar.length}`);
+              // accountedFor credits deduped appeals, so this gap is genuinely
+              // lost frames. Page on it only when the user is left short; once
+              // they have plenty, a small shortfall is just noise we log.
+              const detail = `server reported ${total} appeals, client got ${appealsSoFar.length} (+${duplicatesSkipped} deduped)`;
+              if (appealsSoFar.length > PLENTY_APPEALS_THRESHOLD) {
+                console.warn(`Partial delivery tolerated: ${detail}`);
+              } else {
+                console.warn(`Partial delivery: ${detail}`);
+                reportClientError(`Partial delivery: server reported ${total} appeals, client got ${appealsSoFar.length}`);
+              }
             }
             markAllDone();
             renderChecklist();

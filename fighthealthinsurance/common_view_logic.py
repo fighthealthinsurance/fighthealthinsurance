@@ -2665,14 +2665,24 @@ class AppealsBackendHelper:
         # If we've had a timeout on the initial call and we're on round 2
         # we should fetch the existing appeals from the previous round if present.
         existing_appeals = ProposedAppeal.objects.filter(for_denial=denial).all()
-        # Track the normalized text of every appeal we yield this stream so we
-        # never ship — or count — the same appeal twice. The client dedupes by
-        # content too, so a duplicate yield makes the server's total outrun the
-        # client's count and trips the "partial delivery" alarm in
-        # appeal_fetcher.ts. Deduping here keeps both counts in lockstep and
-        # spares the user a redundant draft. Spans existing + newly generated
+        # Dedupe every appeal we yield this stream so we never ship — or count —
+        # the same text twice. The client also dedupes by content and credits
+        # those in its own tally, so this isn't what keeps the counts honest on
+        # current clients; rather it avoids regenerating/saving a redundant
+        # draft and keeps the total aligned for older clients that don't credit
+        # deduped appeals. register_appeal_text spans existing + newly generated
         # appeals; the synthesis step does its own verbatim check below.
         seen_appeal_texts: set[str] = set()
+
+        def register_appeal_text(text: str) -> bool:
+            """Record ``text`` as yielded; return ``True`` if it's new, ``False``
+            if a whitespace-normalized copy was already yielded this stream."""
+            normalized = text.strip()
+            if normalized in seen_appeal_texts:
+                return False
+            seen_appeal_texts.add(normalized)
+            return True
+
         # Yield the existing appeals first
         old = 0
         async for appeal in existing_appeals:
@@ -2681,8 +2691,7 @@ class AppealsBackendHelper:
             # (or by paths that skipped the filter), and we must not re-deliver
             # them.
             if is_real_appeal(appeal.appeal_text):
-                normalized = appeal.appeal_text.strip()
-                if normalized in seen_appeal_texts:
+                if not register_appeal_text(appeal.appeal_text):
                     # Duplicate row in the DB (e.g. a prior run saved the same
                     # text twice); don't re-yield it.
                     logger.debug(
@@ -2690,7 +2699,6 @@ class AppealsBackendHelper:
                         f"for denial {denial_id}"
                     )
                     continue
-                seen_appeal_texts.add(normalized)
                 old = old + 1
                 logger.debug(f"Found existing appeal {appeal}, yielding")
                 existing_appeal_dict = await sub_in_appeals(
@@ -3397,16 +3405,14 @@ class AppealsBackendHelper:
             if is_real_appeal(text):
                 # Drop appeals whose text we've already yielded this stream — a
                 # previously-saved draft re-fetched above, or two models landing
-                # on the same wording. Yielding both would desync the client's
-                # content-deduped count from the server's total and page Sentry.
-                normalized = text.strip()
-                if normalized in seen_appeal_texts:
+                # on the same wording — so we don't regenerate/ship a redundant
+                # draft or inflate the server's total past what the client shows.
+                if not register_appeal_text(text):
                     logger.debug(
                         f"Skipping duplicate generated appeal from "
                         f"model={item.model_name!r} for denial {denial_id}"
                     )
                     return False
-                seen_appeal_texts.add(normalized)
                 return True
             if isinstance(text, str) and text.strip():
                 runts += 1
