@@ -74,7 +74,19 @@
 </head>
 <body>
   <h1>Staff Dashboard</h1>
-  
+
+  <div class="dashboard-section">
+    <h2>🩺 System Status</h2>
+    <ul class="link-list">
+      <li>
+        <a href="{% url 'admin_status' %}">
+          <strong>System Status</strong>
+          <div class="link-description">Live health: ML models up, Ray actors, Sonic fax, queued faxes, and storage</div>
+        </a>
+      </li>
+    </ul>
+  </div>
+
   <div class="dashboard-section">
     <h2>📧 Email &amp; Communication</h2>
     <ul class="link-list">

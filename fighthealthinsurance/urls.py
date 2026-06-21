@@ -73,6 +73,11 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         name="staff_dashboard",
     ),
     path(
+        "timbit/help/status",
+        staff_member_required(staff_views.AdminStatusView.as_view()),
+        name="admin_status",
+    ),
+    path(
         "timbit/help/followup_sched",
         staff_member_required(staff_views.ScheduleFollowUps.as_view()),
     ),

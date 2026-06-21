@@ -304,5 +304,71 @@ class _HealthStatus:
         self._schedule_refresh()
 
 
+def compute_model_health_details(timeout_seconds: int = 8) -> List[Dict[str, Any]]:
+    """Run a fresh, uncached health check across every known model backend.
+
+    Unlike :meth:`_HealthStatus.get_snapshot`, which returns a cached summary
+    (used by the public ``live_models_status`` endpoint and deliberately keeps
+    internal failures out of ``details``), this returns a full per-backend
+    breakdown — ``{"name", "ok", "external", "error"}`` — for the staff-only
+    system status dashboard. It does not send alerts or mutate the cached
+    snapshot.
+
+    Checks run in parallel with a shared deadline; a backend whose check has
+    not finished by ``timeout_seconds`` is reported as not-ok with a timeout
+    error. Results are sorted problems-first (down before up, internal before
+    external, then by name) so on-call sees failures at the top.
+    """
+    try:
+        candidates = list(ml_router_module.ml_router.all_models_by_cost)
+    except Exception:
+        # Propagate rather than returning [] — an empty list is indistinguishable
+        # from "no models registered" and would let the caller (_model_status)
+        # report a broken router as a healthy "0 backends" instead of an error.
+        logger.opt(exception=True).warning(
+            "compute_model_health_details could not enumerate models"
+        )
+        raise
+
+    results: List[Dict[str, Any]] = []
+    if not candidates:
+        return results
+
+    ex = concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(candidates)))
+    try:
+        future_map = {ex.submit(m.model_is_ok): m for m in candidates}
+        concurrent.futures.wait(future_map, timeout=timeout_seconds)
+        for future, m in future_map.items():
+            name = str(
+                getattr(m, "model", None) or getattr(m, "__class__", type(m)).__name__
+            )
+            is_external = bool(getattr(m, "external", True))
+            ok = False
+            err: Optional[str] = None
+            if future.done():
+                try:
+                    ok = bool(future.result(timeout=0))
+                    if not ok:
+                        err = "not ok"
+                except Exception as e:
+                    err = str(e)
+            else:
+                err = f"timeout>{timeout_seconds}s"
+            results.append(
+                {"name": name, "ok": ok, "external": is_external, "error": err}
+            )
+    finally:
+        # Return at the deadline rather than blocking on stragglers. Exiting a
+        # `with ThreadPoolExecutor()` calls shutdown(wait=True), which joins
+        # every submitted probe — so a single hung/slow model_is_ok() would
+        # stall the staff status request well past timeout_seconds, defeating
+        # the bounded live check. Cancel queued probes and let any in-flight
+        # ones finish in the background instead.
+        ex.shutdown(wait=False, cancel_futures=True)
+
+    results.sort(key=lambda r: (r["ok"], r["external"], r["name"]))
+    return results
+
+
 # Singleton used by views
 health_status = _HealthStatus()

@@ -75,6 +75,16 @@ class FaxSenderBase(object):
     ) -> bool:
         return True
 
+    def check_health(self, timeout: Optional[float] = None) -> bool:
+        """Return whether this backend is healthy.
+
+        Base backends are assumed healthy once configured; only backends that
+        support a cheap liveness probe (e.g. :class:`SonicFax`, which can do a
+        login round-trip) override this. ``timeout`` is accepted (and ignored
+        here) so callers can pass a probe budget uniformly to any backend.
+        """
+        return True
+
 
 class SonicFax(FaxSenderBase):
     base_cost = 10
@@ -110,6 +120,40 @@ class SonicFax(FaxSenderBase):
             "SONIC_NOTIFICATION_EMAIL", "support42@fighthealthinsurance.com"
         )
 
+    def check_health(self, timeout: Optional[float] = None) -> bool:
+        """Verify we can authenticate against the Sonic fax service.
+
+        Logs in and then confirms the session can actually reach a
+        members-only page. ``_login`` alone only rejects a response that
+        contains the literal ``"Member Login"`` text, so a 4xx/5xx or
+        maintenance page would otherwise be treated as a successful login.
+        Here we additionally require the fax page to return HTTP 2xx
+        (``raise_for_status``) and not be the login form, so the dashboard
+        only reports Sonic healthy when it genuinely is.
+
+        ``timeout`` is applied per HTTP request so a hung/slow Sonic can't
+        stall the caller (e.g. the staff status page) indefinitely; it
+        defaults to 3s when not supplied. The signature matches
+        ``FaxSenderBase.check_health`` (``Optional[float]``) so the probe can
+        pass its budget uniformly to any backend.
+        """
+        if timeout is None:
+            timeout = 3.0
+        with requests.Session() as s:
+            cookies = self._login(s, timeout=timeout)
+            r = s.get(
+                "https://members.sonic.net/labs/fax/?a=history",
+                headers=self.headers,
+                cookies=cookies,
+                timeout=timeout,
+            )
+            # 4xx/5xx (incl. 403/500/maintenance) -> not healthy.
+            r.raise_for_status()
+            # A bounced/expired session renders the login form instead.
+            if "Member Login" in r.text:
+                raise Exception("Sonic session not authenticated (got login page)")
+            return True
+
     async def send_fax_blocking(
         self, destination: str, path: str, dest_name: Optional[str] = None
     ) -> bool:
@@ -130,14 +174,20 @@ class SonicFax(FaxSenderBase):
                 dest_name=dest_name,
             )
 
-    def _login(self, s: Session) -> dict[str, str]:
+    def _login(self, s: Session, timeout: Optional[float] = None) -> dict[str, str]:
         cookies = {"mt2FAToken": self.token}
-        r = s.get("https://members.sonic.net/", headers=self.headers, cookies=cookies)
+        r = s.get(
+            "https://members.sonic.net/",
+            headers=self.headers,
+            cookies=cookies,
+            timeout=timeout,
+        )
         r = s.post(
             "https://members.sonic.net/",
             data={"login": "login", "user": self.username, "pw": self.password},
             headers=self.headers,
             cookies=cookies,
+            timeout=timeout,
         )
         if "Member Login" in r.text:
             raise Exception(f"Error logging into sonic got back {r.text}")

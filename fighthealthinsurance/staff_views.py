@@ -87,6 +87,166 @@ class StaffDashboardView(generic.TemplateView):
     template_name = "staff_dashboard.html"
 
 
+class AdminStatusView(generic.TemplateView):
+    """Staff system-status dashboard.
+
+    A one-stop live health view for on-call: which ML model backends are up,
+    Ray polling-actor health, whether the Sonic fax backend can authenticate,
+    queued/pending fax counts, and external storage reachability.
+
+    Each subsystem is gathered independently and wrapped in its own error
+    handling so a single failing check degrades to an error row instead of
+    breaking the whole page. The model and Sonic checks make live network
+    calls (bounded by timeouts), so this page is intentionally staff-only and
+    a little slower than a cached endpoint.
+    """
+
+    template_name = "admin_status.html"
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        ctx["title"] = "System Status"
+        ctx["generated_at"] = timezone.now()
+        ctx["models"] = self._model_status()
+        ctx["actors"] = self._actor_status()
+        ctx["fax"] = self._fax_backend_status()
+        ctx["fax_queue"] = self._fax_queue_status()
+        ctx["storage"] = self._storage_status()
+        return ctx
+
+    @staticmethod
+    def _model_status() -> Dict[str, Any]:
+        """ML model backend health: a fresh, per-backend probe plus router summary.
+
+        Uses ``compute_model_health_details`` (a standalone check) rather than
+        ``health_status.get_snapshot``. The latter, on first access, runs its
+        own full refresh *and* can fire an alert email / start a background
+        timer — surprising side effects to attach to rendering a status page,
+        and a redundant second check pass. ``generated_at`` conveys freshness.
+        """
+        out: Dict[str, Any] = {"ok": True, "error": None, "details": []}
+        try:
+            from fighthealthinsurance.ml.health_status import (
+                compute_model_health_details,
+            )
+            from fighthealthinsurance.ml.ml_router import ml_router
+
+            details = compute_model_health_details()
+            out["details"] = details
+            out["alive"] = sum(1 for d in details if d["ok"])
+            out["total"] = len(details)
+            out["internal_alive"] = sum(
+                1 for d in details if d["ok"] and not d["external"]
+            )
+            out["internal_total"] = sum(1 for d in details if not d["external"])
+            out["working"] = ml_router.working()
+        except Exception as e:
+            logger.opt(exception=True).error("Error computing model status")
+            out["ok"] = False
+            out["error"] = str(e)
+        return out
+
+    @staticmethod
+    def _actor_status() -> Dict[str, Any]:
+        """Ray polling-actor health via the shared check_actor_health helper."""
+        out: Dict[str, Any] = {
+            "ok": True,
+            "error": None,
+            "details": [],
+            "alive_actors": 0,
+            "total_actors": 0,
+        }
+        try:
+            from fighthealthinsurance.actor_health_status import check_actor_health
+
+            out.update(check_actor_health())
+        except Exception as e:
+            logger.opt(exception=True).error("Error checking actor health")
+            out["ok"] = False
+            out["error"] = str(e)
+        return out
+
+    @staticmethod
+    def _fax_backend_status() -> Dict[str, Any]:
+        """Fax backend health, including a live Sonic login probe."""
+        out: Dict[str, Any] = {
+            "ok": True,
+            "error": None,
+            "backends": [],
+            "sonic": {"configured": False, "active": False, "ok": False, "error": None},
+        }
+        try:
+            from fighthealthinsurance.fax_health_status import (
+                check_fax_backends_health,
+            )
+
+            out.update(check_fax_backends_health())
+        except Exception as e:
+            logger.opt(exception=True).error("Error checking fax backends")
+            out["ok"] = False
+            out["error"] = str(e)
+            out["sonic"] = {
+                "configured": False,
+                "active": False,
+                "ok": False,
+                "error": str(e),
+            }
+        return out
+
+    @staticmethod
+    def _fax_queue_status() -> Dict[str, Any]:
+        """Counts of queued / pending / failed faxes from FaxesToSend.
+
+        Mirrors what the fax actor acts on: it sends faxes that are
+        ``should_send=True, sent=False`` and at least an hour old.
+        """
+        out: Dict[str, Any] = {"ok": True, "error": None}
+        try:
+            from fighthealthinsurance.models import FaxesToSend
+
+            now = timezone.now()
+            one_hour_ago = now - datetime.timedelta(hours=1)
+            week_ago = now - datetime.timedelta(days=7)
+
+            unsent = FaxesToSend.objects.filter(sent=False)
+            out["unsent_total"] = unsent.count()
+            out["ready_queued"] = unsent.filter(should_send=True).count()
+            out["due_now"] = unsent.filter(
+                should_send=True, date__lt=one_hour_ago
+            ).count()
+            out["awaiting_confirmation"] = unsent.filter(should_send=False).count()
+            out["in_flight"] = unsent.filter(
+                attempting_to_send_as_of__isnull=False
+            ).count()
+            out["failures_recent"] = FaxesToSend.objects.filter(
+                sent=True, fax_success=False, date__gte=week_ago
+            ).count()
+        except Exception as e:
+            logger.opt(exception=True).error("Error computing fax queue status")
+            out["ok"] = False
+            out["error"] = str(e)
+        return out
+
+    @staticmethod
+    def _storage_status() -> Dict[str, Any]:
+        """Whether the external (encrypted) storage backend is reachable."""
+        out: Dict[str, Any] = {"ok": False, "error": None}
+        try:
+            from django.conf import settings
+            from stopit import ThreadingTimeout as Timeout
+
+            es = settings.EXTERNAL_STORAGE
+            with Timeout(3.0):
+                es.listdir("./")
+                out["ok"] = True
+                return out
+            out["error"] = "timeout"
+        except Exception as e:
+            logger.opt(exception=True).warning("External storage health check failed")
+            out["error"] = str(e)
+        return out
+
+
 class ScheduleFollowUps(View):
     """A view to go through and schedule any missing follow ups.
 
