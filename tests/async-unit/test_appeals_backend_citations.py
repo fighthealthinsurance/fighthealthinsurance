@@ -757,9 +757,15 @@ async def test_synthesis_skips_verbatim_duplicate():
             AsyncMock(return_value=[_ga(t) for t in saved_texts]),
         )
         mock_pa_cls.return_value = MagicMock(id=1, asave=AsyncMock())
-        mock_pa_cls.objects.filter.return_value = (
-            _make_proposed_appeal_query_with_texts(saved_texts)
-        )
+        # First filter() call is the existing-appeals query (empty — this is a
+        # fresh run); the second is the synthesis read-back of the saved drafts.
+        # Keeping existing empty means the drafts from make_appeals count as
+        # "new", isolating this test to the synthesis-dedup behaviour rather
+        # than the existing-vs-generated dedup exercised elsewhere.
+        mock_pa_cls.objects.filter.side_effect = [
+            _make_empty_proposed_appeal_query(),
+            _make_proposed_appeal_query_with_texts(saved_texts),
+        ]
         # Synthesizer returns a verbatim copy of the first saved draft —
         # the server must NOT yield it as a "new" appeal.
         mock_appeal_gen.synthesize_appeals = AsyncMock(return_value=saved_texts[0])
@@ -940,3 +946,149 @@ async def test_existing_too_short_appeal_is_skipped():
     output = sink.getvalue()
     assert "too-short appeal" in output
     assert "saved appeal id=" in output
+
+
+def _done_frame(chunks):
+    """Return the single parsed ``phase=="done"`` frame from a chunk stream."""
+    for c in chunks:
+        stripped = c.strip()
+        if not stripped:
+            continue
+        try:
+            parsed = json.loads(stripped)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict) and parsed.get("phase") == "done":
+            return parsed
+    return None
+
+
+async def _run_generate_appeals(
+    *, existing_texts, generated_texts, synthesis_db_texts=None, synthesis_return=None
+):
+    """Run ``generate_appeals`` against a mocked dependency stack and return the
+    streamed chunks.
+
+    - ``existing_texts``: texts the existing-appeals query re-yields (prior runs)
+    - ``generated_texts``: texts ``make_appeals`` produces this run
+    - ``synthesis_db_texts``: texts the synthesis read-back query returns;
+      defaults to the distinct existing+generated union (what a real run would
+      have saved after server-side dedup)
+    - ``synthesis_return``: value ``synthesize_appeals`` returns (``None`` ->
+      synthesis yields nothing)
+
+    ``ProposedAppeal.objects.filter`` is called twice inside ``generate_appeals``
+    (existing-appeals query, then the synthesis read-back), so a two-element
+    ``side_effect`` feeds each its own queryset.
+    """
+    if synthesis_db_texts is None:
+        synthesis_db_texts = list(dict.fromkeys([*existing_texts, *generated_texts]))
+    mock_denial = _make_mock_denial()
+    parameters = {
+        "denial_id": "12345",
+        "email": "test@example.com",
+        "semi_sekret": "test-secret",
+    }
+    with (
+        patch(
+            "fighthealthinsurance.common_view_logic.Denial.objects.filter",
+            return_value=_make_mock_denial_query(mock_denial),
+        ),
+        patch(
+            "fighthealthinsurance.common_view_logic.Denial.get_hashed_email",
+            return_value="hashed",
+        ),
+        patch.object(AppealsBackendHelper, "regex_denial_processor") as mock_regex,
+        patch(
+            "fighthealthinsurance.common_view_logic.MLCitationsHelper.generate_citations_for_denial",
+            new_callable=AsyncMock,
+            return_value="",
+        ),
+        patch.object(
+            AppealsBackendHelper.pmt,
+            "find_context_for_denial",
+            new_callable=AsyncMock,
+            return_value="",
+        ),
+        patch(
+            "fighthealthinsurance.common_view_logic.sync_to_async",
+        ) as mock_sync_to_async,
+        patch(
+            "fighthealthinsurance.common_view_logic.interleave_iterator_for_keep_alive",
+            side_effect=passthrough_interleave,
+        ),
+        patch(
+            "fighthealthinsurance.common_view_logic.ProposedAppeal",
+        ) as mock_pa_cls,
+        patch(
+            "fighthealthinsurance.common_view_logic.appealGenerator"
+        ) as mock_appeal_gen,
+    ):
+        mock_regex.get_appeal_templates = AsyncMock(return_value=[])
+        mock_sync_to_async.side_effect = _sync_to_async_router(
+            AsyncMock(return_value=""),
+            AsyncMock(return_value=[_ga(t) for t in generated_texts]),
+        )
+        mock_pa_cls.return_value = MagicMock(id=1, asave=AsyncMock())
+        mock_pa_cls.objects.filter.side_effect = [
+            _make_proposed_appeal_query_with_texts(existing_texts),
+            _make_proposed_appeal_query_with_texts(synthesis_db_texts),
+        ]
+        mock_appeal_gen.synthesize_appeals = AsyncMock(return_value=synthesis_return)
+
+        chunks = []
+        async for chunk in AppealsBackendHelper.generate_appeals(parameters):
+            chunks.append(chunk)
+    return chunks
+
+
+@pytest.mark.asyncio
+async def test_duplicate_generated_appeals_are_deduped():
+    """Two model outputs with identical text must be yielded — and counted —
+    once. Otherwise the server's total outruns the client's content-deduped
+    count and trips the spurious "partial delivery" report (the production
+    6-vs-5 case)."""
+    d1 = "first duplicate draft body"
+    d2 = "second distinct draft body"
+    chunks = await _run_generate_appeals(
+        existing_texts=[],
+        generated_texts=[d1, d1, d2],  # d1 produced twice this run
+        synthesis_return=None,
+    )
+
+    contents = _collect_appeal_contents(chunks)
+    assert contents.count(d1) == 1, f"duplicate appeal not deduped: {contents}"
+    assert contents.count(d2) == 1
+    assert len(contents) == 2
+
+    done = _done_frame(chunks)
+    assert done is not None, "expected a done frame"
+    assert done["new_appeals"] == 2
+    assert done["existing_appeals"] == 0
+    assert done["total_appeals"] == 2
+
+
+@pytest.mark.asyncio
+async def test_regenerated_appeal_matching_existing_is_deduped():
+    """On a retry the models can regenerate text identical to an appeal already
+    re-yielded as "existing". It must be delivered once — as the existing
+    draft — not again as a new one, so the counts stay in lockstep."""
+    e1 = "existing appeal draft alpha"
+    n2 = "freshly generated appeal beta"
+    chunks = await _run_generate_appeals(
+        existing_texts=[e1],
+        generated_texts=[e1, n2],  # e1 regenerated, n2 genuinely new
+        synthesis_db_texts=[e1, n2],
+        synthesis_return=None,
+    )
+
+    contents = _collect_appeal_contents(chunks)
+    assert contents.count(e1) == 1, f"existing appeal re-yielded as new: {contents}"
+    assert contents.count(n2) == 1
+    assert len(contents) == 2
+
+    done = _done_frame(chunks)
+    assert done is not None, "expected a done frame"
+    assert done["existing_appeals"] == 1
+    assert done["new_appeals"] == 1
+    assert done["total_appeals"] == 2

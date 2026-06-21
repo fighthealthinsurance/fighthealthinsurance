@@ -634,6 +634,13 @@ function done(): void {
 // surfacing the external-models opt-in for.
 const FEW_APPEALS_THRESHOLD = 2;
 
+// Upper tolerance for the partial-delivery alarm. The happy path targets 3
+// appeals, but external-model reruns and synthesis can push the total higher.
+// Once the client is holding more than this many distinct appeals, a small
+// server/client count mismatch (e.g. the server counted a draft the client
+// deduped) isn't worth paging on — the user already has plenty to work with.
+const PLENTY_APPEALS_THRESHOLD = 4;
+
 // Latched once the user has already opted in. Prevents re-showing the
 // prompt if the post-opt-in rerun also underdelivers — the user has
 // already made the call, repeating it doesn't help.
@@ -848,6 +855,10 @@ function processResponseChunk(chunk: string): void {
             if (total > 0 && appealsSoFar.length === 0 && duplicatesSkipped === 0) {
               console.error(`BUG: Server sent ${total} appeals but client received none!`);
               reportClientError(`Server sent ${total} appeals but client received 0 (lost in transit)`);
+            } else if (total > accountedFor && appealsSoFar.length > PLENTY_APPEALS_THRESHOLD) {
+              // The user already has plenty of appeals, so a small server/client
+              // count discrepancy isn't worth paging on — log it and move on.
+              console.warn(`Partial delivery tolerated: server reported ${total} appeals, client got ${appealsSoFar.length} (>${PLENTY_APPEALS_THRESHOLD}); not reporting`);
             } else if (total > accountedFor) {
               console.warn(`Partial delivery: server reported ${total} appeals, client got ${appealsSoFar.length} (+${duplicatesSkipped} deduped)`);
               reportClientError(`Partial delivery: server reported ${total} appeals, client got ${appealsSoFar.length}`);
