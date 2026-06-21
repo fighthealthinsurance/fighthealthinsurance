@@ -2,7 +2,7 @@ import csv
 import datetime
 import json
 from collections import Counter, defaultdict
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from django.db import transaction
 from django.db.models import Count
@@ -37,15 +37,18 @@ from fighthealthinsurance.models import (
     UserDomain,
 )
 from fighthealthinsurance.email_utils import is_sendable_email
+from fighthealthinsurance.business_hours import describe_send_window
 from fighthealthinsurance.proconnector import (
     PROCONNECTOR_INTRO_SUBJECT,
     build_search_links,
     generate_intro_email,
     get_next_interested_professional,
     get_professional_cc_email,
+    mark_email_queued,
     mark_email_sent,
     mark_email_skipped,
     non_spam_interested_professionals,
+    queue_proconnector_intro_email,
     remaining_interested_professionals_count,
     send_proconnector_intro_email,
 )
@@ -478,8 +481,9 @@ class ProConnectorProcessView(View):
     This view shows one unprocessed ``InterestedProfessional`` at a time with all
     known details, research links, and an AI-drafted (editable) intro email.
     Staff either send the (edited) email -- which CCs the professional contact
-    address and records the send -- or skip the record. Either action advances to
-    the next unprocessed record. Nothing is sent automatically.
+    address and records the send -- queue it to go out during the recipient's
+    likely business hours, or skip the record. Any action advances to the next
+    unprocessed record. Nothing is sent automatically.
     """
 
     template_name = "proconnector.html"
@@ -514,6 +518,7 @@ class ProConnectorProcessView(View):
             "skip_reason": skip_reason,
             "error": error,
             "remaining_count": remaining_interested_professionals_count(),
+            "send_window_hint": describe_send_window(pro.phone_number),
         }
         return render(request, self.template_name, context, status=status)
 
@@ -556,37 +561,28 @@ class ProConnectorProcessView(View):
             )
             return redirect("proconnector_process")
 
-        if action == "send":
-            body = (request.POST.get("email_body") or "").strip()
-            subject = (
-                request.POST.get("subject") or ""
-            ).strip() or PROCONNECTOR_INTRO_SUBJECT
-            skip_reason = (request.POST.get("skip_reason") or "").strip()
-            if not body:
-                return self._render_record(
-                    request,
-                    pro,
-                    draft=request.POST.get("email_body", ""),
-                    subject=subject,
-                    skip_reason=skip_reason,
-                    error="Email body cannot be empty.",
-                    status=400,
-                )
-            if not is_sendable_email(pro.email):
-                return self._render_record(
-                    request,
-                    pro,
-                    draft=body,
-                    subject=subject,
-                    skip_reason=skip_reason,
-                    error=f"{pro.email} is not a sendable address; cannot send.",
-                    status=400,
-                )
+        # "send" delivers now; "queue" defers to the recipient's likely business
+        # hours. They share validation and edit-preserving error handling.
+        if action in ("send", "queue"):
+            validated = self._validated_intro(request, pro)
+            if isinstance(validated, HttpResponse):
+                return validated
+            body, subject, skip_reason = validated
+            deliver: Callable[..., Any]
+            mark: Callable[[str, str], int]
+            if action == "send":
+                deliver = send_proconnector_intro_email
+                mark = mark_email_sent
+                verb, failed_msg = "sent", "Failed to send the email."
+            else:
+                deliver = queue_proconnector_intro_email
+                mark = mark_email_queued
+                verb, failed_msg = "queued", "Failed to queue the email."
             try:
-                send_proconnector_intro_email(pro, subject=subject, body=body)
+                deliver(pro, subject=subject, body=body)
             except Exception as e:
                 logger.opt(exception=True).error(
-                    f"Failed to send pro-connector intro to "
+                    f"Failed to {action} pro-connector intro to "
                     f"{mask_email_for_logging(pro.email)}: {e}"
                 )
                 # Do NOT mark attempted on failure; let staff retry the record.
@@ -598,20 +594,56 @@ class ProConnectorProcessView(View):
                     draft=body,
                     subject=subject,
                     skip_reason=skip_reason,
-                    error="Failed to send the email. The error has been logged; please try again.",
+                    error=f"{failed_msg} The error has been logged; please try again.",
                     status=500,
                 )
-            # Record the send on every signup sharing this email so duplicate
-            # records are resolved together and never resurface in the queue.
-            mark_email_sent(pro.email, body)
+            # Record on every signup sharing this email so duplicate records are
+            # resolved together and never resurface in the queue.
+            mark(pro.email, body)
             logger.info(
-                f"Staff user {request.user.username} sent pro-connector intro to "
+                f"Staff user {request.user.username} {verb} pro-connector intro to "
                 f"InterestedProfessional {pro.id} ({mask_email_for_logging(pro.email)})"
             )
             return redirect("proconnector_process")
 
         # Unknown / missing action -- re-render the current record.
         return self._render_record(request, pro, error="Unknown action.", status=400)
+
+    def _validated_intro(
+        self, request, pro: InterestedProfessional
+    ) -> Union[Tuple[str, str, str], HttpResponse]:
+        """Validate the submitted intro for send/queue.
+
+        Returns ``(body, subject, skip_reason)`` when valid, or an error
+        ``HttpResponse`` (re-rendering the record with the staff edits preserved)
+        when the body is empty or the recipient address is unsendable.
+        """
+        body = (request.POST.get("email_body") or "").strip()
+        subject = (
+            request.POST.get("subject") or ""
+        ).strip() or PROCONNECTOR_INTRO_SUBJECT
+        skip_reason = (request.POST.get("skip_reason") or "").strip()
+        if not body:
+            return self._render_record(
+                request,
+                pro,
+                draft=request.POST.get("email_body", ""),
+                subject=subject,
+                skip_reason=skip_reason,
+                error="Email body cannot be empty.",
+                status=400,
+            )
+        if not is_sendable_email(pro.email):
+            return self._render_record(
+                request,
+                pro,
+                draft=body,
+                subject=subject,
+                skip_reason=skip_reason,
+                error=f"{pro.email} is not a sendable address; cannot send.",
+                status=400,
+            )
+        return body, subject, skip_reason
 
 
 class _CSVEcho:
