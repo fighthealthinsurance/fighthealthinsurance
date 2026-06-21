@@ -67,6 +67,71 @@ The app needs an ML backend to generate appeals. Options:
    ```
    Note: Requires a GPU (3090 or equivalent).
 
+3. **Hosted generative models (Azure, Anthropic, Groq, …)**: Set the relevant
+   API keys (see below). These external models are used when `use_external=True`
+   (e.g. premium/chooser workflows).
+
+### External & Azure Generative Models
+
+The router auto-discovers any external backend whose API key (and, for Azure,
+endpoint) is configured. Each model is registered under a friendly name that is
+recorded for usage tracking in both the regular appeal workflow and the chooser
+(e.g. `azure-openai/gpt-5`, `azure-anthropic/claude-opus-4-8`,
+`anthropic/claude-opus-4-8`). Configured names are printed in the
+`All loaded models` line at startup.
+
+| Provider | Required env vars | Friendly name prefix |
+| --- | --- | --- |
+| Azure OpenAI (GPT) | `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT` | `azure-openai/` |
+| Azure AI Foundry (Claude) | `AZURE_ANTHROPIC_API_KEY`, `AZURE_ANTHROPIC_ENDPOINT` | `azure-anthropic/` |
+| Anthropic (direct) | `ANTHROPIC_API_KEY` | `anthropic/` |
+| Groq | `GROQ_API_KEY` | `groq/` |
+| DeepInfra | `DEEPINFRA_API` | (model id) |
+| Perplexity (citations) | `PERPLEXITY_API` | `sonar` |
+
+**Set up Azure-hosted models (Claude & OpenAI):**
+
+1. In the [Azure AI Foundry](https://ai.azure.com/) / Azure OpenAI portal, create
+   a resource and **deploy** the model(s) you want (e.g. `gpt-5`,
+   `claude-opus-4-8`). Note the *deployment name* — that is the model id sent on
+   the wire.
+2. Copy the resource's **API key** and endpoint. The two providers use different
+   API surfaces:
+   - **Azure OpenAI (GPT)** is OpenAI-compatible — use the v1 base URL *without*
+     a trailing `/chat/completions`, e.g.
+     `https://my-resource.openai.azure.com/openai/v1`.
+   - **Azure AI Foundry (Claude)** uses the native Anthropic **Messages API** —
+     use the base URL ending in `/anthropic`, e.g.
+     `https://my-resource.services.ai.azure.com/anthropic` (the `/v1/messages`
+     path is appended automatically).
+3. Export the variables (or add them to `.env`):
+   ```bash
+   # Azure OpenAI (GPT family)
+   export AZURE_OPENAI_API_KEY=...
+   export AZURE_OPENAI_ENDPOINT=https://my-resource.openai.azure.com/openai/v1
+
+   # Azure AI Foundry (Claude family)
+   export AZURE_ANTHROPIC_API_KEY=...
+   export AZURE_ANTHROPIC_ENDPOINT=https://my-resource.services.ai.azure.com/anthropic
+   ```
+4. By default the latest models are exposed (Azure OpenAI: `gpt-4.1-mini`,
+   `gpt-5-mini`, `gpt-5`; Azure Claude: `claude-haiku-4-5`, `claude-sonnet-4-6`,
+   `claude-opus-4-8`). If your Azure *deployment names* differ from these model
+   ids, list them explicitly with `AZURE_OPENAI_MODELS` /
+   `AZURE_ANTHROPIC_MODELS` (comma-separated).
+
+**Restricting which remote models load:** Set `ENABLED_REMOTE_MODELS` to a
+comma-separated list of friendly names to enable *only* those **remote**
+generation models. **Always enabled** regardless of this setting: local/internal
+models (e.g. `fhi-legacy`, the self-hosted backends) and context-only models
+(e.g. Perplexity `sonar` used for citations). When the variable is unset (the
+default), every configured model is enabled.
+```bash
+# Of the remote providers, load only Azure Opus and Azure GPT-5
+# (local models still load):
+export ENABLED_REMOTE_MODELS="azure-anthropic/claude-opus-4-8,azure-openai/gpt-5"
+```
+
 ### Troubleshooting
 
 If you see `django.core.exceptions.AppRegistryNotReady`, make sure you're using Python 3.10+.

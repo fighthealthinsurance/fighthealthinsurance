@@ -20,7 +20,7 @@ import aiohttp
 # Set up environment before importing RemoteGroq
 os.environ.setdefault("GROQ_API_KEY", "test-api-key")
 
-from fighthealthinsurance.ml.ml_models import RemoteGroq
+from fighthealthinsurance.ml.ml_models import RemoteGroq, RemoteFullOpenLike
 from fighthealthinsurance.utils import RateLimiter
 
 
@@ -269,7 +269,7 @@ class TestRemoteGroqInfer(unittest.TestCase):
 
         # Mock parent _infer to raise 429
         with patch.object(
-            RemoteGroq.__bases__[0], "_infer", new_callable=AsyncMock, side_effect=error
+            RemoteFullOpenLike, "_infer", new_callable=AsyncMock, side_effect=error
         ):
             result = await model._infer(
                 system_prompts=["You are helpful."], prompt="Test prompt"
@@ -303,7 +303,7 @@ class TestRemoteGroqInfer(unittest.TestCase):
 
         # Mock parent _infer to raise 429
         with patch.object(
-            RemoteGroq.__bases__[0], "_infer", new_callable=AsyncMock, side_effect=error
+            RemoteFullOpenLike, "_infer", new_callable=AsyncMock, side_effect=error
         ):
             result = await model._infer(
                 system_prompts=["You are helpful."], prompt="Test prompt"
@@ -339,7 +339,7 @@ class TestRemoteGroqInfer(unittest.TestCase):
 
         # Mock parent _infer to raise 429
         with patch.object(
-            RemoteGroq.__bases__[0], "_infer", new_callable=AsyncMock, side_effect=error
+            RemoteFullOpenLike, "_infer", new_callable=AsyncMock, side_effect=error
         ):
             result = await model._infer(
                 system_prompts=["You are helpful."], prompt="Test prompt"

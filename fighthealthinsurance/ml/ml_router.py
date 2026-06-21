@@ -27,6 +27,12 @@ class MLRouter(object):
         self.external_models_by_cost = []
         self.context_only_models_by_cost = []
         logger.debug("MLRouter: starting model registration")
+        enabled_models = self._enabled_model_names()
+        if enabled_models is not None:
+            logger.info(
+                f"MLRouter: ENABLED_REMOTE_MODELS set; only enabling "
+                f"{sorted(enabled_models)}"
+            )
         building_internal_models_by_cost = []
         building_external_models_by_cost = []
         building_all_models_by_cost = []
@@ -39,6 +45,38 @@ class MLRouter(object):
                 for m in models:
                     if m.model is None:
                         m.model = backend(model=m.internal_name)
+                    # Honor the ENABLED_REMOTE_MODELS allow-list (if set): only
+                    # register a *remote* generation model whose friendly name
+                    # (or internal name) is listed. Always-enabled regardless of
+                    # the allow-list: local/internal models, and context-only
+                    # models (e.g. Perplexity citations) which are a separate
+                    # special-purpose pool. When the variable is unset, every
+                    # model is enabled.
+                    if (
+                        enabled_models is not None
+                        and m.model.external
+                        and not m.model.context_only
+                        and m.name not in enabled_models
+                        and m.internal_name not in enabled_models
+                    ):
+                        logger.debug(
+                            f"MLRouter: skipping disabled remote model {m.name} "
+                            f"(not in ENABLED_REMOTE_MODELS)"
+                        )
+                        continue
+                    # Stamp the friendly tracking name onto the instance so
+                    # consumers that hold a model *instance* (e.g. the chooser
+                    # in chooser_tasks.py) record this stable, human-readable
+                    # name instead of a raw object repr. The name also matches
+                    # the models_by_name keys used by the regular workflow.
+                    if getattr(m.model, "name", None) is None:
+                        try:
+                            m.model.name = m.name
+                        except Exception as e:
+                            logger.debug(
+                                f"MLRouter: could not stamp name on "
+                                f"{m.internal_name}: {e}"
+                            )
                     # Context-only models (e.g. Perplexity) are reserved for
                     # building context such as citations and must never appear
                     # in the general generation pools. They remain reachable by
@@ -90,6 +128,26 @@ class MLRouter(object):
         logger.debug(
             f"Built {self} with i:{self.internal_models_by_cost} a:{self.all_models_by_cost}"
         )
+
+    @staticmethod
+    def _enabled_model_names() -> Optional[set[str]]:
+        """Parse the ``ENABLED_REMOTE_MODELS`` allow-list.
+
+        Returns a set of enabled *remote* model names (friendly names as shown
+        in the "All loaded models" log, and/or internal names) when the
+        environment variable is set and non-empty, or ``None`` to mean "no
+        restriction" (the default when the variable is absent/blank). Entries
+        are comma-separated; surrounding whitespace is ignored.
+
+        The allow-list only gates remote (external) generation models.
+        Local/internal models and context-only models (e.g. Perplexity
+        citations) are always enabled regardless of this setting.
+        """
+        raw = os.getenv("ENABLED_REMOTE_MODELS")
+        if not raw or not raw.strip():
+            return None
+        names = {n.strip() for n in raw.split(",") if n.strip()}
+        return names or None
 
     @staticmethod
     def _keep_single_groq(models: Sequence[RemoteModelLike]) -> list[RemoteModelLike]:

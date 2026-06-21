@@ -377,6 +377,13 @@ def repetition_penalty(text: str, min_block_size: int = 3) -> float:
 class RemoteModelLike(DenialBase):
     """Base class for remote ML model backends used for chat and appeal generation."""
 
+    # Friendly tracking name, stamped by MLRouter during model registration so
+    # that consumers holding a model *instance* (e.g. the chooser in
+    # chooser_tasks.py) can record the same human-readable name the router uses
+    # (matches ModelDescription.name / ml_router.models_by_name keys) instead of
+    # an opaque ``<...object at 0x...>`` repr. ``None`` until the router stamps it.
+    name: Optional[str] = None
+
     # Keywords that indicate Medicaid/Medicare-related conversation
     # Note: All keywords should be lowercase for case-insensitive matching
     MEDICAID_KEYWORDS: ClassVar[List[str]] = [
@@ -460,6 +467,22 @@ class RemoteModelLike(DenialBase):
         "government health",
         "public health insurance",
     ]
+
+    def __str__(self) -> str:
+        """Render as the friendly tracking name (stamped by MLRouter), falling
+        back to a ``Class(model)`` descriptor so logs and any ``str(model)``
+        consumer never surface an opaque ``<...object at 0x...>`` repr."""
+        name = getattr(self, "name", None)
+        if name:
+            return str(name)
+        model = getattr(self, "model", None)
+        if isinstance(model, str) and model:
+            return f"{type(self).__name__}({model})"
+        return type(self).__name__
+
+    def __repr__(self) -> str:
+        """Same as ``__str__`` (friendly name / descriptor, never an object id)."""
+        return self.__str__()
 
     def quality(self) -> int:
         return 100
@@ -1972,21 +1995,12 @@ class RemoteOpenLike(RemoteModel):
         json_result = {}
         try:
             async with aiohttp.ClientSession() as s:
-                context_extra = ""
-                if patient_context is not None and len(patient_context) > 3:
-                    patient_context_max = int(self.max_len / 2)
-                    max_len = self.max_len - min(
-                        len(patient_context), patient_context_max
-                    )
-                    context_extra = f"When answering the following question you can use the patient context {patient_context[0:patient_context_max]}."
-                if pubmed_context is not None:
-                    context_extra += f"You can also use this context from pubmed: {pubmed_context} and you can include the DOI number in the appeal."
-                if plan_context is not None and len(plan_context) > 3:
-                    context_extra += f"For answering the question you can use this context about the plan {plan_context}"
-                if ml_citations_context is not None:
-                    context_extra += f"You can also use this context from citations: {ml_citations_context}."
-                if len(context_extra) > 0:
-                    context_extra = f"System context: {context_extra}\n\n"
+                context_extra = self._build_context_extra(
+                    patient_context,
+                    pubmed_context,
+                    plan_context,
+                    ml_citations_context,
+                )
 
                 # Detect if backend supports system messages
                 # Some backends (e.g., Mistral VLLM) do not support the system role; in those cases, embed the system prompt in the user message.
@@ -2156,6 +2170,33 @@ class RemoteOpenLike(RemoteModel):
             formatted_citations.append(str(citation))
 
         return formatted_citations
+
+    def _build_context_extra(
+        self,
+        patient_context: Optional[str] = None,
+        pubmed_context: Optional[str] = None,
+        plan_context: Optional[str] = None,
+        ml_citations_context: Optional[List[str]] = None,
+    ) -> str:
+        """Assemble the optional ``System context: …`` preamble injected into the
+        user turn. Shared by the OpenAI-compatible path and the Anthropic
+        Messages path (``RemoteAzureClaude``) so context handling stays in one
+        place."""
+        context_extra = ""
+        if patient_context is not None and len(patient_context) > 3:
+            patient_context_max = int(self.max_len / 2)
+            context_extra = f"When answering the following question you can use the patient context {patient_context[0:patient_context_max]}."
+        if pubmed_context is not None:
+            context_extra += f"You can also use this context from pubmed: {pubmed_context} and you can include the DOI number in the appeal."
+        if plan_context is not None and len(plan_context) > 3:
+            context_extra += f"For answering the question you can use this context about the plan {plan_context}"
+        if ml_citations_context is not None:
+            context_extra += (
+                f"You can also use this context from citations: {ml_citations_context}."
+            )
+        if len(context_extra) > 0:
+            context_extra = f"System context: {context_extra}\n\n"
+        return context_extra
 
 
 class RemoteFullOpenLike(RemoteOpenLike):
@@ -2795,7 +2836,140 @@ class DeepInfra(RemoteFullOpenLike):
         ]
 
 
-class RemoteGroq(RemoteFullOpenLike):
+class RateLimitedRemoteOpenLike(RemoteFullOpenLike):
+    """``RemoteFullOpenLike`` with shared per-model rate limiting and 429
+    back-off, used by the external paid backends (Groq, Anthropic, Azure).
+
+    Concrete subclasses declare their own ``_rate_limiters`` dict and
+    ``_rate_limiter_lock`` (so providers keep separate rate-limit state) and set
+    ``PROVIDER_LABEL`` for rate-limiter names and 429 log messages.
+    """
+
+    # Subclasses override these with their own instances.
+    _rate_limiters: ClassVar[dict[str, RateLimiter]] = {}
+    _rate_limiter_lock: ClassVar[threading.Lock] = threading.Lock()
+    PROVIDER_LABEL: ClassVar[str] = "remote"
+
+    # Re-raise ClientResponseError from the parent _infer so we can detect 429.
+    _propagate_http_errors: ClassVar[bool] = True
+
+    @classmethod
+    def _ensure_rate_limiter(cls, model: str) -> None:
+        """Lazily create a per-model rate limiter (thread-safe)."""
+        if model not in cls._rate_limiters:
+            with cls._rate_limiter_lock:
+                if model not in cls._rate_limiters:
+                    cls._rate_limiters[model] = RateLimiter(
+                        name=f"{cls.PROVIDER_LABEL}-{model}",
+                    )
+                    logger.info(
+                        f"Created rate limiter for {cls.PROVIDER_LABEL}-{model}"
+                    )
+
+    @property
+    def rate_limiter(self) -> RateLimiter:
+        """Get the rate limiter for this model instance."""
+        return self._rate_limiters[self.model]
+
+    def _retry_after_seconds(
+        self, e: aiohttp.ClientResponseError, default: float = 60.0
+    ) -> float:
+        """Parse and clamp (1-600s) a Retry-After header from a 429 response."""
+        retry_after = default
+        headers = getattr(e, "headers", None)
+        if headers:
+            retry_header = headers.get("Retry-After", "")
+            if retry_header:
+                try:
+                    retry_after = float(retry_header)
+                except ValueError:
+                    logger.debug(
+                        f"{type(self).__name__}._infer: Non-numeric Retry-After "
+                        f"header '{retry_header}' for {self.model}; using default "
+                        f"{retry_after}s"
+                    )
+        return max(1.0, min(retry_after, 600.0))
+
+    async def _infer(
+        self,
+        system_prompts: list[str],
+        prompt: str,
+        patient_context: Optional[str] = None,
+        plan_context: Optional[str] = None,
+        pubmed_context: Optional[str] = None,
+        ml_citations_context: Optional[List[str]] = None,
+        history: Optional[List[dict[str, str]]] = None,
+        temperature: float = 0.7,
+    ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
+        """Inference with rate-limit gating and 429 back-off.
+
+        Skips (returns None) when backing off; on a 429 marks the limiter
+        exhausted honoring Retry-After so other backends can take over; other
+        HTTP errors propagate.
+        """
+        if not self.rate_limiter.can_request():
+            logger.debug(
+                f"{type(self).__name__}._infer: Skipping {self.model} - backing off"
+            )
+            return None
+        try:
+            return await self._do_infer(
+                system_prompts=system_prompts,
+                prompt=prompt,
+                patient_context=patient_context,
+                plan_context=plan_context,
+                pubmed_context=pubmed_context,
+                ml_citations_context=ml_citations_context,
+                history=history,
+                temperature=temperature,
+            )
+        except aiohttp.ClientResponseError as e:
+            if e.status == 429:
+                retry_after = self._retry_after_seconds(e)
+                self.rate_limiter.mark_exhausted(retry_after)
+                logger.warning(
+                    f"{type(self).__name__}._infer: 429 from {self.PROVIDER_LABEL} "
+                    f"for {self.model}, backing off for {retry_after}s"
+                )
+                return None
+            raise
+        except Exception as e:
+            logger.warning(f"{type(self).__name__}._infer error for {self.model}: {e}")
+            return None
+
+    async def _do_infer(
+        self,
+        system_prompts: list[str],
+        prompt: str,
+        patient_context: Optional[str] = None,
+        plan_context: Optional[str] = None,
+        pubmed_context: Optional[str] = None,
+        ml_citations_context: Optional[List[str]] = None,
+        history: Optional[List[dict[str, str]]] = None,
+        temperature: float = 0.7,
+    ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
+        """The actual transport call wrapped by ``_infer``'s rate-limit gating
+        and 429 back-off.
+
+        Defaults to the OpenAI-compatible path (``RemoteOpenLike._infer``).
+        Subclasses whose provider speaks a different wire format (e.g.
+        ``RemoteAzureClaude`` with the Anthropic Messages API) override this and
+        raise ``aiohttp.ClientResponseError`` on HTTP errors so the shared 429
+        handling in ``_infer`` still applies.
+        """
+        return await super()._infer(
+            system_prompts=system_prompts,
+            prompt=prompt,
+            patient_context=patient_context,
+            plan_context=plan_context,
+            pubmed_context=pubmed_context,
+            ml_citations_context=ml_citations_context,
+            history=history,
+            temperature=temperature,
+        )
+
+
+class RemoteGroq(RateLimitedRemoteOpenLike):
     """
     Groq API backend for ultra-fast LLM inference.
 
@@ -2831,12 +3005,11 @@ class RemoteGroq(RemoteFullOpenLike):
         },
     }
 
-    # Shared rate limiters per model (class-level, initialized lazily)
+    # Per-provider rate-limit state (separate from other providers); the
+    # limiter logic and 429 back-off live in RateLimitedRemoteOpenLike.
     _rate_limiters: ClassVar[dict[str, RateLimiter]] = {}
     _rate_limiter_lock: ClassVar[threading.Lock] = threading.Lock()
-
-    # Re-raise ClientResponseError from the parent _infer so we can detect 429.
-    _propagate_http_errors: ClassVar[bool] = True
+    PROVIDER_LABEL: ClassVar[str] = "Groq"
 
     def __init__(self, model: str, dual_mode: bool = False):
         """
@@ -2867,26 +3040,6 @@ class RemoteGroq(RemoteFullOpenLike):
             f"RemoteGroq initialized: model={model}, "
             f"tier={model_spec.get('tier', 'unknown')}"
         )
-
-    @classmethod
-    def _ensure_rate_limiter(cls, model: str) -> None:
-        """
-        Ensure a rate limiter exists for the given model.
-        Creates one if it doesn't exist (thread-safe).
-        """
-        if model not in cls._rate_limiters:
-            with cls._rate_limiter_lock:
-                # Double-check after acquiring lock
-                if model not in cls._rate_limiters:
-                    cls._rate_limiters[model] = RateLimiter(
-                        name=f"groq-{model}",
-                    )
-                    logger.info(f"Created rate limiter for groq-{model}")
-
-    @property
-    def rate_limiter(self) -> RateLimiter:
-        """Get the rate limiter for this model instance."""
-        return self._rate_limiters[self.model]
 
     @property
     def supports_system(self):
@@ -2953,88 +3106,6 @@ class RemoteGroq(RemoteFullOpenLike):
         logger.warning("Groq model selection: No models available (all rate limited)")
         return None
 
-    async def _infer(
-        self,
-        system_prompts: list[str],
-        prompt: str,
-        patient_context: Optional[str] = None,
-        plan_context: Optional[str] = None,
-        pubmed_context: Optional[str] = None,
-        ml_citations_context: Optional[List[str]] = None,
-        history: Optional[List[dict[str, str]]] = None,
-        temperature: float = 0.7,
-    ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
-        """
-        Perform inference with rate limit checking and 429 handling.
-
-        Checks the rate limiter before making the API call. If rate limited,
-        returns None immediately to allow fallback to other backends.
-        On 429 response, marks the limiter as exhausted and returns None.
-
-        Args:
-            system_prompts: System prompts for the model
-            prompt: User prompt
-            patient_context: Optional patient health context
-            plan_context: Optional insurance plan context
-            pubmed_context: Optional PubMed citations context
-            ml_citations_context: Optional ML-generated citations
-            history: Optional conversation history
-            temperature: Optional temperature override
-
-        Returns:
-            Tuple of (response_text, context_parts) or None if rate limited/failed
-        """
-        # Check if we're backing off from a previous 429
-        if not self.rate_limiter.can_request():
-            logger.debug(f"RemoteGroq._infer: Skipping {self.model} - backing off")
-            return None
-
-        try:
-            # Call parent implementation
-            result = await super()._infer(
-                system_prompts=system_prompts,
-                prompt=prompt,
-                patient_context=patient_context,
-                plan_context=plan_context,
-                pubmed_context=pubmed_context,
-                ml_citations_context=ml_citations_context,
-                history=history,
-                temperature=temperature,
-            )
-            return result
-
-        except aiohttp.ClientResponseError as e:
-            if e.status == 429:
-                # Rate limited by Groq - parse Retry-After if available
-                retry_after = 60.0  # Default fallback
-                if hasattr(e, "headers") and e.headers:
-                    retry_header = e.headers.get("Retry-After", "")
-                    if retry_header:
-                        try:
-                            # Most APIs send delay-seconds (e.g., "30")
-                            retry_after = float(retry_header)
-                        except ValueError:
-                            # If not a number, use default (HTTP-date format is rare)
-                            logger.debug(
-                                f"RemoteGroq._infer: Non-numeric Retry-After header "
-                                f"'{retry_header}' for {self.model}; using default {retry_after}s"
-                            )
-
-                retry_after = max(1.0, min(retry_after, 600.0))
-
-                self.rate_limiter.mark_exhausted(retry_after)
-                logger.warning(
-                    f"RemoteGroq._infer: 429 from Groq for {self.model}, "
-                    f"backing off for {retry_after}s"
-                )
-                return None
-            else:
-                # Re-raise other HTTP errors
-                raise
-        except Exception as e:
-            logger.warning(f"RemoteGroq._infer error for {self.model}: {e}")
-            return None
-
     @classmethod
     def models(cls) -> List[ModelDescription]:
         """
@@ -3073,7 +3144,7 @@ class RemoteGroq(RemoteFullOpenLike):
         return self.rate_limiter.can_request()
 
 
-class RemoteAnthropic(RemoteFullOpenLike):
+class RemoteAnthropic(RateLimitedRemoteOpenLike):
     """
     Anthropic Claude API backend.
 
@@ -3100,18 +3171,17 @@ class RemoteAnthropic(RemoteFullOpenLike):
             "tier": "quality",
             "description": "Claude Sonnet 4.6 - balanced quality and speed",
         },
-        "claude-opus-4-7": {
+        "claude-opus-4-8": {
             "tier": "premium",
-            "description": "Claude Opus 4.7 - highest quality, most capable",
+            "description": "Claude Opus 4.8 - highest quality, most capable",
         },
     }
 
-    # Shared rate limiters per model (class-level, initialized lazily)
+    # Per-provider rate-limit state (separate from other providers); the
+    # limiter logic and 429 back-off live in RateLimitedRemoteOpenLike.
     _rate_limiters: ClassVar[dict[str, RateLimiter]] = {}
     _rate_limiter_lock: ClassVar[threading.Lock] = threading.Lock()
-
-    # Re-raise ClientResponseError from the parent _infer so we can detect 429.
-    _propagate_http_errors: ClassVar[bool] = True
+    PROVIDER_LABEL: ClassVar[str] = "Anthropic"
 
     def __init__(self, model: str, dual_mode: bool = False):
         """
@@ -3142,25 +3212,6 @@ class RemoteAnthropic(RemoteFullOpenLike):
             f"tier={model_spec.get('tier', 'unknown')}"
         )
 
-    @classmethod
-    def _ensure_rate_limiter(cls, model: str) -> None:
-        """
-        Ensure a rate limiter exists for the given model.
-        Creates one if it doesn't exist (thread-safe).
-        """
-        if model not in cls._rate_limiters:
-            with cls._rate_limiter_lock:
-                if model not in cls._rate_limiters:
-                    cls._rate_limiters[model] = RateLimiter(
-                        name=f"anthropic-{model}",
-                    )
-                    logger.info(f"Created rate limiter for anthropic-{model}")
-
-    @property
-    def rate_limiter(self) -> RateLimiter:
-        """Get the rate limiter for this model instance."""
-        return self._rate_limiters[self.model]
-
     @property
     def supports_system(self):
         return True
@@ -3172,67 +3223,6 @@ class RemoteAnthropic(RemoteFullOpenLike):
     def get_tier(self) -> str:
         """Get the tier (speed/quality/premium) for this model."""
         return self.MODEL_SPECS.get(self.model, {}).get("tier", "unknown")
-
-    async def _infer(
-        self,
-        system_prompts: list[str],
-        prompt: str,
-        patient_context: Optional[str] = None,
-        plan_context: Optional[str] = None,
-        pubmed_context: Optional[str] = None,
-        ml_citations_context: Optional[List[str]] = None,
-        history: Optional[List[dict[str, str]]] = None,
-        temperature: float = 0.7,
-    ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
-        """
-        Perform inference with rate limit checking and 429 handling.
-
-        Checks the rate limiter before making the API call. If rate limited,
-        returns None immediately to allow fallback to other backends.
-        On 429 response, marks the limiter as exhausted and returns None.
-        """
-        if not self.rate_limiter.can_request():
-            logger.debug(f"RemoteAnthropic._infer: Skipping {self.model} - backing off")
-            return None
-
-        try:
-            return await super()._infer(
-                system_prompts=system_prompts,
-                prompt=prompt,
-                patient_context=patient_context,
-                plan_context=plan_context,
-                pubmed_context=pubmed_context,
-                ml_citations_context=ml_citations_context,
-                history=history,
-                temperature=temperature,
-            )
-        except aiohttp.ClientResponseError as e:
-            if e.status == 429:
-                retry_after = 60.0
-                if hasattr(e, "headers") and e.headers:
-                    retry_header = e.headers.get("Retry-After", "")
-                    if retry_header:
-                        try:
-                            retry_after = float(retry_header)
-                        except ValueError:
-                            logger.debug(
-                                f"RemoteAnthropic._infer: Non-numeric Retry-After header "
-                                f"'{retry_header}' for {self.model}; using default {retry_after}s"
-                            )
-
-                retry_after = max(1.0, min(retry_after, 600.0))
-
-                self.rate_limiter.mark_exhausted(retry_after)
-                logger.warning(
-                    f"RemoteAnthropic._infer: 429 from Anthropic for {self.model}, "
-                    f"backing off for {retry_after}s"
-                )
-                return None
-            else:
-                raise
-        except Exception as e:
-            logger.warning(f"RemoteAnthropic._infer error for {self.model}: {e}")
-            return None
 
     @classmethod
     def models(cls) -> List[ModelDescription]:
@@ -3261,8 +3251,8 @@ class RemoteAnthropic(RemoteFullOpenLike):
             ),
             ModelDescription(
                 cost=130,
-                name="anthropic/claude-opus-4-7",
-                internal_name="claude-opus-4-7",
+                name="anthropic/claude-opus-4-8",
+                internal_name="claude-opus-4-8",
             ),
         ]
 
@@ -3277,6 +3267,346 @@ class RemoteAnthropic(RemoteFullOpenLike):
         if not os.getenv("ANTHROPIC_API_KEY"):
             return False
         return self.rate_limiter.can_request()
+
+
+class RemoteAzureOpenLike(RateLimitedRemoteOpenLike):
+    """Shared base for Azure-hosted backends configured from environment vars.
+
+    Azure OpenAI (GPT) deployments speak an OpenAI-compatible
+    ``/chat/completions`` surface with Bearer auth — the wire format
+    ``RemoteOpenLike`` already speaks — so ``RemoteAzureOpenAI`` uses this base
+    as-is. Claude on Azure AI Foundry instead answers only the native Anthropic
+    Messages API, so ``RemoteAzureClaude`` reuses the shared configuration and
+    rate limiting here but overrides the transport (``_do_infer``). Azure
+    resources and deployments are tenant-specific, so the endpoint, key, and
+    (latest-default) model list come from environment variables. Concrete
+    subclasses set the ``*_ENV`` names, ``NAME_PREFIX``, ``MAX_LEN`` and
+    ``DEFAULT_MODELS``, and each declares its own
+    ``_rate_limiters``/``_rate_limiter_lock``.
+    """
+
+    # --- Subclass configuration (overridden by concrete providers) --------
+    API_KEY_ENV: ClassVar[str] = ""
+    ENDPOINT_ENV: ClassVar[str] = ""
+    MODELS_ENV: ClassVar[str] = ""
+    NAME_PREFIX: ClassVar[str] = "azure"
+    PROVIDER_LABEL: ClassVar[str] = "Azure"
+    # Example endpoint shown in the "missing endpoint" error; each provider
+    # overrides this since Azure OpenAI and Azure AI Foundry use different hosts.
+    ENDPOINT_EXAMPLE: ClassVar[str] = "https://my-resource.services.ai.azure.com"
+    MAX_LEN: ClassVar[int] = 128000
+    # Ordered cheapest -> most expensive: (deployment_name, cost, tier).
+    DEFAULT_MODELS: ClassVar[List[Tuple[str, int, str]]] = []
+
+    def __init__(self, model: str, dual_mode: bool = False):
+        """Configure the backend from the subclass's env vars (API key +
+        endpoint), normalize the endpoint, and create the rate limiter.
+        Raises EnvironmentError if the key or endpoint is missing."""
+        api_key = os.getenv(self.API_KEY_ENV) if self.API_KEY_ENV else None
+        endpoint = os.getenv(self.ENDPOINT_ENV) if self.ENDPOINT_ENV else None
+        if not api_key:
+            raise EnvironmentError(
+                f"No API key found for {self.PROVIDER_LABEL}. Please set the "
+                f"{self.API_KEY_ENV} environment variable in your environment "
+                f"or .env file."
+            )
+        if not endpoint:
+            raise EnvironmentError(
+                f"No endpoint found for {self.PROVIDER_LABEL}. Please set the "
+                f"{self.ENDPOINT_ENV} environment variable (e.g. "
+                f"{self.ENDPOINT_EXAMPLE})."
+            )
+
+        api_base = self._normalize_endpoint(endpoint)
+        super().__init__(
+            api_base, api_key, model=model, dual_mode=dual_mode, max_len=self.MAX_LEN
+        )
+
+        self._ensure_rate_limiter(model)
+
+        tier = self.get_tier()
+        logger.debug(
+            f"{type(self).__name__} initialized: model={model}, tier={tier}, "
+            f"endpoint={api_base}"
+        )
+
+    @staticmethod
+    def _normalize_endpoint(endpoint: str) -> str:
+        """Strip trailing slashes and a trailing ``/chat/completions`` (which
+        ``_infer`` re-appends) so either form of the URL works."""
+        e = endpoint.strip().rstrip("/")
+        suffix = "/chat/completions"
+        if e.endswith(suffix):
+            e = e[: -len(suffix)]
+        return e
+
+    @classmethod
+    def _configured_deployments(cls) -> List[Tuple[str, int, str]]:
+        """(deployment, cost, tier) list, honoring the optional ``MODELS_ENV``
+        override (overrides inherit incrementing costs and a ``custom`` tier)."""
+        override = os.getenv(cls.MODELS_ENV) if cls.MODELS_ENV else None
+        if override and override.strip():
+            names = [n.strip() for n in override.split(",") if n.strip()]
+            if not names:
+                # e.g. AZURE_*_MODELS="," — separators only, no real names.
+                # Fall back to defaults rather than silently disabling the
+                # provider with an empty deployment list.
+                logger.warning(
+                    f"{cls.__name__}._configured_deployments: {cls.MODELS_ENV} is "
+                    f"set but contains no valid deployment names; falling back to "
+                    f"defaults"
+                )
+                return list(cls.DEFAULT_MODELS)
+            base_cost = cls.DEFAULT_MODELS[0][1] if cls.DEFAULT_MODELS else 60
+            return [(n, base_cost + i * 10, "custom") for i, n in enumerate(names)]
+        return list(cls.DEFAULT_MODELS)
+
+    @property
+    def supports_system(self):
+        """Azure OpenAI (GPT) deployments accept the OpenAI ``system`` role.
+        (``RemoteAzureClaude`` overrides the transport and passes the system
+        prompt as a top-level Messages field instead.)"""
+        return True
+
+    @property
+    def external(self):
+        """Azure-hosted models are external (paid) backends."""
+        return True
+
+    def get_tier(self) -> str:
+        """Get the tier (speed/quality/premium/custom) for this model."""
+        for deployment, _cost, tier in self._configured_deployments():
+            if deployment == self.model:
+                return tier
+        return "unknown"
+
+    @classmethod
+    def models(cls) -> List[ModelDescription]:
+        """Configured Azure deployments; empty (disabled) unless the base class
+        is subclassed and both the key and endpoint env vars are set."""
+        if not cls.API_KEY_ENV or not cls.ENDPOINT_ENV:
+            return []  # the shared base carries no configuration of its own
+        if not os.getenv(cls.API_KEY_ENV) or not os.getenv(cls.ENDPOINT_ENV):
+            logger.debug(
+                f"{cls.__name__}.models: {cls.API_KEY_ENV}/{cls.ENDPOINT_ENV} "
+                f"not both set, skipping"
+            )
+            return []
+
+        return [
+            ModelDescription(
+                cost=cost,
+                name=f"{cls.NAME_PREFIX}/{deployment}",
+                internal_name=deployment,
+            )
+            for deployment, cost, _tier in cls._configured_deployments()
+        ]
+
+    def model_is_ok(self) -> bool:
+        """Available if env is configured and not rate limited. (No ``/models``
+        query — Azure's compat-layer support varies; fail fast on inference.)"""
+        if self.API_KEY_ENV and not os.getenv(self.API_KEY_ENV):
+            return False
+        if self.ENDPOINT_ENV and not os.getenv(self.ENDPOINT_ENV):
+            return False
+        return self.rate_limiter.can_request()
+
+
+class RemoteAzureOpenAI(RemoteAzureOpenLike):
+    """Azure OpenAI Service (GPT family). Registers as ``azure-openai/<deploy>``.
+
+    Configure AZURE_OPENAI_API_KEY + AZURE_OPENAI_ENDPOINT (the ``/openai/v1``
+    base URL); optionally override the deployment list with AZURE_OPENAI_MODELS.
+    The wire ``model`` is the Azure deployment name. See README / .env.example.
+    """
+
+    API_KEY_ENV: ClassVar[str] = "AZURE_OPENAI_API_KEY"
+    ENDPOINT_ENV: ClassVar[str] = "AZURE_OPENAI_ENDPOINT"
+    MODELS_ENV: ClassVar[str] = "AZURE_OPENAI_MODELS"
+    NAME_PREFIX: ClassVar[str] = "azure-openai"
+    PROVIDER_LABEL: ClassVar[str] = "Azure OpenAI"
+    ENDPOINT_EXAMPLE: ClassVar[str] = "https://my-resource.openai.azure.com/openai/v1"
+    MAX_LEN: ClassVar[int] = 128000
+
+    # Latest broadly-available Azure OpenAI deployments (cheapest -> premium).
+    DEFAULT_MODELS: ClassVar[List[Tuple[str, int, str]]] = [
+        ("gpt-4.1-mini", 55, "speed"),
+        ("gpt-5-mini", 75, "quality"),
+        ("gpt-5", 135, "premium"),
+    ]
+
+    # Per-subclass rate-limit state (do not share across providers).
+    _rate_limiters: ClassVar[dict[str, RateLimiter]] = {}
+    _rate_limiter_lock: ClassVar[threading.Lock] = threading.Lock()
+
+
+class RemoteAzureClaude(RemoteAzureOpenLike):
+    """Claude on Azure AI Foundry. Registers as ``azure-anthropic/<deploy>``
+    (distinct from the direct ``anthropic/`` API so usage tracking can tell them
+    apart). Configure AZURE_ANTHROPIC_API_KEY + AZURE_ANTHROPIC_ENDPOINT;
+    optionally override the deployment list with AZURE_ANTHROPIC_MODELS.
+
+    Unlike Azure OpenAI, Foundry's Claude deployments are **not** exposed over an
+    OpenAI ``/chat/completions`` surface — they answer only the native Anthropic
+    Messages API at ``{endpoint}/v1/messages`` (``x-api-key`` +
+    ``anthropic-version`` auth), per Microsoft's docs. So this subclass keeps the
+    shared config/model-list/rate-limit machinery but overrides the transport
+    (:meth:`_do_infer`) to speak the Messages wire format (system prompt as a
+    top-level field; text returned in ``content`` blocks). HTTP errors still
+    surface as ``aiohttp.ClientResponseError`` so the inherited 429 back-off
+    applies unchanged.
+    """
+
+    API_KEY_ENV: ClassVar[str] = "AZURE_ANTHROPIC_API_KEY"
+    ENDPOINT_ENV: ClassVar[str] = "AZURE_ANTHROPIC_ENDPOINT"
+    MODELS_ENV: ClassVar[str] = "AZURE_ANTHROPIC_MODELS"
+    NAME_PREFIX: ClassVar[str] = "azure-anthropic"
+    PROVIDER_LABEL: ClassVar[str] = "Azure AI Foundry (Claude)"
+    ENDPOINT_EXAMPLE: ClassVar[str] = (
+        "https://my-resource.services.ai.azure.com/anthropic"
+    )
+    MAX_LEN: ClassVar[int] = 200000
+
+    # Anthropic Messages API wire constants.
+    ANTHROPIC_VERSION: ClassVar[str] = "2023-06-01"
+    # The Messages API requires an explicit max output token budget.
+    MAX_OUTPUT_TOKENS: ClassVar[int] = 8192
+
+    # Latest Claude models (cheapest -> premium). Deployment names default to
+    # the canonical model ids; override with AZURE_ANTHROPIC_MODELS if your
+    # Foundry deployments use different names.
+    DEFAULT_MODELS: ClassVar[List[Tuple[str, int, str]]] = [
+        ("claude-haiku-4-5", 55, "speed"),
+        ("claude-sonnet-4-6", 95, "quality"),
+        ("claude-opus-4-8", 135, "premium"),
+    ]
+
+    # Per-subclass rate-limit state (do not share across providers).
+    _rate_limiters: ClassVar[dict[str, RateLimiter]] = {}
+    _rate_limiter_lock: ClassVar[threading.Lock] = threading.Lock()
+
+    @staticmethod
+    def _normalize_endpoint(endpoint: str) -> str:
+        """Normalize to the Foundry Anthropic base (``…/anthropic``); the
+        Messages path ``/v1/messages`` is appended at request time. Accepts the
+        endpoint with or without a trailing ``/v1/messages``, and appends the
+        ``/anthropic`` segment when only the bare resource host was supplied."""
+        e = endpoint.strip().rstrip("/")
+        suffix = "/v1/messages"
+        if e.endswith(suffix):
+            e = e[: -len(suffix)].rstrip("/")
+        if not e.endswith("/anthropic"):
+            e = f"{e}/anthropic"
+        return e
+
+    async def _do_infer(
+        self,
+        system_prompts: list[str],
+        prompt: str,
+        patient_context: Optional[str] = None,
+        plan_context: Optional[str] = None,
+        pubmed_context: Optional[str] = None,
+        ml_citations_context: Optional[List[str]] = None,
+        history: Optional[List[dict[str, str]]] = None,
+        temperature: float = 0.7,
+    ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
+        """Inference via the Anthropic Messages API exposed by Azure AI Foundry.
+
+        Returns the first non-empty completion across ``system_prompts``. HTTP
+        error statuses raise ``aiohttp.ClientResponseError`` (so the caller's
+        429 back-off applies); transport/parse failures return ``None``.
+        """
+        if prompt is None:
+            logger.debug("No prompt supplied; skipping inference")
+            return None
+        # The native Anthropic Messages API caps temperature at 1.0 (vs the
+        # OpenAI surface's 2.0); clamp so a shared router temperature that's
+        # valid for other providers can't trigger a 400 here.
+        temperature = max(0.0, min(temperature, 1.0))
+        context_extra = self._build_context_extra(
+            patient_context,
+            pubmed_context,
+            plan_context,
+            ml_citations_context,
+        )
+        url = f"{self.api_base}/v1/messages"
+        headers = {
+            "x-api-key": self.token or "",
+            "anthropic-version": self.ANTHROPIC_VERSION,
+            "content-type": "application/json",
+        }
+        for system_prompt in system_prompts:
+            messages: List[dict[str, str]] = []
+            if history:
+                messages.extend(history)
+            messages.append(
+                {
+                    "role": "user",
+                    "content": f"{context_extra}\n\n User prompt: {prompt}",
+                }
+            )
+            messages = ensure_message_alternation(messages)
+            cleaned_messages = [
+                {"role": m.get("role"), "content": m.get("content")} for m in messages
+            ]
+            body = {
+                "model": self.model,
+                "max_tokens": self.MAX_OUTPUT_TOKENS,
+                "system": system_prompt,
+                "messages": cleaned_messages,
+                "temperature": temperature,
+            }
+            result = await self._messages_request(url, headers, body)
+            if result and result[0]:
+                return result
+        return None
+
+    async def _messages_request(
+        self, url: str, headers: dict, body: dict
+    ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
+        """POST a single Messages API request (honoring ``self._timeout``) and
+        parse the response. ``raise_for_status`` surfaces HTTP errors as
+        ``aiohttp.ClientResponseError`` so 429s reach the shared back-off."""
+
+        async def _post() -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, headers=headers, json=body) as response:
+                    response.raise_for_status()
+                    json_result = await response.json()
+            return self._parse_messages_response(json_result)
+
+        if self._timeout is not None:
+            try:
+                async with async_timeout(self._timeout):
+                    return await _post()
+            except asyncio.TimeoutError:
+                logger.warning(f"Timed out querying {self}")
+                return None
+        return await _post()
+
+    def _parse_messages_response(
+        self, json_result: dict
+    ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
+        """Extract text from a Messages API response by concatenating its
+        ``text`` content blocks, then apply the same validity check and
+        reasoning-answer extraction as the OpenAI path."""
+        blocks = json_result.get("content") or []
+        text = "".join(
+            block.get("text", "")
+            for block in blocks
+            if isinstance(block, dict) and block.get("type") == "text"
+        )
+        if not text:
+            logger.debug(f"Messages response from {self.model} had no text content")
+            return None
+        if not LLMResponseUtils.is_valid_text(text):
+            logger.error(f"Received non-text response from {self.model}")
+            return None
+        if LLMResponseUtils.is_well_formatted_for_reasoning(text):
+            extracted = LLMResponseUtils.extract_answer(text)
+            if extracted:
+                text = extracted.strip()
+        return (text, [])
 
 
 class TailscaleModelBackend(RemoteFullOpenLike):
