@@ -1005,6 +1005,13 @@ function connectWebSocket(
   done: () => void,
 ) {
   const startWebSocket = () => {
+    // A REST handoff may have been triggered between when this (re)connect
+    // was queued (e.g. ws.onerror's 1s retry firing right as the hard cap
+    // hits) and now. Don't open a parallel socket — REST owns the stream,
+    // and starting an attempt here would also stomp the REST leg's timer.
+    if (handingOffToRest || usingRestFallback) {
+      return;
+    }
     // Start the per-attempt wait timer. connectWebSocket is called
     // recursively for retries, so each invocation gets its own start.
     beginAttempt();
@@ -1151,13 +1158,17 @@ export function doQuery(backend_url: string, data: Map<string, string>, rest_fal
   handingOffToRest = false;
   // Start the aggregate wait clock only on the first call. doQuery
   // recurses on retry via done(), and we want the total to span the
-  // entire user-visible wait, not just the latest retry. Arm the hard
-  // WebSocket deadline alongside it so a slow-but-alive socket can't keep
-  // the user waiting past the budget before we fire the backup REST.
+  // entire user-visible wait, not just the latest retry.
   if (doQueryStartedAtMs === 0) {
     doQueryStartedAtMs = Date.now();
-    armHardTimeout();
   }
+  // Arm the hard WebSocket deadline so a slow-but-alive socket can't keep
+  // the user waiting past the budget before we fire the backup REST.
+  // armHardTimeout() no-ops while a timer is already live, so in-flight
+  // retries keep the original deadline; a fresh pass after done() cleared
+  // it — notably the external-models rerun — gets a new budget instead of
+  // running with no hard timeout at all.
+  armHardTimeout();
   return connectWebSocket(backend_url, data, processResponseChunk, done);
 }
 
