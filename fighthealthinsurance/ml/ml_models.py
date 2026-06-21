@@ -56,6 +56,21 @@ _sentence_split_re = re.compile(r"(?<=[.!?])\s+(?=[A-Z])")
 # ---------------------------------------------------------------------------
 
 
+# HTTP status codes that represent expected, operational conditions rather
+# than bugs in our code: an exhausted/insufficient quota or invalid/disabled
+# key (401), a billing/payment problem (402), a forbidden resource (403), or
+# rate limiting (429). These happen in normal operation -- e.g. when a
+# provider's prepaid balance runs out -- so when a backend returns one we log
+# it concisely (WARNING, no stack trace) and fall through to the next backend
+# instead of emitting a scary ERROR + traceback that reads like a crash.
+EXPECTED_HTTP_STATUS_CODES: frozenset[int] = frozenset({401, 402, 403, 429})
+
+
+def _http_status_is_expected(status: Optional[int]) -> bool:
+    """Whether ``status`` is an expected operational HTTP error (vs. a bug)."""
+    return status in EXPECTED_HTTP_STATUS_CODES
+
+
 def _count_items(items: list[str]) -> dict[str, int]:
     """Count occurrences of each normalized (stripped+lowered) item."""
     counts: dict[str, int] = {}
@@ -573,6 +588,7 @@ class RemoteModelLike(DenialBase):
         ml_citations_context=None,
         history: Optional[List[dict[str, str]]] = None,
         temperature=0.7,
+        raise_http_errors: bool = False,
     ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
         """Do inference on a remote model."""
         await asyncio.sleep(0)  # yield
@@ -587,6 +603,7 @@ class RemoteModelLike(DenialBase):
         pubmed_context=None,
         ml_citations_context=None,
         temperature=0.7,
+        raise_http_errors: bool = False,
     ) -> Optional[str]:
         result = await self._infer(
             system_prompts=system_prompts,
@@ -596,10 +613,52 @@ class RemoteModelLike(DenialBase):
             pubmed_context=pubmed_context,
             ml_citations_context=ml_citations_context,
             temperature=temperature,
+            raise_http_errors=raise_http_errors,
         )
         if result:
             return result[0]
         return result
+
+    async def probe(self, timeout: float = 20.0) -> Tuple[bool, Optional[str]]:
+        """One-off "Hello" reachability probe, used at startup.
+
+        Unlike ``model_is_ok`` (the free, config-only per-request liveness
+        check) this makes a real -- but tiny and one-time -- inference call to
+        confirm the backend actually returns text. It therefore catches
+        problems a config check misses: invalid credentials, an exhausted
+        quota, or a dead endpoint.
+
+        Returns ``(ok, error)`` where ``ok`` is True when the backend returned
+        non-empty text and ``error`` is a short reason string otherwise. Never
+        raises.
+
+        ``raise_http_errors=True`` is passed through so that an auth/quota/
+        rate-limit response surfaces its real HTTP status here (e.g.
+        "HTTP 401 Unauthorized") instead of being swallowed into the generic
+        "empty or no response" -- that distinction is the whole point of the
+        probe, since it tells a swapped/invalid key apart from a model that
+        merely returned nothing.
+        """
+        try:
+            result = await asyncio.wait_for(
+                self._infer_no_context(
+                    system_prompts=[
+                        "You are a helpful assistant. Reply with a short greeting."
+                    ],
+                    prompt="Hello",
+                    raise_http_errors=True,
+                ),
+                timeout=timeout,
+            )
+        except asyncio.TimeoutError:
+            return (False, f"timeout>{timeout}s")
+        except aiohttp.ClientResponseError as e:
+            return (False, f"HTTP {e.status} {e.message}".strip())
+        except Exception as e:
+            return (False, f"{type(e).__name__}: {e}")
+        if result and result.strip():
+            return (True, None)
+        return (False, "empty or no response")
 
     async def generate_prior_auth_response(self, prompt: str) -> Optional[str]:
         """
@@ -1841,6 +1900,7 @@ class RemoteOpenLike(RemoteModel):
         ml_citations_context=None,
         history: Optional[List[dict[str, str]]] = None,
         temperature=0.7,
+        raise_http_errors: bool = False,
     ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
         """
         Try and infer on a given model falling back to fallback in primary fails.
@@ -1932,14 +1992,27 @@ class RemoteOpenLike(RemoteModel):
                     )
                     return backup_response
 
-        except aiohttp.ClientResponseError:
+        except aiohttp.ClientResponseError as e:
             # Subclasses that opt in (via _propagate_http_errors) handle
             # status-specific HTTP errors themselves (e.g. 429 backoff in
-            # RemoteGroq / RemoteAnthropic). Otherwise preserve the original
-            # contract of returning None on transport errors.
-            if self._propagate_http_errors:
+            # RemoteGroq / RemoteAnthropic). The probe path
+            # (raise_http_errors=True) also wants the raw status surfaced so it
+            # can report *why* a backend is unreachable. Otherwise preserve the
+            # original contract of returning None on transport errors.
+            if self._propagate_http_errors or raise_http_errors:
                 raise
-            logger.opt(exception=True).error(f"HTTP error calling {self.api_base}")
+            if _http_status_is_expected(e.status):
+                # Quota/auth/rate-limit conditions are an operational state of
+                # the provider account, not an application error. Emit a single
+                # concise line without a stack trace so it doesn't read like a
+                # crash (e.g. Perplexity returning 401 insufficient_quota).
+                logger.warning(
+                    f"{self}: skipping backend -- {self.api_base} returned "
+                    f"HTTP {e.status} ({e.message}); "
+                    f"check quota/billing/API key."
+                )
+            else:
+                logger.opt(exception=True).error(f"HTTP error calling {self.api_base}")
         except Exception as e:
             logger.opt(exception=True).error(f"Error {e} calling {self.api_base}")
 
@@ -2072,18 +2145,31 @@ class RemoteOpenLike(RemoteModel):
                             response_body = "<failed to read response body>"
 
                         response_body_preview = response_body[:2000]
-                        logger.warning(
-                            f"HTTP {e.status} error from {api_base} for model {model}. "
-                            f"Body preview (truncated): {response_body_preview}"
-                        )
+                        # Expected operational errors (quota/auth/rate-limit)
+                        # are summarized concisely by _infer; keep their body
+                        # preview at debug so they don't double-warn. Real
+                        # failures stay at WARNING so the body aids debugging.
+                        if _http_status_is_expected(e.status):
+                            logger.debug(
+                                f"HTTP {e.status} (expected) from {api_base} for "
+                                f"model {model}. Body preview (truncated): "
+                                f"{response_body_preview}"
+                            )
+                        else:
+                            logger.warning(
+                                f"HTTP {e.status} error from {api_base} for model "
+                                f"{model}. Body preview (truncated): "
+                                f"{response_body_preview}"
+                            )
                         raise
                     json_result = await response.json()
                     if json_result.get("object") == "error":
                         logger.warning(f"Bad response from {self} with {model}")
         except aiohttp.ClientResponseError as e:
-            # Re-raise HTTP errors to allow subclasses (e.g., RemoteGroq) to handle
-            # specific status codes like 429 rate limiting
-            logger.warning(
+            # Already logged with a body preview above; keep this at debug to
+            # avoid double-logging. Re-raise so _infer (and opted-in subclasses
+            # like RemoteGroq) can apply status-specific handling.
+            logger.debug(
                 f"HTTP error {e.status} from {api_base} for model {model}: {e.message}"
             )
             raise
@@ -2917,12 +3003,17 @@ class RateLimitedRemoteOpenLike(RemoteFullOpenLike):
         ml_citations_context: Optional[List[str]] = None,
         history: Optional[List[dict[str, str]]] = None,
         temperature: float = 0.7,
+        raise_http_errors: bool = False,
     ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
         """Inference with rate-limit gating and 429 back-off.
 
         Skips (returns None) when backing off; on a 429 marks the limiter
         exhausted honoring Retry-After so other backends can take over; other
         HTTP errors propagate.
+
+        ``raise_http_errors=True`` (used by the startup probe) re-raises any
+        HTTP error -- including 429/quota/auth -- so the probe can report the
+        real status instead of a generic "no response".
         """
         if not self.rate_limiter.can_request():
             logger.debug(
@@ -2941,12 +3032,23 @@ class RateLimitedRemoteOpenLike(RemoteFullOpenLike):
                 temperature=temperature,
             )
         except aiohttp.ClientResponseError as e:
+            if raise_http_errors:
+                raise
             if e.status == 429:
                 retry_after = self._retry_after_seconds(e)
                 self.rate_limiter.mark_exhausted(retry_after)
                 logger.warning(
                     f"{type(self).__name__}._infer: 429 from {self.PROVIDER_LABEL} "
                     f"for {self.model}, backing off for {retry_after}s"
+                )
+                return None
+            if _http_status_is_expected(e.status):
+                # Quota/auth/billing conditions are operational, not bugs:
+                # degrade to the next backend with a concise warning rather
+                # than raising a scary error up the generation path.
+                logger.warning(
+                    f"{self}: skipping backend -- {self.api_base} returned "
+                    f"HTTP {e.status} ({e.message}); check quota/billing/API key."
                 )
                 return None
             raise

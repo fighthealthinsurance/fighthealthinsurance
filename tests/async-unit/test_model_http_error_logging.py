@@ -1,0 +1,124 @@
+"""Tests for status-aware HTTP error logging in remote ML backends.
+
+A backend that returns an expected operational error -- an exhausted quota
+(401), a billing problem (402), a forbidden resource (403), or rate limiting
+(429) -- should be logged concisely as a WARNING and degrade to ``None``,
+*not* emit an ERROR with a stack trace (which reads like a crash). Real
+failures (e.g. HTTP 500) keep the ERROR + traceback.
+"""
+
+from unittest.mock import AsyncMock, patch
+
+import aiohttp
+import pytest
+from loguru import logger
+from multidict import CIMultiDict, CIMultiDictProxy
+from yarl import URL
+
+from fighthealthinsurance.ml.ml_models import (
+    EXPECTED_HTTP_STATUS_CODES,
+    RemoteFullOpenLike,
+    _http_status_is_expected,
+)
+
+
+def _client_response_error(status: int) -> aiohttp.ClientResponseError:
+    """Build a ClientResponseError carrying ``status``.
+
+    A real ``RequestInfo`` is required because the exception's ``__str__``
+    (used when loguru renders the traceback) dereferences
+    ``request_info.real_url``.
+    """
+    url = URL("https://api.test/chat/completions")
+    request_info = aiohttp.RequestInfo(
+        url, "POST", CIMultiDictProxy(CIMultiDict()), url
+    )
+    return aiohttp.ClientResponseError(
+        request_info=request_info,
+        history=(),
+        status=status,
+        message="Unauthorized" if status == 401 else "Error",
+    )
+
+
+class _LogCapture:
+    """Context manager capturing loguru records at DEBUG and above."""
+
+    def __enter__(self):
+        self.records = []
+        self._sink_id = logger.add(
+            lambda msg: self.records.append(msg.record), level="DEBUG"
+        )
+        return self
+
+    def __exit__(self, *exc):
+        logger.remove(self._sink_id)
+
+    @property
+    def levels(self):
+        return [r["level"].name for r in self.records]
+
+
+class TestExpectedStatusClassification:
+    def test_quota_auth_ratelimit_codes_are_expected(self):
+        for status in (401, 402, 403, 429):
+            assert _http_status_is_expected(status)
+            assert status in EXPECTED_HTTP_STATUS_CODES
+
+    def test_server_errors_and_none_are_not_expected(self):
+        for status in (400, 404, 500, 502, 503, None):
+            assert not _http_status_is_expected(status)
+
+
+class TestInferHttpErrorLogging:
+    def _model(self) -> RemoteFullOpenLike:
+        return RemoteFullOpenLike("http://test-api.com", "test-token", "test-model")
+
+    @pytest.mark.asyncio
+    async def test_expected_error_logs_warning_not_error_and_returns_none(self):
+        """A 401 (insufficient_quota) must not produce an ERROR-level log."""
+        model = self._model()
+        with patch.object(
+            model,
+            "_RemoteOpenLike__timeout_infer",
+            new_callable=AsyncMock,
+            side_effect=_client_response_error(401),
+        ):
+            with _LogCapture() as cap:
+                result = await model._infer(system_prompts=["sys"], prompt="hi")
+
+        assert result is None
+        assert "ERROR" not in cap.levels
+        assert "WARNING" in cap.levels
+        # The concise warning should hint at the operational cause.
+        warning_text = " ".join(
+            r["message"] for r in cap.records if r["level"].name == "WARNING"
+        )
+        assert "401" in warning_text
+        assert "quota" in warning_text.lower()
+
+    @pytest.mark.asyncio
+    async def test_unexpected_error_still_logs_error_with_traceback(self):
+        """A 500 is a real failure and keeps the ERROR + traceback."""
+        model = self._model()
+        with patch.object(
+            model,
+            "_RemoteOpenLike__timeout_infer",
+            new_callable=AsyncMock,
+            side_effect=_client_response_error(500),
+        ):
+            with _LogCapture() as cap:
+                result = await model._infer(system_prompts=["sys"], prompt="hi")
+
+        assert result is None
+        assert "ERROR" in cap.levels
+
+
+class TestModelStr:
+    def test_str_is_readable(self):
+        """str() should be human-readable, not the default object repr."""
+        model = RemoteFullOpenLike("http://test-api.com", "tok", "test-model")
+        text = str(model)
+        assert "test-model" in text
+        assert "RemoteFullOpenLike" in text
+        assert "object at 0x" not in text
