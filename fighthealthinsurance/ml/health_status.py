@@ -49,6 +49,10 @@ class _HealthStatus:
         self._lock = threading.RLock()
         # Fast mode for tests to avoid network stalls
         self._fast_mode = os.getenv("FHI_HEALTH_FAST", "0") == "1"
+        # Whether the one-time startup "Hello" probe has been kicked off. This
+        # is distinct from the liveness check: the probe makes a real (tiny)
+        # inference call per backend, so it runs at most once per process.
+        self._startup_probe_started = False
         # Monotonic timestamp of last alert email, used to throttle
         # outgoing alerts to at most one per ALERT_THROTTLE_SECONDS.
         self._last_alert_sent_at: Optional[float] = None
@@ -62,6 +66,7 @@ class _HealthStatus:
             if not self._initialized:
                 pending_alert = self._refresh_unlocked()
                 self._schedule_refresh()
+                self._maybe_start_model_probe()
                 self._initialized = True
 
         if pending_alert is not None:
@@ -75,6 +80,29 @@ class _HealthStatus:
                 for d in self._snapshot.details
             ],
         }
+
+    def _maybe_start_model_probe(self) -> None:
+        """Kick off the one-time "Hello" startup probe in a background thread.
+
+        Deliberately separate from the (free) liveness refresh: the probe
+        makes a real, tiny inference call per backend, so it runs at most once
+        per process and never blocks the request-serving path (it spawns its
+        own daemon thread). Skipped in fast/test mode and can be disabled with
+        ``FHI_STARTUP_MODEL_PROBE=0``.
+        """
+        if self._fast_mode or self._startup_probe_started:
+            return
+        if os.getenv("FHI_STARTUP_MODEL_PROBE", "1") != "1":
+            return
+        self._startup_probe_started = True
+        try:
+            threading.Thread(
+                target=_run_model_probe,
+                name="fhi-startup-model-probe",
+                daemon=True,
+            ).start()
+        except Exception as e:
+            logger.warning(f"Failed to start startup model probe: {e}")
 
     def _schedule_refresh(self):
         """Schedule the next refresh."""
@@ -302,6 +330,24 @@ class _HealthStatus:
 
         # Since only one timer no need to worry about lock.
         self._schedule_refresh()
+
+
+def _run_model_probe() -> None:
+    """Run the one-time startup model probe in a fresh event loop.
+
+    Meant to be invoked from a short-lived daemon thread. This makes a tiny
+    one-off "Hello" inference per backend -- a real cost, unlike the free
+    liveness check -- purely to surface misconfigured/over-quota backends in
+    the logs at startup. Never raises.
+    """
+    try:
+        import asyncio
+
+        from fighthealthinsurance.ml import ml_router as ml_router_module
+
+        asyncio.run(ml_router_module.ml_router.probe_all_models())
+    except Exception:
+        logger.opt(exception=True).warning("Startup model probe failed to run")
 
 
 # Singleton used by views

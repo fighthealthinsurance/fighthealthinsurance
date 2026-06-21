@@ -1,6 +1,6 @@
 import asyncio
 import os
-from typing import List, Optional, Sequence
+from typing import List, Optional, Sequence, Tuple
 
 from loguru import logger
 
@@ -649,6 +649,62 @@ class MLRouter(object):
     def working(self) -> bool:
         """Return if we have candidates to route to. (TODO: Check they're alive)"""
         return len(self.all_models_by_cost) > 0
+
+    async def probe_all_models(
+        self, per_model_timeout: float = 20.0
+    ) -> List[Tuple[str, bool, Optional[str]]]:
+        """Probe every registered backend with a tiny "Hello" inference.
+
+        Intended to run once at startup to surface misconfigured or
+        over-quota backends in the logs. Unlike the free liveness check
+        (``model_is_ok``), each probe makes a real -- though tiny and
+        one-off -- inference call, so this should not be wired into any
+        per-request path.
+
+        Returns a list of ``(name, ok, error)`` tuples. Failing backends are
+        logged at WARNING; this never raises.
+        """
+        # Context-only backends (e.g. Perplexity) are included on purpose --
+        # those are exactly the ones whose quota/billing failures (HTTP 401)
+        # we want to catch early. Dedup by identity since a backend can appear
+        # in more than one pool.
+        seen: set[int] = set()
+        models: List[RemoteModelLike] = []
+        for m in list(self.all_models_by_cost) + list(self.context_only_models_by_cost):
+            if id(m) not in seen:
+                seen.add(id(m))
+                models.append(m)
+
+        if not models:
+            logger.info("Model startup probe: no backends registered to probe")
+            return []
+
+        async def _probe_one(m: RemoteModelLike) -> Tuple[str, bool, Optional[str]]:
+            name = str(m)
+            try:
+                ok, err = await m.probe(timeout=per_model_timeout)
+            except Exception as e:
+                ok, err = False, f"{type(e).__name__}: {e}"
+            if ok:
+                logger.debug(f"Model startup probe OK: {name}")
+            else:
+                logger.warning(f"Model startup probe FAILED: {name} ({err})")
+            return (name, ok, err)
+
+        results = await asyncio.gather(*[_probe_one(m) for m in models])
+        ok_count = sum(1 for _, ok, _ in results if ok)
+        failures = [(n, e) for n, ok, e in results if not ok]
+        if failures:
+            failure_summary = "; ".join(f"{n}: {e}" for n, e in failures)
+            logger.warning(
+                f"Model startup probe complete: {ok_count}/{len(results)} "
+                f"backends responded. Failures: {failure_summary}"
+            )
+        else:
+            logger.info(
+                f"Model startup probe complete: all {ok_count} backends responded"
+            )
+        return results
 
 
 # Lazy singleton - initialized on first access
