@@ -3631,3 +3631,70 @@ class ModelHealthAlertState(models.Model):
 
     def __str__(self) -> str:
         return f"ModelHealthAlertState<{self.key}@{self.last_alert_sent}>"
+
+
+class CallScriptGoal(models.TextChoices):
+    INFO_GATHERING = "info_gathering", "Information Gathering"
+    ESCALATION = "escalation", "Escalation"
+
+
+class GenericCallScript(ExportModelOperationsMixin("GenericCallScript"), models.Model):  # type: ignore
+    """Cached LLM-generated phone call scripts keyed by non-PHI inputs.
+
+    Scripts are reused across patients whose denial shares the same insurer,
+    denial reason and call goal. Patient-specific customization happens at
+    render time and is never stored here.
+    """
+
+    id = models.AutoField(primary_key=True)
+    # Normalized (trim + lowercase) before persisting so cache hits are
+    # case-insensitive without scanning indexes with LOWER().
+    insurer_name = models.CharField(max_length=300)
+    denial_reason = models.CharField(max_length=600)
+    goal = models.CharField(max_length=32, choices=CallScriptGoal.choices)
+    # Prompt version is part of the cache key so prompt edits don't keep
+    # serving stale scripts that were generated under the old prompt.
+    prompt_version = models.CharField(max_length=32, default="v1")
+    script_text = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["insurer_name", "denial_reason", "goal", "prompt_version"],
+                name="generic_call_script_key",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"GenericCallScript<{self.insurer_name}|{self.goal}>"
+
+
+class CallScript(ExportModelOperationsMixin("CallScript"), models.Model):  # type: ignore
+    """Patient-specific phone call script generated for a Denial.
+
+    Persisted (rather than returned-and-forgotten) so the user can come back
+    to a printable version after the call without re-running inference.
+    Modeled on ProposedPriorAuth.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    for_denial = models.ForeignKey(
+        "Denial", on_delete=models.CASCADE, related_name="call_scripts"
+    )
+    goal = models.CharField(max_length=32, choices=CallScriptGoal.choices)
+    insurer_name = models.CharField(max_length=300)
+    denial_reason = models.CharField(max_length=600)
+    script_text = models.TextField()
+    generic_script = models.ForeignKey(
+        GenericCallScript, on_delete=models.SET_NULL, null=True, blank=True
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["for_denial", "goal"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"CallScript<{self.id} denial={self.for_denial_id} goal={self.goal}>"
