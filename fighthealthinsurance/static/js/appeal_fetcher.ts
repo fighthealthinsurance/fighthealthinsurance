@@ -440,10 +440,12 @@ function beginAttempt(): void {
 // longest expected quiet stretch (the research phase) is ~50s, so 90s is
 // comfortably above normal cadence while still well under the hard cap.
 const WS_INACTIVITY_TIMEOUT_MS = 90000;
-// Hard cap on the WebSocket transport. Even if frames are trickling in,
-// once we've spent this long without finishing we stop waiting on the
-// socket and fire the backup REST request so the user isn't stuck.
-const WS_HARD_TIMEOUT_MS = 120000;
+// Hard cap on the WebSocket transport (7 minutes). Even if frames are
+// trickling in, once we've spent this long without finishing we stop
+// waiting on the socket and fire the backup REST request so the user
+// isn't stuck. Kept generous because a healthy run can legitimately take
+// several minutes; the 90s inactivity timeout handles dead streams sooner.
+const WS_HARD_TIMEOUT_MS = 420000;
 
 let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
 // Absolute-deadline timer for the WebSocket transport (see escalateToRest).
