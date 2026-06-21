@@ -7,7 +7,7 @@ These tests verify that:
 """
 
 import pytest
-from unittest.mock import patch, MagicMock, call
+from unittest.mock import patch
 from django.template.loader import render_to_string
 
 from fighthealthinsurance.models import Denial, FaxesToSend
@@ -76,7 +76,7 @@ class TestFaxStatusNotification:
         self, test_fax_with_destination, notify_enabled
     ):
         """Test that a status notification is sent when fax succeeds."""
-        from fighthealthinsurance.fax_actor import send_fax_status_notification
+        from fighthealthinsurance.fax_send_core import send_fax_status_notification
 
         send_fax_status_notification(test_fax_with_destination, True, False)
 
@@ -90,7 +90,7 @@ class TestFaxStatusNotification:
         self, test_fax_with_destination, notify_enabled
     ):
         """Test that a status notification is sent when fax fails."""
-        from fighthealthinsurance.fax_actor import send_fax_status_notification
+        from fighthealthinsurance.fax_send_core import send_fax_status_notification
 
         send_fax_status_notification(test_fax_with_destination, False, False)
 
@@ -101,7 +101,7 @@ class TestFaxStatusNotification:
         self, test_fax_without_destination, notify_enabled
     ):
         """Test that missing destination is indicated in notification."""
-        from fighthealthinsurance.fax_actor import send_fax_status_notification
+        from fighthealthinsurance.fax_send_core import send_fax_status_notification
 
         send_fax_status_notification(test_fax_without_destination, False, True)
 
@@ -110,7 +110,7 @@ class TestFaxStatusNotification:
 
     def test_notification_missing_denial(self, notify_enabled, db):
         """Test that missing denial is indicated in notification."""
-        from fighthealthinsurance.fax_actor import send_fax_status_notification
+        from fighthealthinsurance.fax_send_core import send_fax_status_notification
 
         fax = FaxesToSend.objects.create(
             hashed_email="abc123",
@@ -128,7 +128,7 @@ class TestFaxStatusNotification:
 
     def test_notification_disabled_by_env_var(self, test_fax_with_destination):
         """Test that notifications are not sent when disabled via env var."""
-        from fighthealthinsurance.fax_actor import send_fax_status_notification
+        from fighthealthinsurance.fax_send_core import send_fax_status_notification
 
         with patch("fighthealthinsurance.fax_send_core.send_mail") as mock_send, patch(
             "fighthealthinsurance.fax_send_core.get_env_variable", return_value="false"
@@ -141,7 +141,7 @@ class TestFaxStatusNotification:
         self, test_fax_with_destination, notify_enabled
     ):
         """Test that notification body contains fax ID and UUID for lookup."""
-        from fighthealthinsurance.fax_actor import send_fax_status_notification
+        from fighthealthinsurance.fax_send_core import send_fax_status_notification
 
         fax = test_fax_with_destination
         send_fax_status_notification(fax, True, False)
@@ -245,9 +245,9 @@ class TestFaxActorEmailSending:
         """
         fax = test_fax_without_destination
 
-        # This is the condition checked in do_send_fax_object:
-        # if fax.destination is None:
-        #     self._update_fax_for_sent(fax, False, missing_destination=True)
+        # This is the condition checked in fax_send_core.do_send_fax_object:
+        # if precheck returns STATUS_MISSING_DESTINATION:
+        #     finalize_fax(fax, False, missing_destination=True)
         should_trigger_missing_destination_email = fax.destination is None
 
         assert (
@@ -269,15 +269,14 @@ class TestFaxActorEmailSending:
     def test_fax_actor_passes_missing_destination_to_template(
         self, test_fax_without_destination
     ):
-        """Test that FaxActor._update_fax_for_sent passes missing_destination to template.
+        """Test that fax_send_core.finalize_fax passes missing_destination to template.
 
-        This test verifies the actual context dict built in fax_actor.py
+        This test verifies the actual context dict built in fax_send_core.py
         includes the missing_destination key, which is required for the template
         to show the correct message.
         """
         # Import and inspect the actual fax-send code
         import inspect
-        import re
         from fighthealthinsurance import fax_send_core
 
         # Get the source code of finalize_fax (formerly FaxActor._update_fax_for_sent)
@@ -302,8 +301,8 @@ class TestFaxActorEmailSending:
 
         assert (
             found_missing_destination
-        ), "FaxActor._update_fax_for_sent must include 'missing_destination' in the email context (not commented out)"
-        print("✓ FaxActor passes missing_destination to email template")
+        ), "fax_send_core.finalize_fax must include 'missing_destination' in the email context (not commented out)"
+        print("✓ finalize_fax passes missing_destination to email template")
 
     def test_fax_actor_context_dict_structure(self, test_fax_with_destination):
         """Test that the context dict has all required keys for the template."""
@@ -334,9 +333,9 @@ class TestFaxActorEmailSending:
                     break
             assert (
                 found
-            ), f"FaxActor._update_fax_for_sent must include '{key}' in the email context (not commented out)"
+            ), f"fax_send_core.finalize_fax must include '{key}' in the email context (not commented out)"
 
-        print("✓ FaxActor context dict has all required keys")
+        print("✓ finalize_fax context dict has all required keys")
 
 
 @pytest.mark.django_db

@@ -8,11 +8,6 @@ from django.utils import timezone
 import ray
 
 from fighthealthinsurance import fax_send_core
-
-# Re-exported for backwards compatibility -- callers (and tests) still import
-# send_fax_status_notification from this module. The implementation now lives in
-# fax_send_core so the Ray actor and the Temporal activities share one copy.
-from fighthealthinsurance.fax_send_core import send_fax_status_notification
 from fighthealthinsurance.fax_utils import *
 from fighthealthinsurance.utils import get_env_variable
 
