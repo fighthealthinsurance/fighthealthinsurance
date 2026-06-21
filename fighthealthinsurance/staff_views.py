@@ -116,12 +116,18 @@ class AdminStatusView(generic.TemplateView):
 
     @staticmethod
     def _model_status() -> Dict[str, Any]:
-        """ML model backend health (fresh, per-backend) plus router summary."""
+        """ML model backend health: a fresh, per-backend probe plus router summary.
+
+        Uses ``compute_model_health_details`` (a standalone check) rather than
+        ``health_status.get_snapshot``. The latter, on first access, runs its
+        own full refresh *and* can fire an alert email / start a background
+        timer — surprising side effects to attach to rendering a status page,
+        and a redundant second check pass. ``generated_at`` conveys freshness.
+        """
         out: Dict[str, Any] = {"ok": True, "error": None, "details": []}
         try:
             from fighthealthinsurance.ml.health_status import (
                 compute_model_health_details,
-                health_status,
             )
             from fighthealthinsurance.ml.ml_router import ml_router
 
@@ -134,14 +140,6 @@ class AdminStatusView(generic.TemplateView):
             )
             out["internal_total"] = sum(1 for d in details if not d["external"])
             out["working"] = ml_router.working()
-
-            snapshot = health_status.get_snapshot()
-            last_checked = snapshot.get("last_checked")
-            out["last_background_check"] = (
-                datetime.datetime.fromtimestamp(last_checked, tz=datetime.timezone.utc)
-                if last_checked
-                else None
-            )
         except Exception as e:
             logger.opt(exception=True).error("Error computing model status")
             out["ok"] = False

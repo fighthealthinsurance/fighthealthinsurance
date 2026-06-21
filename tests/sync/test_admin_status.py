@@ -26,7 +26,6 @@ class _FakeBackend:
 
 # Patch targets for the lazily-imported subsystem checks the view calls.
 _MODELS = "fighthealthinsurance.ml.health_status.compute_model_health_details"
-_SNAPSHOT = "fighthealthinsurance.ml.health_status.health_status.get_snapshot"
 _ACTORS = "fighthealthinsurance.actor_health_status.check_actor_health"
 _FAX = "fighthealthinsurance.fax_health_status.check_fax_backends_health"
 
@@ -55,19 +54,13 @@ class AdminStatusAccessTest(TestCase):
 
     @mock.patch(_FAX)
     @mock.patch(_ACTORS)
-    @mock.patch(_SNAPSHOT)
     @mock.patch(_MODELS)
     def test_staff_user_gets_200_and_renders_sections(
-        self, mock_models, mock_snap, mock_actors, mock_fax
+        self, mock_models, mock_actors, mock_fax
     ):
         mock_models.return_value = [
             {"name": "fhi-2025", "ok": True, "external": False, "error": None}
         ]
-        mock_snap.return_value = {
-            "alive_models": 1,
-            "last_checked": None,
-            "details": [],
-        }
         mock_actors.return_value = {
             "alive_actors": 6,
             "total_actors": 6,
@@ -116,15 +109,9 @@ class AdminStatusFaxQueueTest(TestCase):
 
     @mock.patch(_FAX)
     @mock.patch(_ACTORS)
-    @mock.patch(_SNAPSHOT)
     @mock.patch(_MODELS)
-    def test_fax_queue_counts(self, mock_models, mock_snap, mock_actors, mock_fax):
+    def test_fax_queue_counts(self, mock_models, mock_actors, mock_fax):
         mock_models.return_value = []
-        mock_snap.return_value = {
-            "alive_models": 0,
-            "last_checked": None,
-            "details": [],
-        }
         mock_actors.return_value = {
             "alive_actors": 0,
             "total_actors": 6,

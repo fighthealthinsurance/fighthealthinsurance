@@ -36,7 +36,7 @@
   <h1>{{ title }}</h1>
   <p class="meta">
     Generated {{ generated_at }} &middot;
-    <a href="">Refresh</a> &middot;
+    <a href="{% url 'admin_status' %}">Refresh</a> &middot;
     Model and Sonic checks run live (bounded by timeouts), so this page may take a few seconds.
   </p>
 
@@ -58,9 +58,6 @@
         ({{ models.internal_alive }} / {{ models.internal_total }} internal)
         &middot; router working: {{ models.working|yesno:"yes,no" }}
       </p>
-      {% if models.last_background_check %}
-        <p class="meta">Last background snapshot: {{ models.last_background_check }} ({{ models.last_background_check|timesince }} ago)</p>
-      {% endif %}
       {% if models.details %}
       <table class="status">
         <thead><tr><th>Model</th><th>Type</th><th>Status</th><th>Error</th></tr></thead>
