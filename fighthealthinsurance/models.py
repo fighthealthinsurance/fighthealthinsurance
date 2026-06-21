@@ -3727,7 +3727,7 @@ class SiteBanner(models.Model):
 
         cached = cache.get(cls.CACHE_KEY)
         if cached is not None:
-            return cached
+            return typing.cast(typing.List[typing.Dict[str, typing.Any]], cached)
 
         now = timezone.now()
         banners = cls.objects.filter(active=True).filter(

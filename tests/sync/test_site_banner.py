@@ -132,13 +132,15 @@ class TestSiteBannerRendering(TestCase):
     def test_dismissible_banner_has_close_button(self):
         SiteBanner.objects.create(message="Closeable", dismissible=True)
         response = self.client.get(self.url)
-        self.assertContains(response, "site-banner-close")
+        # The aria-label is unique to the dismiss button (the class name also
+        # appears in the always-emitted CSS/JS, so it can't distinguish here).
+        self.assertContains(response, 'aria-label="Dismiss message"')
 
     def test_non_dismissible_banner_has_no_close_button(self):
         SiteBanner.objects.create(message="Sticky", dismissible=False)
         response = self.client.get(self.url)
         self.assertContains(response, "Sticky")
-        self.assertNotContains(response, "site-banner-close")
+        self.assertNotContains(response, 'aria-label="Dismiss message"')
 
 
 class TestSiteBannerAdmin(TestCase):
