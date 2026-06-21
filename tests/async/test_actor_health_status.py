@@ -1,8 +1,30 @@
 """Tests for actor health status endpoint and functionality."""
 
+import contextlib
 from unittest import mock
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
+
+
+def _patched_actor_refs():
+    """Patch every polling actor-ref singleton so relaunch_actors() can run
+    without touching Ray. Each ref's ``.get`` yields an (actor, task) tuple."""
+    modules = [
+        "email_polling_actor_ref",
+        "fax_polling_actor_ref",
+        "chooser_refill_actor_ref",
+        "imr_refresh_actor_ref",
+        "pa_refresh_actor_ref",
+        "ucr_refresh_actor_ref",
+    ]
+    stack = contextlib.ExitStack()
+    for module_name in modules:
+        ref = mock.MagicMock()
+        ref.get = (mock.MagicMock(), mock.MagicMock())
+        stack.enter_context(
+            mock.patch(f"fighthealthinsurance.{module_name}.{module_name}", ref)
+        )
+    return stack
 
 
 class TestActorHealthStatus(TestCase):
@@ -96,3 +118,42 @@ class TestActorHealthStatus(TestCase):
         cache_control = response["Cache-Control"]
         # Should cache for at most 60 seconds
         assert "max-age=60" in cache_control or "max-age" in cache_control
+
+    @override_settings(TEMPORAL_ENABLED=True)
+    @mock.patch("fighthealthinsurance.actor_health_status.ray")
+    def test_check_actor_health_excludes_fax_when_temporal_enabled(self, mock_ray):
+        """When Temporal owns fax sending, the fax polling actor is not checked."""
+        mock_ray.get_actor.return_value = mock.MagicMock()
+        mock_ray.get.return_value = True
+
+        from fighthealthinsurance.actor_health_status import check_actor_health
+
+        result = check_actor_health()
+        # Five actors remain: email, chooser, IMR, UCR, PA (no fax).
+        assert result["total_actors"] == 5
+        assert result["alive_actors"] == 5
+        names = [d["name"] for d in result["details"]]
+        assert "fax_polling_actor" not in names
+
+    @override_settings(TEMPORAL_ENABLED=True)
+    def test_relaunch_actors_excludes_fax_when_temporal_enabled(self):
+        """relaunch_actors must not resurrect the fax polling actor under Temporal."""
+        from fighthealthinsurance.actor_health_status import relaunch_actors
+
+        with _patched_actor_refs():
+            results = relaunch_actors(force=False)
+
+        assert "fax_polling_actor" not in results
+        assert len(results) == 5
+        assert all(r["status"] == "launched" for r in results.values())
+
+    @override_settings(TEMPORAL_ENABLED=False)
+    def test_relaunch_actors_includes_fax_by_default(self):
+        """With Temporal off, the fax polling actor is still relaunched as before."""
+        from fighthealthinsurance.actor_health_status import relaunch_actors
+
+        with _patched_actor_refs():
+            results = relaunch_actors(force=False)
+
+        assert "fax_polling_actor" in results
+        assert len(results) == 6
