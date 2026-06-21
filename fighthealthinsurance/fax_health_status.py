@@ -34,15 +34,19 @@ def _probe_backend(backend: Any, timeout: float) -> tuple[bool, Optional[str]]:
     not-ok with a descriptive error rather than propagating, so one slow/broken
     backend never takes down the whole status page.
     """
+    ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     try:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-            future = ex.submit(backend.check_health)
-            ok = bool(future.result(timeout=timeout))
-            return (ok, None if ok else "health check returned False")
+        future = ex.submit(backend.check_health)
+        ok = bool(future.result(timeout=timeout))
+        return (ok, None if ok else "health check returned False")
     except concurrent.futures.TimeoutError:
         return (False, f"timeout>{timeout}s")
     except Exception as e:
         return (False, str(e))
+    finally:
+        # Don't let exiting the executor block on a hung probe (a `with` block
+        # would shutdown(wait=True) and join it); make `timeout` a real cap.
+        ex.shutdown(wait=False, cancel_futures=True)
 
 
 def check_fax_backends_health(probe_timeout: float = 10.0) -> Dict[str, Any]:

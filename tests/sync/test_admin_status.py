@@ -3,8 +3,11 @@ fax/model health helpers it relies on."""
 
 import datetime
 import os
+import threading
+import time
 from unittest import mock
 
+import requests
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.urls import reverse
@@ -129,9 +132,7 @@ class AdminStatusFaxQueueTest(TestCase):
         # C: awaiting confirmation (not marked should_send).
         self._make_fax(should_send=False, sent=False)
         # D: in-flight / attempting to send.
-        self._make_fax(
-            should_send=True, sent=False, attempting_to_send_as_of=now
-        )
+        self._make_fax(should_send=True, sent=False, attempting_to_send_as_of=now)
         # E: a recent failure.
         self._make_fax(should_send=True, sent=True, fax_success=False)
         # F: a success (must be ignored everywhere).
@@ -187,6 +188,51 @@ class ComputeModelHealthDetailsTest(TestCase):
         fake_router.all_models_by_cost = []
         with mock.patch("fighthealthinsurance.ml.ml_router.ml_router", fake_router):
             self.assertEqual(compute_model_health_details(), [])
+
+    def test_returns_at_deadline_without_blocking_on_hung_probe(self):
+        """A hung model_is_ok() must not stall the call past the deadline.
+
+        Regression for the executor shutdown(wait=True) gap: the call must
+        return ~timeout_seconds with the slow backend marked as a timeout,
+        not block until the hung probe finishes.
+        """
+        from fighthealthinsurance.ml.health_status import compute_model_health_details
+
+        release = threading.Event()
+
+        class Slow:
+            model = "slow-internal"
+            external = False
+
+            def model_is_ok(self):
+                # Blocks well past the deadline unless released.
+                release.wait(timeout=10)
+                return True
+
+        class Fast:
+            model = "fast-internal"
+            external = False
+
+            def model_is_ok(self):
+                return True
+
+        fake_router = mock.MagicMock()
+        fake_router.all_models_by_cost = [Slow(), Fast()]
+        try:
+            with mock.patch("fighthealthinsurance.ml.ml_router.ml_router", fake_router):
+                start = time.monotonic()
+                details = compute_model_health_details(timeout_seconds=1)
+                elapsed = time.monotonic() - start
+
+            # Returned promptly at the deadline, not after the 10s hung probe.
+            self.assertLess(elapsed, 5)
+            by_name = {d["name"]: d for d in details}
+            self.assertTrue(by_name["fast-internal"]["ok"])
+            self.assertFalse(by_name["slow-internal"]["ok"])
+            self.assertIn("timeout", by_name["slow-internal"]["error"] or "")
+        finally:
+            # Let the orphaned probe thread finish so it doesn't linger.
+            release.set()
 
 
 class FaxBackendsHealthTest(TestCase):
@@ -250,29 +296,60 @@ class FaxBackendsHealthTest(TestCase):
         self.assertFalse(result["backends"][0]["probed"])
 
 
+_LOGIN = "fighthealthinsurance.fax_utils.SonicFax._login"
+_SESSION_GET = "requests.Session.get"
+_SONIC_ENV = {"SONIC_USERNAME": "u", "SONIC_PASSWORD": "p", "SONIC_TOKEN": "t"}
+
+
+def _members_response(text="Fax Console", http_error=False):
+    """Fake members-page response for the post-login verification GET."""
+    resp = mock.Mock()
+    resp.text = text
+    resp.raise_for_status = mock.Mock(
+        side_effect=requests.HTTPError("500") if http_error else None
+    )
+    return resp
+
+
 class SonicCheckHealthTest(TestCase):
-    @mock.patch.dict(
-        os.environ,
-        {"SONIC_USERNAME": "u", "SONIC_PASSWORD": "p", "SONIC_TOKEN": "t"},
-    )
-    def test_check_health_true_on_successful_login(self):
+    @mock.patch.dict(os.environ, _SONIC_ENV)
+    @mock.patch(_SESSION_GET)
+    @mock.patch(_LOGIN, return_value={"c": "v"})
+    def test_check_health_true_when_login_and_members_page_ok(
+        self, mock_login, mock_get
+    ):
         from fighthealthinsurance.fax_utils import SonicFax
 
-        sonic = SonicFax()
-        with mock.patch.object(SonicFax, "_login", return_value={"c": "v"}) as m:
-            self.assertTrue(sonic.check_health())
-        m.assert_called_once()
+        mock_get.return_value = _members_response()
+        self.assertTrue(SonicFax().check_health())
+        mock_login.assert_called_once()
 
-    @mock.patch.dict(
-        os.environ,
-        {"SONIC_USERNAME": "u", "SONIC_PASSWORD": "p", "SONIC_TOKEN": "t"},
-    )
-    def test_check_health_propagates_login_failure(self):
+    @mock.patch.dict(os.environ, _SONIC_ENV)
+    @mock.patch(_LOGIN, side_effect=Exception("login rejected"))
+    def test_check_health_propagates_login_failure(self, mock_login):
         from fighthealthinsurance.fax_utils import SonicFax
 
-        sonic = SonicFax()
-        with mock.patch.object(
-            SonicFax, "_login", side_effect=Exception("login rejected")
-        ):
-            with self.assertRaises(Exception):
-                sonic.check_health()
+        with self.assertRaises(Exception):
+            SonicFax().check_health()
+
+    @mock.patch.dict(os.environ, _SONIC_ENV)
+    @mock.patch(_SESSION_GET)
+    @mock.patch(_LOGIN, return_value={"c": "v"})
+    def test_check_health_raises_on_http_error(self, mock_login, mock_get):
+        """A 4xx/5xx members page (e.g. 500/maintenance) is not healthy."""
+        from fighthealthinsurance.fax_utils import SonicFax
+
+        mock_get.return_value = _members_response(http_error=True)
+        with self.assertRaises(requests.HTTPError):
+            SonicFax().check_health()
+
+    @mock.patch.dict(os.environ, _SONIC_ENV)
+    @mock.patch(_SESSION_GET)
+    @mock.patch(_LOGIN, return_value={"c": "v"})
+    def test_check_health_raises_when_bounced_to_login(self, mock_login, mock_get):
+        """A 200 that is really the login form must not count as healthy."""
+        from fighthealthinsurance.fax_utils import SonicFax
+
+        mock_get.return_value = _members_response(text="Please Member Login")
+        with self.assertRaises(Exception):
+            SonicFax().check_health()

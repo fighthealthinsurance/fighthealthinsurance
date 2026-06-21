@@ -120,18 +120,33 @@ class SonicFax(FaxSenderBase):
             "SONIC_NOTIFICATION_EMAIL", "support42@fighthealthinsurance.com"
         )
 
-    def check_health(self, timeout: float = 4.0) -> bool:
+    def check_health(self, timeout: float = 3.0) -> bool:
         """Verify we can authenticate against the Sonic fax service.
 
-        Performs a login round-trip (network call) and returns ``True`` when it
-        succeeds. ``_login`` raises if credentials are rejected or Sonic is
-        unreachable, so any failure surfaces as an exception to the caller.
+        Logs in and then confirms the session can actually reach a
+        members-only page. ``_login`` alone only rejects a response that
+        contains the literal ``"Member Login"`` text, so a 4xx/5xx or
+        maintenance page would otherwise be treated as a successful login.
+        Here we additionally require the fax page to return HTTP 2xx
+        (``raise_for_status``) and not be the login form, so the dashboard
+        only reports Sonic healthy when it genuinely is.
 
-        ``timeout`` is applied per HTTP request so a hung/slow Sonic can't stall
-        the caller (e.g. the staff status page) indefinitely.
+        ``timeout`` is applied per HTTP request so a hung/slow Sonic can't
+        stall the caller (e.g. the staff status page) indefinitely.
         """
         with requests.Session() as s:
-            self._login(s, timeout=timeout)
+            cookies = self._login(s, timeout=timeout)
+            r = s.get(
+                "https://members.sonic.net/labs/fax/?a=history",
+                headers=self.headers,
+                cookies=cookies,
+                timeout=timeout,
+            )
+            # 4xx/5xx (incl. 403/500/maintenance) -> not healthy.
+            r.raise_for_status()
+            # A bounced/expired session renders the login form instead.
+            if "Member Login" in r.text:
+                raise Exception("Sonic session not authenticated (got login page)")
             return True
 
     async def send_fax_blocking(

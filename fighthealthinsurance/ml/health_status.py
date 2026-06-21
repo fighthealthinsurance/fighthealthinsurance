@@ -329,9 +329,8 @@ def compute_model_health_details(timeout_seconds: int = 8) -> List[Dict[str, Any
     if not candidates:
         return results
 
-    with concurrent.futures.ThreadPoolExecutor(
-        max_workers=min(8, len(candidates))
-    ) as ex:
+    ex = concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(candidates)))
+    try:
         future_map = {ex.submit(m.model_is_ok): m for m in candidates}
         concurrent.futures.wait(future_map, timeout=timeout_seconds)
         for future, m in future_map.items():
@@ -353,6 +352,14 @@ def compute_model_health_details(timeout_seconds: int = 8) -> List[Dict[str, Any
             results.append(
                 {"name": name, "ok": ok, "external": is_external, "error": err}
             )
+    finally:
+        # Return at the deadline rather than blocking on stragglers. Exiting a
+        # `with ThreadPoolExecutor()` calls shutdown(wait=True), which joins
+        # every submitted probe — so a single hung/slow model_is_ok() would
+        # stall the staff status request well past timeout_seconds, defeating
+        # the bounded live check. Cancel queued probes and let any in-flight
+        # ones finish in the background instead.
+        ex.shutdown(wait=False, cancel_futures=True)
 
     results.sort(key=lambda r: (r["ok"], r["external"], r["name"]))
     return results
