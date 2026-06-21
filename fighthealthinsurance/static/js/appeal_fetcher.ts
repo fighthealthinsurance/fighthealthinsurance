@@ -17,6 +17,11 @@ let currentMessageIndex = 0;
 let messageRotationInterval: ReturnType<typeof setTimeout> | null = null;
 let startTime: number | null = null;
 let timerInterval: ReturnType<typeof setInterval> | null = null;
+// Per-appeal wait tracking so the status indicator can show how long the
+// user waited for the first appeal (frozen once it lands) and how long
+// they've been waiting for the next/current one (resets on each arrival).
+let firstAppealArrivedAtMs: number | null = null;
+let lastAppealArrivedAtMs: number | null = null;
 
 // Humorous progress messages
 const progressMessages = [
@@ -254,9 +259,8 @@ function createStatusIndicator(): HTMLElement {
   document.head.appendChild(style);
 
   statusDiv.innerHTML = `
-    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
+    <div style="margin-bottom: 12px;">
       <div style="font-weight: 600; font-size: 1rem; color: #333;">Generating Your Appeals</div>
-      <div id="appeal-timer" style="font-size: 0.8rem; color: #888;"></div>
     </div>
     <div id="phase-checklist" style="margin-bottom: 12px;"></div>
     <div style="margin-bottom: 8px; display: flex; align-items: center; gap: 8px;">
@@ -265,17 +269,55 @@ function createStatusIndicator(): HTMLElement {
       </div>
       <div id="status-count" style="font-size: 0.85rem; font-weight: 600; color: #7B920A;">0/3</div>
     </div>
+    <div id="appeal-wait-times" style="display: flex; flex-wrap: wrap; gap: 2px 14px; font-size: 0.72rem; color: #888; margin-bottom: 8px;">
+      <span>First appeal: <span id="wait-first" style="font-weight: 600; color: #555;">0s</span></span>
+      <span>Current appeal: <span id="wait-current" style="font-weight: 600; color: #555;">0s</span></span>
+      <span>Total: <span id="wait-total" style="font-weight: 600; color: #555;">0s</span></span>
+    </div>
     <div id="status-message" style="font-size: 0.8rem; color: #888; line-height: 1.4; font-style: italic; transition: opacity 0.2s ease;">${progressMessages[0]}</div>
   `;
   return statusDiv;
 }
 
+function formatDuration(ms: number): string {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  if (totalSeconds < 60) {
+    return `${totalSeconds}s`;
+  }
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}m ${seconds}s`;
+}
+
 function updateTimer(): void {
-  if (!startTime) return;
-  const elapsed = Math.floor((Date.now() - startTime) / 1000);
-  const timerEl = document.getElementById('appeal-timer');
-  if (timerEl) {
-    timerEl.textContent = `${elapsed}s`;
+  if (startTime === null) return;
+  const now = Date.now();
+
+  // Total wait: time since we first started fetching (spans retries).
+  const totalEl = document.getElementById('wait-total');
+  if (totalEl) {
+    totalEl.textContent = formatDuration(now - startTime);
+  }
+
+  // First-appeal wait: ticks live until the first appeal lands, then
+  // freezes at how long that first one took.
+  const firstEl = document.getElementById('wait-first');
+  if (firstEl) {
+    const firstWaitMs =
+      firstAppealArrivedAtMs !== null
+        ? firstAppealArrivedAtMs - startTime
+        : now - startTime;
+    firstEl.textContent = formatDuration(firstWaitMs);
+  }
+
+  // Current-appeal wait: time since the most recent appeal arrived (i.e.
+  // how long we've been waiting for the next one); before any have arrived
+  // it tracks from the start.
+  const currentEl = document.getElementById('wait-current');
+  if (currentEl) {
+    const since =
+      lastAppealArrivedAtMs !== null ? lastAppealArrivedAtMs : startTime;
+    currentEl.textContent = formatDuration(now - since);
   }
 }
 
@@ -354,10 +396,14 @@ function showLoading(): void {
   renderChecklist();
   updateStatusIndicator('connecting', 0);
 
-  // Start timer
-  startTime = Date.now();
+  // Start timer. Anchor startTime only once so the total (and first-appeal)
+  // wait spans retries rather than resetting on each attempt.
+  if (startTime === null) {
+    startTime = Date.now();
+  }
   if (timerInterval) clearInterval(timerInterval);
   timerInterval = setInterval(updateTimer, 1000);
+  updateTimer();
 
   // Rotate messages every 8 seconds with sub-1-second jitter
   if (messageRotationInterval) {
@@ -918,6 +964,17 @@ function processResponseChunk(chunk: string): void {
 
         appealsSoFar.push(appealText);
         appealId++;
+
+        // Record arrival timing for the wait-time indicators: freeze the
+        // first-appeal clock on the first arrival, and reset the
+        // current-appeal clock on every arrival. Refresh immediately so the
+        // displayed values don't lag the up-to-1s timer interval.
+        const appealArrivedAtMs = Date.now();
+        if (firstAppealArrivedAtMs === null) {
+          firstAppealArrivedAtMs = appealArrivedAtMs;
+        }
+        lastAppealArrivedAtMs = appealArrivedAtMs;
+        updateTimer();
 
         const isSynthesized = parsedLine.synthesized === "true";
 
