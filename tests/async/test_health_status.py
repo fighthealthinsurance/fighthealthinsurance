@@ -130,6 +130,43 @@ class TestHealthStatus(TestCase):
         assert snap["alive_models"] == 1
 
     @mock.patch("fighthealthinsurance.ml.ml_router.ml_router")
+    def test_model_ok_true_for_healthy_backend(self, fake_router):
+        """model_ok() returns True for a backend the last sweep found healthy."""
+        good = _ExternalGood()
+        fake_router.all_models_by_cost = [good, _ExternalBad()]
+        from fighthealthinsurance.ml.health_status import _HealthStatus
+
+        _HealthStatus._refresh(health_status)
+
+        # Patch ensure_started so reading the cache doesn't spawn a real sweep.
+        with mock.patch.object(health_status, "ensure_started"):
+            assert health_status.model_ok(good) is True
+
+    @mock.patch("fighthealthinsurance.ml.ml_router.ml_router")
+    def test_model_ok_false_for_unhealthy_backend(self, fake_router):
+        """model_ok() returns False for a backend the last sweep found down."""
+        bad = _ExternalBad()
+        fake_router.all_models_by_cost = [_ExternalGood(), bad]
+        from fighthealthinsurance.ml.health_status import _HealthStatus
+
+        _HealthStatus._refresh(health_status)
+
+        with mock.patch.object(health_status, "ensure_started"):
+            assert health_status.model_ok(bad) is False
+
+    @mock.patch("fighthealthinsurance.ml.ml_router.ml_router")
+    def test_model_ok_none_for_unswept_backend(self, fake_router):
+        """model_ok() returns None for a backend the sweep never saw, so the
+        router fails open rather than excluding an unknown backend."""
+        fake_router.all_models_by_cost = [_ExternalGood(), _ExternalBad()]
+        from fighthealthinsurance.ml.health_status import _HealthStatus
+
+        _HealthStatus._refresh(health_status)
+
+        with mock.patch.object(health_status, "ensure_started"):
+            assert health_status.model_ok(_InternalGood()) is None
+
+    @mock.patch("fighthealthinsurance.ml.ml_router.ml_router")
     def test_all_internal_dead_sends_alert(self, fake_router):
         """All internal backends failing triggers email + error log."""
         fake_router.all_models_by_cost = [_InternalBad(), _ExternalGood()]
