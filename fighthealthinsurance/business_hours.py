@@ -466,8 +466,12 @@ def normalize_area_code(phone: Optional[str]) -> Optional[str]:
     if not phone:
         return None
     digits = re.sub(r"\D", "", phone)
-    # Drop a leading US/Canada country code so "+1 212..." parses correctly.
-    if len(digits) == 11 and digits.startswith("1"):
+    # Drop a leading US/Canada country code so "+1 212..." parses correctly. Use
+    # >= 11 (not == 11) so an extension's digits ("+1 808 555 1234 x99" -> 13
+    # digits) don't keep the country code and yield "180" instead of "808"; a
+    # valid NANP area code never starts with 1, so a leading 1 is always the
+    # country code here.
+    if len(digits) >= 11 and digits.startswith("1"):
         digits = digits[1:]
     if len(digits) < 10:
         return None

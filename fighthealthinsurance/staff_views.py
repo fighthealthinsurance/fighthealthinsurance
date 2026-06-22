@@ -41,12 +41,14 @@ from fighthealthinsurance.business_hours import describe_send_window
 from fighthealthinsurance.proconnector import (
     PROCONNECTOR_INTRO_SUBJECT,
     build_search_links,
+    claim_email_for_send,
     generate_intro_email,
     get_next_interested_professional,
     get_professional_cc_email,
     mark_email_queued,
     mark_email_sent,
     mark_email_skipped,
+    release_email_claim,
     non_spam_interested_professionals,
     queue_proconnector_intro_email,
     remaining_interested_professionals_count,
@@ -738,6 +740,12 @@ class ProConnectorProcessView(View):
                 deliver = queue_proconnector_intro_email
                 mark = mark_email_queued
                 verb, failed_msg = "queued", "Failed to queue the email."
+            # Atomically claim the address before sending. Two staff sessions are
+            # handed the same next record, so without this both could pass the
+            # already-processed check above and double-send; losing the claim
+            # means another request already handled it, so just advance.
+            if claim_email_for_send(pro.email) == 0:
+                return redirect("proconnector_process")
             try:
                 deliver(pro, subject=subject, body=body)
             except Exception as e:
@@ -745,9 +753,10 @@ class ProConnectorProcessView(View):
                     f"Failed to {action} pro-connector intro to "
                     f"{mask_email_for_logging(pro.email)}: {e}"
                 )
-                # Do NOT mark attempted on failure; let staff retry the record.
-                # Keep the exception detail in the logs (above) and show a
-                # generic message so internal details aren't surfaced in the UI.
+                # Release the claim so staff can retry the record. Keep the
+                # exception detail in the logs (above) and show a generic message
+                # so internal details aren't surfaced in the UI.
+                release_email_claim(pro.email)
                 return self._render_record(
                     request,
                     pro,

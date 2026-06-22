@@ -455,6 +455,40 @@ def remaining_interested_professionals_count() -> int:
     )
 
 
+def claim_email_for_send(email: str) -> int:
+    """Atomically claim every unprocessed record sharing ``email`` for sending.
+
+    Two staff sessions are handed the *same* next record by
+    :func:`get_next_interested_professional`, so a plain "is it attempted yet?"
+    check leaves a window where both pass and both send. This collapses the
+    check-and-mark into a single conditional UPDATE: only the first caller flips
+    ``proconnector_attempted`` and gets a non-zero count; a concurrent caller
+    sees ``0`` and must skip. Released via :func:`release_email_claim` if the
+    subsequent send/queue fails. Returns the number of rows claimed.
+    """
+    return InterestedProfessional.objects.filter(
+        email__iexact=email,
+        proconnector_attempted=False,
+        proconnector_skipped=False,
+    ).update(proconnector_attempted=True)
+
+
+def release_email_claim(email: str) -> int:
+    """Undo a :func:`claim_email_for_send` claim after a failed send/queue.
+
+    Only releases rows that were never actually delivered (``sent_at`` null) and
+    not skipped, so an already-sent or skipped record is left untouched. This
+    returns the address to the queue so staff can retry. Returns the number of
+    rows released.
+    """
+    return InterestedProfessional.objects.filter(
+        email__iexact=email,
+        proconnector_attempted=True,
+        proconnector_sent_at__isnull=True,
+        proconnector_skipped=False,
+    ).update(proconnector_attempted=False)
+
+
 def mark_email_sent(email: str, body: str) -> int:
     """Mark every record sharing ``email`` as sent (attempted) with ``body``.
 
