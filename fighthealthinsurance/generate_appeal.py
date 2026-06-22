@@ -18,10 +18,15 @@ class GeneratedAppeal:
 
     Threaded through the streaming pipeline so ProposedAppeal rows can be
     saved with their originating model_name for downstream analytics.
+
+    ``synthesized`` marks appeals combined from multiple drafts rather than
+    produced by a single model pass, so synthesis provenance is tracked
+    independently of the model label.
     """
 
     text: str
     model_name: Optional[str]
+    synthesized: bool = False
 
 
 from fighthealthinsurance.context_utils import truncate_at_boundary

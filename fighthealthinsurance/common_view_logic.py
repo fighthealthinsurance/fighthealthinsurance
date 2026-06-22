@@ -543,12 +543,14 @@ def mark_proposal_chosen(
             .first()
         )
     model_name = original.model_name if original is not None else None
+    synthesized = original.synthesized if original is not None else False
     pa = ProposedAppeal(
         appeal_text=appeal_text,
         for_denial=denial,
         chosen=True,
         editted=editted,
         model_name=model_name,
+        synthesized=synthesized,
     )
     pa.save()
     return pa
@@ -3316,6 +3318,7 @@ class AppealsBackendHelper:
                     appeal_text=appeal_text,
                     for_denial=denial,
                     model_name=model_name,
+                    synthesized=item.synthesized,
                 )
                 await pa.asave()
                 id = str(pa.id)
@@ -3505,7 +3508,9 @@ class AppealsBackendHelper:
                         else:
                             saved = await save_appeal(
                                 GeneratedAppeal(
-                                    text=synthesized, model_name="synthesized"
+                                    text=synthesized,
+                                    model_name="synthesized",
+                                    synthesized=True,
                                 )
                             )
                             subbed = await sub_in_appeals(saved)

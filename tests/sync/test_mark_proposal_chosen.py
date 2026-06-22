@@ -32,6 +32,24 @@ class MarkProposalChosenTest(TestCase):
         )
         self.assertEqual(original.model_name, "model-x")
 
+    def test_synthesized_flag_copied_from_original(self):
+        # Picking a synthesized draft must carry synthesized=True onto the
+        # chosen row, not just model_name.
+        ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="synth-text",
+            chosen=False,
+            model_name="synthesized",
+            synthesized=True,
+        )
+        pa = mark_proposal_chosen(self.denial, "synth-text")
+        self.assertTrue(pa.chosen)
+        self.assertTrue(pa.synthesized)
+
+    def test_synthesized_defaults_false_without_match(self):
+        pa = mark_proposal_chosen(self.denial, "no-match-text")
+        self.assertFalse(pa.synthesized)
+
     def test_no_match_falls_back_to_none(self):
         ProposedAppeal.objects.create(
             for_denial=self.denial,

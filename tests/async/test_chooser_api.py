@@ -79,6 +79,22 @@ class ChooserCandidateModelTest(APITestCase):
         self.assertEqual(candidate.candidate_index, 0)
         self.assertEqual(candidate.kind, "appeal_letter")
         self.assertTrue(candidate.is_active)
+        # Candidates default to not-synthesized.
+        self.assertFalse(candidate.synthesized)
+
+    def test_create_synthesized_candidate(self):
+        """A candidate can be marked as synthesized from multiple inputs."""
+        task = ChooserTask.objects.create(task_type="appeal", status="READY")
+        candidate = ChooserCandidate.objects.create(
+            task=task,
+            candidate_index=2,
+            kind="appeal_letter",
+            model_name="synthesized",
+            synthesized=True,
+            content="A synthesized appeal letter.",
+        )
+        self.assertTrue(candidate.synthesized)
+        self.assertEqual(candidate.model_name, "synthesized")
 
     def test_candidate_unique_together(self):
         """Test that candidate_index is unique per task."""
@@ -203,6 +219,9 @@ class ChooserNextTaskAPITest(APITestCase):
         self.assertEqual(data["task_type"], "appeal")
         self.assertEqual(len(data["candidates"]), 2)
         self.assertEqual(data["task_context"]["procedure"], "Physical Therapy")
+        # The synthesized flag is exposed per candidate (default False).
+        self.assertIn("synthesized", data["candidates"][0])
+        self.assertFalse(data["candidates"][0]["synthesized"])
 
     def test_get_next_task_no_tasks_available(self):
         """Test getting next task when none are available and generation fails."""

@@ -2274,6 +2274,7 @@ class ChooserViewSet(viewsets.ViewSet):
                 "candidate_index": c.candidate_index,
                 "kind": c.kind,
                 "model_name": c.model_name,
+                "synthesized": c.synthesized,
                 "content": c.content,
                 "metadata": c.metadata,
             }

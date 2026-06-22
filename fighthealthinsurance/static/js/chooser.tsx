@@ -27,6 +27,7 @@ interface ChooserCandidate {
   candidate_index: number;
   kind: string;
   model_name: string;
+  synthesized?: boolean;
   content: string;
   metadata: Record<string, unknown> | null;
 }
@@ -468,7 +469,7 @@ const ChooserInterface: React.FC = () => {
 
   // Render voting state
   if (state.mode === "voting" && state.task) {
-    const labels = ["A", "B", "C", "D"];
+    const labels = ["A", "B", "C", "D", "E"];
     const hasEnoughCandidates = state.task.candidates.length >= 2;
 
     // If only one candidate, show a message and skip options
