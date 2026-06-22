@@ -27,21 +27,21 @@ ALERT_THROTTLE_SECONDS = 60 * 60  # at most one alert email per hour
 
 
 def _model_key(model: Any) -> str:
-    """Stable identifier for a backend instance, shared by the health sweep
+    """Stable per-instance identifier for a backend, shared by the health sweep
     (which records per-model results) and the router (which looks them up).
 
-    Prefers the unique friendly ``name`` the router stamps onto each registered
-    model (so two providers exposing the same wire ``model`` id — e.g. the
-    direct Anthropic API vs Azure Claude — don't collide), then the wire
-    ``model`` id, then the class name.
+    Keyed by object identity so distinct backend instances never collide — e.g.
+    internal replicas of one model on several hosts, or two providers exposing
+    the same wire ``model`` id — even when they share a friendly ``name``. The
+    sweep and the router operate on the same registered singleton instances, so
+    the identity matches across them; an unregistered/foreign instance simply
+    isn't found (``model_ok`` returns ``None`` -> the router fails open). A
+    readable prefix (friendly name / wire id / class) is kept for debuggability.
     """
-    name = getattr(model, "name", None)
-    if name:
-        return str(name)
-    model_id = getattr(model, "model", None)
-    if model_id:
-        return str(model_id)
-    return type(model).__name__
+    prefix = getattr(model, "name", None) or getattr(model, "model", None)
+    if not prefix:
+        prefix = type(model).__name__
+    return f"{prefix}@{id(model):x}"
 
 
 @dataclass
@@ -68,6 +68,14 @@ class _HealthStatus:
         self._health_map: Dict[str, bool] = {}
         self._timer: Optional[threading.Timer] = None
         self._initialized = False
+        # Whether the recurring background sweep has been kicked off. Kept
+        # separate from ``_initialized`` (which get_snapshot owns for its first
+        # synchronous refresh) so ensure_started() can start the sweep without
+        # making get_snapshot's first call return a stale empty snapshot.
+        # Guarded by a short, dedicated lock that is never held during a sweep,
+        # so request-path callers (via model_ok) never block.
+        self._sweep_started = False
+        self._start_lock = threading.Lock()
         # Use RLock to allow reentrant locking and reduce deadlock chances
         self._lock = threading.RLock()
         # Fast mode for tests to avoid network stalls
@@ -84,8 +92,13 @@ class _HealthStatus:
         with self._lock:
             if not self._initialized:
                 pending_alert = self._refresh_unlocked()
-                self._schedule_refresh()
                 self._initialized = True
+
+        # Start the recurring sweep exactly once. Done outside _lock via a
+        # short, separate lock so it neither double-schedules with
+        # ensure_started() nor blocks. We just refreshed synchronously above
+        # (when first initializing), so only the timer chain needs starting.
+        self._ensure_sweep_scheduled(refresh_now=False)
 
         if pending_alert is not None:
             self._alert_if_all_internal_dead(*pending_alert)
@@ -112,23 +125,38 @@ class _HealthStatus:
         return self._health_map.get(_model_key(model))
 
     def ensure_started(self) -> None:
-        """Start the periodic health sweep exactly once, in the background, so
-        cached results get populated without any caller blocking on the initial
-        probe.
+        """Start the periodic health sweep once, in the background, so cached
+        results get populated without any caller blocking on the initial probe.
 
-        The common (already-started) path is a lock-free flag read, so callers
-        on the request path don't contend on the sweep lock. Shares the
-        ``_initialized`` guard with :meth:`get_snapshot`, so whichever runs
-        first does the one-time start and only a single refresh timer is ever
-        scheduled.
+        Lock-free fast path; the short ``_start_lock`` is never held during a
+        sweep, so request-path callers (via :meth:`model_ok`) don't contend.
+        Crucially this does *not* set ``_initialized`` — that flag is owned by
+        :meth:`get_snapshot`, so its first call still does a synchronous refresh
+        and never returns a stale empty snapshot just because a background sweep
+        was kicked off here first.
         """
-        if self._initialized:
+        self._ensure_sweep_scheduled(refresh_now=True)
+
+    def _ensure_sweep_scheduled(self, refresh_now: bool) -> None:
+        """Kick off the recurring sweep exactly once (idempotent, non-blocking).
+
+        ``refresh_now`` runs the first sweep immediately in a background thread
+        (used when the cached snapshot may still be cold); otherwise we only
+        start the timer chain, because the caller already refreshed
+        synchronously and the snapshot is warm.
+        """
+        if self._sweep_started:
             return
-        with self._lock:
-            if self._initialized:
+        with self._start_lock:
+            if self._sweep_started:
                 return
-            self._initialized = True
-        threading.Thread(target=self._refresh, daemon=True, name="health-init").start()
+            self._sweep_started = True
+        if refresh_now:
+            threading.Thread(
+                target=self._refresh, daemon=True, name="health-sweep"
+            ).start()
+        else:
+            self._schedule_refresh()
 
     def _schedule_refresh(self):
         """Schedule the next refresh."""

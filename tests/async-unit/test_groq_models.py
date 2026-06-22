@@ -150,7 +150,13 @@ class TestRemoteGroqTiers(unittest.TestCase):
         instant = RemoteGroq(model="llama-3.1-8b-instant")
 
         self.assertGreater(versatile.quality(), instant.quality())
-        # External models stay below the internal models' range (>=101).
+
+    @patch.dict(os.environ, {"GROQ_API_KEY": "test-key"})
+    def test_quality_below_internal_threshold(self):
+        """External Groq quality stays below the internal models' range (>=101)
+        so internal backends stay preferred in mixed scoring."""
+        versatile = RemoteGroq(model="llama-3.3-70b-versatile")
+
         self.assertLess(versatile.quality(), 101)
 
     @patch.dict(os.environ, {"GROQ_API_KEY": "test-key"})

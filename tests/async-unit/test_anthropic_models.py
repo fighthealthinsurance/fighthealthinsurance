@@ -157,7 +157,13 @@ class TestRemoteAnthropicTiers(unittest.TestCase):
 
         self.assertGreater(opus.quality(), sonnet.quality())
         self.assertGreater(sonnet.quality(), haiku.quality())
-        # External models stay below the internal models' range (>=101).
+
+    @patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"})
+    def test_quality_stays_below_internal_threshold(self):
+        """External Claude quality stays below the internal models' range (>=101)
+        so internal backends stay preferred in mixed scoring."""
+        opus = RemoteAnthropic(model="claude-opus-4-8")
+
         self.assertLess(opus.quality(), 101)
 
 
