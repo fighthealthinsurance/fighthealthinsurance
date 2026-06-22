@@ -14,6 +14,8 @@ If you still need help with your denial, we're here for you. Health insurance de
 
 Please share your experience with us at {{ followup_link }} — hearing about outcomes helps us improve and helps others in similar situations know what to expect.
 
+Prefer e-mail? You can also just reply to this message with your story. Please keep in mind that e-mail is not encrypted, so if you'd rather not include personal or medical details in your reply, the follow-up form above is the more private option.
+
 Thank you for being part of our community! If you found Fight Health Insurance helpful, there are many ways you can help us and others fighting unfair denials:
 - Share your experience with friends and family who might need help
 - Follow us on social media to help spread awareness
