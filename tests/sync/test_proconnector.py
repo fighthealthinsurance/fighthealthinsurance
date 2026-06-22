@@ -320,6 +320,47 @@ class QueueFilteringTest(TestCase):
 
 
 # ---------------------------------------------------------------------------
+# Atomic claim / release (concurrent double-send prevention)
+# ---------------------------------------------------------------------------
+class ClaimTest(TestCase):
+    def test_claim_marks_all_duplicates_and_second_claim_returns_zero(self):
+        # First claim wins (marks every duplicate); a concurrent second claim
+        # gets zero rows and must therefore skip -- preventing a double send.
+        a = _make_pro(email="dup@clinic.org")
+        b = _make_pro(email="dup@clinic.org")
+        self.assertEqual(proconnector.claim_email_for_send("dup@clinic.org"), 2)
+        for rec in (a, b):
+            rec.refresh_from_db()
+            self.assertTrue(rec.proconnector_attempted)
+        self.assertEqual(proconnector.claim_email_for_send("dup@clinic.org"), 0)
+
+    def test_claim_does_not_claim_skipped_record(self):
+        proconnector.mark_email_skipped("nope@clinic.org", "not a fit")
+        _make_pro(email="nope@clinic.org")  # ensure a row exists post-skip
+        proconnector.mark_email_skipped("nope@clinic.org", "not a fit")
+        self.assertEqual(proconnector.claim_email_for_send("nope@clinic.org"), 0)
+
+    def test_release_restores_unsent_claim_to_queue(self):
+        pro = _make_pro(email="retry@clinic.org")
+        proconnector.claim_email_for_send("retry@clinic.org")
+        self.assertEqual(proconnector.release_email_claim("retry@clinic.org"), 1)
+        pro.refresh_from_db()
+        self.assertFalse(pro.proconnector_attempted)
+        # Back in the queue for a retry.
+        self.assertEqual(get_next_interested_professional().pk, pro.pk)
+
+    def test_release_does_not_unsend_a_delivered_record(self):
+        # A record already delivered (sent_at set) must not be un-attempted by a
+        # stray release; release only frees claims that never sent.
+        pro = _make_pro(email="sent@clinic.org")
+        proconnector.mark_email_sent("sent@clinic.org", "delivered body")
+        self.assertEqual(proconnector.release_email_claim("sent@clinic.org"), 0)
+        pro.refresh_from_db()
+        self.assertTrue(pro.proconnector_attempted)
+        self.assertIsNotNone(pro.proconnector_sent_at)
+
+
+# ---------------------------------------------------------------------------
 # AI draft generation + safe fallback
 # ---------------------------------------------------------------------------
 class SafetyValidatorTest(TestCase):
@@ -555,6 +596,25 @@ class SendFlowTest(TestCase):
             },
         )
         self.assertEqual(response.status_code, 302)
+        mock_send.assert_not_called()
+
+    @patch("fighthealthinsurance.staff_views.send_proconnector_intro_email")
+    @patch("fighthealthinsurance.staff_views.claim_email_for_send", return_value=0)
+    def test_lost_atomic_claim_advances_without_sending(self, _mock_claim, mock_send):
+        # Simulates a concurrent staff session winning the atomic claim in the
+        # window between our fetch and our claim (both were handed the same
+        # record): we must advance without sending a duplicate intro.
+        pro = _make_pro(email="race@clinic.org")
+        response = self.client.post(
+            self.url,
+            {
+                "action": "send",
+                "interested_professional_id": pro.id,
+                "email_body": "Body with the compensation disclosure.",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.url, reverse("proconnector_process"))
         mock_send.assert_not_called()
 
 

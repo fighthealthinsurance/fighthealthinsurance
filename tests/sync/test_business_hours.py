@@ -42,6 +42,14 @@ def test_normalize_area_code_various_formats():
     assert normalize_area_code("212.555.1234 x99") == "212"
 
 
+def test_normalize_area_code_strips_country_code_with_extension():
+    # The country code must be dropped even when an extension pushes the digit
+    # count past 11, otherwise the area code wrongly becomes "180" (regression).
+    assert normalize_area_code("+1 808 555 1234 x99") == "808"
+    assert normalize_area_code("1-808-555-1234 ext. 5") == "808"
+    assert normalize_area_code("+1 (212) 555-1234 x1000") == "212"
+
+
 def test_normalize_area_code_insufficient_digits():
     assert normalize_area_code("555-1234") is None
     assert normalize_area_code("") is None
@@ -79,7 +87,9 @@ def test_resolve_send_timezone():
 
 def test_default_window_is_nine_to_two_pacific():
     # is_specific=False -> 9am-2pm Pacific (the cross-US overlap).
-    assert is_within_business_hours(_at(WEDNESDAY, 10, PACIFIC), DEFAULT_TIMEZONE, False)
+    assert is_within_business_hours(
+        _at(WEDNESDAY, 10, PACIFIC), DEFAULT_TIMEZONE, False
+    )
     assert is_within_business_hours(_at(WEDNESDAY, 9, PACIFIC), DEFAULT_TIMEZONE, False)
     assert is_within_business_hours(
         _at(WEDNESDAY, 13, PACIFIC, 59), DEFAULT_TIMEZONE, False
@@ -95,7 +105,9 @@ def test_default_window_is_nine_to_two_pacific():
 
 def test_specific_window_is_nine_to_five_local():
     # is_specific=True -> normal 9am-5pm in the recipient's own timezone.
-    assert is_within_business_hours(_at(WEDNESDAY, 16, EASTERN), "America/New_York", True)
+    assert is_within_business_hours(
+        _at(WEDNESDAY, 16, EASTERN), "America/New_York", True
+    )
     assert not is_within_business_hours(
         _at(WEDNESDAY, 17, EASTERN), "America/New_York", True
     )
