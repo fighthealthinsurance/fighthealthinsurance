@@ -1083,6 +1083,21 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # Notify the professional-signup inbox (defaults to
+        # professional@fighthealthinsurance.com) for every FPW REST professional
+        # sign-up. Deferred via transaction.on_commit so the mail only goes out
+        # once this signup transaction commits and a mail failure can't roll the
+        # signup back.
+        self._notify_professional_signup(
+            email=email,
+            first_name=first_name,
+            last_name=last_name,
+            domain_name=domain_name,
+            visible_phone_number=visible_phone_number,
+            new_domain=new_domain,
+            professional_user=professional_user,
+        )
+
         # If the domain is not new we don't need billing info
         if not new_domain:
             return Response(
@@ -1139,6 +1154,42 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                 ).data,
                 status=status.HTTP_201_CREATED,
             )
+
+    @staticmethod
+    def _notify_professional_signup(
+        *,
+        email: str,
+        first_name: str,
+        last_name: str,
+        domain_name: Optional[str],
+        visible_phone_number: Optional[str],
+        new_domain: bool,
+        professional_user: ProfessionalUser,
+    ) -> None:
+        """Queue a best-effort team notification for a professional signing up
+        via the Fight Paperwork REST API.
+
+        Deferred via transaction.on_commit so the notification only fires once
+        the signup transaction commits — no spurious mail if a later step (e.g.
+        Stripe checkout creation) rolls the signup back.
+        """
+        from fighthealthinsurance.utils import notify_professional_signup
+
+        full_name = f"{first_name} {last_name}".strip()
+        body = (
+            "A new professional signed up via the Fight Paperwork REST API.\n\n"
+            f"Name: {full_name or 'N/A'}\n"
+            f"Email: {email}\n"
+            f"Domain: {domain_name or 'N/A'}\n"
+            f"Phone: {visible_phone_number or 'N/A'}\n"
+            f"New domain: {'yes' if new_domain else 'no (joining existing domain)'}\n"
+            f"Professional user id: {professional_user.id}\n"
+        )
+        transaction.on_commit(
+            lambda: notify_professional_signup(
+                f"New professional signup: {email}", body
+            )
+        )
 
     @extend_schema(
         responses={

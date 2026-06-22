@@ -361,6 +361,40 @@ class RestAuthViewsTests(TestCase):
         response = self.client.post(url, data, format="json")
         self.assertIn(response.status_code, range(200, 300))
 
+    def test_professional_signup_notifies_professional_inbox(self) -> None:
+        """A successful FPW REST professional signup emails the professional
+        notification inbox (defaults to professional@fighthealthinsurance.com).
+
+        Uses the join-existing-domain path so no Stripe call is involved, and
+        captures on_commit callbacks since the notification is deferred until
+        the signup transaction commits.
+        """
+        url = reverse("professional_user-list")
+        data = {
+            "user_signup_info": {
+                "username": "notifypro",
+                "password": "newLongerPasswordMagicCheetoCheeto123",
+                "email": "notifypro@test-fhi.com",
+                "first_name": "Notify",
+                "last_name": "Pro",
+                "domain_name": "testdomain",
+                "visible_phone_number": "1234567892",
+                "continue_url": "http://example.com/continue",
+            },
+            "make_new_domain": False,
+        }
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.post(url, data, format="json")
+        self.assertIn(response.status_code, range(200, 300))
+        notification = next(
+            m
+            for m in mail.outbox
+            if m.subject == "New professional signup: notifypro@test-fhi.com"
+        )
+        self.assertEqual(notification.to, ["professional@fighthealthinsurance.com"])
+        self.assertIn("notifypro@test-fhi.com", notification.body)
+        self.assertIn("Notify Pro", notification.body)
+
     def test_create_professional_user_with_existing_visible_phone_number(self) -> None:
         url = reverse("professional_user-list")
         data = {

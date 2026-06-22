@@ -34,7 +34,7 @@ from email.utils import formataddr
 from uuid import UUID
 
 from django.conf import settings
-from django.core.mail import EmailMultiAlternatives
+from django.core.mail import EmailMultiAlternatives, send_mail
 from django.template.loader import render_to_string
 
 # Minimum number of meaningful characters an appeal must have to be
@@ -434,6 +434,36 @@ def send_fallback_email(
     except Exception as e:
         logger.error(f"Error sending email to BCC: {e}")
         pass
+
+
+def notify_professional_signup(subject: str, body: str) -> None:
+    """Send a best-effort team notification about a new professional signup.
+
+    Shared by the web /pro_version interest form and the Fight Paperwork REST
+    professional sign-up endpoint. Recipients default to
+    professional@fighthealthinsurance.com and can be extended via
+    settings.PROFESSIONAL_SIGNUP_NOTIFICATION_EMAILS. A mail failure is logged
+    and swallowed so it never breaks the signup it is reporting on.
+    """
+    recipients = list(
+        getattr(
+            settings,
+            "PROFESSIONAL_SIGNUP_NOTIFICATION_EMAILS",
+            ["professional@fighthealthinsurance.com"],
+        )
+    )
+    if not recipients:
+        return
+    try:
+        send_mail(subject, body, settings.DEFAULT_FROM_EMAIL, recipients)
+    except Exception:
+        # Don't interpolate `subject`/`body`: for REST signups the subject
+        # embeds the professional's email and the body is full of PII. The
+        # recipients are configured internal inboxes, so they're safe to log,
+        # and logger.opt(exception=True) attaches the SMTP traceback.
+        logger.opt(exception=True).error(
+            f"Error sending professional signup notification email to {recipients}"
+        )
 
 
 def get_unsubscribe_url(email: str) -> Optional[str]:
