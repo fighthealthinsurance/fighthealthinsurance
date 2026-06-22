@@ -55,6 +55,22 @@ class EmailPollingActor:
         while self.running:
             await asyncio.sleep(1)  # Yield
             try:
+                # Send queued emails whose business-hours window is now open
+                # FIRST: these are time-sensitive, and the follow-up batch below
+                # ends in a long jittered pacing delay (can exceed an hour) that
+                # would otherwise push due intros past their business-hours
+                # window. asend_all already paces sends (1-3s each); no big
+                # jittered delay here so a batch can't spill past the window.
+                self._logger.debug("Getting scheduled email candidates")
+                scheduled_candidates = await self.scheduled_sender.afind_candidates()
+                scheduled_count = len(scheduled_candidates)
+                self._logger.debug(f"Scheduled email candidates: {scheduled_count}")
+                if scheduled_count > 0:
+                    scheduled_sent = await self.scheduled_sender.asend_all(
+                        count=10, candidates=scheduled_candidates
+                    )
+                    self._logger.info(f"Sent {scheduled_sent} scheduled emails")
+
                 self._logger.debug("Getting follow up candidates")
                 # Send follow-up emails (pass candidates to avoid double DB query)
                 followup_candidates = await self.followup_sender.afind_candidates()
@@ -66,19 +82,6 @@ class EmailPollingActor:
                     )
                     self._logger.info(f"Sent {sent_count} follow-up emails")
                     await self._jittered_send_delay(sent_count)
-
-                # Send queued emails whose business-hours window is now open.
-                # asend_all already paces sends (1-3s each); no big jittered
-                # delay here so a batch can't spill past the sending window.
-                self._logger.debug("Getting scheduled email candidates")
-                scheduled_candidates = await self.scheduled_sender.afind_candidates()
-                scheduled_count = len(scheduled_candidates)
-                self._logger.debug(f"Scheduled email candidates: {scheduled_count}")
-                if scheduled_count > 0:
-                    scheduled_sent = await self.scheduled_sender.asend_all(
-                        count=10, candidates=scheduled_candidates
-                    )
-                    self._logger.info(f"Sent {scheduled_sent} scheduled emails")
 
                 if False:
                     # Send thank-you emails to professionals
