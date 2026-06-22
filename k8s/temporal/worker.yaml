@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: temporal-worker
+  namespace: totallylegitco
+  labels:
+    app: fight-health-insurance-prod
+    group: fight-health-insurance-prod-temporal-worker
+spec:
+  # Faxes are low volume; start with one worker and scale out by raising
+  # replicas (Temporal load-balances tasks across all workers on the queue).
+  replicas: 1
+  selector:
+    matchLabels:
+      group: fight-health-insurance-prod-temporal-worker
+  template:
+    metadata:
+      labels:
+        app: fight-health-insurance-prod
+        group: fight-health-insurance-prod-temporal-worker
+    spec:
+      containers:
+        - image: ${FHI_BASE}:${FHI_VERSION}
+          name: totallylegitco
+          # start-server.sh runs `manage.py run_temporal_worker` when this is set.
+          env:
+            - name: TEMPORAL_WORKER
+              value: "1"
+            - name: TEMPORAL_ENABLED
+              value: "true"
+            # In-cluster Temporal frontend (Helm release "temporal" in this ns).
+            - name: TEMPORAL_HOST
+              value: "temporal-frontend:7233"
+            - name: TEMPORAL_NAMESPACE
+              value: "default"
+            - name: TEMPORAL_TASK_QUEUE
+              value: "fhi-fax"
+          envFrom:
+            # Same DB / app secrets the web + Ray pods use, so activities can
+            # reach the database and regenerate fax documents.
+            - secretRef:
+                name: fight-health-insurance-secret
+            - secretRef:
+                name: fight-health-insurance-primary-secret
+          imagePullPolicy: Always
+          resources:
+            requests:
+              cpu: "250m"
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          volumeMounts:
+            # SSH key for the FaxyMcFaxFace backend, exactly as the Ray fax actor
+            # mounts it. TODO: confirm this mountPath matches what FaxyMcFaxFace
+            # expects in the FHI image (the Ray cluster mounts at /home/ray/.ssh).
+            - name: faxymcfaxface-ssh
+              readOnly: true
+              mountPath: "/root/.ssh"
+      volumes:
+        - name: faxymcfaxface-ssh
+          secret:
+            secretName: faxymcfaxface-ssh
+            defaultMode: 0755

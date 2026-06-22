@@ -93,6 +93,17 @@ class StripeWebhookHelper:
                     FaxesToSend.objects.filter(uuid=fax_uuid).update(
                         paid=True, should_send=True
                     )
+                    # When Temporal is enabled, hand the delayed send to a
+                    # durable SendFaxWorkflow timer (replacing the FaxPollingActor
+                    # ~1h sweep). When it isn't, dispatch_fax_send is a no-op and
+                    # the Ray polling actor still picks this up via should_send.
+                    from fighthealthinsurance.temporal_client import dispatch_fax_send
+
+                    fax = FaxesToSend.objects.filter(uuid=fax_uuid).first()
+                    if fax is not None:
+                        dispatch_fax_send(
+                            fax.hashed_email, str(fax.uuid), delay_send=True
+                        )
                 else:
                     logger.warning("No uuid in metadata for fax payment")
             else:
