@@ -372,6 +372,7 @@ def send_fallback_email(
     from_name: Optional[str] = None,
     reply_to: Optional[str] = None,
     extra_headers: Optional[Dict[str, str]] = None,
+    cc: Optional[List[str]] = None,
 ):
     if is_blocked_email(to_email):
         logger.info(
@@ -410,6 +411,7 @@ def send_fallback_email(
         text_content,
         from_address,
         to=[to_email],
+        cc=cc or None,
         reply_to=[reply_to_address],
         headers=headers,
     )

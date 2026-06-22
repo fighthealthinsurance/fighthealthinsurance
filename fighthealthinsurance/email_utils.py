@@ -1,5 +1,7 @@
 """Email validation utilities for filtering disposable/temporary email domains."""
 
+from typing import Optional
+
 # Known invalid domains (temporary mail is _ok_ and should not be included).
 # Emails to these domains will never be delivered successfully or read,
 # so we skip sending to avoid wasting resources and hurting sender reputation.
@@ -15,6 +17,24 @@ BLOCKED_EMAIL_DOMAINS: frozenset[str] = frozenset(
 )
 
 
+def get_email_domain(email: Optional[str]) -> Optional[str]:
+    """Return the lowercased domain of an email address, or None if unparseable.
+
+    Shared helper so domain extraction (strip/lowercase/split on the last "@")
+    lives in one place instead of being re-implemented at each call site.
+    """
+    if not email or not isinstance(email, str):
+        return None
+    email = email.strip().lower()
+    if "@" not in email:
+        return None
+    local_part, domain = email.rsplit("@", 1)
+    # Require a non-empty local part too, so "@example.com" is unparseable.
+    if not local_part.strip() or not domain.strip():
+        return None
+    return domain.strip()
+
+
 def is_blocked_email(email: str) -> bool:
     """Check if an email address should be blocked from sending.
 
@@ -26,16 +46,11 @@ def is_blocked_email(email: str) -> bool:
     if not email or not isinstance(email, str):
         return True
 
-    email = email.strip().lower()
-
     # Existing test-email pattern
-    if email.endswith("-fake@fighthealthinsurance.com"):
+    if email.strip().lower().endswith("-fake@fighthealthinsurance.com"):
         return True
 
-    if "@" not in email:
-        return True
-
-    domain = email.rsplit("@", 1)[1].strip()
+    domain = get_email_domain(email)
     if not domain:
         return True
 

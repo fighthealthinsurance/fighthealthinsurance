@@ -117,6 +117,13 @@ class Base(Configuration):
     BCC_EMAILS = ["auto-user-messages@fighthealthinsurance.com"]
     DEFAULT_FROM_EMAIL = "support42@fighthealthinsurance.com"
 
+    # Professional/support contact address CC'd on pro-connector
+    # (Cofactor AI sourcing agreement) intro emails. Configurable via env so we
+    # don't hardcode the address in the workflow code.
+    PROFESSIONAL_CC_EMAIL = os.getenv(
+        "PROFESSIONAL_CC_EMAIL", "professional@fighthealthinsurance.com"
+    )
+
     # Demo-request notifications always go to support42@; additional recipients
     # can be configured via the DEMO_REQUEST_EXTRA_NOTIFICATION_EMAILS env var
     # (comma-separated).

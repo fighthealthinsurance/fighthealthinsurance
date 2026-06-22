@@ -1,11 +1,13 @@
+import csv
 import datetime
 import json
 from collections import Counter, defaultdict
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from django.db import transaction
 from django.db.models import Count
-from django.http import HttpResponse
+from django.http import HttpResponse, StreamingHttpResponse
+from django.shortcuts import redirect, render
 from django.utils import timezone
 from django.views import View, generic
 
@@ -27,6 +29,7 @@ from fighthealthinsurance.models import (
     ChooserVote,
     Denial,
     FollowUpSched,
+    InterestedProfessional,
     MailingListSubscriber,
     ProfessionalDomainRelation,
     ProfessionalUser,
@@ -34,6 +37,23 @@ from fighthealthinsurance.models import (
     UserDomain,
 )
 from fighthealthinsurance.email_utils import is_sendable_email
+from fighthealthinsurance.business_hours import describe_send_window
+from fighthealthinsurance.proconnector import (
+    PROCONNECTOR_INTRO_SUBJECT,
+    build_search_links,
+    claim_email_for_send,
+    generate_intro_email,
+    get_next_interested_professional,
+    get_professional_cc_email,
+    mark_email_queued,
+    mark_email_sent,
+    mark_email_skipped,
+    release_email_claim,
+    non_spam_interested_professionals,
+    queue_proconnector_intro_email,
+    remaining_interested_professionals_count,
+    send_proconnector_intro_email,
+)
 from fighthealthinsurance.type_utils import User
 from fighthealthinsurance.utils import mask_email_for_logging
 
@@ -613,3 +633,253 @@ class ModelUsageDashboardView(generic.TemplateView):
             if mn:
                 presented[mn] += n
         return _merge_stats(chosen, dict(presented))
+
+
+class ProConnectorProcessView(View):
+    """Staff workflow to introduce interested professionals to Cofactor AI.
+
+    After refocusing FHI on its consumer mission, we have a sourcing agreement
+    to introduce interested professionals (who may be a fit) to Cofactor AI.
+    This view shows one unprocessed ``InterestedProfessional`` at a time with all
+    known details, research links, and an AI-drafted (editable) intro email.
+    Staff either send the (edited) email -- which CCs the professional contact
+    address and records the send -- queue it to go out during the recipient's
+    likely business hours, or skip the record. Any action advances to the next
+    unprocessed record. Nothing is sent automatically.
+    """
+
+    template_name = "proconnector.html"
+
+    def _render_record(
+        self,
+        request,
+        pro: InterestedProfessional,
+        *,
+        draft: Optional[str] = None,
+        subject: Optional[str] = None,
+        skip_reason: str = "",
+        error: Optional[str] = None,
+        status: int = 200,
+    ) -> HttpResponse:
+        """Render the processing page for a single record.
+
+        ``draft`` is generated via AI only when not supplied so that re-renders
+        after a validation/send error preserve the staff member's edits.
+        """
+        if draft is None:
+            draft = generate_intro_email(pro)
+        links = build_search_links(pro)
+        context = {
+            "title": "Pro Connector",
+            "pro": pro,
+            "email_body": draft,
+            "subject": subject or PROCONNECTOR_INTRO_SUBJECT,
+            "cc_email": get_professional_cc_email(),
+            "google_search_url": links["google"],
+            "linkedin_search_url": links["linkedin"],
+            "skip_reason": skip_reason,
+            "error": error,
+            "remaining_count": remaining_interested_professionals_count(),
+            "send_window_hint": describe_send_window(pro.phone_number),
+        }
+        return render(request, self.template_name, context, status=status)
+
+    def get(self, request) -> HttpResponse:
+        pro = get_next_interested_professional()
+        if pro is None:
+            return render(
+                request,
+                self.template_name,
+                {"title": "Pro Connector", "pro": None, "remaining_count": 0},
+            )
+        return self._render_record(request, pro)
+
+    def post(self, request) -> HttpResponse:
+        action = request.POST.get("action")
+        pro_id = request.POST.get("interested_professional_id")
+        pro = None
+        if pro_id:
+            try:
+                pro = InterestedProfessional.objects.filter(pk=int(pro_id)).first()
+            except (TypeError, ValueError):
+                pro = None
+        if pro is None:
+            # The record vanished (deleted, bad id, or already processed in
+            # another tab). Just advance to whatever is next.
+            return redirect("proconnector_process")
+
+        if pro.proconnector_attempted or pro.proconnector_skipped:
+            # Already processed (stale tab, back button, or double submit). Don't
+            # re-send or overwrite; just advance.
+            return redirect("proconnector_process")
+
+        if action == "skip":
+            skip_reason = (request.POST.get("skip_reason") or "").strip()
+            # Resolve every signup sharing this email so duplicates don't return.
+            mark_email_skipped(pro.email, skip_reason)
+            logger.info(
+                f"Staff user {request.user.username} skipped pro-connector intro for "
+                f"InterestedProfessional {pro.id} ({mask_email_for_logging(pro.email)})"
+            )
+            return redirect("proconnector_process")
+
+        # "send" delivers now; "queue" defers to the recipient's likely business
+        # hours. They share validation and edit-preserving error handling.
+        if action in ("send", "queue"):
+            validated = self._validated_intro(request, pro)
+            if isinstance(validated, HttpResponse):
+                return validated
+            body, subject, skip_reason = validated
+            deliver: Callable[..., Any]
+            mark: Callable[[str, str], int]
+            if action == "send":
+                deliver = send_proconnector_intro_email
+                mark = mark_email_sent
+                verb, failed_msg = "sent", "Failed to send the email."
+            else:
+                deliver = queue_proconnector_intro_email
+                mark = mark_email_queued
+                verb, failed_msg = "queued", "Failed to queue the email."
+            # Atomically claim the address before sending. Two staff sessions are
+            # handed the same next record, so without this both could pass the
+            # already-processed check above and double-send; losing the claim
+            # means another request already handled it, so just advance.
+            if claim_email_for_send(pro.email) == 0:
+                return redirect("proconnector_process")
+            try:
+                deliver(pro, subject=subject, body=body)
+            except Exception as e:
+                logger.opt(exception=True).error(
+                    f"Failed to {action} pro-connector intro to "
+                    f"{mask_email_for_logging(pro.email)}: {e}"
+                )
+                # Release the claim so staff can retry the record. Keep the
+                # exception detail in the logs (above) and show a generic message
+                # so internal details aren't surfaced in the UI.
+                release_email_claim(pro.email)
+                return self._render_record(
+                    request,
+                    pro,
+                    draft=body,
+                    subject=subject,
+                    skip_reason=skip_reason,
+                    error=f"{failed_msg} The error has been logged; please try again.",
+                    status=500,
+                )
+            # Record on every signup sharing this email so duplicate records are
+            # resolved together and never resurface in the queue.
+            mark(pro.email, body)
+            logger.info(
+                f"Staff user {request.user.username} {verb} pro-connector intro to "
+                f"InterestedProfessional {pro.id} ({mask_email_for_logging(pro.email)})"
+            )
+            return redirect("proconnector_process")
+
+        # Unknown / missing action -- re-render the current record.
+        return self._render_record(request, pro, error="Unknown action.", status=400)
+
+    def _validated_intro(
+        self, request, pro: InterestedProfessional
+    ) -> Union[Tuple[str, str, str], HttpResponse]:
+        """Validate the submitted intro for send/queue.
+
+        Returns ``(body, subject, skip_reason)`` when valid, or an error
+        ``HttpResponse`` (re-rendering the record with the staff edits preserved)
+        when the body is empty or the recipient address is unsendable.
+        """
+        body = (request.POST.get("email_body") or "").strip()
+        subject = (
+            request.POST.get("subject") or ""
+        ).strip() or PROCONNECTOR_INTRO_SUBJECT
+        skip_reason = (request.POST.get("skip_reason") or "").strip()
+        if not body:
+            return self._render_record(
+                request,
+                pro,
+                draft=request.POST.get("email_body", ""),
+                subject=subject,
+                skip_reason=skip_reason,
+                error="Email body cannot be empty.",
+                status=400,
+            )
+        if not is_sendable_email(pro.email):
+            return self._render_record(
+                request,
+                pro,
+                draft=body,
+                subject=subject,
+                skip_reason=skip_reason,
+                error=f"{pro.email} is not a sendable address; cannot send.",
+                status=400,
+            )
+        return body, subject, skip_reason
+
+
+class _CSVEcho:
+    """A file-like object that returns each written row, for CSV streaming."""
+
+    def write(self, value: str) -> str:
+        return value
+
+
+def _csv_safe(value: Any) -> str:
+    """Neutralize CSV formula injection in user-controlled fields.
+
+    Spreadsheet apps (Excel/Sheets) interpret a cell beginning with =, +, -, @
+    (or a leading tab/CR) as a formula. Several exported fields come from the
+    public, unauthenticated signup form, so prefix any such value with a single
+    quote to force it to render as text. ``None`` becomes an empty cell.
+    """
+    if value is None:
+        return ""
+    text = str(value)
+    if text[:1] in ("=", "+", "-", "@", "\t", "\r"):
+        return "'" + text
+    return text
+
+
+class ProConnectorExtractCSVView(View):
+    """Staff CSV export of interested professionals, excluding test/spam signups.
+
+    Dumps the info we have on each (non-filtered) interested professional --
+    including pro-connector processing state -- streamed as CSV. The same
+    test/spam filter used by the processing queue (testing@, .ru/.ua, names
+    containing a URL) is applied here.
+    """
+
+    columns = [
+        "id",
+        "name",
+        "email",
+        "business_name",
+        "phone_number",
+        "address",
+        "job_title_or_provider_type",
+        "most_common_denial",
+        "comments",
+        "paid",
+        "clicked_for_paid",
+        "signup_date",
+        "mod_date",
+        "proconnector_attempted",
+        "proconnector_sent_at",
+        "proconnector_skipped",
+        "proconnector_skip_reason",
+    ]
+
+    def get(self, request) -> StreamingHttpResponse:
+        qs = non_spam_interested_professionals().order_by("signup_date", "id")
+        writer = csv.writer(_CSVEcho())
+
+        def rows():
+            yield writer.writerow(self.columns)
+            for pro in qs.iterator():
+                yield writer.writerow(
+                    [_csv_safe(getattr(pro, column)) for column in self.columns]
+                )
+
+        response = StreamingHttpResponse(rows(), content_type="text/csv")
+        response["Content-Disposition"] = (
+            'attachment; filename="interested_professionals.csv"'
+        )
+        return response
