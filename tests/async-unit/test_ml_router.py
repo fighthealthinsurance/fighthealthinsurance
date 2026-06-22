@@ -330,6 +330,19 @@ class TestMLRouterBestExternalModels(unittest.TestCase):
 
         self.assertEqual(self.router.best_external_models(), [])
 
+    def test_generate_text_backends_fallback_honors_availability_gate(self):
+        """With no internal models and every external unavailable, the
+        all-models fallback must not re-offer the filtered-out externals."""
+        down = make_external_mock(quality=90, available=False)
+        self.router.models_by_name = {}
+        self.router.internal_models_by_cost = []
+        self.router.external_models_by_cost = [down]
+        self.router.all_models_by_cost = [down]
+
+        result = self.router.generate_text_backends(use_external=True)
+
+        self.assertEqual(result, [])
+
 
 class TestContextOnlyModelFlag(unittest.TestCase):
     """Tests for the context_only flag and how the router handles it."""

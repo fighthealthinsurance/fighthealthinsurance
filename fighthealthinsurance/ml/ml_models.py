@@ -2897,6 +2897,10 @@ class DeepInfra(RemoteFullOpenLike):
     # models for fan-out (MLRouter.best_external_models). Unknown models fall
     # back to a mid value.
     _MODEL_QUALITY: ClassVar[dict[str, int]] = {
+        # Currently registered by models() (flagship Pro deepseek + gemma-4).
+        "deepseek-ai/DeepSeek-V4-Pro": 92,
+        "google/gemma-4-26B-A4B-it": 80,
+        # Retained for _old_models() should it be re-enabled.
         "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8": 90,
         "meta-llama/Llama-4-Scout-17B-16E-Instruct": 85,
         "google/gemma-3-27b-it": 80,

@@ -212,9 +212,10 @@ class _HealthStatus:
         new_health: Dict[str, bool] = {}
         timeout_seconds = 10
         if candidates:
-            with concurrent.futures.ThreadPoolExecutor(
+            ex = concurrent.futures.ThreadPoolExecutor(
                 max_workers=min(8, len(candidates))
-            ) as ex:
+            )
+            try:
                 future_map = {ex.submit(m.model_is_ok): m for m in candidates}
                 # Block until all checks finish or the deadline elapses.
                 concurrent.futures.wait(future_map, timeout=timeout_seconds)
@@ -249,6 +250,14 @@ class _HealthStatus:
                                 name=name, ok=False, error=err or "not ok"
                             )
                         )
+            finally:
+                # Return at the deadline rather than blocking on stragglers: a
+                # `with` block's shutdown(wait=True) would join every probe, so
+                # one hung model_is_ok() could stall the sweep (and the held
+                # _lock) past timeout_seconds and delay publishing _health_map.
+                # Cancel queued probes; let any in-flight ones finish in the
+                # background. Matches compute_model_health_details below.
+                ex.shutdown(wait=False, cancel_futures=True)
 
         snapshot = HealthSnapshot(
             alive_models=alive_count,

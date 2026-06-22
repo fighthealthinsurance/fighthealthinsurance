@@ -309,7 +309,14 @@ class MLRouter(object):
             models += self.best_external_models()
         # Only fall back to all_models if use_external is True
         if not models and use_external:
-            models = self.all_models_by_cost[:6] if self.all_models_by_cost else []
+            # Keep the availability gate authoritative: don't re-introduce
+            # externals that best_external_models() just filtered out. Internal
+            # backends are always eligible; externals must pass the same gate.
+            models = [
+                m
+                for m in self.all_models_by_cost
+                if not m.external or self._external_selectable(m)
+            ][:6]
         return models
 
     def generate_text_backend_names(self, use_external: bool = False) -> list[str]:
