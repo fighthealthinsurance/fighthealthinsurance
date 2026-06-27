@@ -562,6 +562,7 @@ def generate_chooser_ranked_lines():
                 "candidate_index": c.candidate_index,
                 "kind": c.kind,
                 "model_name": c.model_name,
+                "synthesized": c.synthesized,
                 "content": c.content,
                 "metadata": c.metadata,
             }
@@ -580,6 +581,7 @@ def generate_chooser_ranked_lines():
                 "candidate_index": chosen.candidate_index,
                 "kind": chosen.kind,
                 "model_name": chosen.model_name,
+                "synthesized": chosen.synthesized,
                 "content": chosen.content,
             },
             "vote_count": top_vote_count,
