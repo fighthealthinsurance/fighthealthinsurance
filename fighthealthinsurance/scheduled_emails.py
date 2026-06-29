@@ -27,6 +27,11 @@ _SEND_RETRY_BACKOFF = datetime.timedelta(hours=1)
 # Stop retrying after this many failed attempts so a permanently-broken row
 # doesn't churn the queue forever.
 MAX_SEND_ATTEMPTS = 8
+# Soft-claim window: when a poller picks up a due row it pushes ``send_after``
+# this far out *before* the external send, so a second concurrent poller won't
+# also grab it. If the sender dies mid-send the row simply becomes eligible
+# again after this hour rather than being lost or double-sent.
+_SOFT_CLAIM_TTL = datetime.timedelta(hours=1)
 
 
 def enqueue_scheduled_email(
@@ -104,6 +109,22 @@ class ScheduledEmailSender(AsyncEmailSenderMixin):
             )
             se.save(update_fields=["send_after"])
             return False
+
+        # Atomically soft-claim the row before the external send so two
+        # concurrent pollers can't both deliver it: push ``send_after`` an hour
+        # out, conditional on the row still being due and unsent. Only the first
+        # claimant matches (others now see a future ``send_after`` and skip); a
+        # crash mid-send just lets the row become eligible again after the claim
+        # window instead of double-sending.
+        claimed = ScheduledEmail.objects.filter(
+            pk=se.pk,
+            sent=False,
+            send_after__lte=now,
+            attempts__lt=MAX_SEND_ATTEMPTS,
+        ).update(send_after=now + _SOFT_CLAIM_TTL)
+        if claimed == 0:
+            return False
+        se.refresh_from_db()
 
         try:
             send_fallback_email(

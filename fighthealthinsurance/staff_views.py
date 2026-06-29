@@ -716,7 +716,11 @@ class ProConnectorProcessView(View):
         if action == "skip":
             skip_reason = (request.POST.get("skip_reason") or "").strip()
             # Resolve every signup sharing this email so duplicates don't return.
-            mark_email_skipped(pro.email, skip_reason)
+            # Conditional on still-unprocessed: if another session already
+            # sent/queued it, mark returns 0 and we just advance rather than
+            # forcing a contradictory sent+skipped state.
+            if mark_email_skipped(pro.email, skip_reason) == 0:
+                return redirect("proconnector_process")
             logger.info(
                 f"Staff user {request.user.username} skipped pro-connector intro for "
                 f"InterestedProfessional {pro.id} ({mask_email_for_logging(pro.email)})"
@@ -825,15 +829,18 @@ class _CSVEcho:
 def _csv_safe(value: Any) -> str:
     """Neutralize CSV formula injection in user-controlled fields.
 
-    Spreadsheet apps (Excel/Sheets) interpret a cell beginning with =, +, -, @
-    (or a leading tab/CR) as a formula. Several exported fields come from the
-    public, unauthenticated signup form, so prefix any such value with a single
-    quote to force it to render as text. ``None`` becomes an empty cell.
+    Spreadsheet apps (Excel/Sheets) interpret a cell beginning with =, +, -, or
+    @ as a formula. They also trim leading whitespace/control characters first,
+    so a payload like " =1+1" or "\\n=..." must be caught by its first
+    *non-whitespace* character rather than its literal first character. Several
+    exported fields come from the public, unauthenticated signup form, so prefix
+    any such value with a single quote to force it to render as text. ``None``
+    becomes an empty cell.
     """
     if value is None:
         return ""
     text = str(value)
-    if text[:1] in ("=", "+", "-", "@", "\t", "\r"):
+    if text.lstrip()[:1] in ("=", "+", "-", "@"):
         return "'" + text
     return text
 

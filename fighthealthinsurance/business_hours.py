@@ -459,21 +459,26 @@ def normalize_area_code(phone: Optional[str]) -> Optional[str]:
     """Extract the 3-digit NANP area code from a free-form phone string.
 
     Handles common formats ("(212) 555-1234", "212-555-1234", "+1 212 555
-    1234"). Returns ``None`` when there aren't enough digits to contain an area
-    code. Does not validate that the result is a real area code -- callers look
-    it up in :data:`AREA_CODE_TIMEZONES`, where unknown codes simply miss.
+    1234", "+1 808 555 1234 x99"). Returns ``None`` when the value isn't a
+    canonical 10-digit NANP number after dropping an optional ``+1`` and any
+    extension -- including international numbers like "+44 20 7946 0958" -- so
+    callers fall back to the conservative default window instead of inventing a
+    US area code from non-NANP digits. Does not further validate that the result
+    is an assigned area code -- callers look it up in
+    :data:`AREA_CODE_TIMEZONES`, where unknown codes simply miss.
     """
     if not phone:
         return None
-    digits = re.sub(r"\D", "", phone)
-    # Drop a leading US/Canada country code so "+1 212..." parses correctly. Use
-    # >= 11 (not == 11) so an extension's digits ("+1 808 555 1234 x99" -> 13
-    # digits) don't keep the country code and yield "180" instead of "808"; a
-    # valid NANP area code never starts with 1, so a leading 1 is always the
-    # country code here.
-    if len(digits) >= 11 and digits.startswith("1"):
+    # Strip a trailing extension ("x99", "ext. 5") first so its digits don't
+    # inflate the length check or get mistaken for part of the number.
+    core = re.split(r"(?:ext\.?|x)\s*\d+\s*$", phone, flags=re.IGNORECASE)[0]
+    digits = re.sub(r"\D", "", core)
+    # Drop a leading US/Canada country code so "+1 212..." parses correctly.
+    if len(digits) == 11 and digits.startswith("1"):
         digits = digits[1:]
-    if len(digits) < 10:
+    # Require a canonical 10-digit NANP number; anything else (too short, or an
+    # international number) has no area code we can trust.
+    if len(digits) != 10:
         return None
     return digits[:3]
 

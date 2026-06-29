@@ -318,6 +318,17 @@ class QueueFilteringTest(TestCase):
             self.assertEqual(rec.proconnector_skip_reason, "not a fit")
         self.assertIsNone(get_next_interested_professional())
 
+    def test_mark_email_skipped_does_not_clobber_already_sent(self):
+        # A record already sent/claimed by another session must not be flipped
+        # to skipped -- that would be a contradictory sent+skipped state.
+        pro = _make_pro(email="sent@clinic.org")
+        proconnector.mark_email_sent("sent@clinic.org", "delivered body")
+        updated = proconnector.mark_email_skipped("sent@clinic.org", "too late")
+        self.assertEqual(updated, 0)
+        pro.refresh_from_db()
+        self.assertFalse(pro.proconnector_skipped)
+        self.assertTrue(pro.proconnector_attempted)
+
 
 # ---------------------------------------------------------------------------
 # Atomic claim / release (concurrent double-send prevention)

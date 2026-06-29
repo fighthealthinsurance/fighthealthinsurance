@@ -50,6 +50,13 @@ def test_normalize_area_code_strips_country_code_with_extension():
     assert normalize_area_code("+1 (212) 555-1234 x1000") == "212"
 
 
+def test_normalize_area_code_rejects_international():
+    # Non-NANP numbers must not be coerced into a US area code; callers then
+    # fall back to the conservative default window instead.
+    assert normalize_area_code("+44 20 7946 0958") is None
+    assert normalize_area_code("+33 1 42 68 53 00") is None
+
+
 def test_normalize_area_code_insufficient_digits():
     assert normalize_area_code("555-1234") is None
     assert normalize_area_code("") is None

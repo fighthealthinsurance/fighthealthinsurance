@@ -9,7 +9,7 @@ class Migration(migrations.Migration):
     dependencies = [
         (
             "fighthealthinsurance",
-            "0188_interestedprofessional_proconnector_attempted_and_more",
+            "0189_interestedprofessional_proconnector_attempted_and_more",
         ),
     ]
 
