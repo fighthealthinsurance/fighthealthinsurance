@@ -139,6 +139,32 @@ class DoSendTest(TestCase):
         self.assertFalse(result)
         mock_send.assert_not_called()
 
+    def test_soft_claim_blocks_concurrent_second_send(self):
+        # Simulate another poller having soft-claimed the row first (its
+        # send_after pushed into the future): this dosend must not double-send.
+        ScheduledEmail.objects.filter(pk=self.se.pk).update(
+            send_after=timezone.now() + datetime.timedelta(minutes=30)
+        )
+        with patch(f"{_MODULE}.is_within_business_hours", return_value=True), patch(
+            f"{_MODULE}.send_fallback_email"
+        ) as mock_send:
+            result = self.sender.dosend(scheduled_email=self.se)
+        self.assertFalse(result)
+        mock_send.assert_not_called()
+        self.se.refresh_from_db()
+        self.assertFalse(self.se.sent)
+
+    def test_send_advances_send_after_as_soft_claim(self):
+        # A successful send soft-claims by pushing send_after ~an hour out, so a
+        # concurrent poller scanning due rows won't also pick it up.
+        before = timezone.now()
+        with patch(f"{_MODULE}.is_within_business_hours", return_value=True), patch(
+            f"{_MODULE}.send_fallback_email"
+        ):
+            self.sender.dosend(scheduled_email=self.se)
+        self.se.refresh_from_db()
+        self.assertGreater(self.se.send_after, before + datetime.timedelta(minutes=30))
+
 
 class AsendAllTest(TestCase):
     def test_asend_all_sends_due_candidates(self):

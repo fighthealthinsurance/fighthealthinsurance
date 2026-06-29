@@ -518,8 +518,19 @@ def mark_email_queued(email: str, body: str) -> int:
 
 
 def mark_email_skipped(email: str, reason: Optional[str]) -> int:
-    """Mark every record sharing ``email`` as skipped. Returns the number updated."""
-    return InterestedProfessional.objects.filter(email__iexact=email).update(
+    """Mark every *unprocessed* record sharing ``email`` as skipped.
+
+    Filtered on not-yet-attempted/skipped so a concurrent send/queue (which
+    claims the address via ``proconnector_attempted``) isn't clobbered into a
+    contradictory sent+skipped state. Returns the number updated; ``0`` means
+    another action already claimed the address, so the caller should just
+    advance.
+    """
+    return InterestedProfessional.objects.filter(
+        email__iexact=email,
+        proconnector_attempted=False,
+        proconnector_skipped=False,
+    ).update(
         proconnector_skipped=True,
         proconnector_skip_reason=reason or None,
     )
