@@ -223,24 +223,43 @@ def _claims_cofactor_relationship(text: str) -> bool:
     return any(abs(p - c) <= 6 for p in partner_positions for c in cofactor_positions)
 
 
+def intro_wording_problem(text: Optional[str]) -> Optional[str]:
+    """Return a human-readable reason the intro wording is disallowed, or ``None``.
+
+    Enforces the two hard rules that apply to *both* AI drafts and staff edits:
+    Cofactor AI must not be framed as a "partner"/partnership, and the
+    plain-language compensation disclosure must be present. Length/quality
+    heuristics belong with the AI-draft guard (:func:`_is_safe_intro_draft`),
+    not here, so a deliberately short staff edit isn't rejected for length.
+    """
+    lowered = (text or "").lower()
+    if _claims_cofactor_relationship(lowered):
+        return (
+            "Please don't describe Cofactor AI as a partner or say FHI partnered "
+            "with them -- this is a sourcing agreement, not a partnership."
+        )
+    if "compensat" not in lowered:  # compensation / compensated
+        return (
+            "The required compensation disclosure is missing -- mention that FHI "
+            "may be compensated for the introduction."
+        )
+    return None
+
+
 def _is_safe_intro_draft(text: Optional[str]) -> bool:
     """Guard an AI draft against the two hard wording requirements.
 
-    Rejects drafts that (a) describe Cofactor AI as a "partner" / claim a
-    partnership with them, or (b) omit the plain-language compensation
-    disclosure. A rejected draft falls back to the always-safe base email.
+    Rejects drafts that are too short to be a real personalization, describe
+    Cofactor AI as a "partner" / claim a partnership with them, or omit the
+    plain-language compensation disclosure. A rejected draft falls back to the
+    always-safe base email.
     """
     if not text:
         return False
     stripped = text.strip()
     if len(stripped) < 100:
         return False
-    lowered = stripped.lower()
-    if _claims_cofactor_relationship(lowered):
-        return False
-    if "compensat" not in lowered:  # compensation / compensated
-        return False
-    return True
+    return intro_wording_problem(stripped) is None
 
 
 async def agenerate_intro_email(pro: InterestedProfessional) -> str:
@@ -490,12 +509,18 @@ def release_email_claim(email: str) -> int:
 
 
 def mark_email_sent(email: str, body: str) -> int:
-    """Mark every record sharing ``email`` as sent (attempted) with ``body``.
+    """Mark every *non-skipped* record sharing ``email`` as sent (attempted).
 
-    Duplicate signups for the same address are all resolved by a single send,
-    so the address never resurfaces in the queue. Returns the number updated.
+    Scoped to non-skipped rows -- matching what ``claim_email_for_send``
+    actually claimed -- so a separately-skipped duplicate of the same address
+    isn't flipped into a contradictory skipped+sent state. The remaining
+    duplicates are still resolved together, so the address never resurfaces in
+    the queue. Returns the number updated.
     """
-    return InterestedProfessional.objects.filter(email__iexact=email).update(
+    return InterestedProfessional.objects.filter(
+        email__iexact=email,
+        proconnector_skipped=False,
+    ).update(
         proconnector_attempted=True,
         proconnector_sent_at=timezone.now(),
         proconnector_email_body=body,
@@ -508,10 +533,14 @@ def mark_email_queued(email: str, body: str) -> int:
     Like :func:`mark_email_sent` but leaves ``proconnector_sent_at`` null: the
     intro has been handed off to the business-hours send queue but not delivered
     yet. Setting ``attempted`` removes it from the staff queue so it isn't shown
-    twice; the actual delivery time lives on the ``ScheduledEmail`` row. Returns
-    the number updated.
+    twice; the actual delivery time lives on the ``ScheduledEmail`` row. Scoped
+    to non-skipped rows (like :func:`mark_email_sent`) so a separately-skipped
+    duplicate isn't clobbered. Returns the number updated.
     """
-    return InterestedProfessional.objects.filter(email__iexact=email).update(
+    return InterestedProfessional.objects.filter(
+        email__iexact=email,
+        proconnector_skipped=False,
+    ).update(
         proconnector_attempted=True,
         proconnector_email_body=body,
     )

@@ -165,6 +165,22 @@ class DoSendTest(TestCase):
         self.se.refresh_from_db()
         self.assertGreater(self.se.send_after, before + datetime.timedelta(minutes=30))
 
+    def test_send_failure_backoff_is_exponential(self):
+        # A row that has already failed several times backs off much longer than
+        # the initial hour (exponential, not a fixed interval).
+        self.se.attempts = 3
+        self.se.save()
+        before = timezone.now()
+        with patch(f"{_MODULE}.is_within_business_hours", return_value=True), patch(
+            f"{_MODULE}.send_fallback_email", side_effect=RuntimeError("boom")
+        ):
+            result = self.sender.dosend(scheduled_email=self.se)
+        self.assertFalse(result)
+        self.se.refresh_from_db()
+        self.assertEqual(self.se.attempts, 4)
+        # attempts=3 -> ~1h * 2**3 = 8h, far beyond the 1h initial backoff.
+        self.assertGreater(self.se.send_after, before + datetime.timedelta(hours=4))
+
 
 class AsendAllTest(TestCase):
     def test_asend_all_sends_due_candidates(self):
