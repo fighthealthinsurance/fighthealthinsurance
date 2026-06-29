@@ -45,6 +45,7 @@ from fighthealthinsurance.proconnector import (
     generate_intro_email,
     get_next_interested_professional,
     get_professional_cc_email,
+    intro_wording_problem,
     mark_email_queued,
     mark_email_sent,
     mark_email_skipped,
@@ -789,7 +790,10 @@ class ProConnectorProcessView(View):
 
         Returns ``(body, subject, skip_reason)`` when valid, or an error
         ``HttpResponse`` (re-rendering the record with the staff edits preserved)
-        when the body is empty or the recipient address is unsendable.
+        when the body is empty, the recipient address is unsendable, or the
+        (possibly hand-edited) wording breaks the intro rules -- partner framing
+        or a missing compensation disclosure -- which must hold for the final
+        sent text, not just the AI draft.
         """
         body = (request.POST.get("email_body") or "").strip()
         subject = (
@@ -814,6 +818,20 @@ class ProConnectorProcessView(View):
                 subject=subject,
                 skip_reason=skip_reason,
                 error=f"{pro.email} is not a sendable address; cannot send.",
+                status=400,
+            )
+        # Re-validate the *final* (possibly hand-edited) wording, not just the AI
+        # draft: a staff edit must not drop the compensation disclosure or frame
+        # Cofactor AI as a partner.
+        wording_problem = intro_wording_problem(body)
+        if wording_problem:
+            return self._render_record(
+                request,
+                pro,
+                draft=body,
+                subject=subject,
+                skip_reason=skip_reason,
+                error=wording_problem,
                 status=400,
             )
         return body, subject, skip_reason

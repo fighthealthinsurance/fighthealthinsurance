@@ -370,6 +370,24 @@ class ClaimTest(TestCase):
         self.assertTrue(pro.proconnector_attempted)
         self.assertIsNotNone(pro.proconnector_sent_at)
 
+    def test_mark_email_sent_does_not_clobber_skipped_duplicate(self):
+        # An older duplicate already skipped must stay skipped when a newer
+        # signup with the same address is sent -- no contradictory skipped+sent
+        # row corrupting the export/audit trail.
+        skipped = _make_pro(email="dup@clinic.org")
+        skipped.proconnector_skipped = True
+        skipped.save()
+        fresh = _make_pro(email="dup@clinic.org")
+        updated = proconnector.mark_email_sent("dup@clinic.org", "the body")
+        self.assertEqual(updated, 1)  # only the non-skipped row
+        skipped.refresh_from_db()
+        fresh.refresh_from_db()
+        self.assertTrue(skipped.proconnector_skipped)
+        self.assertFalse(skipped.proconnector_attempted)
+        self.assertIsNone(skipped.proconnector_sent_at)
+        self.assertTrue(fresh.proconnector_attempted)
+        self.assertIsNotNone(fresh.proconnector_sent_at)
+
 
 # ---------------------------------------------------------------------------
 # AI draft generation + safe fallback
@@ -396,6 +414,25 @@ class SafetyValidatorTest(TestCase):
             + "x" * 100
         )
         self.assertTrue(_is_safe_intro_draft(text))
+
+    def test_wording_problem_flags_partner_framing(self):
+        self.assertIsNotNone(
+            proconnector.intro_wording_problem(
+                "FHI has partnered with Cofactor AI. We may be compensated."
+            )
+        )
+
+    def test_wording_problem_flags_missing_compensation(self):
+        self.assertIsNotNone(
+            proconnector.intro_wording_problem("A short note to introduce you.")
+        )
+
+    def test_wording_problem_allows_short_compliant_edit(self):
+        # Unlike the AI-draft guard there is no length floor here, so a short
+        # but compliant staff edit is accepted.
+        self.assertIsNone(
+            proconnector.intro_wording_problem("Intro; FHI may be compensated.")
+        )
 
     def test_rejects_partnership_claim_near_cofactor(self):
         text = (
@@ -627,6 +664,45 @@ class SendFlowTest(TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertEqual(response.url, reverse("proconnector_process"))
         mock_send.assert_not_called()
+
+    @patch("fighthealthinsurance.staff_views.send_proconnector_intro_email")
+    def test_send_rejects_edit_missing_compensation(self, mock_send):
+        # A staff edit that strips the compensation disclosure must be rejected,
+        # not silently sent -- the rule applies to the final body, not just the
+        # AI draft.
+        pro = _make_pro(email="jane@janeclinic.com")
+        response = self.client.post(
+            self.url,
+            {
+                "action": "send",
+                "interested_professional_id": pro.id,
+                "email_body": "Hi, I'd love to introduce you to Cofactor AI.",
+            },
+        )
+        self.assertEqual(response.status_code, 400)
+        mock_send.assert_not_called()
+        pro.refresh_from_db()
+        self.assertFalse(pro.proconnector_attempted)
+
+    @patch("fighthealthinsurance.staff_views.send_proconnector_intro_email")
+    def test_send_rejects_edit_with_partner_wording(self, mock_send):
+        # A staff edit that frames Cofactor AI as a partner must be rejected even
+        # though the compensation disclosure is present.
+        pro = _make_pro(email="jane@janeclinic.com")
+        response = self.client.post(
+            self.url,
+            {
+                "action": "send",
+                "interested_professional_id": pro.id,
+                "email_body": (
+                    "FHI has partnered with Cofactor AI. We may be compensated."
+                ),
+            },
+        )
+        self.assertEqual(response.status_code, 400)
+        mock_send.assert_not_called()
+        pro.refresh_from_db()
+        self.assertFalse(pro.proconnector_attempted)
 
 
 # ---------------------------------------------------------------------------

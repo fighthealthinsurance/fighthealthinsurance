@@ -22,8 +22,11 @@ from fighthealthinsurance.followup_emails import AsyncEmailSenderMixin
 from fighthealthinsurance.models import ScheduledEmail
 from fighthealthinsurance.utils import mask_email_for_logging, send_fallback_email
 
-# How long to wait before retrying a scheduled email whose send raised.
-_SEND_RETRY_BACKOFF = datetime.timedelta(hours=1)
+# Retry backoff for a scheduled email whose send raised: exponential per attempt
+# (1h, 2h, 4h, ... capped) so a permanently-broken row doesn't churn the queue
+# at a fixed interval until it gives up.
+_INITIAL_SEND_RETRY_BACKOFF = datetime.timedelta(hours=1)
+_MAX_SEND_RETRY_BACKOFF = datetime.timedelta(hours=24)
 # Stop retrying after this many failed attempts so a permanently-broken row
 # doesn't churn the queue forever.
 MAX_SEND_ATTEMPTS = 8
@@ -135,9 +138,15 @@ class ScheduledEmailSender(AsyncEmailSenderMixin):
                 cc=se.cc or None,
             )
         except Exception as e:
+            # Exponential backoff keyed on attempts already made (1h, 2h, 4h ...
+            # capped) so a broken template/backend stops churning the queue.
+            retry_backoff = min(
+                _INITIAL_SEND_RETRY_BACKOFF * (2**se.attempts),
+                _MAX_SEND_RETRY_BACKOFF,
+            )
             se.attempts = se.attempts + 1
             se.last_error = str(e)[:2000]
-            se.send_after = now + _SEND_RETRY_BACKOFF
+            se.send_after = now + retry_backoff
             se.save(update_fields=["attempts", "last_error", "send_after"])
             logger.warning(
                 f"Failed to send scheduled email {se.pk} to "
