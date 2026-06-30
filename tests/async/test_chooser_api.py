@@ -223,6 +223,29 @@ class ChooserNextTaskAPITest(APITestCase):
         self.assertIn("synthesized", data["candidates"][0])
         self.assertFalse(data["candidates"][0]["synthesized"])
 
+    def test_next_task_serializes_synthesized_true(self):
+        """A synthesized=True candidate is serialized as true by the API.
+
+        Guards against a regression where the view stops passing the flag and
+        the serializer's default (False) silently masks it.
+        """
+        ChooserCandidate.objects.create(
+            task=self.task,
+            candidate_index=2,
+            kind="appeal_letter",
+            model_name="synthesized",
+            synthesized=True,
+            content="An AI-synthesized appeal combining the other drafts.",
+        )
+        url = reverse("chooser-next-appeal")
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        candidates = response.json()["candidates"]
+        synthesized = [c for c in candidates if c["model_name"] == "synthesized"]
+        self.assertEqual(len(synthesized), 1)
+        self.assertTrue(synthesized[0]["synthesized"])
+
     def test_get_next_task_no_tasks_available(self):
         """Test getting next task when none are available and generation fails."""
         # Delete all tasks

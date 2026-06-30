@@ -50,6 +50,24 @@ class MarkProposalChosenTest(TestCase):
         pa = mark_proposal_chosen(self.denial, "no-match-text")
         self.assertFalse(pa.synthesized)
 
+    def test_synthesized_flag_copied_via_id_lookup(self):
+        # The preferred id-based lookup path must also carry synthesized, even
+        # when sub_in_appeals has rewritten the displayed text.
+        original = ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="raw synthesized draft {claim_id}",
+            chosen=False,
+            model_name="synthesized",
+            synthesized=True,
+        )
+        pa = mark_proposal_chosen(
+            self.denial,
+            "raw synthesized draft ABC123",
+            proposed_appeal_id=original.id,
+        )
+        self.assertTrue(pa.synthesized)
+        self.assertEqual(pa.model_name, "synthesized")
+
     def test_no_match_falls_back_to_none(self):
         ProposedAppeal.objects.create(
             for_denial=self.denial,

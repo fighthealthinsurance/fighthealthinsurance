@@ -579,50 +579,57 @@ async def _maybe_add_synthesized_candidate(task: ChooserTask, kind: str) -> None
 
     from asgiref.sync import sync_to_async
 
-    existing: List[ChooserCandidate] = [
-        candidate
-        async for candidate in ChooserCandidate.objects.filter(
-            task=task, is_active=True, synthesized=False
-        ).order_by("candidate_index")
-    ]
-    # Dedupe identical drafts so two copies of the same text don't count as
-    # two distinct inputs (synthesizing from identical drafts is pointless).
-    contents = list(
-        dict.fromkeys(
-            c.content.strip() for c in existing if c.content and c.content.strip()
-        )
-    )
-    if len(contents) < 2:
-        # Not enough distinct drafts to synthesize from.
-        return
-
-    context = task.context_json or {}
-    if kind == "appeal_letter":
-        synthesized_text = await _synthesize_appeal_candidate(context, contents)
-    else:
-        synthesized_text = await _synthesize_chat_candidate(context, contents)
-
-    if not synthesized_text:
-        return
-    normalized = synthesized_text.strip()
-    # Hold the synthesized candidate to the same minimum-length bar the base
-    # candidates must clear (>100 chars for appeals, >50 for chat).
-    min_length = 100 if kind == "appeal_letter" else 50
-    if len(normalized) <= min_length:
-        logger.info(
-            f"Chooser synthesis for task {task.id} returned too-short output; skipping"
-        )
-        return
-    # Skip a synthesized output that is just a verbatim copy of a draft.
-    if normalized in set(contents):
-        logger.info(
-            f"Chooser synthesis for task {task.id} returned a verbatim draft; skipping"
-        )
-        return
-
-    # Next free index: base candidates occupy 0..N-1 contiguously.
-    next_index = await sync_to_async(ChooserCandidate.objects.filter(task=task).count)()
+    # Best-effort: synthesis runs AFTER the base candidates are already
+    # persisted, so nothing here may propagate. Otherwise a transient error
+    # (e.g. a DB read/count hiccup) would bubble into _generate_single_task's
+    # except and flip an otherwise-valid task to DISABLED, orphaning its good
+    # base candidates. Contain everything and simply skip on error.
     try:
+        existing: List[ChooserCandidate] = [
+            candidate
+            async for candidate in ChooserCandidate.objects.filter(
+                task=task, is_active=True, synthesized=False
+            ).order_by("candidate_index")
+        ]
+        # Dedupe identical drafts so two copies of the same text don't count as
+        # two distinct inputs (synthesizing from identical drafts is pointless).
+        contents = list(
+            dict.fromkeys(
+                c.content.strip() for c in existing if c.content and c.content.strip()
+            )
+        )
+        if len(contents) < 2:
+            # Not enough distinct drafts to synthesize from.
+            return
+
+        context = task.context_json or {}
+        if kind == "appeal_letter":
+            synthesized_text = await _synthesize_appeal_candidate(context, contents)
+        else:
+            synthesized_text = await _synthesize_chat_candidate(context, contents)
+
+        if not synthesized_text:
+            return
+        normalized = synthesized_text.strip()
+        # Hold the synthesized candidate to the same minimum-length bar the base
+        # candidates must clear (>100 chars for appeals, >50 for chat).
+        min_length = 100 if kind == "appeal_letter" else 50
+        if len(normalized) <= min_length:
+            logger.info(
+                f"Chooser synthesis for task {task.id} returned too-short output; skipping"
+            )
+            return
+        # Skip a synthesized output that is just a verbatim copy of a draft.
+        if normalized in set(contents):
+            logger.info(
+                f"Chooser synthesis for task {task.id} returned a verbatim draft; skipping"
+            )
+            return
+
+        # Next free index: base candidates occupy 0..N-1 contiguously.
+        next_index = await sync_to_async(
+            ChooserCandidate.objects.filter(task=task).count
+        )()
         await sync_to_async(ChooserCandidate.objects.create)(
             task=task,
             candidate_index=next_index,

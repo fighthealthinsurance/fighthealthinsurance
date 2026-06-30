@@ -14,11 +14,13 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from django.test import TransactionTestCase
+from django.test import SimpleTestCase, TransactionTestCase
 
 from fighthealthinsurance.chooser_tasks import (
     _count_unscored_tasks,
     _maybe_add_synthesized_candidate,
+    _synthesize_appeal_candidate,
+    _synthesize_chat_candidate,
     check_and_refill_task_pool,
 )
 from fighthealthinsurance.models import (
@@ -118,20 +120,47 @@ class RefillThresholdTest(TransactionTestCase):
 
         mock_fire.assert_not_awaited()
 
-    def test_refill_triggers_when_ready_pool_low_even_if_scored(self):
-        # A voted task keeps the READY pool nonzero but leaves zero unscored
-        # tasks, so the unscored threshold still forces a back-fill.
-        task = _make_task(task_type="appeal")
-        cand = _make_candidate(task)
-        ChooserVote.objects.create(
-            task=task,
-            chosen_candidate=cand,
-            presented_candidate_ids=[cand.id],
-            session_key="sess-1",
-        )
+    def test_refill_triggers_on_low_unscored_when_ready_pool_healthy(self):
+        # Each type has a READY task that has already been voted on, so the
+        # READY pool is healthy (>=MIN_READY) but zero tasks are unscored.
+        # Isolates the unscored branch: only it can trigger the back-fill.
+        for tt in ("appeal", "chat"):
+            task = _make_task(task_type=tt)
+            cand = _make_candidate(task)
+            ChooserVote.objects.create(
+                task=task,
+                chosen_candidate=cand,
+                presented_candidate_ids=[cand.id],
+                session_key=f"sess-{tt}",
+            )
 
         with patch(
             "fighthealthinsurance.chooser_tasks.CHOOSER_MIN_READY_TASKS", 1
+        ), patch(
+            "fighthealthinsurance.chooser_tasks.CHOOSER_MIN_UNSCORED_TASKS", 5
+        ), patch(
+            "fighthealthinsurance.chooser_tasks._generate_batch_tasks",
+            new=MagicMock(),
+        ), patch(
+            "fighthealthinsurance.chooser_tasks.fire_and_forget_in_new_threadpool",
+            new=AsyncMock(),
+        ) as mock_fire:
+            asyncio.run(check_and_refill_task_pool())
+
+        # ready=1>=1 (healthy) for both; unscored=0<5 -> both refill solely via
+        # the unscored branch. Dropping that clause would make this 0.
+        self.assertEqual(mock_fire.await_count, 2)
+
+    def test_refill_triggers_on_low_ready_pool_when_unscored_healthy(self):
+        # Two fresh (unvoted) READY tasks per type: unscored=2 is healthy
+        # (>=MIN_UNSCORED) but the READY pool (2) is below MIN_READY.
+        # Isolates the ready-pool branch: only it can trigger the back-fill.
+        for tt in ("appeal", "chat"):
+            _make_task(task_type=tt)
+            _make_task(task_type=tt)
+
+        with patch(
+            "fighthealthinsurance.chooser_tasks.CHOOSER_MIN_READY_TASKS", 5
         ), patch(
             "fighthealthinsurance.chooser_tasks.CHOOSER_MIN_UNSCORED_TASKS", 1
         ), patch(
@@ -143,8 +172,8 @@ class RefillThresholdTest(TransactionTestCase):
         ) as mock_fire:
             asyncio.run(check_and_refill_task_pool())
 
-        # appeal has a READY task (ready>=1) but 0 unscored -> still refills;
-        # chat is empty -> refills. Both types trigger.
+        # ready=2<5 -> both refill; unscored=2>=1 is healthy, so the trigger is
+        # solely the ready-pool branch. Dropping that clause would make this 0.
         self.assertEqual(mock_fire.await_count, 2)
 
 
@@ -294,3 +323,91 @@ class SynthesizedCandidateTest(TransactionTestCase):
         self.assertEqual(synth.kind, "chat_response")
         self.assertEqual(synth.candidate_index, 2)
         self.assertEqual(synth.content, synth_text)
+
+
+class SynthesizeHelpersTest(SimpleTestCase):
+    """Direct tests for the synthesis helpers (these touch ML, not the DB)."""
+
+    def test_chat_synthesis_builds_prompt_and_returns_result(self):
+        model = MagicMock()
+        model._infer_no_context = AsyncMock(
+            return_value="A synthesized chat answer comfortably longer than fifty chars."
+        )
+        context = {
+            "prompt": "What documents do I need?",
+            "history": [{"role": "user", "content": "My MRI was denied."}],
+        }
+        responses = ["You need your denial letter.", "Bring your EOB and notes."]
+        with patch(
+            "fighthealthinsurance.chooser_tasks.ml_router.best_internal_model",
+            return_value=model,
+        ):
+            result = asyncio.run(_synthesize_chat_candidate(context, responses))
+
+        self.assertEqual(
+            result, "A synthesized chat answer comfortably longer than fifty chars."
+        )
+        # The prompt fed to the model includes the conversation and every
+        # candidate response to be combined, at the synthesis temperature.
+        kwargs = model._infer_no_context.call_args.kwargs
+        self.assertIn("What documents do I need?", kwargs["prompt"])
+        self.assertIn("My MRI was denied.", kwargs["prompt"])
+        for r in responses:
+            self.assertIn(r, kwargs["prompt"])
+        self.assertEqual(kwargs["temperature"], 0.3)
+
+    def test_chat_synthesis_returns_none_without_internal_model(self):
+        with patch(
+            "fighthealthinsurance.chooser_tasks.ml_router.best_internal_model",
+            return_value=None,
+        ):
+            result = asyncio.run(
+                _synthesize_chat_candidate({"prompt": "hi", "history": []}, ["a", "b"])
+            )
+        self.assertIsNone(result)
+
+    def test_chat_synthesis_rejects_too_short_model_output(self):
+        model = MagicMock()
+        model._infer_no_context = AsyncMock(return_value="short")
+        with patch(
+            "fighthealthinsurance.chooser_tasks.ml_router.best_internal_model",
+            return_value=model,
+        ):
+            result = asyncio.run(
+                _synthesize_chat_candidate({"prompt": "hi", "history": []}, ["a", "b"])
+            )
+        self.assertIsNone(result)
+
+    def test_appeal_synthesis_maps_context_fields(self):
+        generator = MagicMock()
+        generator.synthesize_appeals = AsyncMock(return_value="synthesized appeal text")
+        context = {
+            "denial_text_preview": "Denied as not medically necessary.",
+            "procedure": "MRI lumbar spine",
+            "diagnosis": "chronic low back pain",
+            "insurance_company": "Acme Health",
+        }
+        with patch(
+            "fighthealthinsurance.generate_appeal.AppealGenerator",
+            return_value=generator,
+        ):
+            result = asyncio.run(
+                _synthesize_appeal_candidate(context, ["draft a", "draft b"])
+            )
+
+        self.assertEqual(result, "synthesized appeal text")
+        kwargs = generator.synthesize_appeals.call_args.kwargs
+        self.assertEqual(kwargs["appeal_texts"], ["draft a", "draft b"])
+        self.assertEqual(kwargs["denial_text"], "Denied as not medically necessary.")
+        self.assertEqual(kwargs["procedure"], "MRI lumbar spine")
+        self.assertEqual(kwargs["diagnosis"], "chronic low back pain")
+
+    def test_appeal_synthesis_swallows_errors(self):
+        generator = MagicMock()
+        generator.synthesize_appeals = AsyncMock(side_effect=RuntimeError("boom"))
+        with patch(
+            "fighthealthinsurance.generate_appeal.AppealGenerator",
+            return_value=generator,
+        ):
+            result = asyncio.run(_synthesize_appeal_candidate({}, ["a", "b"]))
+        self.assertIsNone(result)
