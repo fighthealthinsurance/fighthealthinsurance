@@ -34,6 +34,7 @@ from fighthealthinsurance.models import (
     ProfessionalDomainRelation,
     ProfessionalUser,
     ProposedAppeal,
+    ScheduledEmail,
     UserDomain,
 )
 from fighthealthinsurance.email_utils import is_sendable_email
@@ -51,6 +52,7 @@ from fighthealthinsurance.proconnector import (
     mark_email_skipped,
     release_email_claim,
     non_spam_interested_professionals,
+    partner_framing_problem,
     queue_proconnector_intro_email,
     remaining_interested_professionals_count,
     send_proconnector_intro_email,
@@ -790,10 +792,11 @@ class ProConnectorProcessView(View):
 
         Returns ``(body, subject, skip_reason)`` when valid, or an error
         ``HttpResponse`` (re-rendering the record with the staff edits preserved)
-        when the body is empty, the recipient address is unsendable, or the
-        (possibly hand-edited) wording breaks the intro rules -- partner framing
-        or a missing compensation disclosure -- which must hold for the final
-        sent text, not just the AI draft.
+        when the body is empty, the recipient address is unsendable, the subject
+        is too long for the scheduled-email column, or the (possibly hand-edited)
+        wording breaks the intro rules -- partner framing (body *or* subject) or a
+        missing compensation disclosure -- which must hold for the final sent
+        text, not just the AI draft.
         """
         body = (request.POST.get("email_body") or "").strip()
         subject = (
@@ -832,6 +835,31 @@ class ProConnectorProcessView(View):
                 subject=subject,
                 skip_reason=skip_reason,
                 error=wording_problem,
+                status=400,
+            )
+        # The no-"partner" rule applies to the subject line too (the most visible
+        # header), and the queue path persists the subject to a bounded column --
+        # validate both so the immediate and queued paths behave identically.
+        subject_max = ScheduledEmail._meta.get_field("subject").max_length
+        if subject_max is not None and len(subject) > subject_max:
+            return self._render_record(
+                request,
+                pro,
+                draft=body,
+                subject=subject,
+                skip_reason=skip_reason,
+                error=f"Subject is too long (max {subject_max} characters).",
+                status=400,
+            )
+        subject_problem = partner_framing_problem(subject)
+        if subject_problem:
+            return self._render_record(
+                request,
+                pro,
+                draft=body,
+                subject=subject,
+                skip_reason=skip_reason,
+                error=subject_problem,
                 status=400,
             )
         return body, subject, skip_reason

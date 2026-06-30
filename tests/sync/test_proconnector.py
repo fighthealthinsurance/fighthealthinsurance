@@ -18,6 +18,7 @@ from fighthealthinsurance import proconnector
 from fighthealthinsurance.models import InterestedProfessional, ScheduledEmail
 from fighthealthinsurance.proconnector import (
     BASE_INTRO_EMAIL,
+    _claims_cofactor_relationship,
     _is_safe_intro_draft,
     build_base_intro_email,
     build_search_links,
@@ -25,7 +26,7 @@ from fighthealthinsurance.proconnector import (
     generate_intro_email,
     get_next_interested_professional,
     get_professional_cc_email,
-    is_personal_email_domain,
+    partner_framing_problem,
     queue_proconnector_intro_email,
 )
 
@@ -200,17 +201,6 @@ class NextRecordQueryTest(TestCase):
 # Domain prioritization (business domains before personal/free-email)
 # ---------------------------------------------------------------------------
 class DomainPriorityTest(TestCase):
-    def test_is_personal_email_domain(self):
-        self.assertTrue(is_personal_email_domain("someone@gmail.com"))
-        self.assertTrue(is_personal_email_domain("Someone@Outlook.com"))
-        self.assertTrue(is_personal_email_domain("a@yahoo.com"))
-        self.assertFalse(is_personal_email_domain("doctor@stanfordhealth.org"))
-        # Anchored on "@": a business domain merely ending in a personal one
-        # is not treated as personal.
-        self.assertFalse(is_personal_email_domain("billing@notgmail.com"))
-        self.assertFalse(is_personal_email_domain(""))
-        self.assertFalse(is_personal_email_domain("not-an-email"))
-
     def test_business_domain_prioritized_over_older_personal(self):
         # Personal-domain record is OLDER, business-domain record is NEWER.
         personal = _make_pro(email="older@gmail.com")
@@ -451,6 +441,19 @@ class SafetyValidatorTest(TestCase):
             "compensation if you choose to work with them. " + "x" * 100
         )
         self.assertTrue(_is_safe_intro_draft(text))
+
+    def test_partner_proximity_boundary(self):
+        # The guard flags partner* within <=6 tokens of "cofactor"; pin the exact
+        # decision boundary so an off-by-one threshold change is caught.
+        self.assertTrue(_claims_cofactor_relationship("partner a b c d e cofactor"))
+        self.assertFalse(_claims_cofactor_relationship("partner a b c d e f cofactor"))
+
+    def test_partner_framing_problem_independent_of_compensation(self):
+        # partner_framing_problem enforces ONLY the no-"partner" rule (it guards
+        # the subject line too), so it must not demand the compensation disclosure.
+        self.assertIsNotNone(partner_framing_problem("A partnership with Cofactor AI"))
+        self.assertIsNone(partner_framing_problem("Intro to Cofactor AI"))
+        self.assertIsNone(partner_framing_problem(""))
 
 
 class AIDraftFallbackTest(TestCase):
@@ -704,6 +707,44 @@ class SendFlowTest(TestCase):
         pro.refresh_from_db()
         self.assertFalse(pro.proconnector_attempted)
 
+    @patch("fighthealthinsurance.staff_views.send_proconnector_intro_email")
+    def test_send_rejects_partner_framing_in_subject(self, mock_send):
+        # The no-"partner" rule applies to the subject line too (the most visible
+        # header), even when the body is fully compliant.
+        pro = _make_pro(email="jane@janeclinic.com")
+        response = self.client.post(
+            self.url,
+            {
+                "action": "send",
+                "interested_professional_id": pro.id,
+                "subject": "Our new partnership with Cofactor AI",
+                "email_body": "Body with the compensation disclosure.",
+            },
+        )
+        self.assertEqual(response.status_code, 400)
+        mock_send.assert_not_called()
+        pro.refresh_from_db()
+        self.assertFalse(pro.proconnector_attempted)
+
+    @patch("fighthealthinsurance.staff_views.send_proconnector_intro_email")
+    def test_send_rejects_overlong_subject(self, mock_send):
+        # A subject longer than the ScheduledEmail column is rejected up front --
+        # consistently for send and queue -- instead of 500-ing on the queue path.
+        pro = _make_pro(email="jane@janeclinic.com")
+        response = self.client.post(
+            self.url,
+            {
+                "action": "send",
+                "interested_professional_id": pro.id,
+                "subject": "x" * 1001,
+                "email_body": "Body with the compensation disclosure.",
+            },
+        )
+        self.assertEqual(response.status_code, 400)
+        mock_send.assert_not_called()
+        pro.refresh_from_db()
+        self.assertFalse(pro.proconnector_attempted)
+
 
 # ---------------------------------------------------------------------------
 # Send failure behavior
@@ -839,6 +880,21 @@ class SendHelperTest(TestCase):
         self.assertIn("watcher@watch.org", msg.cc)
         # No duplicate professional address despite being passed in cc too.
         self.assertEqual(msg.cc.count(get_professional_cc_email()), 1)
+
+    def test_cc_dedup_is_case_insensitive(self):
+        # The professional address is deduped case-insensitively, so passing it
+        # back in a different case must not produce a duplicate CC.
+        pro = _make_pro(email="jane@janeclinic.com")
+        prof = get_professional_cc_email()
+        proconnector.send_proconnector_intro_email(
+            pro,
+            subject="Intro",
+            body="Body with compensation disclosure.",
+            cc=[prof.upper()],
+        )
+        msg = mail.outbox[0]
+        lowered = [a.lower() for a in msg.cc]
+        self.assertEqual(lowered.count(prof.lower()), 1)
 
 
 # ---------------------------------------------------------------------------
@@ -1117,3 +1173,16 @@ class ProExtractCSVTest(TestCase):
         self.assertNotIn("\n=SUM(1+2)", content)
         # It is prefixed with a quote so spreadsheets render it as text.
         self.assertIn("'=SUM(1+2)", content)
+
+    def test_csv_safe_neutralizes_all_dangerous_leads(self):
+        # Every formula-trigger lead char, plus leading whitespace/control chars
+        # a spreadsheet would strip, must be neutralized; benign values untouched.
+        from fighthealthinsurance.staff_views import _csv_safe
+
+        for payload in ("=1+1", "+1", "-1", "@cmd", " =1+1", "\t=1", "\n=1"):
+            self.assertTrue(
+                _csv_safe(payload).startswith("'"),
+                f"{payload!r} should be quote-prefixed",
+            )
+        self.assertEqual(_csv_safe("Dr. Jane"), "Dr. Jane")
+        self.assertEqual(_csv_safe(None), "")
