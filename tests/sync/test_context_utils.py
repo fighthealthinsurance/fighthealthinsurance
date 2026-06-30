@@ -7,12 +7,29 @@ supplemental-citation attach pattern used in the appeal/denial flow.
 import unittest
 
 from fighthealthinsurance.context_utils import (
+    CHARS_PER_TOKEN,
+    DENIAL_CONTEXT_TOKEN_FIELDS,
     attach_supplemental_to_citations,
     dedupe_blocks,
+    estimate_tokens,
     flatten_citation_context,
     merge_context_blocks,
+    summarize_denial_context_tokens,
     truncate_at_boundary,
 )
+
+
+class _FakeDenial:
+    """Minimal stand-in for a Denial row.
+
+    ``summarize_denial_context_tokens`` reads context fields via getattr,
+    so a plain attribute bag is sufficient and keeps the test Django-free.
+    Any field not set defaults to None (handled by getattr's default).
+    """
+
+    def __init__(self, **fields):
+        for key, value in fields.items():
+            setattr(self, key, value)
 
 
 class TestTruncateAtBoundary(unittest.TestCase):
@@ -227,8 +244,7 @@ class TestAttachSupplementalToCitations(unittest.TestCase):
         # Realistic shape: existing already has the supplemental block
         # appended via \n\n from a prior call.
         microsite_block = (
-            "## Additional Medical Evidence\n\n"
-            "Microsite link: https://example.com/x"
+            "## Additional Medical Evidence\n\n" "Microsite link: https://example.com/x"
         )
         existing = f"original ml citations\n\n{microsite_block}"
         ml, pm = attach_supplemental_to_citations(existing, None, microsite_block)
@@ -278,6 +294,62 @@ class TestAttachSupplementalToCitations(unittest.TestCase):
         ml, pm = attach_supplemental_to_citations(existing_list, None, supp)
         self.assertIs(ml, existing_list)
         self.assertIsNone(pm)
+
+
+class TestEstimateTokens(unittest.TestCase):
+    def test_empty_and_none_estimate_to_zero(self):
+        self.assertEqual(estimate_tokens(None), 0)
+        self.assertEqual(estimate_tokens(""), 0)
+        self.assertEqual(estimate_tokens([]), 0)
+        self.assertEqual(estimate_tokens({}), 0)
+        self.assertEqual(estimate_tokens(0), 0)
+
+    def test_string_uses_chars_per_token(self):
+        text = "x" * 400
+        self.assertEqual(estimate_tokens(text), 400 // CHARS_PER_TOKEN)
+
+    def test_non_string_is_stringified_then_counted(self):
+        # JSONField context (lists/dicts) must still contribute to the
+        # estimate rather than being silently dropped.
+        value = ["citation one", "citation two"]
+        self.assertEqual(estimate_tokens(value), len(str(value)) // CHARS_PER_TOKEN)
+
+
+class TestSummarizeDenialContextTokens(unittest.TestCase):
+    def test_reports_total_and_only_nonzero_fields(self):
+        denial = _FakeDenial(
+            denial_text="d" * 40,
+            qa_context="q" * 80,
+            # health_history left unset (None) -> omitted from breakdown
+            pubmed_context="",  # empty -> omitted
+        )
+        summary = summarize_denial_context_tokens(denial)
+        expected_total = (40 // CHARS_PER_TOKEN) + (80 // CHARS_PER_TOKEN)
+        self.assertIn(f"est_total={expected_total}tok", summary)
+        self.assertIn(f"denial_text={40 // CHARS_PER_TOKEN}", summary)
+        self.assertIn(f"qa_context={80 // CHARS_PER_TOKEN}", summary)
+        self.assertNotIn("health_history=", summary)
+        self.assertNotIn("pubmed_context=", summary)
+
+    def test_no_context_reports_zero_total_and_none(self):
+        summary = summarize_denial_context_tokens(_FakeDenial())
+        self.assertEqual(summary, "est_total=0tok (none)")
+
+    def test_counts_json_context_fields(self):
+        # ml_citation_context / ucr_context are JSONFields; their non-string
+        # values must be included in the total.
+        citations = ["a" * 100, "b" * 100]
+        denial = _FakeDenial(ml_citation_context=citations)
+        summary = summarize_denial_context_tokens(denial)
+        expected = len(str(citations)) // CHARS_PER_TOKEN
+        self.assertIn(f"ml_citation_context={expected}", summary)
+        self.assertIn(f"est_total={expected}tok", summary)
+
+    def test_field_list_covers_appeal_generation_context(self):
+        # Guards against the breakdown silently drifting from the fields
+        # that actually feed appeal generation.
+        for field in ("denial_text", "qa_context", "health_history"):
+            self.assertIn(field, DENIAL_CONTEXT_TOKEN_FIELDS)
 
 
 if __name__ == "__main__":
