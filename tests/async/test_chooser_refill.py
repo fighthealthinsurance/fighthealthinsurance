@@ -10,11 +10,9 @@ Covers two behaviors added alongside synthesis tracking:
   individual models.
 """
 
-import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from django.test import SimpleTestCase, TransactionTestCase
 
 from fighthealthinsurance.chooser_tasks import (
     _count_unscored_tasks,
@@ -30,12 +28,14 @@ from fighthealthinsurance.models import (
 )
 
 
-def _make_task(task_type="appeal", status="READY", source="synthetic"):
-    return ChooserTask.objects.create(task_type=task_type, status=status, source=source)
+async def _make_task(task_type="appeal", status="READY", source="synthetic"):
+    return await ChooserTask.objects.acreate(
+        task_type=task_type, status=status, source=source
+    )
 
 
-def _make_candidate(task, index=0, kind="appeal_letter", content="x"):
-    return ChooserCandidate.objects.create(
+async def _make_candidate(task, index=0, kind="appeal_letter", content="x"):
+    return await ChooserCandidate.objects.acreate(
         task=task,
         candidate_index=index,
         kind=kind,
@@ -44,19 +44,20 @@ def _make_candidate(task, index=0, kind="appeal_letter", content="x"):
     )
 
 
-@pytest.mark.django_db
-class CountUnscoredTasksTest(TransactionTestCase):
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+class TestCountUnscoredTasks:
     """_count_unscored_tasks should only count fresh, READY, synthetic tasks."""
 
-    def test_counts_only_ready_synthetic_unvoted_tasks(self):
+    async def test_counts_only_ready_synthetic_unvoted_tasks(self):
         # Counts: READY synthetic appeal with no votes.
-        _make_task()
-        _make_task()
+        await _make_task()
+        await _make_task()
 
         # Excluded: READY synthetic appeal that already has a vote.
-        voted = _make_task()
-        cand = _make_candidate(voted)
-        ChooserVote.objects.create(
+        voted = await _make_task()
+        cand = await _make_candidate(voted)
+        await ChooserVote.objects.acreate(
             task=voted,
             chosen_candidate=cand,
             presented_candidate_ids=[cand.id],
@@ -64,28 +65,28 @@ class CountUnscoredTasksTest(TransactionTestCase):
         )
 
         # Excluded: not READY.
-        _make_task(status="QUEUED")
+        await _make_task(status="QUEUED")
         # Excluded: not synthetic.
-        _make_task(source="real")
+        await _make_task(source="real")
         # Excluded: different task type.
-        _make_task(task_type="chat")
+        await _make_task(task_type="chat")
 
-        count = asyncio.run(_count_unscored_tasks("appeal"))
-        self.assertEqual(count, 2)
+        assert await _count_unscored_tasks("appeal") == 2
 
-    def test_chat_counted_separately(self):
-        _make_task(task_type="chat")
-        _make_task(task_type="appeal")
+    async def test_chat_counted_separately(self):
+        await _make_task(task_type="chat")
+        await _make_task(task_type="appeal")
 
-        self.assertEqual(asyncio.run(_count_unscored_tasks("chat")), 1)
-        self.assertEqual(asyncio.run(_count_unscored_tasks("appeal")), 1)
+        assert await _count_unscored_tasks("chat") == 1
+        assert await _count_unscored_tasks("appeal") == 1
 
 
-@pytest.mark.django_db
-class RefillThresholdTest(TransactionTestCase):
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+class TestRefillThreshold:
     """check_and_refill_task_pool back-fills based on the unscored threshold."""
 
-    def test_refill_triggers_when_unscored_below_threshold(self):
+    async def test_refill_triggers_when_unscored_below_threshold(self):
         # Empty DB: every type is below threshold and should be back-filled.
         with patch(
             "fighthealthinsurance.chooser_tasks._generate_batch_tasks",
@@ -94,16 +95,16 @@ class RefillThresholdTest(TransactionTestCase):
             "fighthealthinsurance.chooser_tasks.fire_and_forget_in_new_threadpool",
             new=AsyncMock(),
         ) as mock_fire:
-            asyncio.run(check_and_refill_task_pool())
+            await check_and_refill_task_pool()
 
         # Once for "appeal" and once for "chat".
-        self.assertEqual(mock_fire.await_count, 2)
+        assert mock_fire.await_count == 2
 
-    def test_no_refill_when_enough_unscored_and_ready(self):
+    async def test_no_refill_when_enough_unscored_and_ready(self):
         # One fresh READY synthetic task per type, with thresholds lowered to 1
         # so the pool is considered healthy and no generation is triggered.
-        _make_task(task_type="appeal")
-        _make_task(task_type="chat")
+        await _make_task(task_type="appeal")
+        await _make_task(task_type="chat")
 
         with patch(
             "fighthealthinsurance.chooser_tasks.CHOOSER_MIN_READY_TASKS", 1
@@ -116,18 +117,18 @@ class RefillThresholdTest(TransactionTestCase):
             "fighthealthinsurance.chooser_tasks.fire_and_forget_in_new_threadpool",
             new=AsyncMock(),
         ) as mock_fire:
-            asyncio.run(check_and_refill_task_pool())
+            await check_and_refill_task_pool()
 
         mock_fire.assert_not_awaited()
 
-    def test_refill_triggers_on_low_unscored_when_ready_pool_healthy(self):
+    async def test_refill_triggers_on_low_unscored_when_ready_pool_healthy(self):
         # Each type has a READY task that has already been voted on, so the
         # READY pool is healthy (>=MIN_READY) but zero tasks are unscored.
         # Isolates the unscored branch: only it can trigger the back-fill.
         for tt in ("appeal", "chat"):
-            task = _make_task(task_type=tt)
-            cand = _make_candidate(task)
-            ChooserVote.objects.create(
+            task = await _make_task(task_type=tt)
+            cand = await _make_candidate(task)
+            await ChooserVote.objects.acreate(
                 task=task,
                 chosen_candidate=cand,
                 presented_candidate_ids=[cand.id],
@@ -145,19 +146,19 @@ class RefillThresholdTest(TransactionTestCase):
             "fighthealthinsurance.chooser_tasks.fire_and_forget_in_new_threadpool",
             new=AsyncMock(),
         ) as mock_fire:
-            asyncio.run(check_and_refill_task_pool())
+            await check_and_refill_task_pool()
 
         # ready=1>=1 (healthy) for both; unscored=0<5 -> both refill solely via
         # the unscored branch. Dropping that clause would make this 0.
-        self.assertEqual(mock_fire.await_count, 2)
+        assert mock_fire.await_count == 2
 
-    def test_refill_triggers_on_low_ready_pool_when_unscored_healthy(self):
+    async def test_refill_triggers_on_low_ready_pool_when_unscored_healthy(self):
         # Two fresh (unvoted) READY tasks per type: unscored=2 is healthy
         # (>=MIN_UNSCORED) but the READY pool (2) is below MIN_READY.
         # Isolates the ready-pool branch: only it can trigger the back-fill.
         for tt in ("appeal", "chat"):
-            _make_task(task_type=tt)
-            _make_task(task_type=tt)
+            await _make_task(task_type=tt)
+            await _make_task(task_type=tt)
 
         with patch(
             "fighthealthinsurance.chooser_tasks.CHOOSER_MIN_READY_TASKS", 5
@@ -170,126 +171,124 @@ class RefillThresholdTest(TransactionTestCase):
             "fighthealthinsurance.chooser_tasks.fire_and_forget_in_new_threadpool",
             new=AsyncMock(),
         ) as mock_fire:
-            asyncio.run(check_and_refill_task_pool())
+            await check_and_refill_task_pool()
 
         # ready=2<5 -> both refill; unscored=2>=1 is healthy, so the trigger is
         # solely the ready-pool branch. Dropping that clause would make this 0.
-        self.assertEqual(mock_fire.await_count, 2)
+        assert mock_fire.await_count == 2
 
 
-@pytest.mark.django_db
-class SynthesizedCandidateTest(TransactionTestCase):
+@pytest.mark.asyncio
+@pytest.mark.django_db(transaction=True)
+class TestSynthesizedCandidate:
     """_maybe_add_synthesized_candidate appends a synthesized candidate."""
 
-    def test_adds_synthesized_appeal_candidate(self):
-        task = _make_task()
+    async def test_adds_synthesized_appeal_candidate(self):
+        task = await _make_task()
         task.context_json = {"procedure": "MRI", "diagnosis": "back pain"}
         task.num_candidates_generated = 2
-        task.save()
-        _make_candidate(task, 0, content="First draft appeal letter body.")
-        _make_candidate(task, 1, content="Second draft appeal letter body.")
+        await task.asave()
+        await _make_candidate(task, 0, content="First draft appeal letter body.")
+        await _make_candidate(task, 1, content="Second draft appeal letter body.")
 
         synth_text = "Synthesized appeal letter " + "z" * 200
         with patch(
             "fighthealthinsurance.chooser_tasks._synthesize_appeal_candidate",
             new=AsyncMock(return_value=synth_text),
         ):
-            asyncio.run(_maybe_add_synthesized_candidate(task, "appeal_letter"))
+            await _maybe_add_synthesized_candidate(task, "appeal_letter")
 
-        candidates = ChooserCandidate.objects.filter(task=task).order_by(
-            "candidate_index"
-        )
-        self.assertEqual(candidates.count(), 3)
-        synth = candidates.get(synthesized=True)
-        self.assertEqual(synth.candidate_index, 2)
-        self.assertEqual(synth.model_name, "synthesized")
-        self.assertEqual(synth.kind, "appeal_letter")
-        self.assertEqual(synth.content, synth_text)
-        task.refresh_from_db()
-        self.assertEqual(task.num_candidates_generated, 3)
+        assert await ChooserCandidate.objects.filter(task=task).acount() == 3
+        synth = await ChooserCandidate.objects.aget(task=task, synthesized=True)
+        assert synth.candidate_index == 2
+        assert synth.model_name == "synthesized"
+        assert synth.kind == "appeal_letter"
+        assert synth.content == synth_text
+        await task.arefresh_from_db()
+        assert task.num_candidates_generated == 3
 
-    def test_skips_synthesis_with_single_candidate(self):
-        task = _make_task()
-        _make_candidate(task, 0, content="Only one draft.")
+    async def test_skips_synthesis_with_single_candidate(self):
+        task = await _make_task()
+        await _make_candidate(task, 0, content="Only one draft.")
 
         with patch(
             "fighthealthinsurance.chooser_tasks._synthesize_appeal_candidate",
             new=AsyncMock(return_value="should not be used"),
         ) as mock_synth:
-            asyncio.run(_maybe_add_synthesized_candidate(task, "appeal_letter"))
+            await _maybe_add_synthesized_candidate(task, "appeal_letter")
 
         mock_synth.assert_not_called()
-        self.assertEqual(ChooserCandidate.objects.filter(task=task).count(), 1)
+        assert await ChooserCandidate.objects.filter(task=task).acount() == 1
 
-    def test_skips_verbatim_duplicate(self):
-        task = _make_task()
+    async def test_skips_verbatim_duplicate(self):
+        task = await _make_task()
         # Drafts long enough to clear the min-length bar, so this exercises the
         # verbatim-duplicate skip rather than the too-short skip.
         draft_one = "Draft one appeal letter body. " * 5
-        _make_candidate(task, 0, content=draft_one)
-        _make_candidate(task, 1, content="Draft two appeal letter body. " * 5)
+        await _make_candidate(task, 0, content=draft_one)
+        await _make_candidate(task, 1, content="Draft two appeal letter body. " * 5)
 
         # Synthesis returns a verbatim copy of an existing draft.
         with patch(
             "fighthealthinsurance.chooser_tasks._synthesize_appeal_candidate",
             new=AsyncMock(return_value=draft_one),
         ):
-            asyncio.run(_maybe_add_synthesized_candidate(task, "appeal_letter"))
+            await _maybe_add_synthesized_candidate(task, "appeal_letter")
 
-        self.assertFalse(
-            ChooserCandidate.objects.filter(task=task, synthesized=True).exists()
-        )
-        self.assertEqual(ChooserCandidate.objects.filter(task=task).count(), 2)
+        assert not await ChooserCandidate.objects.filter(
+            task=task, synthesized=True
+        ).aexists()
+        assert await ChooserCandidate.objects.filter(task=task).acount() == 2
 
-    def test_skips_too_short_synthesis(self):
-        task = _make_task()
-        _make_candidate(task, 0, content="First appeal draft body text here.")
-        _make_candidate(task, 1, content="Second appeal draft body text here.")
+    async def test_skips_too_short_synthesis(self):
+        task = await _make_task()
+        await _make_candidate(task, 0, content="First appeal draft body text here.")
+        await _make_candidate(task, 1, content="Second appeal draft body text here.")
 
         # A synthesized appeal under the 100-char base-candidate bar is rejected.
         with patch(
             "fighthealthinsurance.chooser_tasks._synthesize_appeal_candidate",
             new=AsyncMock(return_value="Too short."),
         ):
-            asyncio.run(_maybe_add_synthesized_candidate(task, "appeal_letter"))
+            await _maybe_add_synthesized_candidate(task, "appeal_letter")
 
-        self.assertFalse(
-            ChooserCandidate.objects.filter(task=task, synthesized=True).exists()
-        )
-        self.assertEqual(ChooserCandidate.objects.filter(task=task).count(), 2)
+        assert not await ChooserCandidate.objects.filter(
+            task=task, synthesized=True
+        ).aexists()
+        assert await ChooserCandidate.objects.filter(task=task).acount() == 2
 
-    def test_skips_synthesis_when_drafts_identical(self):
-        task = _make_task()
-        _make_candidate(task, 0, content="Identical appeal draft body.")
-        _make_candidate(task, 1, content="Identical appeal draft body.")
+    async def test_skips_synthesis_when_drafts_identical(self):
+        task = await _make_task()
+        await _make_candidate(task, 0, content="Identical appeal draft body.")
+        await _make_candidate(task, 1, content="Identical appeal draft body.")
 
         with patch(
             "fighthealthinsurance.chooser_tasks._synthesize_appeal_candidate",
             new=AsyncMock(return_value="x" * 200),
         ) as mock_synth:
-            asyncio.run(_maybe_add_synthesized_candidate(task, "appeal_letter"))
+            await _maybe_add_synthesized_candidate(task, "appeal_letter")
 
         # After dedupe there is only one distinct draft -> synthesis skipped.
         mock_synth.assert_not_called()
-        self.assertEqual(ChooserCandidate.objects.filter(task=task).count(), 2)
+        assert await ChooserCandidate.objects.filter(task=task).acount() == 2
 
-    def test_disabled_when_synthesis_returns_none(self):
-        task = _make_task()
-        _make_candidate(task, 0, content="Draft one body text.")
-        _make_candidate(task, 1, content="Draft two body text.")
+    async def test_disabled_when_synthesis_returns_none(self):
+        task = await _make_task()
+        await _make_candidate(task, 0, content="Draft one body text.")
+        await _make_candidate(task, 1, content="Draft two body text.")
 
         with patch(
             "fighthealthinsurance.chooser_tasks._synthesize_appeal_candidate",
             new=AsyncMock(return_value=None),
         ):
-            asyncio.run(_maybe_add_synthesized_candidate(task, "appeal_letter"))
+            await _maybe_add_synthesized_candidate(task, "appeal_letter")
 
-        self.assertEqual(ChooserCandidate.objects.filter(task=task).count(), 2)
+        assert await ChooserCandidate.objects.filter(task=task).acount() == 2
 
-    def test_respects_include_synthesis_flag(self):
-        task = _make_task()
-        _make_candidate(task, 0, content="Draft one body text.")
-        _make_candidate(task, 1, content="Draft two body text.")
+    async def test_respects_include_synthesis_flag(self):
+        task = await _make_task()
+        await _make_candidate(task, 0, content="Draft one body text.")
+        await _make_candidate(task, 1, content="Draft two body text.")
 
         with patch(
             "fighthealthinsurance.chooser_tasks.CHOOSER_INCLUDE_SYNTHESIS", False
@@ -297,17 +296,21 @@ class SynthesizedCandidateTest(TransactionTestCase):
             "fighthealthinsurance.chooser_tasks._synthesize_appeal_candidate",
             new=AsyncMock(return_value="x" * 200),
         ) as mock_synth:
-            asyncio.run(_maybe_add_synthesized_candidate(task, "appeal_letter"))
+            await _maybe_add_synthesized_candidate(task, "appeal_letter")
 
         mock_synth.assert_not_called()
-        self.assertEqual(ChooserCandidate.objects.filter(task=task).count(), 2)
+        assert await ChooserCandidate.objects.filter(task=task).acount() == 2
 
-    def test_adds_synthesized_chat_candidate(self):
-        task = _make_task(task_type="chat")
+    async def test_adds_synthesized_chat_candidate(self):
+        task = await _make_task(task_type="chat")
         task.context_json = {"prompt": "How do I appeal?", "history": []}
-        task.save()
-        _make_candidate(task, 0, kind="chat_response", content="First chat response.")
-        _make_candidate(task, 1, kind="chat_response", content="Second chat response.")
+        await task.asave()
+        await _make_candidate(
+            task, 0, kind="chat_response", content="First chat response."
+        )
+        await _make_candidate(
+            task, 1, kind="chat_response", content="Second chat response."
+        )
 
         # Must clear the chat min-length bar (>50 chars).
         synth_text = (
@@ -317,18 +320,19 @@ class SynthesizedCandidateTest(TransactionTestCase):
             "fighthealthinsurance.chooser_tasks._synthesize_chat_candidate",
             new=AsyncMock(return_value=synth_text),
         ):
-            asyncio.run(_maybe_add_synthesized_candidate(task, "chat_response"))
+            await _maybe_add_synthesized_candidate(task, "chat_response")
 
-        synth = ChooserCandidate.objects.get(task=task, synthesized=True)
-        self.assertEqual(synth.kind, "chat_response")
-        self.assertEqual(synth.candidate_index, 2)
-        self.assertEqual(synth.content, synth_text)
+        synth = await ChooserCandidate.objects.aget(task=task, synthesized=True)
+        assert synth.kind == "chat_response"
+        assert synth.candidate_index == 2
+        assert synth.content == synth_text
 
 
-class SynthesizeHelpersTest(SimpleTestCase):
+@pytest.mark.asyncio
+class TestSynthesizeHelpers:
     """Direct tests for the synthesis helpers (these touch ML, not the DB)."""
 
-    def test_chat_synthesis_builds_prompt_and_returns_result(self):
+    async def test_chat_synthesis_builds_prompt_and_returns_result(self):
         model = MagicMock()
         model._infer_no_context = AsyncMock(
             return_value="A synthesized chat answer comfortably longer than fifty chars."
@@ -342,43 +346,43 @@ class SynthesizeHelpersTest(SimpleTestCase):
             "fighthealthinsurance.chooser_tasks.ml_router.best_internal_model",
             return_value=model,
         ):
-            result = asyncio.run(_synthesize_chat_candidate(context, responses))
+            result = await _synthesize_chat_candidate(context, responses)
 
-        self.assertEqual(
-            result, "A synthesized chat answer comfortably longer than fifty chars."
+        assert (
+            result == "A synthesized chat answer comfortably longer than fifty chars."
         )
         # The prompt fed to the model includes the conversation and every
         # candidate response to be combined, at the synthesis temperature.
         kwargs = model._infer_no_context.call_args.kwargs
-        self.assertIn("What documents do I need?", kwargs["prompt"])
-        self.assertIn("My MRI was denied.", kwargs["prompt"])
+        assert "What documents do I need?" in kwargs["prompt"]
+        assert "My MRI was denied." in kwargs["prompt"]
         for r in responses:
-            self.assertIn(r, kwargs["prompt"])
-        self.assertEqual(kwargs["temperature"], 0.3)
+            assert r in kwargs["prompt"]
+        assert kwargs["temperature"] == 0.3
 
-    def test_chat_synthesis_returns_none_without_internal_model(self):
+    async def test_chat_synthesis_returns_none_without_internal_model(self):
         with patch(
             "fighthealthinsurance.chooser_tasks.ml_router.best_internal_model",
             return_value=None,
         ):
-            result = asyncio.run(
-                _synthesize_chat_candidate({"prompt": "hi", "history": []}, ["a", "b"])
+            result = await _synthesize_chat_candidate(
+                {"prompt": "hi", "history": []}, ["a", "b"]
             )
-        self.assertIsNone(result)
+        assert result is None
 
-    def test_chat_synthesis_rejects_too_short_model_output(self):
+    async def test_chat_synthesis_rejects_too_short_model_output(self):
         model = MagicMock()
         model._infer_no_context = AsyncMock(return_value="short")
         with patch(
             "fighthealthinsurance.chooser_tasks.ml_router.best_internal_model",
             return_value=model,
         ):
-            result = asyncio.run(
-                _synthesize_chat_candidate({"prompt": "hi", "history": []}, ["a", "b"])
+            result = await _synthesize_chat_candidate(
+                {"prompt": "hi", "history": []}, ["a", "b"]
             )
-        self.assertIsNone(result)
+        assert result is None
 
-    def test_appeal_synthesis_maps_context_fields(self):
+    async def test_appeal_synthesis_maps_context_fields(self):
         generator = MagicMock()
         generator.synthesize_appeals = AsyncMock(return_value="synthesized appeal text")
         context = {
@@ -391,23 +395,21 @@ class SynthesizeHelpersTest(SimpleTestCase):
             "fighthealthinsurance.generate_appeal.AppealGenerator",
             return_value=generator,
         ):
-            result = asyncio.run(
-                _synthesize_appeal_candidate(context, ["draft a", "draft b"])
-            )
+            result = await _synthesize_appeal_candidate(context, ["draft a", "draft b"])
 
-        self.assertEqual(result, "synthesized appeal text")
+        assert result == "synthesized appeal text"
         kwargs = generator.synthesize_appeals.call_args.kwargs
-        self.assertEqual(kwargs["appeal_texts"], ["draft a", "draft b"])
-        self.assertEqual(kwargs["denial_text"], "Denied as not medically necessary.")
-        self.assertEqual(kwargs["procedure"], "MRI lumbar spine")
-        self.assertEqual(kwargs["diagnosis"], "chronic low back pain")
+        assert kwargs["appeal_texts"] == ["draft a", "draft b"]
+        assert kwargs["denial_text"] == "Denied as not medically necessary."
+        assert kwargs["procedure"] == "MRI lumbar spine"
+        assert kwargs["diagnosis"] == "chronic low back pain"
 
-    def test_appeal_synthesis_swallows_errors(self):
+    async def test_appeal_synthesis_swallows_errors(self):
         generator = MagicMock()
         generator.synthesize_appeals = AsyncMock(side_effect=RuntimeError("boom"))
         with patch(
             "fighthealthinsurance.generate_appeal.AppealGenerator",
             return_value=generator,
         ):
-            result = asyncio.run(_synthesize_appeal_candidate({}, ["a", "b"]))
-        self.assertIsNone(result)
+            result = await _synthesize_appeal_candidate({}, ["a", "b"])
+        assert result is None
