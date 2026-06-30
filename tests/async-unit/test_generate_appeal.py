@@ -8,6 +8,10 @@ from fighthealthinsurance.generate_appeal import (
     AppealGenerator,
     AppealTemplateGenerator,
     GeneratedAppeal,
+    _calls_over_context_budget,
+    _DUAL_CALL_CONTEXT_RATIO,
+    _estimate_call_token_footprint,
+    _model_context_limit,
     _peek_real_or_none,
     _shed_context,
     _PROMPT_TIER1_NULLS,
@@ -668,6 +672,107 @@ class TestShedContextPromptRebuild:
         )
         assert calls_count[0] == 0, "rebuild fired on truly-empty enrichment"
         assert not any(c.startswith("prompt.") for c in changed)
+
+
+# --- proactive dual-call (over-context-budget) tests ------------------------
+
+
+def _backend_with_context(max_context):
+    """A minimal model backend stub exposing get_max_context()."""
+    backend = MagicMock()
+    backend.get_max_context.return_value = max_context
+    return backend
+
+
+class TestDualCallContextBudget:
+    """Proactive dual-call: over-budget calls get a tier-1 shed sibling on
+    the first iteration (see make_appeals)."""
+
+    def test_estimate_sums_prompt_and_context_surfaces(self):
+        call = _make_call(
+            prompt="p" * 40,
+            patient_context="a" * 40,
+            plan_context="b" * 40,
+            pubmed_context="c" * 40,
+            ml_citations_context="d" * 40,
+        )
+        # 5 fields x (40 // 4 chars-per-token) = 5 x 10 = 50.
+        assert _estimate_call_token_footprint(call) == 50
+
+    def test_estimate_handles_none_and_list_contexts(self):
+        call = _make_call(
+            prompt=None,
+            patient_context=None,
+            plan_context=None,
+            pubmed_context=None,
+            ml_citations_context=["x" * 20, "y" * 20],
+        )
+        # Only the list contributes; it is stringified before counting.
+        assert _estimate_call_token_footprint(call) > 0
+
+    def test_model_context_limit_uses_smallest_backend(self):
+        models_by_name = {
+            "fhi-internal": [
+                _backend_with_context(100000),
+                _backend_with_context(8000),
+            ]
+        }
+        with patch(
+            "fighthealthinsurance.generate_appeal.ml_router.models_by_name",
+            new=models_by_name,
+        ):
+            assert _model_context_limit("fhi-internal") == 8000
+
+    def test_model_context_limit_unknown_model_is_none(self):
+        with patch(
+            "fighthealthinsurance.generate_appeal.ml_router.models_by_name",
+            new={},
+        ):
+            assert _model_context_limit("missing") is None
+            assert _model_context_limit(None) is None
+
+    def test_model_context_limit_survives_backend_error(self):
+        bad = MagicMock()
+        bad.get_max_context.side_effect = RuntimeError("boom")
+        with patch(
+            "fighthealthinsurance.generate_appeal.ml_router.models_by_name",
+            new={"fhi-internal": [bad]},
+        ):
+            # All backends erroring -> unknown, not a raised exception.
+            assert _model_context_limit("fhi-internal") is None
+
+    def test_over_budget_detects_calls_above_ratio(self):
+        # ~8000 tokens of context vs an 8000-token window comfortably clears
+        # the 0.8*8000=6400 threshold.
+        big = "x" * (8000 * 4)  # ~8000 tokens in one field
+        call = _make_call(patient_context=big)
+        with patch(
+            "fighthealthinsurance.generate_appeal.ml_router.models_by_name",
+            new={"fhi-internal": [_backend_with_context(8000)]},
+        ):
+            over = _calls_over_context_budget([call])
+        assert over == [call]
+
+    def test_under_budget_returns_empty(self):
+        call = _make_call(prompt="short", patient_context="short", plan_context="short")
+        with patch(
+            "fighthealthinsurance.generate_appeal.ml_router.models_by_name",
+            new={"fhi-internal": [_backend_with_context(8000)]},
+        ):
+            assert _calls_over_context_budget([call]) == []
+
+    def test_unknown_model_window_is_not_flagged(self):
+        # No proactive shed when we can't size the window.
+        big = "x" * (8000 * 4)
+        call = _make_call(patient_context=big)
+        with patch(
+            "fighthealthinsurance.generate_appeal.ml_router.models_by_name",
+            new={},
+        ):
+            assert _calls_over_context_budget([call]) == []
+
+    def test_ratio_is_a_sane_fraction(self):
+        assert 0.0 < _DUAL_CALL_CONTEXT_RATIO < 1.0
 
 
 # --- make_appeals router-call-pattern tests --------------------------------
