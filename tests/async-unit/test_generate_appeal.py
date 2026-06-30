@@ -8,6 +8,7 @@ from fighthealthinsurance.generate_appeal import (
     AppealGenerator,
     AppealTemplateGenerator,
     GeneratedAppeal,
+    _add_proactive_shed_variants,
     _calls_over_context_budget,
     _DUAL_CALL_CONTEXT_RATIO,
     _estimate_call_token_footprint,
@@ -700,15 +701,35 @@ class TestDualCallContextBudget:
         assert _estimate_call_token_footprint(call) == 50
 
     def test_estimate_handles_none_and_list_contexts(self):
+        citations = ["x" * 20, "y" * 20]
         call = _make_call(
             prompt=None,
             patient_context=None,
             plan_context=None,
             pubmed_context=None,
-            ml_citations_context=["x" * 20, "y" * 20],
+            ml_citations_context=citations,
         )
         # Only the list contributes; it is stringified before counting.
-        assert _estimate_call_token_footprint(call) > 0
+        from fighthealthinsurance.context_utils import estimate_tokens
+
+        assert _estimate_call_token_footprint(call) == estimate_tokens(citations)
+
+    def test_estimate_caps_patient_context_to_wire_size(self):
+        # _build_context_extra only sends patient_context[0:max_len/2] chars,
+        # so the estimate must count the capped size, not the full string.
+        big_patient = "a" * 40000  # 10000 tokens uncapped
+        call = _make_call(
+            prompt=None,
+            patient_context=big_patient,
+            plan_context=None,
+            pubmed_context=None,
+            ml_citations_context=None,
+        )
+        # cap of 4000 chars -> 1000 tokens, far below the uncapped 10000.
+        assert (
+            _estimate_call_token_footprint(call, patient_context_char_cap=4000) == 1000
+        )
+        assert _estimate_call_token_footprint(call) == 10000
 
     def test_model_context_limit_uses_smallest_backend(self):
         models_by_name = {
@@ -742,16 +763,30 @@ class TestDualCallContextBudget:
             assert _model_context_limit("fhi-internal") is None
 
     def test_over_budget_detects_calls_above_ratio(self):
-        # ~8000 tokens of context vs an 8000-token window comfortably clears
-        # the 0.8*8000=6400 threshold.
+        # ~8000 tokens of (sheddable) enrichment vs an 8000-token window
+        # comfortably clears the 0.8*8000=6400 threshold.
         big = "x" * (8000 * 4)  # ~8000 tokens in one field
-        call = _make_call(patient_context=big)
+        call = _make_call(pubmed_context=big)
         with patch(
             "fighthealthinsurance.generate_appeal.ml_router.models_by_name",
             new={"fhi-internal": [_backend_with_context(8000)]},
         ):
             over = _calls_over_context_budget([call])
         assert over == [call]
+
+    def test_patient_context_alone_not_flagged_due_to_wire_cap(self):
+        # A huge patient_context is capped to max_len/2 chars on the wire, so
+        # it must NOT trip the over-budget check (tier-1 can't shed it anyway).
+        big_patient = "x" * (8000 * 4)  # 8000 tokens uncapped
+        call = _make_call(
+            patient_context=big_patient, pubmed_context=None, ml_citations_context=None
+        )
+        with patch(
+            "fighthealthinsurance.generate_appeal.ml_router.models_by_name",
+            new={"fhi-internal": [_backend_with_context(8000)]},
+        ):
+            # Capped to 4000 chars -> 1000 tokens, well under 6400.
+            assert _calls_over_context_budget([call]) == []
 
     def test_under_budget_returns_empty(self):
         call = _make_call(prompt="short", patient_context="short", plan_context="short")
@@ -762,9 +797,10 @@ class TestDualCallContextBudget:
             assert _calls_over_context_budget([call]) == []
 
     def test_unknown_model_window_is_not_flagged(self):
-        # No proactive shed when we can't size the window.
+        # No proactive shed when we can't size the window, even when the call
+        # would otherwise be over budget.
         big = "x" * (8000 * 4)
-        call = _make_call(patient_context=big)
+        call = _make_call(pubmed_context=big)
         with patch(
             "fighthealthinsurance.generate_appeal.ml_router.models_by_name",
             new={},
@@ -773,6 +809,79 @@ class TestDualCallContextBudget:
 
     def test_ratio_is_a_sane_fraction(self):
         assert 0.0 < _DUAL_CALL_CONTEXT_RATIO < 1.0
+
+    # --- _add_proactive_shed_variants integration (the make_appeals wiring) --
+
+    @staticmethod
+    def _noop_rebuild(**kwargs):
+        # make_appeals passes self.make_open_prompt; tests inject this so the
+        # prompt-rebuild path is exercised without a real prompt builder.
+        return "REBUILT_PROMPT"
+
+    def test_adds_shed_sibling_for_over_budget_call(self):
+        big = "x" * (8000 * 4)
+        call = _make_call(prompt="ORIGINAL", pubmed_context=big)
+        original_snapshot = dict(call)
+        with patch(
+            "fighthealthinsurance.generate_appeal.ml_router.models_by_name",
+            new={"fhi-internal": [_backend_with_context(8000)]},
+        ):
+            result = _add_proactive_shed_variants(
+                [call],
+                open_prompt_kwargs={"pubmed_context": "enrichment"},
+                rebuild_prompt=self._noop_rebuild,
+                original_open_prompt="ORIGINAL",
+                denial_id=1,
+            )
+        # Full call kept first and left untouched...
+        assert result[0] is call
+        assert call == original_snapshot
+        # ...with a shed sibling appended that nulls the call-dict enrichment
+        # and swaps in the rebuilt prompt.
+        assert len(result) == 2
+        sibling = result[1]
+        assert sibling["pubmed_context"] is None
+        assert sibling["ml_citations_context"] is None
+        assert sibling["prompt"] == "REBUILT_PROMPT"
+
+    def test_no_sibling_when_under_budget(self):
+        call = _make_call(prompt="ORIGINAL")
+        with patch(
+            "fighthealthinsurance.generate_appeal.ml_router.models_by_name",
+            new={"fhi-internal": [_backend_with_context(200000)]},
+        ):
+            result = _add_proactive_shed_variants(
+                [call],
+                open_prompt_kwargs={},
+                rebuild_prompt=self._noop_rebuild,
+                original_open_prompt="ORIGINAL",
+                denial_id=1,
+            )
+        assert result == [call]
+
+    def test_no_sibling_when_tier1_shed_is_noop(self):
+        # Over budget purely from plan_context (tier-1 doesn't touch it) with
+        # no sheddable enrichment and an unrelated prompt -> the variant equals
+        # the source and is dropped rather than duplicating the full call.
+        big_plan = "x" * (8000 * 4)
+        call = _make_call(
+            prompt="UNRELATED",
+            plan_context=big_plan,
+            pubmed_context=None,
+            ml_citations_context=None,
+        )
+        with patch(
+            "fighthealthinsurance.generate_appeal.ml_router.models_by_name",
+            new={"fhi-internal": [_backend_with_context(8000)]},
+        ):
+            result = _add_proactive_shed_variants(
+                [call],
+                open_prompt_kwargs={},
+                rebuild_prompt=self._noop_rebuild,
+                original_open_prompt="DIFFERENT",
+                denial_id=1,
+            )
+        assert result == [call]
 
 
 # --- make_appeals router-call-pattern tests --------------------------------

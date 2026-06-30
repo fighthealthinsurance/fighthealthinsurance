@@ -935,7 +935,9 @@ def _shed_context(
 _DUAL_CALL_CONTEXT_RATIO = 0.8
 
 
-def _estimate_call_token_footprint(call: dict) -> int:
+def _estimate_call_token_footprint(
+    call: dict, *, patient_context_char_cap: Optional[int] = None
+) -> int:
     """Rough token estimate of what a model call actually sends.
 
     Sums the prompt with the patient/plan/pubmed/citation context that the
@@ -943,10 +945,24 @@ def _estimate_call_token_footprint(call: dict) -> int:
     ``ml_models.RemoteOpenLike._build_context_extra``). Enrichment baked
     into the prompt string is already counted via ``prompt``; the call-dict
     contexts are added on top because that mirrors what is sent on the wire.
+
+    ``patient_context_char_cap`` mirrors the on-the-wire truncation that
+    ``_build_context_extra`` applies (``patient_context[0:max_len/2]``): the
+    caller passes the model's cap so a huge ``patient_context`` is counted at
+    the size actually sent, not at its full size. Without this the estimate
+    over-counts patient context and false-positives the over-budget check on
+    a field that tier-1 shedding cannot reduce anyway.
     """
+    patient_context = call.get("patient_context")
+    if (
+        patient_context_char_cap is not None
+        and isinstance(patient_context, str)
+        and len(patient_context) > patient_context_char_cap
+    ):
+        patient_context = patient_context[:patient_context_char_cap]
     return (
         estimate_tokens(call.get("prompt"))
-        + estimate_tokens(call.get("patient_context"))
+        + estimate_tokens(patient_context)
         + estimate_tokens(call.get("plan_context"))
         + estimate_tokens(call.get("pubmed_context"))
         + estimate_tokens(call.get("ml_citations_context"))
@@ -986,9 +1002,58 @@ def _calls_over_context_budget(calls: List[dict]) -> List[dict]:
         limit = _model_context_limit(call.get("model_name"))
         if limit is None:
             continue
-        if _estimate_call_token_footprint(call) > limit * _DUAL_CALL_CONTEXT_RATIO:
+        # ``_build_context_extra`` only sends ``patient_context[0:max_len/2]``
+        # chars on the wire, so size patient context against that same cap;
+        # otherwise an oversized patient_context (which tier-1 cannot shed)
+        # yields a false-positive flag and a useless no-op sibling.
+        footprint = _estimate_call_token_footprint(
+            call, patient_context_char_cap=limit // 2
+        )
+        if footprint > limit * _DUAL_CALL_CONTEXT_RATIO:
             over.append(call)
     return over
+
+
+def _add_proactive_shed_variants(
+    calls: List[dict],
+    *,
+    open_prompt_kwargs: dict,
+    rebuild_prompt: Callable[..., Optional[str]],
+    original_open_prompt: Optional[str],
+    denial_id: Any = None,
+) -> List[dict]:
+    """Return ``calls`` plus a tier-1 context-shed sibling for each call whose
+    estimated footprint exceeds its model's fuzzy context window.
+
+    This is the proactive half of the dual-call: rather than waiting for the
+    primary+backup cycle to fail before shedding, fan out a shed variant
+    alongside the full call on the first iteration. ``calls`` is never
+    mutated (a new list is returned) so the reactive tier-shed ladder still
+    sees the original full calls. No-op variants — a call not actually
+    reduced by tier-1 shedding (e.g. over budget purely from ``plan_context``,
+    which only truncates at tier 2) — are dropped so we don't merely
+    duplicate the full call. Returns ``calls`` unchanged when nothing is over
+    budget or every variant was a no-op.
+    """
+    over_budget_calls = _calls_over_context_budget(calls)
+    if not over_budget_calls:
+        return calls
+    variants, changed = _shed_context(
+        over_budget_calls,
+        tier=1,
+        open_prompt_kwargs=open_prompt_kwargs,
+        rebuild_prompt=rebuild_prompt,
+        original_open_prompt=original_open_prompt,
+    )
+    shed_variants = [v for v, src in zip(variants, over_budget_calls) if v != src]
+    if not shed_variants:
+        return calls
+    logger.info(
+        f"make_appeals: {len(shed_variants)} of {len(over_budget_calls)} "
+        f"over-budget call(s) for denial {denial_id} get a first-iteration "
+        f"tier-1 shed variant alongside the full call (changed={changed})"
+    )
+    return calls + shed_variants
 
 
 _T_peek = TypeVar("_T_peek")
@@ -2378,31 +2443,13 @@ class AppealGenerator(object):
         # overflow. Whichever returns a real appeal first wins via
         # as_available_nested. ``calls`` is left untouched so the reactive
         # ladder below still escalates to tier 2 if every call comes back empty.
-        first_iteration_calls = calls
-        over_budget_calls = _calls_over_context_budget(calls)
-        if over_budget_calls:
-            variants, changed = _shed_context(
-                over_budget_calls,
-                tier=1,
-                open_prompt_kwargs=open_prompt_kwargs,
-                rebuild_prompt=self.make_open_prompt,
-                original_open_prompt=open_prompt,
-            )
-            # Drop no-op variants: a call over budget purely from
-            # patient_context isn't reduced at tier 1, so its variant would
-            # just duplicate the full call (tier-2 patient/plan truncation
-            # for that case is left to the reactive fallback).
-            shed_variants = [
-                v for v, src in zip(variants, over_budget_calls) if v != src
-            ]
-            if shed_variants:
-                logger.info(
-                    f"make_appeals: {len(shed_variants)} of "
-                    f"{len(over_budget_calls)} over-budget call(s) for denial "
-                    f"{denial.denial_id} get a first-iteration tier-1 shed "
-                    f"variant alongside the full call (changed={changed})"
-                )
-                first_iteration_calls = calls + shed_variants
+        first_iteration_calls = _add_proactive_shed_variants(
+            calls,
+            open_prompt_kwargs=open_prompt_kwargs,
+            rebuild_prompt=self.make_open_prompt,
+            original_open_prompt=open_prompt,
+            denial_id=denial.denial_id,
+        )
 
         generated_text_futures: List[Future[Iterator[GeneratedAppeal]]] = (
             make_async_model_calls(first_iteration_calls)
