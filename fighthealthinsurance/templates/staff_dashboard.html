@@ -97,6 +97,12 @@
         </a>
       </li>
       <li>
+        <a href="{% url 'proconnector_process' %}">
+          <strong>Pro Connector Introductions (Cofactor AI)</strong>
+          <div class="link-description">Review interested professionals one at a time and send an AI-drafted introduction to Cofactor AI under our sourcing agreement</div>
+        </a>
+      </li>
+      <li>
         <a href="/timbit/help/followup_sender_test">
           <strong>Follow-up Email Sender Test</strong>
           <div class="link-description">Test the follow-up email sender functionality</div>
@@ -198,6 +204,12 @@
   <div class="dashboard-section">
     <h2>📁 Data Exports</h2>
     <ul class="link-list">
+      <li>
+        <a href="{% url 'proconnector_extract_csv' %}">
+          <strong>Pro Extract (CSV)</strong>
+          <div class="link-description">Download interested professionals as CSV (excludes test/spam signups), including pro-connector processing state</div>
+        </a>
+      </li>
       <li>
         <a href="{% url 'charts:de_identified_export' %}">
           <strong>De-Identified Data Export</strong>

@@ -245,6 +245,18 @@ class InterestedProfessional(ExportModelOperationsMixin("InterestedProfessional"
     mod_date = models.DateField(auto_now=True)
     thankyou_email_sent = models.BooleanField(default=False)
 
+    # Pro-connector (Cofactor AI sourcing agreement) workflow.
+    # After refocusing FHI on its consumer mission, staff review and send a
+    # one-at-a-time introduction email to interested professionals who may be a
+    # fit for Cofactor AI's AI-powered support for appeals / prior auth / backend
+    # workflows. These fields track that per-record processing state so each
+    # professional is only ever considered once.
+    proconnector_attempted = models.BooleanField(default=False)
+    proconnector_sent_at = models.DateTimeField(null=True, blank=True)
+    proconnector_skipped = models.BooleanField(default=False)
+    proconnector_skip_reason = models.TextField(null=True, blank=True)
+    proconnector_email_body = models.TextField(null=True, blank=True)
+
 
 # Everyone else:
 class MailingListSubscriber(models.Model):
@@ -377,6 +389,56 @@ class FollowUpSched(models.Model):
 
     def __str__(self):
         return f"{self.email} on {self.follow_up_date}"
+
+
+class ScheduledEmail(models.Model):
+    """A templated email queued to be sent later, gated on a sending window.
+
+    Generic queue drained by ``EmailPollingActor`` (via ``ScheduledEmailSender``).
+    Used for "send during likely business hours": rather than sending the moment
+    a staff member clicks, the email is enqueued with the recipient's likely
+    timezone and an earliest-send time, and the actor delivers it once the
+    business-hours window for that timezone is open. See ``business_hours.py``.
+    """
+
+    id = models.AutoField(primary_key=True)
+    to_email = models.EmailField()
+    subject = models.CharField(max_length=998, default="")
+    # Name of the template under ``templates/emails/`` (".txt"/".html" variants),
+    # rendered with ``context`` -- mirrors ``send_fallback_email``.
+    template_name = models.CharField(max_length=100)
+    context = models.JSONField(default=dict, blank=True)
+    # Additional CC recipients (list of addresses).
+    cc = models.JSONField(default=list, blank=True)
+    # Earliest time this email is eligible to send. Initialized to the next
+    # business-hours window opening for ``send_timezone``; the actor additionally
+    # re-checks the live window before sending so it never fires after it closes.
+    send_after = models.DateTimeField(default=timezone.now)
+    # IANA timezone whose business-hours window gates sending. Defaults to the
+    # conservative cross-US Pacific overlap when the recipient zone is unknown.
+    send_timezone = models.CharField(max_length=64, default="America/Los_Angeles")
+    # True when ``send_timezone`` was confidently derived (e.g. a phone area
+    # code) so the normal local window applies rather than the Pacific overlap.
+    timezone_is_specific = models.BooleanField(default=False)
+    # Free-form category for observability (e.g. "proconnector_intro").
+    purpose = models.CharField(max_length=64, default="", blank=True)
+    sent = models.BooleanField(default=False)
+    sent_at = models.DateTimeField(null=True, blank=True)
+    attempts = models.IntegerField(default=0)
+    last_error = models.TextField(null=True, blank=True)
+    created = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        # The actor polls for unsent, now-due rows oldest-first.
+        indexes = [
+            models.Index(
+                fields=["sent", "send_after"], name="sched_email_sent_after_idx"
+            ),
+        ]
+
+    def __str__(self):
+        state = "sent" if self.sent else "pending"
+        return f"ScheduledEmail({self.purpose or 'email'}) to {self.to_email} [{state}]"
 
 
 class PlanType(models.Model):
