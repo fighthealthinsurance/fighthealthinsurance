@@ -19,8 +19,16 @@ from fighthealthinsurance.utils import fire_and_forget_in_new_threadpool
 
 # Configuration for auto-refill thresholds
 CHOOSER_MIN_READY_TASKS = getattr(settings, "CHOOSER_MIN_READY_TASKS", 50)
+# Minimum number of READY synthetic tasks of each type that still have zero
+# votes ("unscored"). The READY pool can stay large while every task has
+# already been voted on, so we back-fill whenever fresh, unscored tasks run
+# low to keep collecting preference data.
+CHOOSER_MIN_UNSCORED_TASKS = getattr(settings, "CHOOSER_MIN_UNSCORED_TASKS", 5)
 CHOOSER_GENERATION_BATCH_SIZE = getattr(settings, "CHOOSER_GENERATION_BATCH_SIZE", 10)
 CHOOSER_NUM_CANDIDATES = getattr(settings, "CHOOSER_NUM_CANDIDATES", 4)
+# Whether to add a synthesized candidate (combining the per-model outputs)
+# to each task so the chooser can measure synthesis vs. single models.
+CHOOSER_INCLUDE_SYNTHESIS = getattr(settings, "CHOOSER_INCLUDE_SYNTHESIS", True)
 
 
 async def check_and_refill_task_pool():
@@ -47,9 +55,18 @@ async def check_and_refill_task_pool():
     try:
         for task_type in ["appeal", "chat"]:
             ready_count = await _count_ready_tasks(task_type)
-            if ready_count < CHOOSER_MIN_READY_TASKS:
+            unscored_count = await _count_unscored_tasks(task_type)
+            # Back-fill when either the overall READY pool is low OR there are
+            # fewer than CHOOSER_MIN_UNSCORED_TASKS fresh (unscored) tasks left
+            # to collect votes on.
+            if (
+                ready_count < CHOOSER_MIN_READY_TASKS
+                or unscored_count < CHOOSER_MIN_UNSCORED_TASKS
+            ):
                 logger.info(
-                    f"Chooser {task_type} tasks below threshold ({ready_count} < {CHOOSER_MIN_READY_TASKS}). "
+                    f"Chooser {task_type} tasks below threshold "
+                    f"(ready={ready_count}/{CHOOSER_MIN_READY_TASKS}, "
+                    f"unscored={unscored_count}/{CHOOSER_MIN_UNSCORED_TASKS}). "
                     f"Triggering generation of {CHOOSER_GENERATION_BATCH_SIZE} tasks."
                 )
                 # Fire and forget the generation tasks
@@ -67,6 +84,27 @@ async def _count_ready_tasks(task_type: str) -> int:
 
     return await sync_to_async(
         ChooserTask.objects.filter(task_type=task_type, status="READY").count
+    )()
+
+
+async def _count_unscored_tasks(task_type: str) -> int:
+    """Count READY synthetic tasks of a type that have not yet received a vote.
+
+    These are the tasks still able to gather fresh preference data; once a
+    task has any vote it is "scored" and contributes diminishing value, so we
+    track unscored tasks separately from the overall READY pool.
+    """
+    from asgiref.sync import sync_to_async
+
+    from django.db.models import Count
+
+    return await sync_to_async(
+        ChooserTask.objects.filter(
+            task_type=task_type, status="READY", source="synthetic"
+        )
+        .annotate(vote_count=Count("votes"))
+        .filter(vote_count=0)
+        .count
     )()
 
 
@@ -283,6 +321,9 @@ async def _generate_appeal_candidates(task: ChooserTask):
                 )
             retry_count += 1
 
+    # Add a synthesized candidate combining the per-model drafts.
+    await _maybe_add_synthesized_candidate(task, "appeal_letter")
+
 
 async def _generate_chat_candidates(task: ChooserTask):
     """Generate chat response candidates for a task using ONLY synthetic data from ML."""
@@ -498,6 +539,9 @@ async def _generate_chat_candidates(task: ChooserTask):
                 )
             retry_count += 1
 
+    # Add a synthesized candidate combining the per-model responses.
+    await _maybe_add_synthesized_candidate(task, "chat_response")
+
 
 def _build_appeal_prompt(context: dict) -> str:
     """Build a prompt for generating appeal letters."""
@@ -519,6 +563,163 @@ def _build_appeal_prompt(context: dict) -> str:
     )
 
     return "\n".join(parts)
+
+
+async def _maybe_add_synthesized_candidate(task: ChooserTask, kind: str) -> None:
+    """Add one synthesized candidate combining the task's existing candidates.
+
+    Synthesis needs >=2 base candidates to be meaningful (with a single input
+    models tend to echo it verbatim), mirroring the real appeal flow. The
+    synthesized candidate is stored with ``synthesized=True`` and
+    ``model_name="synthesized"`` so it is tracked and bucketed distinctly when
+    measuring synthesis against single models.
+    """
+    if not CHOOSER_INCLUDE_SYNTHESIS:
+        return
+
+    from asgiref.sync import sync_to_async
+
+    # Best-effort: synthesis runs AFTER the base candidates are already
+    # persisted, so nothing here may propagate. Otherwise a transient error
+    # (e.g. a DB read/count hiccup) would bubble into _generate_single_task's
+    # except and flip an otherwise-valid task to DISABLED, orphaning its good
+    # base candidates. Contain everything and simply skip on error.
+    try:
+        existing: List[ChooserCandidate] = [
+            candidate
+            async for candidate in ChooserCandidate.objects.filter(
+                task=task, is_active=True, synthesized=False
+            ).order_by("candidate_index")
+        ]
+        # Dedupe identical drafts so two copies of the same text don't count as
+        # two distinct inputs (synthesizing from identical drafts is pointless).
+        contents = list(
+            dict.fromkeys(
+                c.content.strip() for c in existing if c.content and c.content.strip()
+            )
+        )
+        if len(contents) < 2:
+            # Not enough distinct drafts to synthesize from.
+            return
+
+        context = task.context_json or {}
+        if kind == "appeal_letter":
+            synthesized_text = await _synthesize_appeal_candidate(context, contents)
+        else:
+            synthesized_text = await _synthesize_chat_candidate(context, contents)
+
+        if not synthesized_text:
+            return
+        normalized = synthesized_text.strip()
+        # Hold the synthesized candidate to the same minimum-length bar the base
+        # candidates must clear (>100 chars for appeals, >50 for chat).
+        min_length = 100 if kind == "appeal_letter" else 50
+        if len(normalized) <= min_length:
+            logger.info(
+                f"Chooser synthesis for task {task.id} returned too-short output; skipping"
+            )
+            return
+        # Skip a synthesized output that is just a verbatim copy of a draft.
+        if normalized in set(contents):
+            logger.info(
+                f"Chooser synthesis for task {task.id} returned a verbatim draft; skipping"
+            )
+            return
+
+        # Next free index: base candidates occupy 0..N-1 contiguously.
+        next_index = await sync_to_async(
+            ChooserCandidate.objects.filter(task=task).count
+        )()
+        await sync_to_async(ChooserCandidate.objects.create)(
+            task=task,
+            candidate_index=next_index,
+            kind=kind,
+            model_name="synthesized",
+            synthesized=True,
+            content=normalized,
+            metadata={"source": "synthetic", "synthesized": True},
+        )
+        task.num_candidates_generated = next_index + 1
+        await sync_to_async(task.save)()
+        logger.info(
+            f"Added synthesized {kind} candidate to task {task.id} "
+            f"from {len(contents)} drafts"
+        )
+    except Exception as e:
+        logger.opt(exception=True).warning(
+            f"Failed to add synthesized candidate to task {task.id}: {e}"
+        )
+
+
+async def _synthesize_appeal_candidate(
+    context: dict, contents: List[str]
+) -> Optional[str]:
+    """Synthesize multiple appeal drafts into one, reusing AppealGenerator."""
+    from fighthealthinsurance.generate_appeal import AppealGenerator
+
+    try:
+        generator = AppealGenerator()
+        return await generator.synthesize_appeals(
+            appeal_texts=contents,
+            denial_text=context.get("denial_text_preview"),
+            procedure=context.get("procedure"),
+            diagnosis=context.get("diagnosis"),
+        )
+    except Exception as e:
+        logger.opt(exception=True).warning(
+            f"Error synthesizing appeal chooser candidate: {e}"
+        )
+        return None
+
+
+async def _synthesize_chat_candidate(
+    context: dict, contents: List[str]
+) -> Optional[str]:
+    """Synthesize multiple chat responses into one using the best internal model."""
+    best_model = ml_router.best_internal_model()
+    if best_model is None:
+        logger.warning("No internal model available for chat synthesis")
+        return None
+
+    history = context.get("history", []) or []
+    user_prompt = context.get("prompt", "") or ""
+
+    convo_lines = []
+    for msg in history:
+        role = str(msg.get("role", "user")).capitalize()
+        convo_lines.append(f"{role}: {msg.get('content', '')}")
+    convo_lines.append(f"User: {user_prompt}")
+    conversation = "\n".join(convo_lines)
+
+    numbered = "\n\n".join(
+        f"--- RESPONSE {i + 1} ---\n{text}" for i, text in enumerate(contents)
+    )
+    prompt = (
+        f"CONVERSATION SO FAR:\n{conversation}\n\n"
+        f"Below are {len(contents)} candidate assistant responses to the final "
+        "user message. Synthesize them into the single best response, combining "
+        "the most accurate, helpful, and clear elements from each. Reply with "
+        "only the synthesized response.\n\n"
+        f"{numbered}"
+    )
+    try:
+        result = await best_model._infer_no_context(
+            system_prompts=[
+                "You combine multiple assistant responses into one best response "
+                "for a health insurance assistance chatbot. Keep it accurate, "
+                "helpful, and concise."
+            ],
+            prompt=prompt,
+            temperature=0.3,
+        )
+    except Exception as e:
+        logger.opt(exception=True).warning(
+            f"Error synthesizing chat chooser candidate: {e}"
+        )
+        return None
+    if result and len(result.strip()) > 50:
+        return str(result).strip()
+    return None
 
 
 async def prefill_if_needed(min_ready: int = 1):
