@@ -181,6 +181,22 @@ class DoSendTest(TestCase):
         # attempts=3 -> ~1h * 2**3 = 8h, far beyond the 1h initial backoff.
         self.assertGreater(self.se.send_after, before + datetime.timedelta(hours=4))
 
+    def test_send_failure_backoff_is_capped(self):
+        # Backoff is capped at 24h; without the cap attempts=6 would be ~64h.
+        self.se.attempts = 6
+        self.se.save()
+        before = timezone.now()
+        with patch(f"{_MODULE}.is_within_business_hours", return_value=True), patch(
+            f"{_MODULE}.send_fallback_email", side_effect=RuntimeError("boom")
+        ):
+            self.sender.dosend(scheduled_email=self.se)
+        self.se.refresh_from_db()
+        self.assertEqual(self.se.attempts, 7)
+        self.assertLessEqual(
+            self.se.send_after, before + datetime.timedelta(hours=24, minutes=5)
+        )
+        self.assertGreater(self.se.send_after, before + datetime.timedelta(hours=23))
+
 
 class AsendAllTest(TestCase):
     def test_asend_all_sends_due_candidates(self):

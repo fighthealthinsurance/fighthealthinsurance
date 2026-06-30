@@ -16,6 +16,7 @@ from fighthealthinsurance.business_hours import (
 
 PACIFIC = ZoneInfo("America/Los_Angeles")
 EASTERN = ZoneInfo("America/New_York")
+PHOENIX = ZoneInfo("America/Phoenix")
 
 # Fixed reference dates (verified weekdays):
 #   2026-06-17 = Wednesday, 2026-06-19 = Friday,
@@ -172,6 +173,41 @@ def test_next_window_from_saturday_is_monday():
     result = _pacific(next_business_hours_start(DEFAULT_TIMEZONE, False, now=now))
     assert result.weekday() == 0  # Monday
     assert result.hour == 9
+
+
+def test_next_window_specific_zone_phoenix_before_window():
+    # Specific (is_specific=True) non-DST zone, before 9am on a weekday ->
+    # same-day 9am Arizona time.
+    now = _at(WEDNESDAY, 7, PHOENIX)
+    result = next_business_hours_start("America/Phoenix", True, now=now).astimezone(
+        PHOENIX
+    )
+    assert result.hour == 9
+    assert result.date() == now.date()
+    assert is_within_business_hours(result, "America/Phoenix", True)
+
+
+def test_next_window_specific_zone_crosses_spring_forward():
+    # Friday evening before the US spring-forward weekend -> Monday 9am Eastern,
+    # computed correctly across the DST boundary.
+    now = datetime.datetime(2026, 3, 6, 18, 0, tzinfo=EASTERN)  # Fri, after window
+    result = next_business_hours_start("America/New_York", True, now=now).astimezone(
+        EASTERN
+    )
+    assert result.weekday() == 0  # Monday 2026-03-09
+    assert result.hour == 9 and result.minute == 0
+    assert is_within_business_hours(result, "America/New_York", True)
+
+
+def test_next_window_specific_zone_crosses_fall_back():
+    # Friday evening before the US fall-back weekend -> Monday 9am Eastern.
+    now = datetime.datetime(2026, 10, 30, 18, 0, tzinfo=EASTERN)  # Fri, after window
+    result = next_business_hours_start("America/New_York", True, now=now).astimezone(
+        EASTERN
+    )
+    assert result.weekday() == 0  # Monday 2026-11-02
+    assert result.hour == 9 and result.minute == 0
+    assert is_within_business_hours(result, "America/New_York", True)
 
 
 # ---------------------------------------------------------------------------

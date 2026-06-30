@@ -30,7 +30,7 @@ from django.utils import timezone
 
 from loguru import logger
 
-from fighthealthinsurance.email_utils import get_email_domain, is_blocked_email
+from fighthealthinsurance.email_utils import is_blocked_email
 from fighthealthinsurance.ml.ml_inference import infer_with_fallback
 from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance.models import InterestedProfessional, ScheduledEmail
@@ -223,6 +223,21 @@ def _claims_cofactor_relationship(text: str) -> bool:
     return any(abs(p - c) <= 6 for p in partner_positions for c in cofactor_positions)
 
 
+def partner_framing_problem(text: Optional[str]) -> Optional[str]:
+    """Return a reason ``text`` frames Cofactor AI as a "partner", or ``None``.
+
+    The no-"partner"/partnership rule applies to every staff-editable surface --
+    the email body *and* the subject line -- so it lives in its own helper that
+    both :func:`intro_wording_problem` (body) and the subject check reuse.
+    """
+    if _claims_cofactor_relationship((text or "").lower()):
+        return (
+            "Please don't describe Cofactor AI as a partner or say FHI partnered "
+            "with them -- this is a sourcing agreement, not a partnership."
+        )
+    return None
+
+
 def intro_wording_problem(text: Optional[str]) -> Optional[str]:
     """Return a human-readable reason the intro wording is disallowed, or ``None``.
 
@@ -232,13 +247,10 @@ def intro_wording_problem(text: Optional[str]) -> Optional[str]:
     heuristics belong with the AI-draft guard (:func:`_is_safe_intro_draft`),
     not here, so a deliberately short staff edit isn't rejected for length.
     """
-    lowered = (text or "").lower()
-    if _claims_cofactor_relationship(lowered):
-        return (
-            "Please don't describe Cofactor AI as a partner or say FHI partnered "
-            "with them -- this is a sourcing agreement, not a partnership."
-        )
-    if "compensat" not in lowered:  # compensation / compensated
+    partner_problem = partner_framing_problem(text)
+    if partner_problem:
+        return partner_problem
+    if "compensat" not in (text or "").lower():  # compensation / compensated
         return (
             "The required compensation disclosure is missing -- mention that FHI "
             "may be compensated for the introduction."
@@ -376,11 +388,6 @@ def queue_proconnector_intro_email(
         phone=pro.phone_number,
         purpose="proconnector_intro",
     )
-
-
-def is_personal_email_domain(email: Optional[str]) -> bool:
-    """Whether ``email`` uses a known personal / free-email provider domain."""
-    return get_email_domain(email) in PERSONAL_EMAIL_DOMAINS
 
 
 def _personal_domain_q() -> Q:
