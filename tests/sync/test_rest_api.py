@@ -2049,3 +2049,95 @@ class DemoRequestEndpointTest(APITestCase):
             )
         self.assertEqual(response.status_code, 201)
         self.assertTrue(DemoRequests.objects.filter(email="lead3@example.com").exists())
+
+
+class InterestedProfessionalEndpointTest(APITestCase):
+    """The interested_professional REST endpoint records a professional-interest
+    lead (the FPW counterpart to the web /pro_version form) and notifies the
+    professional-signup inbox (defaults to professional@fighthealthinsurance.com).
+    The notification flows through fighthealthinsurance.utils.notify_professional_signup,
+    so that is the send_mail patch target."""
+
+    def test_records_lead_and_emails_professional_inbox(self):
+        from fighthealthinsurance.models import InterestedProfessional
+
+        with patch("fighthealthinsurance.utils.send_mail") as mock_send:
+            response = self.client.post(
+                reverse("interested-professional-list"),
+                data=json.dumps(
+                    {
+                        "email": "pro@example.com",
+                        "name": "Dr. Pro",
+                        "business_name": "Acme Health",
+                        "job_title_or_provider_type": "Billing Manager",
+                    }
+                ),
+                content_type="application/json",
+            )
+        self.assertEqual(response.status_code, 201)
+        pro = InterestedProfessional.objects.get(email="pro@example.com")
+        self.assertEqual(pro.name, "Dr. Pro")
+        self.assertEqual(pro.business_name, "Acme Health")
+        # Legacy model default is clicked_for_paid=True; the endpoint records
+        # leads as not-clicked (matches the web /pro_version form).
+        self.assertFalse(pro.clicked_for_paid)
+        mock_send.assert_called_once()
+        # send_mail(subject, body, from_email, recipients)
+        subject, body, _from, recipients = mock_send.call_args.args
+        self.assertIn("professional@fighthealthinsurance.com", recipients)
+        self.assertIn("pro@example.com", body)
+        self.assertIn(str(pro.id), subject)
+
+    def test_extra_notification_recipient_is_configurable(self):
+        with patch(
+            "fighthealthinsurance.utils.send_mail"
+        ) as mock_send, self.settings(
+            PROFESSIONAL_SIGNUP_NOTIFICATION_EMAILS=[
+                "professional@fighthealthinsurance.com",
+                "sales@example.com",
+            ]
+        ):
+            response = self.client.post(
+                reverse("interested-professional-list"),
+                data=json.dumps({"email": "pro2@example.com"}),
+                content_type="application/json",
+            )
+        self.assertEqual(response.status_code, 201)
+        recipients = mock_send.call_args.args[3]
+        self.assertIn("sales@example.com", recipients)
+
+    def test_mail_failure_does_not_fail_request(self):
+        # The lead is persisted before the notification is attempted, so a mail
+        # backend error must not turn into a 500.
+        from fighthealthinsurance.models import InterestedProfessional
+
+        with patch(
+            "fighthealthinsurance.utils.send_mail",
+            side_effect=RuntimeError("smtp down"),
+        ):
+            response = self.client.post(
+                reverse("interested-professional-list"),
+                data=json.dumps({"email": "pro3@example.com"}),
+                content_type="application/json",
+            )
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(
+            InterestedProfessional.objects.filter(email="pro3@example.com").exists()
+        )
+
+    def test_email_is_required(self):
+        # email is the one required lead field; a payload without it is a 400
+        # and must not persist a row or send a notification.
+        from fighthealthinsurance.models import InterestedProfessional
+
+        with patch("fighthealthinsurance.utils.send_mail") as mock_send:
+            response = self.client.post(
+                reverse("interested-professional-list"),
+                data=json.dumps({"name": "No Email"}),
+                content_type="application/json",
+            )
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(
+            InterestedProfessional.objects.filter(name="No Email").exists()
+        )
+        mock_send.assert_not_called()

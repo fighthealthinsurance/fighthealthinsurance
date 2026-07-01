@@ -16,6 +16,7 @@ from fighthealthinsurance.models import (
     ChatType,
     DemoRequests,
     Denial,
+    InterestedProfessional,
     MailingListSubscriber,
     OngoingChat,
     PriorAuthRequest,
@@ -467,6 +468,28 @@ class DemoRequestsSerializer(serializers.ModelSerializer):
     class Meta:
         model = DemoRequests
         fields = ["email", "name", "company", "role", "source", "phone"]
+
+
+class InterestedProfessionalSerializer(serializers.ModelSerializer):
+    """Serializer for Fight Paperwork professional-interest lead submissions.
+
+    Exposes the same lead fields collected by the web /pro_version interest
+    form. Internal fields (paid/clicked_for_paid/signup_date/mod_date/
+    thankyou_email_sent) are set server-side and are not client-writable.
+    """
+
+    class Meta:
+        model = InterestedProfessional
+        fields = [
+            "email",
+            "name",
+            "business_name",
+            "phone_number",
+            "address",
+            "comments",
+            "most_common_denial",
+            "job_title_or_provider_type",
+        ]
 
 
 class SendToUserSerializer(serializers.Serializer):

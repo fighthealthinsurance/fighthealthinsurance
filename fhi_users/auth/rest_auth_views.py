@@ -1083,6 +1083,12 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # DEPRECATED: professional-interest notifications are consolidating on
+        # the dedicated `interested_professional` REST endpoint
+        # (InterestedProfessionalViewSet) and the web /pro_version form. This
+        # signup-flow notification is retained for backward compatibility but
+        # should not be extended -- prefer the dedicated endpoint for new work.
+        #
         # Notify the professional-signup inbox (defaults to
         # professional@fighthealthinsurance.com) for every FPW REST professional
         # sign-up. Deferred via transaction.on_commit so the mail only goes out
@@ -1168,6 +1174,11 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
     ) -> None:
         """Queue a best-effort team notification for a professional signing up
         via the Fight Paperwork REST API.
+
+        DEPRECATED: prefer the dedicated `interested_professional` REST endpoint
+        (InterestedProfessionalViewSet), which is the canonical channel for
+        professional-interest notifications. This signup-flow hook is retained
+        for backward compatibility and should not be extended.
 
         Deferred via transaction.on_commit so the notification only fires once
         the signup transaction commits — no spurious mail if a later step (e.g.
