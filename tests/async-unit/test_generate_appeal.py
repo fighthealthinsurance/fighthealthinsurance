@@ -757,12 +757,18 @@ class TestDualCallContextBudget:
         ):
             assert _model_context_limit("fhi-internal") == 8000
 
-    def test_model_context_limit_unknown_model_is_none(self):
+    def test_model_context_limit_missing_model_key_is_none(self):
         with patch(
             "fighthealthinsurance.generate_appeal.ml_router.models_by_name",
             new={},
         ):
             assert _model_context_limit("missing") is None
+
+    def test_model_context_limit_none_model_name_is_none(self):
+        with patch(
+            "fighthealthinsurance.generate_appeal.ml_router.models_by_name",
+            new={},
+        ):
             assert _model_context_limit(None) is None
 
     def test_model_context_limit_survives_backend_error(self):
