@@ -58,6 +58,7 @@ fi
 if [ -n "${CLAUDE_ENV_FILE:-}" ] && ! grep -qs 'fhi-session-start-path' "$CLAUDE_ENV_FILE"; then
   {
     echo '# fhi-session-start-path'
+    # shellcheck disable=SC2016  # literal on purpose: expands when the env file is sourced
     echo 'export PATH="$HOME/.local/bin:$PATH"'
   } >> "$CLAUDE_ENV_FILE"
 fi
