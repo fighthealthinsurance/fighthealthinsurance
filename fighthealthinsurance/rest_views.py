@@ -55,6 +55,7 @@ from fighthealthinsurance.models import (
     DemoRequests,
     Denial,
     DenialQA,
+    InterestedProfessional,
     MailingListSubscriber,
     OngoingChat,
     PriorAuthRequest,
@@ -1573,6 +1574,78 @@ class DemoRequestsViewSet(viewsets.ViewSet, CreateMixin, DeleteMixin):
     def perform_delete(self, request: Request, serializer):
         email = serializer.validated_data["email"]
         DemoRequests.objects.filter(email=email).delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class InterestedProfessionalViewSet(viewsets.ViewSet, CreateMixin, DeleteMixin):
+    """
+    ViewSet for professional-interest leads submitted via the Fight Paperwork
+    REST API.
+
+    Public counterpart to the web /pro_version interest form: it records an
+    InterestedProfessional lead and notifies the professional-signup inbox
+    (defaults to professional@fighthealthinsurance.com, extendable via
+    settings.PROFESSIONAL_SIGNUP_NOTIFICATION_EMAILS). Also supports removing a
+    lead by email for data-removal requests.
+    """
+
+    serializer_class = serializers.InterestedProfessionalSerializer
+
+    @extend_schema(responses=serializers.StatusResponseSerializer)
+    def create(self, request: Request) -> Response:
+        """Submit a new professional-interest lead."""
+        return super().create(request)
+
+    @extend_schema(responses=serializers.StatusResponseSerializer)
+    def perform_create(self, request: Request, serializer) -> Response:
+        """Save the lead, then notify the professional-signup inbox."""
+        # clicked_for_paid defaults to True on the model for legacy reasons; the
+        # interest form no longer collects a pay-to-express-interest choice, so
+        # record leads as not-clicked (matches the web /pro_version form).
+        interested_pro = serializer.save(clicked_for_paid=False)
+        self._notify_interested_professional(interested_pro)
+        return Response(
+            serializers.StatusResponseSerializer({"status": "subscribed"}).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+    @staticmethod
+    def _notify_interested_professional(
+        interested_pro: InterestedProfessional,
+    ) -> None:
+        """Email the professional-signup inbox about a new REST interest lead.
+
+        Best-effort: notify_professional_signup logs and swallows mail failures
+        so a mail error never fails the already-persisted lead. Mirrors the body
+        of the web /pro_version notification for a consistent inbox format."""
+        from django.urls import reverse
+
+        from fighthealthinsurance.utils import notify_professional_signup
+
+        admin_path = reverse(
+            "admin:fighthealthinsurance_interestedprofessional_change",
+            args=[interested_pro.id],
+        )
+        admin_url = f"https://{settings.FIGHT_HEALTH_INSURANCE_DOMAIN}{admin_path}"
+        body = (
+            "A new professional signed up via the Fight Paperwork REST API.\n\n"
+            f"Name: {interested_pro.name or 'N/A'}\n"
+            f"Email: {interested_pro.email}\n"
+            f"Job title / provider type: {interested_pro.job_title_or_provider_type or 'N/A'}\n"
+            f"Business: {interested_pro.business_name or 'N/A'}\n"
+            f"Phone: {interested_pro.phone_number or 'N/A'}\n"
+            f"Address: {interested_pro.address or 'N/A'}\n"
+            f"Most common denial: {interested_pro.most_common_denial or 'N/A'}\n"
+            f"Comments: {interested_pro.comments or 'N/A'}\n"
+            f"Admin: {admin_url}\n"
+        )
+        notify_professional_signup(f"New pro REST signup #{interested_pro.id}", body)
+
+    @extend_schema(responses=serializers.StatusResponseSerializer)
+    def perform_delete(self, request: Request, serializer):
+        """Remove a professional-interest lead by email."""
+        email = serializer.validated_data["email"]
+        InterestedProfessional.objects.filter(email=email).delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
