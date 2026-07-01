@@ -970,26 +970,31 @@ def _estimate_call_token_footprint(
 
 
 def _model_context_limit(model_name: Optional[str]) -> Optional[int]:
-    """Smallest advertised context window (tokens) across the backends that
-    serve ``model_name``, or ``None`` when unknown.
+    """Advertised context window (tokens) of the first backend serving
+    ``model_name``, or ``None`` when unknown.
 
-    ``min`` because ``get_model_result`` may route the call to any backend
-    for the name, so we size against the tightest window to decide whether
-    overflow is a risk. Never raises — an unexpected backend degrades to
-    "unknown" (no proactive shed) rather than aborting generation.
+    First-in-routing-order rather than ``min()`` across the pool because
+    ``get_model_result`` submits to backends in order and returns the first
+    successful submission — so the first backend is the one that actually
+    receives the call, and sizing against a smaller later backend would
+    over-trigger shed siblings. Never raises — an unexpected backend
+    degrades to "unknown" (no proactive shed) rather than aborting
+    generation.
     """
     if not model_name:
         return None
     backends = ml_router.models_by_name.get(model_name)
     if not backends:
         return None
-    limits: List[int] = []
     for backend in backends:
         try:
-            limits.append(int(backend.get_max_context()))
-        except Exception:
-            continue
-    return min(limits) if limits else None
+            return int(backend.get_max_context())
+        except Exception as e:
+            logger.debug(
+                f"_model_context_limit: backend {backend} for "
+                f"{model_name} has no usable max context: {e}"
+            )
+    return None
 
 
 def _calls_over_context_budget(calls: List[dict]) -> List[dict]:

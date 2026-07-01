@@ -731,13 +731,26 @@ class TestDualCallContextBudget:
         )
         assert _estimate_call_token_footprint(call) == 10000
 
-    def test_model_context_limit_uses_smallest_backend(self):
+    def test_model_context_limit_uses_first_backend_in_routing_order(self):
+        # get_model_result submits to backends in order and the first
+        # successful submission serves the call, so the first backend's
+        # window is the one that matters — not the smallest in the pool.
         models_by_name = {
             "fhi-internal": [
                 _backend_with_context(100000),
                 _backend_with_context(8000),
             ]
         }
+        with patch(
+            "fighthealthinsurance.generate_appeal.ml_router.models_by_name",
+            new=models_by_name,
+        ):
+            assert _model_context_limit("fhi-internal") == 100000
+
+    def test_model_context_limit_falls_back_past_erroring_backend(self):
+        bad = MagicMock()
+        bad.get_max_context.side_effect = RuntimeError("boom")
+        models_by_name = {"fhi-internal": [bad, _backend_with_context(8000)]}
         with patch(
             "fighthealthinsurance.generate_appeal.ml_router.models_by_name",
             new=models_by_name,
