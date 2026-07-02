@@ -737,16 +737,14 @@ class ProConnectorProcessView(View):
             if isinstance(validated, HttpResponse):
                 return validated
             body, subject, skip_reason = validated
-            deliver: Callable[..., Any]
-            mark: Callable[[str, str], int]
-            if action == "send":
-                deliver = send_proconnector_intro_email
-                mark = mark_email_sent
-                verb, failed_msg = "sent", "Failed to send the email."
-            else:
-                deliver = queue_proconnector_intro_email
-                mark = mark_email_queued
-                verb, failed_msg = "queued", "Failed to queue the email."
+            dispatch: Dict[
+                str, Tuple[Callable[..., Any], Callable[[str, str], int], str]
+            ] = {
+                "send": (send_proconnector_intro_email, mark_email_sent, "sent"),
+                "queue": (queue_proconnector_intro_email, mark_email_queued, "queued"),
+            }
+            deliver, mark, verb = dispatch[action]
+            failed_msg = f"Failed to {action} the email."
             # Atomically claim the address before sending. Two staff sessions are
             # handed the same next record, so without this both could pass the
             # already-processed check above and double-send; losing the claim
@@ -803,63 +801,28 @@ class ProConnectorProcessView(View):
             request.POST.get("subject") or ""
         ).strip() or PROCONNECTOR_INTRO_SUBJECT
         skip_reason = (request.POST.get("skip_reason") or "").strip()
-        if not body:
-            return self._render_record(
-                request,
-                pro,
-                draft=request.POST.get("email_body", ""),
-                subject=subject,
-                skip_reason=skip_reason,
-                error="Email body cannot be empty.",
-                status=400,
-            )
-        if not is_sendable_email(pro.email):
-            return self._render_record(
-                request,
-                pro,
-                draft=body,
-                subject=subject,
-                skip_reason=skip_reason,
-                error=f"{pro.email} is not a sendable address; cannot send.",
-                status=400,
-            )
-        # Re-validate the *final* (possibly hand-edited) wording, not just the AI
-        # draft: a staff edit must not drop the compensation disclosure or frame
-        # Cofactor AI as a partner.
-        wording_problem = intro_wording_problem(body)
-        if wording_problem:
-            return self._render_record(
-                request,
-                pro,
-                draft=body,
-                subject=subject,
-                skip_reason=skip_reason,
-                error=wording_problem,
-                status=400,
-            )
-        # The no-"partner" rule applies to the subject line too (the most visible
-        # header), and the queue path persists the subject to a bounded column --
-        # validate both so the immediate and queued paths behave identically.
+        # First failing check wins. The wording rules run against the *final*
+        # (possibly hand-edited) values, not just the AI draft, and cover the
+        # subject line too; the length cap matches the scheduled-email column so
+        # the immediate and queued paths behave identically.
         subject_max = ScheduledEmail._meta.get_field("subject").max_length
-        if subject_max is not None and len(subject) > subject_max:
+        error: Optional[str]
+        if not body:
+            error = "Email body cannot be empty."
+        elif not is_sendable_email(pro.email):
+            error = f"{pro.email} is not a sendable address; cannot send."
+        elif subject_max is not None and len(subject) > subject_max:
+            error = f"Subject is too long (max {subject_max} characters)."
+        else:
+            error = intro_wording_problem(body) or partner_framing_problem(subject)
+        if error:
             return self._render_record(
                 request,
                 pro,
-                draft=body,
+                draft=body or request.POST.get("email_body", ""),
                 subject=subject,
                 skip_reason=skip_reason,
-                error=f"Subject is too long (max {subject_max} characters).",
-                status=400,
-            )
-        subject_problem = partner_framing_problem(subject)
-        if subject_problem:
-            return self._render_record(
-                request,
-                pro,
-                draft=body,
-                subject=subject,
-                skip_reason=skip_reason,
-                error=subject_problem,
+                error=error,
                 status=400,
             )
         return body, subject, skip_reason

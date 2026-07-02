@@ -530,26 +530,31 @@ class AIDraftFallbackTest(TestCase):
         self.assertEqual(good.calls, 1)
 
 
-# ---------------------------------------------------------------------------
-# Send flow
-# ---------------------------------------------------------------------------
-class SendFlowTest(TestCase):
+class _ProcessViewTestCase(TestCase):
+    """Shared staff login and POST helper for the process-view flow tests."""
+
     def setUp(self):
         self.url = reverse("proconnector_process")
         _login(self.client, is_staff=True)
 
+    def _post(self, action, **fields):
+        """POST the process form with ``action`` plus any form ``fields``."""
+        return self.client.post(self.url, {"action": action, **fields})
+
+
+# ---------------------------------------------------------------------------
+# Send flow
+# ---------------------------------------------------------------------------
+class SendFlowTest(_ProcessViewTestCase):
     @patch("fighthealthinsurance.staff_views.send_proconnector_intro_email")
     def test_send_marks_attempted_stores_body_and_advances(self, mock_send):
         pro = _make_pro(email="jane@janeclinic.com")
         body = "Edited intro body mentioning the compensation disclosure."
-        response = self.client.post(
-            self.url,
-            {
-                "action": "send",
-                "interested_professional_id": pro.id,
-                "subject": "Intro to Cofactor AI",
-                "email_body": body,
-            },
+        response = self._post(
+            "send",
+            interested_professional_id=pro.id,
+            subject="Intro to Cofactor AI",
+            email_body=body,
         )
         # Advances via redirect to the next record.
         self.assertEqual(response.status_code, 302)
@@ -570,13 +575,8 @@ class SendFlowTest(TestCase):
     @patch("fighthealthinsurance.staff_views.send_proconnector_intro_email")
     def test_send_empty_body_rejected(self, mock_send):
         pro = _make_pro()
-        response = self.client.post(
-            self.url,
-            {
-                "action": "send",
-                "interested_professional_id": pro.id,
-                "email_body": "   ",
-            },
+        response = self._post(
+            "send", interested_professional_id=pro.id, email_body="   "
         )
         self.assertEqual(response.status_code, 400)
         self.assertContains(response, "cannot be empty", status_code=400)
@@ -588,13 +588,10 @@ class SendFlowTest(TestCase):
     def test_send_to_unsendable_address_rejected(self, mock_send):
         # example.com is a blocked domain -> not sendable.
         pro = _make_pro(email="blocked@example.com")
-        response = self.client.post(
-            self.url,
-            {
-                "action": "send",
-                "interested_professional_id": pro.id,
-                "email_body": "Body with compensation disclosure.",
-            },
+        response = self._post(
+            "send",
+            interested_professional_id=pro.id,
+            email_body="Body with compensation disclosure.",
         )
         self.assertEqual(response.status_code, 400)
         mock_send.assert_not_called()
@@ -606,13 +603,10 @@ class SendFlowTest(TestCase):
         # Two signups share an email; sending once marks both and emails once.
         a = _make_pro(email="dup@clinic.org")
         b = _make_pro(email="dup@clinic.org")
-        response = self.client.post(
-            self.url,
-            {
-                "action": "send",
-                "interested_professional_id": a.id,
-                "email_body": "Body with the compensation disclosure.",
-            },
+        response = self._post(
+            "send",
+            interested_professional_id=a.id,
+            email_body="Body with the compensation disclosure.",
         )
         self.assertEqual(response.status_code, 302)
         mock_send.assert_called_once()  # one email, not one per duplicate
@@ -624,10 +618,7 @@ class SendFlowTest(TestCase):
     @patch("fighthealthinsurance.staff_views.send_proconnector_intro_email")
     def test_non_numeric_id_advances_without_error(self, mock_send):
         # A tampered/garbage hidden id must not 500; it just advances.
-        response = self.client.post(
-            self.url,
-            {"action": "send", "interested_professional_id": "abc", "email_body": "x"},
-        )
+        response = self._post("send", interested_professional_id="abc", email_body="x")
         self.assertEqual(response.status_code, 302)
         self.assertEqual(response.url, reverse("proconnector_process"))
         mock_send.assert_not_called()
@@ -638,13 +629,10 @@ class SendFlowTest(TestCase):
         pro = _make_pro(email="done@clinic.org")
         pro.proconnector_attempted = True
         pro.save()
-        response = self.client.post(
-            self.url,
-            {
-                "action": "send",
-                "interested_professional_id": pro.id,
-                "email_body": "Body with the compensation disclosure.",
-            },
+        response = self._post(
+            "send",
+            interested_professional_id=pro.id,
+            email_body="Body with the compensation disclosure.",
         )
         self.assertEqual(response.status_code, 302)
         mock_send.assert_not_called()
@@ -656,13 +644,10 @@ class SendFlowTest(TestCase):
         # window between our fetch and our claim (both were handed the same
         # record): we must advance without sending a duplicate intro.
         pro = _make_pro(email="race@clinic.org")
-        response = self.client.post(
-            self.url,
-            {
-                "action": "send",
-                "interested_professional_id": pro.id,
-                "email_body": "Body with the compensation disclosure.",
-            },
+        response = self._post(
+            "send",
+            interested_professional_id=pro.id,
+            email_body="Body with the compensation disclosure.",
         )
         self.assertEqual(response.status_code, 302)
         self.assertEqual(response.url, reverse("proconnector_process"))
@@ -674,13 +659,10 @@ class SendFlowTest(TestCase):
         # not silently sent -- the rule applies to the final body, not just the
         # AI draft.
         pro = _make_pro(email="jane@janeclinic.com")
-        response = self.client.post(
-            self.url,
-            {
-                "action": "send",
-                "interested_professional_id": pro.id,
-                "email_body": "Hi, I'd love to introduce you to Cofactor AI.",
-            },
+        response = self._post(
+            "send",
+            interested_professional_id=pro.id,
+            email_body="Hi, I'd love to introduce you to Cofactor AI.",
         )
         self.assertEqual(response.status_code, 400)
         mock_send.assert_not_called()
@@ -692,15 +674,10 @@ class SendFlowTest(TestCase):
         # A staff edit that frames Cofactor AI as a partner must be rejected even
         # though the compensation disclosure is present.
         pro = _make_pro(email="jane@janeclinic.com")
-        response = self.client.post(
-            self.url,
-            {
-                "action": "send",
-                "interested_professional_id": pro.id,
-                "email_body": (
-                    "FHI has partnered with Cofactor AI. We may be compensated."
-                ),
-            },
+        response = self._post(
+            "send",
+            interested_professional_id=pro.id,
+            email_body="FHI has partnered with Cofactor AI. We may be compensated.",
         )
         self.assertEqual(response.status_code, 400)
         mock_send.assert_not_called()
@@ -712,14 +689,11 @@ class SendFlowTest(TestCase):
         # The no-"partner" rule applies to the subject line too (the most visible
         # header), even when the body is fully compliant.
         pro = _make_pro(email="jane@janeclinic.com")
-        response = self.client.post(
-            self.url,
-            {
-                "action": "send",
-                "interested_professional_id": pro.id,
-                "subject": "Our new partnership with Cofactor AI",
-                "email_body": "Body with the compensation disclosure.",
-            },
+        response = self._post(
+            "send",
+            interested_professional_id=pro.id,
+            subject="Our new partnership with Cofactor AI",
+            email_body="Body with the compensation disclosure.",
         )
         self.assertEqual(response.status_code, 400)
         mock_send.assert_not_called()
@@ -731,14 +705,11 @@ class SendFlowTest(TestCase):
         # A subject longer than the ScheduledEmail column is rejected up front --
         # consistently for send and queue -- instead of 500-ing on the queue path.
         pro = _make_pro(email="jane@janeclinic.com")
-        response = self.client.post(
-            self.url,
-            {
-                "action": "send",
-                "interested_professional_id": pro.id,
-                "subject": "x" * 1001,
-                "email_body": "Body with the compensation disclosure.",
-            },
+        response = self._post(
+            "send",
+            interested_professional_id=pro.id,
+            subject="x" * 1001,
+            email_body="Body with the compensation disclosure.",
         )
         self.assertEqual(response.status_code, 400)
         mock_send.assert_not_called()
@@ -749,11 +720,7 @@ class SendFlowTest(TestCase):
 # ---------------------------------------------------------------------------
 # Send failure behavior
 # ---------------------------------------------------------------------------
-class SendFailureTest(TestCase):
-    def setUp(self):
-        self.url = reverse("proconnector_process")
-        _login(self.client, is_staff=True)
-
+class SendFailureTest(_ProcessViewTestCase):
     @patch(
         "fighthealthinsurance.staff_views.send_proconnector_intro_email",
         side_effect=Exception("smtp boom"),
@@ -761,14 +728,8 @@ class SendFailureTest(TestCase):
     def test_send_failure_does_not_mark_attempted(self, _mock_send):
         pro = _make_pro(email="jane@janeclinic.com")
         body = "Body with compensation disclosure to send."
-        response = self.client.post(
-            self.url,
-            {
-                "action": "send",
-                "interested_professional_id": pro.id,
-                "subject": "Intro",
-                "email_body": body,
-            },
+        response = self._post(
+            "send", interested_professional_id=pro.id, subject="Intro", email_body=body
         )
         self.assertEqual(response.status_code, 500)
         self.assertContains(response, "Failed to send", status_code=500)
@@ -784,20 +745,13 @@ class SendFailureTest(TestCase):
 # ---------------------------------------------------------------------------
 # Skip flow
 # ---------------------------------------------------------------------------
-class SkipFlowTest(TestCase):
-    def setUp(self):
-        self.url = reverse("proconnector_process")
-        _login(self.client, is_staff=True)
-
+class SkipFlowTest(_ProcessViewTestCase):
     def test_skip_records_reason_and_advances_without_email(self):
         pro = _make_pro()
-        response = self.client.post(
-            self.url,
-            {
-                "action": "skip",
-                "interested_professional_id": pro.id,
-                "skip_reason": "Not a fit for Cofactor AI",
-            },
+        response = self._post(
+            "skip",
+            interested_professional_id=pro.id,
+            skip_reason="Not a fit for Cofactor AI",
         )
         self.assertEqual(response.status_code, 302)
         self.assertEqual(response.url, reverse("proconnector_process"))
@@ -810,20 +764,14 @@ class SkipFlowTest(TestCase):
 
     def test_skip_without_reason_stores_none(self):
         pro = _make_pro()
-        response = self.client.post(
-            self.url,
-            {"action": "skip", "interested_professional_id": pro.id},
-        )
+        response = self._post("skip", interested_professional_id=pro.id)
         self.assertEqual(response.status_code, 302)
         pro.refresh_from_db()
         self.assertTrue(pro.proconnector_skipped)
         self.assertIsNone(pro.proconnector_skip_reason)
 
     def test_post_for_missing_record_just_advances(self):
-        response = self.client.post(
-            self.url,
-            {"action": "skip", "interested_professional_id": 999999},
-        )
+        response = self._post("skip", interested_professional_id=999999)
         self.assertEqual(response.status_code, 302)
         self.assertEqual(response.url, reverse("proconnector_process"))
 
@@ -910,23 +858,16 @@ class MissingInfoTest(TestCase):
 # ---------------------------------------------------------------------------
 # "Send during business hours" queue flow
 # ---------------------------------------------------------------------------
-class QueueFlowTest(TestCase):
-    def setUp(self):
-        self.url = reverse("proconnector_process")
-        _login(self.client, is_staff=True)
-
+class QueueFlowTest(_ProcessViewTestCase):
     @patch("fighthealthinsurance.staff_views.queue_proconnector_intro_email")
     def test_queue_marks_attempted_without_sent_at_and_advances(self, mock_queue):
         pro = _make_pro(email="jane@janeclinic.com")
         body = "Edited intro body with the compensation disclosure."
-        response = self.client.post(
-            self.url,
-            {
-                "action": "queue",
-                "interested_professional_id": pro.id,
-                "subject": "Intro to Cofactor AI",
-                "email_body": body,
-            },
+        response = self._post(
+            "queue",
+            interested_professional_id=pro.id,
+            subject="Intro to Cofactor AI",
+            email_body=body,
         )
         self.assertEqual(response.status_code, 302)
         self.assertEqual(response.url, reverse("proconnector_process"))
@@ -946,13 +887,8 @@ class QueueFlowTest(TestCase):
     @patch("fighthealthinsurance.staff_views.queue_proconnector_intro_email")
     def test_queue_empty_body_rejected(self, mock_queue):
         pro = _make_pro()
-        response = self.client.post(
-            self.url,
-            {
-                "action": "queue",
-                "interested_professional_id": pro.id,
-                "email_body": "  ",
-            },
+        response = self._post(
+            "queue", interested_professional_id=pro.id, email_body="  "
         )
         self.assertEqual(response.status_code, 400)
         mock_queue.assert_not_called()
@@ -965,13 +901,10 @@ class QueueFlowTest(TestCase):
     )
     def test_queue_failure_does_not_mark_attempted(self, _mock_queue):
         pro = _make_pro(email="jane@janeclinic.com")
-        response = self.client.post(
-            self.url,
-            {
-                "action": "queue",
-                "interested_professional_id": pro.id,
-                "email_body": "Body with compensation disclosure.",
-            },
+        response = self._post(
+            "queue",
+            interested_professional_id=pro.id,
+            email_body="Body with compensation disclosure.",
         )
         self.assertEqual(response.status_code, 500)
         pro.refresh_from_db()

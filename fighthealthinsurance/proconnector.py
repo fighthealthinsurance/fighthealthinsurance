@@ -524,14 +524,7 @@ def mark_email_sent(email: str, body: str) -> int:
     duplicates are still resolved together, so the address never resurfaces in
     the queue. Returns the number updated.
     """
-    return InterestedProfessional.objects.filter(
-        email__iexact=email,
-        proconnector_skipped=False,
-    ).update(
-        proconnector_attempted=True,
-        proconnector_sent_at=timezone.now(),
-        proconnector_email_body=body,
-    )
+    return _mark_email_processed(email, body, delivered=True)
 
 
 def mark_email_queued(email: str, body: str) -> int:
@@ -539,15 +532,24 @@ def mark_email_queued(email: str, body: str) -> int:
 
     Like :func:`mark_email_sent` but leaves ``proconnector_sent_at`` null: the
     intro has been handed off to the business-hours send queue but not delivered
-    yet. Setting ``attempted`` removes it from the staff queue so it isn't shown
-    twice; the actual delivery time lives on the ``ScheduledEmail`` row. Scoped
-    to non-skipped rows (like :func:`mark_email_sent`) so a separately-skipped
-    duplicate isn't clobbered. Returns the number updated.
+    yet; the actual delivery time lives on the ``ScheduledEmail`` row.
     """
-    return InterestedProfessional.objects.filter(
+    return _mark_email_processed(email, body, delivered=False)
+
+
+def _mark_email_processed(email: str, body: str, *, delivered: bool) -> int:
+    """Shared post-send/post-queue update; ``delivered`` stamps ``sent_at``."""
+    qs = InterestedProfessional.objects.filter(
         email__iexact=email,
         proconnector_skipped=False,
-    ).update(
+    )
+    if delivered:
+        return qs.update(
+            proconnector_attempted=True,
+            proconnector_sent_at=timezone.now(),
+            proconnector_email_body=body,
+        )
+    return qs.update(
         proconnector_attempted=True,
         proconnector_email_body=body,
     )

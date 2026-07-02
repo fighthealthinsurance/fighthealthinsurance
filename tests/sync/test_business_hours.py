@@ -78,6 +78,10 @@ def test_timezone_for_phone_unknown_or_service_code():
     # 999 is not an assigned area code; 555 is not in the map either.
     assert timezone_for_phone("999-555-1234") is None
     assert timezone_for_phone(None) is None
+    # 812 and its overlay 930 (southern Indiana, split Eastern/Central) are
+    # deliberately ambiguous -> conservative fallback, never a guessed zone.
+    assert timezone_for_phone("812-555-1234") is None
+    assert timezone_for_phone("930-555-1234") is None
 
 
 def test_resolve_send_timezone():

@@ -36,404 +36,69 @@ DEFAULT_WINDOW: tuple[int, int] = (9, 14)
 # Known recipient timezone -> normal local business hours (9am-5pm).
 SPECIFIC_WINDOW: tuple[int, int] = (9, 17)
 
-# North American area code -> IANA timezone. Grouped by zone for maintainability
-# and flattened below. Split states/area codes are assigned to the timezone of
-# their most populous region; genuinely ambiguous codes (e.g. FL 850, IN 812)
-# are intentionally omitted so they fall back to the safe Pacific overlap.
-_ZONE_AREA_CODES: dict[str, tuple[str, ...]] = {
-    "America/New_York": (
-        # CT, DC, DE
-        "203",
-        "475",
-        "860",
-        "959",
-        "202",
-        "302",
-        # FL (peninsula -- Eastern)
-        "305",
-        "786",
-        "321",
-        "407",
-        "689",
-        "561",
-        "772",
-        "904",
-        "386",
-        "352",
-        "754",
-        "954",
-        "727",
-        "813",
-        "941",
-        "239",
-        "863",
-        # GA
-        "404",
-        "470",
-        "678",
-        "770",
-        "762",
-        "706",
-        "912",
-        "229",
-        # IN (Eastern majority)
-        "317",
-        "463",
-        "260",
-        "574",
-        "765",
-        "930",
-        # KY (Louisville/Lexington -- Eastern)
-        "502",
-        "859",
-        "606",
-        # MA
-        "617",
-        "857",
-        "781",
-        "339",
-        "508",
-        "774",
-        "978",
-        "351",
-        "413",
-        # MD
-        "410",
-        "443",
-        "240",
-        "301",
-        # ME
-        "207",
-        # MI (Eastern majority, incl. most of the UP)
-        "313",
-        "248",
-        "947",
-        "586",
-        "734",
-        "810",
-        "989",
-        "517",
-        "616",
-        "231",
-        "269",
-        "906",
-        # NC
-        "704",
-        "980",
-        "828",
-        "336",
-        "743",
-        "919",
-        "984",
-        "252",
-        "910",
-        # NH
-        "603",
-        # NJ
-        "201",
-        "551",
-        "609",
-        "640",
-        "732",
-        "848",
-        "856",
-        "862",
-        "908",
-        "973",
-        # NY
-        "212",
-        "646",
-        "332",
-        "718",
-        "347",
-        "929",
-        "917",
-        "516",
-        "631",
-        "934",
-        "845",
-        "914",
-        "315",
-        "680",
-        "585",
-        "607",
-        "716",
-        "518",
-        "838",
-        # OH
-        "216",
-        "220",
-        "234",
-        "330",
-        "380",
-        "419",
-        "440",
-        "513",
-        "567",
-        "614",
-        "740",
-        "937",
-        "326",
-        # PA
-        "215",
-        "267",
-        "445",
-        "484",
-        "610",
-        "412",
-        "878",
-        "717",
-        "223",
-        "570",
-        "272",
-        "814",
-        "724",
-        # RI
-        "401",
-        # SC
-        "803",
-        "839",
-        "843",
-        "854",
-        "864",
-        # TN (eastern -- Knoxville/Chattanooga)
-        "423",
-        "865",
-        # VA
-        "703",
-        "571",
-        "804",
-        "757",
-        "540",
-        "434",
-        "276",
-        # VT
-        "802",
-        # WV
-        "304",
-        "681",
-    ),
-    "America/Chicago": (
-        # AL
-        "205",
-        "251",
-        "256",
-        "334",
-        "938",
-        "659",
-        # AR
-        "479",
-        "501",
-        "870",
-        # IA
-        "319",
-        "515",
-        "563",
-        "641",
-        "712",
-        # IL
-        "312",
-        "872",
-        "773",
-        "224",
-        "847",
-        "630",
-        "331",
-        "708",
-        "815",
-        "779",
-        "217",
-        "447",
-        "309",
-        "618",
-        "464",
-        # IN (NW -- Gary, Central)
-        "219",
-        # KS (Central majority)
-        "316",
-        "620",
-        "785",
-        "913",
-        # KY (western -- Central)
-        "270",
-        "364",
-        # LA
-        "225",
-        "318",
-        "337",
-        "504",
-        "985",
-        # MN
-        "218",
-        "320",
-        "507",
-        "612",
-        "651",
-        "763",
-        "952",
-        # MO
-        "314",
-        "557",
-        "573",
-        "636",
-        "660",
-        "816",
-        "417",
-        # MS
-        "228",
-        "601",
-        "662",
-        "769",
-        # ND (Central majority)
-        "701",
-        # NE (Central majority)
-        "402",
-        "531",
-        "308",
-        # OK
-        "405",
-        "572",
-        "539",
-        "918",
-        "580",
-        # SD (Central majority -- Sioux Falls)
-        "605",
-        # TN (central/western -- Nashville/Memphis)
-        "615",
-        "629",
-        "731",
-        "901",
-        "931",
-        # TX (Central majority)
-        "214",
-        "469",
-        "972",
-        "945",
-        "817",
-        "682",
-        "713",
-        "281",
-        "832",
-        "346",
-        "409",
-        "936",
-        "979",
-        "210",
-        "726",
-        "512",
-        "737",
-        "361",
-        "956",
-        "830",
-        "254",
-        "940",
-        "325",
-        "432",
-        "806",
-        # WI
-        "262",
-        "274",
-        "414",
-        "534",
-        "608",
-        "715",
-        "920",
-    ),
-    "America/Denver": (
-        # CO
-        "303",
-        "720",
-        "983",
-        "970",
-        "719",
-        # ID (Mountain majority -- Boise)
-        "208",
-        "986",
-        # MT
-        "406",
-        # NM
-        "505",
-        "575",
-        # TX (El Paso)
-        "915",
-        # UT
-        "385",
-        "801",
-        # WY
-        "307",
-    ),
-    "America/Phoenix": (
-        # AZ (no DST)
-        "480",
-        "602",
-        "623",
-        "520",
-        "928",
-    ),
-    "America/Los_Angeles": (
-        # CA
-        "209",
-        "213",
-        "279",
-        "310",
-        "323",
-        "408",
-        "415",
-        "424",
-        "442",
-        "510",
-        "530",
-        "559",
-        "562",
-        "619",
-        "626",
-        "628",
-        "650",
-        "657",
-        "661",
-        "669",
-        "707",
-        "714",
-        "747",
-        "760",
-        "805",
-        "818",
-        "820",
-        "831",
-        "840",
-        "858",
-        "909",
-        "916",
-        "925",
-        "949",
-        "951",
-        # NV
-        "702",
-        "725",
-        "775",
-        # OR (Pacific majority)
-        "503",
-        "971",
-        "541",
-        "458",
-        # WA
-        "206",
-        "253",
-        "360",
-        "425",
-        "509",
-        "564",
-    ),
-    "America/Anchorage": ("907",),
-    "Pacific/Honolulu": ("808",),
+# North American area code -> IANA timezone. Codes are packed per zone (split
+# on whitespace below); see git history for a per-state annotated version.
+# Split states/area codes are assigned to the timezone of their most populous
+# region; genuinely ambiguous codes (e.g. FL 850/448, IN 812/930) are
+# intentionally omitted so they fall back to the safe Pacific overlap.
+_ZONE_AREA_CODES: dict[str, str] = {
+    "America/New_York": """
+        201 202 203 207 212 215 216 220 223 229 231 234 239
+        240 248 252 260 267 269 272 276 301 302 304 305 313
+        315 317 321 326 330 332 336 339 347 351 352 380 386
+        401 404 407 410 412 413 419 423 434 440 443 445 463
+        470 475 484 502 508 513 516 517 518 540 551 561 567
+        570 571 574 585 586 603 606 607 609 610 614 616 617
+        631 640 646 678 680 681 689 703 704 706 716 717 718
+        724 727 732 734 740 743 754 757 762 765 770 772 774
+        781 786 802 803 804 810 813 814 828 838 839 843 845
+        848 854 856 857 859 860 862 863 864 865 878 904 906
+        908 910 912 914 917 919 929 934 937 941 947 954 959
+        973 978 980 984 989
+    """,
+    "America/Chicago": """
+        205 210 214 217 218 219 224 225 228 251 254 256 262
+        270 274 281 308 309 312 314 316 318 319 320 325 331
+        334 337 346 361 364 402 405 409 414 417 432 447 464
+        469 479 501 504 507 512 515 531 534 539 557 563 572
+        573 580 601 605 608 612 615 618 620 629 630 636 641
+        651 659 660 662 682 701 708 712 713 715 726 731 737
+        763 769 773 779 785 806 815 816 817 830 832 847 870
+        872 901 913 918 920 931 936 938 940 945 952 956 972
+        979 985
+    """,
+    "America/Denver": """
+        208 303 307 385 406 505 575 719 720 801 915 970 983
+        986
+    """,
+    "America/Phoenix": """
+        480 520 602 623 928
+    """,
+    "America/Los_Angeles": """
+        206 209 213 253 279 310 323 360 408 415 424 425 442
+        458 503 509 510 530 541 559 562 564 619 626 628 650
+        657 661 669 702 707 714 725 747 760 775 805 818 820
+        831 840 858 909 916 925 949 951 971
+    """,
+    "America/Anchorage": """
+        907
+    """,
+    "Pacific/Honolulu": """
+        808
+    """,
 }
 
 # Flattened lookup: area code -> IANA timezone name.
 AREA_CODE_TIMEZONES: dict[str, str] = {
     area_code: tz
     for tz, area_codes in _ZONE_AREA_CODES.items()
-    for area_code in area_codes
+    for area_code in area_codes.split()
 }
+# A code listed under two zones would silently last-write-win in the dict
+# comprehension above; fail loudly at import instead.
+assert len(AREA_CODE_TIMEZONES) == sum(
+    len(codes.split()) for codes in _ZONE_AREA_CODES.values()
+), "duplicate area code across zones in _ZONE_AREA_CODES"
 
 # IANA timezone -> short, human-friendly label for the staff UI hint.
 _FRIENDLY_TZ_LABELS: dict[str, str] = {
