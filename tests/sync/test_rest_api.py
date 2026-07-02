@@ -2141,3 +2141,25 @@ class InterestedProfessionalEndpointTest(APITestCase):
             InterestedProfessional.objects.filter(name="No Email").exists()
         )
         mock_send.assert_not_called()
+
+    def test_notification_build_failure_does_not_fail_request(self):
+        # The notification body is built (including an admin reverse()) only
+        # after the lead is saved. A failure there must be logged and swallowed
+        # -- the lead is already persisted, so it must not surface as a 500.
+        from fighthealthinsurance.models import InterestedProfessional
+
+        with patch(
+            "fighthealthinsurance.utils.reverse",
+            side_effect=Exception("no reverse match"),
+        ), patch("fighthealthinsurance.utils.send_mail") as mock_send:
+            response = self.client.post(
+                reverse("interested-professional-list"),
+                data=json.dumps({"email": "pro4@example.com"}),
+                content_type="application/json",
+            )
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(
+            InterestedProfessional.objects.filter(email="pro4@example.com").exists()
+        )
+        # The build failed before the send, so no notification goes out.
+        mock_send.assert_not_called()
