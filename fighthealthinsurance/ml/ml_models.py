@@ -2223,17 +2223,24 @@ class RemoteOpenLike(RemoteModel):
                         headers={"Authorization": f"Bearer {self.token}"},
                         json=request_body,
                     ) as response:
+                        # Read the error body BEFORE raise_for_status():
+                        # depending on the aiohttp version, raising can
+                        # release the connection and make text() unreadable
+                        # afterwards, which would reduce every error body to
+                        # the fallback string — hiding the payload from the
+                        # logs and from the unsupported-temperature detection
+                        # the retry below depends on.
+                        response_body = ""
+                        if response.status >= 400:
+                            try:
+                                response_body = await response.text()
+                            except Exception:
+                                response_body = "<failed to read response body>"
                         # Raise ClientResponseError for HTTP error status codes (4xx, 5xx)
                         # This allows subclasses to catch and handle specific errors like 429
                         try:
                             response.raise_for_status()
                         except aiohttp.ClientResponseError as e:
-                            response_body = ""
-                            try:
-                                response_body = await response.text()
-                            except Exception:
-                                response_body = "<failed to read response body>"
-
                             if (
                                 sent_temperature
                                 and _http_error_indicates_unsupported_temperature(
