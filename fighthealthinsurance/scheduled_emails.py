@@ -18,6 +18,7 @@ from fighthealthinsurance.business_hours import (
     next_business_hours_start,
     resolve_send_timezone,
 )
+from fighthealthinsurance.email_utils import is_blocked_email
 from fighthealthinsurance.followup_emails import AsyncEmailSenderMixin
 from fighthealthinsurance.models import ScheduledEmail
 from fighthealthinsurance.utils import mask_email_for_logging, send_fallback_email
@@ -104,6 +105,21 @@ class ScheduledEmailSender(AsyncEmailSenderMixin):
             return False
 
         now = timezone.now()
+        # Fail closed if the recipient became blocked between enqueue time and
+        # now (blocklist deploys, or a future producer without the enqueue-time
+        # pre-check): send_fallback_email silently no-ops for blocked addresses,
+        # which would otherwise be recorded below as a successful delivery.
+        # Terminal, not retried -- the blocklist is static config.
+        if is_blocked_email(se.to_email):
+            se.last_error = "recipient blocked at send time"
+            se.attempts = MAX_SEND_ATTEMPTS
+            se.save(update_fields=["attempts", "last_error"])
+            logger.warning(
+                f"Scheduled email {se.pk} to blocked address "
+                f"{mask_email_for_logging(se.to_email)}; giving up without sending"
+            )
+            return False
+
         # Re-check the live window: a row can become due (send_after passed) but
         # only after its window already closed for the day -> wait for next open.
         if not is_within_business_hours(now, se.send_timezone, se.timezone_is_specific):

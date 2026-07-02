@@ -23,7 +23,7 @@ _MODULE = "fighthealthinsurance.scheduled_emails"
 
 def _make_scheduled(**kwargs) -> ScheduledEmail:
     defaults = {
-        "to_email": "pro@example.com",
+        "to_email": "pro@example-host.com",
         "subject": "Hi",
         "template_name": "proconnector_intro",
         "context": {"body": "Hello there", "name": "Pat"},
@@ -38,7 +38,7 @@ class EnqueueTest(TestCase):
         sentinel = timezone.now() + datetime.timedelta(hours=3)
         with patch(f"{_MODULE}.next_business_hours_start", return_value=sentinel):
             se = enqueue_scheduled_email(
-                to_email="pro@example.com",
+                to_email="pro@example-host.com",
                 subject="Intro",
                 template_name="proconnector_intro",
                 context={"body": "b", "name": "n"},
@@ -56,7 +56,7 @@ class EnqueueTest(TestCase):
 
     def test_enqueue_without_phone_uses_conservative_pacific(self):
         se = enqueue_scheduled_email(
-            to_email="pro@example.com",
+            to_email="pro@example-host.com",
             subject="Intro",
             template_name="proconnector_intro",
             context={},
@@ -98,7 +98,7 @@ class DoSendTest(TestCase):
         self.assertTrue(result)
         mock_send.assert_called_once()
         kwargs = mock_send.call_args.kwargs
-        self.assertEqual(kwargs["to_email"], "pro@example.com")
+        self.assertEqual(kwargs["to_email"], "pro@example-host.com")
         self.assertEqual(kwargs["template_name"], "proconnector_intro")
         self.assertEqual(kwargs["cc"], ["professional@fighthealthinsurance.com"])
         self.se.refresh_from_db()
@@ -138,6 +138,26 @@ class DoSendTest(TestCase):
             result = self.sender.dosend(scheduled_email=self.se)
         self.assertFalse(result)
         mock_send.assert_not_called()
+
+    def test_blocked_at_send_time_fails_closed_not_marked_sent(self):
+        # Regression: send_fallback_email silently no-ops for blocked addresses,
+        # which would otherwise be recorded here as a successful delivery. A
+        # recipient blocked between enqueue and the send window must be given up
+        # on terminally, never marked sent.
+        blocked = _make_scheduled(
+            to_email="pro@example.com",  # example.com is a blocked domain
+            send_after=timezone.now() - datetime.timedelta(minutes=5),
+        )
+        with patch(f"{_MODULE}.is_within_business_hours", return_value=True), patch(
+            f"{_MODULE}.send_fallback_email"
+        ) as mock_send:
+            result = self.sender.dosend(scheduled_email=blocked)
+        self.assertFalse(result)
+        mock_send.assert_not_called()
+        blocked.refresh_from_db()
+        self.assertFalse(blocked.sent)
+        self.assertEqual(blocked.attempts, MAX_SEND_ATTEMPTS)  # terminal
+        self.assertIn("blocked", blocked.last_error or "")
 
     def test_soft_claim_blocks_concurrent_second_send(self):
         # Simulate another poller having soft-claimed the row first (its

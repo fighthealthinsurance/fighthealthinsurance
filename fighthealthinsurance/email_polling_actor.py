@@ -3,6 +3,7 @@ import datetime
 import os
 import random
 import time
+from typing import Optional
 
 from django.utils import timezone
 
@@ -41,6 +42,10 @@ class EmailPollingActor:
         self.followup_sender = FollowUpEmailSender()
         self.thankyou_sender = ThankyouEmailSender()
         self.scheduled_sender = ScheduledEmailSender()
+        # Damping for the scheduled-email block's private error handling (see
+        # run()): consecutive failures and the time to skip the block until.
+        self._scheduled_failures = 0
+        self._scheduled_skip_until: Optional[datetime.datetime] = None
         self.last_email_clear_check = timezone.now()
         self._logger.info("EmailPollingActor senders initialized")
 
@@ -63,23 +68,41 @@ class EmailPollingActor:
                 # jittered delay here so a batch can't spill past the window.
                 # Own error isolation: a scheduled-path failure (find/claim/send)
                 # must not abort this iteration and trip the loop's global backoff,
-                # which would starve the healthy follow-up pipeline below.
-                try:
-                    self._logger.debug("Getting scheduled email candidates")
-                    scheduled_candidates = (
-                        await self.scheduled_sender.afind_candidates()
-                    )
-                    scheduled_count = len(scheduled_candidates)
-                    self._logger.debug(f"Scheduled email candidates: {scheduled_count}")
-                    if scheduled_count > 0:
-                        scheduled_sent = await self.scheduled_sender.asend_all(
-                            count=10, candidates=scheduled_candidates
+                # which would starve the healthy follow-up pipeline below. But
+                # isolation alone would retry a persistent failure every poll
+                # (~10s) forever, so consecutive failures skip the block with
+                # exponential backoff instead of sleeping the whole loop.
+                if (
+                    self._scheduled_skip_until is None
+                    or timezone.now() >= self._scheduled_skip_until
+                ):
+                    try:
+                        self._logger.debug("Getting scheduled email candidates")
+                        scheduled_candidates = (
+                            await self.scheduled_sender.afind_candidates()
                         )
-                        self._logger.info(f"Sent {scheduled_sent} scheduled emails")
-                except Exception as e:
-                    self._logger.opt(exception=True).error(
-                        f"Scheduled-email processing failed, continuing: {e}"
-                    )
+                        scheduled_count = len(scheduled_candidates)
+                        self._logger.debug(
+                            f"Scheduled email candidates: {scheduled_count}"
+                        )
+                        if scheduled_count > 0:
+                            scheduled_sent = await self.scheduled_sender.asend_all(
+                                count=10, candidates=scheduled_candidates
+                            )
+                            self._logger.info(f"Sent {scheduled_sent} scheduled emails")
+                        self._scheduled_failures = 0
+                        self._scheduled_skip_until = None
+                    except Exception as e:
+                        self._scheduled_failures += 1
+                        skip_s = min(60 * 2 ** (self._scheduled_failures - 1), 1800)
+                        self._scheduled_skip_until = (
+                            timezone.now() + datetime.timedelta(seconds=skip_s)
+                        )
+                        self._logger.opt(exception=True).error(
+                            f"Scheduled-email processing failed "
+                            f"(#{self._scheduled_failures}), skipping the block "
+                            f"for {skip_s}s: {e}"
+                        )
 
                 self._logger.debug("Getting follow up candidates")
                 # Send follow-up emails (pass candidates to avoid double DB query)

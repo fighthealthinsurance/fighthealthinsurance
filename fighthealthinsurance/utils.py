@@ -379,6 +379,15 @@ def send_fallback_email(
             f"Skipping email to blocked address: {mask_email_for_logging(to_email)}"
         )
         return
+    # Blocked addresses are filtered from CC too (same invariant as To:); log so
+    # a misconfigured CC setting doesn't silently vanish.
+    if cc:
+        kept_cc = [a for a in cc if not is_blocked_email(a)]
+        for dropped in set(cc) - set(kept_cc):
+            logger.info(
+                f"Dropping blocked CC address: {mask_email_for_logging(dropped)}"
+            )
+        cc = kept_cc
     # First, render the plain text content if present
     text_content = render_to_string(
         f"emails/{template_name}.txt",

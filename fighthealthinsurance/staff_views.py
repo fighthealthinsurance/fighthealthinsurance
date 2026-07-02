@@ -52,8 +52,8 @@ from fighthealthinsurance.proconnector import (
     mark_email_skipped,
     release_email_claim,
     non_spam_interested_professionals,
-    partner_framing_problem,
     queue_proconnector_intro_email,
+    subject_wording_problem,
     remaining_interested_professionals_count,
     send_proconnector_intro_email,
 )
@@ -814,7 +814,7 @@ class ProConnectorProcessView(View):
         elif subject_max is not None and len(subject) > subject_max:
             error = f"Subject is too long (max {subject_max} characters)."
         else:
-            error = intro_wording_problem(body) or partner_framing_problem(subject)
+            error = intro_wording_problem(body) or subject_wording_problem(subject)
         if error:
             return self._render_record(
                 request,

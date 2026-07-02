@@ -50,6 +50,13 @@ FILTERED_EMAILS: frozenset[str] = frozenset(
         "testing@example.com",
         "farts@farts.com",
         "holden@pigscanfly.ca",
+        # Also on charts' consumer-analytics exclusion list; without these an
+        # internal tester's signup would land (business domains even sort to the
+        # FRONT of the queue) and get a real Cofactor intro.
+        "holden.karau@gmail.com",
+        "holden@fighthealthinsurance.com",
+        "warrick@fighthealthinsurance.com",
+        "test@test.com",
     }
 )
 # Signups on these TLDs are treated as spam / out of scope and filtered out.
@@ -238,6 +245,24 @@ def partner_framing_problem(text: Optional[str]) -> Optional[str]:
     return None
 
 
+def subject_wording_problem(subject: Optional[str]) -> Optional[str]:
+    """Return a reason the *subject line* wording is disallowed, or ``None``.
+
+    Subjects get a stricter rule than bodies: any ``partner*`` token is
+    rejected outright. The body check's proximity heuristic (partner near a
+    literal "cofactor") inverts on subjects -- the natural violations
+    ("Announcing our new partnership") don't name Cofactor at all, while the
+    benign case it protects ("... for Cardiology Partners") is rare in a
+    subject and just gets a 400 with the staff edits preserved.
+    """
+    if re.search(r"\bpartner", (subject or "").lower()):
+        return (
+            "Please don't use 'partner'/'partnership' wording in the subject "
+            "line -- this is a sourcing agreement, not a partnership."
+        )
+    return None
+
+
 def intro_wording_problem(text: Optional[str]) -> Optional[str]:
     """Return a human-readable reason the intro wording is disallowed, or ``None``.
 
@@ -284,7 +309,10 @@ async def agenerate_intro_email(pro: InterestedProfessional) -> str:
     """
     base = build_base_intro_email(pro)
     try:
-        models = list(ml_router.external_models_by_cost)
+        # best_external_models filters by availability/health and keeps a single
+        # Groq entry; the raw cost-ordered list would serially wait out (30s
+        # each) backends the health sweep already knows are down.
+        models = ml_router.best_external_models(limit=4)
     except Exception as e:
         logger.opt(exception=True).warning(
             f"Proconnector: external model lookup failed, using base email: {e}"
@@ -310,7 +338,7 @@ async def agenerate_intro_email(pro: InterestedProfessional) -> str:
         timeout=30.0,
         label="proconnector intro",
         validator=_is_safe_intro_draft,
-        models=models[:4],
+        models=models,
     )
     return result or base
 
@@ -502,15 +530,19 @@ def claim_email_for_send(email: str) -> int:
 def release_email_claim(email: str) -> int:
     """Undo a :func:`claim_email_for_send` claim after a failed send/queue.
 
-    Only releases rows that were never actually delivered (``sent_at`` null) and
-    not skipped, so an already-sent or skipped record is left untouched. This
-    returns the address to the queue so staff can retry. Returns the number of
-    rows released.
+    Scoped to *in-flight* claims only: a claim flips ``attempted`` but never
+    writes ``proconnector_email_body`` (only the mark helpers do, atomically
+    with ``attempted``), so ``body IS NULL`` distinguishes a mid-request claim
+    from a queued or sent record sharing the address. Without that predicate a
+    failed send on a later duplicate signup would resurrect a previously queued
+    row -- whose ScheduledEmail is still pending -- and cause a duplicate intro.
+    Returns the number of rows released back to the queue for retry.
     """
     return InterestedProfessional.objects.filter(
         email__iexact=email,
         proconnector_attempted=True,
         proconnector_sent_at__isnull=True,
+        proconnector_email_body__isnull=True,
         proconnector_skipped=False,
     ).update(proconnector_attempted=False)
 
@@ -538,9 +570,16 @@ def mark_email_queued(email: str, body: str) -> int:
 
 
 def _mark_email_processed(email: str, body: str, *, delivered: bool) -> int:
-    """Shared post-send/post-queue update; ``delivered`` stamps ``sent_at``."""
+    """Shared post-send/post-queue update; ``delivered`` stamps ``sent_at``.
+
+    Scoped to rows with no ``proconnector_email_body`` yet -- i.e. exactly the
+    in-flight claims plus same-time duplicates -- so re-processing a repeat
+    signup can't overwrite a previously sent/queued sibling's ``sent_at`` and
+    body, which are the audit record of what was actually sent and when.
+    """
     qs = InterestedProfessional.objects.filter(
         email__iexact=email,
+        proconnector_email_body__isnull=True,
         proconnector_skipped=False,
     )
     if delivered:

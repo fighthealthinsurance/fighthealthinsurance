@@ -67,7 +67,8 @@ class _FakeModel:
 
 def _fake_router(models):
     class _Router:
-        external_models_by_cost = models
+        def best_external_models(self, limit=3):
+            return list(models)[:limit]
 
     return _Router()
 
@@ -264,9 +265,15 @@ class QueueFilteringTest(TestCase):
         self.assertEqual(proconnector.remaining_interested_professionals_count(), 0)
 
     def test_filters_out_internal_test_accounts(self):
-        # FHI's own internal test accounts must never be introduced to Cofactor.
+        # FHI's own internal test accounts must never be introduced to Cofactor,
+        # including the ones on charts' consumer-analytics exclusion list (two of
+        # which would otherwise sort to the FRONT via business-domain priority).
         _make_pro(email="farts@farts.com")
         _make_pro(email="holden@pigscanfly.ca")
+        _make_pro(email="holden.karau@gmail.com")
+        _make_pro(email="holden@fighthealthinsurance.com")
+        _make_pro(email="warrick@fighthealthinsurance.com")
+        _make_pro(email="test@test.com")
         self.assertIsNone(get_next_interested_professional())
         self.assertEqual(proconnector.remaining_interested_professionals_count(), 0)
 
@@ -360,6 +367,40 @@ class ClaimTest(TestCase):
         self.assertTrue(pro.proconnector_attempted)
         self.assertIsNotNone(pro.proconnector_sent_at)
 
+    def test_release_does_not_resurrect_queued_sibling(self):
+        # Regression: a queued record (attempted=True, sent_at NULL, body set,
+        # ScheduledEmail pending) shares release's old filter state. A failed
+        # send on a LATER duplicate signup must release only the fresh claim,
+        # not flip the queued sibling back into the staff queue (which would
+        # produce a duplicate intro when its ScheduledEmail delivers).
+        queued = _make_pro(email="dup@clinic.org")
+        proconnector.mark_email_queued("dup@clinic.org", "queued body")
+        fresh = _make_pro(email="dup@clinic.org")
+        self.assertEqual(proconnector.claim_email_for_send("dup@clinic.org"), 1)
+        released = proconnector.release_email_claim("dup@clinic.org")
+        self.assertEqual(released, 1)  # only the fresh claim
+        queued.refresh_from_db()
+        fresh.refresh_from_db()
+        self.assertTrue(queued.proconnector_attempted)  # still handed off
+        self.assertFalse(fresh.proconnector_attempted)  # retryable again
+
+    def test_mark_email_sent_does_not_clobber_previously_sent_sibling(self):
+        # Regression: re-processing a repeat signup must not overwrite the
+        # earlier row's sent_at/body -- the audit record of what was sent when.
+        earlier = _make_pro(email="dup@clinic.org")
+        proconnector.mark_email_sent("dup@clinic.org", "march body")
+        earlier.refresh_from_db()
+        original_sent_at = earlier.proconnector_sent_at
+        later = _make_pro(email="dup@clinic.org")
+        updated = proconnector.mark_email_sent("dup@clinic.org", "june body")
+        self.assertEqual(updated, 1)  # only the new signup
+        earlier.refresh_from_db()
+        later.refresh_from_db()
+        self.assertEqual(earlier.proconnector_email_body, "march body")
+        self.assertEqual(earlier.proconnector_sent_at, original_sent_at)
+        self.assertEqual(later.proconnector_email_body, "june body")
+        self.assertTrue(later.proconnector_attempted)
+
     def test_mark_email_sent_does_not_clobber_skipped_duplicate(self):
         # An older duplicate already skipped must stay skipped when a newer
         # signup with the same address is sent -- no contradictory skipped+sent
@@ -449,11 +490,28 @@ class SafetyValidatorTest(TestCase):
         self.assertFalse(_claims_cofactor_relationship("partner a b c d e f cofactor"))
 
     def test_partner_framing_problem_independent_of_compensation(self):
-        # partner_framing_problem enforces ONLY the no-"partner" rule (it guards
-        # the subject line too), so it must not demand the compensation disclosure.
+        # partner_framing_problem enforces ONLY the no-"partner" rule for BODY
+        # text, so it must not demand the compensation disclosure.
         self.assertIsNotNone(partner_framing_problem("A partnership with Cofactor AI"))
         self.assertIsNone(partner_framing_problem("Intro to Cofactor AI"))
         self.assertIsNone(partner_framing_problem(""))
+
+    def test_subject_rule_is_strict_partner_ban(self):
+        # Subjects use a stricter rule than the body's proximity heuristic: the
+        # natural violations don't name Cofactor at all, so ANY partner* token
+        # is rejected -- even without a nearby "cofactor" token.
+        self.assertIsNotNone(
+            proconnector.subject_wording_problem(
+                "A new partnership introduction from Fight Health Insurance"
+            )
+        )
+        self.assertIsNotNone(
+            proconnector.subject_wording_problem("Our new partnership with Cofactor AI")
+        )
+        self.assertIsNone(
+            proconnector.subject_wording_problem("An introduction to Cofactor AI")
+        )
+        self.assertIsNone(proconnector.subject_wording_problem(""))
 
 
 class AIDraftFallbackTest(TestCase):
@@ -471,8 +529,7 @@ class AIDraftFallbackTest(TestCase):
 
     def test_fallback_when_model_lookup_raises(self):
         class _Boom:
-            @property
-            def external_models_by_cost(self):
+            def best_external_models(self, limit=3):
                 raise RuntimeError("router down")
 
         with patch.object(proconnector, "ml_router", _Boom()):
@@ -716,6 +773,23 @@ class SendFlowTest(_ProcessViewTestCase):
         pro.refresh_from_db()
         self.assertFalse(pro.proconnector_attempted)
 
+    @patch("fighthealthinsurance.staff_views.send_proconnector_intro_email")
+    def test_send_rejects_partnership_subject_without_cofactor_token(self, mock_send):
+        # Regression: the natural violating subject doesn't name Cofactor, so the
+        # body's proximity heuristic would pass it; the strict subject rule must
+        # reject any partner* wording.
+        pro = _make_pro(email="jane@janeclinic.com")
+        response = self._post(
+            "send",
+            interested_professional_id=pro.id,
+            subject="A new partnership introduction from Fight Health Insurance",
+            email_body="Body naming Cofactor AI with the compensation disclosure.",
+        )
+        self.assertEqual(response.status_code, 400)
+        mock_send.assert_not_called()
+        pro.refresh_from_db()
+        self.assertFalse(pro.proconnector_attempted)
+
 
 # ---------------------------------------------------------------------------
 # Send failure behavior
@@ -843,6 +917,20 @@ class SendHelperTest(TestCase):
         msg = mail.outbox[0]
         lowered = [a.lower() for a in msg.cc]
         self.assertEqual(lowered.count(prof.lower()), 1)
+
+    def test_blocked_cc_address_is_dropped_from_delivery(self):
+        # The blocked-recipient invariant covers Cc like To: a blocked address
+        # (e.g. a misconfigured CC setting) is filtered out, not delivered to.
+        pro = _make_pro(email="jane@janeclinic.com")
+        proconnector.send_proconnector_intro_email(
+            pro,
+            subject="Intro",
+            body="Body with compensation disclosure.",
+            cc=["oops@example.com"],  # example.com is a blocked domain
+        )
+        msg = mail.outbox[0]
+        self.assertNotIn("oops@example.com", msg.cc)
+        self.assertIn(get_professional_cc_email(), msg.cc)
 
 
 # ---------------------------------------------------------------------------
