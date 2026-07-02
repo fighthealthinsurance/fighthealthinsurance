@@ -2479,6 +2479,10 @@ class ProposedAppeal(ExportModelOperationsMixin("ProposedAppeal"), models.Model)
     chosen = models.BooleanField(default=False)
     editted = models.BooleanField(default=False)
     model_name = models.CharField(max_length=200, null=True, blank=True, db_index=True)
+    # Tracks whether this appeal was synthesized from multiple drafts rather
+    # than produced by a single model pass. Complements model_name so the
+    # synthesis provenance survives independently of the model label.
+    synthesized = models.BooleanField(default=False, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True, null=True, db_index=True)
 
     def __str__(self):
@@ -3248,6 +3252,11 @@ class ChooserCandidate(ExportModelOperationsMixin("ChooserCandidate"), models.Mo
     candidate_index = models.IntegerField()  # 0, 1, 2, 3
     kind = models.CharField(max_length=30, choices=KIND_CHOICES)
     model_name = models.CharField(max_length=200)
+    # True when this candidate was synthesized from the other candidates'
+    # outputs rather than produced directly by a single model. Tracked
+    # alongside model_name so the chooser can compare synthesis vs. single
+    # models when collecting preference data.
+    synthesized = models.BooleanField(default=False)
     content = models.TextField()
     metadata = models.JSONField(null=True, blank=True)
     is_active = models.BooleanField(default=True)

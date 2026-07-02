@@ -698,6 +698,12 @@ async def test_synthesis_threshold(saved_texts, synthesis_should_run):
                 mock_appeal_gen.synthesize_appeals.call_args[1]["appeal_texts"]
                 == saved_texts
             )
+            # The synthesized appeal is persisted with synthesized=True so the
+            # provenance is tracked independently of model_name.
+            assert any(
+                call.kwargs.get("synthesized") is True
+                for call in mock_pa_cls.call_args_list
+            ), "expected a ProposedAppeal saved with synthesized=True"
         else:
             mock_appeal_gen.synthesize_appeals.assert_not_called()
 
