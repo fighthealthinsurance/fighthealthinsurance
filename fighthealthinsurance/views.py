@@ -32,7 +32,6 @@ from django.views.decorators.http import require_http_methods
 from django.views.generic.base import TemplateView
 from django.utils import timezone
 from django.views.generic.edit import FormView
-from django.core.mail import send_mail
 
 import stripe
 from django_encrypted_filefield.crypt import Cryptographer
@@ -52,7 +51,11 @@ from fighthealthinsurance.models import (
     StripeRecoveryInfo,
 )
 from fighthealthinsurance.type_utils import User
-from fighthealthinsurance.utils import is_valid_denial_id, send_fallback_email
+from fighthealthinsurance.utils import (
+    is_valid_denial_id,
+    notify_interested_professional,
+    send_fallback_email,
+)
 
 
 def _handle_mailing_list_subscribe(form: forms.Form, source_page: str) -> None:
@@ -277,7 +280,7 @@ class ProVersionView(generic.FormView):
         interested_pro = form.save(commit=False)
         interested_pro.clicked_for_paid = False
         interested_pro.save()
-        self._notify_support_of_signup(interested_pro)
+        self._notify_professional_signup(interested_pro)
         # Send the thank-you email synchronously so the signer gets it right
         # away. The batched ThankyouEmailSender will skip records where
         # thankyou_email_sent=True, which dosend() sets on success.
@@ -291,38 +294,14 @@ class ProVersionView(generic.FormView):
         return super().form_valid(form)
 
     @staticmethod
-    def _notify_support_of_signup(
+    def _notify_professional_signup(
         interested_pro: "models.InterestedProfessional",
     ) -> None:
-        admin_path = reverse(
-            "admin:fighthealthinsurance_interestedprofessional_change",
-            args=[interested_pro.id],
+        notify_interested_professional(
+            interested_pro,
+            source="/pro_version",
+            subject=f"New pro version signup #{interested_pro.id}",
         )
-        admin_url = f"https://{settings.FIGHT_HEALTH_INSURANCE_DOMAIN}{admin_path}"
-        body = (
-            f"A new professional signed up via /pro_version.\n\n"
-            f"Name: {interested_pro.name or 'N/A'}\n"
-            f"Email: {interested_pro.email}\n"
-            f"Job title / provider type: {interested_pro.job_title_or_provider_type or 'N/A'}\n"
-            f"Business: {interested_pro.business_name or 'N/A'}\n"
-            f"Phone: {interested_pro.phone_number or 'N/A'}\n"
-            f"Address: {interested_pro.address or 'N/A'}\n"
-            f"Most common denial: {interested_pro.most_common_denial or 'N/A'}\n"
-            f"Comments: {interested_pro.comments or 'N/A'}\n"
-            f"Admin: {admin_url}\n"
-        )
-        try:
-            send_mail(
-                f"New pro version signup #{interested_pro.id}",
-                body,
-                settings.DEFAULT_FROM_EMAIL,
-                ["support42@fighthealthinsurance.com"],
-            )
-        except Exception:
-            logger.opt(exception=True).error(
-                f"Error sending pro signup notification email "
-                f"(interested_professional_id={interested_pro.id})"
-            )
 
 
 class PatientAccessView(generic.TemplateView):

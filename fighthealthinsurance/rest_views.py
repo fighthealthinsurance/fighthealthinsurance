@@ -55,6 +55,7 @@ from fighthealthinsurance.models import (
     DemoRequests,
     Denial,
     DenialQA,
+    InterestedProfessional,
     MailingListSubscriber,
     OngoingChat,
     PriorAuthRequest,
@@ -1574,6 +1575,58 @@ class DemoRequestsViewSet(viewsets.ViewSet, CreateMixin, DeleteMixin):
         email = serializer.validated_data["email"]
         DemoRequests.objects.filter(email=email).delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class InterestedProfessionalViewSet(viewsets.ViewSet, CreateMixin):
+    """
+    ViewSet for professional-interest leads submitted via the Fight Paperwork
+    REST API.
+
+    Public counterpart to the web /pro_version interest form: it records an
+    InterestedProfessional lead and notifies the professional-signup inbox
+    (defaults to professional@fighthealthinsurance.com, extendable via
+    settings.PROFESSIONAL_SIGNUP_NOTIFICATION_EMAILS). Create-only: this is a
+    public, unauthenticated endpoint, so lead removal is intentionally not
+    exposed here (an email-only delete would let anyone erase a lead); data
+    removal is handled out of band.
+    """
+
+    serializer_class = serializers.InterestedProfessionalSerializer
+
+    @extend_schema(responses=serializers.StatusResponseSerializer)
+    def create(self, request: Request) -> Response:
+        """Submit a new professional-interest lead."""
+        return super().create(request)
+
+    def perform_create(self, request: Request, serializer) -> Response:
+        """Save the lead, then notify the professional-signup inbox."""
+        # clicked_for_paid defaults to True on the model for legacy reasons; the
+        # interest form no longer collects a pay-to-express-interest choice, so
+        # record leads as not-clicked (matches the web /pro_version form).
+        interested_pro = serializer.save(clicked_for_paid=False)
+        self._notify_interested_professional(interested_pro)
+        return Response(
+            serializers.StatusResponseSerializer({"status": "subscribed"}).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+    @staticmethod
+    def _notify_interested_professional(
+        interested_pro: InterestedProfessional,
+    ) -> None:
+        """Notify the professional-signup inbox about a new REST interest lead.
+
+        Delegates to the shared notify_interested_professional helper so the web
+        /pro_version form and this endpoint send an identical inbox format.
+        Best-effort: mail failures are logged, not raised, so they never fail
+        the already-persisted lead."""
+        from fighthealthinsurance.utils import notify_interested_professional
+
+        notify_interested_professional(
+            interested_pro,
+            source="the Fight Paperwork REST API",
+            subject=f"New pro REST signup #{interested_pro.id}",
+        )
 
 
 class SendToUserViewSet(viewsets.ViewSet, SerializerMixin):

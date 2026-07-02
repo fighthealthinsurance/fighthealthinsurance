@@ -126,6 +126,21 @@ class Base(Configuration):
         if e.strip()
     ]
 
+    # Professional-signup notifications — the web /pro_version interest form and
+    # the Fight Paperwork (FPW) REST professional sign-up endpoint — default to
+    # professional@fighthealthinsurance.com; additional recipients can be
+    # configured via the PROFESSIONAL_SIGNUP_EXTRA_NOTIFICATION_EMAILS env var
+    # (comma-separated).
+    PROFESSIONAL_SIGNUP_NOTIFICATION_EMAILS = [
+        "professional@fighthealthinsurance.com"
+    ] + [
+        e.strip()
+        for e in os.getenv("PROFESSIONAL_SIGNUP_EXTRA_NOTIFICATION_EMAILS", "").split(
+            ","
+        )
+        if e.strip()
+    ]
+
     # Session cookie configs
     SESSION_COOKIE_SECURE = True  # https only (up to the browser to enforce)
     SESSION_COOKIE_HTTPONLY = False  # allow js access
