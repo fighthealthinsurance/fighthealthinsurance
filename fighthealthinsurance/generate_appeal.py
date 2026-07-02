@@ -29,7 +29,7 @@ class GeneratedAppeal:
     synthesized: bool = False
 
 
-from fighthealthinsurance.context_utils import truncate_at_boundary
+from fighthealthinsurance.context_utils import estimate_tokens, truncate_at_boundary
 from fighthealthinsurance.denial_base import DenialBase
 
 from .exec import executor
@@ -928,6 +928,142 @@ def _shed_context(
             _apply_tier2_truncations(new, _TIER2_TRUNCATIONS, changed, label="")
         new_calls.append(new)
     return new_calls, sorted(changed)
+
+
+# Proactive dual-call threshold. When a call's estimated token footprint
+# exceeds this fraction of a model's advertised context window, we fan out a
+# context-shed variant alongside the full call on the FIRST iteration. The
+# ratio is < 1.0 because (a) the window must also hold the generated appeal
+# and (b) both the char-based token estimate and the advertised max_len are
+# approximate — better to shed a little early than to overflow and waste a
+# full primary+backup cycle discovering it.
+_DUAL_CALL_CONTEXT_RATIO = 0.8
+
+
+def _estimate_call_token_footprint(
+    call: dict, *, patient_context_char_cap: Optional[int] = None
+) -> int:
+    """Rough token estimate of what a model call actually sends.
+
+    Sums the prompt with the patient/plan/pubmed/citation context that the
+    model re-injects via ``context_extra`` (see
+    ``ml_models.RemoteOpenLike._build_context_extra``). Enrichment baked
+    into the prompt string is already counted via ``prompt``; the call-dict
+    contexts are added on top because that mirrors what is sent on the wire.
+
+    ``patient_context_char_cap`` mirrors the on-the-wire truncation that
+    ``_build_context_extra`` applies (``patient_context[0:max_len/2]``): the
+    caller passes the model's cap so a huge ``patient_context`` is counted at
+    the size actually sent, not at its full size. Without this the estimate
+    over-counts patient context and false-positives the over-budget check on
+    a field that tier-1 shedding cannot reduce anyway.
+    """
+    patient_context = call.get("patient_context")
+    if (
+        patient_context_char_cap is not None
+        and isinstance(patient_context, str)
+        and len(patient_context) > patient_context_char_cap
+    ):
+        patient_context = patient_context[:patient_context_char_cap]
+    return (
+        estimate_tokens(call.get("prompt"))
+        + estimate_tokens(patient_context)
+        + estimate_tokens(call.get("plan_context"))
+        + estimate_tokens(call.get("pubmed_context"))
+        + estimate_tokens(call.get("ml_citations_context"))
+    )
+
+
+def _model_context_limit(model_name: Optional[str]) -> Optional[int]:
+    """Advertised context window (tokens) of the first backend serving
+    ``model_name``, or ``None`` when unknown.
+
+    First-in-routing-order rather than ``min()`` across the pool because
+    ``get_model_result`` submits to backends in order and returns the first
+    successful submission — so the first backend is the one that actually
+    receives the call, and sizing against a smaller later backend would
+    over-trigger shed siblings. Never raises — an unexpected backend
+    degrades to "unknown" (no proactive shed) rather than aborting
+    generation.
+    """
+    if not model_name:
+        return None
+    backends = ml_router.models_by_name.get(model_name)
+    if not backends:
+        return None
+    for backend in backends:
+        try:
+            return int(backend.get_max_context())
+        except Exception as e:
+            logger.debug(
+                f"_model_context_limit: backend {backend} for "
+                f"{model_name} has no usable max context: {e}"
+            )
+    return None
+
+
+def _calls_over_context_budget(calls: List[dict]) -> List[dict]:
+    """Return the subset of ``calls`` whose estimated footprint exceeds the
+    fuzzy context window (``_DUAL_CALL_CONTEXT_RATIO`` * limit) of their
+    model. Calls whose model window is unknown are left out (no proactive
+    shed)."""
+    over: List[dict] = []
+    for call in calls:
+        limit = _model_context_limit(call.get("model_name"))
+        if limit is None:
+            continue
+        # ``_build_context_extra`` only sends ``patient_context[0:max_len/2]``
+        # chars on the wire, so size patient context against that same cap;
+        # otherwise an oversized patient_context (which tier-1 cannot shed)
+        # yields a false-positive flag and a useless no-op sibling.
+        footprint = _estimate_call_token_footprint(
+            call, patient_context_char_cap=limit // 2
+        )
+        if footprint > limit * _DUAL_CALL_CONTEXT_RATIO:
+            over.append(call)
+    return over
+
+
+def _add_proactive_shed_variants(
+    calls: List[dict],
+    *,
+    open_prompt_kwargs: dict,
+    rebuild_prompt: Callable[..., Optional[str]],
+    original_open_prompt: Optional[str],
+    denial_id: Any = None,
+) -> List[dict]:
+    """Return ``calls`` plus a tier-1 context-shed sibling for each call whose
+    estimated footprint exceeds its model's fuzzy context window.
+
+    This is the proactive half of the dual-call: rather than waiting for the
+    primary+backup cycle to fail before shedding, fan out a shed variant
+    alongside the full call on the first iteration. ``calls`` is never
+    mutated (a new list is returned) so the reactive tier-shed ladder still
+    sees the original full calls. No-op variants — a call not actually
+    reduced by tier-1 shedding (e.g. over budget purely from ``plan_context``,
+    which only truncates at tier 2) — are dropped so we don't merely
+    duplicate the full call. Returns ``calls`` unchanged when nothing is over
+    budget or every variant was a no-op.
+    """
+    over_budget_calls = _calls_over_context_budget(calls)
+    if not over_budget_calls:
+        return calls
+    variants, changed = _shed_context(
+        over_budget_calls,
+        tier=1,
+        open_prompt_kwargs=open_prompt_kwargs,
+        rebuild_prompt=rebuild_prompt,
+        original_open_prompt=original_open_prompt,
+    )
+    shed_variants = [v for v, src in zip(variants, over_budget_calls) if v != src]
+    if not shed_variants:
+        return calls
+    logger.info(
+        f"make_appeals: {len(shed_variants)} of {len(over_budget_calls)} "
+        f"over-budget call(s) for denial {denial_id} get a first-iteration "
+        f"tier-1 shed variant alongside the full call (changed={changed})"
+    )
+    return calls + shed_variants
 
 
 _T_peek = TypeVar("_T_peek")
@@ -2308,8 +2444,25 @@ class AppealGenerator(object):
             ]
             return generated_text_futures
 
+        # Proactive dual-call: when a call is estimated to exceed its model's
+        # (fuzzy) context window, fan out a tier-1 context-shed variant
+        # alongside the full call on the FIRST iteration instead of waiting
+        # for the primary+backup cycle to fail before shedding. max_len is
+        # approximate, so we keep BOTH: the full call may still fit (and tends
+        # to be higher quality), while the shed call is insurance against an
+        # overflow. Whichever returns a real appeal first wins via
+        # as_available_nested. ``calls`` is left untouched so the reactive
+        # ladder below still escalates to tier 2 if every call comes back empty.
+        first_iteration_calls = _add_proactive_shed_variants(
+            calls,
+            open_prompt_kwargs=open_prompt_kwargs,
+            rebuild_prompt=self.make_open_prompt,
+            original_open_prompt=open_prompt,
+            denial_id=denial.denial_id,
+        )
+
         generated_text_futures: List[Future[Iterator[GeneratedAppeal]]] = (
-            make_async_model_calls(calls)
+            make_async_model_calls(first_iteration_calls)
         )
 
         # Tiered fallback: primary -> backup -> retry primary with shed

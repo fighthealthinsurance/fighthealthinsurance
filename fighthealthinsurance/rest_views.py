@@ -36,7 +36,11 @@ from stopit import ThreadingTimeout as Timeout
 
 from fhi_users.auth import auth_utils
 from fhi_users.models import PatientUser, ProfessionalUser, UserDomain
-from fighthealthinsurance import common_view_logic, rest_serializers as serializers
+from fighthealthinsurance import (
+    common_view_logic,
+    context_utils,
+    rest_serializers as serializers,
+)
 from fighthealthinsurance.denial_context import merge_qa
 from fighthealthinsurance.external_review import (
     generate_external_review_packet,
@@ -552,10 +556,35 @@ class ReportClientError(APIView):
         diagnostics = _sanitize(str(request.data.get("diagnostics", "")), 1000)
         session_key = request.session.session_key or "no_session_key"
         denial_id_valid = is_valid_denial_id(denial_id)
+        # Annotate with the (estimated) token sizes of the denial text and the
+        # context that feeds appeal generation. A client-reported "0 appeals"
+        # is frequently a context-window overflow, and seeing the per-field
+        # token breakdown server-side makes that diagnosable without a repro.
+        # Never let this diagnostic enrichment break the error-report endpoint.
+        context_tokens = "unavailable"
+        if denial_id_valid:
+            try:
+                denial = (
+                    Denial.objects.filter(denial_id=int(denial_id))
+                    .only(*context_utils.DENIAL_CONTEXT_TOKEN_FIELDS)
+                    .first()
+                )
+                if denial is not None:
+                    context_tokens = context_utils.summarize_denial_context_tokens(
+                        denial
+                    )
+                else:
+                    context_tokens = "denial_not_found"
+            except Exception as e:
+                logger.opt(exception=True).debug(
+                    f"Failed to compute context token sizes for denial "
+                    f"{denial_id}: {e}"
+                )
         logger.error(
             f"Client-reported appeal error for denial {denial_id}: "
             f"{error_message} | browser: {browser_info} | "
             f"diagnostics: {diagnostics} | "
+            f"context_tokens: {context_tokens} | "
             f"session_key={session_key} | remote_ip={request.META.get('REMOTE_ADDR', 'unknown')} | "
             f"denial_id_valid={denial_id_valid} | denial_id_raw={denial_id_raw}"
         )
