@@ -118,6 +118,16 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         staff_member_required(staff_views.ModelUsageDashboardView.as_view()),
         name="model_usage_dashboard",
     ),
+    path(
+        "timbit/help/proconnector",
+        staff_member_required(staff_views.ProConnectorProcessView.as_view()),
+        name="proconnector_process",
+    ),
+    path(
+        "timbit/help/proconnector_extract.csv",
+        staff_member_required(staff_views.ProConnectorExtractCSVView.as_view()),
+        name="proconnector_extract_csv",
+    ),
     # Authentication
     path("v0/auth/", include("fhi_users.urls")),
     # stripe integration (TODO webhooks go here)

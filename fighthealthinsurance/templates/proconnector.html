@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>{{ title|default:"Pro Connector" }}</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 20px;
+      background-color: #f5f5f5;
+    }
+    h1 {
+      color: #333;
+      border-bottom: 2px solid #007bff;
+      padding-bottom: 10px;
+    }
+    .card {
+      background: white;
+      padding: 20px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    table.info {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    table.info th, table.info td {
+      text-align: left;
+      padding: 6px 10px;
+      border-bottom: 1px solid #eee;
+      vertical-align: top;
+    }
+    table.info th {
+      width: 230px;
+      color: #555;
+      white-space: nowrap;
+    }
+    .muted { color: #999; font-style: italic; }
+    .research a {
+      display: inline-block;
+      margin-right: 12px;
+      padding: 8px 14px;
+      background-color: #f0f4ff;
+      border: 1px solid #c7d6ff;
+      border-radius: 4px;
+      color: #0047b3;
+      text-decoration: none;
+    }
+    .research a:hover { background-color: #dbe6ff; }
+    label { display: block; font-weight: bold; margin-top: 14px; color: #444; }
+    input[type=text], textarea {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 8px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      font-family: inherit;
+      font-size: 14px;
+    }
+    textarea { min-height: 360px; white-space: pre-wrap; }
+    .disclosure {
+      background: #fff8e1;
+      border: 1px solid #ffe0a3;
+      border-radius: 4px;
+      padding: 10px 14px;
+      margin: 14px 0;
+      font-size: 0.92em;
+      color: #6b4e00;
+    }
+    .actions { margin-top: 18px; display: flex; gap: 12px; }
+    button {
+      padding: 10px 18px;
+      border: none;
+      border-radius: 4px;
+      font-size: 15px;
+      cursor: pointer;
+    }
+    button.send { background-color: #28a745; color: white; }
+    button.send:hover { background-color: #218838; }
+    button.queue { background-color: #007bff; color: white; }
+    button.queue:hover { background-color: #0069d9; }
+    button.skip { background-color: #6c757d; color: white; }
+    button.skip:hover { background-color: #5a6268; }
+    .send-window {
+      background: #e7f3ff;
+      border: 1px solid #b6d8ff;
+      border-radius: 4px;
+      padding: 8px 12px;
+      margin: 14px 0 0;
+      font-size: 0.9em;
+      color: #0b4f8a;
+    }
+    .error {
+      background: #f8d7da;
+      border: 1px solid #f5c2c7;
+      color: #842029;
+      padding: 12px 16px;
+      border-radius: 4px;
+      margin-bottom: 16px;
+    }
+    .readonly { color: #333; }
+    .back { display: inline-block; margin-top: 10px; color: #007bff; }
+  </style>
+</head>
+<body>
+  <h1>{{ title|default:"Pro Connector" }} &mdash; Cofactor AI Introduction</h1>
+
+  {% if error %}
+    <div class="error">{{ error }}</div>
+  {% endif %}
+
+  {% if pro %}
+    <p class="readonly">{{ remaining_count }} interested professional{{ remaining_count|pluralize }} remaining to process.</p>
+
+    <div class="card">
+      <h2>Known information</h2>
+      <table class="info">
+        <tr><th>ID</th><td>{{ pro.id }}</td></tr>
+        <tr><th>Name</th><td>{% if pro.name %}{{ pro.name }}{% else %}<span class="muted">(none)</span>{% endif %}</td></tr>
+        <tr><th>Email</th><td>{{ pro.email }}</td></tr>
+        <tr><th>Organization</th><td>{% if pro.business_name %}{{ pro.business_name }}{% else %}<span class="muted">(none)</span>{% endif %}</td></tr>
+        <tr><th>Role / provider type</th><td>{% if pro.job_title_or_provider_type %}{{ pro.job_title_or_provider_type }}{% else %}<span class="muted">(none)</span>{% endif %}</td></tr>
+        <tr><th>Most common denial / stated needs</th><td>{% if pro.most_common_denial %}{{ pro.most_common_denial }}{% else %}<span class="muted">(none)</span>{% endif %}</td></tr>
+        <tr><th>Notes / comments</th><td>{% if pro.comments %}{{ pro.comments }}{% else %}<span class="muted">(none)</span>{% endif %}</td></tr>
+        <tr><th>Phone number</th><td>{% if pro.phone_number %}{{ pro.phone_number }}{% else %}<span class="muted">(none)</span>{% endif %}</td></tr>
+        <tr><th>Address</th><td>{% if pro.address %}{{ pro.address }}{% else %}<span class="muted">(none)</span>{% endif %}</td></tr>
+        <tr><th>Paid</th><td>{{ pro.paid|yesno:"Yes,No" }}</td></tr>
+        <tr><th>Clicked for paid</th><td>{{ pro.clicked_for_paid|yesno:"Yes,No" }}</td></tr>
+        <tr><th>Signup / created date</th><td>{{ pro.signup_date }}</td></tr>
+        <tr><th>Last modified</th><td>{{ pro.mod_date }}</td></tr>
+      </table>
+
+      {% if google_search_url or linkedin_search_url %}
+        <h3>Research</h3>
+        <div class="research">
+          {% if google_search_url %}<a href="{{ google_search_url }}" target="_blank" rel="noopener noreferrer">Google search &#8599;</a>{% endif %}
+          {% if linkedin_search_url %}<a href="{{ linkedin_search_url }}" target="_blank" rel="noopener noreferrer">LinkedIn search &#8599;</a>{% endif %}
+        </div>
+      {% endif %}
+    </div>
+
+    <div class="card">
+      <h2>Introduction email</h2>
+      <div class="disclosure">
+        This draft was generated to help. Review and edit it before sending.
+        The email includes a plain-language disclosure that FHI may receive
+        compensation under our sourcing agreement if the recipient chooses to
+        work with Cofactor AI &mdash; please keep that disclosure in the email.
+        Cofactor AI is described as a sourcing agreement, not a partnership.
+      </div>
+
+      <form method="post">
+        {% csrf_token %}
+        <input type="hidden" name="interested_professional_id" value="{{ pro.id }}">
+
+        <label>To</label>
+        <input type="text" class="readonly" value="{{ pro.email }}" readonly>
+
+        <label>CC</label>
+        <input type="text" class="readonly" value="{{ cc_email }}" readonly>
+
+        <label for="subject">Subject</label>
+        <input type="text" id="subject" name="subject" value="{{ subject }}">
+
+        <label for="email_body">Email body (editable)</label>
+        <textarea id="email_body" name="email_body">{{ email_body }}</textarea>
+
+        <label for="skip_reason">Skip reason (optional, only used when skipping)</label>
+        <input type="text" id="skip_reason" name="skip_reason" value="{{ skip_reason }}">
+
+        {% if send_window_hint %}
+          <p class="send-window">⏰ {{ send_window_hint }}</p>
+        {% endif %}
+
+        <div class="actions">
+          <button type="submit" class="send" name="action" value="send">Send intro email now</button>
+          <button type="submit" class="queue" name="action" value="queue">Send during business hours</button>
+          <button type="submit" class="skip" name="action" value="skip" formnovalidate>Skip</button>
+        </div>
+      </form>
+    </div>
+  {% else %}
+    <div class="card">
+      <p>🎉 All caught up &mdash; there are no interested professionals left to process.</p>
+    </div>
+  {% endif %}
+
+  <a class="back" href="{% url 'staff_dashboard' %}">&larr; Back to staff dashboard</a>
+
+  <script>
+    // Guard against a double-click / double-submit sending the intro twice.
+    // We only block a second submit of the same form; the first submit (with
+    // the clicked button's action) goes through normally.
+    (function () {
+      var form = document.querySelector("form");
+      if (!form) return;
+      var submitted = false;
+      form.addEventListener("submit", function (e) {
+        if (submitted) {
+          e.preventDefault();
+          return;
+        }
+        submitted = true;
+      });
+    })();
+  </script>
+</body>
+</html>
