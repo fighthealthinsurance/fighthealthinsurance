@@ -440,6 +440,13 @@ let usingRestFallback = false;
 // concurrent ws.onclose doesn't run done() in parallel and tear
 // down the UI while the REST stream is still in flight.
 let handingOffToRest = false;
+// Set when the hard timeout gives up with no REST fallback available.
+// The module-level hard-timeout handler can't set the per-attempt
+// retryScheduled closure flag, so without this latch the closed socket's
+// onclose would run its normal-completion path: paint the checklist green,
+// show "Your appeals are ready!" over the give-up error, and call done()
+// a second time.
+let wsGaveUp = false;
 let hasAutoScrolledToFirstAppeal = false;
 
 // Diagnostic counters used in the client error report so server logs
@@ -572,6 +579,11 @@ function armHardTimeout(): void {
     // letting slow WS attempts keep the user waiting indefinitely.
     if (!usingRestFallback && !handingOffToRest) {
       retries = maxRetries;
+      // Latch before closing: the socket's onclose/onerror fire async after
+      // done() below, and without this they'd run the normal-completion path
+      // (green checklist + "appeals are ready" over the give-up message) and
+      // call done() a second time.
+      wsGaveUp = true;
       closeActiveWebSocket();
       endCurrentAttempt();
       fadeStatusMessage(
@@ -770,6 +782,12 @@ async function requestExternalModels(
     retries = 0;
     respBuffer = "";
     hasAutoScrolledToFirstAppeal = false;
+    // The wait for the next appeal starts now, not when the last pre-rerun
+    // appeal arrived — otherwise the "Current appeal" clock would include
+    // however long the user spent reading drafts before opting in. The
+    // total/first-appeal clocks deliberately keep their original anchor
+    // (see the startTime comment in showLoading).
+    lastAppealArrivedAtMs = Date.now();
     doQuery(my_backend_url, my_data, my_rest_fallback_url);
   } catch (error) {
     console.error("Failed to enable external models:", error);
@@ -1066,7 +1084,9 @@ function connectWebSocket(
     // was queued (e.g. ws.onerror's 1s retry firing right as the hard cap
     // hits) and now. Don't open a parallel socket — REST owns the stream,
     // and starting an attempt here would also stomp the REST leg's timer.
-    if (handingOffToRest || usingRestFallback) {
+    // Same for a hard-timeout give-up: a queued reconnect firing after it
+    // would open a socket the user was just told to abandon.
+    if (handingOffToRest || usingRestFallback || wsGaveUp) {
       return;
     }
     // Start the per-attempt wait timer. connectWebSocket is called
@@ -1168,14 +1188,17 @@ function connectWebSocket(
       console.log("WebSocket connection closed:", event.code, event.reason);
       lastWsCloseCode = event.code;
       lastWsCloseReason = event.reason || '';
-      // Two reasons to short-circuit done():
+      // Three reasons to short-circuit done():
       //   1. handingOffToRest: REST fallback owns the final done() call
       //      and will record its own attempt duration.
       //   2. retryScheduled: ws.onerror or the inactivity-timeout path
       //      already queued a reconnect for this attempt and recorded
       //      its duration; calling done()/endCurrentAttempt() here
       //      would stomp on it.
-      if (handingOffToRest || retryScheduled) {
+      //   3. wsGaveUp: the hard timeout already gave up, showed the error
+      //      message, and called done(); running the normal-completion path
+      //      here would paint false success over it and double-fire done().
+      if (handingOffToRest || retryScheduled || wsGaveUp) {
         return;
       }
       // Normal close path: record the attempt duration before done().
@@ -1187,8 +1210,9 @@ function connectWebSocket(
     // Handle errors
     ws.onerror = (error) => {
       // A reconnect/fallback was already scheduled for this socket (e.g. by
-      // the inactivity timeout or hard cap closing it); don't double-handle.
-      if (retryScheduled || handingOffToRest) return;
+      // the inactivity timeout or hard cap closing it), or the hard timeout
+      // already gave up and reported; don't double-handle.
+      if (retryScheduled || handingOffToRest || wsGaveUp) return;
       console.error("WebSocket error:", error);
       lastWsErrorMessage = (error as any)?.message || (error as any)?.type || 'unknown';
       updateStatusIndicator('error', appealsSoFar.length);
@@ -1219,6 +1243,7 @@ export function doQuery(backend_url: string, data: Map<string, string>, rest_fal
   my_rest_fallback_url = rest_fallback_url || '';
   usingRestFallback = false;
   handingOffToRest = false;
+  wsGaveUp = false;
   // Start the aggregate wait clock only on the first call. doQuery
   // recurses on retry via done(), and we want the total to span the
   // entire user-visible wait, not just the latest retry.

@@ -27,23 +27,39 @@ class FaxBackendHealthDetail:
     error: Optional[str] = None
 
 
+# A ``check_health`` probe can make several sequential HTTP round-trips
+# (SonicFax: login GET + login POST + members-page GET), each budgeted
+# ``timeout`` individually. The outer deadline must cover their sum, or a
+# backend answering every request comfortably within its per-request budget
+# (i.e. working, just slow) would be reported as a false "timeout" failure.
+_MAX_SEQUENTIAL_PROBE_REQUESTS = 3
+
+
 def _probe_backend(backend: Any, timeout: float) -> tuple[bool, Optional[str]]:
     """Run ``backend.check_health()`` under a timeout.
+
+    ``timeout`` is the per-HTTP-request budget passed to the backend; the
+    probe as a whole is capped at ``timeout * _MAX_SEQUENTIAL_PROBE_REQUESTS``
+    so the sum of individually-within-budget requests can't trip the outer
+    deadline.
 
     Returns ``(ok, error)``. A timeout or any raised exception is reported as
     not-ok with a descriptive error rather than propagating, so one slow/broken
     backend never takes down the whole status page.
     """
     ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    outer_timeout = timeout * _MAX_SEQUENTIAL_PROBE_REQUESTS
     try:
         # Pass the probe budget through so a backend's own per-request default
         # (e.g. SonicFax's 3s) doesn't report it down under latency well within
         # `timeout`.
         future = ex.submit(backend.check_health, timeout=timeout)
-        ok = bool(future.result(timeout=timeout))
+        ok = bool(future.result(timeout=outer_timeout))
         return (ok, None if ok else "health check returned False")
     except concurrent.futures.TimeoutError:
-        return (False, f"timeout>{timeout}s")
+        # :g so a multiplied float budget renders as "6s"/"0.6s" rather than
+        # "0.6000000000000001s" on the dashboard.
+        return (False, f"timeout>{outer_timeout:g}s")
     except Exception as e:
         return (False, str(e))
     finally:

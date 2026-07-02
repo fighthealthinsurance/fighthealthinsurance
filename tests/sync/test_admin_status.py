@@ -296,6 +296,25 @@ class FaxBackendsHealthTest(TestCase):
         self.assertIn("bad login", result["sonic"]["error"])
         self.assertFalse(result["backends"][0]["ok"])
 
+    def test_probe_outer_cap_covers_sequential_per_request_budgets(self):
+        """A backend whose sequential round-trips each fit the per-request
+        budget but sum past it (e.g. Sonic's login GET + POST + members GET,
+        each just under ``timeout``) is slow-but-working, not dead. The outer
+        probe deadline covers the sum, so it must report healthy instead of a
+        false ``timeout>Ns`` failure."""
+        from fighthealthinsurance.fax_health_status import _probe_backend
+
+        def slow_but_healthy(timeout):
+            # Longer than one per-request budget, well within the 3x cap.
+            time.sleep(timeout * 1.5)
+            return True
+
+        backend = mock.Mock()
+        backend.check_health = slow_but_healthy
+        ok, error = _probe_backend(backend, timeout=0.2)
+        self.assertTrue(ok)
+        self.assertIsNone(error)
+
     def test_sonic_not_configured_reports_reason(self):
         from fighthealthinsurance import fax_utils
         from fighthealthinsurance.fax_health_status import check_fax_backends_health
