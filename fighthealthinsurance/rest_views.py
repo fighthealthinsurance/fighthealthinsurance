@@ -1598,7 +1598,6 @@ class InterestedProfessionalViewSet(viewsets.ViewSet, CreateMixin):
         """Submit a new professional-interest lead."""
         return super().create(request)
 
-    @extend_schema(responses=serializers.StatusResponseSerializer)
     def perform_create(self, request: Request, serializer) -> Response:
         """Save the lead, then notify the professional-signup inbox."""
         # clicked_for_paid defaults to True on the model for legacy reasons; the
