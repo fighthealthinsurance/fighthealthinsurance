@@ -424,7 +424,8 @@ class MLRouter(object):
         """
         Return models for handling question-answer pairs for appeal generation.
         Always includes internal FHI models. When use_external is True, also
-        includes external models like Llama Scout and Perplexity.
+        includes a cheap external generalist (google/gemma-4-26B-A4B-it) and
+        Perplexity for web-informed questions.
 
         Args:
             use_external: Whether to use external models
@@ -442,9 +443,17 @@ class MLRouter(object):
 
         if use_external:
             # Add a cheap external generalist if available (successor to the
-            # dropped Llama-4-Scout entry in the DeepInfra catalog)
+            # dropped Llama-4-Scout entry in the DeepInfra catalog). Gate on
+            # availability like best_external_models() does: question
+            # generation waits on every fanned-out task, so appending a
+            # backend the health sweep already marked down would stall it
+            # for the full model timeout.
             if "google/gemma-4-26B-A4B-it" in self.models_by_name:
-                models += self.cheapest("google/gemma-4-26B-A4B-it")
+                models += [
+                    m
+                    for m in self.cheapest("google/gemma-4-26B-A4B-it")
+                    if self._external_selectable(m)
+                ]
             # Add Perplexity for web-informed questions
             if "sonar" in self.models_by_name:
                 models += self.cheapest("sonar")
@@ -673,12 +682,14 @@ class MLRouter(object):
         # article text (title/abstract/body), not patient data, so an
         # external model is fine here — and without it a DeepInfra-only
         # deployment has an empty internal pool and summarize() would
-        # silently return None.
+        # silently return None. Gated on availability so a sweep-marked-down
+        # DeepInfra doesn't add a doomed call before the internal fallbacks.
         if "google/gemma-4-26B-A4B-it" in self.models_by_name:
-            models = (
-                self.models_by_name["google/gemma-4-26B-A4B-it"]
-                + self.internal_models_by_cost
-            )
+            models = [
+                m
+                for m in self.models_by_name["google/gemma-4-26B-A4B-it"]
+                if self._external_selectable(m)
+            ] + self.internal_models_by_cost
         else:
             models = self.internal_models_by_cost
         abstract_optional = ""

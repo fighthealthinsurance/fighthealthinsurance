@@ -57,7 +57,9 @@ def _probe_backend(backend: Any, timeout: float) -> tuple[bool, Optional[str]]:
         ok = bool(future.result(timeout=outer_timeout))
         return (ok, None if ok else "health check returned False")
     except concurrent.futures.TimeoutError:
-        return (False, f"timeout>{outer_timeout}s")
+        # :g so a multiplied float budget renders as "6s"/"0.6s" rather than
+        # "0.6000000000000001s" on the dashboard.
+        return (False, f"timeout>{outer_timeout:g}s")
     except Exception as e:
         return (False, str(e))
     finally:

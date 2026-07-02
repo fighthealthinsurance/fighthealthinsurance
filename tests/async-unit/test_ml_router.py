@@ -343,6 +343,28 @@ class TestMLRouterBestExternalModels(unittest.TestCase):
 
         self.assertEqual(result, [])
 
+    def test_full_qa_backends_includes_available_gemma(self):
+        """An available gemma-4 external is offered for QA with use_external."""
+        gemma = make_external_mock(quality=80)
+        self.router.models_by_name = {"google/gemma-4-26B-A4B-it": [gemma]}
+        self.router.internal_models_by_cost = []
+
+        result = self.router.full_qa_backends(use_external=True)
+
+        self.assertIn(gemma, result)
+
+    def test_full_qa_backends_skips_unavailable_gemma(self):
+        """The named gemma-4 QA append honors the availability gate: a
+        rate-limited/down backend must not be handed to question generation,
+        which waits on every fanned-out task until the timeout."""
+        down = make_external_mock(quality=80, available=False)
+        self.router.models_by_name = {"google/gemma-4-26B-A4B-it": [down]}
+        self.router.internal_models_by_cost = []
+
+        result = self.router.full_qa_backends(use_external=True)
+
+        self.assertNotIn(down, result)
+
 
 class TestContextOnlyModelFlag(unittest.TestCase):
     """Tests for the context_only flag and how the router handles it."""

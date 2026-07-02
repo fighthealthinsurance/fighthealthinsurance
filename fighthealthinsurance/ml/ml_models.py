@@ -71,6 +71,29 @@ def _http_status_is_expected(status: Optional[int]) -> bool:
     return status in EXPECTED_HTTP_STATUS_CODES
 
 
+def _http_error_indicates_unsupported_temperature(status: int, body: str) -> bool:
+    """True when a 400 means the model rejected the ``temperature`` parameter
+    outright (OpenAI/Azure reasoning models accept only the default value).
+
+    Name-based detection in ``_supports_custom_temperature`` can't recognize a
+    reasoning model behind a custom deployment name (e.g. an Azure gpt-5
+    deployment called "appeals-prod"), so the transport uses this to fall back
+    at runtime: retry the request once without the field and remember the
+    deployment. Matched loosely on the error text, e.g. "Unsupported value:
+    'temperature' ... Only the default (1) value is supported."
+    """
+    if status != 400 or not body:
+        return False
+    lowered = body.lower()
+    if "temperature" not in lowered:
+        return False
+    return (
+        "unsupported" in lowered
+        or "only the default" in lowered
+        or "not supported" in lowered
+    )
+
+
 def _count_items(items: list[str]) -> dict[str, int]:
     """Count occurrences of each normalized (stripped+lowered) item."""
     counts: dict[str, int] = {}
@@ -1337,6 +1360,12 @@ class RemoteOpenLike(RemoteModel):
         self.backup_api_base = backup_api_base
         self._expensive = expensive
         self.dual_mode = dual_mode
+        # Deployments observed rejecting the ``temperature`` parameter at
+        # runtime (reasoning models behind custom deployment names that
+        # ``_supports_custom_temperature`` can't recognize). Router-registered
+        # instances are long-lived, so one rejection stops the field being
+        # sent on every later call.
+        self._temperature_unsupported_models: set[str] = set()
 
     def model_is_ok(self):
         """Check that the backend supports this model, returns true if found in list.
@@ -2056,8 +2085,12 @@ class RemoteOpenLike(RemoteModel):
         deployments. For those models the request body must omit the field
         entirely or every call fails. Matched on the bare deployment/model
         name so provider-prefixed registrations (``azure-openai/gpt-5``) are
-        covered too.
+        covered too. Deployments that can't be recognized by name are caught
+        at runtime instead: a temperature-rejection 400 lands them in
+        ``_temperature_unsupported_models`` (see ``__infer``).
         """
+        if model in self._temperature_unsupported_models:
+            return False
         name = model.split("/")[-1].lower()
         if name == "gpt-5" or name.startswith("gpt-5-"):
             return False
@@ -2177,46 +2210,79 @@ class RemoteOpenLike(RemoteModel):
                 }
                 # Reasoning models (gpt-5 family, o-series) reject any
                 # non-default temperature with HTTP 400; omit the field for
-                # them so the request can succeed at all.
-                if self._supports_custom_temperature(model):
+                # them so the request can succeed at all. Models we can't
+                # recognize by name (custom deployment names) are handled by
+                # the temperature-rejection retry below, so the loop runs at
+                # most twice.
+                sent_temperature = self._supports_custom_temperature(model)
+                if sent_temperature:
                     request_body["temperature"] = temperature
-                async with s.post(
-                    url,
-                    headers={"Authorization": f"Bearer {self.token}"},
-                    json=request_body,
-                ) as response:
-                    # Raise ClientResponseError for HTTP error status codes (4xx, 5xx)
-                    # This allows subclasses to catch and handle specific errors like 429
-                    try:
-                        response.raise_for_status()
-                    except aiohttp.ClientResponseError as e:
-                        response_body = ""
+                while True:
+                    async with s.post(
+                        url,
+                        headers={"Authorization": f"Bearer {self.token}"},
+                        json=request_body,
+                    ) as response:
+                        # Raise ClientResponseError for HTTP error status codes (4xx, 5xx)
+                        # This allows subclasses to catch and handle specific errors like 429
                         try:
-                            response_body = await response.text()
-                        except Exception:
-                            response_body = "<failed to read response body>"
+                            response.raise_for_status()
+                        except aiohttp.ClientResponseError as e:
+                            response_body = ""
+                            try:
+                                response_body = await response.text()
+                            except Exception:
+                                response_body = "<failed to read response body>"
 
-                        response_body_preview = response_body[:2000]
-                        # Expected operational errors (quota/auth/rate-limit)
-                        # are summarized concisely by _infer; keep their body
-                        # preview at debug so they don't double-warn. Real
-                        # failures stay at WARNING so the body aids debugging.
-                        if _http_status_is_expected(e.status):
-                            logger.debug(
-                                f"HTTP {e.status} (expected) from {api_base} for "
-                                f"model {model}. Body preview (truncated): "
-                                f"{response_body_preview}"
-                            )
-                        else:
-                            logger.warning(
-                                f"HTTP {e.status} error from {api_base} for model "
-                                f"{model}. Body preview (truncated): "
-                                f"{response_body_preview}"
-                            )
-                        raise
-                    json_result = await response.json()
-                    if json_result.get("object") == "error":
-                        logger.warning(f"Bad response from {self} with {model}")
+                            if (
+                                sent_temperature
+                                and _http_error_indicates_unsupported_temperature(
+                                    e.status, response_body
+                                )
+                            ):
+                                # A reasoning model behind a deployment name
+                                # we couldn't recognize. Remember it so later
+                                # calls skip the field, and retry once
+                                # without it.
+                                logger.warning(
+                                    f"Model {model} at {api_base} rejected "
+                                    f"'temperature'; retrying without it and "
+                                    f"omitting it for this deployment from now on."
+                                )
+                                self._temperature_unsupported_models.add(model)
+                                sent_temperature = False
+                                # Fresh dict rather than popping in place: the
+                                # sent body may still be referenced elsewhere
+                                # (e.g. captured by tests or tracing).
+                                request_body = {
+                                    k: v
+                                    for k, v in request_body.items()
+                                    if k != "temperature"
+                                }
+                                continue
+
+                            response_body_preview = response_body[:2000]
+                            # Expected operational errors (quota/auth/rate-limit)
+                            # are summarized concisely by _infer; keep their body
+                            # preview at debug so they don't double-warn. Real
+                            # failures stay at WARNING so the body aids debugging.
+                            if _http_status_is_expected(e.status):
+                                logger.debug(
+                                    f"HTTP {e.status} (expected) from {api_base} for "
+                                    f"model {model}. Body preview (truncated): "
+                                    f"{response_body_preview}"
+                                )
+                            else:
+                                logger.warning(
+                                    f"HTTP {e.status} error from {api_base} for model "
+                                    f"{model}. Body preview (truncated): "
+                                    f"{response_body_preview}"
+                                )
+                            raise
+                        json_result = await response.json()
+                        if json_result.get("object") == "error":
+                            logger.warning(f"Bad response from {self} with {model}")
+                    break
         except aiohttp.ClientResponseError as e:
             # Already logged with a body preview above; keep this at debug to
             # avoid double-logging. Re-raise so _infer (and opted-in subclasses

@@ -301,7 +301,7 @@ class FaxBackendsHealthTest(TestCase):
         budget but sum past it (e.g. Sonic's login GET + POST + members GET,
         each just under ``timeout``) is slow-but-working, not dead. The outer
         probe deadline covers the sum, so it must report healthy instead of a
-        false ``timeout>``."""
+        false ``timeout>Ns`` failure."""
         from fighthealthinsurance.fax_health_status import _probe_backend
 
         def slow_but_healthy(timeout):

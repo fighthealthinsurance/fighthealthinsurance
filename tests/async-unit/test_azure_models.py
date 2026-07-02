@@ -50,11 +50,12 @@ def _clear_azure_env():
 class _FakeAiohttpResponse:
     """Minimal async-context-manager stand-in for an aiohttp response."""
 
-    def __init__(self, json_data=None, status=200, headers=None):
-        """Capture the canned JSON body, HTTP status, and response headers."""
+    def __init__(self, json_data=None, status=200, headers=None, text=""):
+        """Capture the canned JSON body, HTTP status, headers, and body text."""
         self._json_data = json_data or {}
         self.status = status
         self._headers = headers or {}
+        self._text = text
 
     async def __aenter__(self):
         """Enter the ``async with`` response context."""
@@ -67,6 +68,10 @@ class _FakeAiohttpResponse:
     async def json(self):
         """Return the canned JSON body."""
         return self._json_data
+
+    async def text(self):
+        """Return the canned body text (read by error-handling paths)."""
+        return self._text
 
     def raise_for_status(self):
         """Raise ClientResponseError for >=400 statuses (like aiohttp)."""
@@ -102,6 +107,28 @@ class _FakeAiohttpSession:
         self._capture["headers"] = headers
         self._capture["json"] = json
         return self._response
+
+
+class _FakeSequencedSession:
+    """Session stand-in returning queued responses, recording every POST body."""
+
+    def __init__(self, responses, bodies):
+        """Take the response queue and the list to append request bodies to."""
+        self._responses = list(responses)
+        self._bodies = bodies
+
+    async def __aenter__(self):
+        """Enter the ``async with`` session context."""
+        return self
+
+    async def __aexit__(self, *exc):
+        """Exit the session context without suppressing exceptions."""
+        return False
+
+    def post(self, url, headers=None, json=None):
+        """Record the body and return the next queued response."""
+        self._bodies.append(json)
+        return self._responses.pop(0)
 
 
 class TestAzureBackends(unittest.TestCase):
@@ -336,6 +363,67 @@ class TestAzureInfer(unittest.TestCase):
         """Non-reasoning deployments keep the router-supplied temperature."""
         body = self._capture_chat_completions_body("gpt-4.1-mini")
         self.assertIn("temperature", body)
+
+    _TEMPERATURE_REJECTION_TEXT = (
+        "Unsupported value: 'temperature' does not support 0.7 with this "
+        "model. Only the default (1) value is supported."
+    )
+    _OK_COMPLETION = {"choices": [{"message": {"content": "Dear insurer, please."}}]}
+
+    @patch.dict(os.environ, AZURE_OPENAI_ENV)
+    def test_custom_deployment_temperature_rejection_retries_without(self):
+        """A reasoning model behind a custom deployment name (which the
+        name-based check can't recognize) must trigger a single retry with
+        temperature stripped instead of failing with the 400."""
+
+        async def run():
+            """Queue a temperature-rejection 400 then a 200 and inspect bodies."""
+            m = RemoteAzureOpenAI(model="appeals-prod")
+            bodies: list = []
+            session = _FakeSequencedSession(
+                [
+                    _FakeAiohttpResponse(
+                        status=400, text=self._TEMPERATURE_REJECTION_TEXT
+                    ),
+                    _FakeAiohttpResponse(self._OK_COMPLETION),
+                ],
+                bodies,
+            )
+            with patch.object(aiohttp, "ClientSession", return_value=session):
+                result = await m._infer(system_prompts=["x"], prompt="y")
+            self.assertIsNotNone(result)
+            self.assertEqual(len(bodies), 2)
+            self.assertIn("temperature", bodies[0])
+            self.assertNotIn("temperature", bodies[1])
+
+        asyncio.run(run())
+
+    @patch.dict(os.environ, AZURE_OPENAI_ENV)
+    def test_temperature_rejection_memoized_for_later_calls(self):
+        """After one rejection the deployment is remembered: the next call's
+        first attempt already omits temperature (no wasted 400 round-trip)."""
+
+        async def run():
+            """Run two calls through one queue and inspect the third body."""
+            m = RemoteAzureOpenAI(model="appeals-prod")
+            bodies: list = []
+            session = _FakeSequencedSession(
+                [
+                    _FakeAiohttpResponse(
+                        status=400, text=self._TEMPERATURE_REJECTION_TEXT
+                    ),
+                    _FakeAiohttpResponse(self._OK_COMPLETION),
+                    _FakeAiohttpResponse(self._OK_COMPLETION),
+                ],
+                bodies,
+            )
+            with patch.object(aiohttp, "ClientSession", return_value=session):
+                await m._infer(system_prompts=["x"], prompt="y")
+                await m._infer(system_prompts=["x"], prompt="y")
+            self.assertEqual(len(bodies), 3)
+            self.assertNotIn("temperature", bodies[2])
+
+        asyncio.run(run())
 
 
 class TestAzureClaudeMessages(unittest.TestCase):
