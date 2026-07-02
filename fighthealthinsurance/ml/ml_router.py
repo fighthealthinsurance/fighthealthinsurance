@@ -1,6 +1,6 @@
 import asyncio
 import os
-from typing import List, Optional, Sequence
+from typing import List, Optional, Sequence, Tuple
 
 from loguru import logger
 
@@ -165,6 +165,54 @@ class MLRouter(object):
             filtered.append(m)
         return filtered
 
+    def best_external_models(self, limit: int = 3) -> list[RemoteModelLike]:
+        """Return up to ``limit`` external models, best-quality first, limited to
+        those currently available.
+
+        "Best" means highest ``quality()`` (descending); because
+        ``external_models_by_cost`` is cost-ordered and the sort is stable,
+        cheaper models win ties. Availability is judged from cheap, non-blocking
+        signals only — never a live network probe on the request path (see
+        :meth:`_external_selectable`): the model's in-memory ``is_available()``
+        plus, for backends without a live signal, the last cached
+        ``health_status`` sweep. At most one Groq backend is kept (matching the
+        rest of the router) to avoid double fan-out.
+
+        Replaces the previous "cheapest N external" slices so that, instead of
+        fanning out across every external backend, we route to the strongest
+        few that are up.
+        """
+        available = [
+            m for m in self.external_models_by_cost if self._external_selectable(m)
+        ]
+        available = self._keep_single_groq(available)
+        best = sorted(available, key=lambda m: -m.quality())
+        return best[:limit]
+
+    def _external_selectable(self, model: RemoteModelLike) -> bool:
+        """Whether an external model should be offered for fan-out, using only
+        cheap, non-blocking signals — no live network calls in the router.
+
+        * ``is_available()`` — the model's own in-memory signal (paid providers
+          report config + rate-limit back-off; others fail open).
+        * the last cached ``health_status`` sweep — consulted only for models
+          that lack a live signal (``health_checked_live`` is False, e.g.
+          DeepInfra, which the sweep probes over the network). Models the last
+          sweep marked unhealthy are skipped; ones it hasn't checked yet fail
+          open, so we assume a backend is available until a real check says
+          otherwise.
+        """
+        if not model.is_available():
+            return False
+        if not model.health_checked_live:
+            # Imported lazily to avoid a circular import (health_status imports
+            # the router). model_ok() is a lock-free cache read.
+            from fighthealthinsurance.ml.health_status import health_status
+
+            if health_status.model_ok(model) is False:
+                return False
+        return True
+
     def _get_forced_models(
         self, task_description: str = "", *, use_external: bool = True
     ) -> Optional[list[RemoteModelLike]]:
@@ -257,11 +305,18 @@ class MLRouter(object):
         models: list[RemoteModelLike] = []
         if self.internal_models_by_cost:
             models += self.internal_models_by_cost[:6]
-        if use_external and self.external_models_by_cost:
-            models += self.external_models_by_cost[:4]
+        if use_external:
+            models += self.best_external_models()
         # Only fall back to all_models if use_external is True
         if not models and use_external:
-            models = self.all_models_by_cost[:6] if self.all_models_by_cost else []
+            # Keep the availability gate authoritative: don't re-introduce
+            # externals that best_external_models() just filtered out. Internal
+            # backends are always eligible; externals must pass the same gate.
+            models = [
+                m
+                for m in self.all_models_by_cost
+                if not m.external or self._external_selectable(m)
+            ][:6]
         return models
 
     def generate_text_backend_names(self, use_external: bool = False) -> list[str]:
@@ -349,10 +404,11 @@ class MLRouter(object):
             return False
 
         if use_external:
-            # Internal + external: take internal first, then external
+            # Internal + external: take internal first, then the best
+            # available external models.
             for model in self.internal_models_by_cost[:6]:
                 add_model_name(model)
-            for model in self.external_models_by_cost[:4]:
+            for model in self.best_external_models():
                 add_model_name(model)
         else:
             # Internal only
@@ -474,8 +530,7 @@ class MLRouter(object):
         if fhi_models:
             models += self.models_by_name[fhi_models[0]] * 2
         if use_external:
-            external_to_add = self._keep_single_groq(self.external_models_by_cost[:2])
-            models += external_to_add
+            models += self.best_external_models()
         internal_to_add = self.internal_models_by_cost[:6]
         models += internal_to_add
         logger.debug(
@@ -508,12 +563,8 @@ class MLRouter(object):
 
         fallback_models: list[RemoteModelLike] = []
         if use_external:
-            # Get external models sorted by quality for fallback
-            external_models = self._keep_single_groq(
-                [m for m in self.all_models_by_cost if m.external]
-            )
-            # Prefer higher quality models for chat fallback
-            fallback_models = sorted(external_models, key=lambda m: -m.quality())[:4]
+            # Prefer the best available external models for chat fallback.
+            fallback_models = self.best_external_models()
 
         return primary_models, fallback_models
 
@@ -649,6 +700,62 @@ class MLRouter(object):
     def working(self) -> bool:
         """Return if we have candidates to route to. (TODO: Check they're alive)"""
         return len(self.all_models_by_cost) > 0
+
+    async def probe_all_models(
+        self, per_model_timeout: float = 20.0
+    ) -> List[Tuple[str, bool, Optional[str]]]:
+        """Probe every registered backend with a tiny "Hello" inference.
+
+        Intended to run once at startup to surface misconfigured or
+        over-quota backends in the logs. Unlike the free liveness check
+        (``model_is_ok``), each probe makes a real -- though tiny and
+        one-off -- inference call, so this should not be wired into any
+        per-request path.
+
+        Returns a list of ``(name, ok, error)`` tuples. Failing backends are
+        logged at WARNING; this never raises.
+        """
+        # Context-only backends (e.g. Perplexity) are included on purpose --
+        # those are exactly the ones whose quota/billing failures (HTTP 401)
+        # we want to catch early. Dedup by identity since a backend can appear
+        # in more than one pool.
+        seen: set[int] = set()
+        models: List[RemoteModelLike] = []
+        for m in list(self.all_models_by_cost) + list(self.context_only_models_by_cost):
+            if id(m) not in seen:
+                seen.add(id(m))
+                models.append(m)
+
+        if not models:
+            logger.info("Model startup probe: no backends registered to probe")
+            return []
+
+        async def _probe_one(m: RemoteModelLike) -> Tuple[str, bool, Optional[str]]:
+            name = str(m)
+            try:
+                ok, err = await m.probe(timeout=per_model_timeout)
+            except Exception as e:
+                ok, err = False, f"{type(e).__name__}: {e}"
+            if ok:
+                logger.debug(f"Model startup probe OK: {name}")
+            else:
+                logger.warning(f"Model startup probe FAILED: {name} ({err})")
+            return (name, ok, err)
+
+        results = await asyncio.gather(*[_probe_one(m) for m in models])
+        ok_count = sum(1 for _, ok, _ in results if ok)
+        failures = [(n, e) for n, ok, e in results if not ok]
+        if failures:
+            failure_summary = "; ".join(f"{n}: {e}" for n, e in failures)
+            logger.warning(
+                f"Model startup probe complete: {ok_count}/{len(results)} "
+                f"backends responded. Failures: {failure_summary}"
+            )
+        else:
+            logger.info(
+                f"Model startup probe complete: all {ok_count} backends responded"
+            )
+        return results
 
 
 # Lazy singleton - initialized on first access

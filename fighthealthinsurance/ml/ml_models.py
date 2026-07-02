@@ -56,6 +56,21 @@ _sentence_split_re = re.compile(r"(?<=[.!?])\s+(?=[A-Z])")
 # ---------------------------------------------------------------------------
 
 
+# HTTP status codes that represent expected, operational conditions rather
+# than bugs in our code: an exhausted/insufficient quota or invalid/disabled
+# key (401), a billing/payment problem (402), a forbidden resource (403), or
+# rate limiting (429). These happen in normal operation -- e.g. when a
+# provider's prepaid balance runs out -- so when a backend returns one we log
+# it concisely (WARNING, no stack trace) and fall through to the next backend
+# instead of emitting a scary ERROR + traceback that reads like a crash.
+EXPECTED_HTTP_STATUS_CODES: frozenset[int] = frozenset({401, 402, 403, 429})
+
+
+def _http_status_is_expected(status: Optional[int]) -> bool:
+    """Whether ``status`` is an expected operational HTTP error (vs. a bug)."""
+    return status in EXPECTED_HTTP_STATUS_CODES
+
+
 def _count_items(items: list[str]) -> dict[str, int]:
     """Count occurrences of each normalized (stripped+lowered) item."""
     counts: dict[str, int] = {}
@@ -496,6 +511,35 @@ class RemoteModelLike(DenialBase):
     def model_is_ok(self):
         return False
 
+    def is_available(self) -> bool:
+        """Cheap, non-blocking availability signal used when *selecting* which
+        backends to fan out to (see ``MLRouter.best_external_models``).
+
+        Defaults to ``True`` (fail-open). Unlike ``model_is_ok()`` this must not
+        perform network I/O: it runs on the request path, so a slow check would
+        add latency to every call. Subclasses with an in-memory health signal
+        (e.g. paid providers that track API-key presence and rate-limit
+        back-off) override this; deeper reachability checks remain the job of
+        the periodic ``health_status`` sweep and per-inference fallback.
+        """
+        return True
+
+    @property
+    def health_checked_live(self) -> bool:
+        """Whether ``is_available()`` is a complete, current health signal the
+        router can trust directly (cheap and in-memory), versus relying on the
+        periodic ``health_status`` sweep for reachability.
+
+        Defaults to ``False``: most backends have no cheap live probe, so the
+        router consults the last cached sweep result for them (e.g. DeepInfra,
+        which the sweep checks over the network). Backends that track their own
+        state in memory (rate-limited paid providers) override this to ``True``
+        so the router trusts ``is_available()`` and skips the sweep result —
+        whose hourly snapshot would otherwise pin a transient rate-limit for an
+        hour.
+        """
+        return False
+
     def infer(
         self,
         prompt,
@@ -573,6 +617,7 @@ class RemoteModelLike(DenialBase):
         ml_citations_context=None,
         history: Optional[List[dict[str, str]]] = None,
         temperature=0.7,
+        raise_http_errors: bool = False,
     ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
         """Do inference on a remote model."""
         await asyncio.sleep(0)  # yield
@@ -587,6 +632,7 @@ class RemoteModelLike(DenialBase):
         pubmed_context=None,
         ml_citations_context=None,
         temperature=0.7,
+        raise_http_errors: bool = False,
     ) -> Optional[str]:
         result = await self._infer(
             system_prompts=system_prompts,
@@ -596,10 +642,52 @@ class RemoteModelLike(DenialBase):
             pubmed_context=pubmed_context,
             ml_citations_context=ml_citations_context,
             temperature=temperature,
+            raise_http_errors=raise_http_errors,
         )
         if result:
             return result[0]
         return result
+
+    async def probe(self, timeout: float = 20.0) -> Tuple[bool, Optional[str]]:
+        """One-off "Hello" reachability probe, used at startup.
+
+        Unlike ``model_is_ok`` (the free, config-only per-request liveness
+        check) this makes a real -- but tiny and one-time -- inference call to
+        confirm the backend actually returns text. It therefore catches
+        problems a config check misses: invalid credentials, an exhausted
+        quota, or a dead endpoint.
+
+        Returns ``(ok, error)`` where ``ok`` is True when the backend returned
+        non-empty text and ``error`` is a short reason string otherwise. Never
+        raises.
+
+        ``raise_http_errors=True`` is passed through so that an auth/quota/
+        rate-limit response surfaces its real HTTP status here (e.g.
+        "HTTP 401 Unauthorized") instead of being swallowed into the generic
+        "empty or no response" -- that distinction is the whole point of the
+        probe, since it tells a swapped/invalid key apart from a model that
+        merely returned nothing.
+        """
+        try:
+            result = await asyncio.wait_for(
+                self._infer_no_context(
+                    system_prompts=[
+                        "You are a helpful assistant. Reply with a short greeting."
+                    ],
+                    prompt="Hello",
+                    raise_http_errors=True,
+                ),
+                timeout=timeout,
+            )
+        except asyncio.TimeoutError:
+            return (False, f"timeout>{timeout}s")
+        except aiohttp.ClientResponseError as e:
+            return (False, f"HTTP {e.status} {e.message}".strip())
+        except Exception as e:
+            return (False, f"{type(e).__name__}: {e}")
+        if result and result.strip():
+            return (True, None)
+        return (False, "empty or no response")
 
     async def generate_prior_auth_response(self, prompt: str) -> Optional[str]:
         """
@@ -1841,6 +1929,7 @@ class RemoteOpenLike(RemoteModel):
         ml_citations_context=None,
         history: Optional[List[dict[str, str]]] = None,
         temperature=0.7,
+        raise_http_errors: bool = False,
     ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
         """
         Try and infer on a given model falling back to fallback in primary fails.
@@ -1932,14 +2021,27 @@ class RemoteOpenLike(RemoteModel):
                     )
                     return backup_response
 
-        except aiohttp.ClientResponseError:
+        except aiohttp.ClientResponseError as e:
             # Subclasses that opt in (via _propagate_http_errors) handle
             # status-specific HTTP errors themselves (e.g. 429 backoff in
-            # RemoteGroq / RemoteAnthropic). Otherwise preserve the original
-            # contract of returning None on transport errors.
-            if self._propagate_http_errors:
+            # RemoteGroq / RemoteAnthropic). The probe path
+            # (raise_http_errors=True) also wants the raw status surfaced so it
+            # can report *why* a backend is unreachable. Otherwise preserve the
+            # original contract of returning None on transport errors.
+            if self._propagate_http_errors or raise_http_errors:
                 raise
-            logger.opt(exception=True).error(f"HTTP error calling {self.api_base}")
+            if _http_status_is_expected(e.status):
+                # Quota/auth/rate-limit conditions are an operational state of
+                # the provider account, not an application error. Emit a single
+                # concise line without a stack trace so it doesn't read like a
+                # crash (e.g. Perplexity returning 401 insufficient_quota).
+                logger.warning(
+                    f"{self}: skipping backend -- {self.api_base} returned "
+                    f"HTTP {e.status} ({e.message}); "
+                    f"check quota/billing/API key."
+                )
+            else:
+                logger.opt(exception=True).error(f"HTTP error calling {self.api_base}")
         except Exception as e:
             logger.opt(exception=True).error(f"Error {e} calling {self.api_base}")
 
@@ -2072,18 +2174,31 @@ class RemoteOpenLike(RemoteModel):
                             response_body = "<failed to read response body>"
 
                         response_body_preview = response_body[:2000]
-                        logger.warning(
-                            f"HTTP {e.status} error from {api_base} for model {model}. "
-                            f"Body preview (truncated): {response_body_preview}"
-                        )
+                        # Expected operational errors (quota/auth/rate-limit)
+                        # are summarized concisely by _infer; keep their body
+                        # preview at debug so they don't double-warn. Real
+                        # failures stay at WARNING so the body aids debugging.
+                        if _http_status_is_expected(e.status):
+                            logger.debug(
+                                f"HTTP {e.status} (expected) from {api_base} for "
+                                f"model {model}. Body preview (truncated): "
+                                f"{response_body_preview}"
+                            )
+                        else:
+                            logger.warning(
+                                f"HTTP {e.status} error from {api_base} for model "
+                                f"{model}. Body preview (truncated): "
+                                f"{response_body_preview}"
+                            )
                         raise
                     json_result = await response.json()
                     if json_result.get("object") == "error":
                         logger.warning(f"Bad response from {self} with {model}")
         except aiohttp.ClientResponseError as e:
-            # Re-raise HTTP errors to allow subclasses (e.g., RemoteGroq) to handle
-            # specific status codes like 429 rate limiting
-            logger.warning(
+            # Already logged with a body preview above; keep this at debug to
+            # avoid double-logging. Re-raise so _infer (and opted-in subclasses
+            # like RemoteGroq) can apply status-specific handling.
+            logger.debug(
                 f"HTTP error {e.status} from {api_base} for model {model}: {e.message}"
             )
             raise
@@ -2773,6 +2888,26 @@ class DeepInfra(RemoteFullOpenLike):
         "meta-llama/Llama-3.2-3B-Instruct": 128000,
         "meta-llama/Llama-3.3-70B-Instruct-Turbo": 128000,
         "deepseek-ai/DeepSeek-R1-Turbo": 64000,
+        "google/gemma-4-26B-A4B-it": 260000,
+        "deepseek-ai/DeepSeek-V4-Pro": 1048000,
+    }
+
+    # Routing quality per model, kept below the internal models' range (>=101)
+    # so internal backends stay preferred. Used to rank the "best" external
+    # models for fan-out (MLRouter.best_external_models). Unknown models fall
+    # back to a mid value.
+    _MODEL_QUALITY: ClassVar[dict[str, int]] = {
+        # Currently registered by models() (flagship Pro deepseek + gemma-4).
+        "deepseek-ai/DeepSeek-V4-Pro": 92,
+        "google/gemma-4-26B-A4B-it": 80,
+        # Retained for _old_models() should it be re-enabled.
+        "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8": 90,
+        "meta-llama/Llama-4-Scout-17B-16E-Instruct": 85,
+        "google/gemma-3-27b-it": 80,
+        "meta-llama/Meta-Llama-3.1-70B-Instruct": 84,
+        "meta-llama/Llama-3.2-3B-Instruct": 68,
+        "meta-llama/Llama-3.3-70B-Instruct-Turbo": 84,
+        "deepseek-ai/DeepSeek-R1-0528-Turbo": 90,
     }
 
     def __init__(self, model: str, dual_mode: bool = False):
@@ -2790,8 +2925,28 @@ class DeepInfra(RemoteFullOpenLike):
     def supports_system(self):
         return True
 
+    def quality(self) -> int:
+        """Routing quality derived from the specific model (see
+        ``_MODEL_QUALITY``)."""
+        return self._MODEL_QUALITY.get(self.model, 82)
+
     @classmethod
     def models(cls) -> List[ModelDescription]:
+        return [
+            ModelDescription(
+                cost=260,
+                name="deepseek-ai/DeepSeek-V4-Pro",
+                internal_name="deepseek-ai/DeepSeek-V4-Pro",
+            ),
+            ModelDescription(
+                cost=35,
+                name="google/gemma-4-26B-A4B-it",
+                internal_name="google/gemma-4-26B-A4B-it",
+            ),
+        ]
+
+    @classmethod
+    def _old_models(cls) -> List[ModelDescription]:
         return [
             ModelDescription(
                 cost=80,
@@ -2853,6 +3008,42 @@ class RateLimitedRemoteOpenLike(RemoteFullOpenLike):
     # Re-raise ClientResponseError from the parent _infer so we can detect 429.
     _propagate_http_errors: ClassVar[bool] = True
 
+    # Routing quality by provider tier, kept below the internal models' range
+    # (>=101) so internal backends stay preferred. Used to rank the "best"
+    # external models for fan-out (MLRouter.best_external_models). Subclasses
+    # expose each model's tier via get_tier().
+    _TIER_QUALITY: ClassVar[dict[str, int]] = {
+        "premium": 98,
+        "quality": 92,
+        "speed": 80,
+        "custom": 88,
+    }
+
+    def get_tier(self) -> str:
+        """Provider tier (speed/quality/premium/custom). Concrete subclasses
+        override with their own per-model mapping; this default keeps
+        ``quality()`` robust if a subclass omits it."""
+        return "unknown"
+
+    def quality(self) -> int:
+        """Routing quality derived from the model's tier (see ``_TIER_QUALITY``)."""
+        return self._TIER_QUALITY.get(self.get_tier(), 85)
+
+    def is_available(self) -> bool:
+        """Available when configured and not currently backing off. This mirrors
+        ``model_is_ok()`` for the paid providers, whose health signal is already
+        in-memory (API key/endpoint presence + rate-limit state) and never hits
+        the network, so it is safe to consult on the request path."""
+        return bool(self.model_is_ok())
+
+    @property
+    def health_checked_live(self) -> bool:
+        """Paid providers track availability live in memory (config + rate-limit
+        back-off), so the router trusts ``is_available()`` and skips the cached
+        sweep result for them (an hourly snapshot would otherwise pin a
+        transient 429 back-off for up to an hour)."""
+        return True
+
     @classmethod
     def _ensure_rate_limiter(cls, model: str) -> None:
         """Lazily create a per-model rate limiter (thread-safe)."""
@@ -2900,12 +3091,17 @@ class RateLimitedRemoteOpenLike(RemoteFullOpenLike):
         ml_citations_context: Optional[List[str]] = None,
         history: Optional[List[dict[str, str]]] = None,
         temperature: float = 0.7,
+        raise_http_errors: bool = False,
     ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
         """Inference with rate-limit gating and 429 back-off.
 
         Skips (returns None) when backing off; on a 429 marks the limiter
         exhausted honoring Retry-After so other backends can take over; other
         HTTP errors propagate.
+
+        ``raise_http_errors=True`` (used by the startup probe) re-raises any
+        HTTP error -- including 429/quota/auth -- so the probe can report the
+        real status instead of a generic "no response".
         """
         if not self.rate_limiter.can_request():
             logger.debug(
@@ -2924,12 +3120,23 @@ class RateLimitedRemoteOpenLike(RemoteFullOpenLike):
                 temperature=temperature,
             )
         except aiohttp.ClientResponseError as e:
+            if raise_http_errors:
+                raise
             if e.status == 429:
                 retry_after = self._retry_after_seconds(e)
                 self.rate_limiter.mark_exhausted(retry_after)
                 logger.warning(
                     f"{type(self).__name__}._infer: 429 from {self.PROVIDER_LABEL} "
                     f"for {self.model}, backing off for {retry_after}s"
+                )
+                return None
+            if _http_status_is_expected(e.status):
+                # Quota/auth/billing conditions are operational, not bugs:
+                # degrade to the next backend with a concise warning rather
+                # than raising a scary error up the generation path.
+                logger.warning(
+                    f"{self}: skipping backend -- {self.api_base} returned "
+                    f"HTTP {e.status} ({e.message}); check quota/billing/API key."
                 )
                 return None
             raise
@@ -3607,132 +3814,6 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
             if extracted:
                 text = extracted.strip()
         return (text, [])
-
-
-class TailscaleModelBackend(RemoteFullOpenLike):
-    """
-    Backend that auto-discovers model servers via Tailscale DNS.
-
-    Looks for hosts named 'azure-{model-name}' in the Tailscale network
-    and adds them as available backends.
-    """
-
-    # Models we try to discover via Tailscale DNS
-    DISCOVERABLE_MODELS: ClassVar[List[Tuple[str, str]]] = [
-        ("fhi-legacy", "TotallyLegitCo/fighthealthinsurance_model_v0.5"),
-        ("fhi-new", "/models/fhi-2025-may-0.3-float16-q8-vllm-compressed"),
-        ("llama-scout", "meta-llama/Llama-4-Scout-17B-16E-Instruct"),
-        ("fhi-2025-nov-q8-vllm-compressed", "/app/model"),
-    ]
-
-    _discovered_hosts: ClassVar[dict[str, str]] = {}
-    _resolved_ips: ClassVar[dict[str, str]] = {}  # hostname -> IP mapping
-
-    # Tailscale DNS server
-    TAILSCALE_DNS: ClassVar[str] = "100.100.100.100"
-
-    # DNS resolution timeout in seconds
-    DNS_TIMEOUT: ClassVar[float] = 2.0
-
-    def quality(self) -> int:
-        return 150  # Higher quality since these are dedicated hosts
-
-    def __init__(self, model: str, host: str, port: str = "8000"):
-        self.host = host
-        self.port = port
-        self.url = f"http://{host}:{port}/v1"
-        super().__init__(
-            self.url,
-            token="",
-            model=model,
-            max_len=4096 * 20,
-        )
-
-    @property
-    def external(self):
-        return False
-
-    @classmethod
-    def _resolve_tailscale_host(cls, hostname: str) -> Optional[str]:
-        """
-        Try to resolve a Tailscale hostname via explicit Tailscale DNS with timeout.
-
-        Uses Tailscale DNS (100.100.100.100) explicitly since containers don't
-        automatically use it. Caches resolved IPs.
-
-        Returns:
-            The resolved IP address if successful, None otherwise
-        """
-        import concurrent.futures
-
-        import dns.resolver
-
-        # Check cache first
-        if hostname in cls._resolved_ips:
-            logger.debug(
-                f"Using cached IP for {hostname}: {cls._resolved_ips[hostname]}"
-            )
-            return cls._resolved_ips[hostname]
-
-        try:
-            # Configure resolver to use Tailscale DNS
-            resolver = dns.resolver.Resolver(configure=False)
-            resolver.nameservers = [cls.TAILSCALE_DNS]
-            resolver.timeout = cls.DNS_TIMEOUT
-            resolver.lifetime = cls.DNS_TIMEOUT
-
-            # Use ThreadPoolExecutor to add timeout to blocking DNS call
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(resolver.resolve, hostname, "A")
-                answers = future.result(timeout=cls.DNS_TIMEOUT)
-
-                # Get the first A record
-                ip_address = str(answers[0])
-                logger.info(f"Resolved {hostname} to {ip_address} via Tailscale DNS")
-
-                # Cache the result
-                cls._resolved_ips[hostname] = ip_address
-                return ip_address
-        except (
-            dns.resolver.NXDOMAIN,
-            dns.resolver.NoAnswer,
-            dns.resolver.Timeout,
-            dns.resolver.NoNameservers,
-            concurrent.futures.TimeoutError,
-            TimeoutError,
-        ) as e:
-            logger.debug(f"Skipping {hostname}: {e}")
-            return None
-        except Exception as e:
-            logger.error(f"Skipping {hostname}: unexpected error {e}")
-            return None
-
-    @classmethod
-    def models(cls) -> List[ModelDescription]:
-        """Discover available models via Tailscale DNS."""
-        discovered = []
-
-        for friendly_name, model_path in cls.DISCOVERABLE_MODELS:
-            # Try azure-{name} pattern
-            hostname = f"azure-{friendly_name}"
-            resolved_ip = cls._resolve_tailscale_host(hostname)
-            if resolved_ip:
-                logger.info(
-                    f"Discovered Tailscale model backend: {hostname} -> {resolved_ip}"
-                )
-                cls._discovered_hosts[friendly_name] = hostname
-                discovered.append(
-                    ModelDescription(
-                        cost=5,  # Low cost since it's on credits.
-                        name=f"ts-{friendly_name}",
-                        internal_name=model_path,
-                        model=cls(model=model_path, host=resolved_ip),
-                    )
-                )
-
-        if discovered:
-            logger.info(f"Tailscale discovery found {len(discovered)} model backends")
-        return discovered
 
 
 candidate_model_backends: list[type[RemoteModel]] = all_concrete_subclasses(RemoteModel)  # type: ignore[type-abstract]

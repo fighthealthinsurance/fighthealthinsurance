@@ -1,8 +1,11 @@
+from django import forms
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
 from django.db import connection
 from django.db.models import IntegerField
 from django.db.models.expressions import RawSQL
+
+from fighthealthinsurance.constants import SITE_BANNER_CANNED_MESSAGES
 
 from fhi_users.audit import AuditLog
 from fhi_users.models import (
@@ -52,6 +55,7 @@ from fighthealthinsurance.models import (
     PubMedArticleSummarized,
     PubMedQueryData,
     Regulator,
+    SiteBanner,
     SecondaryAppealProfessionalRelation,
     SecondaryDenialProfessionalRelation,
     StripePrice,
@@ -1081,3 +1085,88 @@ class PolicyDocumentAnalysisAdmin(admin.ModelAdmin):
     list_filter = ("created_at",)
     search_fields = ("user_question", "summary")
     readonly_fields = ("id", "created_at")
+
+
+class SiteBannerAdminForm(forms.ModelForm):
+    """SiteBanner form with a pre-canned message picker.
+
+    ``canned_message`` is a non-model dropdown of ready-made notices (from
+    ``constants.SITE_BANNER_CANNED_MESSAGES``); selecting one fills the message
+    box client-side (see ``js/admin_site_banner.js``) so staff can start from a
+    template during an incident and then edit it. The field itself is not saved.
+    """
+
+    canned_message = forms.ChoiceField(
+        required=False,
+        label="Pre-canned message",
+        help_text=(
+            "Optional: pick a ready-made message to fill the box below, then "
+            "edit if needed. This dropdown itself is not saved."
+        ),
+        choices=[("", "--- Start from a template (optional) ---")]
+        + [(text, label) for label, text in SITE_BANNER_CANNED_MESSAGES],
+    )
+
+    class Meta:
+        model = SiteBanner
+        fields = "__all__"
+
+    class Media:
+        js = ("js/admin_site_banner.js",)
+
+
+@admin.register(SiteBanner)
+class SiteBannerAdmin(admin.ModelAdmin):
+    """Admin for the staff-controlled site header banner (no deploy needed)."""
+
+    form = SiteBannerAdminForm
+    list_display = (
+        "id",
+        "short_message",
+        "level",
+        "active",
+        "dismissible",
+        "expires_at",
+        "updated_at",
+    )
+    list_display_links = ("id", "short_message")
+    list_editable = ("active",)
+    list_filter = ("active", "level", "dismissible")
+    search_fields = ("message",)
+    ordering = ("-updated_at",)
+    readonly_fields = ("created_at", "updated_at")
+    fieldsets = (
+        (
+            None,
+            {
+                "fields": ("canned_message", "message", "level"),
+                "description": (
+                    "Show a temporary notice in the site header to every "
+                    "visitor. Pick a pre-canned message to start, then edit "
+                    "as needed."
+                ),
+            },
+        ),
+        (
+            "Visibility",
+            {
+                "fields": ("active", "dismissible", "expires_at"),
+                "description": (
+                    "Uncheck <strong>active</strong> (or set an expiry) to "
+                    "remove the banner. Changes go live within ~30 seconds."
+                ),
+            },
+        ),
+        (
+            "Timestamps",
+            {
+                "fields": ("created_at", "updated_at"),
+                "classes": ("collapse",),
+            },
+        ),
+    )
+
+    @admin.display(description="Message")
+    def short_message(self, obj: SiteBanner) -> str:
+        text = (obj.message or "").strip().replace("\n", " ")
+        return (text[:80] + "…") if len(text) > 80 else text

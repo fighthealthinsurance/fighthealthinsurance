@@ -1,0 +1,66 @@
+{% comment %}
+Admin-controlled site-wide notice shown in the header.
+
+`site_banners` is injected on every request by
+`context_processors.site_banner_context` from the `SiteBanner` model, so staff
+can post/remove a temporary message via the Django admin without a deploy.
+Dismissals are remembered per-browser via localStorage (keyed by banner id +
+version) so editing a banner re-shows it to everyone.
+{% endcomment %}
+{% if site_banners %}
+<style>
+  .site-banner-container { position: relative; z-index: 1031; }
+  .site-banner { border-radius: 0; margin-bottom: 0; }
+  .site-banner-inner { position: relative; padding-left: 2.5rem; padding-right: 2.5rem; }
+  .site-banner .site-banner-close {
+    position: absolute; top: 50%; right: 0.75rem; transform: translateY(-50%);
+  }
+  .site-banner-message { white-space: normal; }
+</style>
+<div id="site-banner-container" class="site-banner-container">
+  {% for banner in site_banners %}
+  <div class="alert alert-{{ banner.level }} site-banner text-center"
+       role="alert"
+       data-banner-id="{{ banner.id }}"
+       data-banner-version="{{ banner.version }}">
+    <div class="container site-banner-inner">
+      <span class="site-banner-message">{{ banner.message|linebreaksbr }}</span>
+      {% if banner.dismissible %}
+      <button type="button" class="btn-close site-banner-close"
+              aria-label="Dismiss message"></button>
+      {% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+<script>
+  (function () {
+    function dismissKey(el) {
+      return "fhi-banner-dismissed-" +
+        el.getAttribute("data-banner-id") + "-" +
+        el.getAttribute("data-banner-version");
+    }
+    var container = document.getElementById("site-banner-container");
+    if (!container) { return; }
+    var banners = container.querySelectorAll(".site-banner[data-banner-id]");
+    Array.prototype.forEach.call(banners, function (el) {
+      try {
+        if (window.localStorage && localStorage.getItem(dismissKey(el))) {
+          el.style.display = "none";
+        }
+      } catch (e) { /* localStorage blocked; just show the banner */ }
+      var closeBtn = el.querySelector(".site-banner-close");
+      if (closeBtn) {
+        closeBtn.addEventListener("click", function () {
+          el.style.display = "none";
+          try {
+            if (window.localStorage) {
+              localStorage.setItem(dismissKey(el), "1");
+            }
+          } catch (e) { /* ignore */ }
+        });
+      }
+    });
+  })();
+</script>
+{% endif %}
