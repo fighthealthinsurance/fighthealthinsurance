@@ -297,11 +297,14 @@ class MLRouter(object):
         if forced_models:
             return forced_models
 
-        # First try to find specific text generation models
-        if "meta-llama/Llama-4-Scout-17B-16E-Instruct" in self.models_by_name:
-            return self.cheapest("meta-llama/Llama-4-Scout-17B-16E-Instruct")
+        # NOTE: there used to be an early return here preferring DeepInfra's
+        # Llama-4-Scout for all text generation. It went dead when the model
+        # was dropped from the DeepInfra catalog, and it is deliberately NOT
+        # re-pointed at a successor: the early return bypassed the
+        # ``use_external`` privacy gate below, routing internal-only requests
+        # to an external model whenever DeepInfra was configured.
 
-        # Fall back to internal models, optionally appending external if allowed
+        # Internal models first, optionally appending external if allowed
         models: list[RemoteModelLike] = []
         if self.internal_models_by_cost:
             models += self.internal_models_by_cost[:6]
@@ -438,9 +441,10 @@ class MLRouter(object):
         models += self.internal_models_by_cost[:3]
 
         if use_external:
-            # Add Llama Scout model if available
-            if "meta-llama/Llama-4-Scout-17B-16E-Instruct" in self.models_by_name:
-                models += self.cheapest("meta-llama/Llama-4-Scout-17B-16E-Instruct")
+            # Add a cheap external generalist if available (successor to the
+            # dropped Llama-4-Scout entry in the DeepInfra catalog)
+            if "google/gemma-4-26B-A4B-it" in self.models_by_name:
+                models += self.cheapest("google/gemma-4-26B-A4B-it")
             # Add Perplexity for web-informed questions
             if "sonar" in self.models_by_name:
                 models += self.cheapest("sonar")
@@ -450,7 +454,10 @@ class MLRouter(object):
     def partial_qa_backends(self) -> list[RemoteModelLike]:
         """
         Return models for handling partial question-answer pairs (when we have less context).
-        Includes internal FHI models and Llama Scout if available.
+        Internal FHI models only: this method has no ``use_external`` gate, so
+        it must never include external backends. (It used to append DeepInfra's
+        Llama-4-Scout unconditionally; that branch went dead when the model was
+        dropped from the catalog and is deliberately not re-pointed.)
 
         Returns:
             List of RemoteModelLike models suitable for partial QA tasks
@@ -458,9 +465,6 @@ class MLRouter(object):
         models: list[RemoteModelLike] = []
         # Always include internal FHI models
         models += self.internal_models_by_cost
-        # Add Llama Scout model if available
-        if "meta-llama/Llama-4-Scout-17B-16E-Instruct" in self.models_by_name:
-            models += self.cheapest("meta-llama/Llama-4-Scout-17B-16E-Instruct")
         return models
 
     def full_find_citation_backends(self, use_external=False) -> list[RemoteModelLike]:
@@ -664,9 +668,15 @@ class MLRouter(object):
         self, title: Optional[str], text: Optional[str], abstract: Optional[str] = None
     ) -> Optional[str]:
         models: list[RemoteModelLike] = []
-        if "google/gemma-3-27b-it" in self.models_by_name:
+        # Prefer the cheap DeepInfra generalist (successor to the dropped
+        # gemma-3-27b entry) for article summaries. The inputs are public
+        # article text (title/abstract/body), not patient data, so an
+        # external model is fine here — and without it a DeepInfra-only
+        # deployment has an empty internal pool and summarize() would
+        # silently return None.
+        if "google/gemma-4-26B-A4B-it" in self.models_by_name:
             models = (
-                self.models_by_name["google/gemma-3-27b-it"]
+                self.models_by_name["google/gemma-4-26B-A4B-it"]
                 + self.internal_models_by_cost
             )
         else:

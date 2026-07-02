@@ -300,6 +300,43 @@ class TestAzureInfer(unittest.TestCase):
 
         asyncio.run(run())
 
+    def _capture_chat_completions_body(self, model: str) -> dict:
+        """Drive the OpenAI-compatible transport end-to-end against a fake
+        session and return the captured request body."""
+        capture: dict = {}
+
+        async def run():
+            """Run _infer with a canned 200 chat-completions response."""
+            m = RemoteAzureOpenAI(model=model)
+            response = _FakeAiohttpResponse(
+                {"choices": [{"message": {"content": "Dear insurer, please."}}]}
+            )
+            session = _FakeAiohttpSession(response, capture)
+            with patch.object(aiohttp, "ClientSession", return_value=session):
+                await m._infer(system_prompts=["be helpful"], prompt="appeal this")
+
+        asyncio.run(run())
+        return capture["json"]
+
+    @patch.dict(os.environ, AZURE_OPENAI_ENV)
+    def test_gpt5_request_omits_temperature(self):
+        """gpt-5-family deployments reject any non-default temperature with
+        HTTP 400, so the request body must omit the field entirely."""
+        body = self._capture_chat_completions_body("gpt-5")
+        self.assertNotIn("temperature", body)
+
+    @patch.dict(os.environ, AZURE_OPENAI_ENV)
+    def test_gpt5_mini_request_omits_temperature(self):
+        """The gpt-5 prefix match covers the -mini variant too."""
+        body = self._capture_chat_completions_body("gpt-5-mini")
+        self.assertNotIn("temperature", body)
+
+    @patch.dict(os.environ, AZURE_OPENAI_ENV)
+    def test_non_reasoning_model_request_keeps_temperature(self):
+        """Non-reasoning deployments keep the router-supplied temperature."""
+        body = self._capture_chat_completions_body("gpt-4.1-mini")
+        self.assertIn("temperature", body)
+
 
 class TestAzureClaudeMessages(unittest.TestCase):
     """RemoteAzureClaude's Anthropic Messages API transport (Foundry)."""

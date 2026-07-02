@@ -9,7 +9,7 @@ import traceback
 from abc import abstractmethod
 from concurrent.futures import Future
 from dataclasses import dataclass
-from typing import Callable, ClassVar, Iterable, List, Optional, Tuple, Union
+from typing import Any, Callable, ClassVar, Iterable, List, Optional, Tuple, Union
 
 import aiohttp
 import requests
@@ -2047,6 +2047,24 @@ class RemoteOpenLike(RemoteModel):
 
         return None
 
+    def _supports_custom_temperature(self, model: str) -> bool:
+        """Whether ``model`` accepts a non-default ``temperature``.
+
+        OpenAI's reasoning models (the gpt-5 family and o-series) reject any
+        temperature other than the default with HTTP 400 ("Only the default
+        (1) value is supported"), on both openai.com and Azure OpenAI
+        deployments. For those models the request body must omit the field
+        entirely or every call fails. Matched on the bare deployment/model
+        name so provider-prefixed registrations (``azure-openai/gpt-5``) are
+        covered too.
+        """
+        name = model.split("/")[-1].lower()
+        if name == "gpt-5" or name.startswith("gpt-5-"):
+            return False
+        if re.match(r"^o[134](-|$)", name):
+            return False
+        return True
+
     async def __timeout_infer(
         self,
         *args,
@@ -2153,14 +2171,19 @@ class RemoteOpenLike(RemoteModel):
                     logger.debug(
                         f"Prepared {len(cleaned_messages)} messages for model {model}: {cleaned_messages}"
                     )
+                request_body: dict[str, Any] = {
+                    "model": model,
+                    "messages": cleaned_messages,
+                }
+                # Reasoning models (gpt-5 family, o-series) reject any
+                # non-default temperature with HTTP 400; omit the field for
+                # them so the request can succeed at all.
+                if self._supports_custom_temperature(model):
+                    request_body["temperature"] = temperature
                 async with s.post(
                     url,
                     headers={"Authorization": f"Bearer {self.token}"},
-                    json={
-                        "model": model,
-                        "messages": cleaned_messages,
-                        "temperature": temperature,
-                    },
+                    json=request_body,
                 ) as response:
                     # Raise ClientResponseError for HTTP error status codes (4xx, 5xx)
                     # This allows subclasses to catch and handle specific errors like 429
