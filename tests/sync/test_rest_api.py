@@ -15,6 +15,7 @@ import json
 
 from django.urls import reverse
 from django.contrib.auth import get_user_model
+from django.core import mail
 from django.utils import timezone
 from dateutil.relativedelta import relativedelta
 
@@ -2050,6 +2051,87 @@ class DemoRequestEndpointTest(APITestCase):
         self.assertEqual(response.status_code, 201)
         self.assertTrue(DemoRequests.objects.filter(email="lead3@example.com").exists())
 
+    def test_demo_request_records_interested_professional_lead(self):
+        # With new FPW signups closed, demo requests are the professional lead
+        # intake: the endpoint mirrors the web /pro_version form by recording an
+        # InterestedProfessional with the demo fields mapped over.
+        from fighthealthinsurance.models import InterestedProfessional
+
+        response = self.client.post(
+            reverse("demorequest-list"),
+            data=json.dumps(
+                {
+                    "email": "lead4@example.com",
+                    "name": "Dr. Lead",
+                    "company": "Acme Health",
+                    "role": "Billing Manager",
+                    "phone": "2035551234",
+                    "source": "webinar",
+                }
+            ),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 201)
+        pro = InterestedProfessional.objects.get(email="lead4@example.com")
+        self.assertEqual(pro.name, "Dr. Lead")
+        self.assertEqual(pro.business_name, "Acme Health")
+        self.assertEqual(pro.job_title_or_provider_type, "Billing Manager")
+        self.assertEqual(pro.phone_number, "2035551234")
+        self.assertIn("webinar", pro.comments)
+        self.assertFalse(pro.clicked_for_paid)
+
+    def test_demo_request_sends_thankyou_email_to_requester(self):
+        from fighthealthinsurance.models import InterestedProfessional
+
+        response = self.client.post(
+            reverse("demorequest-list"),
+            data=json.dumps({"email": "lead5@example.com", "name": "Dr. Five"}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 201)
+        thankyou = next(m for m in mail.outbox if m.to == ["lead5@example.com"])
+        self.assertEqual(
+            thankyou.subject,
+            "Thanks for your interest in our new professional version!",
+        )
+        pro = InterestedProfessional.objects.get(email="lead5@example.com")
+        self.assertTrue(pro.thankyou_email_sent)
+
+    def test_demo_request_notifies_professional_inbox(self):
+        # The lead notification goes through the shared
+        # notify_interested_professional helper, i.e. to the professional inbox.
+        response = self.client.post(
+            reverse("demorequest-list"),
+            data=json.dumps({"email": "lead6@example.com"}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 201)
+        notification = next(
+            m for m in mail.outbox if m.to == ["professional@fighthealthinsurance.com"]
+        )
+        self.assertIn("lead6@example.com", notification.body)
+        self.assertIn("a Fight Paperwork demo request", notification.body)
+
+    def test_interested_professional_failure_does_not_fail_demo_request(self):
+        # The DemoRequests row is persisted before the lead bookkeeping; a
+        # failure there must be swallowed, not surface as a 500.
+        from fighthealthinsurance.models import DemoRequests, InterestedProfessional
+
+        with patch(
+            "fighthealthinsurance.rest_views.InterestedProfessional.objects.create",
+            side_effect=RuntimeError("db hiccup"),
+        ):
+            response = self.client.post(
+                reverse("demorequest-list"),
+                data=json.dumps({"email": "lead7@example.com"}),
+                content_type="application/json",
+            )
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(DemoRequests.objects.filter(email="lead7@example.com").exists())
+        self.assertFalse(
+            InterestedProfessional.objects.filter(email="lead7@example.com").exists()
+        )
+
 
 class InterestedProfessionalEndpointTest(APITestCase):
     """The interested_professional REST endpoint records a professional-interest
@@ -2089,9 +2171,7 @@ class InterestedProfessionalEndpointTest(APITestCase):
         self.assertIn(str(pro.id), subject)
 
     def test_extra_notification_recipient_is_configurable(self):
-        with patch(
-            "fighthealthinsurance.utils.send_mail"
-        ) as mock_send, self.settings(
+        with patch("fighthealthinsurance.utils.send_mail") as mock_send, self.settings(
             PROFESSIONAL_SIGNUP_NOTIFICATION_EMAILS=[
                 "professional@fighthealthinsurance.com",
                 "sales@example.com",

@@ -1557,10 +1557,48 @@ class DemoRequestsViewSet(viewsets.ViewSet, CreateMixin, DeleteMixin):
             ip_address=bound_client_ip(ip), asn=asn, asn_name=asn_name
         )
         self._notify_demo_request(demo)
+        self._record_interested_professional(demo)
         return Response(
             serializers.StatusResponseSerializer({"status": "subscribed"}).data,
             status=status.HTTP_201_CREATED,
         )
+
+    @staticmethod
+    def _record_interested_professional(demo: DemoRequests) -> None:
+        """Feed the demo request into the interested-professional flow.
+
+        With new Fight Paperwork signups closed (connector agreement), demo
+        requests are the professional lead intake, so mirror the web
+        /pro_version form: record an InterestedProfessional lead, notify the
+        professional-signup inbox, and send the professional_thankyou email to
+        the requester. Best-effort: the DemoRequests row is already persisted
+        and this public endpoint must not 500 over lead bookkeeping or mail."""
+        from fighthealthinsurance.followup_emails import ThankyouEmailSender
+        from fighthealthinsurance.utils import notify_interested_professional
+
+        try:
+            interested_pro = InterestedProfessional.objects.create(
+                name=demo.name or "",
+                email=demo.email,
+                business_name=demo.company or "",
+                job_title_or_provider_type=demo.role or "",
+                phone_number=demo.phone or "",
+                comments=f"Demo request (source: {demo.source or 'direct'})",
+                clicked_for_paid=False,
+            )
+            notify_interested_professional(
+                interested_pro,
+                source="a Fight Paperwork demo request",
+                subject=f"New demo request lead #{interested_pro.id}",
+            )
+            # Send the thank-you right away; dosend() sets
+            # thankyou_email_sent=True on success so the batched
+            # ThankyouEmailSender won't re-send, and it swallows mail errors.
+            ThankyouEmailSender().dosend(interested_pro=interested_pro)
+        except Exception:
+            logger.opt(exception=True).error(
+                f"Error recording interested professional for demo request {demo.id}"
+            )
 
     @staticmethod
     def _notify_demo_request(demo: DemoRequests) -> None:

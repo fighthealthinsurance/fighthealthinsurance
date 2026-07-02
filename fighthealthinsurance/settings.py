@@ -89,6 +89,13 @@ class Base(Configuration):
     PRO_VERSION_AVAILABLE = (
         os.getenv("PRO_VERSION_AVAILABLE", "false").lower() == "true"
     )
+    # New self-serve Fight Paperwork professional signups are closed (connector
+    # agreement in place); professionals request a demo instead and the team
+    # onboards them. Off by default; Dev/Test enable it so the signup flow and
+    # its tests stay exercised.
+    NEW_PROFESSIONAL_SIGNUP_ENABLED = (
+        os.getenv("NEW_PROFESSIONAL_SIGNUP_ENABLED", "false").lower() == "true"
+    )
     LOGIN_URL = "login"
     LOGIN_REDIRECT_URL = "/"
     THUMBNAIL_DEBUG = True
@@ -533,6 +540,9 @@ class Base(Configuration):
 
 
 class Dev(Base):
+    # Keep the (production-closed) professional signup flow testable locally
+    # and in the Test* configurations that subclass Dev.
+    NEW_PROFESSIONAL_SIGNUP_ENABLED = True
     CSRF_TRUSTED_ORIGINS = [
         "https://fightpaperwork.com",
         "https://localhost:3000",

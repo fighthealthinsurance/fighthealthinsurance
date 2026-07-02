@@ -4,14 +4,7 @@ You have been invited by {{ inviter_name }} to join {{ practice_name }} on Fight
 
 Our platform helps healthcare providers successfully appeal insurance denials and reduce administrative burden. Studies show that when providers appeal denials, they have a high success rate of overturning the initial decision.
 
-To join {{ practice_name }}, please follow these steps:
-
-1. Visit https://www.fightpaperwork.com/auth/provider-signup
-2. Create your account
-3. When asked, select "Joining Existing Group"
-4. Enter the practice phone number: {{ practice_number }}
-
-This will ensure you're connected to the right practice group.
+To join {{ practice_name }}, ask {{ inviter_name }} (or another practice administrator) to add you from the Fight Paperwork dashboard. Once they do, you'll receive an email at this address with a link to set your password and finish activating your account.
 
 If you have any questions, please feel free to reach out to us at support42@fighthealthinsurance.com.
 
