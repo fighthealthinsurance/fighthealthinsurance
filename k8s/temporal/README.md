@@ -79,6 +79,44 @@ are already set on the worker Deployment:
 For TLS/mTLS to the cluster, also set `TEMPORAL_TLS=true` and optionally
 `TEMPORAL_CLIENT_CERT_PATH` / `TEMPORAL_CLIENT_KEY_PATH`.
 
+## Pre-flight checklist (verify before flipping the flag)
+
+The repo's manifests have some drift between the pods that currently touch fax
+documents; confirm these against the **live** namespace rather than trusting
+any one yaml:
+
+1. **Fax-document PVC** — the worker mounts `new-uploads-longhorn-backup4` at
+   `/external_data` (matching the web pods in `deploy-back.yaml`, which write
+   the documents). The Ray back cluster (`ray/cluster-back.yaml`) mounts
+   `new-uploads-longhorn-backup3` at the same path — if that's the claim with
+   the real documents in your cluster, change the worker's claim to match:
+
+   ```sh
+   kubectl -n totallylegitco get pvc | grep new-uploads
+   ```
+
+2. **Fax SSH secret** — the worker mounts `faxymcfaxface-ssh` (as
+   `ray/cluster.yaml` does); `ray/cluster-back.yaml` uses `ssh-privatekey`
+   instead. Check which secret actually exists / holds the working key:
+
+   ```sh
+   kubectl -n totallylegitco get secret | grep -E 'ssh|fax'
+   ```
+
+3. **SSH user** — the worker process runs as **root**, so it connects to the
+   fax host as `root@$FAXYMCFAXFACE_HOST`. The Ray fax actor runs as the `ray`
+   user and connects as `ray@...`. Make sure the fax host's `authorized_keys`
+   accepts the key for the user the worker connects as (or add a `username=` to
+   the SSH client config).
+
+4. **Smoke test** — after deploying the worker but before flipping the flag on
+   the web pods, exec into the worker pod and confirm it can read a stored
+   document and reach the fax host:
+
+   ```sh
+   kubectl -n totallylegitco exec deploy/temporal-worker -- ls /external_data | head
+   ```
+
 ## Rollback
 
 Set `TEMPORAL_ENABLED=false` (or scale the worker to 0). Fax dispatch falls

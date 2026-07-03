@@ -14,7 +14,10 @@ thread-local; this drops any connection left stale/closed by a prior task.
 
 from django.db import close_old_connections
 
+from loguru import logger
+
 from temporalio import activity
+from temporalio.exceptions import ApplicationError
 
 from fighthealthinsurance import fax_send_core
 from fighthealthinsurance.fax_status import STATUS_NOT_FOUND
@@ -37,7 +40,16 @@ def send_fax_via_vendor(hashed_email: str, fax_uuid: str) -> bool:
     fax = fax_send_core.load_fax(hashed_email, fax_uuid)
     if fax is None:
         return False
-    return fax_send_core.send_fax_via_vendor(fax)
+    try:
+        return fax_send_core.send_fax_via_vendor(fax)
+    except Exception:
+        # Temporal records raised exception messages + tracebacks verbatim in
+        # durable workflow history. Keep the full detail in the worker logs,
+        # but raise a sanitized (still retryable) error carrying only the
+        # opaque uuid so document/vendor exception text can never leak
+        # sensitive strings into history.
+        logger.opt(exception=True).error(f"Vendor send failed for fax {fax_uuid}")
+        raise ApplicationError(f"vendor send failed for fax {fax_uuid}") from None
 
 
 @activity.defn

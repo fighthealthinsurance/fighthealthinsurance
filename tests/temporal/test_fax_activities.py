@@ -12,6 +12,8 @@ result directly (no ``await``) and these are plain sync tests.
 import uuid
 from unittest.mock import Mock, patch
 
+import pytest
+
 from temporalio.testing import ActivityEnvironment
 
 from fighthealthinsurance.activities import fax as fax_activities
@@ -51,6 +53,22 @@ def test_send_fax_via_vendor_skips_when_already_completed(mock_load):
     env = ActivityEnvironment()
     result = env.run(fax_activities.send_fax_via_vendor, "h", "u")
     assert result is True
+
+
+@patch("fighthealthinsurance.fax_send_core.send_fax_via_vendor")
+@patch("fighthealthinsurance.fax_send_core.load_fax")
+def test_send_fax_via_vendor_sanitizes_exceptions(mock_load, mock_send):
+    """Raised errors must not leak vendor/document text into workflow history."""
+    from temporalio.exceptions import ApplicationError
+
+    mock_load.return_value = Mock(vendor_send_completed=False, uuid="u")
+    mock_send.side_effect = Exception("sensitive patient details /tmp/doc.pdf")
+    env = ActivityEnvironment()
+    with pytest.raises(ApplicationError) as exc_info:
+        env.run(fax_activities.send_fax_via_vendor, "h", "u")
+    assert "sensitive" not in str(exc_info.value)
+    assert "u" in str(exc_info.value)
+    assert exc_info.value.__cause__ is None
 
 
 @patch("fighthealthinsurance.fax_send_core.finalize_fax", return_value=True)

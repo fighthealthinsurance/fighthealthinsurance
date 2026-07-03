@@ -106,8 +106,10 @@ class Base(Configuration):
     TEMPORAL_CLIENT_CERT_PATH = os.getenv("TEMPORAL_CLIENT_CERT_PATH", "")
     TEMPORAL_CLIENT_KEY_PATH = os.getenv("TEMPORAL_CLIENT_KEY_PATH", "")
     try:
-        TEMPORAL_MAX_ACTIVITY_WORKERS = int(
-            os.getenv("TEMPORAL_MAX_ACTIVITY_WORKERS") or 20
+        # Clamp to >=1: 0 or a negative value would crash the worker's
+        # ThreadPoolExecutor at startup.
+        TEMPORAL_MAX_ACTIVITY_WORKERS = max(
+            1, int(os.getenv("TEMPORAL_MAX_ACTIVITY_WORKERS") or 20)
         )
     except ValueError:
         # A misconfigured env var should not block app startup.

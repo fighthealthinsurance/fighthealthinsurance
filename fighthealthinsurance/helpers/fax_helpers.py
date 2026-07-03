@@ -148,6 +148,10 @@ class SendFaxHelper:
         f.sent = (
             False  # Technically not necessary, but set in case the live actor fails
         )
+        # An explicit resend must actually re-transmit: clear the vendor
+        # idempotency marker or send_fax_via_vendor would short-circuit and
+        # report success without faxing the new number.
+        f.vendor_send_completed = False
         f.save()
         _dispatch_or_ray_fax(hashed_email, uuid)
         return True

@@ -93,17 +93,7 @@ class StripeWebhookHelper:
                     FaxesToSend.objects.filter(uuid=fax_uuid).update(
                         paid=True, should_send=True
                     )
-                    # When Temporal is enabled, hand the delayed send to a
-                    # durable SendFaxWorkflow timer (replacing the FaxPollingActor
-                    # ~1h sweep). When it isn't, dispatch_fax_send is a no-op and
-                    # the Ray polling actor still picks this up via should_send.
-                    from fighthealthinsurance.temporal_client import dispatch_fax_send
-
-                    fax = FaxesToSend.objects.filter(uuid=fax_uuid).first()
-                    if fax is not None:
-                        dispatch_fax_send(
-                            fax.hashed_email, str(fax.uuid), delay_send=True
-                        )
+                    StripeWebhookHelper._handle_fax_payment(fax_uuid)
                 else:
                     logger.warning("No uuid in metadata for fax payment")
             else:
@@ -111,6 +101,34 @@ class StripeWebhookHelper:
         except Exception as e:
             logger.opt(exception=True).error("Error processing checkout session")
             raise e
+
+    @staticmethod
+    def _handle_fax_payment(fax_uuid: str) -> None:
+        """Kick off sending for a just-paid fax.
+
+        When Temporal is enabled the delayed send runs as a durable
+        SendFaxWorkflow timer (replacing the FaxPollingActor ~1h sweep); if that
+        dispatch fails, fall back to an immediate Ray send -- the polling sweep
+        is gated off under Temporal, so a paid fax would otherwise sit unsent
+        forever. When Temporal is disabled the dispatch is a no-op and the Ray
+        polling actor picks the fax up via should_send, preserving the ~1h
+        delay as before.
+        """
+        from fighthealthinsurance.temporal_client import dispatch_fax_send
+
+        fax = FaxesToSend.objects.filter(uuid=fax_uuid).first()
+        if fax is None:
+            logger.warning(f"Paid fax {fax_uuid} not found; cannot dispatch send")
+            return
+        dispatched = dispatch_fax_send(fax.hashed_email, str(fax.uuid), delay_send=True)
+        if not dispatched and getattr(settings, "TEMPORAL_ENABLED", False):
+            logger.warning(
+                f"Temporal dispatch failed for paid fax {fax.uuid}; "
+                "falling back to immediate Ray send"
+            )
+            from fighthealthinsurance.fax_actor_ref import fax_actor_ref
+
+            fax_actor_ref.get.do_send_fax.remote(fax.hashed_email, str(fax.uuid))
 
     @staticmethod
     def _build_recovery_link(

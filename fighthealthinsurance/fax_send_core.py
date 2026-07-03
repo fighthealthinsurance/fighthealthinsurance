@@ -92,11 +92,12 @@ def precheck_fax(fax: "FaxesToSend") -> str:
     denial and destination and has been stamped ``attempting_to_send_as_of`` --
     the caller should proceed to :func:`send_fax_via_vendor`.
     """
-    if fax.sent:
-        # Idempotency guard: never re-send a fax that has already gone out. The
-        # Ray delayed-send query already excludes sent faxes, so this only ever
-        # short-circuits a duplicate Temporal dispatch / resend race.
-        logger.info(f"Fax uuid={fax.uuid} already sent; skipping")
+    if fax.sent and fax.fax_success:
+        # Idempotency guard: never re-send a fax that already went out
+        # successfully (e.g. a duplicate Temporal dispatch or resend race).
+        # A *failed* attempt (sent=True, fax_success=False) may be retried,
+        # matching the original FaxActor behavior.
+        logger.info(f"Fax uuid={fax.uuid} already sent successfully; skipping")
         return STATUS_ALREADY_SENT
     denial = fax.denial_id
     if denial is None:

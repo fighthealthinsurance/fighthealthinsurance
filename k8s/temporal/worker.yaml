@@ -51,14 +51,27 @@ spec:
               cpu: "1"
               memory: 1Gi
           volumeMounts:
-            # SSH key for the FaxyMcFaxFace backend, exactly as the Ray fax actor
-            # mounts it. TODO: confirm this mountPath matches what FaxyMcFaxFace
-            # expects in the FHI image (the Ray cluster mounts at /home/ray/.ssh).
+            # Fax documents live on COMBINED_STORAGE -> /external_data. Mount the
+            # same PVC the web pods write to (deploy-back.yaml) so activities can
+            # read the stored PDF instead of falling back to regeneration.
+            # NOTE: the Ray back cluster mounts a *different* claim (backup3) at
+            # this path -- see the pre-flight checklist in README.md.
+            - name: new-uploads-longhorn-backup4
+              mountPath: /external_data
+            # SSH key for the FaxyMcFaxFace backend. The worker runs as root
+            # (start-server.sh execs manage.py directly), so ~/.ssh is /root/.ssh.
+            # Pre-flight: confirm the fax host trusts this key for the *root*
+            # user, and whether the live secret is faxymcfaxface-ssh or
+            # ssh-privatekey (README checklist).
             - name: faxymcfaxface-ssh
               readOnly: true
               mountPath: "/root/.ssh"
       volumes:
+        - name: new-uploads-longhorn-backup4
+          persistentVolumeClaim:
+            claimName: new-uploads-longhorn-backup4
         - name: faxymcfaxface-ssh
           secret:
             secretName: faxymcfaxface-ssh
-            defaultMode: 0755
+            # Private key: readable by the root worker process only.
+            defaultMode: 0400
