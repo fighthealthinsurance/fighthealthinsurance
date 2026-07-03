@@ -76,8 +76,10 @@ are already set on the worker Deployment:
 | `TEMPORAL_NAMESPACE` | `default` |
 | `TEMPORAL_TASK_QUEUE` | `fhi-fax` |
 
-For TLS/mTLS to the cluster, also set `TEMPORAL_TLS=true` and optionally
-`TEMPORAL_CLIENT_CERT_PATH` / `TEMPORAL_CLIENT_KEY_PATH`.
+`TEMPORAL_TLS=true` enables (server-side) TLS to the cluster. For **mTLS**,
+additionally set **both** `TEMPORAL_CLIENT_CERT_PATH` and
+`TEMPORAL_CLIENT_KEY_PATH` — if either is missing the client silently falls
+back to plain TLS.
 
 ## Pre-flight checklist (verify before flipping the flag)
 
@@ -111,10 +113,20 @@ any one yaml:
 
 4. **Smoke test** — after deploying the worker but before flipping the flag on
    the web pods, exec into the worker pod and confirm it can read a stored
-   document and reach the fax host:
+   document **and** authenticate to the fax host with the same user/key
+   mapping the worker uses (local user + `~/.ssh` + `$FAXYMCFAXFACE_HOST`):
 
    ```sh
    kubectl -n totallylegitco exec deploy/temporal-worker -- ls /external_data | head
+   kubectl -n totallylegitco exec deploy/temporal-worker -- \
+     sh -c 'ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new "$FAXYMCFAXFACE_HOST" true'
+   ```
+
+   If the image has no `ssh` binary, use the bundled asyncssh instead:
+
+   ```sh
+   kubectl -n totallylegitco exec deploy/temporal-worker -- python -c \
+     "import asyncio, os, asyncssh; asyncio.run(asyncssh.connect(os.environ['FAXYMCFAXFACE_HOST'])); print('ssh ok')"
    ```
 
 5. **Drain the pre-flag backlog** — faxes queued before the flip

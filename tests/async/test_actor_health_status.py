@@ -27,6 +27,10 @@ def _patched_actor_refs():
     return stack
 
 
+# Pin the default (Temporal off) so the 6-actor assertions don't flake if a
+# dev/CI shell exports TEMPORAL_ENABLED=true (tox uses passenv = *). The
+# Temporal-on tests below re-override at the method level.
+@override_settings(TEMPORAL_ENABLED=False)
 class TestActorHealthStatus(TestCase):
     """Tests for actor health status checking."""
 
