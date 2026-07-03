@@ -13,6 +13,7 @@ step.
 """
 
 import asyncio
+import os
 from typing import TYPE_CHECKING, Optional, Union
 from uuid import UUID
 
@@ -140,18 +141,36 @@ def send_fax_via_vendor(fax: "FaxesToSend") -> bool:
     if fax.name is not None and len(fax.name) > 2:
         extra += f"This fax is sent on behalf of {fax.name}."
     logger.debug(f"Kicking off fax sending for uuid={fax.uuid}")
-    result = asyncio.run(
-        flexible_fax_magic.send_fax(
-            input_paths=[fax.get_temporary_document_path()],
-            extra=extra,
-            destination=destination,
-            blocking=True,
-            professional=fax.professional,
+    # get_temporary_document_path leaves cleanup to the caller (delete=False),
+    # so remove the temp file on both success and failure paths.
+    document_path = fax.get_temporary_document_path()
+    try:
+        result = asyncio.run(
+            flexible_fax_magic.send_fax(
+                input_paths=[document_path],
+                extra=extra,
+                destination=destination,
+                blocking=True,
+                professional=fax.professional,
+            )
         )
-    )
+    finally:
+        try:
+            os.unlink(document_path)
+        except OSError:
+            pass
     if result:
-        fax.vendor_send_completed = True
-        fax.save(update_fields=["vendor_send_completed"])
+        try:
+            fax.vendor_send_completed = True
+            fax.save(update_fields=["vendor_send_completed"])
+        except Exception:
+            # The vendor already accepted the fax. Raising here would make the
+            # Temporal retry policy re-send an already-delivered document, so
+            # log and report success; finalize (which retries indefinitely)
+            # records the outcome once the DB recovers.
+            logger.opt(exception=True).error(
+                f"Failed to persist vendor_send_completed for fax uuid={fax.uuid}"
+            )
     return result
 
 

@@ -79,37 +79,55 @@ async def execute_send_fax_workflow(
     If a workflow for this fax is already open, attach to it and wait for its
     result instead of failing -- the activities hydrate all fax state from the
     DB at send time, so the in-flight run acts on the freshest data.
+
+    Raises only when the workflow was definitely NOT started (connection /
+    start errors), so the caller can safely fall back to Ray. Once Temporal has
+    accepted the workflow this returns a bool and never signals fallback -- a
+    failed or unobservable run must not trigger a second, concurrent send.
     """
+    from temporalio.client import WorkflowFailureError
     from temporalio.exceptions import WorkflowAlreadyStartedError
 
     from fighthealthinsurance.workflows.types import SendFaxInput
 
     client = await get_temporal_client()
     try:
-        return bool(
-            await client.execute_workflow(
-                "SendFaxWorkflow",
-                SendFaxInput(
-                    hashed_email=hashed_email,
-                    fax_uuid=str(fax_uuid),
-                    delay_send=delay_send,
-                ),
-                id=f"send-fax-{fax_uuid}",
-                task_queue=settings.TEMPORAL_TASK_QUEUE,
-            )
+        handle = await client.start_workflow(
+            "SendFaxWorkflow",
+            SendFaxInput(
+                hashed_email=hashed_email,
+                fax_uuid=str(fax_uuid),
+                delay_send=delay_send,
+            ),
+            id=f"send-fax-{fax_uuid}",
+            task_queue=settings.TEMPORAL_TASK_QUEUE,
         )
     except WorkflowAlreadyStartedError:
         logger.info(f"SendFaxWorkflow already running for fax {fax_uuid}; waiting")
         handle = client.get_workflow_handle(f"send-fax-{fax_uuid}")
+    # Past this point Temporal owns the send; never map errors to "fall back".
+    try:
         return bool(await handle.result())
+    except WorkflowFailureError:
+        # The workflow ran and failed; it already recorded/notified the
+        # failure itself. Falling back would re-send.
+        logger.opt(exception=True).error(f"SendFaxWorkflow failed for fax {fax_uuid}")
+        return False
+    except Exception:
+        # Accepted but the result is unobservable (e.g. RPC drop mid-wait).
+        # The run is still executing server-side; a Ray send would race it.
+        logger.opt(exception=True).error(
+            f"Lost result of SendFaxWorkflow for fax {fax_uuid}; not falling back"
+        )
+        return False
 
 
 def dispatch_fax_send_blocking(hashed_email: str, fax_uuid: str) -> Optional[bool]:
     """Run a fax send via Temporal and block until it finishes.
 
-    Returns the send result (True/False) when handled by Temporal, or None when
-    Temporal is disabled or the dispatch failed -- in which case the caller
-    should fall back to the blocking Ray path.
+    Returns the send result (True/False) when handled by Temporal, or None only
+    when Temporal is disabled or the workflow was never started -- the two
+    cases where the caller may safely fall back to the blocking Ray path.
     """
     if not getattr(settings, "TEMPORAL_ENABLED", False):
         return None

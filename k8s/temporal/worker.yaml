@@ -43,6 +43,14 @@ spec:
             - secretRef:
                 name: fight-health-insurance-primary-secret
           imagePullPolicy: Always
+          # Partial hardening: no privilege escalation, all capabilities
+          # dropped. runAsNonRoot / readOnlyRootFilesystem are deferred -- the
+          # image entrypoint (start-server.sh) currently runs as root and the
+          # worker writes temp fax documents, matching the other manifests.
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           resources:
             requests:
               cpu: "250m"

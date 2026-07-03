@@ -117,6 +117,14 @@ any one yaml:
    kubectl -n totallylegitco exec deploy/temporal-worker -- ls /external_data | head
    ```
 
+5. **Drain the pre-flag backlog** — faxes queued before the flip
+   (`should_send=True, sent=False`) have no Temporal workflow, and the Ray
+   delayed sweep goes idle once the flag is on. Before (or right after)
+   flipping, send any stragglers via `SendFaxHelper.blocking_dosend_all` or
+   confirm none exist. Also kill the old detached `fax_polling_actor` if one
+   is still running from a pre-flag deploy (`launch_polling_actors --force`
+   relaunch excludes it under Temporal, but does not kill a live one).
+
 ## Rollback
 
 Set `TEMPORAL_ENABLED=false` (or scale the worker to 0). Fax dispatch falls

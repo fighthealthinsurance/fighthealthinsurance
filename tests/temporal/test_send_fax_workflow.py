@@ -21,6 +21,7 @@ from fighthealthinsurance.fax_status import (
     STATUS_ALREADY_SENT,
     STATUS_MISSING_DENIAL,
     STATUS_MISSING_DESTINATION,
+    STATUS_NOT_FOUND,
     STATUS_OK,
 )
 from fighthealthinsurance.workflows.send_fax import SendFaxWorkflow
@@ -131,6 +132,15 @@ async def test_missing_destination_finalizes_without_send():
 @pytest.mark.asyncio
 async def test_already_sent_is_noop():
     rec = _Recorder(precheck_status=STATUS_ALREADY_SENT)
+    async with await WorkflowEnvironment.start_local() as env:
+        result = await _run(env, rec)
+    assert result is False
+    assert [c[0] for c in rec.calls] == ["precheck"]
+
+
+@pytest.mark.asyncio
+async def test_not_found_stops_without_send_or_finalize():
+    rec = _Recorder(precheck_status=STATUS_NOT_FOUND)
     async with await WorkflowEnvironment.start_local() as env:
         result = await _run(env, rec)
     assert result is False

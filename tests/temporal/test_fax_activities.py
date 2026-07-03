@@ -71,6 +71,13 @@ def test_send_fax_via_vendor_sanitizes_exceptions(mock_load, mock_send):
     assert exc_info.value.__cause__ is None
 
 
+@patch("fighthealthinsurance.fax_send_core.load_fax", return_value=None)
+def test_finalize_fax_returns_false_when_fax_not_found(mock_load):
+    env = ActivityEnvironment()
+    result = env.run(fax_activities.finalize_fax, "h", "u", True, False)
+    assert result is False
+
+
 @patch("fighthealthinsurance.fax_send_core.finalize_fax", return_value=True)
 @patch("fighthealthinsurance.fax_send_core.load_fax")
 def test_finalize_fax_delegates_to_core(mock_load, mock_finalize):

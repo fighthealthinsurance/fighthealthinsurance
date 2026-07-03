@@ -48,13 +48,13 @@ FINALIZE_RETRY = RetryPolicy(
 @workflow.defn
 class SendFaxWorkflow:
     @workflow.run
-    async def run(self, input: SendFaxInput) -> bool:
-        if input.delay_send:
+    async def run(self, fax_input: SendFaxInput) -> bool:
+        if fax_input.delay_send:
             await workflow.sleep(DELAYED_SEND_WAIT)
 
         status = await workflow.execute_activity(
             fax_activities.precheck_fax,
-            args=[input.hashed_email, input.fax_uuid],
+            args=[fax_input.hashed_email, fax_input.fax_uuid],
             start_to_close_timeout=timedelta(seconds=60),
             retry_policy=RetryPolicy(maximum_attempts=5),
         )
@@ -68,7 +68,7 @@ class SendFaxWorkflow:
         if status == STATUS_MISSING_DESTINATION:
             await workflow.execute_activity(
                 fax_activities.finalize_fax,
-                args=[input.hashed_email, input.fax_uuid, False, True],
+                args=[fax_input.hashed_email, fax_input.fax_uuid, False, True],
                 start_to_close_timeout=timedelta(minutes=2),
                 retry_policy=FINALIZE_RETRY,
             )
@@ -80,7 +80,7 @@ class SendFaxWorkflow:
         try:
             success = await workflow.execute_activity(
                 fax_activities.send_fax_via_vendor,
-                args=[input.hashed_email, input.fax_uuid],
+                args=[fax_input.hashed_email, fax_input.fax_uuid],
                 start_to_close_timeout=timedelta(minutes=10),
                 retry_policy=RetryPolicy(maximum_attempts=3),
             )
@@ -94,7 +94,7 @@ class SendFaxWorkflow:
 
         await workflow.execute_activity(
             fax_activities.finalize_fax,
-            args=[input.hashed_email, input.fax_uuid, success, False],
+            args=[fax_input.hashed_email, fax_input.fax_uuid, success, False],
             start_to_close_timeout=timedelta(minutes=2),
             retry_policy=FINALIZE_RETRY,
         )
