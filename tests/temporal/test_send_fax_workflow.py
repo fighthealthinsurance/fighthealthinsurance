@@ -35,10 +35,12 @@ class _Recorder:
         precheck_status: str = STATUS_OK,
         send_result: bool = True,
         send_raises: bool = False,
+        finalize_fail_times: int = 0,
     ):
         self.precheck_status = precheck_status
         self.send_result = send_result
         self.send_raises = send_raises
+        self.finalize_fail_times = finalize_fail_times
         self.calls: list = []
 
     def activities(self):
@@ -64,6 +66,9 @@ class _Recorder:
             missing_destination: bool,
         ) -> bool:
             rec.calls.append(("finalize", fax_success, missing_destination))
+            finalize_count = sum(1 for c in rec.calls if c[0] == "finalize")
+            if finalize_count <= rec.finalize_fail_times:
+                raise ApplicationError("simulated transient finalize failure")
             return True
 
         return [precheck_fax, send_fax_via_vendor, finalize_fax]
@@ -152,3 +157,20 @@ async def test_send_raising_is_finalized_as_failure_after_retries():
     # The send was retried (more than one attempt) and then finalized as failure.
     assert rec.calls.count(("send", "h", "u")) >= 2
     assert rec.calls[-1] == ("finalize", False, False)
+
+
+@pytest.mark.asyncio
+async def test_finalize_retries_through_transient_failures():
+    """Post-send bookkeeping must survive transient outages, not fail the run.
+
+    Finalize fails 4 times then succeeds -- past the old maximum_attempts=3
+    limit, which would have failed the workflow with the fax already delivered
+    but recorded as unsent.
+    """
+    rec = _Recorder(precheck_status=STATUS_OK, send_result=True, finalize_fail_times=4)
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        result = await _run(env, rec)
+    assert result is True
+    finalize_calls = [c for c in rec.calls if c[0] == "finalize"]
+    assert len(finalize_calls) == 5
+    assert finalize_calls[-1] == ("finalize", True, False)

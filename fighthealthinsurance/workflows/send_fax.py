@@ -33,6 +33,17 @@ with workflow.unsafe.imports_passed_through():
 # fax-polling actor's "older than 1 hour" threshold.
 DELAYED_SEND_WAIT = timedelta(hours=1)
 
+# Finalize records the outcome (sent/fax_success/appeal) and notifies the user.
+# Once the vendor send has happened this bookkeeping MUST eventually run, or the
+# fax is physically delivered while the DB says sent=False and nobody is
+# notified. So: retry forever with capped backoff -- the workflow stays visibly
+# running/retrying in the Temporal UI through e.g. a DB outage instead of dying
+# into a silent FAILED state. (maximum_attempts=0 means unlimited.)
+FINALIZE_RETRY = RetryPolicy(
+    maximum_attempts=0,
+    maximum_interval=timedelta(minutes=5),
+)
+
 
 @workflow.defn
 class SendFaxWorkflow:
@@ -59,7 +70,7 @@ class SendFaxWorkflow:
                 fax_activities.finalize_fax,
                 args=[input.hashed_email, input.fax_uuid, False, True],
                 start_to_close_timeout=timedelta(minutes=2),
-                retry_policy=RetryPolicy(maximum_attempts=3),
+                retry_policy=FINALIZE_RETRY,
             )
             return False
 
@@ -85,6 +96,6 @@ class SendFaxWorkflow:
             fax_activities.finalize_fax,
             args=[input.hashed_email, input.fax_uuid, success, False],
             start_to_close_timeout=timedelta(minutes=2),
-            retry_policy=RetryPolicy(maximum_attempts=3),
+            retry_policy=FINALIZE_RETRY,
         )
         return success
