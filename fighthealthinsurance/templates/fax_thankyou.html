@@ -11,11 +11,17 @@ Thank you for using Fight Health Insurance & Our Fax Service!
 <section id="contact">
     <div class="container">
       <div class="section-header text-align-center">
-	<h2>Thank you!</h2>
+	<h2>{% if already_sent %}Already received{% else %}Thank you!{% endif %}</h2>
       </div>
+      {% if already_sent %}
+      <p>
+	Good news &mdash; this appeal fax is already in our system and being processed (or has already been delivered). You don't need to send it again; you're all set.
+      </p>
+      {% else %}
       <p>
 	The dream of the <a href="https://www.youtube.com/watch?v=U4hShMEk1Ew">90s is alive in Portland</a>, Seattle, and <a href="https://amzn.to/3UvGZaD">our FaxMachine (you can get your own too!)</a>.
       </p>
+      {% endif %}
       <div class="appeal-donate-wrapper" style="background-color: #f8f9fa; padding: 1.5rem; border-radius: 8px; margin: 1.5rem auto; max-width: 680px;">
         <p style="color: #333; text-align: center; margin-bottom: 1rem;">
           <strong>Appreciate us?</strong> Help us keep fighting for others:

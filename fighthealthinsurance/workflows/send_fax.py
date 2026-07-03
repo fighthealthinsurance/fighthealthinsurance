@@ -33,13 +33,20 @@ with workflow.unsafe.imports_passed_through():
 # fax-polling actor's "older than 1 hour" threshold.
 DELAYED_SEND_WAIT = timedelta(hours=1)
 
-# Finalize records the outcome (sent/fax_success/appeal) and notifies the user.
-# Once the vendor send has happened this bookkeeping MUST eventually run, or the
-# fax is physically delivered while the DB says sent=False and nobody is
-# notified. So: retry forever with capped backoff -- the workflow stays visibly
-# running/retrying in the Temporal UI through e.g. a DB outage instead of dying
-# into a silent FAILED state. (maximum_attempts=0 means unlimited.)
-FINALIZE_RETRY = RetryPolicy(
+# Activities that must not give up partway through a transient outage retry
+# forever with capped backoff, staying visibly running/retrying in the Temporal
+# UI instead of dying into a silent FAILED state (maximum_attempts=0 = unlimited):
+#
+# * precheck -- a bounded retry that ran out would fail the whole workflow before
+#   the fax was ever sent, orphaning it with no finalize and no notification (the
+#   Ray delayed sweep is gated off under Temporal, so nothing else retries it).
+# * finalize -- once the vendor send has happened this bookkeeping MUST run, or
+#   the fax is physically delivered while the DB says sent=False and nobody is
+#   notified.
+#
+# Terminal, non-transient outcomes are returned as STATUS_* values (not raised),
+# so they are handled without retrying forever.
+DURABLE_RETRY = RetryPolicy(
     maximum_attempts=0,
     maximum_interval=timedelta(minutes=5),
 )
@@ -56,7 +63,7 @@ class SendFaxWorkflow:
             fax_activities.precheck_fax,
             args=[fax_input.hashed_email, fax_input.fax_uuid],
             start_to_close_timeout=timedelta(seconds=60),
-            retry_policy=RetryPolicy(maximum_attempts=5),
+            retry_policy=DURABLE_RETRY,
         )
 
         # Terminal precheck outcomes: nothing left to send.
@@ -70,7 +77,7 @@ class SendFaxWorkflow:
                 fax_activities.finalize_fax,
                 args=[fax_input.hashed_email, fax_input.fax_uuid, False, True],
                 start_to_close_timeout=timedelta(minutes=2),
-                retry_policy=FINALIZE_RETRY,
+                retry_policy=DURABLE_RETRY,
             )
             return False
 
@@ -81,8 +88,15 @@ class SendFaxWorkflow:
             success = await workflow.execute_activity(
                 fax_activities.send_fax_via_vendor,
                 args=[fax_input.hashed_email, fax_input.fax_uuid],
-                start_to_close_timeout=timedelta(minutes=10),
-                retry_policy=RetryPolicy(maximum_attempts=3),
+                # The vendor layer has its own long internal timeouts (up to
+                # ~1300s per backend, across multiple backends), so give the
+                # activity a wide window. It is a synchronous, non-heartbeating
+                # thread Temporal cannot cancel, so a start_to_close timeout
+                # mid-send must NOT spawn a concurrent retry -> maximum_attempts=1.
+                # Cross-orchestrator dedupe is handled by the atomic
+                # vendor_send_completed claim in fax_send_core, not by retries.
+                start_to_close_timeout=timedelta(minutes=30),
+                retry_policy=RetryPolicy(maximum_attempts=1),
             )
         except ActivityError as e:
             # Let cancellation cancel the workflow; otherwise record a failed
@@ -96,6 +110,6 @@ class SendFaxWorkflow:
             fax_activities.finalize_fax,
             args=[fax_input.hashed_email, fax_input.fax_uuid, success, False],
             start_to_close_timeout=timedelta(minutes=2),
-            retry_policy=FINALIZE_RETRY,
+            retry_policy=DURABLE_RETRY,
         )
         return success

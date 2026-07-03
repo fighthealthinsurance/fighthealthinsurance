@@ -9,6 +9,8 @@ from typing import Optional
 
 import ray
 
+from loguru import logger
+
 from fighthealthinsurance.fax_actor_ref import fax_actor_ref
 from fighthealthinsurance.models import Appeal, Denial, FaxesToSend
 from fighthealthinsurance.temporal_client import (
@@ -17,14 +19,17 @@ from fighthealthinsurance.temporal_client import (
 )
 
 
-def _dispatch_or_ray_fax(hashed_email: str, fax_uuid: str) -> None:
+def _dispatch_or_ray_fax(
+    hashed_email: str, fax_uuid: str, force_restart: bool = False
+) -> None:
     """Send a fax via Temporal when enabled, otherwise via the Ray fax actor.
 
     Keeps a single switch point: when ``TEMPORAL_ENABLED`` is set the send runs
     as a durable ``SendFaxWorkflow``; otherwise (or if dispatch fails) it falls
-    back to the existing non-blocking Ray ``do_send_fax`` call.
+    back to the existing non-blocking Ray ``do_send_fax`` call. ``force_restart``
+    (an explicit resend) supersedes any in-flight workflow for this fax.
     """
-    if not dispatch_fax_send(hashed_email, str(fax_uuid)):
+    if not dispatch_fax_send(hashed_email, str(fax_uuid), force_restart=force_restart):
         fax_actor_ref.get.do_send_fax.remote(hashed_email, str(fax_uuid))
 
 
@@ -153,11 +158,14 @@ class SendFaxHelper:
         # report success without faxing the new number.
         f.vendor_send_completed = False
         f.save()
-        _dispatch_or_ray_fax(hashed_email, uuid)
+        # force_restart supersedes any workflow still open for this fax so the
+        # corrected destination is not dropped by a run already past its send
+        # step (which would never re-read the new number).
+        _dispatch_or_ray_fax(hashed_email, uuid, force_restart=True)
         return True
 
     @classmethod
-    def remote_send_fax(cls, hashed_email: str, uuid: str) -> bool:
+    def remote_send_fax(cls, hashed_email: str, uuid: str) -> str:
         """
         Send a fax using ray non-blocking.
 
@@ -166,12 +174,23 @@ class SendFaxHelper:
             uuid: UUID of the fax to send
 
         Returns:
-            True if send was initiated
+            ``"already_sent"`` if the fax already went out successfully (so the
+            caller can confirm receipt instead of silently re-rendering a
+            "sending" page), otherwise ``"dispatched"``.
         """
-        # Mark fax as to be sent just in case ray doesn't follow through
         f = FaxesToSend.objects.filter(hashed_email=hashed_email, uuid=uuid).get()
+        if f.sent and f.fax_success:
+            # Idempotent request -- e.g. a browser refresh/prefetch of the Stripe
+            # success page re-hitting this GET. The fax already went out; don't
+            # re-dispatch, and tell the caller so it can show a real confirmation
+            # rather than an identical "thank you, sending" page.
+            logger.info(
+                f"Fax uuid={uuid} already sent successfully; confirming receipt"
+            )
+            return "already_sent"
+        # Mark fax as to be sent just in case ray doesn't follow through
         f.should_send = True
         f.paid = True
         f.save()
         _dispatch_or_ray_fax(hashed_email, uuid)
-        return True
+        return "dispatched"

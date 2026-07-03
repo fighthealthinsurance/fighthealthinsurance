@@ -66,15 +66,25 @@ Fax sending only routes through Temporal when `TEMPORAL_ENABLED=true`. Until
 then everything stays on the Ray fax actor, so this can be deployed dark and
 flipped on later.
 
-Set these on the **web** pods (so `SendFaxHelper` dispatches workflows) and they
-are already set on the worker Deployment:
+Set `TEMPORAL_ENABLED=true` in the **shared `fight-health-insurance-secret`**,
+which the web pods, the Ray cluster pods, and the worker all read via `envFrom`.
+Do **not** set it only on the web pods: the Ray `FaxPollingActor` sweep gates
+itself off by reading `TEMPORAL_ENABLED` *in its own process*, so if the Ray
+pods don't see the flag the sweep keeps running and races the Temporal delay
+timer on the same paid fax (both would try to send it). The atomic
+`vendor_send_completed` claim in `fax_send_core` prevents an actual double
+transmission, but the correct configuration is to flip the flag everywhere at
+once via the shared secret.
 
-| Env var | Value |
-| --- | --- |
-| `TEMPORAL_ENABLED` | `true` |
-| `TEMPORAL_HOST` | `temporal-frontend:7233` |
-| `TEMPORAL_NAMESPACE` | `default` |
-| `TEMPORAL_TASK_QUEUE` | `fhi-fax` |
+| Env var | Value | Where |
+| --- | --- | --- |
+| `TEMPORAL_ENABLED` | `true` | shared `fight-health-insurance-secret` (web + Ray + worker) |
+| `TEMPORAL_HOST` | `temporal-frontend:7233` | web + worker |
+| `TEMPORAL_NAMESPACE` | `default` | web + worker |
+| `TEMPORAL_TASK_QUEUE` | `fhi-fax` | web + worker |
+
+(The worker Deployment also sets `TEMPORAL_ENABLED=true` explicitly, so it is
+always on regardless of the shared secret.)
 
 `TEMPORAL_TLS=true` enables (server-side) TLS to the cluster. For **mTLS**,
 additionally set **both** `TEMPORAL_CLIENT_CERT_PATH` and
@@ -130,12 +140,15 @@ any one yaml:
    ```
 
 5. **Drain the pre-flag backlog** — faxes queued before the flip
-   (`should_send=True, sent=False`) have no Temporal workflow, and the Ray
-   delayed sweep goes idle once the flag is on. Before (or right after)
-   flipping, send any stragglers via `SendFaxHelper.blocking_dosend_all` or
-   confirm none exist. Also kill the old detached `fax_polling_actor` if one
-   is still running from a pre-flag deploy (`launch_polling_actors --force`
-   relaunch excludes it under Temporal, but does not kill a live one).
+   (`should_send=True, sent=False`) have no Temporal workflow. The Ray delayed
+   sweep only goes idle in a process that actually sees `TEMPORAL_ENABLED=true`,
+   so this holds **only if the flag is set on the Ray pods** (via the shared
+   secret above) — otherwise the sweep keeps running alongside Temporal. Before
+   (or right after) flipping, send any stragglers via
+   `SendFaxHelper.blocking_dosend_all` or confirm none exist. Also kill the old
+   detached `fax_polling_actor` if one is still running from a pre-flag deploy
+   (`launch_polling_actors --force` relaunch excludes it under Temporal, but
+   does not kill a live one).
 
 ## Rollback
 

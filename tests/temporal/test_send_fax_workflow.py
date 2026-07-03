@@ -37,11 +37,13 @@ class _Recorder:
         send_result: bool = True,
         send_raises: bool = False,
         finalize_fail_times: int = 0,
+        precheck_fail_times: int = 0,
     ):
         self.precheck_status = precheck_status
         self.send_result = send_result
         self.send_raises = send_raises
         self.finalize_fail_times = finalize_fail_times
+        self.precheck_fail_times = precheck_fail_times
         self.calls: list = []
 
     def activities(self):
@@ -50,6 +52,9 @@ class _Recorder:
         @activity.defn(name="precheck_fax")
         async def precheck_fax(hashed_email: str, fax_uuid: str) -> str:
             rec.calls.append(("precheck", hashed_email, fax_uuid))
+            precheck_count = sum(1 for c in rec.calls if c[0] == "precheck")
+            if precheck_count <= rec.precheck_fail_times:
+                raise ApplicationError("simulated transient precheck failure")
             return rec.precheck_status
 
         @activity.defn(name="send_fax_via_vendor")
@@ -158,15 +163,41 @@ async def test_delay_send_waits_then_sends():
 
 
 @pytest.mark.asyncio
-async def test_send_raising_is_finalized_as_failure_after_retries():
-    """A send that keeps raising is retried, then recorded as a failed send."""
+async def test_send_raising_is_finalized_as_failure_without_concurrent_retry():
+    """A raising send is NOT retried, then recorded as a failed send.
+
+    The vendor activity is a synchronous, non-heartbeating thread Temporal
+    cannot cancel, so retrying it after a start_to_close timeout would run a
+    second attempt *concurrently* with the still-running first one and double-fax.
+    It therefore runs at most once (maximum_attempts=1); a failure is finalized
+    as a failed send so the user is still notified.
+    """
     rec = _Recorder(precheck_status=STATUS_OK, send_raises=True)
     async with await WorkflowEnvironment.start_time_skipping() as env:
         result = await _run(env, rec)
     assert result is False
-    # The send was retried (more than one attempt) and then finalized as failure.
-    assert rec.calls.count(("send", "h", "u")) >= 2
+    assert rec.calls.count(("send", "h", "u")) == 1
     assert rec.calls[-1] == ("finalize", False, False)
+
+
+@pytest.mark.asyncio
+async def test_precheck_retries_through_transient_failure_then_sends():
+    """A precheck that fails transiently is retried, not orphaned.
+
+    A bounded precheck retry that ran out would fail the whole workflow before
+    the fax was ever sent -- no finalize, no notification, and (with the Ray
+    delayed sweep gated off under Temporal) nothing to retry it. So precheck
+    retries through the outage and the fax still goes out.
+    """
+    rec = _Recorder(precheck_status=STATUS_OK, send_result=True, precheck_fail_times=3)
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        result = await _run(env, rec)
+    assert result is True
+    assert rec.calls.count(("precheck", "h", "u")) >= 4
+    assert [c[0] for c in rec.calls if c[0] in ("send", "finalize")] == [
+        "send",
+        "finalize",
+    ]
 
 
 @pytest.mark.asyncio

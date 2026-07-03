@@ -7,12 +7,19 @@ or touch the network. When ``settings.TEMPORAL_ENABLED`` is False -- the default
 leaving the existing Ray path entirely untouched.
 """
 
+import asyncio
 from typing import Any, Optional
 
 from asgiref.sync import async_to_sync
 from django.conf import settings
 
 from loguru import logger
+
+# Upper bound on how long a *blocking* dispatch waits for a workflow result
+# before returning (the run keeps executing server-side). Without this a
+# synchronous caller that attaches to a sleeping ``delay_send`` run would block
+# for the full 1-hour delay timer -- long enough to exhaust a web worker.
+_RESULT_WAIT_SECONDS = 15 * 60
 
 
 async def get_temporal_client() -> Any:
@@ -48,12 +55,29 @@ async def get_temporal_client() -> Any:
 
 
 async def start_send_fax_workflow(
-    hashed_email: str, fax_uuid: str, delay_send: bool = False
+    hashed_email: str,
+    fax_uuid: str,
+    delay_send: bool = False,
+    force_restart: bool = False,
 ) -> str:
-    """Start ``SendFaxWorkflow`` for a fax. Returns the workflow id."""
+    """Start ``SendFaxWorkflow`` for a fax. Returns the workflow id.
+
+    ``force_restart`` (used by an explicit resend) supersedes any run already
+    open for this fax. The deterministic id would otherwise raise
+    ``WorkflowAlreadyStartedError``, and if that open run is already past its
+    send step it never picks up a corrected destination -- terminating it and
+    starting fresh re-hydrates the new destination from the DB and sends it.
+    """
+    from temporalio.common import WorkflowIDConflictPolicy
+
     from fighthealthinsurance.workflows.types import SendFaxInput
 
     client = await get_temporal_client()
+    conflict_policy = (
+        WorkflowIDConflictPolicy.TERMINATE_EXISTING
+        if force_restart
+        else WorkflowIDConflictPolicy.UNSPECIFIED
+    )
     handle = await client.start_workflow(
         "SendFaxWorkflow",
         SendFaxInput(
@@ -63,9 +87,10 @@ async def start_send_fax_workflow(
         ),
         # Deterministic id -> at most one in-flight send per fax. A resend after
         # the previous run has closed starts a fresh run (default id-reuse
-        # policy), which is exactly what we want.
+        # policy); an in-flight run is superseded only when force_restart is set.
         id=f"send-fax-{fax_uuid}",
         task_queue=settings.TEMPORAL_TASK_QUEUE,
+        id_conflict_policy=conflict_policy,
     )
     logger.info(f"Started SendFaxWorkflow {handle.id} for fax {fax_uuid}")
     return str(handle.id)
@@ -107,7 +132,17 @@ async def execute_send_fax_workflow(
         handle = client.get_workflow_handle(f"send-fax-{fax_uuid}")
     # Past this point Temporal owns the send; never map errors to "fall back".
     try:
-        return bool(await handle.result())
+        # Bound the wait: a synchronous caller (staff blocking drain on a web
+        # request) that attaches to a sleeping delay_send run must not block for
+        # the whole 1-hour timer. On timeout the run keeps executing
+        # server-side; we do NOT fall back (a Ray send would race it).
+        return bool(await asyncio.wait_for(handle.result(), _RESULT_WAIT_SECONDS))
+    except asyncio.TimeoutError:
+        logger.warning(
+            f"Timed out waiting for SendFaxWorkflow result for fax {fax_uuid}; "
+            "it continues running server-side"
+        )
+        return False
     except WorkflowFailureError:
         # The workflow ran and failed; it already recorded/notified the
         # failure itself. Falling back would re-send.
@@ -141,20 +176,29 @@ def dispatch_fax_send_blocking(hashed_email: str, fax_uuid: str) -> Optional[boo
 
 
 def dispatch_fax_send(
-    hashed_email: str, fax_uuid: str, delay_send: bool = False
+    hashed_email: str,
+    fax_uuid: str,
+    delay_send: bool = False,
+    force_restart: bool = False,
 ) -> bool:
     """Dispatch a fax send via Temporal when enabled.
 
     Returns True if the send was handed to Temporal, False if it was not (either
     because Temporal is disabled or because starting the workflow failed) -- in
     which case the caller should fall back to the Ray path.
+
+    ``force_restart`` supersedes any in-flight run for this fax (see
+    :func:`start_send_fax_workflow`); used by an explicit resend so a corrected
+    destination is not dropped when a run is already open.
     """
     if not getattr(settings, "TEMPORAL_ENABLED", False):
         return False
     from temporalio.exceptions import WorkflowAlreadyStartedError
 
     try:
-        async_to_sync(start_send_fax_workflow)(hashed_email, str(fax_uuid), delay_send)
+        async_to_sync(start_send_fax_workflow)(
+            hashed_email, str(fax_uuid), delay_send, force_restart
+        )
         return True
     except WorkflowAlreadyStartedError:
         # A workflow for this fax is already open -- Temporal owns it, so this

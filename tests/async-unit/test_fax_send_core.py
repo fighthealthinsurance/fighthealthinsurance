@@ -14,7 +14,7 @@ integration:
 """
 
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 from django.test import override_settings
 
@@ -70,6 +70,126 @@ class TestResendClearsIdempotencyMarker:
         assert fax.vendor_send_completed is False
         assert fax.sent is False
         assert fax.destination == "8005559999"
+        dispatch.assert_called_once()
+
+    def test_resend_forces_workflow_restart(self, test_denial):
+        """A resend must supersede any in-flight run so the corrected number
+        isn't dropped by a run already past its send step."""
+        fax = _make_fax(
+            test_denial, sent=True, fax_success=True, vendor_send_completed=True
+        )
+        with patch(
+            "fighthealthinsurance.helpers.fax_helpers._dispatch_or_ray_fax"
+        ) as dispatch:
+            SendFaxHelper.resend(
+                fax_phone="8005559999",
+                uuid=str(fax.uuid),
+                hashed_email=fax.hashed_email,
+            )
+        assert dispatch.call_args.kwargs.get("force_restart") is True
+
+
+@pytest.mark.django_db
+class TestVendorSendAtomicClaim:
+    """The vendor_send_completed marker must be claimed atomically so a
+    concurrent second sender (Ray sweep vs Temporal timer, or a lost-ack Ray
+    fallback) can't transmit the same appeal twice."""
+
+    @patch("fighthealthinsurance.fax_send_core.flexible_fax_magic.send_fax")
+    def test_concurrent_second_sender_does_not_retransmit(self, mock_send, test_denial):
+        mock_send.return_value = True
+        fax = _make_fax(test_denial)
+        with patch.object(
+            fax, "get_temporary_document_path", return_value="/tmp/does-not-exist.pdf"
+        ):
+            assert fax_send_core.send_fax_via_vendor(fax) is True
+        fax.refresh_from_db()
+        assert fax.vendor_send_completed is True
+
+        # A racing sender that still holds a stale (False) in-memory marker must
+        # lose the atomic claim and NOT call the vendor a second time.
+        racer = FaxesToSend.objects.get(pk=fax.pk)
+        racer.vendor_send_completed = False
+        with patch.object(
+            racer, "get_temporary_document_path", return_value="/tmp/does-not-exist.pdf"
+        ):
+            assert fax_send_core.send_fax_via_vendor(racer) is True
+        assert mock_send.call_count == 1
+
+    @patch("fighthealthinsurance.fax_send_core.flexible_fax_magic.send_fax")
+    def test_failed_send_releases_claim_for_retry(self, mock_send, test_denial):
+        mock_send.return_value = False
+        fax = _make_fax(test_denial)
+        with patch.object(
+            fax, "get_temporary_document_path", return_value="/tmp/does-not-exist.pdf"
+        ):
+            assert fax_send_core.send_fax_via_vendor(fax) is False
+        fax.refresh_from_db()
+        # Claim released so a genuine retry can send.
+        assert fax.vendor_send_completed is False
+
+
+class TestFinalizeOrdering:
+    """finalize must persist durable state before any notification, so an
+    unlimited retry on a failing appeal.save() can't re-flood support."""
+
+    def _pro_fax(self):
+        fax = Mock()
+        fax.professional = True
+        fax.email = "pro@example.com"
+        fax.uuid = "u"
+        fax.for_appeal = Mock()
+        return fax
+
+    def test_appeal_persisted_before_notification(self):
+        fax = self._pro_fax()
+        order: list = []
+        fax.for_appeal.save.side_effect = lambda: order.append("appeal_save")
+        with patch(
+            "fighthealthinsurance.fax_send_core.send_fax_status_notification",
+            side_effect=lambda *a, **k: order.append("notify"),
+        ):
+            fax_send_core.finalize_fax(fax, True, False)
+        assert order == ["appeal_save", "notify"]
+
+    def test_no_notification_when_appeal_save_fails(self):
+        fax = self._pro_fax()
+        fax.for_appeal.save.side_effect = Exception("locked appeal row")
+        with patch(
+            "fighthealthinsurance.fax_send_core.send_fax_status_notification"
+        ) as notify:
+            with pytest.raises(Exception):
+                fax_send_core.finalize_fax(fax, True, False)
+        # Notification comes after the durable writes, so a failed appeal.save()
+        # (which the workflow will retry) never re-sends the support email.
+        notify.assert_not_called()
+
+
+@pytest.mark.django_db
+class TestRemoteSendFaxConfirmation:
+    """An already-sent fax reports 'already_sent' so the view can confirm
+    receipt instead of a silent no-op that looks like a fresh send."""
+
+    def test_already_sent_fax_is_confirmed_not_redispatched(self, test_denial):
+        fax = _make_fax(test_denial, sent=True, fax_success=True)
+        with patch(
+            "fighthealthinsurance.helpers.fax_helpers._dispatch_or_ray_fax"
+        ) as dispatch:
+            result = SendFaxHelper.remote_send_fax(
+                hashed_email=fax.hashed_email, uuid=str(fax.uuid)
+            )
+        assert result == "already_sent"
+        dispatch.assert_not_called()
+
+    def test_unsent_fax_is_dispatched(self, test_denial):
+        fax = _make_fax(test_denial, sent=False)
+        with patch(
+            "fighthealthinsurance.helpers.fax_helpers._dispatch_or_ray_fax"
+        ) as dispatch:
+            result = SendFaxHelper.remote_send_fax(
+                hashed_email=fax.hashed_email, uuid=str(fax.uuid)
+            )
+        assert result == "dispatched"
         dispatch.assert_called_once()
 
 

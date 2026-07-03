@@ -78,12 +78,27 @@ def load_fax(hashed_email: str, fax_uuid: Union[str, UUID]) -> Optional["FaxesTo
     if not isinstance(fax_uuid, str):
         fax_uuid = str(fax_uuid)
     try:
-        return FaxesToSend.objects.filter(
-            uuid=fax_uuid, hashed_email=hashed_email
-        ).get()
+        return (
+            FaxesToSend.objects.filter(uuid=fax_uuid, hashed_email=hashed_email)
+            .select_related("denial_id")
+            .get()
+        )
     except FaxesToSend.DoesNotExist:
         logger.warning(f"Fax not found for uuid={fax_uuid}")
         return None
+
+
+def _release_send_claim(fax: "FaxesToSend") -> None:
+    """Undo a vendor-send claim after a failed send so it can be retried."""
+    from fighthealthinsurance.models import FaxesToSend
+
+    try:
+        FaxesToSend.objects.filter(pk=fax.pk).update(vendor_send_completed=False)
+        fax.vendor_send_completed = False
+    except Exception:
+        logger.opt(exception=True).error(
+            f"Failed to release vendor send claim for fax uuid={fax.uuid}"
+        )
 
 
 def precheck_fax(fax: "FaxesToSend") -> str:
@@ -116,16 +131,23 @@ def precheck_fax(fax: "FaxesToSend") -> str:
 def send_fax_via_vendor(fax: "FaxesToSend") -> bool:
     """Send the fax document through the fax vendor. Returns success.
 
-    Idempotent on success: once a send has been handed to the vendor we record
-    ``vendor_send_completed`` and short-circuit any later call, so a retry (e.g.
-    Temporal re-running the activity after a worker crash) never double-faxes.
+    Concurrency-safe via an atomic claim: a single conditional UPDATE flips
+    ``vendor_send_completed`` False->True, and only the caller that wins the flip
+    transmits. A concurrent or later caller (a retry after a crash, or a second
+    orchestrator) sees the claim and short-circuits, so a fax is never sent
+    twice. A genuinely failed send releases the claim so it can be retried.
 
     Transport errors are *not* swallowed here -- they propagate so a caller with
     a retry policy (the Temporal workflow) can retry a genuinely failed send. The
     Ray orchestrator in :func:`do_send_fax_object` catches them instead, matching
     the prior actor behavior.
     """
+    from fighthealthinsurance.models import FaxesToSend
+
     if fax.vendor_send_completed:
+        # Fast path: this fax already went to the vendor. The atomic claim below
+        # is the authoritative guard against a concurrent sender; this in-memory
+        # check just avoids a needless DB round-trip on a sequential retry.
         logger.info(f"Fax uuid={fax.uuid} already handed to vendor; not re-sending")
         return True
     destination = fax.destination
@@ -134,6 +156,20 @@ def send_fax_via_vendor(fax: "FaxesToSend") -> bool:
         # caller can't crash the vendor send on a missing fax number.
         logger.warning(f"Fax uuid={fax.uuid} has no destination at send time")
         return False
+    # Atomically claim the right to send. The conditional UPDATE flips
+    # vendor_send_completed False->True for exactly one caller; any concurrent
+    # sender (a Ray delayed sweep racing the Temporal timer, or a Ray fallback
+    # racing a Temporal run whose start-ack was lost) loses the claim and returns
+    # without re-transmitting. A plain in-memory read of the flag was a TOCTOU
+    # race -- the multi-minute vendor call sits between check and write, so two
+    # senders both saw False and both faxed the insurer.
+    claimed = FaxesToSend.objects.filter(pk=fax.pk, vendor_send_completed=False).update(
+        vendor_send_completed=True
+    )
+    if not claimed:
+        logger.info(f"Fax uuid={fax.uuid} already claimed/sent; not re-sending")
+        return True
+    fax.vendor_send_completed = True
     denial = fax.denial_id
     extra = ""
     if denial is not None and denial.claim_id is not None and len(denial.claim_id) > 2:
@@ -154,23 +190,22 @@ def send_fax_via_vendor(fax: "FaxesToSend") -> bool:
                 professional=fax.professional,
             )
         )
+    except Exception:
+        # The send genuinely failed before completing: release the claim so a
+        # legitimate retry (the Temporal retry policy, or a Ray re-send) can send
+        # again instead of short-circuiting on a marker for a fax that never
+        # went out.
+        _release_send_claim(fax)
+        raise
     finally:
         try:
             os.unlink(document_path)
         except OSError:
             pass
-    if result:
-        try:
-            fax.vendor_send_completed = True
-            fax.save(update_fields=["vendor_send_completed"])
-        except Exception:
-            # The vendor already accepted the fax. Raising here would make the
-            # Temporal retry policy re-send an already-delivered document, so
-            # log and report success; finalize (which retries indefinitely)
-            # records the outcome once the DB recovers.
-            logger.opt(exception=True).error(
-                f"Failed to persist vendor_send_completed for fax uuid={fax.uuid}"
-            )
+    if not result:
+        # Vendor reported failure without raising -- release the claim too so the
+        # failed send can be retried.
+        _release_send_claim(fax)
     return result
 
 
@@ -185,22 +220,30 @@ def finalize_fax(
     email never undoes an already-sent fax or triggers a re-send on retry.
     """
     email = fax.email
+    # Durable state first: mark the fax sent and persist the appeal BEFORE any
+    # notification. finalize runs under an unlimited retry policy, so if a write
+    # here fails (e.g. a locked appeal row) the activity retries -- and because
+    # the emails come *after* the writes, a retry does not re-notify. (Sending
+    # the support email before an unguarded appeal.save() previously re-flooded
+    # support on every retry.)
     fax.sent = True
     fax.fax_success = fax_success
     fax.save()
-    send_fax_status_notification(fax, fax_success, missing_destination)
-    logger.debug(
-        f"Fax uuid={fax.uuid} sent (success={fax_success}); checking user notification"
-    )
     if fax.professional:
         appeal = fax.for_appeal
         if appeal is not None:
             appeal.sent = fax_success
             appeal.save()
-            return True
         else:
             logger.warning(f"No appeal found for professional {fax}")
-            return True
+    # Best-effort side effects: state is durable now, so these run once and must
+    # never raise (a flaky email must not trigger a finalize retry / re-send).
+    send_fax_status_notification(fax, fax_success, missing_destination)
+    logger.debug(
+        f"Fax uuid={fax.uuid} sent (success={fax_success}); checking user notification"
+    )
+    if fax.professional:
+        return True
     from fighthealthinsurance.email_utils import is_blocked_email
 
     if is_blocked_email(email):
