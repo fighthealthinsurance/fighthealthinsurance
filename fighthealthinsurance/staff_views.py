@@ -1,11 +1,13 @@
+import csv
 import datetime
 import json
 from collections import Counter, defaultdict
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from django.db import transaction
 from django.db.models import Count
-from django.http import HttpResponse
+from django.http import HttpResponse, StreamingHttpResponse
+from django.shortcuts import redirect, render
 from django.utils import timezone
 from django.views import View, generic
 
@@ -27,13 +29,34 @@ from fighthealthinsurance.models import (
     ChooserVote,
     Denial,
     FollowUpSched,
+    InterestedProfessional,
     MailingListSubscriber,
     ProfessionalDomainRelation,
     ProfessionalUser,
     ProposedAppeal,
+    ScheduledEmail,
     UserDomain,
 )
 from fighthealthinsurance.email_utils import is_sendable_email
+from fighthealthinsurance.business_hours import describe_send_window
+from fighthealthinsurance.proconnector import (
+    PROCONNECTOR_INTRO_SUBJECT,
+    build_search_links,
+    claim_email_for_send,
+    generate_intro_email,
+    get_next_interested_professional,
+    get_professional_cc_email,
+    intro_wording_problem,
+    mark_email_queued,
+    mark_email_sent,
+    mark_email_skipped,
+    release_email_claim,
+    non_spam_interested_professionals,
+    queue_proconnector_intro_email,
+    subject_wording_problem,
+    remaining_interested_professionals_count,
+    send_proconnector_intro_email,
+)
 from fighthealthinsurance.type_utils import User
 from fighthealthinsurance.utils import mask_email_for_logging
 
@@ -85,6 +108,166 @@ class StaffDashboardView(generic.TemplateView):
     """Staff dashboard with links to all staff views."""
 
     template_name = "staff_dashboard.html"
+
+
+class AdminStatusView(generic.TemplateView):
+    """Staff system-status dashboard.
+
+    A one-stop live health view for on-call: which ML model backends are up,
+    Ray polling-actor health, whether the Sonic fax backend can authenticate,
+    queued/pending fax counts, and external storage reachability.
+
+    Each subsystem is gathered independently and wrapped in its own error
+    handling so a single failing check degrades to an error row instead of
+    breaking the whole page. The model and Sonic checks make live network
+    calls (bounded by timeouts), so this page is intentionally staff-only and
+    a little slower than a cached endpoint.
+    """
+
+    template_name = "admin_status.html"
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        ctx["title"] = "System Status"
+        ctx["generated_at"] = timezone.now()
+        ctx["models"] = self._model_status()
+        ctx["actors"] = self._actor_status()
+        ctx["fax"] = self._fax_backend_status()
+        ctx["fax_queue"] = self._fax_queue_status()
+        ctx["storage"] = self._storage_status()
+        return ctx
+
+    @staticmethod
+    def _model_status() -> Dict[str, Any]:
+        """ML model backend health: a fresh, per-backend probe plus router summary.
+
+        Uses ``compute_model_health_details`` (a standalone check) rather than
+        ``health_status.get_snapshot``. The latter, on first access, runs its
+        own full refresh *and* can fire an alert email / start a background
+        timer — surprising side effects to attach to rendering a status page,
+        and a redundant second check pass. ``generated_at`` conveys freshness.
+        """
+        out: Dict[str, Any] = {"ok": True, "error": None, "details": []}
+        try:
+            from fighthealthinsurance.ml.health_status import (
+                compute_model_health_details,
+            )
+            from fighthealthinsurance.ml.ml_router import ml_router
+
+            details = compute_model_health_details()
+            out["details"] = details
+            out["alive"] = sum(1 for d in details if d["ok"])
+            out["total"] = len(details)
+            out["internal_alive"] = sum(
+                1 for d in details if d["ok"] and not d["external"]
+            )
+            out["internal_total"] = sum(1 for d in details if not d["external"])
+            out["working"] = ml_router.working()
+        except Exception as e:
+            logger.opt(exception=True).error("Error computing model status")
+            out["ok"] = False
+            out["error"] = str(e)
+        return out
+
+    @staticmethod
+    def _actor_status() -> Dict[str, Any]:
+        """Ray polling-actor health via the shared check_actor_health helper."""
+        out: Dict[str, Any] = {
+            "ok": True,
+            "error": None,
+            "details": [],
+            "alive_actors": 0,
+            "total_actors": 0,
+        }
+        try:
+            from fighthealthinsurance.actor_health_status import check_actor_health
+
+            out.update(check_actor_health())
+        except Exception as e:
+            logger.opt(exception=True).error("Error checking actor health")
+            out["ok"] = False
+            out["error"] = str(e)
+        return out
+
+    @staticmethod
+    def _fax_backend_status() -> Dict[str, Any]:
+        """Fax backend health, including a live Sonic login probe."""
+        out: Dict[str, Any] = {
+            "ok": True,
+            "error": None,
+            "backends": [],
+            "sonic": {"configured": False, "active": False, "ok": False, "error": None},
+        }
+        try:
+            from fighthealthinsurance.fax_health_status import (
+                check_fax_backends_health,
+            )
+
+            out.update(check_fax_backends_health())
+        except Exception as e:
+            logger.opt(exception=True).error("Error checking fax backends")
+            out["ok"] = False
+            out["error"] = str(e)
+            out["sonic"] = {
+                "configured": False,
+                "active": False,
+                "ok": False,
+                "error": str(e),
+            }
+        return out
+
+    @staticmethod
+    def _fax_queue_status() -> Dict[str, Any]:
+        """Counts of queued / pending / failed faxes from FaxesToSend.
+
+        Mirrors what the fax actor acts on: it sends faxes that are
+        ``should_send=True, sent=False`` and at least an hour old.
+        """
+        out: Dict[str, Any] = {"ok": True, "error": None}
+        try:
+            from fighthealthinsurance.models import FaxesToSend
+
+            now = timezone.now()
+            one_hour_ago = now - datetime.timedelta(hours=1)
+            week_ago = now - datetime.timedelta(days=7)
+
+            unsent = FaxesToSend.objects.filter(sent=False)
+            out["unsent_total"] = unsent.count()
+            out["ready_queued"] = unsent.filter(should_send=True).count()
+            out["due_now"] = unsent.filter(
+                should_send=True, date__lt=one_hour_ago
+            ).count()
+            out["awaiting_confirmation"] = unsent.filter(should_send=False).count()
+            out["in_flight"] = unsent.filter(
+                attempting_to_send_as_of__isnull=False
+            ).count()
+            out["failures_recent"] = FaxesToSend.objects.filter(
+                sent=True, fax_success=False, date__gte=week_ago
+            ).count()
+        except Exception as e:
+            logger.opt(exception=True).error("Error computing fax queue status")
+            out["ok"] = False
+            out["error"] = str(e)
+        return out
+
+    @staticmethod
+    def _storage_status() -> Dict[str, Any]:
+        """Whether the external (encrypted) storage backend is reachable."""
+        out: Dict[str, Any] = {"ok": False, "error": None}
+        try:
+            from django.conf import settings
+            from stopit import ThreadingTimeout as Timeout
+
+            es = settings.EXTERNAL_STORAGE
+            with Timeout(3.0):
+                es.listdir("./")
+                out["ok"] = True
+                return out
+            out["error"] = "timeout"
+        except Exception as e:
+            logger.opt(exception=True).warning("External storage health check failed")
+            out["error"] = str(e)
+        return out
 
 
 class ScheduleFollowUps(View):
@@ -453,3 +636,266 @@ class ModelUsageDashboardView(generic.TemplateView):
             if mn:
                 presented[mn] += n
         return _merge_stats(chosen, dict(presented))
+
+
+class ProConnectorProcessView(View):
+    """Staff workflow to introduce interested professionals to Cofactor AI.
+
+    After refocusing FHI on its consumer mission, we have a sourcing agreement
+    to introduce interested professionals (who may be a fit) to Cofactor AI.
+    This view shows one unprocessed ``InterestedProfessional`` at a time with all
+    known details, research links, and an AI-drafted (editable) intro email.
+    Staff either send the (edited) email -- which CCs the professional contact
+    address and records the send -- queue it to go out during the recipient's
+    likely business hours, or skip the record. Any action advances to the next
+    unprocessed record. Nothing is sent automatically.
+    """
+
+    template_name = "proconnector.html"
+
+    def _render_record(
+        self,
+        request,
+        pro: InterestedProfessional,
+        *,
+        draft: Optional[str] = None,
+        subject: Optional[str] = None,
+        skip_reason: str = "",
+        error: Optional[str] = None,
+        status: int = 200,
+    ) -> HttpResponse:
+        """Render the processing page for a single record.
+
+        ``draft`` is generated via AI only when not supplied so that re-renders
+        after a validation/send error preserve the staff member's edits.
+        """
+        if draft is None:
+            draft = generate_intro_email(pro)
+        links = build_search_links(pro)
+        context = {
+            "title": "Pro Connector",
+            "pro": pro,
+            "email_body": draft,
+            "subject": subject or PROCONNECTOR_INTRO_SUBJECT,
+            "cc_email": get_professional_cc_email(),
+            "google_search_url": links["google"],
+            "linkedin_search_url": links["linkedin"],
+            "skip_reason": skip_reason,
+            "error": error,
+            "remaining_count": remaining_interested_professionals_count(),
+            "send_window_hint": describe_send_window(pro.phone_number),
+        }
+        return render(request, self.template_name, context, status=status)
+
+    def get(self, request) -> HttpResponse:
+        pro = get_next_interested_professional()
+        if pro is None:
+            return render(
+                request,
+                self.template_name,
+                {"title": "Pro Connector", "pro": None, "remaining_count": 0},
+            )
+        return self._render_record(request, pro)
+
+    def post(self, request) -> HttpResponse:
+        action = request.POST.get("action")
+        pro_id = request.POST.get("interested_professional_id")
+        pro = None
+        if pro_id:
+            try:
+                pro = InterestedProfessional.objects.filter(pk=int(pro_id)).first()
+            except (TypeError, ValueError):
+                pro = None
+        if pro is None:
+            # The record vanished (deleted, bad id, or already processed in
+            # another tab). Just advance to whatever is next.
+            return redirect("proconnector_process")
+
+        if pro.proconnector_attempted or pro.proconnector_skipped:
+            # Already processed (stale tab, back button, or double submit). Don't
+            # re-send or overwrite; just advance.
+            return redirect("proconnector_process")
+
+        if action == "skip":
+            skip_reason = (request.POST.get("skip_reason") or "").strip()
+            # Resolve every signup sharing this email so duplicates don't return.
+            # Conditional on still-unprocessed: if another session already
+            # sent/queued it, mark returns 0 and we just advance rather than
+            # forcing a contradictory sent+skipped state.
+            if mark_email_skipped(pro.email, skip_reason) == 0:
+                return redirect("proconnector_process")
+            logger.info(
+                f"Staff user {request.user.username} skipped pro-connector intro for "
+                f"InterestedProfessional {pro.id} ({mask_email_for_logging(pro.email)})"
+            )
+            return redirect("proconnector_process")
+
+        # "send" delivers now; "queue" defers to the recipient's likely business
+        # hours. They share validation and edit-preserving error handling.
+        if action in ("send", "queue"):
+            validated = self._validated_intro(request, pro)
+            if isinstance(validated, HttpResponse):
+                return validated
+            body, subject, skip_reason = validated
+            dispatch: Dict[
+                str, Tuple[Callable[..., Any], Callable[[str, str], int], str]
+            ] = {
+                "send": (send_proconnector_intro_email, mark_email_sent, "sent"),
+                "queue": (queue_proconnector_intro_email, mark_email_queued, "queued"),
+            }
+            deliver, mark, verb = dispatch[action]
+            failed_msg = f"Failed to {action} the email."
+            # Atomically claim the address before sending. Two staff sessions are
+            # handed the same next record, so without this both could pass the
+            # already-processed check above and double-send; losing the claim
+            # means another request already handled it, so just advance.
+            if claim_email_for_send(pro.email) == 0:
+                return redirect("proconnector_process")
+            try:
+                deliver(pro, subject=subject, body=body)
+            except Exception as e:
+                logger.opt(exception=True).error(
+                    f"Failed to {action} pro-connector intro to "
+                    f"{mask_email_for_logging(pro.email)}: {e}"
+                )
+                # Release the claim so staff can retry the record. Keep the
+                # exception detail in the logs (above) and show a generic message
+                # so internal details aren't surfaced in the UI.
+                release_email_claim(pro.email)
+                return self._render_record(
+                    request,
+                    pro,
+                    draft=body,
+                    subject=subject,
+                    skip_reason=skip_reason,
+                    error=f"{failed_msg} The error has been logged; please try again.",
+                    status=500,
+                )
+            # Record on every signup sharing this email so duplicate records are
+            # resolved together and never resurface in the queue.
+            mark(pro.email, body)
+            logger.info(
+                f"Staff user {request.user.username} {verb} pro-connector intro to "
+                f"InterestedProfessional {pro.id} ({mask_email_for_logging(pro.email)})"
+            )
+            return redirect("proconnector_process")
+
+        # Unknown / missing action -- re-render the current record.
+        return self._render_record(request, pro, error="Unknown action.", status=400)
+
+    def _validated_intro(
+        self, request, pro: InterestedProfessional
+    ) -> Union[Tuple[str, str, str], HttpResponse]:
+        """Validate the submitted intro for send/queue.
+
+        Returns ``(body, subject, skip_reason)`` when valid, or an error
+        ``HttpResponse`` (re-rendering the record with the staff edits preserved)
+        when the body is empty, the recipient address is unsendable, the subject
+        is too long for the scheduled-email column, or the (possibly hand-edited)
+        wording breaks the intro rules -- partner framing (body *or* subject) or a
+        missing compensation disclosure -- which must hold for the final sent
+        text, not just the AI draft.
+        """
+        body = (request.POST.get("email_body") or "").strip()
+        subject = (
+            request.POST.get("subject") or ""
+        ).strip() or PROCONNECTOR_INTRO_SUBJECT
+        skip_reason = (request.POST.get("skip_reason") or "").strip()
+        # First failing check wins. The wording rules run against the *final*
+        # (possibly hand-edited) values, not just the AI draft, and cover the
+        # subject line too; the length cap matches the scheduled-email column so
+        # the immediate and queued paths behave identically.
+        subject_max = ScheduledEmail._meta.get_field("subject").max_length
+        error: Optional[str]
+        if not body:
+            error = "Email body cannot be empty."
+        elif not is_sendable_email(pro.email):
+            error = f"{pro.email} is not a sendable address; cannot send."
+        elif subject_max is not None and len(subject) > subject_max:
+            error = f"Subject is too long (max {subject_max} characters)."
+        else:
+            error = intro_wording_problem(body) or subject_wording_problem(subject)
+        if error:
+            return self._render_record(
+                request,
+                pro,
+                draft=body or request.POST.get("email_body", ""),
+                subject=subject,
+                skip_reason=skip_reason,
+                error=error,
+                status=400,
+            )
+        return body, subject, skip_reason
+
+
+class _CSVEcho:
+    """A file-like object that returns each written row, for CSV streaming."""
+
+    def write(self, value: str) -> str:
+        return value
+
+
+def _csv_safe(value: Any) -> str:
+    """Neutralize CSV formula injection in user-controlled fields.
+
+    Spreadsheet apps (Excel/Sheets) interpret a cell beginning with =, +, -, or
+    @ as a formula. They also trim leading whitespace/control characters first,
+    so a payload like " =1+1" or "\\n=..." must be caught by its first
+    *non-whitespace* character rather than its literal first character. Several
+    exported fields come from the public, unauthenticated signup form, so prefix
+    any such value with a single quote to force it to render as text. ``None``
+    becomes an empty cell.
+    """
+    if value is None:
+        return ""
+    text = str(value)
+    if text.lstrip()[:1] in ("=", "+", "-", "@"):
+        return "'" + text
+    return text
+
+
+class ProConnectorExtractCSVView(View):
+    """Staff CSV export of interested professionals, excluding test/spam signups.
+
+    Dumps the info we have on each (non-filtered) interested professional --
+    including pro-connector processing state -- streamed as CSV. The same
+    test/spam filter used by the processing queue (testing@, .ru/.ua, names
+    containing a URL) is applied here.
+    """
+
+    columns = [
+        "id",
+        "name",
+        "email",
+        "business_name",
+        "phone_number",
+        "address",
+        "job_title_or_provider_type",
+        "most_common_denial",
+        "comments",
+        "paid",
+        "clicked_for_paid",
+        "signup_date",
+        "mod_date",
+        "proconnector_attempted",
+        "proconnector_sent_at",
+        "proconnector_skipped",
+        "proconnector_skip_reason",
+    ]
+
+    def get(self, request) -> StreamingHttpResponse:
+        qs = non_spam_interested_professionals().order_by("signup_date", "id")
+        writer = csv.writer(_CSVEcho())
+
+        def rows():
+            yield writer.writerow(self.columns)
+            for pro in qs.iterator():
+                yield writer.writerow(
+                    [_csv_safe(getattr(pro, column)) for column in self.columns]
+                )
+
+        response = StreamingHttpResponse(rows(), content_type="text/csv")
+        response["Content-Disposition"] = (
+            'attachment; filename="interested_professionals.csv"'
+        )
+        return response

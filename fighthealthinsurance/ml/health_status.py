@@ -26,6 +26,24 @@ REFRESH_INTERVAL_SECONDS = 60 * 60  # hourly
 ALERT_THROTTLE_SECONDS = 60 * 60  # at most one alert email per hour
 
 
+def _model_key(model: Any) -> str:
+    """Stable per-instance identifier for a backend, shared by the health sweep
+    (which records per-model results) and the router (which looks them up).
+
+    Keyed by object identity so distinct backend instances never collide — e.g.
+    internal replicas of one model on several hosts, or two providers exposing
+    the same wire ``model`` id — even when they share a friendly ``name``. The
+    sweep and the router operate on the same registered singleton instances, so
+    the identity matches across them; an unregistered/foreign instance simply
+    isn't found (``model_ok`` returns ``None`` -> the router fails open). A
+    readable prefix (friendly name / wire id / class) is kept for debuggability.
+    """
+    prefix = getattr(model, "name", None) or getattr(model, "model", None)
+    if not prefix:
+        prefix = type(model).__name__
+    return f"{prefix}@{id(model):x}"
+
+
 @dataclass
 class BackendHealthDetail:
     name: str
@@ -43,8 +61,21 @@ class HealthSnapshot:
 class _HealthStatus:
     def __init__(self):
         self._snapshot: HealthSnapshot = HealthSnapshot()
+        # Per-model result of the last sweep, keyed by ``_model_key``. Rebound
+        # atomically on each refresh and read lock-free by ``model_ok`` so the
+        # router can consult it on the request path without ever blocking on the
+        # sweep lock.
+        self._health_map: Dict[str, bool] = {}
         self._timer: Optional[threading.Timer] = None
         self._initialized = False
+        # Whether the recurring background sweep has been kicked off. Kept
+        # separate from ``_initialized`` (which get_snapshot owns for its first
+        # synchronous refresh) so ensure_started() can start the sweep without
+        # making get_snapshot's first call return a stale empty snapshot.
+        # Guarded by a short, dedicated lock that is never held during a sweep,
+        # so request-path callers (via model_ok) never block.
+        self._sweep_started = False
+        self._start_lock = threading.Lock()
         # Use RLock to allow reentrant locking and reduce deadlock chances
         self._lock = threading.RLock()
         # Fast mode for tests to avoid network stalls
@@ -61,8 +92,13 @@ class _HealthStatus:
         with self._lock:
             if not self._initialized:
                 pending_alert = self._refresh_unlocked()
-                self._schedule_refresh()
                 self._initialized = True
+
+        # Start the recurring sweep exactly once. Done outside _lock via a
+        # short, separate lock so it neither double-schedules with
+        # ensure_started() nor blocks. We just refreshed synchronously above
+        # (when first initializing), so only the timer chain needs starting.
+        self._ensure_sweep_scheduled(refresh_now=False)
 
         if pending_alert is not None:
             self._alert_if_all_internal_dead(*pending_alert)
@@ -75,6 +111,52 @@ class _HealthStatus:
                 for d in self._snapshot.details
             ],
         }
+
+    def model_ok(self, model: Any) -> Optional[bool]:
+        """Return the last sweep's result for ``model`` — ``True``/``False`` —
+        or ``None`` if it hasn't been checked yet.
+
+        Lock-free and non-blocking: it reads the atomically-rebound health map
+        and never triggers a probe, so the router can call it on the request
+        path. It does ensure the periodic sweep is running (in the background)
+        so the cache gets populated, but returns immediately regardless.
+        """
+        self.ensure_started()
+        return self._health_map.get(_model_key(model))
+
+    def ensure_started(self) -> None:
+        """Start the periodic health sweep once, in the background, so cached
+        results get populated without any caller blocking on the initial probe.
+
+        Lock-free fast path; the short ``_start_lock`` is never held during a
+        sweep, so request-path callers (via :meth:`model_ok`) don't contend.
+        Crucially this does *not* set ``_initialized`` — that flag is owned by
+        :meth:`get_snapshot`, so its first call still does a synchronous refresh
+        and never returns a stale empty snapshot just because a background sweep
+        was kicked off here first.
+        """
+        self._ensure_sweep_scheduled(refresh_now=True)
+
+    def _ensure_sweep_scheduled(self, refresh_now: bool) -> None:
+        """Kick off the recurring sweep exactly once (idempotent, non-blocking).
+
+        ``refresh_now`` runs the first sweep immediately in a background thread
+        (used when the cached snapshot may still be cold); otherwise we only
+        start the timer chain, because the caller already refreshed
+        synchronously and the snapshot is warm.
+        """
+        if self._sweep_started:
+            return
+        with self._start_lock:
+            if self._sweep_started:
+                return
+            self._sweep_started = True
+        if refresh_now:
+            threading.Thread(
+                target=self._refresh, daemon=True, name="health-sweep"
+            ).start()
+        else:
+            self._schedule_refresh()
 
     def _schedule_refresh(self):
         """Schedule the next refresh."""
@@ -127,11 +209,13 @@ class _HealthStatus:
         # dropped from both buckets, which could otherwise fire a false "all
         # internal models are dead" page for a slow-but-healthy backend.
         details: List[BackendHealthDetail] = []
+        new_health: Dict[str, bool] = {}
         timeout_seconds = 10
         if candidates:
-            with concurrent.futures.ThreadPoolExecutor(
+            ex = concurrent.futures.ThreadPoolExecutor(
                 max_workers=min(8, len(candidates))
-            ) as ex:
+            )
+            try:
                 future_map = {ex.submit(m.model_is_ok): m for m in candidates}
                 # Block until all checks finish or the deadline elapses.
                 concurrent.futures.wait(future_map, timeout=timeout_seconds)
@@ -155,6 +239,7 @@ class _HealthStatus:
                         details.append(
                             BackendHealthDetail(name=name, ok=False, error=err)
                         )
+                    new_health[_model_key(m)] = bool(ok)
                     if ok:
                         alive_count += 1
                         if is_internal:
@@ -165,6 +250,14 @@ class _HealthStatus:
                                 name=name, ok=False, error=err or "not ok"
                             )
                         )
+            finally:
+                # Return at the deadline rather than blocking on stragglers: a
+                # `with` block's shutdown(wait=True) would join every probe, so
+                # one hung model_is_ok() could stall the sweep (and the held
+                # _lock) past timeout_seconds and delay publishing _health_map.
+                # Cancel queued probes; let any in-flight ones finish in the
+                # background. Matches compute_model_health_details below.
+                ex.shutdown(wait=False, cancel_futures=True)
 
         snapshot = HealthSnapshot(
             alive_models=alive_count,
@@ -173,6 +266,11 @@ class _HealthStatus:
         )
 
         self._snapshot = snapshot
+        if candidates:
+            # Only replace the cached per-model health when we actually ran a
+            # sweep; on an enumeration failure (no candidates) keep the last
+            # known-good map rather than wiping it to "unknown".
+            self._health_map = new_health
 
         return internal_total, internal_alive, internal_failures, enumeration_error
 
@@ -302,6 +400,72 @@ class _HealthStatus:
 
         # Since only one timer no need to worry about lock.
         self._schedule_refresh()
+
+
+def compute_model_health_details(timeout_seconds: int = 8) -> List[Dict[str, Any]]:
+    """Run a fresh, uncached health check across every known model backend.
+
+    Unlike :meth:`_HealthStatus.get_snapshot`, which returns a cached summary
+    (used by the public ``live_models_status`` endpoint and deliberately keeps
+    internal failures out of ``details``), this returns a full per-backend
+    breakdown — ``{"name", "ok", "external", "error"}`` — for the staff-only
+    system status dashboard. It does not send alerts or mutate the cached
+    snapshot.
+
+    Checks run in parallel with a shared deadline; a backend whose check has
+    not finished by ``timeout_seconds`` is reported as not-ok with a timeout
+    error. Results are sorted problems-first (down before up, internal before
+    external, then by name) so on-call sees failures at the top.
+    """
+    try:
+        candidates = list(ml_router_module.ml_router.all_models_by_cost)
+    except Exception:
+        # Propagate rather than returning [] — an empty list is indistinguishable
+        # from "no models registered" and would let the caller (_model_status)
+        # report a broken router as a healthy "0 backends" instead of an error.
+        logger.opt(exception=True).warning(
+            "compute_model_health_details could not enumerate models"
+        )
+        raise
+
+    results: List[Dict[str, Any]] = []
+    if not candidates:
+        return results
+
+    ex = concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(candidates)))
+    try:
+        future_map = {ex.submit(m.model_is_ok): m for m in candidates}
+        concurrent.futures.wait(future_map, timeout=timeout_seconds)
+        for future, m in future_map.items():
+            name = str(
+                getattr(m, "model", None) or getattr(m, "__class__", type(m)).__name__
+            )
+            is_external = bool(getattr(m, "external", True))
+            ok = False
+            err: Optional[str] = None
+            if future.done():
+                try:
+                    ok = bool(future.result(timeout=0))
+                    if not ok:
+                        err = "not ok"
+                except Exception as e:
+                    err = str(e)
+            else:
+                err = f"timeout>{timeout_seconds}s"
+            results.append(
+                {"name": name, "ok": ok, "external": is_external, "error": err}
+            )
+    finally:
+        # Return at the deadline rather than blocking on stragglers. Exiting a
+        # `with ThreadPoolExecutor()` calls shutdown(wait=True), which joins
+        # every submitted probe — so a single hung/slow model_is_ok() would
+        # stall the staff status request well past timeout_seconds, defeating
+        # the bounded live check. Cancel queued probes and let any in-flight
+        # ones finish in the background instead.
+        ex.shutdown(wait=False, cancel_futures=True)
+
+    results.sort(key=lambda r: (r["ok"], r["external"], r["name"]))
+    return results
 
 
 # Singleton used by views

@@ -21,7 +21,7 @@ Centralizes patterns that were previously scattered across the codebase:
 from __future__ import annotations
 
 import re
-from typing import Any, Iterable, List, Optional, Tuple, Union
+from typing import Any, Iterable, List, Optional, Sequence, Tuple, Union
 
 # Sentence-ending punctuation followed by whitespace or end-of-string.
 _SENTENCE_END_RE = re.compile(r"[.!?](?=\s|$)")
@@ -29,6 +29,75 @@ _SENTENCE_END_RE = re.compile(r"[.!?](?=\s|$)")
 DEFAULT_ELLIPSIS = "..."
 
 CitationContext = Optional[Union[str, List[Any]]]
+
+# Rough average characters-per-token for English prose. The real tokenizer
+# is model-specific, but ~4 chars/token is the standard back-of-envelope
+# estimate (matches ``chat.llm_client.estimate_history_tokens``) and is good
+# enough for "is this context overflowing the window?" triage.
+CHARS_PER_TOKEN = 4
+
+
+def estimate_tokens(value: Any) -> int:
+    """Roughly estimate the token count of a text value.
+
+    Non-string values (e.g. ``JSONField`` lists/dicts holding citation or
+    UCR context) are stringified first so they still get counted. Empty,
+    ``None``, and falsy values estimate to ``0``.
+    """
+    if not value:
+        return 0
+    if not isinstance(value, str):
+        value = str(value)
+    return len(value) // CHARS_PER_TOKEN
+
+
+# Denial fields that feed appeal-generation context, in the rough order they
+# contribute to the prompt / ``context_extra`` injection. Mirrors the
+# assembly in ``generate_appeal.make_appeals`` and
+# ``common_view_logic.AppealsBackendHelper.generate_appeals``: ``denial_text``
+# anchors the prompt; ``qa_context`` + ``health_history`` become the
+# patient/medical context; ``plan_context`` + ``plan_documents_summary`` the
+# plan context; the rest are enrichment contexts that the tier-shed retry
+# drops first when output is empty (see ``generate_appeal._shed_context``).
+DENIAL_CONTEXT_TOKEN_FIELDS: Tuple[str, ...] = (
+    "denial_text",
+    "qa_context",
+    "health_history",
+    "plan_context",
+    "plan_documents_summary",
+    "pubmed_context",
+    "ml_citation_context",
+    "rag_context",
+    "nice_context",
+    "imr_context",
+    "ucr_context",
+)
+
+
+def summarize_denial_context_tokens(
+    denial: Any,
+    *,
+    fields: Sequence[str] = DENIAL_CONTEXT_TOKEN_FIELDS,
+) -> str:
+    """Return a compact ``est_total=Ntok (field=Ntok ...)`` breakdown of a
+    denial's appeal-generation context size.
+
+    Estimates are rough (``estimate_tokens``); the intent is operational
+    triage — spotting when the denial text plus enrichment context is large
+    enough to risk context-window overflow during appeal generation. Only
+    non-zero fields are listed (to keep the line compact), but the total
+    always reflects every field. ``getattr`` is used so the helper stays
+    Django-free and tolerates partially-populated/stale denial instances.
+    """
+    parts: List[str] = []
+    total = 0
+    for field in fields:
+        tok = estimate_tokens(getattr(denial, field, None))
+        if tok:
+            parts.append(f"{field}={tok}")
+        total += tok
+    breakdown = " ".join(parts) if parts else "none"
+    return f"est_total={total}tok ({breakdown})"
 
 
 def truncate_at_boundary(

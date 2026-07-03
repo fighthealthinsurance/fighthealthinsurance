@@ -19,7 +19,7 @@ import aiohttp
 # Set up environment before importing RemoteAnthropic
 os.environ.setdefault("ANTHROPIC_API_KEY", "test-api-key")
 
-from fighthealthinsurance.ml.ml_models import RemoteAnthropic
+from fighthealthinsurance.ml.ml_models import RemoteAnthropic, RemoteFullOpenLike
 from fighthealthinsurance.utils import RateLimiter
 
 
@@ -103,7 +103,7 @@ class TestRemoteAnthropicModels(unittest.TestCase):
 
         haiku_cost = models_by_name["anthropic/claude-haiku-4-5"].cost
         sonnet_cost = models_by_name["anthropic/claude-sonnet-4-6"].cost
-        opus_cost = models_by_name["anthropic/claude-opus-4-7"].cost
+        opus_cost = models_by_name["anthropic/claude-opus-4-8"].cost
 
         self.assertLess(haiku_cost, sonnet_cost)
         self.assertLess(sonnet_cost, opus_cost)
@@ -143,9 +143,33 @@ class TestRemoteAnthropicTiers(unittest.TestCase):
     @patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"})
     def test_opus_is_premium_tier(self):
         """Test Opus is in premium tier."""
-        model = RemoteAnthropic(model="claude-opus-4-7")
+        model = RemoteAnthropic(model="claude-opus-4-8")
 
         self.assertEqual(model.get_tier(), "premium")
+
+    @patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"})
+    def test_quality_opus_above_sonnet(self):
+        """Premium tier (Opus) outranks quality tier (Sonnet)."""
+        opus = RemoteAnthropic(model="claude-opus-4-8")
+        sonnet = RemoteAnthropic(model="claude-sonnet-4-6")
+
+        self.assertGreater(opus.quality(), sonnet.quality())
+
+    @patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"})
+    def test_quality_sonnet_above_haiku(self):
+        """Quality tier (Sonnet) outranks speed tier (Haiku)."""
+        sonnet = RemoteAnthropic(model="claude-sonnet-4-6")
+        haiku = RemoteAnthropic(model="claude-haiku-4-5-20251001")
+
+        self.assertGreater(sonnet.quality(), haiku.quality())
+
+    @patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"})
+    def test_quality_stays_below_internal_threshold(self):
+        """External Claude quality stays below the internal models' range (>=101)
+        so internal backends stay preferred in mixed scoring."""
+        opus = RemoteAnthropic(model="claude-opus-4-8")
+
+        self.assertLess(opus.quality(), 101)
 
 
 class TestRemoteAnthropicInfer(unittest.TestCase):
@@ -186,7 +210,7 @@ class TestRemoteAnthropicInfer(unittest.TestCase):
         )
 
         with patch.object(
-            RemoteAnthropic.__bases__[0],
+            RemoteFullOpenLike,
             "_infer",
             new_callable=AsyncMock,
             side_effect=error,
@@ -218,7 +242,7 @@ class TestRemoteAnthropicInfer(unittest.TestCase):
         )
 
         with patch.object(
-            RemoteAnthropic.__bases__[0],
+            RemoteFullOpenLike,
             "_infer",
             new_callable=AsyncMock,
             side_effect=error,
@@ -252,7 +276,7 @@ class TestRemoteAnthropicInfer(unittest.TestCase):
         )
 
         with patch.object(
-            RemoteAnthropic.__bases__[0],
+            RemoteFullOpenLike,
             "_infer",
             new_callable=AsyncMock,
             side_effect=error,

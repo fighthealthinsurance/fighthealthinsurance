@@ -73,6 +73,11 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         name="staff_dashboard",
     ),
     path(
+        "timbit/help/status",
+        staff_member_required(staff_views.AdminStatusView.as_view()),
+        name="admin_status",
+    ),
+    path(
         "timbit/help/followup_sched",
         staff_member_required(staff_views.ScheduleFollowUps.as_view()),
     ),
@@ -112,6 +117,16 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         "timbit/help/model_usage",
         staff_member_required(staff_views.ModelUsageDashboardView.as_view()),
         name="model_usage_dashboard",
+    ),
+    path(
+        "timbit/help/proconnector",
+        staff_member_required(staff_views.ProConnectorProcessView.as_view()),
+        name="proconnector_process",
+    ),
+    path(
+        "timbit/help/proconnector_extract.csv",
+        staff_member_required(staff_views.ProConnectorExtractCSVView.as_view()),
+        name="proconnector_extract_csv",
     ),
     # Authentication
     path("v0/auth/", include("fhi_users.urls")),

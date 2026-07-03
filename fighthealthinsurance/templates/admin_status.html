@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>{{ title }}</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 1100px; margin: 0 auto; padding: 20px; background: #f5f5f5; color: #222; }
+    h1 { color: #333; border-bottom: 2px solid #007bff; padding-bottom: 10px; }
+    h2 { color: #555; margin-top: 0; border-left: 4px solid #007bff; padding-left: 10px; }
+    .status-section { background: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+    .nav-back { display: inline-block; margin-bottom: 14px; color: #007bff; text-decoration: none; }
+    .nav-back:hover { text-decoration: underline; }
+    .meta { color: #666; font-size: 0.9em; margin-bottom: 18px; }
+    .meta a { color: #007bff; }
+    .summary-line { font-size: 1.05em; margin: 6px 0 12px 0; }
+    table.status { width: 100%; border-collapse: collapse; margin-top: 8px; }
+    table.status th, table.status td { padding: 6px 10px; text-align: left; border-bottom: 1px solid #eee; }
+    table.status th { background: #f0f4f8; }
+    table.status td.num, table.status th.num { text-align: right; }
+    .badge { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 0.82em; font-weight: bold; color: white; }
+    .badge.ok { background: #28a745; }
+    .badge.bad { background: #dc3545; }
+    .badge.warn { background: #f0ad4e; color: #333; }
+    .badge.unknown { background: #adb5bd; }
+    .error-text { color: #dc3545; font-size: 0.85em; }
+    .pill { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 0.78em; background: #e9ecef; color: #555; }
+    .stat-grid { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 8px; }
+    .stat-card { flex: 1 1 140px; background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 6px; padding: 12px 14px; }
+    .stat-card .value { font-size: 1.8em; font-weight: bold; color: #333; }
+    .stat-card .label { font-size: 0.85em; color: #666; margin-top: 2px; }
+    .stat-card.alert .value { color: #dc3545; }
+  </style>
+</head>
+<body>
+  <a class="nav-back" href="{% url 'staff_dashboard' %}">&laquo; Back to Staff Dashboard</a>
+  <h1>{{ title }}</h1>
+  <p class="meta">
+    Generated {{ generated_at }} &middot;
+    <a href="{% url 'admin_status' %}">Refresh</a> &middot;
+    Model and Sonic checks run live (bounded by timeouts), so this page may take a few seconds.
+  </p>
+
+  {# ---------------- ML Models ---------------- #}
+  <div class="status-section">
+    <h2>🧠 ML Model Backends</h2>
+    {% if models.error %}
+      <p><span class="badge bad">ERROR</span> <span class="error-text">{{ models.error }}</span></p>
+    {% else %}
+      <p class="summary-line">
+        {% if models.working and models.internal_alive %}
+          <span class="badge ok">UP</span>
+        {% elif models.alive %}
+          <span class="badge warn">DEGRADED</span>
+        {% else %}
+          <span class="badge bad">DOWN</span>
+        {% endif %}
+        &nbsp;{{ models.alive }} / {{ models.total }} backends responding
+        ({{ models.internal_alive }} / {{ models.internal_total }} internal)
+        &middot; router working: {{ models.working|yesno:"yes,no" }}
+      </p>
+      {% if models.details %}
+      <table class="status">
+        <thead><tr><th>Model</th><th>Type</th><th>Status</th><th>Error</th></tr></thead>
+        <tbody>
+        {% for d in models.details %}
+          <tr>
+            <td>{{ d.name }}</td>
+            <td><span class="pill">{% if d.external %}external{% else %}internal{% endif %}</span></td>
+            <td>{% if d.ok %}<span class="badge ok">up</span>{% else %}<span class="badge bad">down</span>{% endif %}</td>
+            <td class="error-text">{{ d.error|default:"" }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+        <p class="meta">No model backends registered.</p>
+      {% endif %}
+    {% endif %}
+  </div>
+
+  {# ---------------- Ray Actors ---------------- #}
+  <div class="status-section">
+    <h2>⚙️ Ray Polling Actors</h2>
+    {% if actors.error %}
+      <p><span class="badge bad">ERROR</span> <span class="error-text">{{ actors.error }}</span></p>
+    {% else %}
+      <p class="summary-line">
+        {% if actors.alive_actors == actors.total_actors %}
+          <span class="badge ok">ALL UP</span>
+        {% elif actors.alive_actors %}
+          <span class="badge warn">DEGRADED</span>
+        {% else %}
+          <span class="badge bad">DOWN</span>
+        {% endif %}
+        &nbsp;{{ actors.alive_actors }} / {{ actors.total_actors }} actors alive
+      </p>
+      <table class="status">
+        <thead><tr><th>Actor</th><th>Status</th><th>Error</th></tr></thead>
+        <tbody>
+        {% for d in actors.details %}
+          <tr>
+            <td>{{ d.name }}</td>
+            <td>{% if d.alive %}<span class="badge ok">alive</span>{% else %}<span class="badge bad">down</span>{% endif %}</td>
+            <td class="error-text">{{ d.error|default:"" }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+  </div>
+
+  {# ---------------- Fax Backends / Sonic ---------------- #}
+  <div class="status-section">
+    <h2>📠 Fax Backends</h2>
+    <p class="summary-line">
+      Sonic:
+      {% if not fax.sonic.configured %}
+        <span class="badge unknown">NOT CONFIGURED</span>
+      {% elif fax.sonic.ok %}
+        <span class="badge ok">WORKING</span>
+      {% else %}
+        <span class="badge bad">NOT WORKING</span>
+      {% endif %}
+      {% if fax.sonic.error %}<span class="error-text">&nbsp;{{ fax.sonic.error }}</span>{% endif %}
+    </p>
+    {% if fax.error %}
+      <p><span class="badge bad">ERROR</span> <span class="error-text">{{ fax.error }}</span></p>
+    {% endif %}
+    {% if fax.backends %}
+    <table class="status">
+      <thead><tr><th>Backend</th><th>Professional</th><th>Status</th><th>Error</th></tr></thead>
+      <tbody>
+      {% for b in fax.backends %}
+        <tr>
+          <td>{{ b.name }}</td>
+          <td>{{ b.professional|yesno:"yes,no" }}</td>
+          <td>
+            {% if b.ok %}<span class="badge ok">ok</span>{% else %}<span class="badge bad">down</span>{% endif %}
+            {% if not b.probed %}<span class="pill">not probed</span>{% endif %}
+          </td>
+          <td class="error-text">{{ b.error|default:"" }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+      <p class="meta">No fax backends registered.</p>
+    {% endif %}
+  </div>
+
+  {# ---------------- Fax Queue ---------------- #}
+  <div class="status-section">
+    <h2>🗂️ Fax Queue</h2>
+    {% if fax_queue.error %}
+      <p><span class="badge bad">ERROR</span> <span class="error-text">{{ fax_queue.error }}</span></p>
+    {% else %}
+      <div class="stat-grid">
+        <div class="stat-card">
+          <div class="value">{{ fax_queue.unsent_total }}</div>
+          <div class="label">Unsent (total)</div>
+        </div>
+        <div class="stat-card">
+          <div class="value">{{ fax_queue.ready_queued }}</div>
+          <div class="label">Queued (should send)</div>
+        </div>
+        <div class="stat-card">
+          <div class="value">{{ fax_queue.due_now }}</div>
+          <div class="label">Due now (&gt;1h old)</div>
+        </div>
+        <div class="stat-card">
+          <div class="value">{{ fax_queue.awaiting_confirmation }}</div>
+          <div class="label">Awaiting confirmation</div>
+        </div>
+        <div class="stat-card {% if fax_queue.in_flight %}alert{% endif %}">
+          <div class="value">{{ fax_queue.in_flight }}</div>
+          <div class="label">In-flight / attempting</div>
+        </div>
+        <div class="stat-card {% if fax_queue.failures_recent %}alert{% endif %}">
+          <div class="value">{{ fax_queue.failures_recent }}</div>
+          <div class="label">Failures (last 7 days)</div>
+        </div>
+      </div>
+    {% endif %}
+  </div>
+
+  {# ---------------- Storage ---------------- #}
+  <div class="status-section">
+    <h2>💾 External Storage</h2>
+    <p class="summary-line">
+      {% if storage.ok %}
+        <span class="badge ok">REACHABLE</span>
+      {% else %}
+        <span class="badge bad">UNREACHABLE</span>
+      {% endif %}
+      {% if storage.error %}<span class="error-text">&nbsp;{{ storage.error }}</span>{% endif %}
+    </p>
+  </div>
+</body>
+</html>

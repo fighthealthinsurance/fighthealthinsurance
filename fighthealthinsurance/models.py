@@ -10,7 +10,7 @@ import uuid
 from django.conf import settings
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models, transaction
-from django.db.models.signals import post_delete
+from django.db.models.signals import post_delete, post_save
 from django.dispatch import receiver
 from django.db.models import Q
 from django.db.models.functions import Now
@@ -245,6 +245,18 @@ class InterestedProfessional(ExportModelOperationsMixin("InterestedProfessional"
     mod_date = models.DateField(auto_now=True)
     thankyou_email_sent = models.BooleanField(default=False)
 
+    # Pro-connector (Cofactor AI sourcing agreement) workflow.
+    # After refocusing FHI on its consumer mission, staff review and send a
+    # one-at-a-time introduction email to interested professionals who may be a
+    # fit for Cofactor AI's AI-powered support for appeals / prior auth / backend
+    # workflows. These fields track that per-record processing state so each
+    # professional is only ever considered once.
+    proconnector_attempted = models.BooleanField(default=False)
+    proconnector_sent_at = models.DateTimeField(null=True, blank=True)
+    proconnector_skipped = models.BooleanField(default=False)
+    proconnector_skip_reason = models.TextField(null=True, blank=True)
+    proconnector_email_body = models.TextField(null=True, blank=True)
+
 
 # Everyone else:
 class MailingListSubscriber(models.Model):
@@ -377,6 +389,56 @@ class FollowUpSched(models.Model):
 
     def __str__(self):
         return f"{self.email} on {self.follow_up_date}"
+
+
+class ScheduledEmail(models.Model):
+    """A templated email queued to be sent later, gated on a sending window.
+
+    Generic queue drained by ``EmailPollingActor`` (via ``ScheduledEmailSender``).
+    Used for "send during likely business hours": rather than sending the moment
+    a staff member clicks, the email is enqueued with the recipient's likely
+    timezone and an earliest-send time, and the actor delivers it once the
+    business-hours window for that timezone is open. See ``business_hours.py``.
+    """
+
+    id = models.AutoField(primary_key=True)
+    to_email = models.EmailField()
+    subject = models.CharField(max_length=998, default="")
+    # Name of the template under ``templates/emails/`` (".txt"/".html" variants),
+    # rendered with ``context`` -- mirrors ``send_fallback_email``.
+    template_name = models.CharField(max_length=100)
+    context = models.JSONField(default=dict, blank=True)
+    # Additional CC recipients (list of addresses).
+    cc = models.JSONField(default=list, blank=True)
+    # Earliest time this email is eligible to send. Initialized to the next
+    # business-hours window opening for ``send_timezone``; the actor additionally
+    # re-checks the live window before sending so it never fires after it closes.
+    send_after = models.DateTimeField(default=timezone.now)
+    # IANA timezone whose business-hours window gates sending. Defaults to the
+    # conservative cross-US Pacific overlap when the recipient zone is unknown.
+    send_timezone = models.CharField(max_length=64, default="America/Los_Angeles")
+    # True when ``send_timezone`` was confidently derived (e.g. a phone area
+    # code) so the normal local window applies rather than the Pacific overlap.
+    timezone_is_specific = models.BooleanField(default=False)
+    # Free-form category for observability (e.g. "proconnector_intro").
+    purpose = models.CharField(max_length=64, default="", blank=True)
+    sent = models.BooleanField(default=False)
+    sent_at = models.DateTimeField(null=True, blank=True)
+    attempts = models.IntegerField(default=0)
+    last_error = models.TextField(null=True, blank=True)
+    created = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        # The actor polls for unsent, now-due rows oldest-first.
+        indexes = [
+            models.Index(
+                fields=["sent", "send_after"], name="sched_email_sent_after_idx"
+            ),
+        ]
+
+    def __str__(self):
+        state = "sent" if self.sent else "pending"
+        return f"ScheduledEmail({self.purpose or 'email'}) to {self.to_email} [{state}]"
 
 
 class PlanType(models.Model):
@@ -2483,6 +2545,10 @@ class ProposedAppeal(ExportModelOperationsMixin("ProposedAppeal"), models.Model)
     chosen = models.BooleanField(default=False)
     editted = models.BooleanField(default=False)
     model_name = models.CharField(max_length=200, null=True, blank=True, db_index=True)
+    # Tracks whether this appeal was synthesized from multiple drafts rather
+    # than produced by a single model pass. Complements model_name so the
+    # synthesis provenance survives independently of the model label.
+    synthesized = models.BooleanField(default=False, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True, null=True, db_index=True)
 
     def __str__(self):
@@ -3252,6 +3318,11 @@ class ChooserCandidate(ExportModelOperationsMixin("ChooserCandidate"), models.Mo
     candidate_index = models.IntegerField()  # 0, 1, 2, 3
     kind = models.CharField(max_length=30, choices=KIND_CHOICES)
     model_name = models.CharField(max_length=200)
+    # True when this candidate was synthesized from the other candidates'
+    # outputs rather than produced directly by a single model. Tracked
+    # alongside model_name so the chooser can compare synthesis vs. single
+    # models when collecting preference data.
+    synthesized = models.BooleanField(default=False)
     content = models.TextField()
     metadata = models.JSONField(null=True, blank=True)
     is_active = models.BooleanField(default=True)
@@ -3635,3 +3706,132 @@ class ModelHealthAlertState(models.Model):
 
     def __str__(self) -> str:
         return f"ModelHealthAlertState<{self.key}@{self.last_alert_sent}>"
+
+
+class SiteBanner(models.Model):
+    """Admin-controlled banner shown in the site header to every visitor.
+
+    Lets staff post a temporary notice -- e.g. "Our AI models are having
+    difficulty, please try again tomorrow" -- without a deploy. Rows are
+    managed by staff in the Django admin (see ``admin.SiteBannerAdmin``) and
+    read from the DB at request time by
+    ``context_processors.site_banner_context`` (cached briefly), then rendered
+    by ``partials/site_banner.html`` in ``base.html``.
+    """
+
+    LEVEL_INFO = "info"
+    LEVEL_WARNING = "warning"
+    LEVEL_DANGER = "danger"
+    LEVEL_CHOICES = [
+        (LEVEL_INFO, "Info (blue)"),
+        (LEVEL_WARNING, "Warning (yellow)"),
+        (LEVEL_DANGER, "Critical (red)"),
+    ]
+
+    # Short cache so toggling a banner shows up quickly while still sparing the
+    # DB a query on every page load under traffic. Invalidated on save/delete
+    # (see signal below) so staff changes are effectively immediate.
+    CACHE_KEY = "site_banner:active_v1"
+    CACHE_TTL_SECONDS = 30
+
+    message = models.TextField(
+        help_text=(
+            "Plain-text message shown to every visitor in the site header. "
+            "Line breaks are preserved."
+        ),
+    )
+    level = models.CharField(
+        max_length=16,
+        choices=LEVEL_CHOICES,
+        default=LEVEL_WARNING,
+        help_text="Controls the banner color.",
+    )
+    active = models.BooleanField(
+        default=True,
+        help_text="Uncheck to hide the banner without deleting it.",
+    )
+    dismissible = models.BooleanField(
+        default=True,
+        help_text=(
+            "Let visitors close the banner (it stays closed in their browser "
+            "until you edit the message)."
+        ),
+    )
+    expires_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text=(
+            "Optional. If set, the banner automatically stops showing after "
+            "this time. Leave blank to keep showing until you remove it."
+        ),
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("-updated_at",)
+
+    def __str__(self) -> str:
+        preview = (self.message or "").strip().replace("\n", " ")
+        if len(preview) > 50:
+            preview = preview[:50] + "…"
+        status = "active" if self.active else "inactive"
+        return f"SiteBanner<{self.level}, {status}>: {preview}"
+
+    def is_currently_visible(
+        self, now: typing.Optional[datetime.datetime] = None
+    ) -> bool:
+        """Whether this banner should be shown to visitors right now."""
+        if not self.active:
+            return False
+        if self.expires_at is not None:
+            now = now or timezone.now()
+            if self.expires_at <= now:
+                return False
+        return True
+
+    @classmethod
+    def get_active_banners(cls) -> typing.List[typing.Dict[str, typing.Any]]:
+        """Active, unexpired banners as lightweight dicts, cached briefly.
+
+        Returned newest-first (most recently edited on top). Read by the
+        context processor on every request, so the short cache keeps that
+        cheap; ``clear_cache`` (wired to save/delete) drops it on edits.
+        """
+        from django.core.cache import cache
+
+        cached = cache.get(cls.CACHE_KEY)
+        if cached is not None:
+            return typing.cast(typing.List[typing.Dict[str, typing.Any]], cached)
+
+        now = timezone.now()
+        banners = cls.objects.filter(active=True).filter(
+            Q(expires_at__isnull=True) | Q(expires_at__gt=now)
+        )
+        result = [
+            {
+                "id": banner.id,
+                "message": banner.message,
+                "level": banner.level,
+                "dismissible": banner.dismissible,
+                # Changes when the banner is edited, so a visitor who dismissed
+                # an earlier version still sees the updated message.
+                "version": int(banner.updated_at.timestamp()),
+            }
+            for banner in banners
+        ]
+        cache.set(cls.CACHE_KEY, result, cls.CACHE_TTL_SECONDS)
+        return result
+
+    @classmethod
+    def clear_cache(cls) -> None:
+        """Drop the cached active-banner list."""
+        from django.core.cache import cache
+
+        cache.delete(cls.CACHE_KEY)
+
+
+@receiver([post_save, post_delete], sender=SiteBanner)
+def _clear_site_banner_cache(sender, **kwargs) -> None:
+    """Refresh the cached banner list so admin changes show up right away."""
+    SiteBanner.clear_cache()

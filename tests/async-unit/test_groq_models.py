@@ -20,7 +20,7 @@ import aiohttp
 # Set up environment before importing RemoteGroq
 os.environ.setdefault("GROQ_API_KEY", "test-api-key")
 
-from fighthealthinsurance.ml.ml_models import RemoteGroq
+from fighthealthinsurance.ml.ml_models import RemoteGroq, RemoteFullOpenLike
 from fighthealthinsurance.utils import RateLimiter
 
 
@@ -141,6 +141,23 @@ class TestRemoteGroqTiers(unittest.TestCase):
             self.assertEqual(
                 model.get_tier(), "quality", f"{model_name} should be quality tier"
             )
+
+    @patch.dict(os.environ, {"GROQ_API_KEY": "test-key"})
+    def test_quality_versatile_above_instant(self):
+        """Quality tier (versatile) outranks speed tier (instant) so the router's
+        best_external_models prefers the stronger Groq model."""
+        versatile = RemoteGroq(model="llama-3.3-70b-versatile")
+        instant = RemoteGroq(model="llama-3.1-8b-instant")
+
+        self.assertGreater(versatile.quality(), instant.quality())
+
+    @patch.dict(os.environ, {"GROQ_API_KEY": "test-key"})
+    def test_quality_below_internal_threshold(self):
+        """External Groq quality stays below the internal models' range (>=101)
+        so internal backends stay preferred in mixed scoring."""
+        versatile = RemoteGroq(model="llama-3.3-70b-versatile")
+
+        self.assertLess(versatile.quality(), 101)
 
     @patch.dict(os.environ, {"GROQ_API_KEY": "test-key"})
     def test_speed_tier_model(self):
@@ -269,7 +286,7 @@ class TestRemoteGroqInfer(unittest.TestCase):
 
         # Mock parent _infer to raise 429
         with patch.object(
-            RemoteGroq.__bases__[0], "_infer", new_callable=AsyncMock, side_effect=error
+            RemoteFullOpenLike, "_infer", new_callable=AsyncMock, side_effect=error
         ):
             result = await model._infer(
                 system_prompts=["You are helpful."], prompt="Test prompt"
@@ -303,7 +320,7 @@ class TestRemoteGroqInfer(unittest.TestCase):
 
         # Mock parent _infer to raise 429
         with patch.object(
-            RemoteGroq.__bases__[0], "_infer", new_callable=AsyncMock, side_effect=error
+            RemoteFullOpenLike, "_infer", new_callable=AsyncMock, side_effect=error
         ):
             result = await model._infer(
                 system_prompts=["You are helpful."], prompt="Test prompt"
@@ -339,7 +356,7 @@ class TestRemoteGroqInfer(unittest.TestCase):
 
         # Mock parent _infer to raise 429
         with patch.object(
-            RemoteGroq.__bases__[0], "_infer", new_callable=AsyncMock, side_effect=error
+            RemoteFullOpenLike, "_infer", new_callable=AsyncMock, side_effect=error
         ):
             result = await model._infer(
                 system_prompts=["You are helpful."], prompt="Test prompt"

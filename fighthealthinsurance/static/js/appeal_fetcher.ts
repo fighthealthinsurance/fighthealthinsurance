@@ -17,6 +17,11 @@ let currentMessageIndex = 0;
 let messageRotationInterval: ReturnType<typeof setTimeout> | null = null;
 let startTime: number | null = null;
 let timerInterval: ReturnType<typeof setInterval> | null = null;
+// Per-appeal wait tracking so the status indicator can show how long the
+// user waited for the first appeal (frozen once it lands) and how long
+// they've been waiting for the next/current one (resets on each arrival).
+let firstAppealArrivedAtMs: number | null = null;
+let lastAppealArrivedAtMs: number | null = null;
 
 // Humorous progress messages
 const progressMessages = [
@@ -42,9 +47,14 @@ interface PhaseStep {
   label: string;
   substeps?: SubStep[];
   state: 'pending' | 'active' | 'done' | 'skipped';
+  // Hidden phases are skipped by renderChecklist. The REST fallback step
+  // starts hidden and is only revealed if/when we actually hand off to
+  // the backup transport, so the normal happy path doesn't show it.
+  hidden?: boolean;
 }
 
 const phases: PhaseStep[] = [
+  { id: 'fallback', label: 'Switching to backup connection', state: 'pending', hidden: true },
   { id: 'init', label: 'Loading denial information', state: 'pending' },
   {
     id: 'research', label: 'Researching medical evidence', state: 'pending',
@@ -80,6 +90,7 @@ function renderChecklist(): void {
 
   checklist.textContent = '';
   for (const phase of phases) {
+    if (phase.hidden) continue;
     const icon = getPhaseIcon(phase.state);
     const labelStyle = phase.state === 'active' ? 'font-weight: 600; color: #333;' :
                        phase.state === 'done' ? 'color: #28a745;' :
@@ -127,6 +138,9 @@ function renderChecklist(): void {
 function markPhasesUpTo(phaseId: string): void {
   for (const phase of phases) {
     if (phase.id === phaseId) break;
+    // A still-hidden fallback step isn't part of the visible progression,
+    // so don't auto-complete it just because a later phase started.
+    if (phase.hidden) continue;
     if (phase.state !== 'done' && phase.state !== 'skipped') {
       phase.state = 'done';
       if (phase.substeps) {
@@ -168,6 +182,20 @@ function markAllDone(): void {
       }
     }
   }
+}
+
+// Reveal the "Switching to backup connection" step in the checklist and
+// mark it active. Called when we hand the WebSocket off to the REST
+// fallback so the user can see why generation is still going. Once the
+// REST stream starts emitting phase frames, markPhasesUpTo() flips this
+// to done as the real work re-progresses.
+function activateFallbackPhase(): void {
+  const fallback = phases.find((p) => p.id === 'fallback');
+  if (fallback) {
+    fallback.hidden = false;
+    if (fallback.state !== 'done') fallback.state = 'active';
+  }
+  renderChecklist();
 }
 
 // Shared helpers
@@ -231,9 +259,8 @@ function createStatusIndicator(): HTMLElement {
   document.head.appendChild(style);
 
   statusDiv.innerHTML = `
-    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
+    <div style="margin-bottom: 12px;">
       <div style="font-weight: 600; font-size: 1rem; color: #333;">Generating Your Appeals</div>
-      <div id="appeal-timer" style="font-size: 0.8rem; color: #888;"></div>
     </div>
     <div id="phase-checklist" style="margin-bottom: 12px;"></div>
     <div style="margin-bottom: 8px; display: flex; align-items: center; gap: 8px;">
@@ -242,17 +269,55 @@ function createStatusIndicator(): HTMLElement {
       </div>
       <div id="status-count" style="font-size: 0.85rem; font-weight: 600; color: #7B920A;">0/3</div>
     </div>
+    <div id="appeal-wait-times" style="display: flex; flex-wrap: wrap; gap: 2px 14px; font-size: 0.72rem; color: #888; margin-bottom: 8px;">
+      <span>First appeal: <span id="wait-first" style="font-weight: 600; color: #555;">0s</span></span>
+      <span>Current appeal: <span id="wait-current" style="font-weight: 600; color: #555;">0s</span></span>
+      <span>Total: <span id="wait-total" style="font-weight: 600; color: #555;">0s</span></span>
+    </div>
     <div id="status-message" style="font-size: 0.8rem; color: #888; line-height: 1.4; font-style: italic; transition: opacity 0.2s ease;">${progressMessages[0]}</div>
   `;
   return statusDiv;
 }
 
+function formatDuration(ms: number): string {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  if (totalSeconds < 60) {
+    return `${totalSeconds}s`;
+  }
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}m ${seconds}s`;
+}
+
 function updateTimer(): void {
-  if (!startTime) return;
-  const elapsed = Math.floor((Date.now() - startTime) / 1000);
-  const timerEl = document.getElementById('appeal-timer');
-  if (timerEl) {
-    timerEl.textContent = `${elapsed}s`;
+  if (startTime === null) return;
+  const now = Date.now();
+
+  // Total wait: time since we first started fetching (spans retries).
+  const totalEl = document.getElementById('wait-total');
+  if (totalEl) {
+    totalEl.textContent = formatDuration(now - startTime);
+  }
+
+  // First-appeal wait: ticks live until the first appeal lands, then
+  // freezes at how long that first one took.
+  const firstEl = document.getElementById('wait-first');
+  if (firstEl) {
+    const firstWaitMs =
+      firstAppealArrivedAtMs !== null
+        ? firstAppealArrivedAtMs - startTime
+        : now - startTime;
+    firstEl.textContent = formatDuration(firstWaitMs);
+  }
+
+  // Current-appeal wait: time since the most recent appeal arrived (i.e.
+  // how long we've been waiting for the next one); before any have arrived
+  // it tracks from the start.
+  const currentEl = document.getElementById('wait-current');
+  if (currentEl) {
+    const since =
+      lastAppealArrivedAtMs !== null ? lastAppealArrivedAtMs : startTime;
+    currentEl.textContent = formatDuration(now - since);
   }
 }
 
@@ -314,6 +379,9 @@ function showLoading(): void {
   // Reset phase states for retry
   for (const phase of phases) {
     phase.state = 'pending';
+    // Re-hide the fallback step so a fresh WebSocket attempt (e.g. the
+    // external-models rerun) doesn't show a stale "backup connection" row.
+    if (phase.id === 'fallback') phase.hidden = true;
     if (phase.substeps) {
       for (const sub of phase.substeps) sub.state = 'pending';
     }
@@ -328,10 +396,14 @@ function showLoading(): void {
   renderChecklist();
   updateStatusIndicator('connecting', 0);
 
-  // Start timer
-  startTime = Date.now();
+  // Start timer. Anchor startTime only once so the total (and first-appeal)
+  // wait spans retries rather than resetting on each attempt.
+  if (startTime === null) {
+    startTime = Date.now();
+  }
   if (timerInterval) clearInterval(timerInterval);
   timerInterval = setInterval(updateTimer, 1000);
+  updateTimer();
 
   // Rotate messages every 8 seconds with sub-1-second jitter
   if (messageRotationInterval) {
@@ -368,6 +440,13 @@ let usingRestFallback = false;
 // concurrent ws.onclose doesn't run done() in parallel and tear
 // down the UI while the REST stream is still in flight.
 let handingOffToRest = false;
+// Set when the hard timeout gives up with no REST fallback available.
+// The module-level hard-timeout handler can't set the per-attempt
+// retryScheduled closure flag, so without this latch the closed socket's
+// onclose would run its normal-completion path: paint the checklist green,
+// show "Your appeals are ready!" over the give-up error, and call done()
+// a second time.
+let wsGaveUp = false;
 let hasAutoScrolledToFirstAppeal = false;
 
 // Diagnostic counters used in the client error report so server logs
@@ -408,7 +487,113 @@ function beginAttempt(): void {
   currentAttemptStartedAtMs = Date.now();
 }
 
+// Inactivity timeout: if the WebSocket goes this long without ANY frame
+// (not even a keep-alive newline) the stream is treated as stalled. The
+// backend interleaves keep-alives during generation/synthesis and the
+// longest expected quiet stretch (the research phase) is ~50s, so 90s is
+// comfortably above normal cadence while still well under the hard cap.
+const WS_INACTIVITY_TIMEOUT_MS = 90000;
+// Hard cap on the WebSocket transport (7 minutes). Even if frames are
+// trickling in, once we've spent this long without finishing we stop
+// waiting on the socket and fire the backup REST request so the user
+// isn't stuck. Kept generous because a healthy run can legitimately take
+// several minutes; the 90s inactivity timeout handles dead streams sooner.
+const WS_HARD_TIMEOUT_MS = 420000;
+
 let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+// Absolute-deadline timer for the WebSocket transport (see escalateToRest).
+let hardTimeoutHandle: ReturnType<typeof setTimeout> | null = null;
+// The socket for the current attempt, so the module-level hard-timeout
+// handler can close it when it decides to hand off to REST.
+let activeWebSocket: WebSocket | null = null;
+
+// Best-effort close + forget of the live socket. close() can throw on a
+// still-CONNECTING socket, hence the try/catch. Used by the give-up paths
+// to abandon a socket we've decided not to wait on.
+function closeActiveWebSocket(): void {
+  if (activeWebSocket) {
+    try {
+      activeWebSocket.close();
+    } catch (e) {
+      /* ignore */
+    }
+    activeWebSocket = null;
+  }
+}
+
+// Hand generation off from the WebSocket to the REST fallback. Returns
+// true if it actually escalated. Idempotent and safe to call from any of
+// the give-up paths (inactivity timeout, hard cap, exhausted retries):
+// the handingOffToRest/usingRestFallback latches make repeat calls no-ops.
+function escalateToRest(reason: string): boolean {
+  if (!my_rest_fallback_url || usingRestFallback || handingOffToRest) {
+    return false;
+  }
+  console.log(`Escalating to REST fallback: ${reason}`);
+  handingOffToRest = true;
+  // The WS transport is done; stop both of its timers so neither fires
+  // again while the REST leg is streaming.
+  if (timeoutHandle) {
+    clearTimeout(timeoutHandle);
+    timeoutHandle = null;
+  }
+  if (hardTimeoutHandle) {
+    clearTimeout(hardTimeoutHandle);
+    hardTimeoutHandle = null;
+  }
+  // Record the in-flight WS attempt's duration before fetchFallback's
+  // beginAttempt() starts the REST leg's clock. Idempotent if a caller
+  // already ended it.
+  endCurrentAttempt();
+  // Close the live socket so it can't keep streaming into the parser or
+  // re-arm the inactivity timer after we've moved on. ws.onclose/onerror
+  // short-circuit on handingOffToRest.
+  closeActiveWebSocket();
+  // Drop any half-received line from the dead socket so it can't get
+  // concatenated onto (and corrupt) the first frame of the REST stream.
+  respBuffer = '';
+  // Surface the transport switch in the status checklist.
+  activateFallbackPhase();
+  const csrfToken = (my_data as any).csrfmiddlewaretoken || '';
+  fetchFallback(my_rest_fallback_url, my_data, csrfToken);
+  return true;
+}
+
+// Arm the absolute WebSocket deadline. Called once for the whole user
+// wait (from the first doQuery), so it spans retries; it is NOT re-armed
+// per attempt. On fire: hand off to REST, or — if there's no REST URL —
+// stop the WS retry loop so we don't spin past the budget.
+function armHardTimeout(): void {
+  if (hardTimeoutHandle) return;
+  hardTimeoutHandle = setTimeout(() => {
+    hardTimeoutHandle = null;
+    if (connectionStatus === 'done') return;
+    console.error(
+      `WebSocket exceeded ${WS_HARD_TIMEOUT_MS / 1000}s; firing backup REST request.`,
+    );
+    if (escalateToRest('websocket hard timeout (taking too long)')) {
+      return;
+    }
+    // No REST fallback available (or already on it). If we're not already
+    // riding the REST leg, force the retry loop to terminate rather than
+    // letting slow WS attempts keep the user waiting indefinitely.
+    if (!usingRestFallback && !handingOffToRest) {
+      retries = maxRetries;
+      // Latch before closing: the socket's onclose/onerror fire async after
+      // done() below, and without this they'd run the normal-completion path
+      // (green checklist + "appeals are ready" over the give-up message) and
+      // call done() a second time.
+      wsGaveUp = true;
+      closeActiveWebSocket();
+      endCurrentAttempt();
+      fadeStatusMessage(
+        'This is taking longer than expected. Please try refreshing the page.',
+        '#dc3545',
+      );
+      done();
+    }
+  }, WS_HARD_TIMEOUT_MS);
+}
 
 function parseValidDenialId(value: unknown): number | null {
   const asString = String(value ?? '').trim();
@@ -475,8 +660,10 @@ function reportClientError(error: string): void {
 }
 
 function done(): void {
-  // If we've reached stream end but also less than maxRetries appeals retry
-  if (appealsSoFar.length < 3 && retries < maxRetries) {
+  // If we've reached stream end but also less than maxRetries appeals retry.
+  // Once we've fallen back to REST we stop retrying: REST is the last-resort
+  // transport, so bouncing back to the flaky WebSocket would just spin.
+  if (appealsSoFar.length < 3 && retries < maxRetries && !usingRestFallback) {
     console.error("Did not have expected number of appeals, retrying.");
     retries = retries + 1;
     doQuery(my_backend_url, my_data, my_rest_fallback_url);
@@ -488,6 +675,10 @@ function done(): void {
       );
     }
     clearTimeout(timeoutHandle!);
+    if (hardTimeoutHandle) {
+      clearTimeout(hardTimeoutHandle);
+      hardTimeoutHandle = null;
+    }
     hideLoading();
     // When internal-only generation underdelivered (0-2 appeals), the
     // template emits a hidden prompt offering to opt the denial into
@@ -591,6 +782,12 @@ async function requestExternalModels(
     retries = 0;
     respBuffer = "";
     hasAutoScrolledToFirstAppeal = false;
+    // The wait for the next appeal starts now, not when the last pre-rerun
+    // appeal arrived — otherwise the "Current appeal" clock would include
+    // however long the user spent reading drafts before opting in. The
+    // total/first-appeal clocks deliberately keep their original anchor
+    // (see the startTime comment in showLoading).
+    lastAppealArrivedAtMs = Date.now();
     doQuery(my_backend_url, my_data, my_rest_fallback_url);
   } catch (error) {
     console.error("Failed to enable external models:", error);
@@ -786,6 +983,17 @@ function processResponseChunk(chunk: string): void {
         appealsSoFar.push(appealText);
         appealId++;
 
+        // Record arrival timing for the wait-time indicators: freeze the
+        // first-appeal clock on the first arrival, and reset the
+        // current-appeal clock on every arrival. Refresh immediately so the
+        // displayed values don't lag the up-to-1s timer interval.
+        const appealArrivedAtMs = Date.now();
+        if (firstAppealArrivedAtMs === null) {
+          firstAppealArrivedAtMs = appealArrivedAtMs;
+        }
+        lastAppealArrivedAtMs = appealArrivedAtMs;
+        updateTimer();
+
         const isSynthesized = parsedLine.synthesized === "true";
 
         // Update status indicator and checklist
@@ -872,9 +1080,24 @@ function connectWebSocket(
   done: () => void,
 ) {
   const startWebSocket = () => {
+    // A REST handoff may have been triggered between when this (re)connect
+    // was queued (e.g. ws.onerror's 1s retry firing right as the hard cap
+    // hits) and now. Don't open a parallel socket — REST owns the stream,
+    // and starting an attempt here would also stomp the REST leg's timer.
+    // Same for a hard-timeout give-up: a queued reconnect firing after it
+    // would open a socket the user was just told to abandon.
+    if (handingOffToRest || usingRestFallback || wsGaveUp) {
+      return;
+    }
     // Start the per-attempt wait timer. connectWebSocket is called
     // recursively for retries, so each invocation gets its own start.
     beginAttempt();
+    // Clear any inactivity timer left over from a previous attempt so it
+    // can't fire stale during this one and end the wrong attempt's clock.
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle);
+      timeoutHandle = null;
+    }
     // Per-attempt flag: ws.onerror or the inactivity-timeout path may
     // decide to retry or hand off to REST. The same socket's
     // ws.onclose then fires on the normal error->close (or
@@ -885,13 +1108,34 @@ function connectWebSocket(
     let retryScheduled = false;
 
     const ws = new WebSocket(websocketUrl);
+    // Track the live socket so the module-level hard-timeout handler can
+    // close it when it hands off to REST.
+    activeWebSocket = ws;
+
+    // Queue the next WS attempt after a short delay. Marks retryScheduled
+    // so this attempt's ws.onclose won't also call done(). Shared by the
+    // error and inactivity-timeout (no-REST) paths.
+    const scheduleReconnect = () => {
+      retries = retries + 1;
+      retryScheduled = true;
+      console.log(
+        `Retrying WebSocket connection (${retries}/${maxRetries})...`,
+      );
+      setTimeout(
+        () => connectWebSocket(websocketUrl, data, processResponseChunk, done),
+        1000,
+      );
+    };
 
     // Defined inside startWebSocket so it can close `ws` and mark
     // `retryScheduled` on the right per-attempt closure.
     const resetTimeout = () => {
+      if (handingOffToRest || usingRestFallback) return;
       if (timeoutHandle) clearTimeout(timeoutHandle);
       timeoutHandle = setTimeout(() => {
-        console.error("No messages received in 240 seconds. Reconnecting...");
+        console.error(
+          `No messages received in ${WS_INACTIVITY_TIMEOUT_MS / 1000} seconds. Stream stalled.`,
+        );
         // Mark this socket stale, end its attempt timer, and explicitly
         // close it. ws.onclose will short-circuit on retryScheduled,
         // so it can't double-call done() or stomp on the next attempt.
@@ -902,28 +1146,38 @@ function connectWebSocket(
         } catch (e) {
           /* ignore */
         }
+        // A silent socket is usually dead, and reconnecting tends to stall
+        // the same way — so go straight to the backup REST request rather
+        // than burning the remaining time budget on more WS attempts.
+        if (escalateToRest('websocket inactivity timeout')) {
+          return;
+        }
+        // No REST fallback configured: fall back to the old retry/give-up
+        // behaviour so we still terminate.
         if (retries < maxRetries) {
-          retries++;
-          setTimeout(
-            () =>
-              connectWebSocket(websocketUrl, data, processResponseChunk, done),
-            1000,
-          );
+          scheduleReconnect();
         } else {
           console.error("Max retries reached. Closing connection.");
           done();
         }
-      }, 240000); // 240 seconds timeout
+      }, WS_INACTIVITY_TIMEOUT_MS);
     };
 
     ws.onopen = () => {
       console.log("WebSocket connection opened");
       updateStatusIndicator('connected', appealsSoFar.length);
       ws.send(JSON.stringify(data));
+      // Arm the inactivity timer now, not just on the first message: a
+      // socket the server accepts but never replies on would otherwise
+      // have no timeout, no error and no close — i.e. spin forever.
+      resetTimeout();
     };
 
     // Handle incoming messages
     ws.onmessage = (event) => {
+      // Ignore late frames once we've handed off to REST so we don't
+      // re-arm the inactivity timer or append after the switch.
+      if (handingOffToRest) return;
       resetTimeout();
       const chunk = event.data;
       processResponseChunk(chunk);
@@ -934,14 +1188,17 @@ function connectWebSocket(
       console.log("WebSocket connection closed:", event.code, event.reason);
       lastWsCloseCode = event.code;
       lastWsCloseReason = event.reason || '';
-      // Two reasons to short-circuit done():
+      // Three reasons to short-circuit done():
       //   1. handingOffToRest: REST fallback owns the final done() call
       //      and will record its own attempt duration.
       //   2. retryScheduled: ws.onerror or the inactivity-timeout path
       //      already queued a reconnect for this attempt and recorded
       //      its duration; calling done()/endCurrentAttempt() here
       //      would stomp on it.
-      if (handingOffToRest || retryScheduled) {
+      //   3. wsGaveUp: the hard timeout already gave up, showed the error
+      //      message, and called done(); running the normal-completion path
+      //      here would paint false success over it and double-fire done().
+      if (handingOffToRest || retryScheduled || wsGaveUp) {
         return;
       }
       // Normal close path: record the attempt duration before done().
@@ -952,6 +1209,10 @@ function connectWebSocket(
 
     // Handle errors
     ws.onerror = (error) => {
+      // A reconnect/fallback was already scheduled for this socket (e.g. by
+      // the inactivity timeout or hard cap closing it), or the hard timeout
+      // already gave up and reported; don't double-handle.
+      if (retryScheduled || handingOffToRest || wsGaveUp) return;
       console.error("WebSocket error:", error);
       lastWsErrorMessage = (error as any)?.message || (error as any)?.type || 'unknown';
       updateStatusIndicator('error', appealsSoFar.length);
@@ -959,29 +1220,15 @@ function connectWebSocket(
       // take next (retry / fallback / give up).
       endCurrentAttempt();
       if (retries < maxRetries) {
-        console.log(
-          `Retrying WebSocket connection (${retries + 1}/${maxRetries})...`,
-        );
-        retries = retries + 1;
-        retryScheduled = true;
-        setTimeout(
-          () =>
-            connectWebSocket(websocketUrl, data, processResponseChunk, done),
-          1000,
-        );
-      } else if (my_rest_fallback_url && !usingRestFallback) {
-        // WebSocket retries exhausted — try REST fallback
-        console.log("WebSocket retries exhausted, falling back to REST endpoint");
-        handingOffToRest = true;
-        const csrfToken = (data as any).csrfmiddlewaretoken || '';
-        fetchFallback(my_rest_fallback_url, data, csrfToken);
+        scheduleReconnect();
+      } else if (escalateToRest('websocket errored, retries exhausted')) {
+        // REST fallback now owns the stream.
       } else {
         console.error("Max retries reached. Closing connection.");
-        const statusMessage = document.getElementById('status-message');
-        if (statusMessage) {
-          statusMessage.textContent = 'Our AI took too many coffee breaks. Try refreshing the page.';
-          statusMessage.style.color = '#dc3545';
-        }
+        fadeStatusMessage(
+          'Our AI took too many coffee breaks. Try refreshing the page.',
+          '#dc3545',
+        );
         done();
       }
     };
@@ -996,12 +1243,20 @@ export function doQuery(backend_url: string, data: Map<string, string>, rest_fal
   my_rest_fallback_url = rest_fallback_url || '';
   usingRestFallback = false;
   handingOffToRest = false;
+  wsGaveUp = false;
   // Start the aggregate wait clock only on the first call. doQuery
   // recurses on retry via done(), and we want the total to span the
   // entire user-visible wait, not just the latest retry.
   if (doQueryStartedAtMs === 0) {
     doQueryStartedAtMs = Date.now();
   }
+  // Arm the hard WebSocket deadline so a slow-but-alive socket can't keep
+  // the user waiting past the budget before we fire the backup REST.
+  // armHardTimeout() no-ops while a timer is already live, so in-flight
+  // retries keep the original deadline; a fresh pass after done() cleared
+  // it — notably the external-models rerun — gets a new budget instead of
+  // running with no hard timeout at all.
+  armHardTimeout();
   return connectWebSocket(backend_url, data, processResponseChunk, done);
 }
 

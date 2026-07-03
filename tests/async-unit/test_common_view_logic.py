@@ -10,7 +10,12 @@ from fighthealthinsurance.common_view_logic import (
     NextStepInfo,
     DenialCreatorHelper,
 )
-from fighthealthinsurance.utils import MIN_APPEAL_CHARS, is_real_appeal
+from fighthealthinsurance.utils import (
+    MIN_APPEAL_CHARS,
+    is_real_appeal,
+    meaningful_appeal_length,
+    warn_too_short_appeal,
+)
 from fighthealthinsurance.helpers import SendFaxHelper, RemoveDataHelper
 from fighthealthinsurance.models import Denial, DenialTypes, Appeal, FaxesToSend
 import pytest
@@ -683,13 +688,74 @@ class TestCommonViewLogic(TestCase):
         ("", False),
         ("   \t\n  ", False),  # whitespace-only
         ("ok", False),  # below threshold
-        ("a" * MIN_APPEAL_CHARS, False),  # at threshold (strict >)
+        ("a" * (MIN_APPEAL_CHARS - 1), False),  # just below threshold
+        ("a" * MIN_APPEAL_CHARS, True),  # at threshold (inclusive >=)
         (123, False),  # non-string
         (["a"] * 100, False),  # non-string
         ("          short          ", False),  # strip-then-measure
         ("a" * (MIN_APPEAL_CHARS + 1), True),  # just over threshold
         ("this is a long enough appeal text for delivery", True),
+        # Internal whitespace doesn't count: 10 letters padded with spaces.
+        ("a " * 10, False),
+        # Control characters don't count: 10 letters + 50 NUL bytes.
+        ("a" * 10 + "\x00" * 50, False),
+        # Exactly MIN_APPEAL_CHARS letters with control padding stays valid.
+        ("a" * MIN_APPEAL_CHARS + "\x07" * 20, True),
+        # Tabs/newlines between letters are ignored (only 12 real letters).
+        ("a\tb\nc d e f g h i j k l", False),
     ],
 )
 def test_is_real_appeal(value, expected):
     assert is_real_appeal(value) is expected
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        (None, 0),
+        (123, 0),
+        ("", 0),
+        ("   \t\n  ", 0),  # whitespace-only
+        ("abc", 3),
+        ("a b c", 3),  # internal spaces excluded
+        ("  hi  ", 2),  # surrounding spaces excluded
+        ("a\x00b\x07c", 3),  # control characters excluded
+        ("a" * 15, 15),
+        ("a" * 15 + "\n\n\n", 15),  # trailing whitespace excluded
+    ],
+)
+def test_meaningful_appeal_length(value, expected):
+    assert meaningful_appeal_length(value) == expected
+
+
+def test_warn_too_short_appeal_logs_length_and_context():
+    """The shared drop-site warning reports the measured length, the
+    threshold, and the caller-supplied context. The reported length is the
+    meaningful (non-whitespace) count, so internal spaces are not counted."""
+    from loguru import logger as loguru_logger
+
+    sink = io.StringIO()
+    handler_id = loguru_logger.add(sink, level="WARNING")
+    try:
+        warn_too_short_appeal("a b c", "model='m' for denial 7")
+    finally:
+        loguru_logger.remove(handler_id)
+    output = sink.getvalue()
+    assert "too-short appeal" in output
+    assert "len=3" in output  # 3 letters, the 2 spaces are excluded
+    assert f"< {MIN_APPEAL_CHARS} chars" in output
+    assert "model='m' for denial 7" in output
+
+
+def test_warn_too_short_appeal_handles_non_string():
+    """A non-string (e.g. None) is reported as length 0 without raising."""
+    from loguru import logger as loguru_logger
+
+    sink = io.StringIO()
+    handler_id = loguru_logger.add(sink, level="WARNING")
+    try:
+        warn_too_short_appeal(None, "some context")
+    finally:
+        loguru_logger.remove(handler_id)
+    output = sink.getvalue()
+    assert "len=0" in output

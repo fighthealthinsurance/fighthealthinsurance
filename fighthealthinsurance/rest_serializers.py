@@ -823,6 +823,7 @@ class ChooserCandidateSerializer(serializers.Serializer):
     candidate_index = serializers.IntegerField()
     kind = serializers.CharField()
     model_name = serializers.CharField()
+    synthesized = serializers.BooleanField(required=False, default=False)
     content = serializers.CharField()
     metadata = serializers.JSONField(required=False, allow_null=True)
 
