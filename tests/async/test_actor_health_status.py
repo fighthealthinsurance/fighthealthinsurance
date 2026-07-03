@@ -33,6 +33,7 @@ class TestActorHealthStatus(TestCase):
     def setUp(self):
         self.client = APIClient()
 
+    @override_settings(TEMPORAL_ENABLED=False)
     def test_actor_health_endpoint_accessible(self):
         """Test that the actor health endpoint is accessible."""
         response = self.client.get("/ziggy/rest/actor_health_status")
@@ -45,6 +46,7 @@ class TestActorHealthStatus(TestCase):
         # Total actors: email, fax, chooser, IMR refresh, UCR refresh, PA refresh
         assert data["total_actors"] == 6
 
+    @override_settings(TEMPORAL_ENABLED=False)
     @mock.patch("fighthealthinsurance.actor_health_status.ray")
     def test_actor_health_all_down(self, mock_ray):
         """Test actor health when all actors are down."""
@@ -62,6 +64,7 @@ class TestActorHealthStatus(TestCase):
             assert detail["alive"] is False
             assert detail["error"] is not None
 
+    @override_settings(TEMPORAL_ENABLED=False)
     @mock.patch("fighthealthinsurance.actor_health_status.ray")
     def test_actor_health_all_up(self, mock_ray):
         """Test actor health when all actors are up and healthy."""
@@ -84,6 +87,7 @@ class TestActorHealthStatus(TestCase):
             assert detail["alive"] is True
             assert detail["error"] is None
 
+    @override_settings(TEMPORAL_ENABLED=False)
     @mock.patch("fighthealthinsurance.actor_health_status.ray")
     def test_actor_health_partial(self, mock_ray):
         """Test actor health when some actors are up and some are down."""
