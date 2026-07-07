@@ -561,22 +561,26 @@ class ReportClientError(APIView):
         # context that feeds appeal generation. A client-reported "0 appeals"
         # is frequently a context-window overflow, and seeing the per-field
         # token breakdown server-side makes that diagnosable without a repro.
-        # Never let this diagnostic enrichment break the error-report endpoint.
-        context_tokens = "unavailable"
-        if denial_id_valid:
+        #
+        # This enrichment reads PHI-bearing denial fields, so it is gated on the
+        # same (denial_id, email, semi_sekret) ownership triple that guards the
+        # appeal stream -- otherwise any sequential denial_id would load an
+        # arbitrary patient's denial (unauthenticated IDOR). Auth failure still
+        # records the error report: this endpoint is a fire-and-forget
+        # diagnostic sink that must work even in degraded client states, so we
+        # log without the token breakdown rather than reject. Never let the
+        # enrichment break the report.
+        context_tokens = "unauthorized"
+        denial = common_view_logic.get_denial_for_action(
+            denial_id=request.data.get("denial_id"),
+            email=str(request.data.get("email") or ""),
+            semi_sekret=str(request.data.get("semi_sekret") or ""),
+        )
+        if denial is not None:
             try:
-                denial = (
-                    Denial.objects.filter(denial_id=int(denial_id))
-                    .only(*context_utils.DENIAL_CONTEXT_TOKEN_FIELDS)
-                    .first()
-                )
-                if denial is not None:
-                    context_tokens = context_utils.summarize_denial_context_tokens(
-                        denial
-                    )
-                else:
-                    context_tokens = "denial_not_found"
+                context_tokens = context_utils.summarize_denial_context_tokens(denial)
             except Exception as e:
+                context_tokens = "unavailable"
                 logger.opt(exception=True).debug(
                     f"Failed to compute context token sizes for denial "
                     f"{denial_id}: {e}"
