@@ -1577,6 +1577,13 @@ class DemoRequestsViewSet(viewsets.ViewSet, CreateMixin, DeleteMixin):
         from fighthealthinsurance.utils import notify_interested_professional
 
         try:
+            # Dedup by email: if this address already has a lead, don't create a
+            # duplicate InterestedProfessional, re-notify the professional inbox,
+            # or re-send the thank-you. The DemoRequests row + the support
+            # notification (_notify_demo_request) already captured this repeat
+            # submission for the team.
+            if InterestedProfessional.objects.filter(email=demo.email).exists():
+                return
             interested_pro = InterestedProfessional.objects.create(
                 name=demo.name or "",
                 email=demo.email,
@@ -1667,6 +1674,15 @@ class InterestedProfessionalViewSet(viewsets.ViewSet, CreateMixin):
 
     def perform_create(self, request: Request, serializer) -> Response:
         """Save the lead, then notify the professional-signup inbox."""
+        # Dedup by email: a returning lead reuses the existing record rather
+        # than accumulating duplicate rows or re-notifying the professional
+        # inbox. Repeat submissions still get the standard success response.
+        email = serializer.validated_data.get("email")
+        if email and InterestedProfessional.objects.filter(email=email).exists():
+            return Response(
+                serializers.StatusResponseSerializer({"status": "subscribed"}).data,
+                status=status.HTTP_201_CREATED,
+            )
         # clicked_for_paid defaults to True on the model for legacy reasons; the
         # interest form no longer collects a pay-to-express-interest choice, so
         # record leads as not-clicked (matches the web /pro_version form).

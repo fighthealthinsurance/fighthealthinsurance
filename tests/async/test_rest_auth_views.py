@@ -1311,8 +1311,13 @@ class ProfessionalInvitationTests(TestCase):
         # Check email content
         email_content = mail.outbox[-2].body
         self.assertIn("testdomain", email_content)
-        self.assertIn("1234567890", email_content)  # Practice phone number
         self.assertIn("Admin User", email_content)  # Inviter name
+        # Self-serve join is closed (new signups gated), so the invite no longer
+        # tells invitees to self-signup with the practice phone number; it now
+        # directs them to be added from the dashboard and await a set-password
+        # email.
+        self.assertIn("dashboard", email_content)
+        self.assertNotIn("1234567890", email_content)
 
     def test_invite_professional_as_non_admin(self):
         # Login as regular user

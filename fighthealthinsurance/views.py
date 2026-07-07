@@ -279,6 +279,14 @@ class ProVersionView(generic.FormView):
         # field reflects reality.
         interested_pro = form.save(commit=False)
         interested_pro.clicked_for_paid = False
+        # Dedup by email: if this professional already expressed interest, reuse
+        # the existing lead — don't create a duplicate row, re-notify the
+        # professional inbox, or re-send the thank-you. They still land on the
+        # thank-you page.
+        if models.InterestedProfessional.objects.filter(
+            email=interested_pro.email
+        ).exists():
+            return super().form_valid(form)
         interested_pro.save()
         self._notify_professional_signup(interested_pro)
         # Send the thank-you email synchronously so the signer gets it right

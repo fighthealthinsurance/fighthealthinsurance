@@ -2081,21 +2081,63 @@ class DemoRequestEndpointTest(APITestCase):
         self.assertFalse(pro.clicked_for_paid)
 
     def test_demo_request_sends_thankyou_email_to_requester(self):
+        # Use a non-blocked domain: send_fallback_email drops example.com/.net/
+        # .org (see email_utils.is_blocked_email), so the thank-you would never
+        # reach the outbox with an @example.com requester.
         from fighthealthinsurance.models import InterestedProfessional
 
         response = self.client.post(
             reverse("demorequest-list"),
-            data=json.dumps({"email": "lead5@example.com", "name": "Dr. Five"}),
+            data=json.dumps({"email": "dr.five@clinic.example", "name": "Dr. Five"}),
             content_type="application/json",
         )
         self.assertEqual(response.status_code, 201)
-        thankyou = next(m for m in mail.outbox if m.to == ["lead5@example.com"])
+        thankyou = next(m for m in mail.outbox if m.to == ["dr.five@clinic.example"])
         self.assertEqual(
             thankyou.subject,
             "Thanks for your interest in our new professional version!",
         )
-        pro = InterestedProfessional.objects.get(email="lead5@example.com")
+        pro = InterestedProfessional.objects.get(email="dr.five@clinic.example")
         self.assertTrue(pro.thankyou_email_sent)
+
+    def test_demo_request_dedups_interested_professional_by_email(self):
+        # Two demo requests from the same address record only one lead and send
+        # only one thank-you; the second submission reuses the existing lead.
+        # (A non-blocked domain so the first thank-you actually reaches outbox.)
+        from fighthealthinsurance.models import DemoRequests, InterestedProfessional
+
+        payload = json.dumps({"email": "repeat@clinic.example", "name": "Repeat Lead"})
+        first = self.client.post(
+            reverse("demorequest-list"),
+            data=payload,
+            content_type="application/json",
+        )
+        second = self.client.post(
+            reverse("demorequest-list"),
+            data=payload,
+            content_type="application/json",
+        )
+        self.assertEqual(first.status_code, 201)
+        self.assertEqual(second.status_code, 201)
+        # Both demo submissions are still recorded (full audit trail lives on
+        # DemoRequests), but only one InterestedProfessional lead exists...
+        self.assertEqual(
+            DemoRequests.objects.filter(email="repeat@clinic.example").count(), 2
+        )
+        self.assertEqual(
+            InterestedProfessional.objects.filter(
+                email="repeat@clinic.example"
+            ).count(),
+            1,
+        )
+        # ...and the requester got exactly one thank-you.
+        thankyous = [
+            m
+            for m in mail.outbox
+            if m.to == ["repeat@clinic.example"]
+            and "Thanks for your interest" in m.subject
+        ]
+        self.assertEqual(len(thankyous), 1)
 
     def test_demo_request_notifies_professional_inbox(self):
         # The lead notification goes through the shared
