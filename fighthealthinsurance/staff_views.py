@@ -730,6 +730,19 @@ class ProConnectorProcessView(View):
             # re-send or overwrite; just advance.
             return redirect("proconnector_process")
 
+        if action == "noop":
+            # Implicit form submission (pressing Enter in a single-line field)
+            # clicks the form's first submit button -- a hidden no-op button in
+            # the template -- so a stray Enter can never fire the live send.
+            # Just re-render the record with the staff edits preserved.
+            return self._render_record(
+                request,
+                pro,
+                draft=request.POST.get("email_body"),
+                subject=request.POST.get("subject"),
+                skip_reason=(request.POST.get("skip_reason") or "").strip(),
+            )
+
         if action == "skip":
             skip_reason = (request.POST.get("skip_reason") or "").strip()
             # Resolve every signup sharing this email so duplicates don't return.

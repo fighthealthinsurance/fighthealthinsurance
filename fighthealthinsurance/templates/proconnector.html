@@ -180,6 +180,12 @@
       <form method="post">
         {% csrf_token %}
         <input type="hidden" name="interested_professional_id" value="{{ pro.id }}">
+        {# Implicit form submission (pressing Enter in a single-line field) #}
+        {# clicks the form's FIRST submit button. Without this hidden no-op #}
+        {# button that would be "Send intro email now" -- an accidental     #}
+        {# Enter in the subject or test-address field would fire a LIVE     #}
+        {# send. The server treats action=noop as "re-render, keep edits".  #}
+        <button type="submit" name="action" value="noop" style="display:none" aria-hidden="true" tabindex="-1"></button>
 
         <label>To</label>
         <input type="text" class="readonly" value="{{ pro.email }}" readonly>
@@ -241,6 +247,22 @@
           return;
         }
         submitted = true;
+      });
+
+      // Pressing Enter in a single-line field must never fire the live send
+      // (implicit submission would click the form's first submit button; the
+      // hidden no-op button covers browsers without JS). With JS we swallow
+      // Enter -- except in the test-address field, where Enter runs the test
+      // send the staffer clearly intends.
+      var testButton = form.querySelector('button[value="send_test"]');
+      form.querySelectorAll('input[type="text"]').forEach(function (el) {
+        el.addEventListener("keydown", function (e) {
+          if (e.key !== "Enter") return;
+          e.preventDefault();
+          if (el.id === "test_email" && testButton) {
+            form.requestSubmit(testButton);
+          }
+        });
       });
     })();
   </script>

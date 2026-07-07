@@ -820,6 +820,47 @@ class SendFailureTest(_ProcessViewTestCase):
 # ---------------------------------------------------------------------------
 # Test-email flow (preview send that must never mark the record)
 # ---------------------------------------------------------------------------
+class ImplicitSubmitGuardTest(_ProcessViewTestCase):
+    """Pressing Enter in a single-line field triggers implicit form submission
+    via the form's FIRST submit button. A hidden no-op button is that first
+    button so a stray Enter can never fire the live send."""
+
+    def test_noop_action_re_renders_without_sending_or_marking(self):
+        pro = _make_pro(email="jane@janeclinic.com")
+        body = "Edited body with the compensation disclosure, mid-edit."
+        response = self._post(
+            "noop",
+            interested_professional_id=pro.id,
+            subject="Half-typed subject",
+            email_body=body,
+            test_email="staff-tester@fhi-staff.org",
+        )
+        # Same record re-rendered with every edit preserved -- no redirect, no
+        # email, and nothing recorded.
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, body)
+        self.assertContains(response, "Half-typed subject")
+        self.assertContains(response, "staff-tester@fhi-staff.org")
+        self.assertEqual(len(mail.outbox), 0)
+        pro.refresh_from_db()
+        self.assertFalse(pro.proconnector_attempted)
+        self.assertIsNone(pro.proconnector_sent_at)
+        self.assertFalse(pro.proconnector_skipped)
+
+    @patch(
+        "fighthealthinsurance.staff_views.generate_intro_email",
+        return_value="A draft body with compensation disclosure.",
+    )
+    def test_hidden_noop_button_is_the_forms_first_submit_button(self, _mock_gen):
+        # The no-op button must come BEFORE the live-send button in tree order,
+        # or implicit submission would still click "Send intro email now".
+        _make_pro(email="jane@janeclinic.com")
+        response = self.client.get(self.url)
+        content = response.content.decode()
+        self.assertIn('value="noop"', content)
+        self.assertLess(content.index('value="noop"'), content.index('value="send"'))
+
+
 class SendTestEmailFlowTest(_ProcessViewTestCase):
     BODY = "Edited intro body with the compensation disclosure."
 
