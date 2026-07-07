@@ -100,6 +100,29 @@
       border-radius: 4px;
       margin-bottom: 16px;
     }
+    .notice {
+      background: #d1e7dd;
+      border: 1px solid #a3cfbb;
+      color: #0a3622;
+      padding: 12px 16px;
+      border-radius: 4px;
+      margin-bottom: 16px;
+    }
+    .test-send {
+      margin-top: 18px;
+      padding: 12px 14px;
+      background: #f3eefe;
+      border: 1px solid #d9c9f7;
+      border-radius: 4px;
+    }
+    .test-send label { margin-top: 0; }
+    .test-send .hint {
+      font-size: 0.88em;
+      color: #4d3a73;
+      margin: 8px 0 0;
+    }
+    button.test { background-color: #6f42c1; color: white; margin-top: 10px; }
+    button.test:hover { background-color: #59339d; }
     .readonly { color: #333; }
     .back { display: inline-block; margin-top: 10px; color: #007bff; }
   </style>
@@ -109,6 +132,9 @@
 
   {% if error %}
     <div class="error">{{ error }}</div>
+  {% endif %}
+  {% if notice %}
+    <div class="notice">{{ notice }}</div>
   {% endif %}
 
   {% if pro %}
@@ -178,6 +204,18 @@
           <button type="submit" class="send" name="action" value="send">Send intro email now</button>
           <button type="submit" class="queue" name="action" value="queue">Send during business hours</button>
           <button type="submit" class="skip" name="action" value="skip" formnovalidate>Skip</button>
+        </div>
+
+        <div class="test-send">
+          <label for="test_email">Send a test copy to</label>
+          <input type="text" id="test_email" name="test_email" value="{{ test_email }}" placeholder="you@fighthealthinsurance.com">
+          <button type="submit" class="test" name="action" value="send_test">Send test e-mail</button>
+          <p class="hint">
+            Sends the draft above to the test address only, with a TEST marker
+            in the subject and body. {{ pro.email }} is not emailed, nothing is
+            CC'd, and the record is <strong>not</strong> marked as sent &mdash;
+            it stays in the queue.
+          </p>
         </div>
       </form>
     </div>

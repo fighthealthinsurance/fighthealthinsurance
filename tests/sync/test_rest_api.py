@@ -15,6 +15,7 @@ import json
 
 from django.urls import reverse
 from django.contrib.auth import get_user_model
+from django.core import mail
 from django.utils import timezone
 from dateutil.relativedelta import relativedelta
 
@@ -2049,3 +2050,270 @@ class DemoRequestEndpointTest(APITestCase):
             )
         self.assertEqual(response.status_code, 201)
         self.assertTrue(DemoRequests.objects.filter(email="lead3@example.com").exists())
+
+    def test_demo_request_records_interested_professional_lead(self):
+        # With new FPW signups closed, demo requests are the professional lead
+        # intake: the endpoint mirrors the web /pro_version form by recording an
+        # InterestedProfessional with the demo fields mapped over.
+        from fighthealthinsurance.models import InterestedProfessional
+
+        response = self.client.post(
+            reverse("demorequest-list"),
+            data=json.dumps(
+                {
+                    "email": "lead4@example.com",
+                    "name": "Dr. Lead",
+                    "company": "Acme Health",
+                    "role": "Billing Manager",
+                    "phone": "2035551234",
+                    "source": "webinar",
+                }
+            ),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 201)
+        pro = InterestedProfessional.objects.get(email="lead4@example.com")
+        self.assertEqual(pro.name, "Dr. Lead")
+        self.assertEqual(pro.business_name, "Acme Health")
+        self.assertEqual(pro.job_title_or_provider_type, "Billing Manager")
+        self.assertEqual(pro.phone_number, "2035551234")
+        self.assertIn("webinar", pro.comments)
+        self.assertFalse(pro.clicked_for_paid)
+
+    def test_demo_request_sends_thankyou_email_to_requester(self):
+        # Use a non-blocked domain: send_fallback_email drops example.com/.net/
+        # .org (see email_utils.is_blocked_email), so the thank-you would never
+        # reach the outbox with an @example.com requester.
+        from fighthealthinsurance.models import InterestedProfessional
+
+        response = self.client.post(
+            reverse("demorequest-list"),
+            data=json.dumps({"email": "dr.five@clinic.example", "name": "Dr. Five"}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 201)
+        thankyou = next(m for m in mail.outbox if m.to == ["dr.five@clinic.example"])
+        self.assertEqual(
+            thankyou.subject,
+            "Thanks for your interest in our new professional version!",
+        )
+        pro = InterestedProfessional.objects.get(email="dr.five@clinic.example")
+        self.assertTrue(pro.thankyou_email_sent)
+
+    def test_demo_request_dedups_interested_professional_by_email(self):
+        # Two demo requests from the same address record only one lead and send
+        # only one thank-you; the second submission reuses the existing lead.
+        # (A non-blocked domain so the first thank-you actually reaches outbox.)
+        from fighthealthinsurance.models import DemoRequests, InterestedProfessional
+
+        payload = json.dumps({"email": "repeat@clinic.example", "name": "Repeat Lead"})
+        first = self.client.post(
+            reverse("demorequest-list"),
+            data=payload,
+            content_type="application/json",
+        )
+        second = self.client.post(
+            reverse("demorequest-list"),
+            data=payload,
+            content_type="application/json",
+        )
+        self.assertEqual(first.status_code, 201)
+        self.assertEqual(second.status_code, 201)
+        # Both demo submissions are still recorded (full audit trail lives on
+        # DemoRequests), but only one InterestedProfessional lead exists...
+        self.assertEqual(
+            DemoRequests.objects.filter(email="repeat@clinic.example").count(), 2
+        )
+        self.assertEqual(
+            InterestedProfessional.objects.filter(
+                email="repeat@clinic.example"
+            ).count(),
+            1,
+        )
+        # ...and the requester got exactly one thank-you.
+        thankyous = [
+            m
+            for m in mail.outbox
+            if m.to == ["repeat@clinic.example"]
+            and "Thanks for your interest" in m.subject
+        ]
+        self.assertEqual(len(thankyous), 1)
+
+    def test_demo_request_lead_dedup_is_case_insensitive(self):
+        # A resubmission that only differs in email case must reuse the existing
+        # lead (matching the pro-connector queue's email__iexact collapsing),
+        # not create a duplicate InterestedProfessional or re-send the thank-you.
+        from fighthealthinsurance.models import InterestedProfessional
+
+        first = self.client.post(
+            reverse("demorequest-list"),
+            data=json.dumps({"email": "casey@clinic.example", "name": "Casey"}),
+            content_type="application/json",
+        )
+        second = self.client.post(
+            reverse("demorequest-list"),
+            data=json.dumps({"email": "Casey@Clinic.example", "name": "Casey"}),
+            content_type="application/json",
+        )
+        self.assertEqual(first.status_code, 201)
+        self.assertEqual(second.status_code, 201)
+        self.assertEqual(
+            InterestedProfessional.objects.filter(
+                email__iexact="casey@clinic.example"
+            ).count(),
+            1,
+        )
+        thankyous = [
+            m
+            for m in mail.outbox
+            if [a.lower() for a in m.to] == ["casey@clinic.example"]
+            and "Thanks for your interest" in m.subject
+        ]
+        self.assertEqual(len(thankyous), 1)
+
+    def test_demo_request_notifies_professional_inbox(self):
+        # The lead notification goes through the shared
+        # notify_interested_professional helper, i.e. to the professional inbox.
+        response = self.client.post(
+            reverse("demorequest-list"),
+            data=json.dumps({"email": "lead6@example.com"}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 201)
+        notification = next(
+            m for m in mail.outbox if m.to == ["professional@fighthealthinsurance.com"]
+        )
+        self.assertIn("lead6@example.com", notification.body)
+        self.assertIn("a Fight Paperwork demo request", notification.body)
+
+    def test_interested_professional_failure_does_not_fail_demo_request(self):
+        # The DemoRequests row is persisted before the lead bookkeeping; a
+        # failure there must be swallowed, not surface as a 500.
+        from fighthealthinsurance.models import DemoRequests, InterestedProfessional
+
+        with patch(
+            "fighthealthinsurance.rest_views.InterestedProfessional.objects.create",
+            side_effect=RuntimeError("db hiccup"),
+        ):
+            response = self.client.post(
+                reverse("demorequest-list"),
+                data=json.dumps({"email": "lead7@example.com"}),
+                content_type="application/json",
+            )
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(DemoRequests.objects.filter(email="lead7@example.com").exists())
+        self.assertFalse(
+            InterestedProfessional.objects.filter(email="lead7@example.com").exists()
+        )
+
+
+class InterestedProfessionalEndpointTest(APITestCase):
+    """The interested_professional REST endpoint records a professional-interest
+    lead (the FPW counterpart to the web /pro_version form) and notifies the
+    professional-signup inbox (defaults to professional@fighthealthinsurance.com).
+    The notification flows through fighthealthinsurance.utils.notify_professional_signup,
+    so that is the send_mail patch target."""
+
+    def test_records_lead_and_emails_professional_inbox(self):
+        from fighthealthinsurance.models import InterestedProfessional
+
+        with patch("fighthealthinsurance.utils.send_mail") as mock_send:
+            response = self.client.post(
+                reverse("interested-professional-list"),
+                data=json.dumps(
+                    {
+                        "email": "pro@example.com",
+                        "name": "Dr. Pro",
+                        "business_name": "Acme Health",
+                        "job_title_or_provider_type": "Billing Manager",
+                    }
+                ),
+                content_type="application/json",
+            )
+        self.assertEqual(response.status_code, 201)
+        pro = InterestedProfessional.objects.get(email="pro@example.com")
+        self.assertEqual(pro.name, "Dr. Pro")
+        self.assertEqual(pro.business_name, "Acme Health")
+        # Legacy model default is clicked_for_paid=True; the endpoint records
+        # leads as not-clicked (matches the web /pro_version form).
+        self.assertFalse(pro.clicked_for_paid)
+        mock_send.assert_called_once()
+        # send_mail(subject, body, from_email, recipients)
+        subject, body, _from, recipients = mock_send.call_args.args
+        self.assertIn("professional@fighthealthinsurance.com", recipients)
+        self.assertIn("pro@example.com", body)
+        self.assertIn(str(pro.id), subject)
+
+    def test_extra_notification_recipient_is_configurable(self):
+        with patch("fighthealthinsurance.utils.send_mail") as mock_send, self.settings(
+            PROFESSIONAL_SIGNUP_NOTIFICATION_EMAILS=[
+                "professional@fighthealthinsurance.com",
+                "sales@example.com",
+            ]
+        ):
+            response = self.client.post(
+                reverse("interested-professional-list"),
+                data=json.dumps({"email": "pro2@example.com"}),
+                content_type="application/json",
+            )
+        self.assertEqual(response.status_code, 201)
+        recipients = mock_send.call_args.args[3]
+        self.assertIn("sales@example.com", recipients)
+
+    def test_mail_failure_does_not_fail_request(self):
+        # The lead is persisted before the notification is attempted, so a mail
+        # backend error must not turn into a 500.
+        from fighthealthinsurance.models import InterestedProfessional
+
+        with patch(
+            "fighthealthinsurance.utils.send_mail",
+            side_effect=RuntimeError("smtp down"),
+        ):
+            response = self.client.post(
+                reverse("interested-professional-list"),
+                data=json.dumps({"email": "pro3@example.com"}),
+                content_type="application/json",
+            )
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(
+            InterestedProfessional.objects.filter(email="pro3@example.com").exists()
+        )
+
+    def test_email_is_required(self):
+        # email is the one required lead field; a payload without it is a 400
+        # and must not persist a row or send a notification.
+        from fighthealthinsurance.models import InterestedProfessional
+
+        with patch("fighthealthinsurance.utils.send_mail") as mock_send:
+            response = self.client.post(
+                reverse("interested-professional-list"),
+                data=json.dumps({"name": "No Email"}),
+                content_type="application/json",
+            )
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(
+            InterestedProfessional.objects.filter(name="No Email").exists()
+        )
+        mock_send.assert_not_called()
+
+    def test_notification_build_failure_does_not_fail_request(self):
+        # The notification body is built (including an admin reverse()) only
+        # after the lead is saved. A failure there must be logged and swallowed
+        # -- the lead is already persisted, so it must not surface as a 500.
+        from fighthealthinsurance.models import InterestedProfessional
+
+        with patch(
+            "fighthealthinsurance.utils.reverse",
+            side_effect=Exception("no reverse match"),
+        ), patch("fighthealthinsurance.utils.send_mail") as mock_send:
+            response = self.client.post(
+                reverse("interested-professional-list"),
+                data=json.dumps({"email": "pro4@example.com"}),
+                content_type="application/json",
+            )
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(
+            InterestedProfessional.objects.filter(email="pro4@example.com").exists()
+        )
+        # The build failed before the send, so no notification goes out.
+        mock_send.assert_not_called()

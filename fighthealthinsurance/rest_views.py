@@ -59,6 +59,7 @@ from fighthealthinsurance.models import (
     DemoRequests,
     Denial,
     DenialQA,
+    InterestedProfessional,
     MailingListSubscriber,
     OngoingChat,
     PriorAuthRequest,
@@ -1556,10 +1557,57 @@ class DemoRequestsViewSet(viewsets.ViewSet, CreateMixin, DeleteMixin):
             ip_address=bound_client_ip(ip), asn=asn, asn_name=asn_name
         )
         self._notify_demo_request(demo)
+        self._record_interested_professional(demo)
         return Response(
             serializers.StatusResponseSerializer({"status": "subscribed"}).data,
             status=status.HTTP_201_CREATED,
         )
+
+    @staticmethod
+    def _record_interested_professional(demo: DemoRequests) -> None:
+        """Feed the demo request into the interested-professional flow.
+
+        With new Fight Paperwork signups closed (connector agreement), demo
+        requests are the professional lead intake, so mirror the web
+        /pro_version form: record an InterestedProfessional lead, notify the
+        professional-signup inbox, and send the professional_thankyou email to
+        the requester. Best-effort: the DemoRequests row is already persisted
+        and this public endpoint must not 500 over lead bookkeeping or mail."""
+        from fighthealthinsurance.followup_emails import ThankyouEmailSender
+        from fighthealthinsurance.utils import notify_interested_professional
+
+        try:
+            # Dedup by email: if this address already has a lead, don't create a
+            # duplicate InterestedProfessional, re-notify the professional inbox,
+            # or re-send the thank-you. The DemoRequests row + the support
+            # notification (_notify_demo_request) already captured this repeat
+            # submission for the team. Case-insensitive to match how the
+            # pro-connector queue collapses duplicates (email__iexact), so
+            # Jane@clinic.org resubmitting as jane@clinic.org isn't re-thanked.
+            if InterestedProfessional.objects.filter(email__iexact=demo.email).exists():
+                return
+            interested_pro = InterestedProfessional.objects.create(
+                name=demo.name or "",
+                email=demo.email,
+                business_name=demo.company or "",
+                job_title_or_provider_type=demo.role or "",
+                phone_number=demo.phone or "",
+                comments=f"Demo request (source: {demo.source or 'direct'})",
+                clicked_for_paid=False,
+            )
+            notify_interested_professional(
+                interested_pro,
+                source="a Fight Paperwork demo request",
+                subject=f"New demo request lead #{interested_pro.id}",
+            )
+            # Send the thank-you right away; dosend() sets
+            # thankyou_email_sent=True on success so the batched
+            # ThankyouEmailSender won't re-send, and it swallows mail errors.
+            ThankyouEmailSender().dosend(interested_pro=interested_pro)
+        except Exception:
+            logger.opt(exception=True).error(
+                f"Error recording interested professional for demo request {demo.id}"
+            )
 
     @staticmethod
     def _notify_demo_request(demo: DemoRequests) -> None:
@@ -1603,6 +1651,72 @@ class DemoRequestsViewSet(viewsets.ViewSet, CreateMixin, DeleteMixin):
         email = serializer.validated_data["email"]
         DemoRequests.objects.filter(email=email).delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class InterestedProfessionalViewSet(viewsets.ViewSet, CreateMixin):
+    """
+    ViewSet for professional-interest leads submitted via the Fight Paperwork
+    REST API.
+
+    Public counterpart to the web /pro_version interest form: it records an
+    InterestedProfessional lead and notifies the professional-signup inbox
+    (defaults to professional@fighthealthinsurance.com, extendable via
+    settings.PROFESSIONAL_SIGNUP_NOTIFICATION_EMAILS). Create-only: this is a
+    public, unauthenticated endpoint, so lead removal is intentionally not
+    exposed here (an email-only delete would let anyone erase a lead); data
+    removal is handled out of band.
+    """
+
+    serializer_class = serializers.InterestedProfessionalSerializer
+
+    @extend_schema(responses=serializers.StatusResponseSerializer)
+    def create(self, request: Request) -> Response:
+        """Submit a new professional-interest lead."""
+        return super().create(request)
+
+    def perform_create(self, request: Request, serializer) -> Response:
+        """Save the lead, then notify the professional-signup inbox."""
+        # Dedup by email: a returning lead reuses the existing record rather
+        # than accumulating duplicate rows or re-notifying the professional
+        # inbox. Repeat submissions still get the standard success response.
+        # Case-insensitive to match how the pro-connector queue collapses
+        # duplicates (email__iexact).
+        email = serializer.validated_data.get("email")
+        if (
+            email
+            and InterestedProfessional.objects.filter(email__iexact=email).exists()
+        ):
+            return Response(
+                serializers.StatusResponseSerializer({"status": "subscribed"}).data,
+                status=status.HTTP_201_CREATED,
+            )
+        # clicked_for_paid defaults to True on the model for legacy reasons; the
+        # interest form no longer collects a pay-to-express-interest choice, so
+        # record leads as not-clicked (matches the web /pro_version form).
+        interested_pro = serializer.save(clicked_for_paid=False)
+        self._notify_interested_professional(interested_pro)
+        return Response(
+            serializers.StatusResponseSerializer({"status": "subscribed"}).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+    @staticmethod
+    def _notify_interested_professional(
+        interested_pro: InterestedProfessional,
+    ) -> None:
+        """Notify the professional-signup inbox about a new REST interest lead.
+
+        Delegates to the shared notify_interested_professional helper so the web
+        /pro_version form and this endpoint send an identical inbox format.
+        Best-effort: mail failures are logged, not raised, so they never fail
+        the already-persisted lead."""
+        from fighthealthinsurance.utils import notify_interested_professional
+
+        notify_interested_professional(
+            interested_pro,
+            source="the Fight Paperwork REST API",
+            subject=f"New pro REST signup #{interested_pro.id}",
+        )
 
 
 class SendToUserViewSet(viewsets.ViewSet, SerializerMixin):
