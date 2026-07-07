@@ -185,7 +185,10 @@ class ChooserRankedExportContentTest(StaffExportTestBase):
 class DenialAppealExportContentTest(StaffExportTestBase):
     """Test the content of the denial + appeal export."""
 
-    def test_denial_appeal_export_with_chosen_proposed(self):
+    def test_denial_appeal_export_skips_without_manual_deid(self):
+        # Fail closed: a denial with a chosen (raw) proposed appeal but no
+        # manual de-identification must NOT be exported -- previously its raw
+        # denial_text and appeal_text leaked into the training corpus.
         denial = self._create_denial()
         ProposedAppeal.objects.create(
             for_denial=denial,
@@ -193,13 +196,19 @@ class DenialAppealExportContentTest(StaffExportTestBase):
             chosen=True,
         )
 
-        lines = self.get_export_lines("denial_appeal_export")
-        self.assertEqual(len(lines), 1)
+        self.assert_export_empty("denial_appeal_export")
 
-        record = lines[0]
-        self.assertEqual(record["denial_text"], "Your claim was denied")
-        self.assertEqual(record["appeal_text"], "This is the chosen appeal text")
-        self.assertEqual(record["procedure"], "MRI")
+    def test_denial_appeal_export_skips_with_partial_manual_deid(self):
+        # Both halves must be de-identified: a manual denial with no manual
+        # appeal (the raw proposed text is not a substitute) is still skipped.
+        denial = self._create_denial(manual_deidentified_denial="De-id denial")
+        ProposedAppeal.objects.create(
+            for_denial=denial,
+            appeal_text="Raw appeal text",
+            chosen=True,
+        )
+
+        self.assert_export_empty("denial_appeal_export")
 
     def test_denial_appeal_export_prefers_manual_deid(self):
         denial = self._create_denial(
@@ -228,7 +237,12 @@ class DenialAppealExportContentTest(StaffExportTestBase):
             username="prouser", password="testpass123"
         )
         pro = ProfessionalUser.objects.create(user=pro_user_auth, active=True)
-        denial = self._create_denial(creating_professional=pro)
+        # Fully de-identified so the ONLY reason it is excluded is the pro owner.
+        denial = self._create_denial(
+            creating_professional=pro,
+            manual_deidentified_denial="De-id denial text",
+            manual_deidentified_appeal="De-id appeal text",
+        )
         ProposedAppeal.objects.create(
             for_denial=denial,
             appeal_text="Pro appeal text",
@@ -238,7 +252,12 @@ class DenialAppealExportContentTest(StaffExportTestBase):
         self.assert_export_empty("denial_appeal_export")
 
     def test_denial_appeal_export_excludes_flagged(self):
-        denial = self._create_denial(flag_for_exclude=True)
+        # Fully de-identified so the ONLY reason it is excluded is the flag.
+        denial = self._create_denial(
+            flag_for_exclude=True,
+            manual_deidentified_denial="De-id denial text",
+            manual_deidentified_appeal="De-id appeal text",
+        )
         ProposedAppeal.objects.create(
             for_denial=denial,
             appeal_text="Flagged appeal",
@@ -247,8 +266,13 @@ class DenialAppealExportContentTest(StaffExportTestBase):
 
         self.assert_export_empty("denial_appeal_export")
 
-    def test_denial_appeal_export_with_finalized_appeal(self):
-        denial = self._create_denial()
+    def test_denial_appeal_export_uses_manual_deid_over_finalized(self):
+        # A finalized Appeal exists with raw text, but the export must emit the
+        # manually de-identified appeal, never the raw finalized text.
+        denial = self._create_denial(
+            manual_deidentified_denial="De-id denial text",
+            manual_deidentified_appeal="De-id appeal text",
+        )
         Appeal.objects.create(
             for_denial=denial,
             appeal_text="Finalized appeal text",
@@ -257,11 +281,14 @@ class DenialAppealExportContentTest(StaffExportTestBase):
 
         lines = self.get_export_lines("denial_appeal_export")
         self.assertEqual(len(lines), 1)
-        self.assertEqual(lines[0]["appeal_text"], "Finalized appeal text")
+        self.assertEqual(lines[0]["denial_text"], "De-id denial text")
+        self.assertEqual(lines[0]["appeal_text"], "De-id appeal text")
 
     def test_denial_appeal_export_includes_qa_and_pubmed_context(self):
         denial = self._create_denial(
             pubmed_context="PubMed says treatment is effective per PMID 12345",
+            manual_deidentified_denial="De-id denial text",
+            manual_deidentified_appeal="De-id appeal text",
         )
         ProposedAppeal.objects.create(
             for_denial=denial,
@@ -310,7 +337,9 @@ class DenialAppealExportContentTest(StaffExportTestBase):
 class ChatExportContentTest(StaffExportTestBase):
     """Test the content of the chat export."""
 
-    def test_chat_export_content(self):
+    def test_chat_export_is_fail_closed(self):
+        # OngoingChat has no de-identified source, so the export must emit
+        # nothing rather than leak raw chat_history / appeal_text PHI.
         chat = OngoingChat.objects.create(
             chat_history=[
                 {"role": "user", "content": "My claim was denied"},
@@ -326,13 +355,7 @@ class ChatExportContentTest(StaffExportTestBase):
             hashed_email="chathash123",
         )
 
-        lines = self.get_export_lines("chat_export")
-        self.assertEqual(len(lines), 1)
-
-        record = lines[0]
-        self.assertEqual(record["denied_item"], "MRI scan")
-        self.assertEqual(len(record["chat_history"]), 2)
-        self.assertEqual(record["appeal_texts"], ["Chat-based appeal text"])
+        self.assert_export_empty("chat_export")
 
     def test_chat_export_excludes_pro_chats(self):
         from fhi_users.models import ProfessionalUser
@@ -349,8 +372,8 @@ class ChatExportContentTest(StaffExportTestBase):
 
         self.assert_export_empty("chat_export")
 
-    def test_chat_export_without_appeal(self):
-        """Chats without appeals should still be exported."""
+    def test_chat_export_without_appeal_is_fail_closed(self):
+        """Even a chat with no linked appeal is not exported (raw PHI)."""
         OngoingChat.objects.create(
             chat_history=[
                 {"role": "user", "content": "My claim was denied"},
@@ -359,9 +382,7 @@ class ChatExportContentTest(StaffExportTestBase):
             hashed_email="noappealhash",
         )
 
-        lines = self.get_export_lines("chat_export")
-        self.assertEqual(len(lines), 1)
-        self.assertEqual(lines[0]["appeal_texts"], [])
+        self.assert_export_empty("chat_export")
 
 
 class QuestionsByProcedureExportContentTest(StaffExportTestBase):

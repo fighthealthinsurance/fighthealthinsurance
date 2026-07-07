@@ -604,26 +604,19 @@ def generate_denial_appeal_lines():
     )
 
     for denial in denials:
-        denial_text = denial.manual_deidentified_denial or denial.denial_text
+        # Fail closed: only export a (denial, appeal) pair once a human has
+        # de-identified BOTH halves. The prior `manual_deidentified_* or <raw>`
+        # fallback silently emitted raw denial text and raw proposed/finalized
+        # appeal text whenever the manual field was blank, baking patient PHI
+        # into the training corpus. Mirrors generate_de_identified_lines, which
+        # already excludes records lacking manual_deidentified_denial.
+        denial_text = denial.manual_deidentified_denial
+        appeal_text = denial.manual_deidentified_appeal
+        if not denial_text or not appeal_text:
+            continue
+
         procedure = _get_verified_or_raw(denial, "procedure")
         diagnosis = _get_verified_or_raw(denial, "diagnosis")
-
-        appeal_text = None
-        if denial.manual_deidentified_appeal:
-            appeal_text = denial.manual_deidentified_appeal
-        else:
-            chosen_proposed = next(
-                (p for p in denial.proposedappeal_set.all() if p.chosen), None
-            )
-            if chosen_proposed:
-                appeal_text = chosen_proposed.appeal_text
-            else:
-                appeals = list(denial.appeal_set.all())
-                if appeals:
-                    appeal_text = appeals[0].appeal_text
-
-        if not appeal_text:
-            continue
 
         # Build Q&A from prefetched DenialQA records
         qa_pairs = []
@@ -649,28 +642,24 @@ def generate_denial_appeal_lines():
 
 
 def generate_chat_lines():
-    """Yield JSONL lines of de-identified chat histories (non-pro only)."""
-    chats = (
-        OngoingChat.objects.filter(
-            professional_user__isnull=True,
-            domain__isnull=True,
-        )
-        .exclude(chat_history__isnull=True)
-        .exclude(chat_history=[])
-        .exclude(hashed_email__in=_get_excluded_hashed_emails())
-        .prefetch_related("appeals")
-    )
+    """Yield de-identified chat histories (non-pro only).
 
-    for chat in chats:
-        appeal_texts = [a.appeal_text for a in chat.appeals.all() if a.appeal_text]
-        record = {
-            "chat_id": str(chat.id),
-            "chat_history": chat.chat_history,
-            "denied_item": chat.denied_item,
-            "denied_reason": chat.denied_reason,
-            "appeal_texts": appeal_texts,
-        }
-        yield json.dumps(record, default=str) + "\n"
+    Fail closed: OngoingChat has no manually de-identified counterpart, so
+    every field this previously emitted -- chat_history (the raw patient
+    conversation), denied_item/denied_reason, and the linked appeal_text --
+    is unredacted PHI despite the "de-identified" docstring. Until a
+    de-identification pass exists for chats, emit nothing rather than write
+    raw PHI into a training export. Re-enable by sourcing from
+    manual_deidentified_* fields once they exist on OngoingChat.
+    """
+    logger.warning(
+        "chat export skipped: no de-identified source for OngoingChat; "
+        "emitting 0 records under fail-closed export policy"
+    )
+    return
+    # Unreachable: keeps this a generator so callers that iterate it
+    # (run_exports, the streaming view) work unchanged.
+    yield  # pragma: no cover
 
 
 @staff_member_required
