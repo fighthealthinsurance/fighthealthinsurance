@@ -56,6 +56,7 @@ from fighthealthinsurance.proconnector import (
     subject_wording_problem,
     remaining_interested_professionals_count,
     send_proconnector_intro_email,
+    send_proconnector_test_email,
 )
 from fighthealthinsurance.type_utils import User
 from fighthealthinsurance.utils import mask_email_for_logging
@@ -647,8 +648,10 @@ class ProConnectorProcessView(View):
     known details, research links, and an AI-drafted (editable) intro email.
     Staff either send the (edited) email -- which CCs the professional contact
     address and records the send -- queue it to go out during the recipient's
-    likely business hours, or skip the record. Any action advances to the next
-    unprocessed record. Nothing is sent automatically.
+    likely business hours, or skip the record. Any of those actions advances to
+    the next unprocessed record. Staff can also send a TEST-marked copy of the
+    draft to a test address first; that emails nobody else, records nothing on
+    the record, and stays on the same record. Nothing is sent automatically.
     """
 
     template_name = "proconnector.html"
@@ -661,16 +664,25 @@ class ProConnectorProcessView(View):
         draft: Optional[str] = None,
         subject: Optional[str] = None,
         skip_reason: str = "",
+        test_email: Optional[str] = None,
         error: Optional[str] = None,
+        notice: Optional[str] = None,
         status: int = 200,
     ) -> HttpResponse:
         """Render the processing page for a single record.
 
         ``draft`` is generated via AI only when not supplied so that re-renders
         after a validation/send error preserve the staff member's edits.
+        ``test_email`` similarly falls back to whatever was posted (preserving
+        the field across validation errors), then to the staff member's own
+        address so the "send test" button works without retyping it.
         """
         if draft is None:
             draft = generate_intro_email(pro)
+        if test_email is None:
+            test_email = (request.POST.get("test_email") or "").strip() or (
+                getattr(request.user, "email", "") or ""
+            )
         links = build_search_links(pro)
         context = {
             "title": "Pro Connector",
@@ -681,7 +693,9 @@ class ProConnectorProcessView(View):
             "google_search_url": links["google"],
             "linkedin_search_url": links["linkedin"],
             "skip_reason": skip_reason,
+            "test_email": test_email,
             "error": error,
+            "notice": notice,
             "remaining_count": remaining_interested_professionals_count(),
             "send_window_hint": describe_send_window(pro.phone_number),
         }
@@ -729,6 +743,12 @@ class ProConnectorProcessView(View):
                 f"InterestedProfessional {pro.id} ({mask_email_for_logging(pro.email)})"
             )
             return redirect("proconnector_process")
+
+        # "send_test" previews the draft in a real inbox: it emails only the
+        # staff-supplied test address with TEST markers and never touches the
+        # record, so the intro still shows as unsent and stays in the queue.
+        if action == "send_test":
+            return self._handle_send_test(request, pro)
 
         # "send" delivers now; "queue" defers to the recipient's likely business
         # hours. They share validation and edit-preserving error handling.
@@ -783,6 +803,25 @@ class ProConnectorProcessView(View):
         # Unknown / missing action -- re-render the current record.
         return self._render_record(request, pro, error="Unknown action.", status=400)
 
+    @staticmethod
+    def _intro_form_problem(body: str, subject: str) -> Optional[str]:
+        """First problem with the editable intro fields, or ``None``.
+
+        Shared by the real send/queue path and the test-send path so a draft
+        that previews cleanly is exactly one that can be sent: same empty-body
+        rule, same wording rules -- partner framing (body *or* subject) and the
+        required compensation disclosure -- run against the *final* (possibly
+        hand-edited) values, not just the AI draft, and the same length cap
+        matching the scheduled-email column so the immediate and queued paths
+        behave identically.
+        """
+        subject_max = ScheduledEmail._meta.get_field("subject").max_length
+        if not body:
+            return "Email body cannot be empty."
+        if subject_max is not None and len(subject) > subject_max:
+            return f"Subject is too long (max {subject_max} characters)."
+        return intro_wording_problem(body) or subject_wording_problem(subject)
+
     def _validated_intro(
         self, request, pro: InterestedProfessional
     ) -> Union[Tuple[str, str, str], HttpResponse]:
@@ -790,31 +829,17 @@ class ProConnectorProcessView(View):
 
         Returns ``(body, subject, skip_reason)`` when valid, or an error
         ``HttpResponse`` (re-rendering the record with the staff edits preserved)
-        when the body is empty, the recipient address is unsendable, the subject
-        is too long for the scheduled-email column, or the (possibly hand-edited)
-        wording breaks the intro rules -- partner framing (body *or* subject) or a
-        missing compensation disclosure -- which must hold for the final sent
-        text, not just the AI draft.
+        when the shared form checks fail (see :meth:`_intro_form_problem`) or
+        the recipient address is unsendable.
         """
         body = (request.POST.get("email_body") or "").strip()
         subject = (
             request.POST.get("subject") or ""
         ).strip() or PROCONNECTOR_INTRO_SUBJECT
         skip_reason = (request.POST.get("skip_reason") or "").strip()
-        # First failing check wins. The wording rules run against the *final*
-        # (possibly hand-edited) values, not just the AI draft, and cover the
-        # subject line too; the length cap matches the scheduled-email column so
-        # the immediate and queued paths behave identically.
-        subject_max = ScheduledEmail._meta.get_field("subject").max_length
-        error: Optional[str]
-        if not body:
-            error = "Email body cannot be empty."
-        elif not is_sendable_email(pro.email):
+        error = self._intro_form_problem(body, subject)
+        if error is None and not is_sendable_email(pro.email):
             error = f"{pro.email} is not a sendable address; cannot send."
-        elif subject_max is not None and len(subject) > subject_max:
-            error = f"Subject is too long (max {subject_max} characters)."
-        else:
-            error = intro_wording_problem(body) or subject_wording_problem(subject)
         if error:
             return self._render_record(
                 request,
@@ -826,6 +851,77 @@ class ProConnectorProcessView(View):
                 status=400,
             )
         return body, subject, skip_reason
+
+    def _handle_send_test(self, request, pro: InterestedProfessional) -> HttpResponse:
+        """Send a TEST-marked preview of the draft to the staff-supplied address.
+
+        Runs the same form validation as a real send (so a draft that previews
+        cleanly is exactly one that can be sent) but gates on the *test*
+        address being sendable -- the professional is not emailed -- and never
+        writes to the record: no claim, no attempted/sent/body updates, so the
+        intro stays unsent and remains in the queue. Success re-renders the
+        same record (edits preserved) rather than advancing.
+        """
+        body = (request.POST.get("email_body") or "").strip()
+        subject = (
+            request.POST.get("subject") or ""
+        ).strip() or PROCONNECTOR_INTRO_SUBJECT
+        skip_reason = (request.POST.get("skip_reason") or "").strip()
+        test_email = (request.POST.get("test_email") or "").strip()
+        error = self._intro_form_problem(body, subject)
+        if error is None:
+            if not test_email:
+                error = "Enter a test email address to send the test to."
+            elif not is_sendable_email(test_email):
+                error = f"{test_email} is not a sendable address; cannot send the test."
+        if error:
+            return self._render_record(
+                request,
+                pro,
+                draft=body or request.POST.get("email_body", ""),
+                subject=subject,
+                skip_reason=skip_reason,
+                error=error,
+                status=400,
+            )
+        try:
+            send_proconnector_test_email(
+                pro, subject=subject, body=body, test_email=test_email
+            )
+        except Exception as e:
+            logger.opt(exception=True).error(
+                f"Failed to send pro-connector TEST intro for "
+                f"InterestedProfessional {pro.id} to "
+                f"{mask_email_for_logging(test_email)}: {e}"
+            )
+            return self._render_record(
+                request,
+                pro,
+                draft=body,
+                subject=subject,
+                skip_reason=skip_reason,
+                error=(
+                    "Failed to send the test email. The error has been logged; "
+                    "please try again."
+                ),
+                status=500,
+            )
+        logger.info(
+            f"Staff user {request.user.username} sent pro-connector TEST intro for "
+            f"InterestedProfessional {pro.id} ({mask_email_for_logging(pro.email)}) "
+            f"to {mask_email_for_logging(test_email)}"
+        )
+        return self._render_record(
+            request,
+            pro,
+            draft=body,
+            subject=subject,
+            skip_reason=skip_reason,
+            notice=(
+                f"Test email sent to {test_email}. Nothing was recorded on this "
+                "record -- the real intro has NOT been sent."
+            ),
+        )
 
 
 class _CSVEcho:

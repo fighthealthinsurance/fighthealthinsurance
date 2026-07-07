@@ -1581,8 +1581,10 @@ class DemoRequestsViewSet(viewsets.ViewSet, CreateMixin, DeleteMixin):
             # duplicate InterestedProfessional, re-notify the professional inbox,
             # or re-send the thank-you. The DemoRequests row + the support
             # notification (_notify_demo_request) already captured this repeat
-            # submission for the team.
-            if InterestedProfessional.objects.filter(email=demo.email).exists():
+            # submission for the team. Case-insensitive to match how the
+            # pro-connector queue collapses duplicates (email__iexact), so
+            # Jane@clinic.org resubmitting as jane@clinic.org isn't re-thanked.
+            if InterestedProfessional.objects.filter(email__iexact=demo.email).exists():
                 return
             interested_pro = InterestedProfessional.objects.create(
                 name=demo.name or "",
@@ -1677,8 +1679,13 @@ class InterestedProfessionalViewSet(viewsets.ViewSet, CreateMixin):
         # Dedup by email: a returning lead reuses the existing record rather
         # than accumulating duplicate rows or re-notifying the professional
         # inbox. Repeat submissions still get the standard success response.
+        # Case-insensitive to match how the pro-connector queue collapses
+        # duplicates (email__iexact).
         email = serializer.validated_data.get("email")
-        if email and InterestedProfessional.objects.filter(email=email).exists():
+        if (
+            email
+            and InterestedProfessional.objects.filter(email__iexact=email).exists()
+        ):
             return Response(
                 serializers.StatusResponseSerializer({"status": "subscribed"}).data,
                 status=status.HTTP_201_CREATED,

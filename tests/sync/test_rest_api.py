@@ -2139,6 +2139,38 @@ class DemoRequestEndpointTest(APITestCase):
         ]
         self.assertEqual(len(thankyous), 1)
 
+    def test_demo_request_lead_dedup_is_case_insensitive(self):
+        # A resubmission that only differs in email case must reuse the existing
+        # lead (matching the pro-connector queue's email__iexact collapsing),
+        # not create a duplicate InterestedProfessional or re-send the thank-you.
+        from fighthealthinsurance.models import InterestedProfessional
+
+        first = self.client.post(
+            reverse("demorequest-list"),
+            data=json.dumps({"email": "casey@clinic.example", "name": "Casey"}),
+            content_type="application/json",
+        )
+        second = self.client.post(
+            reverse("demorequest-list"),
+            data=json.dumps({"email": "Casey@Clinic.example", "name": "Casey"}),
+            content_type="application/json",
+        )
+        self.assertEqual(first.status_code, 201)
+        self.assertEqual(second.status_code, 201)
+        self.assertEqual(
+            InterestedProfessional.objects.filter(
+                email__iexact="casey@clinic.example"
+            ).count(),
+            1,
+        )
+        thankyous = [
+            m
+            for m in mail.outbox
+            if [a.lower() for a in m.to] == ["casey@clinic.example"]
+            and "Thanks for your interest" in m.subject
+        ]
+        self.assertEqual(len(thankyous), 1)
+
     def test_demo_request_notifies_professional_inbox(self):
         # The lead notification goes through the shared
         # notify_interested_professional helper, i.e. to the professional inbox.
