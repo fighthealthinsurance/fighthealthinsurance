@@ -137,10 +137,13 @@ def send_fax_via_vendor(fax: "FaxesToSend") -> bool:
     orchestrator) sees the claim and short-circuits, so a fax is never sent
     twice. A genuinely failed send releases the claim so it can be retried.
 
-    Transport errors are *not* swallowed here -- they propagate so a caller with
-    a retry policy (the Temporal workflow) can retry a genuinely failed send. The
-    Ray orchestrator in :func:`do_send_fax_object` catches them instead, matching
-    the prior actor behavior.
+    Transport errors are *not* swallowed here -- they propagate so the caller can
+    record the outcome. The Temporal workflow catches the resulting
+    ``ActivityError`` and finalizes the fax as a failed send (the send activity is
+    ``maximum_attempts=1``, so a slow transmission is never retried concurrently);
+    the Ray orchestrator in :func:`do_send_fax_object` likewise catches them and
+    finalizes as failure, matching the prior actor behavior. The released claim is
+    what lets a later explicit resend transmit again.
     """
     from fighthealthinsurance.models import FaxesToSend
 
