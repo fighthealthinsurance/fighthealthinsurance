@@ -702,12 +702,30 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
             200: serializers.ProfessionalSignupResponseSerializer,
             201: serializers.ProfessionalSignupResponseSerializer,
             400: common_serializers.ErrorSerializer,
+            403: common_serializers.ErrorSerializer,
         }
     )
     def create(self, request: Request) -> Response:
         """
         Creates a new professional user and optionally a new domain.
         """
+        # New self-serve Fight Paperwork signups are closed (connector
+        # agreement in place) — professionals should request a demo instead.
+        # Gated on a setting so Dev/Test keep the flow exercisable.
+        if not getattr(settings, "NEW_PROFESSIONAL_SIGNUP_ENABLED", False):
+            return Response(
+                common_serializers.ErrorSerializer(
+                    {
+                        "error": (
+                            "New Fight Paperwork signups are currently closed. "
+                            "Please request a demo at "
+                            "https://www.fightpaperwork.com/schedule-demo and "
+                            "our team will get you set up."
+                        )
+                    }
+                ).data,
+                status=status.HTTP_403_FORBIDDEN,
+            )
         return super().create(request)
 
     def create_stripe_checkout_session(
@@ -1083,6 +1101,27 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # DEPRECATED: professional-interest notifications are consolidating on
+        # the dedicated `interested_professional` REST endpoint
+        # (InterestedProfessionalViewSet) and the web /pro_version form. This
+        # signup-flow notification is retained for backward compatibility but
+        # should not be extended -- prefer the dedicated endpoint for new work.
+        #
+        # Notify the professional-signup inbox (defaults to
+        # professional@fighthealthinsurance.com) for every FPW REST professional
+        # sign-up. Deferred via transaction.on_commit so the mail only goes out
+        # once this signup transaction commits and a mail failure can't roll the
+        # signup back.
+        self._notify_professional_signup(
+            email=email,
+            first_name=first_name,
+            last_name=last_name,
+            domain_name=domain_name,
+            visible_phone_number=visible_phone_number,
+            new_domain=new_domain,
+            professional_user=professional_user,
+        )
+
         # If the domain is not new we don't need billing info
         if not new_domain:
             return Response(
@@ -1139,6 +1178,47 @@ class ProfessionalUserViewSet(viewsets.ViewSet, CreateMixin):
                 ).data,
                 status=status.HTTP_201_CREATED,
             )
+
+    @staticmethod
+    def _notify_professional_signup(
+        *,
+        email: str,
+        first_name: str,
+        last_name: str,
+        domain_name: Optional[str],
+        visible_phone_number: Optional[str],
+        new_domain: bool,
+        professional_user: ProfessionalUser,
+    ) -> None:
+        """Queue a best-effort team notification for a professional signing up
+        via the Fight Paperwork REST API.
+
+        DEPRECATED: prefer the dedicated `interested_professional` REST endpoint
+        (InterestedProfessionalViewSet), which is the canonical channel for
+        professional-interest notifications. This signup-flow hook is retained
+        for backward compatibility and should not be extended.
+
+        Deferred via transaction.on_commit so the notification only fires once
+        the signup transaction commits — no spurious mail if a later step (e.g.
+        Stripe checkout creation) rolls the signup back.
+        """
+        from fighthealthinsurance.utils import notify_professional_signup
+
+        full_name = f"{first_name} {last_name}".strip()
+        body = (
+            "A new professional signed up via the Fight Paperwork REST API.\n\n"
+            f"Name: {full_name or 'N/A'}\n"
+            f"Email: {email}\n"
+            f"Domain: {domain_name or 'N/A'}\n"
+            f"Phone: {visible_phone_number or 'N/A'}\n"
+            f"New domain: {'yes' if new_domain else 'no (joining existing domain)'}\n"
+            f"Professional user id: {professional_user.id}\n"
+        )
+        transaction.on_commit(
+            lambda: notify_professional_signup(
+                f"New professional signup: {email}", body
+            )
+        )
 
     @extend_schema(
         responses={

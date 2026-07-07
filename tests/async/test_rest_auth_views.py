@@ -361,6 +361,64 @@ class RestAuthViewsTests(TestCase):
         response = self.client.post(url, data, format="json")
         self.assertIn(response.status_code, range(200, 300))
 
+    def test_professional_signup_notifies_professional_inbox(self) -> None:
+        """A successful FPW REST professional signup emails the professional
+        notification inbox (defaults to professional@fighthealthinsurance.com).
+
+        Uses the join-existing-domain path so no Stripe call is involved, and
+        captures on_commit callbacks since the notification is deferred until
+        the signup transaction commits.
+        """
+        url = reverse("professional_user-list")
+        data = {
+            "user_signup_info": {
+                "username": "notifypro",
+                "password": "newLongerPasswordMagicCheetoCheeto123",
+                "email": "notifypro@test-fhi.com",
+                "first_name": "Notify",
+                "last_name": "Pro",
+                "domain_name": "testdomain",
+                "visible_phone_number": "1234567892",
+                "continue_url": "http://example.com/continue",
+            },
+            "make_new_domain": False,
+        }
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self.client.post(url, data, format="json")
+        self.assertIn(response.status_code, range(200, 300))
+        notification = next(
+            m
+            for m in mail.outbox
+            if m.subject == "New professional signup: notifypro@test-fhi.com"
+        )
+        self.assertEqual(notification.to, ["professional@fighthealthinsurance.com"])
+        self.assertIn("notifypro@test-fhi.com", notification.body)
+        self.assertIn("Notify Pro", notification.body)
+
+    def test_professional_signup_returns_403_when_signups_disabled(self) -> None:
+        """With NEW_PROFESSIONAL_SIGNUP_ENABLED off (the production default),
+        the public FPW signup endpoint refuses with a pointer to the
+        demo-request flow and creates no user."""
+        url = reverse("professional_user-list")
+        data = {
+            "user_signup_info": {
+                "username": "closedpro",
+                "password": "newLongerPasswordMagicCheetoCheeto123",
+                "email": "closedpro@test-fhi.com",
+                "first_name": "Closed",
+                "last_name": "Pro",
+                "domain_name": "testdomain",
+                "visible_phone_number": "1234567892",
+                "continue_url": "http://example.com/continue",
+            },
+            "make_new_domain": False,
+        }
+        with self.settings(NEW_PROFESSIONAL_SIGNUP_ENABLED=False):
+            response = self.client.post(url, data, format="json")
+        self.assertEqual(response.status_code, 403)
+        self.assertIn("request a demo", response.json()["error"].lower())
+        self.assertFalse(User.objects.filter(email="closedpro@test-fhi.com").exists())
+
     def test_create_professional_user_with_existing_visible_phone_number(self) -> None:
         url = reverse("professional_user-list")
         data = {
@@ -1253,8 +1311,13 @@ class ProfessionalInvitationTests(TestCase):
         # Check email content
         email_content = mail.outbox[-2].body
         self.assertIn("testdomain", email_content)
-        self.assertIn("1234567890", email_content)  # Practice phone number
         self.assertIn("Admin User", email_content)  # Inviter name
+        # Self-serve join is closed (new signups gated), so the invite no longer
+        # tells invitees to self-signup with the practice phone number; it now
+        # directs them to be added from the dashboard and await a set-password
+        # email.
+        self.assertIn("dashboard", email_content)
+        self.assertNotIn("1234567890", email_content)
 
     def test_invite_professional_as_non_admin(self):
         # Login as regular user

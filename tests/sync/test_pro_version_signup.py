@@ -49,8 +49,10 @@ class ProVersionSignupSuccessTest(TestCase):
         # Pay-to-express-interest is no longer collected.
         self.assertFalse(self.pro.clicked_for_paid)
 
-    def test_sends_team_notification_to_support(self):
-        self.assertEqual(self._team_email().to, ["support42@fighthealthinsurance.com"])
+    def test_sends_team_notification_to_professional_inbox(self):
+        self.assertEqual(
+            self._team_email().to, ["professional@fighthealthinsurance.com"]
+        )
 
     def test_team_notification_includes_captured_fields(self):
         body = self._team_email().body
@@ -120,7 +122,7 @@ class ProVersionSignupEdgeCaseTest(TestCase):
 
     def test_team_notification_failure_does_not_block_signup(self):
         with patch(
-            "fighthealthinsurance.views.send_mail", side_effect=Exception("smtp down")
+            "fighthealthinsurance.utils.send_mail", side_effect=Exception("smtp down")
         ):
             response = self.client.post(
                 reverse("pro_version"),
@@ -152,6 +154,28 @@ class ProVersionSignupEdgeCaseTest(TestCase):
         pro = InterestedProfessional.objects.get(email="hacky@clinic.example")
         self.assertFalse(pro.thankyou_email_sent)
         self.assertFalse(pro.paid)
+
+    def test_repeat_submission_dedups_by_email(self):
+        """A returning email reuses its existing lead: no duplicate row and no
+        second thank-you, though the submitter still lands on the thankyou page."""
+        payload = {"name": "Returning", "email": "returning@clinic.example"}
+        first = self.client.post(reverse("pro_version"), payload)
+        second = self.client.post(reverse("pro_version"), payload)
+        self.assertRedirects(first, reverse("pro_version_thankyou"))
+        self.assertRedirects(second, reverse("pro_version_thankyou"))
+        self.assertEqual(
+            InterestedProfessional.objects.filter(
+                email="returning@clinic.example"
+            ).count(),
+            1,
+        )
+        thankyous = [
+            m
+            for m in mail.outbox
+            if "returning@clinic.example" in m.to
+            and "Thanks for your interest" in m.subject
+        ]
+        self.assertEqual(len(thankyous), 1)
 
     def test_post_enforces_csrf(self):
         """The POST endpoint must enforce CSRF — it now writes to the DB."""
