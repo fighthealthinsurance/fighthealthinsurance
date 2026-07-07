@@ -28,6 +28,7 @@ from fighthealthinsurance.proconnector import (
     get_professional_cc_email,
     partner_framing_problem,
     queue_proconnector_intro_email,
+    send_proconnector_test_email,
 )
 
 User = get_user_model()
@@ -814,6 +815,141 @@ class SendFailureTest(_ProcessViewTestCase):
         self.assertFalse(pro.proconnector_attempted)
         self.assertIsNone(pro.proconnector_sent_at)
         self.assertIsNone(pro.proconnector_email_body)
+
+
+# ---------------------------------------------------------------------------
+# Test-email flow (preview send that must never mark the record)
+# ---------------------------------------------------------------------------
+class SendTestEmailFlowTest(_ProcessViewTestCase):
+    BODY = "Edited intro body with the compensation disclosure."
+
+    def _post_test(self, pro, **overrides):
+        fields = {
+            "interested_professional_id": pro.id,
+            "subject": "Intro to Cofactor AI",
+            "email_body": self.BODY,
+            "test_email": "staff-tester@fhi-staff.org",
+        }
+        fields.update(overrides)
+        return self._post("send_test", **fields)
+
+    def test_send_test_emails_target_and_does_not_mark_record(self):
+        pro = _make_pro(email="jane@janeclinic.com")
+        response = self._post_test(pro)
+        # Re-renders the same record (no redirect/advance) with a confirmation.
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Test email sent to staff-tester@fhi-staff.org")
+        self.assertContains(response, "NOT been sent")
+        # The staff edits are preserved on the re-render.
+        self.assertContains(response, self.BODY)
+
+        # The test email goes to the test address only, with no CC of
+        # professional@ (send_fallback_email also drops an internal BCC-copy
+        # message, so check recipients rather than outbox length).
+        self.assertGreaterEqual(len(mail.outbox), 1)
+        msg = mail.outbox[0]
+        self.assertEqual(msg.to, ["staff-tester@fhi-staff.org"])
+        self.assertEqual(msg.cc, [])
+        # TEST markers in subject and body, plus the real draft content.
+        self.assertEqual(msg.subject, "TEST: Intro to Cofactor AI")
+        self.assertIn("[TEST]", msg.body)
+        self.assertIn("jane@janeclinic.com", msg.body)
+        self.assertIn(self.BODY, msg.body)
+        # The interested professional is never a recipient of ANY message.
+        for m in mail.outbox:
+            self.assertNotIn("jane@janeclinic.com", m.to + m.cc + m.bcc)
+
+        # Nothing recorded: not attempted/sent/skipped, no body stored, and the
+        # record is still the next one in the queue.
+        pro.refresh_from_db()
+        self.assertFalse(pro.proconnector_attempted)
+        self.assertIsNone(pro.proconnector_sent_at)
+        self.assertIsNone(pro.proconnector_email_body)
+        self.assertFalse(pro.proconnector_skipped)
+        self.assertEqual(get_next_interested_professional().pk, pro.pk)
+
+    def test_send_test_requires_test_address(self):
+        pro = _make_pro(email="jane@janeclinic.com")
+        response = self._post_test(pro, test_email="   ")
+        self.assertEqual(response.status_code, 400)
+        self.assertContains(response, "Enter a test email address", status_code=400)
+        self.assertEqual(len(mail.outbox), 0)
+        pro.refresh_from_db()
+        self.assertFalse(pro.proconnector_attempted)
+
+    def test_send_test_rejects_blocked_test_address(self):
+        # example.com is a blocked domain -> not sendable, rejected up front.
+        pro = _make_pro(email="jane@janeclinic.com")
+        response = self._post_test(pro, test_email="tester@example.com")
+        self.assertEqual(response.status_code, 400)
+        self.assertContains(response, "not a sendable address", status_code=400)
+        self.assertEqual(len(mail.outbox), 0)
+
+    def test_send_test_allows_blocked_recipient_record(self):
+        # The real recipient's sendability must NOT gate a test: staff may want
+        # to preview the draft even though the record itself can't be sent to.
+        pro = _make_pro(email="blocked@example.com")
+        response = self._post_test(pro)
+        self.assertEqual(response.status_code, 200)
+        self.assertGreaterEqual(len(mail.outbox), 1)
+        self.assertEqual(mail.outbox[0].to, ["staff-tester@fhi-staff.org"])
+
+    def test_send_test_enforces_wording_rules(self):
+        # Same validation as a real send, so a draft that previews cleanly is
+        # exactly one that can be sent.
+        pro = _make_pro(email="jane@janeclinic.com")
+        response = self._post_test(
+            pro, email_body="FHI has partnered with Cofactor AI. Compensated."
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(len(mail.outbox), 0)
+
+    def test_send_test_empty_body_rejected(self):
+        pro = _make_pro(email="jane@janeclinic.com")
+        response = self._post_test(pro, email_body="   ")
+        self.assertEqual(response.status_code, 400)
+        self.assertContains(response, "cannot be empty", status_code=400)
+        self.assertEqual(len(mail.outbox), 0)
+
+    @patch(
+        "fighthealthinsurance.staff_views.send_proconnector_test_email",
+        side_effect=Exception("smtp boom"),
+    )
+    def test_send_test_failure_shows_error_and_marks_nothing(self, _mock_send):
+        pro = _make_pro(email="jane@janeclinic.com")
+        response = self._post_test(pro)
+        self.assertEqual(response.status_code, 500)
+        self.assertContains(response, "Failed to send the test email", status_code=500)
+        # Edits preserved for retry; record untouched.
+        self.assertContains(response, self.BODY, status_code=500)
+        pro.refresh_from_db()
+        self.assertFalse(pro.proconnector_attempted)
+        self.assertIsNone(pro.proconnector_email_body)
+
+    @patch(
+        "fighthealthinsurance.staff_views.generate_intro_email",
+        return_value="A draft body with compensation disclosure.",
+    )
+    def test_test_email_field_prefilled_with_staff_address(self, _mock_gen):
+        # The logged-in staff user (created by _login) has no email, so set one.
+        User.objects.filter(username="u").update(email="staff@fhi-staff.org")
+        _make_pro(email="jane@janeclinic.com")
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'value="send_test"')
+        self.assertContains(response, "Send test e-mail")
+        self.assertContains(response, 'value="staff@fhi-staff.org"')
+
+    def test_send_test_helper_blocked_address_raises(self):
+        pro = _make_pro(email="jane@janeclinic.com")
+        with self.assertRaises(ValueError):
+            send_proconnector_test_email(
+                pro,
+                subject="Intro",
+                body="Body with compensation disclosure.",
+                test_email="nope@example.com",
+            )
+        self.assertEqual(len(mail.outbox), 0)
 
 
 # ---------------------------------------------------------------------------

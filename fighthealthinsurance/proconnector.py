@@ -389,6 +389,37 @@ def send_proconnector_intro_email(
     )
 
 
+def send_proconnector_test_email(
+    pro: InterestedProfessional,
+    subject: str,
+    body: str,
+    test_email: str,
+) -> None:
+    """Send a *test* copy of the intro email to ``test_email`` now.
+
+    Lets staff preview exactly how the (edited) draft renders in a real inbox
+    before committing to the real send. Unlike the real send it goes only to
+    the test address (the professional is NOT emailed and the professional
+    contact address is NOT CC'd), the subject and body are clearly marked as a
+    test, and -- critically -- nothing is written to the record: the intro is
+    not marked attempted/sent, so it stays in the queue. Raises on a blocked
+    test address or send failure so the caller can surface the problem.
+    """
+    if is_blocked_email(test_email):
+        raise ValueError("Test email address is blocked or unsendable")
+    test_banner = (
+        f"[TEST] This is a test preview of the intro email for {pro.email} "
+        f"(InterestedProfessional #{pro.id}). The real intro has NOT been "
+        "sent and the record has NOT been marked as sent."
+    )
+    send_fallback_email(
+        subject=f"TEST: {subject}",
+        template_name="proconnector_intro",
+        context={"body": f"{test_banner}\n\n{body}", "name": pro.name},
+        to_email=test_email,
+    )
+
+
 def queue_proconnector_intro_email(
     pro: InterestedProfessional,
     subject: str,
