@@ -103,17 +103,21 @@ function scrubText(text: string): string {
       }
     }
   }
-  console.log("Preparing to scrub:");
-  console.log(text);
-  console.log("Scrubbing with:");
-  console.log(reservedTokens);
-  console.log(scrubRegex);
+  // Log only sizes: the raw text and the reserved-token regexes contain PII.
+  console.debug(
+    "scrub: text length",
+    text.length,
+    "reserved tokens",
+    reservedTokens.length,
+    "rules",
+    scrubRegex.length,
+  );
   for (let i = 0; i < scrubRegex.length; i++) {
     const match = scrubRegex[i][0].exec(text);
     if (match !== null) {
       // I want to use the groups syntax here but it is not working so just index in I guess.
-      console.log("Match " + match + " groups " + match[1]);
-      console.log("Storing " + match[1] + " for " + scrubRegex[i][1]);
+      // Don't log the match itself -- it is the patient name/ID being scrubbed.
+      console.debug("scrub: rule matched, storing under", scrubRegex[i][1]);
       window.localStorage.setItem(scrubRegex[i][1], match[1]);
     }
     text = text.replace(scrubRegex[i][0], scrubRegex[i][2]);

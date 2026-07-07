@@ -72,9 +72,8 @@ async function recognizeEvent(event: Event): Promise<void> {
   try {
     for (let i = 0; i < filesToProcess.length; i++) {
       const file = filesToProcess[i];
-      console.log(
-        `Processing file ${i + 1}/${filesToProcess.length}: ${file.name}`
-      );
+      // Don't log file.name: user filenames can embed patient names.
+      console.log(`Processing file ${i + 1}/${filesToProcess.length}`);
       await recognize(file, addText);
     }
   } catch (error) {

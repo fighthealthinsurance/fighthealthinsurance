@@ -75,7 +75,8 @@ function updateStatusList(taskName: string): void {
 }
 
 function processResponseChunk(chunk: string): void {
-  console.log("Processing:", chunk);
+  // Chunks can carry extracted denial entities (PHI) -- log only the size.
+  console.debug("Processing chunk, length", chunk.length);
   // Try to parse as task name
   if (chunk && chunk.length > 0 && chunk.length < 50) {
     updateStatusList(chunk.trim());

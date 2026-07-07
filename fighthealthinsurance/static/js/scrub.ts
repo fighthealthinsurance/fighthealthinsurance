@@ -79,11 +79,9 @@ function setupScrub(): void {
   });
 
   // Restore previous local values
-  var input = document.getElementsByTagName("input");
-  console.log(input);
+  // Don't log the nodes themselves: the inputs hold name/address/email values.
   var nodes: NodeListOf<HTMLInputElement> = document.querySelectorAll("input");
-  console.log("Nodes:");
-  console.log(nodes);
+  console.debug("scrub: input nodes found", nodes.length);
   function handleStorage(node: HTMLInputElement) {
     // All store_ fields which are local only and the e-mail field which is local and non-local.
     if (node.id.startsWith("store_") || node.id.startsWith("email")) {
