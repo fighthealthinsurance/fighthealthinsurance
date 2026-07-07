@@ -487,10 +487,10 @@ urlpatterns += staticfiles_urlpatterns()
 
 # Serve static files in development
 if settings.DEBUG:
-    # Serve files from STATICFILES_DIRS in development
+    # Serve files from the app static dir in development
     if settings.STATIC_URL:
         urlpatterns += static(
-            settings.STATIC_URL, document_root=settings.STATICFILES_DIRS[0]
+            settings.STATIC_URL, document_root=settings.APP_STATIC_DIR
         )
     if settings.MEDIA_URL:
         urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

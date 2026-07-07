@@ -5,6 +5,27 @@ SCRIPT_DIR="$(dirname "$0")"
 
 BUILDX_CMD=${BUILDX_CMD:-push}
 
+# --no-build: skip building the container images and assume they already exist
+# in the registry, only running the kubectl deploy steps.
+NO_BUILD=false
+for arg in "$@"; do
+    case "$arg" in
+        --no-build)
+            NO_BUILD=true
+            ;;
+        -h|--help)
+            echo "Usage: $0 [--no-build]"
+            echo "  --no-build  Skip building images; assume they are already built and just deploy."
+            exit 0
+            ;;
+        *)
+            echo "Unknown argument: $arg" >&2
+            echo "Usage: $0 [--no-build]" >&2
+            exit 1
+            ;;
+    esac
+done
+
 source "${SCRIPT_DIR}/setup_templates.sh"
 
 # BUILDKIT_NO_CLIENT_TOKEN=true
@@ -28,8 +49,12 @@ FHI_VERSION_OG=${FHI_VERSION}
 FHI_VERSION=${FHI_VERSION}-dev
 export FHI_VERSION
 
-# Build the dev containers
-source "${SCRIPT_DIR}/build_django.sh"
+# Build the dev containers (skipped with --no-build; assumes image already exists)
+if [ "$NO_BUILD" = true ]; then
+    echo "--no-build: skipping django image build (${FHI_BASE}:${FHI_VERSION})"
+else
+    source "${SCRIPT_DIR}/build_django.sh"
+fi
 
 # Deploy dev
 envsubst < k8s/deploy_dev.yaml | kubectl delete -f - || echo "No existing dev deployment present"
@@ -49,7 +74,12 @@ export FHI_VERSION
 # Build the ray container -- we don't use it in staging *BUT*
 # better to have built than be stuck with a half deployed system if
 # dockerhub is having a day.
-source "${SCRIPT_DIR}/build_ray.sh"
+# (skipped with --no-build; assumes image already exists)
+if [ "$NO_BUILD" = true ]; then
+    echo "--no-build: skipping ray image build (${RAY_BASE}:${FHI_VERSION})"
+else
+    source "${SCRIPT_DIR}/build_ray.sh"
+fi
 
 # Deploy a staging env
 envsubst < k8s/deploy_staging.yaml | kubectl apply -f -
