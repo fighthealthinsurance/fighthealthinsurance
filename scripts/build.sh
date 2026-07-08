@@ -5,8 +5,11 @@ SCRIPT_DIR="$(dirname "$0")"
 
 BUILDX_CMD=${BUILDX_CMD:-push}
 
-# --no-build: skip building the container images and assume they already exist
-# in the registry, only running the kubectl deploy steps.
+# --no-build: assume the container images are already built and pushed, and only
+# run the kubectl deploy steps. This skips every build step -- template/static
+# setup (mypy, migrations, collectstatic, npm build) and the image builds -- so
+# the script can run on a deploy-only host or CI job that has just kubectl and
+# envsubst (no Python/Node build toolchain).
 NO_BUILD=false
 for arg in "$@"; do
     case "$arg" in
@@ -15,7 +18,8 @@ for arg in "$@"; do
             ;;
         -h|--help)
             echo "Usage: $0 [--no-build]"
-            echo "  --no-build  Skip building images; assume they are already built and just deploy."
+            echo "  --no-build  Skip all build steps (template/static setup and image builds);"
+            echo "              assume images are already built and pushed, and only deploy."
             exit 0
             ;;
         *)
@@ -26,7 +30,14 @@ for arg in "$@"; do
     esac
 done
 
-source "${SCRIPT_DIR}/setup_templates.sh"
+# Prepare build artifacts (mypy, migrations check, collectstatic, npm build).
+# These are only needed to build the images, so skip them with --no-build; a
+# deploy-only host may not have the Python/Node build toolchain installed.
+if [ "$NO_BUILD" = true ]; then
+    echo "--no-build: skipping template/static setup (setup_templates.sh)"
+else
+    source "${SCRIPT_DIR}/setup_templates.sh"
+fi
 
 # BUILDKIT_NO_CLIENT_TOKEN=true
 FHI_VERSION=v0.18.2a
