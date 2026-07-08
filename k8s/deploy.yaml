@@ -200,7 +200,9 @@ spec:
       - fighthealthinsurance.com
       - api.fighthealthinsurance.com
       - api.fightpaperwork.com
-    secretName: combined-tls-secret
+    # Bumping this name forces ingress-shim to drop the old (wedged/expired)
+    # Certificate and start a clean issuance for the new secret.
+    secretName: combined-tls-secret-2
   rules:
     - host: www.fighthealthinsurance.com
       http:
