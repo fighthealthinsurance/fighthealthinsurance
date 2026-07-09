@@ -651,6 +651,11 @@ function reportClientError(error: string): void {
     headers,
     body: JSON.stringify({
       denial_id: denialId ?? 'invalid',
+      // Ownership triple: lets the server attach denial-context token sizes to
+      // this report. Same credentials the appeal stream already sends; without
+      // them the server logs the error but skips the PHI-bearing enrichment.
+      email: (my_data as any).email || '',
+      semi_sekret: (my_data as any).semi_sekret || '',
       error,
       browser_info: browserInfo,
       diagnostics,
