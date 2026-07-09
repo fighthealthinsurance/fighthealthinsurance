@@ -350,12 +350,16 @@ def _find_microsites_json() -> Optional[str]:
     except Exception as e:
         logger.debug(f"Could not open microsites.json via staticfiles_storage: {e}")
 
-    # Fallback: search STATICFILES_DIRS directly (for test environments)
-    staticfiles_dirs = getattr(settings, "STATICFILES_DIRS", [])
-    for static_dir in staticfiles_dirs:
+    # Fallback: search the app static dir / STATICFILES_DIRS directly (for test
+    # environments where collectstatic has not run).
+    search_dirs = list(getattr(settings, "STATICFILES_DIRS", []))
+    app_static_dir = getattr(settings, "APP_STATIC_DIR", None)
+    if app_static_dir:
+        search_dirs.append(app_static_dir)
+    for static_dir in search_dirs:
         json_path = Path(static_dir) / "microsites.json"
         if json_path.exists():
-            logger.debug(f"Found microsites.json in STATICFILES_DIRS: {json_path}")
+            logger.debug(f"Found microsites.json in static source dir: {json_path}")
             with open(json_path, "r") as f:
                 return f.read()
 

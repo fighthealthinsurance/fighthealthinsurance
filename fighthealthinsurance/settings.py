@@ -219,10 +219,18 @@ class Base(Configuration):
     SENTRY_ENDPOINT = os.getenv("SENTRY_ENDPOINT")
     # Application definition
 
-    # Ensure Django finds static/blog/ for .mdx blog posts
-    STATICFILES_DIRS = [
-        os.path.join(BASE_DIR, "fighthealthinsurance/static"),
-    ]
+    # The fighthealthinsurance app's own static directory (holds js/dist bundles,
+    # blog/*.md posts, microsites.json, etc.). Because "fighthealthinsurance" is
+    # an installed app, AppDirectoriesFinder already discovers this directory, so
+    # it must NOT also be listed in STATICFILES_DIRS -- otherwise every file is
+    # found twice and collectstatic logs a "Found another file with the
+    # destination path ..." warning for each one.
+    APP_STATIC_DIR = os.path.join(BASE_DIR, "fighthealthinsurance/static")
+
+    # Project-level static source dirs that live outside any installed app. The
+    # fighthealthinsurance app static dir is intentionally excluded here (see
+    # APP_STATIC_DIR above) to avoid duplicate collectstatic warnings.
+    STATICFILES_DIRS: list[str] = []
 
     SITE_ID = 1
 
