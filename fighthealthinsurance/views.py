@@ -55,6 +55,7 @@ from fighthealthinsurance.utils import (
     is_valid_denial_id,
     notify_interested_professional,
     send_fallback_email,
+    should_notify_returning_lead,
 )
 
 
@@ -201,13 +202,16 @@ def _persist_interested_professional_lead(
     Dedup by email (case-insensitive, matching the REST endpoint and the
     pro-connector queue) keeps one row per address: a returning lead never
     creates a duplicate InterestedProfessional and never overwrites the
-    stored one. The team notification is sent on every submission though —
-    repeat interest is real signal, and silently swallowing it makes
-    successful signups look broken — with a "(returning)" subject marker and
-    the freshly submitted field values in the body. The thank-you email goes
-    out immediately for new leads; for returning ones it is only retried when
-    no send has succeeded yet (thankyou_email_sent=False), so repeatedly
-    submitting someone else's address can't be used to spam them. New leads
+    stored one. The team is still notified on repeat submissions — repeat
+    interest is real signal, and silently swallowing it makes successful
+    signups look broken — with a "(returning)" subject marker and the freshly
+    submitted field values in the body, bounded to at most one returning
+    notification per address per cooldown window (see
+    should_notify_returning_lead) so re-POSTing an address can't flood the
+    inboxes. The thank-you email goes out immediately for new leads; for
+    returning ones it is only retried when no send has succeeded yet
+    (thankyou_email_sent=False), so repeatedly submitting someone else's
+    address can't be used to spam them. New leads
     are recorded as not-clicked-for-paid (the pay-to-express-interest choice
     is no longer collected). Mail failures are logged, never raised, so they
     can't fail an already-persisted lead.
@@ -221,12 +225,15 @@ def _persist_interested_professional_lead(
         # phone number or comment is the interesting part). The unsaved
         # instance is discarded afterwards — never save() it here, or an
         # unauthenticated resubmission would overwrite the stored lead.
+        # The cooldown gate bounds inbox amplification: at most one returning
+        # notification per address per window, no matter how fast repeats come.
         interested_pro.id = existing.id
-        notify_interested_professional(
-            interested_pro,
-            source=source,
-            subject=f"{subject_prefix} #{existing.id} (returning)",
-        )
+        if should_notify_returning_lead(existing.email):
+            notify_interested_professional(
+                interested_pro,
+                source=source,
+                subject=f"{subject_prefix} #{existing.id} (returning)",
+            )
         if not existing.thankyou_email_sent:
             try:
                 ThankyouEmailSender().dosend(interested_pro=existing)

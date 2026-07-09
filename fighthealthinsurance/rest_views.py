@@ -1698,10 +1698,14 @@ class InterestedProfessionalViewSet(viewsets.ViewSet, CreateMixin):
             # comment is the interesting part), borrowing the stored row's pk
             # only so the admin deep-link resolves. The transient instance is
             # never saved — matching the web-form returning path — so the
-            # stored lead is not overwritten.
-            fresh = InterestedProfessional(**serializer.validated_data)
-            fresh.id = existing.id
-            self._notify_interested_professional(fresh, returning=True)
+            # stored lead is not overwritten. The shared cooldown gate bounds
+            # inbox amplification across every intake path.
+            from fighthealthinsurance.utils import should_notify_returning_lead
+
+            if should_notify_returning_lead(existing.email):
+                fresh = InterestedProfessional(**serializer.validated_data)
+                fresh.id = existing.id
+                self._notify_interested_professional(fresh, returning=True)
             return Response(
                 serializers.StatusResponseSerializer({"status": "subscribed"}).data,
                 status=status.HTTP_201_CREATED,

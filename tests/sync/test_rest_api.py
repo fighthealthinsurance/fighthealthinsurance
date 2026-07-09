@@ -2301,6 +2301,26 @@ class InterestedProfessionalEndpointTest(APITestCase):
         self.assertEqual(pro.name, "First Try")
         self.assertEqual(pro.phone_number, "")
 
+    def test_second_repeat_within_cooldown_suppresses_notification(self):
+        # The first repeat claims the per-email notification slot; a second
+        # repeat inside the cooldown window must not email the team again
+        # (bounds inbox amplification), while still returning the standard
+        # success response.
+        for _ in range(2):  # new lead, then first repeat (claims the slot)
+            self.client.post(
+                reverse("interested-professional-list"),
+                data=json.dumps({"email": "again2@example.com"}),
+                content_type="application/json",
+            )
+        with patch("fighthealthinsurance.utils.send_mail") as mock_send:
+            response = self.client.post(
+                reverse("interested-professional-list"),
+                data=json.dumps({"email": "again2@example.com"}),
+                content_type="application/json",
+            )
+        self.assertEqual(response.status_code, 201)
+        mock_send.assert_not_called()
+
     def test_mail_failure_does_not_fail_request(self):
         # The lead is persisted before the notification is attempted, so a mail
         # backend error must not turn into a 500.

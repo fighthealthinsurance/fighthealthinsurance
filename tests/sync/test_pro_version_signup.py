@@ -363,10 +363,12 @@ class RepeatSignupNotificationTest(TestCase):
     """Repeat submissions from an email address that already has a lead.
 
     The row is still deduped (one lead per address, matching the pro-connector
-    queue), but the team notification fires on every submission — flagged
-    "(returning)" and carrying the freshly submitted field values — so repeat
-    interest is never silently swallowed. The thank-you email is only retried
-    when no send has succeeded yet.
+    queue), but the team notification still fires — flagged "(returning)" and
+    carrying the freshly submitted field values — so repeat interest is never
+    silently swallowed. It is bounded to one returning notification per
+    address per cooldown window, so re-POSTing an address can't flood the
+    inboxes. The thank-you email is only retried when no send has succeeded
+    yet.
     """
 
     PAYLOAD = {"name": "Returning", "email": "returning@clinic.example"}
@@ -426,6 +428,32 @@ class RepeatSignupNotificationTest(TestCase):
                 for m in mail.outbox
             )
         )
+
+    def test_second_repeat_within_cooldown_is_not_renotified(self):
+        """The first repeat claims the per-email notification slot; an
+        immediate second repeat stays silent, bounding inbox amplification."""
+        self.client.post(reverse("pro_version"), self.PAYLOAD)  # new lead
+        self.client.post(reverse("pro_version"), self.PAYLOAD)  # first repeat
+        mail.outbox.clear()
+        self.client.post(reverse("pro_version"), self.PAYLOAD)  # second repeat
+        self.assertFalse(any("(returning)" in m.subject for m in mail.outbox))
+
+    def test_repeat_notifies_again_after_cooldown_expires(self):
+        import datetime
+
+        from django.utils import timezone
+
+        from fighthealthinsurance.models import ModelHealthAlertState
+
+        self.client.post(reverse("pro_version"), self.PAYLOAD)  # new lead
+        self.client.post(reverse("pro_version"), self.PAYLOAD)  # claims the slot
+        # Backdate the throttle row so the cooldown window has elapsed.
+        ModelHealthAlertState.objects.update(
+            last_alert_sent=timezone.now() - datetime.timedelta(minutes=16)
+        )
+        mail.outbox.clear()
+        self.client.post(reverse("pro_version"), self.PAYLOAD)
+        self.assertTrue(any("(returning)" in m.subject for m in mail.outbox))
 
     def test_repeat_submission_works_from_thankyou_page_intake(self):
         """The relaxed dedup applies to the legacy direct-post path too — the
