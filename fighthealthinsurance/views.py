@@ -184,6 +184,51 @@ class FollowUpView(generic.FormView):
         return render(self.request, "followup_thankyou.html")
 
 
+def _persist_interested_professional_lead(
+    interested_pro: "models.InterestedProfessional",
+    *,
+    source: str,
+    subject_prefix: str,
+) -> None:
+    """Persist a new interested-professional lead and fan out notifications.
+
+    Shared by the on-site /pro_version form (:class:`ProVersionView`) and the
+    off-site fightpaperwork.com classic-form endpoint
+    (:class:`ExternalProSignupView`) so both dedup, notify, and thank
+    identically.
+
+    Dedup by email (case-insensitive, matching the REST endpoint and the
+    pro-connector queue): if a lead with this address already exists, do
+    nothing — no duplicate row, no re-notification, no second thank-you. The
+    caller still sends the submitter to the thank-you page. Otherwise record
+    the lead as not-clicked-for-paid (the pay-to-express-interest choice is no
+    longer collected), notify the professional-signup inbox, and send the
+    thank-you email immediately. Mail failures are logged, never raised, so
+    they can't fail an already-persisted lead.
+    """
+    if models.InterestedProfessional.objects.filter(
+        email__iexact=interested_pro.email
+    ).exists():
+        return
+    interested_pro.clicked_for_paid = False
+    interested_pro.save()
+    notify_interested_professional(
+        interested_pro,
+        source=source,
+        subject=f"{subject_prefix} #{interested_pro.id}",
+    )
+    # Send the thank-you email synchronously so the signer gets it right away.
+    # The batched ThankyouEmailSender will skip records where
+    # thankyou_email_sent=True, which dosend() sets on success.
+    try:
+        ThankyouEmailSender().dosend(interested_pro=interested_pro)
+    except Exception:
+        logger.opt(exception=True).warning(
+            f"Error sending immediate pro signup thank-you "
+            f"(interested_professional_id={interested_pro.id})"
+        )
+
+
 class ProVersionThankYouView(TemplateView):
     """Thank you page displayed after professional version signup."""
 
@@ -274,42 +319,51 @@ class ProVersionView(generic.FormView):
         return reverse("pro_version_thankyou")
 
     def form_valid(self, form):
-        # The pay-to-express-interest checkbox is no longer collected; explicitly
-        # mark new records as not clicked so the (legacy default=True) model
-        # field reflects reality.
         interested_pro = form.save(commit=False)
-        interested_pro.clicked_for_paid = False
-        # Dedup by email: if this professional already expressed interest, reuse
-        # the existing lead — don't create a duplicate row, re-notify the
-        # professional inbox, or re-send the thank-you. They still land on the
-        # thank-you page.
-        if models.InterestedProfessional.objects.filter(
-            email=interested_pro.email
-        ).exists():
-            return super().form_valid(form)
-        interested_pro.save()
-        self._notify_professional_signup(interested_pro)
-        # Send the thank-you email synchronously so the signer gets it right
-        # away. The batched ThankyouEmailSender will skip records where
-        # thankyou_email_sent=True, which dosend() sets on success.
-        try:
-            ThankyouEmailSender().dosend(interested_pro=interested_pro)
-        except Exception:
-            logger.opt(exception=True).warning(
-                f"Error sending immediate pro signup thank-you "
-                f"(interested_professional_id={interested_pro.id})"
-            )
-        return super().form_valid(form)
-
-    @staticmethod
-    def _notify_professional_signup(
-        interested_pro: "models.InterestedProfessional",
-    ) -> None:
-        notify_interested_professional(
+        _persist_interested_professional_lead(
             interested_pro,
             source="/pro_version",
-            subject=f"New pro version signup #{interested_pro.id}",
+            subject_prefix="New pro version signup",
         )
+        return super().form_valid(form)
+
+
+class ExternalProSignupView(View):
+    """Cross-origin classic-form endpoint for the interested-professional lead
+    form hosted on the static Fight Paperwork site (fightpaperwork.com).
+
+    That site is a plain-HTML shell: it can't obtain a Django CSRF token and
+    runs none of our JavaScript, so a fetch()-based POST would fail silently.
+    This endpoint accepts a classic top-level form POST instead — it is
+    csrf_exempt (applied at the URLconf, matching ProVersionThankYouView) and,
+    on success, 302-redirects the browser to the shared thank-you page. Bot
+    protection is a hidden honeypot field on the form (see
+    ExternalInterestedProfessionalForm), so no JavaScript or reCAPTCHA is
+    needed.
+
+    A GET, or a submission that fails validation, sends the visitor to the
+    on-site /pro_version form, which re-validates with full server-side error
+    display (there is no cross-origin page here to re-render errors into).
+    """
+
+    def get(self, request, *args, **kwargs):
+        return HttpResponseRedirect(reverse("pro_version"))
+
+    def post(self, request, *args, **kwargs):
+        form = core_forms.ExternalInterestedProfessionalForm(request.POST)
+        if not form.is_valid():
+            return HttpResponseRedirect(reverse("pro_version"))
+        # Honeypot: a filled "website" field means a bot. Land it on the
+        # thank-you page like any other submission, but drop it silently.
+        if form.cleaned_data.get("website"):
+            return HttpResponseRedirect(reverse("pro_version_thankyou"))
+        interested_pro = form.save(commit=False)
+        _persist_interested_professional_lead(
+            interested_pro,
+            source="fightpaperwork.com",
+            subject_prefix="New Fight Paperwork pro signup",
+        )
+        return HttpResponseRedirect(reverse("pro_version_thankyou"))
 
 
 class PatientAccessView(generic.TemplateView):

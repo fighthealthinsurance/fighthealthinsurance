@@ -313,6 +313,14 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         name="state_help",
     ),
     path("pro_version", views.ProVersionView.as_view(), name="pro_version"),
+    # Cross-origin classic-form intake for the interested-professional lead form
+    # hosted on the static site (fightpaperwork.com). csrf_exempt because that
+    # page can't obtain a CSRF token; a hidden honeypot field guards it instead.
+    path(
+        "pro_version_signup",
+        csrf_exempt(views.ExternalProSignupView.as_view()),
+        name="pro_version_external_signup",
+    ),
     path(
         "professionals/patient-access",
         cache_control(public=True)(

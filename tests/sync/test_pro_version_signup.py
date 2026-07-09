@@ -192,6 +192,130 @@ class ProVersionSignupEdgeCaseTest(TestCase):
         )
 
 
+class ExternalProSignupTest(TestCase):
+    """The cross-origin classic-form intake used by the static Fight Paperwork
+    site (fightpaperwork.com) POSTing to /pro_version_signup.
+
+    Unlike /pro_version this endpoint is csrf_exempt (the static page can't get
+    a token) and always 302-redirects rather than re-rendering, so behavior is
+    asserted via the redirect target, the DB, and the outbox.
+    """
+
+    URL_NAME = "pro_version_external_signup"
+
+    PAYLOAD = {
+        "name": "Ext Pro",
+        "email": "ext@clinic.example",
+        "job_title_or_provider_type": "Biller",
+        "business_name": "Static Clinic",
+        "phone_number": "555-0199",
+        "most_common_denial": "Prior auth",
+        "comments": "Sent from fightpaperwork.com",
+    }
+
+    def test_valid_submission_redirects_to_thankyou(self):
+        response = self.client.post(reverse(self.URL_NAME), self.PAYLOAD)
+        self.assertRedirects(
+            response,
+            reverse("pro_version_thankyou"),
+            fetch_redirect_response=False,
+        )
+
+    def test_valid_submission_creates_lead_and_notifies(self):
+        self.client.post(reverse(self.URL_NAME), self.PAYLOAD)
+        pro = InterestedProfessional.objects.get(email="ext@clinic.example")
+        self.assertEqual(pro.business_name, "Static Clinic")
+        self.assertFalse(pro.clicked_for_paid)
+        # Team notification names the off-site source in its subject.
+        self.assertTrue(
+            any(
+                m.subject == f"New Fight Paperwork pro signup #{pro.id}"
+                and m.to == ["professional@fighthealthinsurance.com"]
+                for m in mail.outbox
+            )
+        )
+
+    def test_valid_submission_sends_thankyou_to_signer(self):
+        self.client.post(reverse(self.URL_NAME), self.PAYLOAD)
+        self.assertTrue(
+            any(
+                "Thanks for your interest" in m.subject and "ext@clinic.example" in m.to
+                for m in mail.outbox
+            )
+        )
+
+    def test_accepts_post_without_csrf_token(self):
+        """The static site can't obtain a CSRF token, so the endpoint must not
+        enforce one (contrast with /pro_version which does)."""
+        csrf_client = Client(enforce_csrf_checks=True)
+        response = csrf_client.post(reverse(self.URL_NAME), self.PAYLOAD)
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(
+            InterestedProfessional.objects.filter(email="ext@clinic.example").exists()
+        )
+
+    def test_honeypot_submission_is_dropped_but_looks_successful(self):
+        """A filled honeypot marks a bot: land on thankyou, save nothing, mail
+        nothing."""
+        payload = {**self.PAYLOAD, "website": "http://spam.example"}
+        response = self.client.post(reverse(self.URL_NAME), payload)
+        self.assertRedirects(
+            response,
+            reverse("pro_version_thankyou"),
+            fetch_redirect_response=False,
+        )
+        self.assertFalse(InterestedProfessional.objects.exists())
+        self.assertEqual(mail.outbox, [])
+
+    def test_invalid_submission_redirects_to_onsite_form(self):
+        """Missing the required email can't be re-rendered across origins, so
+        the visitor is bounced to the on-site /pro_version form; nothing saved."""
+        response = self.client.post(
+            reverse(self.URL_NAME), {"name": "No Email", "email": ""}
+        )
+        self.assertRedirects(
+            response, reverse("pro_version"), fetch_redirect_response=False
+        )
+        self.assertFalse(InterestedProfessional.objects.exists())
+        self.assertEqual(mail.outbox, [])
+
+    def test_get_redirects_to_onsite_form(self):
+        response = self.client.get(reverse(self.URL_NAME))
+        self.assertRedirects(
+            response, reverse("pro_version"), fetch_redirect_response=False
+        )
+
+    def test_repeat_submission_dedups_by_email_case_insensitively(self):
+        self.client.post(reverse(self.URL_NAME), self.PAYLOAD)
+        self.client.post(
+            reverse(self.URL_NAME),
+            {**self.PAYLOAD, "email": "EXT@clinic.example"},
+        )
+        self.assertEqual(
+            InterestedProfessional.objects.filter(
+                email__iexact="ext@clinic.example"
+            ).count(),
+            1,
+        )
+        thankyous = [
+            m
+            for m in mail.outbox
+            if "Thanks for your interest" in m.subject
+            and any("ext@clinic.example" in t.lower() for t in m.to)
+        ]
+        self.assertEqual(len(thankyous), 1)
+
+    def test_rejects_mass_assignment_of_internal_fields(self):
+        with patch("fighthealthinsurance.views.ThankyouEmailSender.dosend"):
+            self.client.post(
+                reverse(self.URL_NAME),
+                {**self.PAYLOAD, "paid": "true", "thankyou_email_sent": "true"},
+            )
+        pro = InterestedProfessional.objects.get(email="ext@clinic.example")
+        self.assertFalse(pro.paid)
+        self.assertFalse(pro.thankyou_email_sent)
+
+
 @override_settings(PRO_VERSION_AVAILABLE=True)
 class ProVersionAvailableModeTest(TestCase):
     """When the flag is on, /pro_version shows the available-now page (no form)."""
