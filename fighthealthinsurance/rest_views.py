@@ -1694,7 +1694,14 @@ class InterestedProfessionalViewSet(viewsets.ViewSet, CreateMixin):
             else None
         )
         if existing is not None:
-            self._notify_interested_professional(existing, returning=True)
+            # Notify with the freshly submitted values (a new phone number or
+            # comment is the interesting part), borrowing the stored row's pk
+            # only so the admin deep-link resolves. The transient instance is
+            # never saved — matching the web-form returning path — so the
+            # stored lead is not overwritten.
+            fresh = InterestedProfessional(**serializer.validated_data)
+            fresh.id = existing.id
+            self._notify_interested_professional(fresh, returning=True)
             return Response(
                 serializers.StatusResponseSerializer({"status": "subscribed"}).data,
                 status=status.HTTP_201_CREATED,
@@ -1718,7 +1725,8 @@ class InterestedProfessionalViewSet(viewsets.ViewSet, CreateMixin):
         Delegates to the shared notify_interested_professional helper so the web
         /pro_version form and this endpoint send an identical inbox format.
         `returning=True` marks a repeat submission from an email that already
-        has a lead (the notification then describes the stored record).
+        has a lead (the caller passes a transient instance carrying the fresh
+        submission with the stored row's pk for the admin link).
         Best-effort: mail failures are logged, not raised, so they never fail
         the already-persisted lead."""
         from fighthealthinsurance.utils import notify_interested_professional

@@ -2266,19 +2266,21 @@ class InterestedProfessionalEndpointTest(APITestCase):
 
     def test_repeat_submission_notifies_as_returning_without_duplicate_row(self):
         # The row is deduped (case-insensitively), but the team is still
-        # notified — flagged "(returning)" — instead of the repeat being
-        # silently swallowed.
+        # notified — flagged "(returning)" and carrying the freshly submitted
+        # values — instead of the repeat being silently swallowed.
         from fighthealthinsurance.models import InterestedProfessional
 
         first = self.client.post(
             reverse("interested-professional-list"),
-            data=json.dumps({"email": "again@example.com"}),
+            data=json.dumps({"email": "again@example.com", "name": "First Try"}),
             content_type="application/json",
         )
         with patch("fighthealthinsurance.utils.send_mail") as mock_send:
             second = self.client.post(
                 reverse("interested-professional-list"),
-                data=json.dumps({"email": "Again@example.com"}),
+                data=json.dumps(
+                    {"email": "Again@example.com", "phone_number": "555-0888"}
+                ),
                 content_type="application/json",
             )
         self.assertEqual(first.status_code, 201)
@@ -2291,8 +2293,13 @@ class InterestedProfessionalEndpointTest(APITestCase):
         )
         pro = InterestedProfessional.objects.get(email__iexact="again@example.com")
         mock_send.assert_called_once()
-        subject = mock_send.call_args.args[0]
+        subject, body = mock_send.call_args.args[0], mock_send.call_args.args[1]
         self.assertEqual(subject, f"New pro REST signup #{pro.id} (returning)")
+        # Body reflects the repeat submission, not the stored row (which keeps
+        # its original values).
+        self.assertIn("555-0888", body)
+        self.assertEqual(pro.name, "First Try")
+        self.assertEqual(pro.phone_number, "")
 
     def test_mail_failure_does_not_fail_request(self):
         # The lead is persisted before the notification is attempted, so a mail
