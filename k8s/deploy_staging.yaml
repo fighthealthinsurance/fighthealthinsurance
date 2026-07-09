@@ -108,7 +108,6 @@ metadata:
     nginx.org/websocket-services: staging-web-svc
     cert-manager.io/cluster-issuer: letsencrypt
     cert-manager.io/issue-temporary-certificate: "true"
-    acme.cert-manager.io/http01-edit-in-place: "true"
     cert-manager.io/renew-before: 360h
     nginx.ingress.kubernetes.io/affinity: "cookie"
     nginx.ingress.kubernetes.io/session-cookie-name: "route"

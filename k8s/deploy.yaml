@@ -184,7 +184,6 @@ metadata:
     nginx.org/websocket-services: web-svc
     cert-manager.io/cluster-issuer: letsencrypt
     cert-manager.io/issue-temporary-certificate: "true"
-    acme.cert-manager.io/http01-edit-in-place: "true"
     cert-manager.io/renew-before: 360h
     nginx.ingress.kubernetes.io/affinity: "cookie"
     nginx.ingress.kubernetes.io/session-cookie-name: "route"
@@ -201,7 +200,9 @@ spec:
       - fighthealthinsurance.com
       - api.fighthealthinsurance.com
       - api.fightpaperwork.com
-    secretName: combined-tls-secret
+    # Bumping this name forces ingress-shim to drop the old (wedged/expired)
+    # Certificate and start a clean issuance for the new secret.
+    secretName: combined-tls-secret-2
   rules:
     - host: www.fighthealthinsurance.com
       http:
