@@ -455,6 +455,18 @@ class RepeatSignupNotificationTest(TestCase):
         self.client.post(reverse("pro_version"), self.PAYLOAD)
         self.assertTrue(any("(returning)" in m.subject for m in mail.outbox))
 
+    def test_cooldown_check_failure_fails_open(self):
+        """A broken throttle check must not silently drop the notification —
+        the gate fails open, so infrastructure trouble degrades to a possible
+        repeat email rather than lost signal."""
+        from fighthealthinsurance.utils import should_notify_returning_lead
+
+        with patch(
+            "fighthealthinsurance.models.ModelHealthAlertState.try_claim",
+            side_effect=RuntimeError("db down"),
+        ):
+            self.assertTrue(should_notify_returning_lead("someone@example.com"))
+
     def test_repeat_submission_works_from_thankyou_page_intake(self):
         """The relaxed dedup applies to the legacy direct-post path too — the
         scenario where repeat testing previously looked like a dead endpoint."""
