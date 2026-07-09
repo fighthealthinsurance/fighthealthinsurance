@@ -350,13 +350,16 @@ class ExternalProSignupView(View):
         return HttpResponseRedirect(reverse("pro_version"))
 
     def post(self, request, *args, **kwargs):
+        # Honeypot first, read straight from the raw POST: a filled "website"
+        # field means a bot, so drop the submission silently and land it on the
+        # thank-you page like any other. Checking before form validation means
+        # a bot can't dodge the honeypot by also omitting a required field
+        # (which would otherwise bounce it to /pro_version and reveal the trap).
+        if request.POST.get("website", "").strip():
+            return HttpResponseRedirect(reverse("pro_version_thankyou"))
         form = core_forms.ExternalInterestedProfessionalForm(request.POST)
         if not form.is_valid():
             return HttpResponseRedirect(reverse("pro_version"))
-        # Honeypot: a filled "website" field means a bot. Land it on the
-        # thank-you page like any other submission, but drop it silently.
-        if form.cleaned_data.get("website"):
-            return HttpResponseRedirect(reverse("pro_version_thankyou"))
         interested_pro = form.save(commit=False)
         _persist_interested_professional_lead(
             interested_pro,

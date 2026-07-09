@@ -267,6 +267,22 @@ class ExternalProSignupTest(TestCase):
         self.assertFalse(InterestedProfessional.objects.exists())
         self.assertEqual(mail.outbox, [])
 
+    def test_honeypot_wins_even_when_required_fields_missing(self):
+        """The honeypot is checked before validation, so a bot can't dodge the
+        trap by also omitting the required email: it still lands on thankyou
+        (not the on-site form) and nothing is saved."""
+        response = self.client.post(
+            reverse(self.URL_NAME),
+            {"name": "Bot", "email": "", "website": "http://spam.example"},
+        )
+        self.assertRedirects(
+            response,
+            reverse("pro_version_thankyou"),
+            fetch_redirect_response=False,
+        )
+        self.assertFalse(InterestedProfessional.objects.exists())
+        self.assertEqual(mail.outbox, [])
+
     def test_invalid_submission_redirects_to_onsite_form(self):
         """Missing the required email can't be re-rendered across origins, so
         the visitor is bounced to the on-site /pro_version form; nothing saved."""
@@ -314,6 +330,25 @@ class ExternalProSignupTest(TestCase):
         pro = InterestedProfessional.objects.get(email="ext@clinic.example")
         self.assertFalse(pro.paid)
         self.assertFalse(pro.thankyou_email_sent)
+
+    def test_rejects_mass_assignment_of_proconnector_state(self):
+        """A crafted POST must not preset pro-connector workflow state. If it
+        could set proconnector_attempted/skipped=True, the lead would be born
+        already-handled and proconnector.processable_queryset() would skip it,
+        silently dropping a real lead from the outreach queue."""
+        self.client.post(
+            reverse(self.URL_NAME),
+            {
+                **self.PAYLOAD,
+                "proconnector_attempted": "true",
+                "proconnector_skipped": "true",
+                "proconnector_skip_reason": "injected",
+            },
+        )
+        pro = InterestedProfessional.objects.get(email="ext@clinic.example")
+        self.assertFalse(pro.proconnector_attempted)
+        self.assertFalse(pro.proconnector_skipped)
+        self.assertIsNone(pro.proconnector_skip_reason)
 
 
 @override_settings(PRO_VERSION_AVAILABLE=True)

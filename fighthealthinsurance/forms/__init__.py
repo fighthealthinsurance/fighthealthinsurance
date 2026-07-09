@@ -121,13 +121,22 @@ class _InterestedProfessionalFieldsForm(forms.ModelForm):
 
     class Meta:
         model = InterestedProfessional
-        # Block mass-assignment of internal/state-tracking fields via a public POST.
-        exclude = [
-            "paid",
-            "clicked_for_paid",
-            "signup_date",
-            "mod_date",
-            "thankyou_email_sent",
+        # Positive allow-list of the public intake fields. A `fields` list
+        # (rather than `exclude`) means any model field NOT named here — the
+        # payment/state flags and, crucially, the internal proconnector_*
+        # workflow fields (proconnector_attempted, proconnector_skipped, ...) —
+        # can never be mass-assigned from a public POST. That matters because a
+        # crafted submission setting proconnector_attempted/skipped=True would
+        # otherwise drop the lead out of proconnector.processable_queryset().
+        fields = [
+            "name",
+            "email",
+            "business_name",
+            "address",
+            "comments",
+            "phone_number",
+            "job_title_or_provider_type",
+            "most_common_denial",
         ]
 
 
