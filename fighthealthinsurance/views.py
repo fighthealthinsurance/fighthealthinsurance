@@ -270,9 +270,12 @@ def _handle_classic_pro_lead_post(
     page like any other. Checking before form validation means a bot can't
     dodge the honeypot by also omitting a required field (which would
     otherwise bounce it to /pro_version and reveal the trap). A submission
-    that fails validation is sent to the on-site /pro_version form, which
-    re-validates with full server-side error display (there is no
-    cross-origin page here to re-render errors into).
+    that fails validation is bounced to the on-site /pro_version form to try
+    again there: the redirect is a plain GET, so the failed input and errors
+    are not carried across (there is no cross-origin page to re-render errors
+    into), but the on-site form gives full error display on resubmission —
+    and since email is the only required field, marked required client-side
+    on the known senders, this path is rare.
     """
     if request.POST.get("website", "").strip():
         return HttpResponseRedirect(reverse("pro_version_thankyou"))
@@ -416,8 +419,8 @@ class ExternalProSignupView(View):
     needed.
 
     A GET, or a submission that fails validation, sends the visitor to the
-    on-site /pro_version form, which re-validates with full server-side error
-    display (there is no cross-origin page here to re-render errors into).
+    on-site /pro_version form to try again (as a plain GET redirect — see
+    _handle_classic_pro_lead_post for why errors can't be carried across).
     """
 
     def get(self, request, *args, **kwargs):
