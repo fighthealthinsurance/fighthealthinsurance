@@ -229,10 +229,58 @@ def _persist_interested_professional_lead(
         )
 
 
+def _handle_classic_pro_lead_post(
+    request: HttpRequest, *, source: str, subject_prefix: str
+) -> HttpResponseRedirect:
+    """Process a classic (top-level, non-JS) interested-professional form POST.
+
+    Shared by the dedicated cross-origin intake endpoint
+    (:class:`ExternalProSignupView`) and the thank-you page
+    (:class:`ProVersionThankYouView`), which older embeds of the static
+    Fight Paperwork form still POST to directly.
+
+    Honeypot first, read straight from the raw POST: a filled "website" field
+    means a bot, so drop the submission silently and land it on the thank-you
+    page like any other. Checking before form validation means a bot can't
+    dodge the honeypot by also omitting a required field (which would
+    otherwise bounce it to /pro_version and reveal the trap). A submission
+    that fails validation is sent to the on-site /pro_version form, which
+    re-validates with full server-side error display (there is no
+    cross-origin page here to re-render errors into).
+    """
+    if request.POST.get("website", "").strip():
+        return HttpResponseRedirect(reverse("pro_version_thankyou"))
+    form = core_forms.ExternalInterestedProfessionalForm(request.POST)
+    if not form.is_valid():
+        return HttpResponseRedirect(reverse("pro_version"))
+    interested_pro = form.save(commit=False)
+    _persist_interested_professional_lead(
+        interested_pro,
+        source=source,
+        subject_prefix=subject_prefix,
+    )
+    return HttpResponseRedirect(reverse("pro_version_thankyou"))
+
+
 class ProVersionThankYouView(TemplateView):
-    """Thank you page displayed after professional version signup."""
+    """Thank you page displayed after professional version signup.
+
+    Also accepts direct classic-form POSTs (the URLconf marks it csrf_exempt
+    for exactly this reason): older deployed/cached copies of the static
+    Fight Paperwork interest form submit straight to this URL, so a POST here
+    must persist the lead and fan out the signup notification emails rather
+    than returning 405 and silently dropping the signup. POST-redirect-GET:
+    a successful submission 302s back to this page, which then renders.
+    """
 
     template_name = "professional_thankyou.html"
+
+    def post(self, request, *args, **kwargs):
+        return _handle_classic_pro_lead_post(
+            request,
+            source="/pro_version_thankyou",
+            subject_prefix="New pro version signup",
+        )
 
 
 class BRB(TemplateView):
@@ -350,23 +398,11 @@ class ExternalProSignupView(View):
         return HttpResponseRedirect(reverse("pro_version"))
 
     def post(self, request, *args, **kwargs):
-        # Honeypot first, read straight from the raw POST: a filled "website"
-        # field means a bot, so drop the submission silently and land it on the
-        # thank-you page like any other. Checking before form validation means
-        # a bot can't dodge the honeypot by also omitting a required field
-        # (which would otherwise bounce it to /pro_version and reveal the trap).
-        if request.POST.get("website", "").strip():
-            return HttpResponseRedirect(reverse("pro_version_thankyou"))
-        form = core_forms.ExternalInterestedProfessionalForm(request.POST)
-        if not form.is_valid():
-            return HttpResponseRedirect(reverse("pro_version"))
-        interested_pro = form.save(commit=False)
-        _persist_interested_professional_lead(
-            interested_pro,
+        return _handle_classic_pro_lead_post(
+            request,
             source="fightpaperwork.com",
             subject_prefix="New Fight Paperwork pro signup",
         )
-        return HttpResponseRedirect(reverse("pro_version_thankyou"))
 
 
 class PatientAccessView(generic.TemplateView):

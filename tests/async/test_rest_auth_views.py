@@ -363,7 +363,8 @@ class RestAuthViewsTests(TestCase):
 
     def test_professional_signup_notifies_professional_inbox(self) -> None:
         """A successful FPW REST professional signup emails the professional
-        notification inbox (defaults to professional@fighthealthinsurance.com).
+        notification inboxes (default to support42@fighthealthinsurance.com
+        and professional@fighthealthinsurance.com).
 
         Uses the join-existing-domain path so no Stripe call is involved, and
         captures on_commit callbacks since the notification is deferred until
@@ -391,7 +392,13 @@ class RestAuthViewsTests(TestCase):
             for m in mail.outbox
             if m.subject == "New professional signup: notifypro@test-fhi.com"
         )
-        self.assertEqual(notification.to, ["professional@fighthealthinsurance.com"])
+        self.assertEqual(
+            notification.to,
+            [
+                "support42@fighthealthinsurance.com",
+                "professional@fighthealthinsurance.com",
+            ],
+        )
         self.assertIn("notifypro@test-fhi.com", notification.body)
         self.assertIn("Notify Pro", notification.body)
 

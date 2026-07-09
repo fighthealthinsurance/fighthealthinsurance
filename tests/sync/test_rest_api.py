@@ -2173,7 +2173,8 @@ class DemoRequestEndpointTest(APITestCase):
 
     def test_demo_request_notifies_professional_inbox(self):
         # The lead notification goes through the shared
-        # notify_interested_professional helper, i.e. to the professional inbox.
+        # notify_interested_professional helper, i.e. to the professional-signup
+        # inboxes (support42@ + professional@).
         response = self.client.post(
             reverse("demorequest-list"),
             data=json.dumps({"email": "lead6@example.com"}),
@@ -2181,8 +2182,9 @@ class DemoRequestEndpointTest(APITestCase):
         )
         self.assertEqual(response.status_code, 201)
         notification = next(
-            m for m in mail.outbox if m.to == ["professional@fighthealthinsurance.com"]
+            m for m in mail.outbox if "professional@fighthealthinsurance.com" in m.to
         )
+        self.assertIn("support42@fighthealthinsurance.com", notification.to)
         self.assertIn("lead6@example.com", notification.body)
         self.assertIn("a Fight Paperwork demo request", notification.body)
 
@@ -2210,7 +2212,8 @@ class DemoRequestEndpointTest(APITestCase):
 class InterestedProfessionalEndpointTest(APITestCase):
     """The interested_professional REST endpoint records a professional-interest
     lead (the FPW counterpart to the web /pro_version form) and notifies the
-    professional-signup inbox (defaults to professional@fighthealthinsurance.com).
+    professional-signup inboxes (default to support42@fighthealthinsurance.com
+    and professional@fighthealthinsurance.com).
     The notification flows through fighthealthinsurance.utils.notify_professional_signup,
     so that is the send_mail patch target."""
 
@@ -2240,6 +2243,7 @@ class InterestedProfessionalEndpointTest(APITestCase):
         mock_send.assert_called_once()
         # send_mail(subject, body, from_email, recipients)
         subject, body, _from, recipients = mock_send.call_args.args
+        self.assertIn("support42@fighthealthinsurance.com", recipients)
         self.assertIn("professional@fighthealthinsurance.com", recipients)
         self.assertIn("pro@example.com", body)
         self.assertIn(str(pro.id), subject)

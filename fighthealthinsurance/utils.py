@@ -457,15 +457,19 @@ def notify_professional_signup(subject: str, body: str) -> None:
 
     Shared by the web /pro_version interest form and the Fight Paperwork REST
     professional sign-up endpoint. Recipients default to
-    professional@fighthealthinsurance.com and can be extended via
-    settings.PROFESSIONAL_SIGNUP_NOTIFICATION_EMAILS. A mail failure is logged
-    and swallowed so it never breaks the signup it is reporting on.
+    support42@fighthealthinsurance.com and professional@fighthealthinsurance.com
+    and can be extended via settings.PROFESSIONAL_SIGNUP_NOTIFICATION_EMAILS. A
+    mail failure is logged and swallowed so it never breaks the signup it is
+    reporting on.
     """
     recipients = list(
         getattr(
             settings,
             "PROFESSIONAL_SIGNUP_NOTIFICATION_EMAILS",
-            ["professional@fighthealthinsurance.com"],
+            [
+                "support42@fighthealthinsurance.com",
+                "professional@fighthealthinsurance.com",
+            ],
         )
     )
     if not recipients:

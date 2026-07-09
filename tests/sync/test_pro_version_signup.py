@@ -49,9 +49,13 @@ class ProVersionSignupSuccessTest(TestCase):
         # Pay-to-express-interest is no longer collected.
         self.assertFalse(self.pro.clicked_for_paid)
 
-    def test_sends_team_notification_to_professional_inbox(self):
+    def test_sends_team_notification_to_support_and_professional_inboxes(self):
         self.assertEqual(
-            self._team_email().to, ["professional@fighthealthinsurance.com"]
+            self._team_email().to,
+            [
+                "support42@fighthealthinsurance.com",
+                "professional@fighthealthinsurance.com",
+            ],
         )
 
     def test_team_notification_includes_captured_fields(self):
@@ -230,7 +234,11 @@ class ExternalProSignupTest(TestCase):
         self.assertTrue(
             any(
                 m.subject == f"New Fight Paperwork pro signup #{pro.id}"
-                and m.to == ["professional@fighthealthinsurance.com"]
+                and m.to
+                == [
+                    "support42@fighthealthinsurance.com",
+                    "professional@fighthealthinsurance.com",
+                ]
                 for m in mail.outbox
             )
         )
@@ -349,6 +357,112 @@ class ExternalProSignupTest(TestCase):
         self.assertFalse(pro.proconnector_attempted)
         self.assertFalse(pro.proconnector_skipped)
         self.assertIsNone(pro.proconnector_skip_reason)
+
+
+class ProVersionThankYouDirectPostTest(TestCase):
+    """Direct classic-form POSTs to /pro_version_thankyou.
+
+    Older deployed/cached copies of the static Fight Paperwork interest form
+    submit straight to the thank-you URL (which is csrf_exempt in the URLconf
+    for exactly this reason). These posts must persist the lead and fan out
+    the notification + thank-you emails instead of 405-ing and silently
+    dropping the signup — the regression this class guards against.
+    """
+
+    URL_NAME = "pro_version_thankyou"
+
+    PAYLOAD = {
+        "name": "Direct Poster",
+        "email": "direct@clinic.example",
+        "job_title_or_provider_type": "Office manager",
+        "business_name": "Legacy Clinic",
+        "phone_number": "555-0142",
+        "most_common_denial": "Out of network",
+        "comments": "Posted straight to the thank-you page",
+    }
+
+    def test_get_still_renders_thankyou_page(self):
+        response = self.client.get(reverse(self.URL_NAME))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Thank you for believing in us")
+
+    def test_post_redirects_to_thankyou_page(self):
+        # POST-redirect-GET back to the same page, matching the external
+        # endpoint's contract (and refreshing won't re-submit).
+        response = self.client.post(reverse(self.URL_NAME), self.PAYLOAD)
+        self.assertRedirects(response, reverse(self.URL_NAME))
+
+    def test_post_creates_lead(self):
+        self.client.post(reverse(self.URL_NAME), self.PAYLOAD)
+        pro = InterestedProfessional.objects.get(email="direct@clinic.example")
+        self.assertEqual(pro.business_name, "Legacy Clinic")
+        self.assertFalse(pro.clicked_for_paid)
+
+    def test_post_notifies_support_and_professional_inboxes(self):
+        self.client.post(reverse(self.URL_NAME), self.PAYLOAD)
+        pro = InterestedProfessional.objects.get(email="direct@clinic.example")
+        notification = next(
+            m for m in mail.outbox if m.subject == f"New pro version signup #{pro.id}"
+        )
+        self.assertEqual(
+            notification.to,
+            [
+                "support42@fighthealthinsurance.com",
+                "professional@fighthealthinsurance.com",
+            ],
+        )
+        # The body names the intake path so the team can tell a legacy
+        # direct post apart from the on-site form.
+        self.assertIn("/pro_version_thankyou", notification.body)
+
+    def test_post_sends_thankyou_email_to_signer(self):
+        self.client.post(reverse(self.URL_NAME), self.PAYLOAD)
+        self.assertTrue(
+            any(
+                "Thanks for your interest" in m.subject
+                and "direct@clinic.example" in m.to
+                for m in mail.outbox
+            )
+        )
+
+    def test_accepts_post_without_csrf_token(self):
+        """Cross-origin static pages can't obtain a CSRF token, so the
+        endpoint must not enforce one."""
+        csrf_client = Client(enforce_csrf_checks=True)
+        response = csrf_client.post(reverse(self.URL_NAME), self.PAYLOAD)
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(
+            InterestedProfessional.objects.filter(
+                email="direct@clinic.example"
+            ).exists()
+        )
+
+    def test_honeypot_submission_is_dropped_but_looks_successful(self):
+        payload = {**self.PAYLOAD, "website": "http://spam.example"}
+        response = self.client.post(reverse(self.URL_NAME), payload)
+        self.assertRedirects(response, reverse(self.URL_NAME))
+        self.assertFalse(InterestedProfessional.objects.exists())
+        self.assertEqual(mail.outbox, [])
+
+    def test_invalid_submission_redirects_to_onsite_form(self):
+        response = self.client.post(
+            reverse(self.URL_NAME), {"name": "No Email", "email": ""}
+        )
+        self.assertRedirects(
+            response, reverse("pro_version"), fetch_redirect_response=False
+        )
+        self.assertFalse(InterestedProfessional.objects.exists())
+        self.assertEqual(mail.outbox, [])
+
+    def test_repeat_submission_dedups_by_email(self):
+        self.client.post(reverse(self.URL_NAME), self.PAYLOAD)
+        self.client.post(reverse(self.URL_NAME), self.PAYLOAD)
+        self.assertEqual(
+            InterestedProfessional.objects.filter(
+                email__iexact="direct@clinic.example"
+            ).count(),
+            1,
+        )
 
 
 @override_settings(PRO_VERSION_AVAILABLE=True)

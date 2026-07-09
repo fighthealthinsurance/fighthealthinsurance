@@ -1663,8 +1663,9 @@ class InterestedProfessionalViewSet(viewsets.ViewSet, CreateMixin):
     REST API.
 
     Public counterpart to the web /pro_version interest form: it records an
-    InterestedProfessional lead and notifies the professional-signup inbox
-    (defaults to professional@fighthealthinsurance.com, extendable via
+    InterestedProfessional lead and notifies the professional-signup inboxes
+    (default to support42@fighthealthinsurance.com and
+    professional@fighthealthinsurance.com, extendable via
     settings.PROFESSIONAL_SIGNUP_NOTIFICATION_EMAILS). Create-only: this is a
     public, unauthenticated endpoint, so lead removal is intentionally not
     exposed here (an email-only delete would let anyone erase a lead); data
