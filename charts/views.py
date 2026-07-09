@@ -597,21 +597,30 @@ def generate_denial_appeal_lines():
         ProposedAppeal.objects.filter(for_denial=OuterRef("pk"), chosen=True)
     )
     has_appeal = Exists(Appeal.objects.filter(for_denial=OuterRef("pk")))
+    # Fail closed: only export a (denial, appeal) pair once a human has
+    # de-identified BOTH halves. The prior `manual_deidentified_* or <raw>`
+    # fallback silently emitted raw denial text and raw proposed/finalized
+    # appeal text whenever the manual field was blank, baking patient PHI into
+    # the training corpus. Exclude those rows at the DB layer (mirroring
+    # generate_de_identified_lines) so they are never fetched; the loop then
+    # only reads denialqa_set, so the proposedappeal/appeal prefetches are
+    # dropped.
     denials = (
         _non_pro_unflagged_denials()
         .filter(has_chosen_proposed | has_appeal)
-        .prefetch_related("proposedappeal_set", "appeal_set", "denialqa_set")
+        .exclude(
+            Q(manual_deidentified_denial="")
+            | Q(manual_deidentified_denial__isnull=True)
+            | Q(manual_deidentified_appeal="")
+            | Q(manual_deidentified_appeal__isnull=True)
+        )
+        .prefetch_related("denialqa_set")
     )
 
     for denial in denials:
-        # Fail closed: only export a (denial, appeal) pair once a human has
-        # de-identified BOTH halves. The prior `manual_deidentified_* or <raw>`
-        # fallback silently emitted raw denial text and raw proposed/finalized
-        # appeal text whenever the manual field was blank, baking patient PHI
-        # into the training corpus. Mirrors generate_de_identified_lines, which
-        # already excludes records lacking manual_deidentified_denial.
         denial_text = denial.manual_deidentified_denial
         appeal_text = denial.manual_deidentified_appeal
+        # Defensive guard: the DB-level exclude above already drops these.
         if not denial_text or not appeal_text:
             continue
 
