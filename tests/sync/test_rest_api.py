@@ -2264,6 +2264,36 @@ class InterestedProfessionalEndpointTest(APITestCase):
         recipients = mock_send.call_args.args[3]
         self.assertIn("sales@example.com", recipients)
 
+    def test_repeat_submission_notifies_as_returning_without_duplicate_row(self):
+        # The row is deduped (case-insensitively), but the team is still
+        # notified — flagged "(returning)" — instead of the repeat being
+        # silently swallowed.
+        from fighthealthinsurance.models import InterestedProfessional
+
+        first = self.client.post(
+            reverse("interested-professional-list"),
+            data=json.dumps({"email": "again@example.com"}),
+            content_type="application/json",
+        )
+        with patch("fighthealthinsurance.utils.send_mail") as mock_send:
+            second = self.client.post(
+                reverse("interested-professional-list"),
+                data=json.dumps({"email": "Again@example.com"}),
+                content_type="application/json",
+            )
+        self.assertEqual(first.status_code, 201)
+        self.assertEqual(second.status_code, 201)
+        self.assertEqual(
+            InterestedProfessional.objects.filter(
+                email__iexact="again@example.com"
+            ).count(),
+            1,
+        )
+        pro = InterestedProfessional.objects.get(email__iexact="again@example.com")
+        mock_send.assert_called_once()
+        subject = mock_send.call_args.args[0]
+        self.assertEqual(subject, f"New pro REST signup #{pro.id} (returning)")
+
     def test_mail_failure_does_not_fail_request(self):
         # The lead is persisted before the notification is attempted, so a mail
         # backend error must not turn into a 500.

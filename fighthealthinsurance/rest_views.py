@@ -1682,15 +1682,19 @@ class InterestedProfessionalViewSet(viewsets.ViewSet, CreateMixin):
     def perform_create(self, request: Request, serializer) -> Response:
         """Save the lead, then notify the professional-signup inbox."""
         # Dedup by email: a returning lead reuses the existing record rather
-        # than accumulating duplicate rows or re-notifying the professional
-        # inbox. Repeat submissions still get the standard success response.
-        # Case-insensitive to match how the pro-connector queue collapses
-        # duplicates (email__iexact).
+        # than accumulating duplicate rows (case-insensitive to match how the
+        # pro-connector queue collapses duplicates, email__iexact). The team
+        # notification still fires — flagged "(returning)" — so repeat
+        # interest is never silently swallowed. Repeat submissions get the
+        # standard success response either way.
         email = serializer.validated_data.get("email")
-        if (
-            email
-            and InterestedProfessional.objects.filter(email__iexact=email).exists()
-        ):
+        existing = (
+            InterestedProfessional.objects.filter(email__iexact=email).first()
+            if email
+            else None
+        )
+        if existing is not None:
+            self._notify_interested_professional(existing, returning=True)
             return Response(
                 serializers.StatusResponseSerializer({"status": "subscribed"}).data,
                 status=status.HTTP_201_CREATED,
@@ -1707,20 +1711,25 @@ class InterestedProfessionalViewSet(viewsets.ViewSet, CreateMixin):
 
     @staticmethod
     def _notify_interested_professional(
-        interested_pro: InterestedProfessional,
+        interested_pro: InterestedProfessional, *, returning: bool = False
     ) -> None:
-        """Notify the professional-signup inbox about a new REST interest lead.
+        """Notify the professional-signup inbox about a REST interest lead.
 
         Delegates to the shared notify_interested_professional helper so the web
         /pro_version form and this endpoint send an identical inbox format.
+        `returning=True` marks a repeat submission from an email that already
+        has a lead (the notification then describes the stored record).
         Best-effort: mail failures are logged, not raised, so they never fail
         the already-persisted lead."""
         from fighthealthinsurance.utils import notify_interested_professional
 
+        subject = f"New pro REST signup #{interested_pro.id}"
+        if returning:
+            subject += " (returning)"
         notify_interested_professional(
             interested_pro,
             source="the Fight Paperwork REST API",
-            subject=f"New pro REST signup #{interested_pro.id}",
+            subject=subject,
         )
 
 

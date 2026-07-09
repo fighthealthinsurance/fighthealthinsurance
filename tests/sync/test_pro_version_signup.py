@@ -359,6 +359,90 @@ class ExternalProSignupTest(TestCase):
         self.assertIsNone(pro.proconnector_skip_reason)
 
 
+class RepeatSignupNotificationTest(TestCase):
+    """Repeat submissions from an email address that already has a lead.
+
+    The row is still deduped (one lead per address, matching the pro-connector
+    queue), but the team notification fires on every submission — flagged
+    "(returning)" and carrying the freshly submitted field values — so repeat
+    interest is never silently swallowed. The thank-you email is only retried
+    when no send has succeeded yet.
+    """
+
+    PAYLOAD = {"name": "Returning", "email": "returning@clinic.example"}
+
+    def test_repeat_submission_notifies_team_as_returning(self):
+        self.client.post(reverse("pro_version"), self.PAYLOAD)
+        mail.outbox.clear()
+        self.client.post(
+            reverse("pro_version"), {**self.PAYLOAD, "phone_number": "555-0777"}
+        )
+        pro = InterestedProfessional.objects.get(email="returning@clinic.example")
+        notification = next(
+            m
+            for m in mail.outbox
+            if m.subject == f"New pro version signup #{pro.id} (returning)"
+        )
+        self.assertEqual(
+            notification.to,
+            [
+                "support42@fighthealthinsurance.com",
+                "professional@fighthealthinsurance.com",
+            ],
+        )
+        # The body carries the freshly submitted values, not the stored row.
+        self.assertIn("555-0777", notification.body)
+
+    def test_repeat_submission_does_not_overwrite_stored_lead(self):
+        self.client.post(reverse("pro_version"), self.PAYLOAD)
+        self.client.post(
+            reverse("pro_version"), {**self.PAYLOAD, "phone_number": "555-0777"}
+        )
+        pro = InterestedProfessional.objects.get(email="returning@clinic.example")
+        self.assertEqual(pro.phone_number, "")
+
+    def test_repeat_submission_does_not_resend_sent_thankyou(self):
+        self.client.post(reverse("pro_version"), self.PAYLOAD)
+        mail.outbox.clear()
+        self.client.post(reverse("pro_version"), self.PAYLOAD)
+        self.assertFalse(
+            any("Thanks for your interest" in m.subject for m in mail.outbox)
+        )
+
+    def test_repeat_submission_retries_unsent_thankyou(self):
+        # A lead whose thank-you never went out (thankyou_email_sent=False)
+        # gets it on resubmission, instead of being stuck silent forever.
+        InterestedProfessional.objects.create(
+            email="unthanked@clinic.example", thankyou_email_sent=False
+        )
+        self.client.post(
+            reverse("pro_version"),
+            {"name": "Unthanked", "email": "unthanked@clinic.example"},
+        )
+        self.assertTrue(
+            any(
+                "Thanks for your interest" in m.subject
+                and "unthanked@clinic.example" in m.to
+                for m in mail.outbox
+            )
+        )
+
+    def test_repeat_submission_works_from_thankyou_page_intake(self):
+        """The relaxed dedup applies to the legacy direct-post path too — the
+        scenario where repeat testing previously looked like a dead endpoint."""
+        self.client.post(reverse("pro_version_thankyou"), self.PAYLOAD)
+        mail.outbox.clear()
+        response = self.client.post(reverse("pro_version_thankyou"), self.PAYLOAD)
+        self.assertRedirects(response, reverse("pro_version_thankyou"))
+        pro = InterestedProfessional.objects.get(email="returning@clinic.example")
+        self.assertTrue(
+            any(
+                m.subject == f"New pro version signup #{pro.id} (returning)"
+                for m in mail.outbox
+            )
+        )
+
+
 class ProVersionThankYouDirectPostTest(TestCase):
     """Direct classic-form POSTs to /pro_version_thankyou.
 

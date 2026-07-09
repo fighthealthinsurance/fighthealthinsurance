@@ -192,23 +192,49 @@ def _persist_interested_professional_lead(
 ) -> None:
     """Persist a new interested-professional lead and fan out notifications.
 
-    Shared by the on-site /pro_version form (:class:`ProVersionView`) and the
+    Shared by the on-site /pro_version form (:class:`ProVersionView`), the
     off-site fightpaperwork.com classic-form endpoint
-    (:class:`ExternalProSignupView`) so both dedup, notify, and thank
+    (:class:`ExternalProSignupView`), and direct posts to the thank-you page
+    (:class:`ProVersionThankYouView`) so all intakes dedup, notify, and thank
     identically.
 
     Dedup by email (case-insensitive, matching the REST endpoint and the
-    pro-connector queue): if a lead with this address already exists, do
-    nothing — no duplicate row, no re-notification, no second thank-you. The
-    caller still sends the submitter to the thank-you page. Otherwise record
-    the lead as not-clicked-for-paid (the pay-to-express-interest choice is no
-    longer collected), notify the professional-signup inbox, and send the
-    thank-you email immediately. Mail failures are logged, never raised, so
-    they can't fail an already-persisted lead.
+    pro-connector queue) keeps one row per address: a returning lead never
+    creates a duplicate InterestedProfessional and never overwrites the
+    stored one. The team notification is sent on every submission though —
+    repeat interest is real signal, and silently swallowing it makes
+    successful signups look broken — with a "(returning)" subject marker and
+    the freshly submitted field values in the body. The thank-you email goes
+    out immediately for new leads; for returning ones it is only retried when
+    no send has succeeded yet (thankyou_email_sent=False), so repeatedly
+    submitting someone else's address can't be used to spam them. New leads
+    are recorded as not-clicked-for-paid (the pay-to-express-interest choice
+    is no longer collected). Mail failures are logged, never raised, so they
+    can't fail an already-persisted lead.
     """
-    if models.InterestedProfessional.objects.filter(
+    existing = models.InterestedProfessional.objects.filter(
         email__iexact=interested_pro.email
-    ).exists():
+    ).first()
+    if existing is not None:
+        # Borrow the existing row's pk so the notification's admin deep-link
+        # resolves, while the body carries what was just submitted (a fresh
+        # phone number or comment is the interesting part). The unsaved
+        # instance is discarded afterwards — never save() it here, or an
+        # unauthenticated resubmission would overwrite the stored lead.
+        interested_pro.id = existing.id
+        notify_interested_professional(
+            interested_pro,
+            source=source,
+            subject=f"{subject_prefix} #{existing.id} (returning)",
+        )
+        if not existing.thankyou_email_sent:
+            try:
+                ThankyouEmailSender().dosend(interested_pro=existing)
+            except Exception:
+                logger.opt(exception=True).warning(
+                    f"Error retrying pro signup thank-you "
+                    f"(interested_professional_id={existing.id})"
+                )
         return
     interested_pro.clicked_for_paid = False
     interested_pro.save()
