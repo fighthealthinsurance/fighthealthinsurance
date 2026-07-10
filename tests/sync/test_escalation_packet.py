@@ -110,6 +110,43 @@ class EscalationAddressesTest(TestCase):
         self.assertEqual(types, ["medical_director"])
         self.assertIn("Cigna", recipients[0].name)
 
+    @patch("fighthealthinsurance.escalation_addresses.get_state_help_by_abbreviation")
+    def test_doi_recipient_includes_consumer_phone_number(self, mock_state):
+        mock_state.return_value = StateHelp(CALIFORNIA_DATA)
+        denial = _FakeDenial(state="CA")
+        recipients = get_recipients_for_denial(denial)
+        doi = next(r for r in recipients if r.recipient_type == "doi")
+        self.assertEqual(doi.phone, "800-927-4357")
+
+    def test_medical_director_uses_insurer_appeal_contact_info(self):
+        denial = _FakeDenial(state="", insurance_company="Aetna")
+        denial.insurance_company_obj = type(
+            "ICO",
+            (),
+            {
+                "is_tpa": False,
+                "name": "Aetna",
+                "appeal_address": "Aetna Appeals\nPO Box 14463\nLexington, KY 40512",
+                "appeal_phone_number": "1-800-872-3862",
+                "member_services_url": "https://www.aetna.com/contact-us.html",
+                "website": "https://www.aetna.com/",
+            },
+        )()
+        recipients = get_recipients_for_denial(denial)
+        md = next(r for r in recipients if r.recipient_type == "medical_director")
+        self.assertEqual(md.phone, "1-800-872-3862")
+        self.assertTrue(md.address.startswith("Medical Director\n"))
+        self.assertIn("PO Box 14463", md.address)
+        self.assertEqual(md.url, "https://www.aetna.com/contact-us.html")
+
+    def test_medical_director_keeps_placeholder_without_matched_insurer(self):
+        denial = _FakeDenial(state="", insurance_company="Cigna")
+        denial.insurance_company_obj = None
+        recipients = get_recipients_for_denial(denial)
+        md = next(r for r in recipients if r.recipient_type == "medical_director")
+        self.assertEqual(md.phone, "")
+        self.assertIn("[Insurance company mailing address", md.address)
+
     def test_erisa_branch_via_tpa_flag_adds_dol_ebsa(self):
         denial = _FakeDenial(
             state="",
@@ -275,6 +312,22 @@ class EscalationPacketViewTest(TestCase):
         self.assertTemplateUsed(response, "escalation_packet.html")
         # Medical director recipient is always present.
         self.assertContains(response, "Medical Director")
+
+    @patch("fighthealthinsurance.escalation_addresses.get_state_help_by_abbreviation")
+    def test_escalation_packet_page_shows_regulator_phone_number(self, mock_state):
+        """The recipient checklist should surface each regulator's phone
+        number so users can call before (or instead of) mailing."""
+        mock_state.return_value = StateHelp(CALIFORNIA_DATA)
+        response = self.client.get(
+            reverse("escalation_packet"),
+            {
+                "denial_id": self.denial.denial_id,
+                "email": self.email,
+                "semi_sekret": self.denial.semi_sekret,
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "800-927-4357")
 
     def test_appeals_generation_page_exposes_escalation_button(self):
         """The appeals.html page (where users choose between drafts) must

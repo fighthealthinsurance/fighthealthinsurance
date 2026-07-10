@@ -869,6 +869,26 @@ class FindNextStepsHelper:
                     "Talk to your employer's HR if you are on good terms with them.",
                 )
             )
+        regulator = denial.regulator
+        if regulator is not None and (regulator.phone or regulator.website):
+            how_to_parts = []
+            if regulator.phone:
+                how_to_parts.append(f"Call {regulator.phone}")
+            if regulator.website:
+                how_to_parts.append(
+                    f"<a href='{regulator.website}' target='_blank' rel='noopener'>"
+                    "file a complaint online</a>"
+                )
+            outside_help_details.append(
+                (
+                    (
+                        f"Your denial letter mentions <strong>{regulator.name}</strong>, "
+                        "a regulator that oversees this kind of plan. They take consumer "
+                        "complaints about denials and can require the plan to respond."
+                    ),
+                    " or ".join(how_to_parts) + ".",
+                )
+            )
         return outside_help_details
 
     @classmethod
@@ -1480,6 +1500,7 @@ class DenialCreatorHelper:
             named_task(cls.extract_set_plan_id(denial_id), "plan id"),
             named_task(cls.extract_set_claim_id(denial_id), "claim id"),
             named_task(cls.extract_set_date_of_service(denial_id), "date of service"),
+            named_task(cls.extract_set_regulator(denial_id), "regulator"),
             named_task(
                 MLPlanDocHelper.generate_plan_documents_summary(denial_id),
                 "plan document summary",
@@ -2280,6 +2301,26 @@ class DenialCreatorHelper:
                 .afirst()
             )
         return None
+
+    @classmethod
+    async def extract_set_regulator(cls, denial_id):
+        """Match the denial text against known regulators and store the match.
+
+        Populates ``Denial.regulator`` so downstream flows (outside help,
+        the escalation packet's ERISA detection) can surface the right
+        regulator along with its complaint phone number.
+        """
+        denial = await Denial.objects.filter(denial_id=denial_id).aget()
+        if denial.regulator_id is not None:
+            return
+        regulators = await cls.regex_denial_processor.get_regulator(
+            denial.denial_text or ""
+        )
+        if regulators:
+            # First match wins; the seeded regexes are mutually specific.
+            await Denial.objects.filter(
+                denial_id=denial_id, regulator__isnull=True
+            ).aupdate(regulator=regulators[0])
 
     @classmethod
     async def extract_set_denialtype(cls, denial_id):

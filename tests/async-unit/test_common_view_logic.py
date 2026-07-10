@@ -17,7 +17,13 @@ from fighthealthinsurance.utils import (
     warn_too_short_appeal,
 )
 from fighthealthinsurance.helpers import SendFaxHelper, RemoveDataHelper
-from fighthealthinsurance.models import Denial, DenialTypes, Appeal, FaxesToSend
+from fighthealthinsurance.models import (
+    Denial,
+    DenialTypes,
+    Appeal,
+    FaxesToSend,
+    Regulator,
+)
 import pytest
 from django.test import TestCase
 
@@ -759,3 +765,57 @@ def test_warn_too_short_appeal_handles_non_string():
         loguru_logger.remove(handler_id)
     output = sink.getvalue()
     assert "len=0" in output
+
+
+class RegulatorContactInfoTest(TestCase):
+    """Denials matched to a regulator surface that regulator's contact info."""
+
+    fixtures = ["fighthealthinsurance/fixtures/initial.yaml"]
+
+    def _make_denial(self, denial_text="denied"):
+        return Denial.objects.create(
+            denial_text=denial_text,
+            hashed_email=Denial.get_hashed_email("regulator@example.com"),
+        )
+
+    def test_extract_set_regulator_links_erisa_denial(self):
+        denial = self._make_denial(
+            "You may have the right to file a civil action under ERISA."
+        )
+        async_to_sync(DenialCreatorHelper.extract_set_regulator)(denial.denial_id)
+        denial.refresh_from_db()
+        self.assertIsNotNone(denial.regulator)
+        self.assertEqual(denial.regulator.alt_name, "ERISA")
+
+    def test_extract_set_regulator_leaves_unmatched_denial_null(self):
+        denial = self._make_denial("Nothing relevant in this text.")
+        async_to_sync(DenialCreatorHelper.extract_set_regulator)(denial.denial_id)
+        denial.refresh_from_db()
+        self.assertIsNone(denial.regulator)
+
+    def test_extract_set_regulator_does_not_overwrite_existing_match(self):
+        cms = Regulator.objects.get(alt_name="CMS")
+        denial = self._make_denial(
+            "You may have the right to file a civil action under ERISA."
+        )
+        denial.regulator = cms
+        denial.save()
+        async_to_sync(DenialCreatorHelper.extract_set_regulator)(denial.denial_id)
+        denial.refresh_from_db()
+        self.assertEqual(denial.regulator.alt_name, "CMS")
+
+    def test_outside_help_includes_regulator_phone_number(self):
+        erisa = Regulator.objects.get(alt_name="ERISA")
+        denial = self._make_denial()
+        denial.regulator = erisa
+        denial.save()
+        details = FindNextStepsHelper._get_outside_help_details(denial)
+        flattened = " ".join(f"{option} {how}" for option, how in details)
+        self.assertIn("1-866-444-3272", flattened)
+        self.assertIn("Federal Department of Labor", flattened)
+
+    def test_outside_help_has_no_contact_row_without_matched_regulator(self):
+        denial = self._make_denial()
+        details = FindNextStepsHelper._get_outside_help_details(denial)
+        flattened = " ".join(f"{option} {how}" for option, how in details)
+        self.assertNotIn("file a complaint online", flattened)

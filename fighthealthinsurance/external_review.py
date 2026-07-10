@@ -4,6 +4,7 @@ from typing import Any, Optional
 
 from fighthealthinsurance.email_utils import is_sendable_email
 from fighthealthinsurance.models import Denial, FollowUpSched
+from fighthealthinsurance.state_help import get_state_help_by_abbreviation
 
 CONFIDENCE_LIKELY = "likely_eligible"
 CONFIDENCE_POSSIBLE = "possibly_eligible"
@@ -243,6 +244,34 @@ def get_state_config(state: Optional[str]) -> dict[str, Any]:
             "notes": f"State {state_up} not yet configured. Use state DOI plus federal instructions.",
         }
     )
+    # Even without a hand-verified external-review entry we know the
+    # state's insurance regulator (name, consumer phone line, complaint
+    # URL) from state_help.json, which covers every state plus DC. Point
+    # the user at their actual regulator instead of only the federal
+    # fallback number.
+    state_help = get_state_help_by_abbreviation(state_up)
+    if state_help is not None and state_help.insurance_department.name:
+        dept = state_help.insurance_department
+        complaint_url = dept.complaint_url or dept.url
+        external_review_url = complaint_url
+        if state_help.external_review and state_help.external_review.info_url:
+            external_review_url = state_help.external_review.info_url
+        result.update(
+            {
+                "regulator_name": dept.name,
+                "phone": dept.consumer_line or dept.phone or result["phone"],
+                "external_review_url": external_review_url
+                or result["external_review_url"],
+                "form_url": complaint_url or result["form_url"],
+                "notes": (
+                    f"External review details for {state_help.name} have not "
+                    f"been hand-verified yet; contact {dept.name} to confirm "
+                    "the exact process and deadlines, and keep the federal "
+                    "instructions as a backup."
+                ),
+                "deadline_days_or_months": "varies",
+            }
+        )
     return result
 
 

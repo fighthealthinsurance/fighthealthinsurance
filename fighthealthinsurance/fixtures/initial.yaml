@@ -45,6 +45,8 @@
     name: Federal Department of Labor
     alt_name: ERISA
     website: https://www.askebsa.dol.gov/WebIntake/
+    # EBSA toll-free consumer assistance line.
+    phone: 1-866-444-3272
     regex: "(You may have the right to file a civil action under ERISA|ERISA)"
 - model: fighthealthinsurance.regulator
   pk: 2
@@ -52,6 +54,8 @@
     name: Centers for Medicare and Medicaid
     alt_name: CMS
     website: https://www.cms.gov/
+    # 1-800-MEDICARE.
+    phone: 1-800-633-4227
     regex: "Centers for Medicare and Medicaid"
 - model: fighthealthinsurance.regulator
   pk: 3
@@ -59,11 +63,15 @@
     name: California Department of Managed Care
     alt_name: CDMC
     website: https://www.dmhc.ca.gov/
+    # DMHC Help Center.
+    phone: 1-888-466-2219
 - model: fighthealthinsurance.regulator
   pk: 4
   fields:
     name: U.S. Dept. of Health and Human Services.
     website: https://ocrportal.hhs.gov/ocr/smartscreen/main.jsf
+    # HHS Office for Civil Rights toll-free line.
+    phone: 1-800-368-1019
 - model: fighthealthinsurance.denialtypes
   pk: 1
   fields:

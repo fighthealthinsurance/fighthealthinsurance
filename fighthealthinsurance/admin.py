@@ -295,7 +295,7 @@ class PlanTypeAdmin(admin.ModelAdmin):
 class RegulatorAdmin(admin.ModelAdmin):
     """Admin configuration for Regulator model."""
 
-    list_display = ("id", "name", "website", "alt_name")
+    list_display = ("id", "name", "website", "alt_name", "phone")
     search_fields = ("name", "website")
     ordering = ("name",)
 
