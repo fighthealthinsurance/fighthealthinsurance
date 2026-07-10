@@ -587,8 +587,7 @@ class ReportClientError(APIView):
         except Exception as e:
             context_tokens = "unavailable"
             logger.opt(exception=True).debug(
-                f"Failed to compute context token sizes for denial "
-                f"{denial_id}: {e}"
+                f"Failed to compute context token sizes for denial " f"{denial_id}: {e}"
             )
         logger.error(
             f"Client-reported appeal error for denial {denial_id}: "
