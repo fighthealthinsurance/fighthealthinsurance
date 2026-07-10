@@ -7,19 +7,17 @@ import string
 import threading
 import time
 import unicodedata
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import Future
 from functools import reduce
 from inspect import isabstract
 from subprocess import CalledProcessError
 from typing import (
     Any,
-    AsyncGenerator,
     AsyncIterator,
     Awaitable,
     Callable,
     Coroutine,
     Dict,
-    Generic,
     Iterator,
     List,
     Optional,
@@ -28,7 +26,6 @@ from typing import (
     Tuple,
     TypeGuard,
     TypeVar,
-    Union,
     cast,
 )
 from email.utils import formataddr
@@ -254,15 +251,15 @@ common_bad_result = [
 maybe_bad_url_endings = re.compile("^(.*)[\\.\\:\\;\\,\\?\\>]+$")
 
 
-def is_convertible_to_int(s):
+def is_convertible_to_int(s: Any) -> bool:
     try:
         int(s)
         return True
-    except ValueError:
+    except (ValueError, TypeError):
         return False
 
 
-def is_valid_denial_id(value) -> bool:
+def is_valid_denial_id(value: Any) -> bool:
     """Return True when value represents a positive integer denial ID."""
     if value is None:
         return False
@@ -603,7 +600,7 @@ async def cancel_tasks(tasks: List[asyncio.Task]) -> None:
             task.get_loop().call_soon_threadsafe(task.cancel)
 
 
-async def check_call(cmd, max_retries=0, **kwargs):
+async def check_call(cmd: Sequence[str], max_retries: int = 0, **kwargs: Any) -> None:
     logger.debug(f"check_call: {cmd}")
     process = await asyncio.create_subprocess_exec(
         *cmd, **kwargs, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
@@ -630,7 +627,7 @@ def markdown_escape(string: Optional[str]) -> str:
     return string.translate(_MARKDOWN_ESCAPE_TABLE)
 
 
-def sekret_gen():
+def sekret_gen() -> str:
     return str(UUID(bytes=os.urandom(16), version=4)) + str(
         UUID(bytes=os.urandom(16), version=4)
     )
@@ -1145,7 +1142,7 @@ def generate_random_unsupported_filename() -> str:
     return rand_str + ".unsupported"
 
 
-async def _try_pandoc_engines(command: list[str]):
+async def _try_pandoc_engines(command: list[str]) -> None:
     engines = [None, "xelatex", "lualatex", "wkhtmltopdf", "weasyprint", "pdflatex"]
     for engine in engines:
         command_with_engine = command
