@@ -1180,8 +1180,24 @@ class ChooseAppeal(View):
         form = core_forms.ChooseAppealForm(request.POST)
 
         if not form.is_valid():
-            logger.debug(form)
-            return
+            # Log field names only; the values in this flow contain PHI.
+            logger.warning(
+                f"Invalid ChooseAppealForm submission; fields with errors: "
+                f"{sorted(form.errors.keys())}"
+            )
+            if any(f in form.errors for f in ("denial_id", "email", "semi_sekret")):
+                return redirect("scan")
+            # The denial ref triple validated (e.g. only appeal_text was
+            # missing), so send the user back to the appeals page; the
+            # generate_appeal GET handler re-validates the triple.
+            return redirect(
+                build_back_url(
+                    "generate_appeal",
+                    form.cleaned_data["denial_id"],
+                    form.cleaned_data["email"],
+                    form.cleaned_data["semi_sekret"],
+                )
+            )
 
         (
             appeal_fax_number,
@@ -1302,8 +1318,15 @@ class GenerateAppeal(View):
     def post(self, request):
         form = core_forms.DenialRefForm(request.POST)
         if not form.is_valid():
-            # TODO: Send user back to fix the form.
-            return
+            # The form is only the hidden denial ref triple; if it's broken
+            # there is no state to rebuild the questions page from, so fall
+            # back to the start of the flow like the GET handler does.
+            # Log field names only; the values in this flow contain PHI.
+            logger.warning(
+                f"Invalid DenialRefForm submission to generate_appeal; fields "
+                f"with errors: {sorted(form.errors.keys())}"
+            )
+            return redirect("scan")
 
         logger.debug("Finishing up prior to appeal gen.")
         denial_id = form.cleaned_data["denial_id"]
