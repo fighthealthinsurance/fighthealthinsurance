@@ -46,7 +46,12 @@ module.exports = async (env, argv) => {
       new TerserPlugin({
         terserOptions: {
           compress: {
-            drop_console: false,  // Keep console.log for debugging production issues
+            // Strip chatty console levels from production bundles as a
+            // defense-in-depth against logging user health data (PHI) to the
+            // browser console. console.warn/error are kept so production
+            // issues stay debuggable (no browser error reporter is
+            // initialized) -- never log PHI at those levels.
+            pure_funcs: ['console.log', 'console.info', 'console.debug'],
           },
           format: {
             comments: false,

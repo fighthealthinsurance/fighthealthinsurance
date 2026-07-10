@@ -876,7 +876,8 @@ async function fetchFallback(url: string, data: object, csrfToken: string): Prom
 }
 
 function processResponseChunk(chunk: string): void {
-  console.log(`Processing chunk ${chunk}`);
+  // Chunks carry appeal text (PHI) -- log only the size.
+  console.debug("Processing chunk, length", chunk.length);
   respBuffer += chunk;
   if (respBuffer.includes("\n")) {
     const lastIndex = respBuffer.lastIndexOf("\n");
@@ -971,7 +972,8 @@ function processResponseChunk(chunk: string): void {
         // Handle regular appeal content
         const appealText = parsedLine.content;
         if (appealText === undefined || appealText === null) {
-          console.warn('Skipping non-appeal frame without content', parsedLine);
+          // Frames come from the appeal stream; log field names only, not values.
+          console.warn('Skipping non-appeal frame without content, keys:', Object.keys(parsedLine));
           return;
         }
 
@@ -1068,12 +1070,16 @@ function processResponseChunk(chunk: string): void {
           (clonedForm[0] as HTMLElement).scrollIntoView({ behavior: "smooth", block: "start" });
         }
       } catch (error) {
-        console.error("Error parsing line:", error);
+        // Log only the error name: JSON.parse errors embed a snippet of the
+        // (PHI-bearing) line in their message, and console.error survives
+        // the production build.
+        console.error("Error parsing line:", (error as Error)?.name);
       }
     });
   } else {
     console.log("Waiting for more data.");
-    console.log(`So far:${respBuffer}`);
+    // The buffer holds partial appeal text (PHI) -- log only the size.
+    console.debug("Buffered so far, length", respBuffer.length);
   }
 }
 

@@ -525,7 +525,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
 
       ws.onmessage = (event) => {
         const data = JSON.parse(event.data);
-        console.log("Received message:", data);
+        // Frames carry chat message content (PHI) -- log only the field names.
+        console.debug("Received message frame, keys:", Object.keys(data ?? {}));
 
         // Get user info for restoring personal info
         const userInfo = getUserInfo();
@@ -1271,7 +1272,9 @@ document.addEventListener("DOMContentLoaded", () => {
     const initialMessage = chatRoot.dataset.initialMessage || undefined;
     const enableVoiceIntake = chatRoot.dataset.enableVoiceIntake === "true";
     const enableLocalSTT = chatRoot.dataset.enableLocalStt === "true";
-    console.log("Using microsite settings", chatRoot.dataset)  
+    // Don't dump chatRoot.dataset: it can include data-initial-message, which
+    // is built from the user's denial text. Non-PHI fields are logged below.
+    console.log("Using microsite settings");
     if (defaultProcedure) {
       console.log("Default procedure from microsite:", defaultProcedure);
     }
@@ -1285,7 +1288,8 @@ document.addEventListener("DOMContentLoaded", () => {
       console.log("Microsite slug from microsite:", micrositeSlug);
     }
     if (initialMessage) {
-      console.log("Initial message provided:", initialMessage.substring(0, 100) + "...");
+      // The initial message is built from the user's denial text (PHI).
+      console.log("Initial message provided, length:", initialMessage.length);
     }
 
     const root = createRoot(chatRoot);

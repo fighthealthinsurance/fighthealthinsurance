@@ -41,7 +41,10 @@ export function getUserInfo(): UserInfo | null {
       return JSON.parse(stored) as UserInfo;
     }
   } catch (e) {
-    console.error("Error parsing stored user info:", e);
+    // Log only the error name: JSON.parse errors embed a snippet of the
+    // stored (PII) JSON in their message, and console.error survives the
+    // production build.
+    console.error("Error parsing stored user info:", (e as Error)?.name);
   }
   return null;
 }
