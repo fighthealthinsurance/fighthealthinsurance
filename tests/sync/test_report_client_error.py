@@ -86,6 +86,20 @@ class ReportClientErrorTest(APITestCase):
         # The diagnostic failure is swallowed; the endpoint still 204s.
         self.assertEqual(resp.status_code, status.HTTP_204_NO_CONTENT)
 
+    def test_never_500_when_ownership_lookup_raises(self):
+        # The ownership lookup does a DB query; if it raises, the endpoint must
+        # still honor its always-204 contract (regression for the lookup being
+        # outside the try/except).
+        denial = self._make_denial(denial_text="x")
+        with patch(
+            "fighthealthinsurance.rest_views.common_view_logic.get_denial_for_action",
+            side_effect=RuntimeError("db exploded"),
+        ):
+            resp = self.client.post(
+                self._url(), self._owner_payload(denial), format="json"
+            )
+        self.assertEqual(resp.status_code, status.HTTP_204_NO_CONTENT)
+
     def test_invalid_denial_id_reports_unauthorized(self):
         with patch("fighthealthinsurance.rest_views.logger") as mock_logger:
             resp = self.client.post(

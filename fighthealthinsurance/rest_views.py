@@ -571,20 +571,24 @@ class ReportClientError(APIView):
         # log without the token breakdown rather than reject. Never let the
         # enrichment break the report.
         context_tokens = "unauthorized"
-        denial = common_view_logic.get_denial_for_action(
-            denial_id=request.data.get("denial_id"),
-            email=str(request.data.get("email") or ""),
-            semi_sekret=str(request.data.get("semi_sekret") or ""),
-        )
-        if denial is not None:
-            try:
+        # Wrap BOTH the ownership lookup and the summarize call: this endpoint's
+        # whole contract is "always 204, never let the diagnostic enrichment
+        # break the report", and get_denial_for_action does a DB query that can
+        # raise. Keeping it outside the try would let a DB/runtime error there
+        # escape and 500 the error reporter.
+        try:
+            denial = common_view_logic.get_denial_for_action(
+                denial_id=request.data.get("denial_id"),
+                email=str(request.data.get("email") or ""),
+                semi_sekret=str(request.data.get("semi_sekret") or ""),
+            )
+            if denial is not None:
                 context_tokens = context_utils.summarize_denial_context_tokens(denial)
-            except Exception as e:
-                context_tokens = "unavailable"
-                logger.opt(exception=True).debug(
-                    f"Failed to compute context token sizes for denial "
-                    f"{denial_id}: {e}"
-                )
+        except Exception as e:
+            context_tokens = "unavailable"
+            logger.opt(exception=True).debug(
+                f"Failed to compute context token sizes for denial " f"{denial_id}: {e}"
+            )
         logger.error(
             f"Client-reported appeal error for denial {denial_id}: "
             f"{error_message} | browser: {browser_info} | "
