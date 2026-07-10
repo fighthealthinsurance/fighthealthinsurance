@@ -1,5 +1,6 @@
 py-spy
 gunicorn
 mysqlclient
-psycopg2
-psycopg-pool
+# psycopg 3 (with C speedups + pooling) -- Django's "pool" OPTION requires
+# psycopg >= 3 and psycopg-pool; it is ignored/rejected with psycopg2.
+psycopg[binary,pool]
