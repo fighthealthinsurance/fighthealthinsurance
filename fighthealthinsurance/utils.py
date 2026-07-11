@@ -590,7 +590,7 @@ async def aget_related(instance: Model, field_name: str) -> Optional[Any]:
     return rel_obj
 
 
-async def cancel_tasks(tasks: List[asyncio.Task]) -> None:
+async def cancel_tasks(tasks: List[asyncio.Task[Any]]) -> None:
     """
     Cancel a list of asyncio tasks.
     """
