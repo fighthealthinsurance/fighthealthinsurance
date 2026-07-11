@@ -12,6 +12,7 @@ identity only. We deliberately do NOT emit awards, ``aggregateRating``,
 risk and none of these are verifiable here.
 """
 
+import functools
 import json
 from typing import Any, Iterable, Mapping, Optional, Sequence, Union
 
@@ -58,6 +59,7 @@ _JSON_SCRIPT_ESCAPES = {
 }
 
 
+@functools.lru_cache(maxsize=1)
 def _logo_url() -> str:
     """Absolute URL to the organization logo.
 
@@ -318,5 +320,6 @@ def medical_web_page(
         url=url,
         description=description,
         breadcrumb=breadcrumb,
+        # Normalize an empty dict to None so _web_page's `if extra:` skips it.
         extra=extra or None,
     )

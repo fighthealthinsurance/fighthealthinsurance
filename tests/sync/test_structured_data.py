@@ -7,6 +7,7 @@ present in the base template.
 
 import json
 
+from django.template.loader import render_to_string
 from django.test import TestCase
 from django.urls import reverse
 
@@ -206,3 +207,11 @@ class TestBaseTemplateStructuredData(TestCase):
         self.assertIn('"@type": "Organization"', content)
         self.assertIn('"@type": "WebSite"', content)
         self.assertIn('"name": "Fight Health Insurance"', content)
+
+
+class TestAiAnswerSummaryPartial(TestCase):
+    """The opt-in AI-answer summary partial renders nothing unless used."""
+
+    def test_renders_empty_without_summary_in_context(self):
+        rendered = render_to_string("partials/ai_answer_summary.html", {})
+        self.assertEqual(rendered.strip(), "")
