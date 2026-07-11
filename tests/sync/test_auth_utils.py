@@ -1,8 +1,11 @@
 """Tests for authentication utility functions."""
 
-from django.test import TestCase, override_settings
+from django.contrib.auth import get_user_model
+from django.contrib.sessions.backends.db import SessionStore
+from django.test import RequestFactory, TestCase, override_settings
 
 from fhi_users.auth.auth_utils import (
+    get_domain_id_from_request,
     validate_username,
     validate_password,
     normalize_phone_number,
@@ -195,3 +198,42 @@ class TestGetAllowedRedirectDomains(TestCase):
         domains = _get_allowed_redirect_domains()
         self.assertIn("custom.example.com", domains)
         self.assertNotIn("fighthealthinsurance.com", domains)
+
+
+class TestGetDomainIdFromRequest(TestCase):
+    """Test resolving the domain id from a request session or username."""
+
+    def _build_request(self, user):
+        request = RequestFactory().get("/")
+        request.user = user
+        request.session = SessionStore()
+        return request
+
+    def _make_user(self, username):
+        return get_user_model().objects.create_user(
+            username=username,
+            password="SecureP@ss123",
+        )
+
+    def test_recovers_domain_from_username_when_session_missing(self):
+        """When the session lacks domain_id, derive it from the username."""
+        domain_id = "550e8400-e29b-41d4-a716-446655440000"
+        user = self._make_user(f"patient@example.com🐼{domain_id}")
+        request = self._build_request(user)
+        self.assertNotIn("domain_id", request.session)
+
+        result = get_domain_id_from_request(request)
+
+        self.assertEqual(result, domain_id)
+        # The recovered value is cached back onto the session.
+        self.assertEqual(request.session["domain_id"], domain_id)
+
+    def test_prefers_session_domain_id_when_present(self):
+        """A truthy session domain_id takes precedence over the username."""
+        user = self._make_user("patient@example.com🐼username-domain")
+        request = self._build_request(user)
+        request.session["domain_id"] = "session-domain"
+
+        result = get_domain_id_from_request(request)
+
+        self.assertEqual(result, "session-domain")

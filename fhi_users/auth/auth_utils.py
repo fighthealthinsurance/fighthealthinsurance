@@ -28,17 +28,20 @@ else:
 def get_domain_id_from_request(request):
     """
     Helper function to get the domain id from the session.
+
+    Prefers the ``domain_id`` cached on the session, but when the session has
+    lost it (e.g. after a session rotation) we recover it from the
+    authenticated user's username, which encodes the domain after the panda
+    separator. The recovered value is cached back onto the session.
     """
     session = request.session
-    if hasattr(session, "get"):
-        try:
-            return session.get("domain_id")
-        except Exception:
-            pass
-    if hasattr(session, "user"):
-        current_user: User = request.user  # type: ignore
-        domain_id = current_user.username.split("🐼")[-1]
-        request.session["domain_id"] = domain_id
+    domain_id = session.get("domain_id")
+    if domain_id:
+        return domain_id
+    current_user = getattr(request, "user", None)
+    if current_user is not None and current_user.is_authenticated:
+        domain_id = current_user.username.rsplit("🐼", 1)[-1]
+        session["domain_id"] = domain_id
         return domain_id
     raise Exception("Could not find domain id in request session or user")
 
