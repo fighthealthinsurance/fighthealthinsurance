@@ -1,0 +1,192 @@
+#!/usr/bin/env bash
+# =============================================================================
+# check-pg8-source.sh
+# READ-ONLY preflight against the LIVE source primary fhi-pg-main-8-3.
+#
+# Confirms -8 has the capacity + configuration to accept -9's streaming clone
+# without exhausting connections or slots, and reports archiver health.
+#
+# SAFETY: this script is strictly READ-ONLY. It NEVER kills a session, NEVER
+# writes, and NEVER touches -8's data or PVC. It only FLAGS clearly-stale app
+# connections for a human to consider -- it will not auto-kill anything, and it
+# explicitly ignores internal / replication / autovacuum / superuser sessions.
+# =============================================================================
+set -euo pipefail
+
+NAMESPACE="${NAMESPACE:-totallylegitco}"
+SRC_POD="${SRC_POD:-fhi-pg-main-8-3}"          # only-healthy primary; do NOT change to -8-2
+PG_CONTAINER="${PG_CONTAINER:-postgres}"
+# Minimum number of FREE normal connection slots we want to see before cloning.
+MIN_FREE_CONNS="${MIN_FREE_CONNS:-10}"
+
+log()  { printf '%s\n' "$*"; }
+info() { printf '\033[0;36m[INFO]\033[0m %s\n' "$*"; }
+pass() { printf '\033[0;32m[PASS]\033[0m %s\n' "$*"; }
+warn() { printf '\033[0;33m[WARN]\033[0m %s\n' "$*"; }
+fail() { printf '\033[0;31m[FAIL]\033[0m %s\n' "$*"; }
+die()  { fail "$*"; exit 1; }
+
+FAILED=0
+
+# --- prereqs ---------------------------------------------------------------
+command -v kubectl >/dev/null 2>&1 || die "kubectl not found on PATH"
+
+CTX="$(kubectl config current-context 2>/dev/null || true)"
+[ -n "$CTX" ] || die "no active kube-context (kubectl config current-context is empty)"
+info "kube-context : $CTX"
+info "namespace    : $NAMESPACE"
+info "source pod   : $SRC_POD (READ-ONLY)"
+
+kubectl -n "$NAMESPACE" get pod "$SRC_POD" >/dev/null 2>&1 \
+  || die "source pod $SRC_POD not found in namespace $NAMESPACE"
+
+# Run a read-only SQL snippet on -8-3 as the postgres superuser (local socket).
+psql_ro() {
+  kubectl -n "$NAMESPACE" exec -i "$SRC_POD" -c "$PG_CONTAINER" -- \
+    psql -U postgres -d postgres -At -v ON_ERROR_STOP=1 -c "$1"
+}
+
+# --- 1. capacity settings --------------------------------------------------
+info "=== connection / replication capacity ==="
+SETTINGS="$(psql_ro "
+  SELECT name || '=' || setting
+  FROM pg_settings
+  WHERE name IN ('max_connections','max_wal_senders','superuser_reserved_connections',
+                 'max_replication_slots','wal_keep_size','max_slot_wal_keep_size')
+  ORDER BY name;")"
+log "$SETTINGS"
+
+get() { printf '%s\n' "$SETTINGS" | grep "^$1=" | cut -d= -f2- ; }
+MAX_CONN="$(get max_connections)"
+MAX_SENDERS="$(get max_wal_senders)"
+MAX_SLOTS="$(get max_replication_slots)"
+MAX_SLOT_KEEP="$(get max_slot_wal_keep_size)"
+
+# Threshold (bytes) beyond which an INACTIVE slot's retained WAL is dangerous.
+STALE_SLOT_MAX_BYTES="${STALE_SLOT_MAX_BYTES:-1073741824}"   # 1 GiB
+
+# max_slot_wal_keep_size is read LIVE from -8 (pg_settings), in MB; -1 = disabled
+# (UNBOUNDED) -- a stuck slot can then fill -8's disk (the -8-1 failure mode).
+# This is a HARD FAIL, not a warning: unset / non-numeric / -1 all fail.
+if ! printf '%s' "$MAX_SLOT_KEEP" | grep -Eq '^-?[0-9]+$'; then
+  fail "max_slot_wal_keep_size='$MAX_SLOT_KEEP' is unset/non-numeric on LIVE -8 -- cannot verify bound"; FAILED=1
+elif [ "$MAX_SLOT_KEEP" = "-1" ]; then
+  fail "max_slot_wal_keep_size=-1 (UNBOUNDED) on LIVE -8 -- a stuck slot could fill -8's disk."
+  fail "  Set a bound on -8 (runbook Phase 1c) BEFORE cloning."; FAILED=1
+else
+  pass "max_slot_wal_keep_size=${MAX_SLOT_KEEP}MB (bounded) on LIVE -8"
+fi
+
+# --- FREE replication headroom (configured - actual usage), not just >=1 ----
+# -9 needs a genuinely FREE wal_sender AND (for -8's own HA) slot headroom.
+ACTIVE_SENDERS="$(psql_ro "SELECT count(*) FROM pg_stat_replication;")"
+USED_SLOTS="$(psql_ro "SELECT count(*) FROM pg_replication_slots;")"
+FREE_SENDERS=$(( ${MAX_SENDERS:-0} - ${ACTIVE_SENDERS:-0} ))
+FREE_SLOTS=$(( ${MAX_SLOTS:-0} - ${USED_SLOTS:-0} ))
+log "wal_senders: max=$MAX_SENDERS active=$ACTIVE_SENDERS free=$FREE_SENDERS"
+log "repl_slots : max=$MAX_SLOTS used=$USED_SLOTS free=$FREE_SLOTS"
+if [ "$FREE_SENDERS" -ge 1 ]; then
+  pass "free wal_sender headroom ($FREE_SENDERS) for -9's stream"
+else
+  fail "NO free wal_sender (max=$MAX_SENDERS all in use) -- -9 cannot stream"; FAILED=1
+fi
+if [ "$FREE_SLOTS" -ge 1 ]; then
+  pass "free replication_slot headroom ($FREE_SLOTS)"
+else
+  fail "NO free replication_slot (max=$MAX_SLOTS all used) -- -8 HA/backup slots exhausted"; FAILED=1
+fi
+
+# --- stale/inactive slots retaining WAL beyond threshold -> FAIL -----------
+STALE="$(psql_ro "
+  SELECT count(*) FROM pg_replication_slots
+  WHERE NOT active
+    AND restart_lsn IS NOT NULL
+    AND pg_wal_lsn_diff(pg_current_wal_lsn(), restart_lsn) > $STALE_SLOT_MAX_BYTES;")"
+if [ "${STALE:-0}" -eq 0 ] 2>/dev/null; then
+  pass "no inactive slot retains WAL beyond ${STALE_SLOT_MAX_BYTES} bytes"
+else
+  fail "$STALE inactive slot(s) retain WAL beyond ${STALE_SLOT_MAX_BYTES} bytes on -8 --"
+  fail "  drop confirmed-stale slots (runbook Phase 0) before cloning; they bloat pgdata."; FAILED=1
+fi
+
+# --- 2. free normal connection slots ---------------------------------------
+info "=== connection headroom ==="
+# reserved = superuser_reserved_connections; normal available = max - reserved - used(non-super)
+FREE="$(psql_ro "
+  SELECT
+    (SELECT setting::int FROM pg_settings WHERE name='max_connections')
+  - (SELECT setting::int FROM pg_settings WHERE name='superuser_reserved_connections')
+  - (SELECT count(*) FROM pg_stat_activity WHERE backend_type='client backend');")"
+log "approx free NORMAL connection slots: $FREE  (max_connections=$MAX_CONN)"
+if [ "${FREE:-0}" -ge "$MIN_FREE_CONNS" ] 2>/dev/null; then
+  pass "at least $MIN_FREE_CONNS normal slots free ($FREE) -- clone can connect"
+else
+  fail "only $FREE free normal slots (< $MIN_FREE_CONNS) -- clone may be refused"; FAILED=1
+fi
+
+# --- 3. replication slots (retention pressure) -----------------------------
+info "=== existing replication slots ==="
+psql_ro "
+  SELECT slot_name, slot_type, active,
+         restart_lsn,
+         pg_size_pretty(COALESCE(
+           pg_wal_lsn_diff(pg_current_wal_lsn(), restart_lsn), 0)) AS retained
+  FROM pg_replication_slots
+  ORDER BY active DESC, slot_name;" || warn "could not read pg_replication_slots"
+
+# --- 4. activity summary ---------------------------------------------------
+info "=== pg_stat_activity summary (by state/backend_type) ==="
+psql_ro "
+  SELECT COALESCE(state,'(none)') AS state, backend_type, count(*)
+  FROM pg_stat_activity
+  GROUP BY 1,2 ORDER BY 3 DESC;" || warn "could not summarise pg_stat_activity"
+
+# FLAG (do NOT kill) clearly-stale APP connections: idle-in-transaction or idle
+# for a long time, on the app db, from a NON-superuser, NON-replication,
+# NON-autovacuum, NON-internal backend. This is advisory only.
+info "=== possibly-stale APP connections (ADVISORY -- never auto-killed) ==="
+psql_ro "
+  SELECT pid, usename, state,
+         now() - state_change AS idle_for, left(query,60) AS query
+  FROM pg_stat_activity
+  WHERE backend_type = 'client backend'
+    AND datname = 'app'
+    AND usename NOT IN ('postgres','streaming_replica')
+    AND NOT usesysid IN (SELECT oid FROM pg_roles WHERE rolsuper)
+    AND state IN ('idle in transaction','idle in transaction (aborted)')
+    AND state_change < now() - interval '30 minutes'
+  ORDER BY idle_for DESC;" \
+  && info "  (any rows above are a HUMAN decision -- this script will not kill them)"
+
+# --- 5. archiver health ----------------------------------------------------
+info "=== pg_stat_archiver ==="
+ARCH="$(psql_ro "
+  SELECT 'archived_count='||archived_count
+       ||' failed_count='||failed_count
+       ||' last_archived_wal='||COALESCE(last_archived_wal,'(none)')
+       ||' last_archived_time='||COALESCE(last_archived_time::text,'(none)')
+       ||' last_failed_wal='||COALESCE(last_failed_wal,'(none)')
+  FROM pg_stat_archiver;")"
+log "$ARCH"
+FAILED_CNT="$(printf '%s\n' "$ARCH" | sed -n 's/.*failed_count=\([0-9]*\).*/\1/p')"
+ARCHIVED_CNT="$(printf '%s\n' "$ARCH" | sed -n 's/archived_count=\([0-9]*\).*/\1/p')"
+if [ "${ARCHIVED_CNT:-0}" -gt 0 ] 2>/dev/null && [ "${FAILED_CNT:-0}" -eq 0 ] 2>/dev/null; then
+  pass "archiver healthy (archived>0, failed=0)"
+else
+  # This is EXPECTED to be red until Phase 0 fixes -8's archiving. Not fatal to
+  # the CLONE (we stream direct, not via archive) but the runbook requires it
+  # fixed before relying on PITR. Flag, do not hard-fail the preflight on it.
+  warn "archiver NOT healthy (archived=$ARCHIVED_CNT failed=$FAILED_CNT)."
+  warn "  Expected until Phase 0 clears the WAL wedge. Do NOT rely on -8's"
+  warn "  object-store archive for the migration -- -9 streams directly."
+fi
+
+# --- verdict ---------------------------------------------------------------
+echo
+if [ "$FAILED" -eq 0 ]; then
+  pass "SOURCE PREFLIGHT PASSED -- -8 can accept the -9 streaming clone."
+  exit 0
+else
+  fail "SOURCE PREFLIGHT FAILED -- resolve the [FAIL] items before cloning."
+  exit 1
+fi

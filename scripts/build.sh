@@ -102,6 +102,20 @@ case $yn in
     * ) echo "Invalid response. Please enter y or n.";;
 esac
 
+# DB-host config (the pg8->pg9 cutover switch). This ConfigMap is the single,
+# version-controlled source of truth for PDBHOST; the prod deploy.yaml and
+# ray/cluster.yaml reference it via configMapKeyRef, so it MUST be applied BEFORE
+# them or those pods fail with CreateContainerConfigError.
+#
+# TO SWAP IN THE NEW DB BACKEND: set PDBHOST in k8s/db-config.yaml to the target
+# primary (fhi-pg-main-9-rw.totallylegitco.svc for the pg9 cutover) and run this
+# script -- the ConfigMap is applied and the workloads below roll onto it.
+# NOTE: this re-asserts the committed value. If scripts/cutover-app-to-pg9.sh
+# already flipped the LIVE ConfigMap to -9, you MUST also commit that flip into
+# k8s/db-config.yaml first, or this apply will revert the host back to -8.
+kubectl apply -f k8s/db-config.yaml
+echo "PDBHOST now set to: $(kubectl -n totallylegitco get configmap fhi-db-config -o jsonpath='{.data.PDBHOST}')"
+
 # The raycluster operator doesn't handle upgrades well so delete + recreate instead.
 kubectl delete raycluster -n totallylegitco raycluster-kuberay || echo "No raycluster present"
 envsubst < k8s/ray/cluster.yaml | kubectl apply -f -

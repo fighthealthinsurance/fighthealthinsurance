@@ -1,0 +1,38 @@
+# fhi-db-config -- single, declarative, configurable source for the production
+# Postgres HOST that the Django app (settings.py Prod.DATABASES -> os.getenv("PDBHOST"))
+# and every background worker connects to.
+#
+# WHY THIS EXISTS
+# ---------------
+# Before this refactor the DB host was supplied ONLY via the cluster Secrets
+# `fight-health-insurance-secret` / `fight-health-insurance-primary-secret`
+# (envFrom), which are not in the repo. That made the host invisible in git and
+# impossible to flip in one reviewable place. This ConfigMap makes PDBHOST an
+# explicit, version-controlled value.
+#
+# The workloads reference PDBHOST as an explicit container `env` entry with
+# valueFrom.configMapKeyRef. In Kubernetes a container-level `env` ALWAYS takes
+# precedence over any `envFrom` (Secret) value for the same key, so this
+# ConfigMap is authoritative for the host regardless of what the Secrets still
+# carry -- passwords/users stay in the Secrets and are never duplicated here.
+#
+# DEFAULT = CURRENT behaviour. PDBHOST defaults to the existing fhi-pg-main-8
+# read-write service, so applying this changes nothing at runtime. The
+# migration cutover (scripts/cutover-app-to-pg9.sh) flips ONLY this value to
+# fhi-pg-main-9-rw and rolls the app; the reverse is a one-line patch back.
+#
+# NOTE: FQDN (`.totallylegitco.svc`) vs the short service name resolve to the
+# same ClusterIP inside the namespace, so pinning the FQDN here is behaviourally
+# identical to the short `fhi-pg-main-8-rw` the Secret most likely carried.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fhi-db-config
+  namespace: totallylegitco
+  labels:
+    app: fight-health-insurance
+    component: db-config
+data:
+  # Primary (read-write) Postgres endpoint. This is the ONLY value the cutover
+  # scripts change. Current cluster: fhi-pg-main-8 (CNPG -rw service = primary).
+  PDBHOST: "fhi-pg-main-8-rw.totallylegitco.svc"
