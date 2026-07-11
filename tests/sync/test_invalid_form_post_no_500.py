@@ -54,6 +54,32 @@ class InvalidFormPostNo500Test(TestCase):
         response = self.client.post(reverse("generate_appeal"), {})
         self.assertEqual(response.status_code, 302)
 
+    def test_generate_appeal_unknown_denial_redirects(self):
+        """Valid form but wrong denial_id/email/semi_sekret -> redirect, not a 500."""
+        response = self.client.post(
+            reverse("generate_appeal"),
+            {
+                "denial_id": 999999,
+                "email": "nobody@example.com",
+                "semi_sekret": "wrong-sekret",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+
+    def test_followup_unknown_denial_404(self):
+        """Expired/tampered follow-up link -> 404, not a 500."""
+        response = self.client.get(
+            reverse(
+                "followup",
+                kwargs={
+                    "uuid": "00000000-0000-0000-0000-000000000000",
+                    "hashed_email": "no-such-hash",
+                    "follow_up_semi_sekret": "no-such-sekret",
+                },
+            )
+        )
+        self.assertEqual(response.status_code, 404)
+
     def test_recommend_appeal_placeholder_not_implemented(self):
         """Placeholder view returns 501, not a 500 from an empty template name."""
         request = RequestFactory().post("/recommend_appeal")

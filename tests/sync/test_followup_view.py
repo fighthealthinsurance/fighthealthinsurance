@@ -159,33 +159,32 @@ class TestFollowUpViewSubmit(TestCase):
 
     def test_invalid_secret_does_not_render_form(self):
         """Wrong secret must NOT render the follow-up form (and must not
-        write a FollowUp row). The view currently lets the DoesNotExist
-        propagate, so the test client either surfaces the exception (when
-        request-exception propagation is on) or renders the custom 500
-        page — never the follow-up form."""
+        write a FollowUp row). An expired/tampered link now yields a clean
+        404 instead of a 500 — never the follow-up form."""
         bad_path = (
             f"/v0/followup/{self.denial.uuid}/"
             f"{self.denial.hashed_email}/not-the-real-sekret"
         )
         self.client.raise_request_exception = False
         response = self.client.get(bad_path)
-        self.assertEqual(response.status_code, 500)
+        self.assertEqual(response.status_code, 404)
         self.assertNotContains(
             response,
             "Follow Up On Your Health Insurance Appeal",
-            status_code=500,
+            status_code=404,
         )
         self.assertEqual(FollowUp.objects.filter(denial_id=self.denial).count(), 0)
 
     def test_invalid_secret_post_does_not_persist(self):
-        """A POST with a wrong secret must not create a FollowUp row."""
+        """A POST with a wrong secret must not create a FollowUp row and
+        yields a 404 rather than a 500."""
         bad_path = (
             f"/v0/followup/{self.denial.uuid}/"
             f"{self.denial.hashed_email}/not-the-real-sekret"
         )
         self.client.raise_request_exception = False
         response = self.client.post(bad_path, data=self._payload())
-        self.assertEqual(response.status_code, 500)
+        self.assertEqual(response.status_code, 404)
         self.assertEqual(FollowUp.objects.filter(denial_id=self.denial).count(), 0)
 
     def test_blank_appeal_result_leaves_denial_pending(self):
