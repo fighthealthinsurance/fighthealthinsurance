@@ -38,9 +38,8 @@ class IMRRefreshActor(BaseRefreshActor):
 
     @staticmethod
     def _refresh_source(source: str, url: str) -> Tuple[int, int, int, int]:
-        from django.db import close_old_connections
-
         from fighthealthinsurance.imr_ingest import fetch_csv, load_csv_text
+        from fighthealthinsurance.utils import close_old_connections_quietly
 
         try:
             csv_text = fetch_csv(url)
@@ -50,7 +49,7 @@ class IMRRefreshActor(BaseRefreshActor):
             # reused executor thread that BaseRefreshActor's thread-sensitive
             # cleanup can't reach — release this thread's own connection so
             # it doesn't pin a Postgres slot across the hourly sleep.
-            close_old_connections()
+            close_old_connections_quietly()
 
     async def _refresh_due(self, interval_hours: int) -> bool:
         sources = self._configured_sources()

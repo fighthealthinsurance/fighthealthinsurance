@@ -77,9 +77,9 @@ class FaxActor:
 
     def send_delayed_faxes(self) -> Tuple[int, int]:
         from django.conf import settings
-        from django.db import close_old_connections
 
         from fighthealthinsurance.models import FaxesToSend
+        from fighthealthinsurance.utils import close_old_connections_quietly
 
         if getattr(settings, "TEMPORAL_ENABLED", False):
             # Temporal's SendFaxWorkflow (delay_send timer) owns delayed sending;
@@ -122,7 +122,7 @@ class FaxActor:
             # Polled every ~60s from FaxPollingActor with no request
             # lifecycle; drop the connection so this thread doesn't pin a
             # Postgres slot while idle between polls.
-            close_old_connections()
+            close_old_connections_quietly()
 
     def do_send_fax(self, hashed_email: str, uuid_val: Union[str, uuid.UUID]) -> bool:
         # Now that we have an app instance we can import faxes to send
