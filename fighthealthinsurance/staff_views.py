@@ -308,7 +308,7 @@ class FollowUpEmailSenderView(generic.FormView):
         field = form.cleaned_data.get("email")
         try:
             count = int(field)
-            sent = s.send_all(count=field)
+            sent = s.send_all(count=count)
         except ValueError:
             sent = s.dosend(email=field)
         return HttpResponse(str(sent))
@@ -325,7 +325,7 @@ class ThankyouSenderView(generic.FormView):
         field = form.cleaned_data.get("email")
         try:
             count = int(field)
-            sent = s.send_all(count=field)
+            sent = s.send_all(count=count)
         except ValueError:
             sent = s.dosend(email=field)
         return HttpResponse(str(sent))
@@ -416,7 +416,7 @@ class FollowUpFaxSenderView(generic.FormView):
         field = form.cleaned_data.get("email")
 
         if field.isdigit():
-            sent = SendFaxHelper.blocking_dosend_all(count=field)
+            sent = SendFaxHelper.blocking_dosend_all(count=int(field))
         else:
             sent = SendFaxHelper.blocking_dosend_target(email=field)
 
