@@ -9,9 +9,11 @@ from urllib.parse import quote, urlencode
 
 from django import forms
 from django.conf import settings
+from django.contrib import messages
 from django.contrib.staticfiles.storage import staticfiles_storage
 from django.core.exceptions import SuspiciousOperation
 from django.http import (
+    Http404,
     HttpRequest,
     HttpResponse,
     HttpResponseBase,
@@ -174,9 +176,13 @@ class FollowUpView(generic.FormView):
         # Also make sure we can resolve the denial
         #
         # NOTE: Potential security issue here
-        denial = common_view_logic.FollowUpHelper.fetch_denial(**self.kwargs)
+        try:
+            denial = common_view_logic.FollowUpHelper.fetch_denial(**self.kwargs)
+        except models.Denial.DoesNotExist:
+            denial = None
         if denial is None:
-            raise Exception(f"Could not find denial for {self.kwargs}")
+            # Expired or tampered follow-up link: 404 instead of a 500.
+            raise Http404(f"Could not find denial for {self.kwargs}")
         return self.kwargs
 
     def form_valid(self, form):
@@ -791,6 +797,10 @@ class ShareAppealView(View):
         form = core_forms.ShareAppealForm(request.POST)
         if not form.is_valid():
             logger.debug(form)
+            messages.error(
+                request,
+                "We couldn't process that submission. Please start again.",
+            )
             return redirect("scan")
 
         denial_id = form.cleaned_data["denial_id"]
@@ -805,6 +815,10 @@ class ShareAppealView(View):
             ).get()
         except models.Denial.DoesNotExist:
             # Wrong denial_id/email combo: redirect instead of raising a 500.
+            messages.error(
+                request,
+                "We couldn't find that denial. Please start again.",
+            )
             return redirect("scan")
         logger.debug(form.cleaned_data)
         denial.appeal_text = form.cleaned_data["appeal_text"]
@@ -1190,6 +1204,10 @@ class ChooseAppeal(View):
 
         if not form.is_valid():
             logger.debug(form)
+            messages.error(
+                request,
+                "We couldn't process that submission. Please start again.",
+            )
             return redirect("scan")
 
         (
@@ -1314,16 +1332,29 @@ class GenerateAppeal(View):
             # Invalid input: redirect back to the start instead of returning
             # None (which raises "didn't return an HttpResponse" -> 500).
             logger.debug(form)
+            messages.error(
+                request,
+                "We couldn't process that submission. Please start again.",
+            )
             return redirect("scan")
 
         logger.debug("Finishing up prior to appeal gen.")
         denial_id = form.cleaned_data["denial_id"]
         email = form.cleaned_data["email"]
-        denial = models.Denial.objects.filter(
-            denial_id=denial_id,
-            hashed_email=models.Denial.get_hashed_email(email),
-            semi_sekret=form.cleaned_data["semi_sekret"],
-        ).get()
+        try:
+            denial = models.Denial.objects.filter(
+                denial_id=denial_id,
+                hashed_email=models.Denial.get_hashed_email(email),
+                semi_sekret=form.cleaned_data["semi_sekret"],
+            ).get()
+        except models.Denial.DoesNotExist:
+            # Wrong/expired denial_id, email, or semi_sekret: redirect instead
+            # of raising a 500.
+            messages.error(
+                request,
+                "We couldn't find that denial. Please start again.",
+            )
+            return redirect("scan")
 
         # We copy _most_ of the input over for the form context
         elems = dict(request.POST)
