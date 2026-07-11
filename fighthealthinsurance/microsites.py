@@ -8,7 +8,6 @@ Microsites are cached in memory after first load for performance.
 """
 
 import json
-import os
 from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional, Union

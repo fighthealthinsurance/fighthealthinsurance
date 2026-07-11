@@ -181,3 +181,10 @@ default/
 
 # Claude Code agent worktrees (transient, created by background agents)
 .claude/worktrees/
+
+# Orchestration / scratch artifacts (agent tooling, worktrees, notes, design sources)
+.polly/
+.worktrees/
+notes/
+farts.md
+*.xcf

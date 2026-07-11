@@ -15,7 +15,6 @@ from typing import (
     AsyncIterator,
     Awaitable,
     Coroutine,
-    Iterable,
     Iterator,
     List,
     Optional,
@@ -29,7 +28,6 @@ if TYPE_CHECKING:
     from fighthealthinsurance.pharmacy_coupon_detector import (
         PharmacyCouponSuggestion,
     )
-from urllib.parse import urlencode
 
 from django.conf import settings
 from django.core.files import File
@@ -46,9 +44,7 @@ import uszipcode
 from asgiref.sync import async_to_sync, sync_to_async
 from loguru import logger
 from PyPDF2 import PdfMerger
-from stopit.utils import TimeoutException
 
-from fhi_users import emails as fhi_emails
 from fhi_users.audit import TrackingInfo
 from fhi_users.models import ProfessionalUser, UserDomain
 from fighthealthinsurance import stripe_utils
@@ -59,7 +55,6 @@ from fighthealthinsurance.denials.algorithmic_review_detector import (
     detect_algorithmic_review_terms,
     render_template_blocks,
 )
-from fighthealthinsurance.fax_actor_ref import fax_actor_ref
 from fighthealthinsurance.medical_code_extractor import (
     extract_icd10_codes,
     extract_procedure_codes,
@@ -202,7 +197,7 @@ class AppealAssemblyHelper:
                 await _try_pandoc_engines(base_convert_command)
                 return f"{input_path}.pdf"
             # pandoc failures are often character encoding issues
-            except Exception as e:
+            except Exception:
                 # try to convert if we've got txt input
                 new_input_path = input_path
                 if input_path.endswith(".txt") and not input_path.endswith(
@@ -1332,7 +1327,7 @@ class DenialCreatorHelper:
                     referral_source_details=referral_source_details,
                     **tracking_kwargs,
                 )
-            except Exception as e:
+            except Exception:
                 # This is a temporary hack to drop non-ASCII characters
                 denial_text = (
                     denial_text.encode("ascii", errors="ignore")

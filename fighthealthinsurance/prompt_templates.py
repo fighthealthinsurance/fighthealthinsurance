@@ -3,8 +3,7 @@ Templates for generating prompts for different types of users.
 This module contains templates for both professional and patient users.
 """
 
-import string
-from typing import Any, Dict, Optional, Union
+from typing import Union
 
 from fighthealthinsurance.chat.safety_filters import DELETE_DATA_SENTINEL
 from fighthealthinsurance.models import ChatType

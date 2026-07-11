@@ -137,7 +137,7 @@ class EmailPollingActor:
                 # Jittered poll interval
                 await asyncio.sleep(random.uniform(8, 15))
                 error_count = 0
-            except Exception as e:
+            except Exception:
                 error_count += 1
                 # Exponential backoff with jitter, capped at 30 minutes
                 exponent = min(error_count - 1, 4)

@@ -1,7 +1,7 @@
 """Base class for Ray actor references to reduce code duplication."""
 
 from functools import cached_property
-from typing import Any, Optional, Tuple
+from typing import Any, Optional
 
 import ray
 from loguru import logger

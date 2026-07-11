@@ -3,7 +3,6 @@ from django.contrib.sites.shortcuts import get_current_site
 from typing import TYPE_CHECKING, Optional
 from fhi_users.models import VerificationToken
 from fighthealthinsurance.utils import send_fallback_email
-from django.utils.html import strip_tags
 from django.utils import timezone
 from datetime import timedelta
 from urllib.parse import urlencode

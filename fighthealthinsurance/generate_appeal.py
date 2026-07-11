@@ -40,7 +40,6 @@ from .payer_policy_helper import (
     resolve_company_from_text,
 )
 from .process_denial import ProcessDenialRegex
-from .pubmed_tools import PubMedTools
 from .utils import as_available_nested, best_within_timelimit, is_real_appeal
 
 
@@ -2292,7 +2291,7 @@ class AppealGenerator(object):
                 qa_context = json.loads(denial.qa_context)
                 formatted = "\n".join(f"{k}:{v}" for k, v in qa_context.items())
                 medical_context += formatted
-            except (json.JSONDecodeError, TypeError) as e:
+            except (json.JSONDecodeError, TypeError):
                 # Fall back to original string if JSON parsing fails
                 medical_context += denial.qa_context
         if denial.health_history is not None:

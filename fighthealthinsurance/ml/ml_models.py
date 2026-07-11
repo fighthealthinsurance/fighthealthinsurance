@@ -5,7 +5,6 @@ import random
 import re
 import sys
 import threading
-import traceback
 from abc import abstractmethod
 from concurrent.futures import Future
 from dataclasses import dataclass
@@ -13,7 +12,7 @@ from typing import Any, Callable, ClassVar, Iterable, List, Optional, Tuple, Uni
 
 import aiohttp
 import requests
-from asgiref.sync import async_to_sync, sync_to_async
+from asgiref.sync import async_to_sync
 from loguru import logger
 
 
@@ -1381,7 +1380,7 @@ class RemoteOpenLike(RemoteModel):
 
         try:
             resp = requests.get(url, headers=headers, timeout=10)
-        except requests.RequestException as exc:
+        except requests.RequestException:
             logger.warning(f"Unable to contact model backend at {url}")
             return False
 
@@ -1394,7 +1393,7 @@ class RemoteOpenLike(RemoteModel):
 
         try:
             payload = resp.json()
-        except ValueError as exc:
+        except ValueError:
             logger.debug(
                 f"Backend {self.api_base} returned non-JSON response for /models."
             )
@@ -2359,7 +2358,7 @@ class RemoteOpenLike(RemoteModel):
 
             return (r, citations)
 
-        except Exception as e:
+        except Exception:
             logger.opt(exception=True).error(
                 f"Error processing response from {api_base} for {self}"
             )

@@ -1,6 +1,5 @@
 from django import forms
 from django.contrib import admin
-from django.contrib.auth.admin import UserAdmin
 from django.db import connection
 from django.db.models import IntegerField
 from django.db.models.expressions import RawSQL

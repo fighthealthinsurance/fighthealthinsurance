@@ -251,7 +251,7 @@ class FaxActor:
                     professional=fax.professional,
                 )
             )
-        except Exception as e:
+        except Exception:
             self._logger.opt(exception=True).error("Error running async send_fax")
         self._update_fax_for_sent(fax, fax_sent, missing_destination=False)
         return fax_sent

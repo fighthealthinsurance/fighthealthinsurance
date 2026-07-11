@@ -1,6 +1,6 @@
 import asyncio
 import datetime
-from typing import Any, Callable, Coroutine, Dict, List, Optional, cast
+from typing import Any, Callable, Coroutine, List, Optional, cast
 
 from django.utils import timezone
 from loguru import logger

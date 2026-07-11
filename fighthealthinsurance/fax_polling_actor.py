@@ -43,7 +43,7 @@ class FaxPollingActor:
                 c, f = await self.fax_actor.send_delayed_faxes.remote()
                 self.e += f
                 self.c += c
-            except Exception as e:
+            except Exception:
                 self._logger.opt(exception=True).error(
                     "Error while checking outbound faxes"
                 )

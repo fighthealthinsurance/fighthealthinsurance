@@ -2,7 +2,6 @@ from loguru import logger
 from typing import Optional, TYPE_CHECKING
 import os
 import time
-import json
 import uuid
 
 from rest_framework import status
@@ -1509,7 +1508,6 @@ class PatientUserViewSet(ViewSet, CreateMixin):
 
     @extend_schema(responses=serializers.StatusResponseSerializer)
     def perform_create(self, request: Request, serializer) -> Response:
-        from fighthealthinsurance.utils import mask_email_for_logging
 
         serializer.is_valid(raise_exception=True)
         domain_name: Optional[str] = None
@@ -1625,7 +1623,7 @@ class VerifyEmailViewSet(ViewSet, SerializerMixin):
         try:
             uid = serializer.validated_data["user_id"]
             user = User.objects.get(pk=uid)
-        except (TypeError, ValueError, OverflowError, User.DoesNotExist) as e:
+        except (TypeError, ValueError, OverflowError, User.DoesNotExist):
             return Response(
                 common_serializers.ErrorSerializer(
                     {
@@ -1659,7 +1657,7 @@ class VerifyEmailViewSet(ViewSet, SerializerMixin):
             return Response(
                 serializers.StatusResponseSerializer({"status": "success"}).data
             )
-        except VerificationToken.DoesNotExist as e:
+        except VerificationToken.DoesNotExist:
             return Response(
                 common_serializers.ErrorSerializer(
                     {"error": "Invalid activation link"}

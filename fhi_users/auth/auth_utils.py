@@ -96,7 +96,7 @@ def user_is_admin_in_domain(
         domain_id = resolve_domain_id(
             domain_id=domain_id, domain_name=domain_name, phone_number=phone_number
         )
-    except Exception as e:
+    except Exception:
         return False
     return (
         ProfessionalDomainRelation.objects.filter(

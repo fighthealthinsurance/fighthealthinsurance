@@ -3,7 +3,6 @@ import os
 import time
 
 import ray
-from asgiref.sync import sync_to_async
 
 from fighthealthinsurance.utils import get_env_variable
 

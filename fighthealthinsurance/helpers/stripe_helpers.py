@@ -307,7 +307,7 @@ class StripeWebhookHelper:
                 )
             else:
                 logger.debug(f"Could not create finish link for {payment_type}")
-        except Exception as e:
+        except Exception:
             logger.opt(exception=True).error(
                 "Error processing expired checkout session"
             )

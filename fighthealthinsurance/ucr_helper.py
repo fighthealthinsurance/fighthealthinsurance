@@ -37,7 +37,6 @@ from fighthealthinsurance.ucr_constants import (
     UCR_SOURCE_PRIORITY,
     UCR_SOURCE_URLS,
     UCRAreaKind,
-    UCRSource,
 )
 
 # ---------------------------------------------------- OON heuristic detector

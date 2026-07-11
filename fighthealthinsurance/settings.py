@@ -14,7 +14,6 @@ import datetime
 import os
 import re
 import time
-import traceback
 from functools import cached_property
 from pathlib import Path
 from typing import Optional
@@ -40,8 +39,6 @@ os.environ.setdefault("DJANGO_CONFIGURATION", get_env_variable("ENVIRONMENT", "D
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
-
-from rest_framework.authentication import SessionAuthentication
 
 
 def _ucr_int(name: str, default: int, minimum: int) -> int:
@@ -509,7 +506,7 @@ class Base(Configuration):
             from django.core.files.storage import FileSystemStorage
 
             return FileSystemStorage(location=self.EXTERNAL_STORAGE_LOCATION_B)
-        except Exception as e:
+        except Exception:
             return None
 
     @cached_property
@@ -925,7 +922,7 @@ class Prod(Base):
                     return minio
                 else:
                     raise ValueError("No storage endpoint configured")
-        except (ConnectionError, TimeoutError, OSError, ValueError) as e:
+        except (ConnectionError, TimeoutError, OSError, ValueError):
             logger.opt(exception=True).error(
                 f"Failed to setup minio storage to {self.MINIO_STORAGE_ENDPOINT}"
             )

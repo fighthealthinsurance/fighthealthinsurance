@@ -25,7 +25,7 @@ from urllib.parse import quote, urlencode, urljoin
 
 import aiohttp
 import PyPDF2
-from asgiref.sync import async_to_sync, sync_to_async
+from asgiref.sync import sync_to_async
 from django.core.cache import cache
 from django.utils import timezone
 from loguru import logger
@@ -47,7 +47,6 @@ from fighthealthinsurance.pubmed_search import (
 from fighthealthinsurance.rxnorm_tools import RxNormTools, looks_like_single_drug_query
 from fighthealthinsurance.utils import pubmed_fetcher
 
-from .exec import pubmed_executor
 from .models import Denial
 from .utils import _try_pandoc_engines, markdown_escape
 

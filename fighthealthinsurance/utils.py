@@ -7,19 +7,17 @@ import string
 import threading
 import time
 import unicodedata
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import Future
 from functools import reduce
 from inspect import isabstract
 from subprocess import CalledProcessError
 from typing import (
     Any,
-    AsyncGenerator,
     AsyncIterator,
     Awaitable,
     Callable,
     Coroutine,
     Dict,
-    Generic,
     Iterator,
     List,
     Optional,
@@ -28,7 +26,6 @@ from typing import (
     Tuple,
     TypeGuard,
     TypeVar,
-    Union,
     cast,
 )
 from email.utils import formataddr
@@ -83,11 +80,9 @@ def is_real_appeal(x: Optional[str]) -> TypeGuard[str]:
 
 
 import asyncstdlib
-import requests
 from loguru import logger
 from markdown_strings import esc_format
 from metapub import PubMedFetcher
-from requests.exceptions import RequestException
 
 from fighthealthinsurance.email_utils import is_blocked_email
 from fighthealthinsurance.env_utils import *
@@ -1033,7 +1028,7 @@ async def execute_critical_optional_fireandforget(
             if required_tasks_finished >= len(required):
                 logger.debug("All done with required tasks")
                 break
-    except asyncio.TimeoutError as e:
+    except asyncio.TimeoutError:
         logger.opt(exception=True).error(f"Timed out waiting for required tasks?")
     except Exception as e:
         logger.opt(exception=True).error(f"Error executing required tasks {e}")
@@ -1063,7 +1058,7 @@ async def execute_critical_optional_fireandforget(
             optional_result: T = await task
             # Yield each result immediately for streaming
             yield optional_result
-    except asyncio.TimeoutError as e:
+    except asyncio.TimeoutError:
         logger.debug("Timed out waiting for optional tasks")
     except asyncio.exceptions.CancelledError:
         logger.debug("Cancelled waiting for optional tasks")

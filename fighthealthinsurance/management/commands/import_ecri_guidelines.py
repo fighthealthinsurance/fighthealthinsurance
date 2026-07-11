@@ -21,7 +21,7 @@ import json
 import sys
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, List, Optional
 
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction

@@ -26,7 +26,6 @@ from fighthealthinsurance.models import (
     PriorAuthRequest,
     ProfessionalUser,
     ProposedAppeal,
-    ProposedPriorAuth,
 )
 
 from .chat_interface import ChatInterface

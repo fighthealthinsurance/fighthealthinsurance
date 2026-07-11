@@ -1,20 +1,19 @@
 import asyncio
 import datetime
 import json
-import typing
 from typing import Optional
 
 from django.conf import settings
 from django.core.exceptions import SuspiciousFileOperation
 from django.core.mail import send_mail
-from django.db import IntegrityError, models
+from django.db import IntegrityError
 from django.db.models import Count, Q
 from django.http import FileResponse, StreamingHttpResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 
-from asgiref.sync import async_to_sync, sync_to_async
+from asgiref.sync import async_to_sync
 from dateutil.relativedelta import relativedelta
 from django_encrypted_filefield.crypt import Cryptographer
 from drf_spectacular.types import OpenApiTypes
@@ -64,14 +63,12 @@ from fighthealthinsurance.models import (
     OngoingChat,
     PriorAuthRequest,
     ProposedPriorAuth,
-    PubMedMiniArticle,
     SecondaryAppealProfessionalRelation,
 )
 from fighthealthinsurance.pubmed_tools import PubMedTools
 from fighthealthinsurance.rest_mixins import (
     CreateMixin,
     DeleteMixin,
-    DeleteOnlyMixin,
     SerializerMixin,
 )
 from fighthealthinsurance.type_utils import User

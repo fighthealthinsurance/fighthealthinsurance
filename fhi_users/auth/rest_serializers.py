@@ -17,11 +17,10 @@ from fhi_users.models import (
     UserContactInfo,
 )
 from fhi_users.auth.auth_utils import (
-    create_user,
     validate_password,
     generic_validate_phone_number,
 )
-from typing import Any, Optional, TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 import re
 
 # Add missing import for extend_schema_field

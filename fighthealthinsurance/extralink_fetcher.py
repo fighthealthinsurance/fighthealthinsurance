@@ -5,12 +5,10 @@ This module provides functionality to fetch and extract text from external docum
 linked in microsites. Supports PDF, DOCX, HTML, and plain text documents.
 """
 
-import asyncio
-import hashlib
 import tempfile
 from urllib.parse import urljoin
 import time
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
+from typing import Awaitable, Callable, Dict, List, Optional, Tuple
 
 from django.db import models
 

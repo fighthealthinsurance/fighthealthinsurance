@@ -52,7 +52,6 @@ from fighthealthinsurance.chat.tools import (
     RxNormLookupTool,
     USPSTFLookupTool,
 )
-from fighthealthinsurance.extralink_context_helper import ExtraLinkContextHelper
 from fighthealthinsurance.rag_client import get_rag_context_for_denial
 from fighthealthinsurance.ml.ml_models import (
     RemoteModelLike,
@@ -978,7 +977,7 @@ class ChatInterface:
                     cleaned = DELETE_DATA_RESPONSE
                 final_response_text = cleaned
                 final_context_part = context_part
-        except Exception as e:
+        except Exception:
             await asyncio.sleep(0.1)
             logger.opt(exception=True).debug(
                 f"Error with model on chat {primary_models}"

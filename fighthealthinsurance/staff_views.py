@@ -14,7 +14,7 @@ from django.views import View, generic
 import ray
 from loguru import logger
 
-from fighthealthinsurance import common_view_logic, forms as core_forms
+from fighthealthinsurance import forms as core_forms
 from fighthealthinsurance.common_view_logic import schedule_follow_ups
 from fighthealthinsurance.helpers.data_helpers import RemoveDataHelper
 from fighthealthinsurance.followup_emails import (
@@ -28,7 +28,6 @@ from fighthealthinsurance.models import (
     ChooserCandidate,
     ChooserVote,
     Denial,
-    FollowUpSched,
     InterestedProfessional,
     MailingListSubscriber,
     ProfessionalDomainRelation,

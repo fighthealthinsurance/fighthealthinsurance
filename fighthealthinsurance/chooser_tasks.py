@@ -730,7 +730,6 @@ async def prefill_if_needed(min_ready: int = 1):
     Args:
         min_ready: Minimum number of ready tasks required for each type.
     """
-    from asgiref.sync import sync_to_async
 
     for task_type in ["appeal", "chat"]:
         ready_count = await _count_ready_tasks(task_type)

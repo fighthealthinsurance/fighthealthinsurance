@@ -50,7 +50,6 @@ from fighthealthinsurance.models import (
     UsedDeleteToken,
     StripeRecoveryInfo,
 )
-from fighthealthinsurance.type_utils import User
 from fighthealthinsurance.utils import (
     is_valid_denial_id,
     notify_interested_professional,
@@ -85,7 +84,7 @@ def _handle_mailing_list_subscribe(form: forms.Form, source_page: str) -> None:
             existing.save(update_fields=list(defaults.keys()))
         else:
             models.MailingListSubscriber.objects.create(email=email, **defaults)
-    except Exception as e:
+    except Exception:
         logger.opt(exception=True).warning(
             f"Failed to create mailing list subscriber from {source_page}"
         )
@@ -1613,7 +1612,7 @@ class InitialProcessView(generic.FormView):
                     models.MailingListSubscriber.objects.filter(email=email).update(
                         **defaults
                     )
-                except Exception as e2:
+                except Exception:
                     logger.warning(f"Error updating subscriber? {email}!?!")
 
         # Get microsite slug from request if available and validate it
@@ -2021,7 +2020,7 @@ class StripeWebhookView(View):
     def post(self, request):
         try:
             return self.do_post(request)
-        except Exception as e:
+        except Exception:
             logger.opt(exception=True).error("Error processing Stripe webhook")
             return HttpResponse(status=500)
 
@@ -2081,7 +2080,7 @@ class CompletePaymentView(View):
             # Browser navigation from the recovery email: send the visitor
             # straight to Stripe rather than showing them raw JSON.
             return HttpResponseRedirect(next_url)
-        except Exception as e:
+        except Exception:
             logger.opt(exception=True).error(
                 "Error processing payment completion from GET"
             )
@@ -2103,7 +2102,7 @@ class CompletePaymentView(View):
                 message, status_code = error or ("An internal error occurred", 500)
                 return self._json_error_response(message, status_code)
             return JsonResponse({"next_url": next_url})
-        except Exception as e:
+        except Exception:
             logger.opt(exception=True).error("Error processing payment completion")
             return self._json_error_response("An internal error occurred", 500)
 
@@ -2518,7 +2517,7 @@ class ChooserView(TemplateView):
 
         try:
             trigger_prefill_async()
-        except Exception as e:
+        except Exception:
             # Don't let pre-fill errors break page load
             pass
 
