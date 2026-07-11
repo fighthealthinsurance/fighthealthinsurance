@@ -34,6 +34,7 @@ class StaticViewSitemap(Sitemap):
         """Return list of URL names for static pages."""
         return [
             "root",
+            "start_appeal",
             "about",
             "pbs-newshour",
             "preparing-2026",
