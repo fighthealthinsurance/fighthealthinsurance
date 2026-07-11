@@ -2803,3 +2803,173 @@ class StateHelpView(TemplateView):
             context["title"] = f"{state.name} Health Insurance Help"
 
         return context
+
+
+# Canonical domain used to build absolute URLs inside JSON-LD structured data.
+# Kept in sync with fighthealthinsurance.context_processors.canonical_url_context.
+_INSURER_GUIDE_CANONICAL_DOMAIN = "https://www.fighthealthinsurance.com"
+
+
+def _insurer_guide_abs_url(url_name: str, **kwargs) -> str:
+    """Build a canonical absolute URL for an insurer guide route."""
+    from django.urls import reverse
+
+    return f"{_INSURER_GUIDE_CANONICAL_DOMAIN}{reverse(url_name, kwargs=kwargs)}"
+
+
+class InsurerAppealGuideIndexView(TemplateView):
+    """Index page listing per-insurer 'how to appeal a denial' guides."""
+
+    template_name = "insurer_appeal_guide_index.html"
+
+    def get_context_data(self, **kwargs):
+        import json
+
+        context = super().get_context_data(**kwargs)
+        from fighthealthinsurance.insurer_appeal_guides import (
+            LAST_REVIEWED,
+            get_insurers_sorted_by_name,
+        )
+
+        insurers = get_insurers_sorted_by_name()
+        context["insurers"] = insurers
+        context["last_reviewed"] = LAST_REVIEWED
+        context["title"] = "How to Appeal a Health Insurance Denial by Insurer"
+
+        index_url = _insurer_guide_abs_url("insurer_appeal_guide_index")
+        webpage = {
+            "@context": "https://schema.org",
+            "@type": "WebPage",
+            "name": "How to Appeal a Health Insurance Denial by Insurer",
+            "url": index_url,
+            "description": (
+                "Original, general guides on how to appeal a health insurance "
+                "denial from major U.S. insurers and pharmacy benefit managers."
+            ),
+        }
+        breadcrumbs = {
+            "@context": "https://schema.org",
+            "@type": "BreadcrumbList",
+            "itemListElement": [
+                {
+                    "@type": "ListItem",
+                    "position": 1,
+                    "name": "Home",
+                    "item": _INSURER_GUIDE_CANONICAL_DOMAIN + "/",
+                },
+                {
+                    "@type": "ListItem",
+                    "position": 2,
+                    "name": "Insurance Appeal Guides",
+                    "item": index_url,
+                },
+            ],
+        }
+        item_list = {
+            "@context": "https://schema.org",
+            "@type": "ItemList",
+            "itemListElement": [
+                {
+                    "@type": "ListItem",
+                    "position": i + 1,
+                    "name": f"How to Appeal a {insurer.name} Insurance Denial",
+                    "url": _insurer_guide_abs_url(
+                        "insurer_appeal_guide", slug=insurer.slug
+                    ),
+                }
+                for i, insurer in enumerate(insurers)
+            ],
+        }
+        context["jsonld"] = json.dumps([webpage, breadcrumbs, item_list])
+        return context
+
+
+class InsurerAppealGuideView(TemplateView):
+    """Individual per-insurer appeal guide page."""
+
+    template_name = "insurer_appeal_guide.html"
+
+    def get(self, request, slug, *args, **kwargs):
+        from fighthealthinsurance.insurer_appeal_guides import get_insurer_guide
+
+        # Cache the lookup to avoid a duplicate call in get_context_data.
+        self._insurer = get_insurer_guide(slug)
+        if self._insurer is None:
+            from django.http import Http404
+
+            raise Http404(f"Insurer appeal guide '{slug}' not found")
+
+        return super().get(request, *args, **kwargs)
+
+    def get_context_data(self, **kwargs):
+        import json
+
+        context = super().get_context_data(**kwargs)
+        from fighthealthinsurance.insurer_appeal_guides import (
+            GENERAL_APPEAL_STEPS,
+            GENERAL_DENIAL_REASONS,
+            LAST_REVIEWED,
+            get_related_guides,
+        )
+
+        insurer = getattr(self, "_insurer", None)
+        if insurer:
+            context["insurer"] = insurer
+            context["related_guides"] = get_related_guides(insurer.slug)
+            context["appeal_steps"] = GENERAL_APPEAL_STEPS
+            context["denial_reasons"] = GENERAL_DENIAL_REASONS
+            context["last_reviewed"] = LAST_REVIEWED
+            title = f"How to Appeal a {insurer.name} Insurance Denial"
+            context["title"] = title
+
+            page_url = _insurer_guide_abs_url("insurer_appeal_guide", slug=insurer.slug)
+            index_url = _insurer_guide_abs_url("insurer_appeal_guide_index")
+            webpage = {
+                "@context": "https://schema.org",
+                "@type": "WebPage",
+                "name": title,
+                "url": page_url,
+                "description": insurer.summary,
+            }
+            breadcrumbs = {
+                "@context": "https://schema.org",
+                "@type": "BreadcrumbList",
+                "itemListElement": [
+                    {
+                        "@type": "ListItem",
+                        "position": 1,
+                        "name": "Home",
+                        "item": _INSURER_GUIDE_CANONICAL_DOMAIN + "/",
+                    },
+                    {
+                        "@type": "ListItem",
+                        "position": 2,
+                        "name": "Insurance Appeal Guides",
+                        "item": index_url,
+                    },
+                    {
+                        "@type": "ListItem",
+                        "position": 3,
+                        "name": insurer.name,
+                        "item": page_url,
+                    },
+                ],
+            }
+            faqpage = {
+                "@context": "https://schema.org",
+                "@type": "FAQPage",
+                "mainEntity": [
+                    {
+                        "@type": "Question",
+                        "name": faq.question,
+                        "acceptedAnswer": {
+                            "@type": "Answer",
+                            "text": faq.answer,
+                        },
+                    }
+                    for faq in insurer.faqs
+                ],
+            }
+            context["jsonld"] = json.dumps([webpage, breadcrumbs, faqpage])
+
+        return context

@@ -152,12 +152,37 @@ class StateHelpSitemap(Sitemap):
         return reverse("state_help", kwargs={"slug": item})
 
 
+class InsurerAppealGuideSitemap(Sitemap):
+    """Sitemap for per-insurer appeal guide pages."""
+
+    priority = 0.6
+    changefreq = "monthly"
+
+    def items(self) -> list[str]:
+        """Return the index marker followed by all validated insurer slugs."""
+        try:
+            from fighthealthinsurance.insurer_appeal_guides import get_insurer_slugs
+
+            # "index" is a sentinel for the guide index page.
+            return ["index"] + get_insurer_slugs()
+        except Exception as e:
+            logger.warning(f"Could not load insurer appeal guides for sitemap: {e}")
+            return []
+
+    def location(self, item: str) -> str:
+        """Return the URL for an insurer appeal guide page."""
+        if item == "index":
+            return reverse("insurer_appeal_guide_index")
+        return reverse("insurer_appeal_guide", kwargs={"slug": item})
+
+
 # Dictionary mapping sitemap section names to sitemap classes
 sitemaps = {
     "static": StaticViewSitemap,
     "blog": BlogSitemap,
     "microsites": MicrositeSitemap,
     "state_help": StateHelpSitemap,
+    "insurer_appeal_guides": InsurerAppealGuideSitemap,
 }
 
 
