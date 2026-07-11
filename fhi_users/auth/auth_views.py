@@ -9,7 +9,7 @@ from .auth_forms import LoginForm
 from django.utils.http import urlsafe_base64_decode
 from django.utils.encoding import force_str
 from django.contrib.auth.tokens import default_token_generator
-from fhi_users.models import UserDomain
+from fhi_users.models import UserDomain, ExtraUserProperties
 
 User = get_user_model()
 
@@ -29,6 +29,7 @@ class LoginView(generic.FormView):
             if not domain and not phone_number:
                 context["invalid"] = True
                 context["need_phone_or_domain"] = True
+                return render(request, "login.html", context)
             else:
                 domain_id = resolve_domain_id(
                     domain_name=domain, phone_number=phone_number
@@ -71,8 +72,12 @@ class VerifyEmailView(View):
             user = None
         if user is not None and default_token_generator.check_token(user, token):
             user.is_active = True
-            user.extrauserproperties.email_verified = True
             user.save()
+            extra_user_properties, _ = ExtraUserProperties.objects.get_or_create(
+                user=user
+            )
+            extra_user_properties.email_verified = True
+            extra_user_properties.save()
             return HttpResponseRedirect(reverse_lazy("login"))
         else:
             return HttpResponse("Activation link is invalid!")
