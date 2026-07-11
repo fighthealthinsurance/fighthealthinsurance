@@ -1,0 +1,377 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Start Your Health Insurance Appeal Free &mdash; No Account Needed{% endblock title %}
+{% block metatitle %}Start Your Health Insurance Appeal Free - Fight Health Insurance{% endblock metatitle %}
+{% block metadescription %}Start your health insurance appeal free with no account needed. Paste your denial, review a drafted appeal letter, and download or send it. Free AI-assisted tools to fight a denial.{% endblock metadescription %}
+
+{% block scriptmagic %}
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "WebPage",
+      "name": "Start Your Health Insurance Appeal Free",
+      "description": "Start your health insurance appeal free with no account needed. Paste your denial, review a drafted appeal letter, and download or send it.",
+      "url": "https://www.fighthealthinsurance.com/start-appeal/",
+      "inLanguage": "en",
+      "isPartOf": {
+        "@type": "WebSite",
+        "name": "Fight Health Insurance",
+        "url": "https://www.fighthealthinsurance.com/"
+      }
+    },
+    {
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        {
+          "@type": "ListItem",
+          "position": 1,
+          "name": "Home",
+          "item": "https://www.fighthealthinsurance.com/"
+        },
+        {
+          "@type": "ListItem",
+          "position": 2,
+          "name": "Start Your Appeal",
+          "item": "https://www.fighthealthinsurance.com/start-appeal/"
+        }
+      ]
+    },
+    {
+      "@type": "HowTo",
+      "name": "How to start a health insurance appeal",
+      "description": "Three steps to begin appealing a health insurance denial for free, with no account required.",
+      "totalTime": "PT10M",
+      "step": [
+        {
+          "@type": "HowToStep",
+          "position": 1,
+          "name": "Share your denial",
+          "text": "Paste or upload the text of your denial letter. No account is required to begin."
+        },
+        {
+          "@type": "HowToStep",
+          "position": 2,
+          "name": "Review a drafted appeal",
+          "text": "Our AI-assisted tools help draft an appeal letter based on the information you provide."
+        },
+        {
+          "@type": "HowToStep",
+          "position": 3,
+          "name": "Download or send it",
+          "text": "Edit the draft, then download it or send it to your insurer to start your appeal."
+        }
+      ]
+    }
+  ]
+}
+</script>
+{% endblock scriptmagic %}
+
+{% block content %}
+<!-- Hero / Value Proposition -->
+<section id="start-appeal-hero" class="slider" data-stellar-background-ratio="0.5">
+    <div class="row">
+        <div class="item item-first">
+            <div class="caption d-flex flex-column align-items-center justify-content-center">
+                <div class="hero-inner" style="max-width: 900px;">
+                    <h3 class="hero-tagline">No account needed to get started</h3>
+                    <h1 class="hero-headline">Start Your Appeal Free</h1>
+                    <p class="hero-subcopy">A health insurance denial is not always the final word. Share your denial and our free, AI-assisted tools help you draft an appeal letter you can review, edit, download, or send&mdash;no sign-up required to begin.</p>
+                    {% if has_prefill %}
+                    <p class="hero-prefill">We'll get you started{% if prefill_procedure %} on <strong>{{ prefill_procedure }}</strong>{% endif %}{% if prefill_condition %} for <strong>{{ prefill_condition }}</strong>{% endif %}.</p>
+                    {% endif %}
+                    <div class="hero-cta-group">
+                        <a href="{{ scan_url }}" class="section-btn btn btn-green btn-lg primary-cta" id="start-appeal-cta">Start My Appeal &mdash; Free</a>
+                    </div>
+                    <div class="hero-cta-group hero-cta-secondary">
+                        <a href="{{ chat_url }}" class="btn btn-outline-green tertiary-cta">Prefer to chat? Ask our AI assistant</a>
+                    </div>
+                    <p class="hero-reassure">Free to start &bull; No account required &bull; You stay in control of your information</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- How It Works -->
+<section id="how-it-works" class="py-5">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-9 mx-auto">
+                <h2 class="text-center mb-4">How It Works</h2>
+                <p class="lead text-center mb-5">Three simple steps to get your appeal started.</p>
+                <div class="row g-4">
+                    <div class="col-md-4">
+                        <div class="card h-100 step-card">
+                            <div class="card-body text-center">
+                                <div class="step-number">1</div>
+                                <h5 class="card-title mt-3">Share your denial</h5>
+                                <p class="card-text">Paste or upload the text from your denial letter. You can begin without creating an account.</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="card h-100 step-card">
+                            <div class="card-body text-center">
+                                <div class="step-number">2</div>
+                                <h5 class="card-title mt-3">Review a drafted appeal</h5>
+                                <p class="card-text">Our AI-assisted tools help draft an appeal letter from the details you provide, so you're not starting from a blank page.</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="card h-100 step-card">
+                            <div class="card-body text-center">
+                                <div class="step-number">3</div>
+                                <h5 class="card-title mt-3">Download or send it</h5>
+                                <p class="card-text">Edit the draft in your own words, then download it or send it to your insurer to start your appeal.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="text-center mt-5">
+                    <a href="{{ scan_url }}" class="btn btn-green btn-lg">Start My Appeal &mdash; Free</a>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Trust / Reassurance -->
+<section id="why-trust" class="py-5 bg-light">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-9 mx-auto">
+                <h2 class="text-center mb-4">Why People Start Here</h2>
+                <div class="row g-4">
+                    <div class="col-md-6">
+                        <div class="card h-100 border-info">
+                            <div class="card-body">
+                                <h5 class="card-title">Free to start, no account needed</h5>
+                                <p class="card-text">You can begin drafting an appeal right away. There's nothing to buy before you see how it works.</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="card h-100 border-info">
+                            <div class="card-body">
+                                <h5 class="card-title">You stay in control</h5>
+                                <p class="card-text">The draft is a starting point. You review and edit every word before anything is sent, and you decide how to submit it.</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="card h-100 border-info">
+                            <div class="card-body">
+                                <h5 class="card-title">Your privacy matters</h5>
+                                <p class="card-text">You choose what information to share. You can review our <a href="{% url 'privacy_policy' %}" class="link">Privacy Policy</a> and request removal of your data at any time.</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="card h-100 border-info">
+                            <div class="card-body">
+                                <h5 class="card-title">Built to be understandable</h5>
+                                <p class="card-text">Denials are full of jargon. Our tools aim to explain what's going on and help you respond in plain language.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Free Tools & Resources (internal links to routes that exist on this branch) -->
+<section id="more-resources" class="py-5">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-9 mx-auto">
+                <h2 class="text-center mb-4">Free Tools &amp; Resources</h2>
+                <p class="text-center text-muted mb-4">Not ready to draft an appeal yet? These free resources can help you understand your denial first.</p>
+                <div class="row g-4">
+                    <div class="col-md-6">
+                        <div class="card h-100">
+                            <div class="card-body">
+                                <h5 class="card-title">Explain My Denial</h5>
+                                <p class="card-text">Paste your denial and get help understanding what it means and why it may have happened.</p>
+                                <a href="{% url 'explain_denial' %}" class="btn btn-outline-green">Explain My Denial</a>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="card h-100">
+                            <div class="card-body">
+                                <h5 class="card-title">Understand My Policy</h5>
+                                <p class="card-text">Ask questions about your plan documents to understand what your policy actually covers.</p>
+                                <a href="{% url 'understand_policy' %}" class="btn btn-outline-green">Understand My Policy</a>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="card h-100">
+                            <div class="card-body">
+                                <h5 class="card-title">Denial Language Library</h5>
+                                <p class="card-text">Look up common denial phrases and what they tend to mean in plain English.</p>
+                                <a href="{% url 'denial-language-library' %}" class="btn btn-outline-green">Browse Denial Language</a>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="card h-100">
+                            <div class="card-body">
+                                <h5 class="card-title">State-by-State Help</h5>
+                                <p class="card-text">Find your state's insurance department and appeal resources, including external review options.</p>
+                                <a href="{% url 'state_help_index' %}" class="btn btn-outline-green">Find Your State's Help</a>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="card h-100">
+                            <div class="card-body">
+                                <h5 class="card-title">Treatment &amp; Drug Resources</h5>
+                                <p class="card-text">Browse condition- and treatment-specific pages with tailored information for appeals.</p>
+                                <a href="{% url 'microsite_directory' %}" class="btn btn-outline-green">Browse Resources</a>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="card h-100">
+                            <div class="card-body">
+                                <h5 class="card-title">FAQ &amp; More Resources</h5>
+                                <p class="card-text">Read answers to common questions and explore additional health policy resources.</p>
+                                <a href="{% url 'faq' %}" class="btn btn-outline-green me-2">FAQ</a>
+                                <a href="{% url 'other-resources' %}" class="btn btn-outline-green">Resources</a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Final CTA -->
+<section id="final-cta" class="py-5">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto text-center">
+                <h2 class="mb-3">Ready to Fight Your Denial?</h2>
+                <p class="lead mb-4">Start your appeal for free&mdash;no account needed. You can review and edit everything before you send it.</p>
+                <div class="d-flex justify-content-center gap-3 flex-wrap">
+                    <a href="{{ scan_url }}" class="btn btn-green btn-lg">Start My Appeal &mdash; Free</a>
+                    <a href="{{ chat_url }}" class="btn btn-outline-green btn-lg">Ask Our AI Assistant</a>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Disclaimer -->
+<section id="disclaimer" class="py-4">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto">
+                <div class="disclaimer-box p-3 bg-light border rounded">
+                    <p class="text-muted small mb-0">
+                        <strong>Disclaimer:</strong> Fight Health Insurance provides informational tools to help you draft an appeal. This page and the tools it links to are for informational purposes only and do not constitute legal, medical, or financial advice. Outcomes vary and are not guaranteed. Review your specific plan documents and consult a qualified professional or your state's insurance department for advice about your situation.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+{% endblock content %}
+
+{% block extra_style %}
+<style>
+    #start-appeal-hero .hero-inner {
+        backdrop-filter: blur(3px);
+        padding: 2rem;
+        border-radius: 14px;
+    }
+
+    .hero-tagline {
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        font-size: 1rem;
+    }
+
+    .hero-reassure {
+        margin-top: 1rem;
+        font-size: 0.95rem;
+        opacity: 0.9;
+    }
+
+    .hero-prefill {
+        font-size: 1.05rem;
+    }
+
+    .step-card {
+        border-top: 4px solid #a5c422;
+    }
+
+    .step-number {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 48px;
+        height: 48px;
+        border-radius: 50%;
+        background: linear-gradient(to right, #ADD100 0%, #7B920A 100%);
+        color: white;
+        font-size: 1.4rem;
+        font-weight: 700;
+    }
+
+    .card.border-info {
+        border-left: 4px solid #17a2b8 !important;
+    }
+
+    #final-cta {
+        background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+    }
+
+    .btn-green {
+        background: linear-gradient(to right, #ADD100 0%, #7B920A 51%, #ADD100 100%);
+        background-size: 200% auto;
+        border: none;
+        color: white;
+        transition: 0.5s;
+    }
+
+    .btn-green:hover {
+        background-position: right center;
+        color: white;
+    }
+
+    .btn-outline-green {
+        color: #7B920A;
+        border-color: #7B920A;
+    }
+
+    .btn-outline-green:hover {
+        background-color: #7B920A;
+        border-color: #7B920A;
+        color: white;
+    }
+
+    section {
+        scroll-margin-top: 80px;
+    }
+
+    @media (max-width: 768px) {
+        #start-appeal-hero .hero-inner {
+            padding: 1.5rem;
+        }
+
+        .btn-lg {
+            padding: 0.5rem 1rem;
+            font-size: 1rem;
+        }
+    }
+</style>
+{% endblock extra_style %}
