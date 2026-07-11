@@ -154,12 +154,37 @@ class StateHelpSitemap(Sitemap):
         return reverse("state_help", kwargs={"slug": item})
 
 
+class DenialReasonDecoderSitemap(Sitemap):
+    """Sitemap for the Denial Reason Decoder public educational tool."""
+
+    priority = 0.6
+    changefreq = "monthly"
+
+    def items(self) -> list[str]:
+        """Return list of denial reason slugs + index."""
+        try:
+            from fighthealthinsurance.denial_reason_decoder import load_reasons
+
+            reasons = load_reasons()
+            return ["index"] + [r.slug for r in reasons]
+        except Exception as e:
+            logger.warning(f"Could not load denial reasons for sitemap: {e}")
+            return []
+
+    def location(self, item: str) -> str:
+        """Return the URL for a denial reason page."""
+        if item == "index":
+            return reverse("denial_reason_decoder_index")
+        return reverse("denial_reason_decoder_detail", kwargs={"slug": item})
+
+
 # Dictionary mapping sitemap section names to sitemap classes
 sitemaps = {
     "static": StaticViewSitemap,
     "blog": BlogSitemap,
     "microsites": MicrositeSitemap,
     "state_help": StateHelpSitemap,
+    "denial_reason_decoder": DenialReasonDecoderSitemap,
 }
 
 

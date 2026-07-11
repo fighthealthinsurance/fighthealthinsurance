@@ -316,6 +316,20 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         name="smtp-domain-faq",
     ),
     path(
+        "tools/denial-reason-decoder/",
+        cache_control(public=True)(
+            cache_page(60 * 60 * 2)(views.DenialReasonDecoderIndexView.as_view())
+        ),
+        name="denial_reason_decoder_index",
+    ),
+    path(
+        "tools/denial-reason-decoder/<slug:slug>/",
+        cache_control(public=True)(
+            cache_page(60 * 60 * 2)(views.DenialReasonDecoderView.as_view())
+        ),
+        name="denial_reason_decoder_detail",
+    ),
+    path(
         "denial-language/",
         cache_control(public=True)(
             cache_page(60 * 60 * 2)(views.DenialLanguageLibraryView.as_view())
