@@ -153,13 +153,18 @@ spec:
   # ---------------------------------------------------------------------------
   # Backup: barman-cloud PLUGIN (1.28 removed in-tree spec.backup.barmanObjectStore).
   # isWALArchiver:true makes this plugin the WAL archiver; barmanObjectName points
-  # at the DEDICATED -9 ObjectStore (distinct serverName -> no collision with -8).
+  # at the DEDICATED -9 ObjectStore.
+  # serverName MUST be set here (NOT in the ObjectStore -- the plugin forbids it
+  # there). It is the per-cluster prefix in the bucket: -9's base backups + WAL
+  # land under s3://fhi-pg-backup-second/fhi-pg-main-9/, fully separate from -8's
+  # fhi-pg-main-8/ history. NEVER set this to fhi-pg-main-8.
   # ---------------------------------------------------------------------------
   plugins:
     - name: barman-cloud.cloudnative-pg.io
       isWALArchiver: true
       parameters:
         barmanObjectName: fhi-backup-store-9
+        serverName: fhi-pg-main-9
 
   # ---------------------------------------------------------------------------
   # HA replication slots for -9's OWN primary->replica streaming (used once
