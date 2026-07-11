@@ -178,6 +178,29 @@ class DenialReasonDecoderSitemap(Sitemap):
         return reverse("denial_reason_decoder_detail", kwargs={"slug": item})
 
 
+class GlossarySitemap(Sitemap):
+    """Sitemap for the glossary index and per-term pages."""
+
+    priority = 0.6
+    changefreq = "monthly"
+
+    def items(self) -> list[str]:
+        """Return the glossary index slug followed by every term slug."""
+        try:
+            from fighthealthinsurance.glossary import get_glossary_slugs
+
+            return ["index"] + get_glossary_slugs()
+        except Exception as e:
+            logger.warning(f"Could not load glossary for sitemap: {e}")
+            return []
+
+    def location(self, item: str) -> str:
+        """Return the URL for the glossary index or a term page."""
+        if item == "index":
+            return reverse("glossary_index")
+        return reverse("glossary_term", kwargs={"slug": item})
+
+
 # Dictionary mapping sitemap section names to sitemap classes
 sitemaps = {
     "static": StaticViewSitemap,
@@ -185,6 +208,7 @@ sitemaps = {
     "microsites": MicrositeSitemap,
     "state_help": StateHelpSitemap,
     "denial_reason_decoder": DenialReasonDecoderSitemap,
+    "glossary": GlossarySitemap,
 }
 
 
