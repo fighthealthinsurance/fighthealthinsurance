@@ -118,7 +118,7 @@
     "external_review": {
       "available": true,
       "info_url": "https://aldoi.gov/consumers/coveragetips.aspx",
-      "review_type": "state"
+      "review_type": "federal"
     },
     "additional_resources": [
       {
@@ -485,7 +485,7 @@
     "external_review": {
       "available": true,
       "info_url": "https://floir.gov/consumers",
-      "review_type": "state"
+      "review_type": "federal"
     },
     "additional_resources": [
       {
@@ -527,7 +527,7 @@
     "external_review": {
       "available": true,
       "info_url": "https://oci.georgia.gov/external-review",
-      "review_type": "state"
+      "review_type": "federal"
     },
     "additional_resources": [
       {
@@ -1925,7 +1925,7 @@
     "external_review": {
       "available": true,
       "info_url": "https://www.tdi.texas.gov/health/irhealthreq.html",
-      "review_type": "state"
+      "review_type": "federal"
     },
     "additional_resources": [
       {
@@ -2190,7 +2190,7 @@
     "external_review": {
       "available": true,
       "info_url": "https://oci.wi.gov/Pages/Consumers/IndependentReview.aspx",
-      "review_type": "state"
+      "review_type": "federal"
     },
     "additional_resources": [
       {

@@ -81,6 +81,18 @@ EXPECTED_STATE_SLUGS = {
     "wyoming",
 }
 
+# States that, per the CMS/KFF "State External Appeals Review Processes" list,
+# do NOT run their own external review process and instead rely on the federal
+# HHS-administered process. These must never be classified as review_type
+# "state" (which would tell users their state runs its own review).
+KNOWN_FEDERAL_PROCESS_STATES = {
+    "alabama",
+    "florida",
+    "georgia",
+    "texas",
+    "wisconsin",
+}
+
 # Internal routes the state page links to. If any of these stop resolving the
 # per-state pages would contain dangling links, so we assert they all reverse.
 INTERNAL_LINK_ROUTE_NAMES = [
@@ -153,6 +165,39 @@ class ExternalReviewDataIntegrityTest(TestCase):
             self.assertIn(
                 state.external_review.review_type_label,
                 EXTERNAL_REVIEW_TYPE_LABELS.values(),
+            )
+
+    def test_known_federal_process_states_are_not_state_administered(self):
+        """States on the federal HHS-administered list are not classified 'state'.
+
+        Marking these 'state' would wrongly tell users their state runs its own
+        external review, so they must be 'federal' (or, conservatively, 'varies')
+        — never 'state'.
+        """
+        for slug in KNOWN_FEDERAL_PROCESS_STATES:
+            self.assertIn(slug, self.states, msg=f"{slug} missing from shipped data")
+            review_type = self.states[slug].external_review.review_type
+            self.assertNotEqual(
+                review_type,
+                "state",
+                msg=(
+                    f"{slug} uses the federal HHS-administered external review "
+                    f"process and must not be classified 'state'"
+                ),
+            )
+            # Not state-administered means the state does not run its own review.
+            self.assertFalse(
+                self.states[slug].external_review.is_state_administered,
+                msg=f"{slug} should not be flagged as state-administered",
+            )
+
+    def test_known_federal_process_states_are_classified_federal(self):
+        """The five federal-process states are affirmatively marked 'federal'."""
+        for slug in KNOWN_FEDERAL_PROCESS_STATES:
+            self.assertEqual(
+                self.states[slug].external_review.review_type,
+                "federal",
+                msg=f"{slug} should be classified 'federal'",
             )
 
     def test_no_dangling_external_review_links(self):
@@ -277,6 +322,30 @@ class StateExternalReviewViewTest(TestCase):
         parsed = json.loads(structured)
         types = {node["@type"] for node in parsed["@graph"]}
         self.assertEqual(types, {"WebPage", "BreadcrumbList"})
+
+    def test_federal_process_state_does_not_claim_its_own_external_review(self):
+        """A federal-process state's page must not say it offers/runs its own review."""
+        with self._patched_get_state_help():
+            url = reverse("state_help", kwargs={"slug": "texas"})
+            response = self.client.get(url)
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode("utf-8")
+        # It must not tell users Texas offers/runs its own external review.
+        self.assertNotIn("offers its own external review", content)
+        self.assertNotIn("runs its own external review", content)
+        # It must affirmatively describe the federal HHS-administered process,
+        # and state that Texas does not run its own process.
+        self.assertIn("federal external review process", content)
+        self.assertIn("Department of Health", content)
+        self.assertIn("does not run its own external review", content)
+
+    def test_state_administered_state_describes_its_own_review(self):
+        """A state-process state still describes running its own external review."""
+        with self._patched_get_state_help():
+            url = reverse("state_help", kwargs={"slug": "california"})
+            response = self.client.get(url)
+        content = response.content.decode("utf-8")
+        self.assertIn("runs its own external review process", content)
 
     def test_unknown_state_returns_404(self):
         """An unknown state slug returns a 404."""
