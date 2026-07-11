@@ -973,6 +973,132 @@ GLOSSARY_TERMS: tuple[GlossaryTerm, ...] = (
         ),
         aliases=("utilization review", "UM"),
     ),
+    GlossaryTerm(
+        slug="hmo",
+        term="Health Maintenance Organization (HMO)",
+        short="A plan type built around a set network that usually requires referrals.",
+        definition=(
+            "A health maintenance organization is a plan that keeps costs down by "
+            "limiting you to a defined network of providers and, in most cases, "
+            "asking you to pick a primary care doctor who coordinates your care. "
+            "Seeing a specialist often requires a referral, and care outside the "
+            "network is generally not covered except in emergencies. Denials in an "
+            "HMO frequently trace back to a missing referral or an out-of-network "
+            "visit."
+        ),
+        related=(
+            "ppo",
+            "epo",
+            "pos",
+            "in-network",
+            "out-of-network",
+            "prior-authorization",
+        ),
+        aliases=("HMO",),
+    ),
+    GlossaryTerm(
+        slug="ppo",
+        term="Preferred Provider Organization (PPO)",
+        short="A flexible plan type that covers out-of-network care at a higher cost.",
+        definition=(
+            "A preferred provider organization is a plan that lets you see providers "
+            "both inside and outside its network, usually without a referral, though "
+            "you pay more for out-of-network care. The added flexibility typically "
+            "comes with higher premiums than more restrictive plans. Because "
+            "out-of-network care is only partly covered, PPO members can still face "
+            "balance billing and larger cost-sharing."
+        ),
+        related=(
+            "hmo",
+            "epo",
+            "pos",
+            "in-network",
+            "out-of-network",
+            "balance-billing",
+        ),
+        aliases=("PPO",),
+    ),
+    GlossaryTerm(
+        slug="epo",
+        term="Exclusive Provider Organization (EPO)",
+        short="A network-only plan that usually skips referrals but not the network.",
+        definition=(
+            "An exclusive provider organization is a plan that covers care only from "
+            "providers in its network, much like an HMO, but often does not require "
+            "referrals to see specialists. Step outside the network and you generally "
+            "pay the full cost yourself, except in emergencies. Knowing your plan is "
+            "an EPO helps you anticipate that out-of-network denials will be hard to "
+            "overturn on network grounds alone."
+        ),
+        related=("hmo", "ppo", "pos", "in-network", "out-of-network"),
+        aliases=("EPO",),
+    ),
+    GlossaryTerm(
+        slug="pos",
+        term="Point-of-Service Plan (POS)",
+        short="A hybrid plan blending HMO referral rules with some out-of-network coverage.",
+        definition=(
+            "A point-of-service plan mixes features of HMO and PPO coverage: you "
+            "usually choose a primary care doctor and need referrals like an HMO, but "
+            "you can still get partial coverage for out-of-network care like a PPO. "
+            "Your costs depend heavily on whether you follow the referral rules and "
+            "stay in network. Missing a required referral is a common, and often "
+            "appealable, reason a POS claim is denied."
+        ),
+        related=(
+            "hmo",
+            "ppo",
+            "epo",
+            "in-network",
+            "out-of-network",
+            "prior-authorization",
+        ),
+        aliases=("POS",),
+    ),
+    GlossaryTerm(
+        slug="cobra",
+        term="COBRA Continuation Coverage",
+        short="A right to keep employer coverage for a time after it would otherwise end.",
+        definition=(
+            "COBRA is a federal protection that lets you keep your employer-based "
+            "health plan for a limited period after an event like a job loss or a "
+            "reduction in hours. The coverage is the same, but you usually pay the "
+            "full premium yourself plus a small administrative fee, so it can be "
+            "costly. COBRA can bridge a gap in coverage and preserve continuity of "
+            "care while you find a new plan."
+        ),
+        related=("premium", "continuity-of-care", "hipaa", "pre-existing-condition"),
+        aliases=("COBRA",),
+    ),
+    GlossaryTerm(
+        slug="hipaa",
+        term="HIPAA",
+        short="The federal law protecting the privacy of your health information.",
+        definition=(
+            "HIPAA, the Health Insurance Portability and Accountability Act, is the "
+            "federal law best known for protecting the privacy and security of your "
+            "health information and giving you the right to see and get copies of "
+            "your records. Those access rights matter when you are gathering medical "
+            "records to support an appeal. HIPAA also set early rules about carrying "
+            "coverage between jobs."
+        ),
+        related=("cobra", "pre-existing-condition", "evidence-of-coverage"),
+        aliases=("HIPAA",),
+    ),
+    GlossaryTerm(
+        slug="waiting-period",
+        term="Waiting Period",
+        short="The time you must wait before coverage or a specific benefit begins.",
+        definition=(
+            "A waiting period is the stretch of time you have to wait after enrolling "
+            "before your coverage, or a particular benefit within it, actually takes "
+            "effect. Employer plans, for example, may impose a waiting period before "
+            "a new hire's coverage starts. If a claim is denied as falling inside a "
+            "waiting period, confirming the exact dates against your plan documents "
+            "is the first step in checking whether the denial is correct."
+        ),
+        related=("premium", "pre-existing-condition", "continuity-of-care"),
+    ),
 )
 
 
