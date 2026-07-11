@@ -1,0 +1,19 @@
+{% comment %}
+Opt-in "AI-answer" style concise summary block.
+
+A page can surface a short, direct answer/summary near the top of its content so
+both readers and AI answer engines get the gist quickly. This is purely opt-in:
+include it and pass the copy, e.g.
+
+    {% include "partials/ai_answer_summary.html" with ai_answer_heading="In short" ai_answer_summary="One or two sentences." %}
+
+Nothing renders unless ``ai_answer_summary`` is provided, so existing pages are
+unaffected. Pair with the {% load structured_data_tags %} {% json_ld %} tag if
+you also want a machine-readable WebPage/FAQPage node.
+{% endcomment %}
+{% if ai_answer_summary %}
+<aside class="ai-answer-summary" aria-label="Quick summary">
+  <p class="ai-answer-summary__heading"><strong>{{ ai_answer_heading|default:"Quick answer" }}</strong></p>
+  <p class="ai-answer-summary__body">{{ ai_answer_summary }}</p>
+</aside>
+{% endif %}
