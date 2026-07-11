@@ -112,7 +112,7 @@ class MLCitationsHelper:
 
             # Only proceed if we have backends to use
             if not full_citation_backends:
-                logger.debug("No citation backends available for generic citations")
+                logger.debug("No citation backends available for specific citations")
                 return []
 
             # Create tasks for full backends
@@ -332,10 +332,15 @@ class MLCitationsHelper:
                 # If we have ML citations, cache them (ML-only) for future use.
                 if ml_only:
                     try:
-                        await GenericContextGeneration.objects.acreate(
+                        # `aupdate_or_create` is atomic against the
+                        # (procedure, diagnosis) lookup, closing the race where
+                        # two concurrent cache misses would otherwise create
+                        # duplicate rows (which `acreate` would surface as an
+                        # IntegrityError). Mirrors generate_cms_coverage_citations.
+                        await GenericContextGeneration.objects.aupdate_or_create(
                             procedure=procedure,
                             diagnosis=diagnosis,
-                            generated_context=ml_only,
+                            defaults={"generated_context": ml_only},
                         )
                         logger.debug(
                             f"Stored cached generic citations for {procedure}/{diagnosis} -- {ml_only}"
