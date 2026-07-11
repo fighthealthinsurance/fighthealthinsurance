@@ -31,6 +31,7 @@ from collections import Counter, defaultdict
 from typing import Any, Dict, Optional, Set, Tuple
 
 from django.core.management.base import BaseCommand
+from django.db.models import Count as DjangoCount
 
 # str(model) fallback used by RemoteModelLike.__str__ for unstamped instances.
 _CLASS_MODEL_RE = re.compile(r"^(\w+)\((.+)\)$")
@@ -143,16 +144,18 @@ class Command(BaseCommand):
             totals[f"{label}.left_unknown_null"] = null_count
 
             renames: Dict[str, str] = {}
-            values = (
+            # One aggregate query yields every distinct value WITH its row
+            # count — avoids a COUNT() query per distinct model_name, which
+            # would crawl on large ProposedAppeal/ChooserCandidate tables.
+            value_counts = (
                 model_cls.objects.filter(model_name__isnull=False)
                 .order_by()
-                .values_list("model_name", flat=True)
-                .distinct()
+                .values_list("model_name")
+                .annotate(c=DjangoCount("id"))
             )
-            for value in values:
+            for value, count in value_counts:
                 if value is None:  # guarded by the isnull filter; keeps mypy happy
                     continue
-                count = model_cls.objects.filter(model_name=value).count()
                 bucket, canonical = self._classify(
                     value, friendly, by_internal, by_class_and_internal, by_class
                 )

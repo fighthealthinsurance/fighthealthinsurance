@@ -79,7 +79,7 @@
             <span class="muted">never checked</span>
           {% endif %}
         </td>
-        <td>{% if r.last_check.latency_ms %}{{ r.last_check.latency_ms }} ms{% else %}&mdash;{% endif %}</td>
+        <td>{% if r.last_check and r.last_check.latency_ms is not None %}{{ r.last_check.latency_ms }} ms{% else %}&mdash;{% endif %}</td>
         <td>{% if r.last_check %}{{ r.last_check.created_at|date:"Y-m-d H:i" }} UTC{% else %}&mdash;{% endif %}</td>
         <td>{% if r.last_generation %}{{ r.last_generation|date:"Y-m-d H:i" }} UTC{% else %}<span class="muted">none recorded</span>{% endif %}</td>
         <td class="err">

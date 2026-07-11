@@ -65,6 +65,22 @@ class ModelBackendStatusContentTest(TestCase):
         self.assertContains(response, "842 ms")
         self.assertContains(response, "PASS")
 
+    def test_zero_latency_rendered_not_hidden(self):
+        # int(ms) rounding can legitimately yield 0 for a very fast local
+        # backend; the template must not collapse it to the em-dash.
+        ModelBackendHealthCheckResult.objects.create(
+            run_id="run-zero",
+            model_name="anthropic/claude-haiku-4-5",
+            internal_name="claude-haiku-4-5-20251001",
+            provider="Anthropic",
+            category="PASS",
+            ok=True,
+            latency_ms=0,
+            started_at=timezone.now(),
+        )
+        response = self.client.get(reverse("model_backend_status"))
+        self.assertContains(response, "0 ms")
+
     def test_shows_last_stored_generation(self):
         denial = Denial.objects.create(
             hashed_email="hash",

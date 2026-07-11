@@ -187,6 +187,22 @@ class TestCheckBackendCategorization:
         assert res.category == mhc.CATEGORY_MALFORMED_RESPONSE
         assert res.failed
 
+    def test_unexpected_text_response_is_malformed(self):
+        """Reachable but garbled (HTML error body, stub text, refusal) must not
+        count as healthy: the probe demands an OK acknowledgement."""
+        res = self._check("<html><body>502 Bad Gateway</body></html>")
+        assert res.category == mhc.CATEGORY_MALFORMED_RESPONSE
+        assert res.failed
+        assert "unexpected response" in res.error
+
+    def test_decorated_ok_still_passes(self):
+        # Instruct models often decorate; "OK." / "Sure — OK" must still pass,
+        # while words merely containing 'ok' (token/broken) must not.
+        assert self._check("OK.").category == mhc.CATEGORY_PASS
+        assert self._check("Sure — OK").category == mhc.CATEGORY_PASS
+        assert self._check("Okay").category == mhc.CATEGORY_PASS
+        assert self._check("a broken token").category == mhc.CATEGORY_MALFORMED_RESPONSE
+
     def test_unexpected_exception_is_other(self):
         res = self._check(RuntimeError("boom"))
         assert res.category == mhc.CATEGORY_OTHER
@@ -378,6 +394,35 @@ class TestRunHealthCheckOrchestration:
             )
         assert summary.email_sent is False
         assert mailoutbox == []
+
+    def test_email_separates_unregistered_passes_from_failures(
+        self, monkeypatch, mailoutbox
+    ):
+        """PASS_UNREGISTERED backends work — the email must list them under a
+        distinct 'not failures' section, not under 'Failing backends'."""
+        monkeypatch.setenv("FHI_DEPLOYMENT_ID", "vtest-email-6")
+        monkeypatch.setenv("FHI_MODEL_HEALTH_ALERT_EMAIL", "1")
+        results = _fake_results(mhc.CATEGORY_AUTH)
+        unregistered = _result(
+            model_name="prov/ghost-model",
+            internal_name="ghost-model",
+            category=mhc.CATEGORY_PASS_UNREGISTERED,
+            ui_registered=False,
+            reporting_registered=False,
+        )
+        unregistered.ok = True
+        unregistered.error = "works but missing from: selection UI, reporting registry"
+        results.append(unregistered)
+        with _patch_results(results):
+            mhc.run_health_check(
+                require_leader=True, send_alert_email=True, persist=False
+            )
+        assert len(mailoutbox) == 1
+        body = mailoutbox[0].body
+        failing_section = body.split("Working but NOT registered")[0]
+        assert "prov/ghost-model" not in failing_section
+        assert "Working but NOT registered (not failures" in body
+        assert "prov/ghost-model" in body
 
     def test_test_environment_suppresses_email_by_default(
         self, monkeypatch, mailoutbox

@@ -73,6 +73,20 @@ HEALTH_CHECK_SYSTEM_PROMPT = (
     "You are part of an automated health check. Reply with exactly: OK"
 )
 
+# What counts as the model acknowledging the probe: the standalone word "OK"
+# (case-insensitive; "OK", "ok.", "Reply: OK") or a reply beginning with
+# "okay". Deliberately looser than an exact match — instruct models decorate
+# ("OK!") — but strict enough that an HTML error page, a refusal, or garbled
+# output is flagged as FAIL_MALFORMED_RESPONSE instead of passing.
+_OK_RESPONSE_RE = re.compile(r"(?i)(\bok\b|^\s*okay\b)")
+
+
+def _looks_like_ok(text: str) -> bool:
+    """Whether a probe reply plausibly acknowledges the 'Reply with exactly:
+    OK' instruction (see ``_OK_RESPONSE_RE``)."""
+    return bool(_OK_RESPONSE_RE.search(text))
+
+
 # --- Result categories ------------------------------------------------------
 CATEGORY_PASS = "PASS"
 # The backend answered, but the router never registered it — it would be
@@ -514,6 +528,16 @@ async def check_backend(
         result.category = CATEGORY_MALFORMED_RESPONSE
         result.error = "empty or no text in provider response"
         return result
+    if not _looks_like_ok(str(text)):
+        # The backend answered, but not with anything resembling the "OK" the
+        # prompt demanded — e.g. an HTML error page surfaced as text, a stub
+        # response, or a model too broken to follow a one-word instruction.
+        # A reachable-but-garbled backend is not healthy.
+        result.category = CATEGORY_MALFORMED_RESPONSE
+        result.error = "unexpected response (no OK acknowledgement): " + sanitize_error(
+            str(text)[:120]
+        )
+        return result
 
     result.ok = True
     if result.ui_registered and result.reporting_registered:
@@ -614,9 +638,9 @@ def _send_consolidated_alert(summary: HealthCheckRunSummary) -> bool:
     failures = summary.failures
     if not failures:
         return False
-    lines = []
+    failure_lines = []
     for r in failures:
-        lines.append(
+        failure_lines.append(
             f"- provider: {r.provider}\n"
             f"  model: {r.model_name} (internal: {r.internal_name or 'n/a'})\n"
             f"  category: {r.category}\n"
@@ -624,13 +648,22 @@ def _send_consolidated_alert(summary: HealthCheckRunSummary) -> bool:
             f"  registered for selection UI: {'yes' if r.ui_registered else 'NO'}; "
             f"recognized by reporting: {'yes' if r.reporting_registered else 'NO'}"
         )
-    for r in summary.unregistered_passes:
-        lines.append(
+    # Kept in a clearly separate section: these backends WORK, they are just
+    # invisible to users — labeling them "failing" would misdirect triage.
+    unregistered_section = ""
+    if summary.unregistered_passes:
+        unregistered_lines = [
             f"- provider: {r.provider}\n"
             f"  model: {r.model_name} (internal: {r.internal_name or 'n/a'})\n"
-            f"  category: {r.category} (model WORKS but is not registered — "
-            f"it will not appear in the selection UI / reporting)\n"
             f"  detail: {r.error or 'n/a'}"
+            for r in summary.unregistered_passes
+        ]
+        unregistered_section = (
+            "Working but NOT registered (not failures — these backends "
+            "answered the probe but are missing from the selection UI / "
+            "reporting registry, so users cannot see them):\n\n"
+            + "\n\n".join(unregistered_lines)
+            + "\n\n"
         )
     timestamp = datetime.now(dt_timezone.utc).isoformat()
     subject = (
@@ -643,8 +676,11 @@ def _send_consolidated_alert(summary: HealthCheckRunSummary) -> bool:
         f"Environment: {summary.environment}\n"
         f"Run id: {summary.run_id}\n"
         f"Timestamp (UTC): {timestamp}\n\n"
-        f"Failing backends:\n\n" + "\n\n".join(lines) + "\n\n"
-        "Each backend was tested once with a tiny 'Reply with exactly: OK' "
+        f"Failing backends:\n\n"
+        + "\n\n".join(failure_lines)
+        + "\n\n"
+        + unregistered_section
+        + "Each backend was tested once with a tiny 'Reply with exactly: OK' "
         "prompt through the same client/credentials/routing as real requests.\n\n"
         "Where to look:\n"
         "- Deployment logs: search for MODEL_BACKEND_HEALTH_SUMMARY in the "
