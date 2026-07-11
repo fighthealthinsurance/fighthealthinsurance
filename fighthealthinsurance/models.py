@@ -3708,6 +3708,104 @@ class ModelHealthAlertState(models.Model):
         return f"ModelHealthAlertState<{self.key}@{self.last_alert_sent}>"
 
 
+class CallScriptGoal(models.TextChoices):
+    INFO_GATHERING = "info_gathering", "Information Gathering"
+    ESCALATION = "escalation", "Escalation"
+
+
+class GenericCallScript(ExportModelOperationsMixin("GenericCallScript"), models.Model):  # type: ignore
+    """Cached LLM-generated phone call scripts keyed by non-PHI inputs.
+
+    Scripts are reused across patients whose denial shares the same insurer,
+    denial reason and call goal. Patient-specific customization happens at
+    render time and is never stored here.
+    """
+
+    id = models.AutoField(primary_key=True)
+    # Normalized (trim + lowercase) before persisting so cache hits are
+    # case-insensitive without scanning indexes with LOWER().
+    insurer_name = models.CharField(max_length=300)
+    denial_reason = models.CharField(max_length=600)
+    goal = models.CharField(max_length=32, choices=CallScriptGoal.choices)
+    # Prompt version is part of the cache key so prompt edits don't keep
+    # serving stale scripts that were generated under the old prompt.
+    prompt_version = models.CharField(max_length=32, default="v1")
+    script_text = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["insurer_name", "denial_reason", "goal", "prompt_version"],
+                name="generic_call_script_key",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"GenericCallScript<{self.insurer_name}|{self.goal}>"
+
+
+class CallScript(ExportModelOperationsMixin("CallScript"), models.Model):  # type: ignore
+    """Patient-specific phone call script generated for a Denial.
+
+    Persisted (rather than returned-and-forgotten) so the user can come back
+    to a printable version after the call without re-running inference.
+    Modeled on ProposedPriorAuth.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    for_denial = models.ForeignKey(
+        "Denial", on_delete=models.CASCADE, related_name="call_scripts"
+    )
+    goal = models.CharField(max_length=32, choices=CallScriptGoal.choices)
+    insurer_name = models.CharField(max_length=300)
+    encrypted_denial_reason = models.BinaryField()
+    encrypted_script_text = models.BinaryField()
+    generic_script = models.ForeignKey(
+        GenericCallScript, on_delete=models.SET_NULL, null=True, blank=True
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["for_denial", "goal"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"CallScript<{self.id} denial={self.for_denial_id} goal={self.goal}>"
+
+    @staticmethod
+    def encrypt_text(value: str) -> bytes:
+        """Encrypt text for patient-specific call-script storage."""
+        return bytes(Cryptographer.encrypted((value or "").encode("utf-8")))
+
+    @staticmethod
+    def decrypt_text(value: bytes | memoryview | None) -> str:
+        """Decrypt text stored by :meth:`encrypt_text`."""
+        if not value:
+            return ""
+        decrypted = Cryptographer.decrypted(bytes(value))
+        if isinstance(decrypted, str):
+            return decrypted
+        return bytes(decrypted).decode("utf-8")
+
+    @property
+    def denial_reason(self) -> str:
+        return self.decrypt_text(self.encrypted_denial_reason)
+
+    @denial_reason.setter
+    def denial_reason(self, value: str) -> None:
+        self.encrypted_denial_reason = self.encrypt_text(value)
+
+    @property
+    def script_text(self) -> str:
+        return self.decrypt_text(self.encrypted_script_text)
+
+    @script_text.setter
+    def script_text(self, value: str) -> None:
+        self.encrypted_script_text = self.encrypt_text(value)
+
+        
 class SiteBanner(models.Model):
     """Admin-controlled banner shown in the site header to every visitor.
 

@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Call Script - {{ insurer_name }}</title>
+    <style>
+        body {
+            font-family: Georgia, "Times New Roman", serif;
+            max-width: 7.5in;
+            margin: 0.5in auto;
+            line-height: 1.55;
+            color: #111;
+        }
+        h1 { font-size: 22pt; margin-bottom: 0.1em; }
+        h2 { font-size: 14pt; margin-top: 1.5em; border-bottom: 1px solid #888; padding-bottom: 0.2em; }
+        .meta { color: #444; font-size: 11pt; margin-bottom: 1em; }
+        .meta strong { display: inline-block; min-width: 9em; }
+        .info-block {
+            background: #f4f4f4;
+            border-left: 4px solid #2a6db5;
+            padding: 0.6em 0.9em;
+            margin: 1em 0;
+            font-size: 11pt;
+        }
+        .script {
+            white-space: pre-wrap;
+            font-size: 12pt;
+            margin-top: 0.5em;
+        }
+        .tips {
+            margin-top: 2em;
+            padding-top: 1em;
+            border-top: 1px solid #ccc;
+            font-size: 10.5pt;
+            color: #333;
+        }
+        .tips ul { padding-left: 1.2em; }
+        @media print {
+            body { margin: 0.4in; }
+            .no-print { display: none; }
+        }
+    </style>
+</head>
+<body>
+    <h1>Phone Call Script</h1>
+    <div class="meta">
+        <div><strong>Insurer:</strong> {{ insurer_name }}</div>
+        <div><strong>Call goal:</strong> {{ goal_display }}</div>
+        {% if denial and denial.claim_id %}<div><strong>Claim ID:</strong> {{ denial.claim_id }}</div>{% endif %}
+        {% if denial %}{% if denial.date_of_service %}<div><strong>Date of service:</strong> {{ denial.date_of_service }}</div>{% elif denial.date_of_service_text %}<div><strong>Date of service:</strong> {{ denial.date_of_service_text }}</div>{% endif %}{% endif %}
+    </div>
+
+    {% if denial %}{% if denial.procedure or denial.diagnosis %}
+    <div class="info-block">
+        {% if denial.procedure %}<div><strong>Procedure:</strong> {{ denial.procedure }}</div>{% endif %}
+        {% if denial.diagnosis %}<div><strong>Diagnosis:</strong> {{ denial.diagnosis }}</div>{% endif %}
+    </div>
+    {% endif %}{% endif %}
+
+    <h2>What to say</h2>
+    <div class="script">{{ script_text }}</div>
+
+    <div class="tips">
+        <strong>Tips for the call:</strong>
+        <ul>
+            <li>Take notes as you go &mdash; you will need them for the written appeal.</li>
+            <li>Ask for the name, title, and a reference number for every person you speak with.</li>
+            <li>Ask the insurer to send written confirmation of anything they tell you.</li>
+            <li>Calls are recorded by the insurer; you may record your own copy in one-party-consent states.</li>
+            <li>If the call goes off-script, return to your numbered questions before hanging up.</li>
+        </ul>
+    </div>
+</body>
+</html>
