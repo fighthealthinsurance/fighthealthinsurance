@@ -86,6 +86,24 @@ class _FakeDenial:
         self.plan_source = _PlanSourceManager()
 
 
+def _make_ico(**overrides):
+    """Build a stand-in matched ``InsuranceCompany`` object for recipient tests.
+
+    Defaults model a plain (non-TPA) carrier with no appeal-routing info;
+    pass keyword overrides for the fields a given test exercises.
+    """
+    attrs = {
+        "is_tpa": False,
+        "name": "Aetna",
+        "appeal_address": "",
+        "appeal_phone_number": "",
+        "member_services_url": "",
+        "website": "",
+    }
+    attrs.update(overrides)
+    return type("ICO", (), attrs)()
+
+
 class EscalationAddressesTest(TestCase):
     """Recipient assembly logic."""
 
@@ -109,6 +127,55 @@ class EscalationAddressesTest(TestCase):
         types = [r.recipient_type for r in recipients]
         self.assertEqual(types, ["medical_director"])
         self.assertIn("Cigna", recipients[0].name)
+
+    @patch("fighthealthinsurance.escalation_addresses.get_state_help_by_abbreviation")
+    def test_doi_recipient_includes_consumer_phone_number(self, mock_state):
+        mock_state.return_value = StateHelp(CALIFORNIA_DATA)
+        denial = _FakeDenial(state="CA")
+        recipients = get_recipients_for_denial(denial)
+        doi = next(r for r in recipients if r.recipient_type == "doi")
+        self.assertEqual(doi.phone, "800-927-4357")
+
+    def test_medical_director_uses_insurer_appeal_contact_info(self):
+        denial = _FakeDenial(state="", insurance_company="Aetna")
+        denial.insurance_company_obj = _make_ico(
+            appeal_address="Aetna Appeals\nPO Box 14463\nLexington, KY 40512",
+            appeal_phone_number="1-800-872-3862",
+            member_services_url="https://www.aetna.com/contact-us.html",
+            website="https://www.aetna.com/",
+        )
+        recipients = get_recipients_for_denial(denial)
+        md = next(r for r in recipients if r.recipient_type == "medical_director")
+        self.assertEqual(md.phone, "1-800-872-3862")
+        self.assertTrue(md.address.startswith("Medical Director\n"))
+        self.assertIn("PO Box 14463", md.address)
+        self.assertEqual(md.url, "https://www.aetna.com/contact-us.html")
+
+    def test_medical_director_falls_back_to_insurer_website_url(self):
+        denial = _FakeDenial(state="", insurance_company="Aetna")
+        denial.insurance_company_obj = _make_ico(website="https://www.aetna.com/")
+        recipients = get_recipients_for_denial(denial)
+        md = next(r for r in recipients if r.recipient_type == "medical_director")
+        self.assertEqual(md.url, "https://www.aetna.com/")
+
+    def test_medical_director_keeps_placeholder_without_matched_insurer(self):
+        denial = _FakeDenial(state="", insurance_company="Cigna")
+        denial.insurance_company_obj = None
+        recipients = get_recipients_for_denial(denial)
+        md = next(r for r in recipients if r.recipient_type == "medical_director")
+        self.assertEqual(md.phone, "")
+        self.assertIn("[Insurance company mailing address", md.address)
+
+    def test_medical_director_drops_non_http_insurer_url(self):
+        """Recipient URLs become clickable links, so schemes other than
+        http(s) must be dropped at construction."""
+        denial = _FakeDenial(state="", insurance_company="Aetna")
+        denial.insurance_company_obj = _make_ico(
+            member_services_url="javascript:alert(1)"
+        )
+        recipients = get_recipients_for_denial(denial)
+        md = next(r for r in recipients if r.recipient_type == "medical_director")
+        self.assertEqual(md.url, "")
 
     def test_erisa_branch_via_tpa_flag_adds_dol_ebsa(self):
         denial = _FakeDenial(
@@ -276,6 +343,22 @@ class EscalationPacketViewTest(TestCase):
         # Medical director recipient is always present.
         self.assertContains(response, "Medical Director")
 
+    @patch("fighthealthinsurance.escalation_addresses.get_state_help_by_abbreviation")
+    def test_escalation_packet_page_shows_regulator_phone_number(self, mock_state):
+        """The recipient checklist should surface each regulator's phone
+        number so users can call before (or instead of) mailing."""
+        mock_state.return_value = StateHelp(CALIFORNIA_DATA)
+        response = self.client.get(
+            reverse("escalation_packet"),
+            {
+                "denial_id": self.denial.denial_id,
+                "email": self.email,
+                "semi_sekret": self.denial.semi_sekret,
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "800-927-4357")
+
     def test_appeals_generation_page_exposes_escalation_button(self):
         """The appeals.html page (where users choose between drafts) must
         link to the regulator escalation flow. Without this, the only entry
@@ -324,6 +407,29 @@ class EscalationPacketViewTest(TestCase):
         self.assertTrue(escalation.chosen)
         self.assertTrue(escalation.edited)
         self.assertEqual(escalation.letter_text, "User-edited text.")
+
+    def test_review_page_does_not_linkify_non_http_stored_url(self):
+        """Stored recipient URLs are linkified on the review page; a
+        non-http(s) scheme (e.g. from hand-edited data) must not render."""
+        escalation = RegulatorEscalation.objects.create(
+            for_denial=self.denial,
+            hashed_email=self.denial.hashed_email,
+            recipient_type=RegulatorEscalation.RECIPIENT_DOI,
+            recipient_name="California Department of Insurance",
+            recipient_url="javascript:alert(1)",
+            letter_text="Original draft.",
+        )
+        response = self.client.post(
+            reverse("choose_escalation_letter"),
+            {
+                "denial_id": str(self.denial.denial_id),
+                "email": self.email,
+                "semi_sekret": self.denial.semi_sekret,
+                "escalation_uuid": escalation.uuid,
+                "letter_text": "Final text.",
+            },
+        )
+        self.assertNotContains(response, "javascript:")
 
     def test_choose_escalation_letter_rejects_malformed_uuid(self):
         url = reverse("choose_escalation_letter")

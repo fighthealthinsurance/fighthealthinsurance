@@ -563,6 +563,12 @@ class Regulator(models.Model):
     name = models.CharField(max_length=300, primary_key=False)
     website = models.CharField(max_length=300, primary_key=False)
     alt_name = models.CharField(max_length=300, primary_key=False)
+    phone = models.CharField(
+        max_length=40,
+        blank=True,
+        default="",
+        help_text="Consumer assistance / complaint line for this regulator (e.g., 1-866-444-3272 for DOL EBSA)",
+    )
     regex = RegexField(max_length=400, re_flags=re.IGNORECASE | re.UNICODE | re.M)
     negative_regex = RegexField(
         max_length=400, re_flags=re.IGNORECASE | re.UNICODE | re.M
@@ -2648,6 +2654,31 @@ class ProposedAppeal(ExportModelOperationsMixin("ProposedAppeal"), models.Model)
             return f"{self.appeal_text[0:100]}"
         else:
             return f"{self.appeal_text}"
+
+    @staticmethod
+    def sole_draft_attribution(denial_id) -> typing.Optional[typing.Tuple[str, bool]]:
+        """Return ``(model_name, synthesized)`` when every generated draft for
+        the denial is attributed to exactly one model, else ``None``.
+
+        The choose flow always picks (possibly after editing) one of the
+        denial's presented drafts, so a pick can safely inherit the drafts'
+        model when they all share one. Any draft with a NULL model_name makes
+        the inference ambiguous (the pick could have come from it), so no
+        attribution is returned in that case. A blank/whitespace model_name
+        (the field is ``blank=True``) is treated as missing for the same
+        reason. Used by mark_proposal_chosen as a fallback and by the
+        attribution backfill; must never guess.
+        """
+        pairs = list(
+            ProposedAppeal.objects.filter(for_denial_id=denial_id, chosen=False)
+            .values_list("model_name", "synthesized")
+            .distinct()[:2]
+        )
+        if len(pairs) == 1:
+            model_name, synthesized = pairs[0]
+            if model_name is not None and model_name.strip():
+                return (model_name, synthesized)
+        return None
 
 
 class RegulatorEscalation(ExportModelOperationsMixin("RegulatorEscalation"), models.Model):  # type: ignore

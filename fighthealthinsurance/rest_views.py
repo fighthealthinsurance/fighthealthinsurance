@@ -2484,7 +2484,11 @@ class ChooserViewSet(viewsets.ViewSet):
         session_key = self._get_session_key(request)
         task_id = serializer.validated_data["task_id"]
         chosen_candidate_id = serializer.validated_data["chosen_candidate_id"]
-        presented_candidate_ids = serializer.validated_data["presented_candidate_ids"]
+        # Deduplicate (order-preserving): a candidate was shown once per vote
+        # event, and repeated ids would inflate presented counts downstream.
+        presented_candidate_ids = list(
+            dict.fromkeys(serializer.validated_data["presented_candidate_ids"])
+        )
 
         # Validate task exists and is in valid state
         try:

@@ -32,6 +32,8 @@ Fight Your Health Insurance Denial: Regulator Escalation Letters
       {% for r in recipients %}
         <li>
           <strong>{{ r.name }}</strong>
+          {% if r.phone %}<br><span style="font-size:0.9rem;">📞 {{ r.phone }}</span>{% endif %}
+          {% if r.url %}<br><span style="font-size:0.9rem;">🔗 <a href="{{ r.url }}" target="_blank" rel="noopener noreferrer">{{ r.url }}</a></span>{% endif %}
           {% if r.rationale %}<br><span style="color:#555; font-size:0.9rem;">{{ r.rationale }}</span>{% endif %}
         </li>
       {% endfor %}
@@ -94,6 +96,26 @@ Fight Your Health Insurance Denial: Regulator Escalation Letters
         addr.style.cssText = 'background:#f5f5f5; padding:0.5rem; border-radius:4px; font-size:0.9rem; white-space:pre-wrap;';
         addr.textContent = payload.recipient_address;
         wrapper.appendChild(addr);
+      }
+      if (payload.recipient_phone) {
+        const phone = document.createElement('p');
+        phone.style.cssText = 'margin:0.25rem 0; font-size:0.95rem;';
+        phone.textContent = '📞 ' + payload.recipient_phone;
+        wrapper.appendChild(phone);
+      }
+      // Only linkify http(s) URLs so an unexpected scheme (e.g.
+      // javascript:) can never become clickable.
+      if (payload.recipient_url && /^https?:\/\//i.test(payload.recipient_url)) {
+        const linkLine = document.createElement('p');
+        linkLine.style.cssText = 'margin:0.25rem 0; font-size:0.95rem;';
+        linkLine.appendChild(document.createTextNode('🔗 '));
+        const link = document.createElement('a');
+        link.href = payload.recipient_url;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        link.textContent = payload.recipient_url;
+        linkLine.appendChild(link);
+        wrapper.appendChild(linkLine);
       }
       if (payload.rationale) {
         const r = document.createElement('p');
