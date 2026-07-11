@@ -1,0 +1,96 @@
+{% load static %}
+<!DOCTYPE html>
+<html>
+<head>
+  <title>{{ title }}</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 1400px; margin: 0 auto; padding: 20px; background: #f5f5f5; }
+    h1 { color: #333; border-bottom: 2px solid #007bff; padding-bottom: 10px; }
+    .nav-back { display: inline-block; margin-bottom: 14px; color: #007bff; text-decoration: none; }
+    .nav-back:hover { text-decoration: underline; }
+    .summary-note { color: #666; font-size: 0.9em; margin-bottom: 18px; }
+    table.status { width: 100%; border-collapse: collapse; background: white; box-shadow: 0 2px 4px rgba(0,0,0,0.1); border-radius: 8px; }
+    table.status th, table.status td { padding: 8px 10px; text-align: left; border-bottom: 1px solid #eee; font-size: 0.92em; vertical-align: top; }
+    table.status th { background: #f0f4f8; position: sticky; top: 0; }
+    .pill { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 0.85em; font-weight: bold; }
+    .pill-ok { background: #d4edda; color: #155724; }
+    .pill-fail { background: #f8d7da; color: #721c24; }
+    .pill-warn { background: #fff3cd; color: #856404; }
+    .pill-off { background: #e2e3e5; color: #383d41; }
+    .yes { color: #155724; font-weight: bold; }
+    .no { color: #721c24; font-weight: bold; }
+    .mono { font-family: monospace; font-size: 0.9em; }
+    .err { color: #721c24; font-size: 0.85em; max-width: 320px; word-break: break-word; }
+    .muted { color: #888; }
+  </style>
+</head>
+<body>
+  <a class="nav-back" href="{% url 'staff_dashboard' %}">&laquo; Back to Staff Dashboard</a>
+  <h1>{{ title }}</h1>
+  <p class="summary-note">
+    Every configured model backend, its registration state, and its most recent
+    health-check result. Health data is written by the once-per-deployment
+    check (search deployment logs for <code>MODEL_BACKEND_HEALTH_SUMMARY</code>)
+    and by manual runs of <code>python manage.py check_model_backends</code> —
+    this page never invokes models itself.
+    &ldquo;In selection UI&rdquo; = registered in the router pools the
+    chooser/appeal flows draw from; &ldquo;In reporting&rdquo; = the name usage
+    reporting records on generations.
+    See also the <a href="{% url 'model_usage_dashboard' %}">ML Model Usage Dashboard</a>.
+  </p>
+
+  <table class="status">
+    <thead>
+      <tr>
+        <th>Provider</th>
+        <th>Model (registry name)</th>
+        <th>Internal key</th>
+        <th>Enabled</th>
+        <th>In selection UI</th>
+        <th>In reporting</th>
+        <th>Last health check</th>
+        <th>Latency</th>
+        <th>Checked at</th>
+        <th>Last stored generation</th>
+        <th>Detail</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td>{{ r.provider }}</td>
+        <td class="mono">{{ r.model_name }}</td>
+        <td class="mono">{{ r.internal_name|default:"&mdash;" }}</td>
+        <td>
+          {% if r.enabled %}<span class="pill pill-ok">enabled</span>
+          {% else %}<span class="pill pill-off">{{ r.config_category|default:"disabled" }}</span>{% endif %}
+        </td>
+        <td>{% if r.ui_registered %}<span class="yes">yes</span>{% else %}<span class="no">no</span>{% endif %}</td>
+        <td>{% if r.reporting_registered %}<span class="yes">yes</span>{% else %}<span class="no">no</span>{% endif %}</td>
+        <td>
+          {% if r.last_check %}
+            {% if r.last_check.ok %}<span class="pill pill-ok">{{ r.last_check.category }}</span>
+            {% else %}<span class="pill pill-fail">{{ r.last_check.category }}</span>{% endif %}
+          {% elif r.config_category and not r.enabled %}
+            <span class="muted">not checked</span>
+          {% elif r.config_category %}
+            <span class="pill pill-warn">{{ r.config_category }}</span>
+          {% else %}
+            <span class="muted">never checked</span>
+          {% endif %}
+        </td>
+        <td>{% if r.last_check.latency_ms %}{{ r.last_check.latency_ms }} ms{% else %}&mdash;{% endif %}</td>
+        <td>{% if r.last_check %}{{ r.last_check.created_at|date:"Y-m-d H:i" }} UTC{% else %}&mdash;{% endif %}</td>
+        <td>{% if r.last_generation %}{{ r.last_generation|date:"Y-m-d H:i" }} UTC{% else %}<span class="muted">none recorded</span>{% endif %}</td>
+        <td class="err">
+          {% if r.last_check and r.last_check.error %}{{ r.last_check.error }}
+          {% elif r.config_detail %}{{ r.config_detail }}{% endif %}
+        </td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="11">No model backends are configured in this environment.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</body>
+</html>

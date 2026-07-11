@@ -1270,8 +1270,63 @@ class ModelDescription:
 
 
 class RemoteModel(RemoteModelLike):
+    # Human-readable provider label used by rate limiting, health checks, and
+    # the staff model-backend status page. Subclasses override; the default
+    # (class name) keeps new backends identifiable without extra wiring.
+    PROVIDER_LABEL: ClassVar[str] = ""
+
     def __init__(self, model: str):
         pass
+
+    @classmethod
+    def provider_label(cls) -> str:
+        """Provider name for logs/reporting (falls back to the class name)."""
+        return cls.PROVIDER_LABEL or cls.__name__
+
+    @classmethod
+    def config_status(cls) -> Tuple[str, Optional[str]]:
+        """Classify this provider's environment configuration.
+
+        Returns ``(status, detail)`` where status is one of:
+
+        * ``"configured"`` — everything needed to construct clients is present.
+        * ``"not_configured"`` — the provider is intentionally off (none of its
+          configuration is present); informational, not a failure.
+        * ``"missing_credentials"`` — partially configured (e.g. endpoint set
+          but key missing, or a key present but empty); a failure worth
+          alerting on since it is almost always a deploy/secret mistake.
+
+        The default reports ``configured`` so backends without environment
+        gating (or ones this method doesn't know about) are still probed; a
+        misconfiguration then surfaces as a client-init or invocation failure.
+        """
+        return ("configured", None)
+
+    @staticmethod
+    def _classify_env_keys(*names: str) -> Tuple[str, Optional[str]]:
+        """Shared helper for ``config_status``: all ``names`` set and non-empty
+        -> configured; none present -> not_configured; anything in between
+        (absent-some or present-but-blank) -> missing_credentials."""
+        values = {name: os.getenv(name) for name in names}
+        present = {n for n, v in values.items() if v is not None}
+        non_empty = {n for n, v in values.items() if v is not None and v.strip()}
+        if not present:
+            return ("not_configured", f"{', '.join(names)} not set")
+        if non_empty == set(names):
+            return ("configured", None)
+        missing = [n for n in names if n not in non_empty]
+        return ("missing_credentials", f"{', '.join(missing)} missing or empty")
+
+    @classmethod
+    def model_catalog(cls) -> List[ModelDescription]:
+        """The models this backend *would* expose when configured.
+
+        Unlike :meth:`models` this must not be gated on credentials, so the
+        health check can report a provider's models as "not configured" /
+        "missing credentials" instead of silently showing nothing. Defaults to
+        :meth:`models` for backends whose listing is already ungated.
+        """
+        return cls.models()
 
     @classmethod
     def models(cls) -> List[ModelDescription]:
@@ -2785,8 +2840,17 @@ class RemoteFullOpenLike(RemoteOpenLike):
 
 
 class RemoteHealthInsurance(RemoteFullOpenLike):
+    PROVIDER_LABEL: ClassVar[str] = "FHI Internal (legacy)"
+
     def quality(self) -> int:
         return 101
+
+    @classmethod
+    def config_status(cls) -> Tuple[str, Optional[str]]:
+        # Constructable with either the primary or the backup host.
+        if os.getenv("HEALTH_BACKEND_HOST") or os.getenv("HEALTH_BACKUP_BACKEND_HOST"):
+            return ("configured", None)
+        return ("not_configured", "HEALTH_BACKEND_HOST not set")
 
     def __init__(self, model: str, dual_mode: bool = True):
         self.port = os.getenv("HEALTH_BACKEND_PORT", "80")
@@ -2826,8 +2890,16 @@ class RemoteHealthInsurance(RemoteFullOpenLike):
 
 
 class NewRemoteInternal(RemoteFullOpenLike):
+    PROVIDER_LABEL: ClassVar[str] = "FHI Internal"
+
     def quality(self) -> int:
         return 200
+
+    @classmethod
+    def config_status(cls) -> Tuple[str, Optional[str]]:
+        if os.getenv("NEW_HEALTH_BACKEND_HOST"):
+            return ("configured", None)
+        return ("not_configured", "NEW_HEALTH_BACKEND_HOST not set")
 
     def __init__(self, model: str, dual_mode: bool = True):
         self.port = os.getenv("NEW_HEALTH_BACKEND_PORT", "80")
@@ -2883,8 +2955,16 @@ class NewRemoteInternal(RemoteFullOpenLike):
 
 
 class AlphaRemoteInternal(RemoteFullOpenLike):
+    PROVIDER_LABEL: ClassVar[str] = "FHI Internal (alpha)"
+
     def quality(self) -> int:
         return 210
+
+    @classmethod
+    def config_status(cls) -> Tuple[str, Optional[str]]:
+        if os.getenv("ALPHA_HEALTH_BACKEND_HOST"):
+            return ("configured", None)
+        return ("not_configured", "ALPHA_HEALTH_BACKEND_HOST not set")
 
     def __init__(self, model: str, dual_mode: bool = True):
         self.port = os.getenv("ALPHA_HEALTH_BACKEND_PORT", "8000")
@@ -2940,6 +3020,12 @@ class AlphaRemoteInternal(RemoteFullOpenLike):
 class RemotePerplexity(RemoteFullOpenLike):
     """Use RemotePerplexity for denial magic calls a service"""
 
+    PROVIDER_LABEL: ClassVar[str] = "Perplexity"
+
+    @classmethod
+    def config_status(cls) -> Tuple[str, Optional[str]]:
+        return cls._classify_env_keys("PERPLEXITY_API")
+
     def __init__(self, model: str, dual_mode: bool = False):
         api_base = "https://api.perplexity.ai"
         token = os.getenv("PERPLEXITY_API")
@@ -2975,6 +3061,8 @@ class RemotePerplexity(RemoteFullOpenLike):
 class DeepInfra(RemoteFullOpenLike):
     """Use DeepInfra."""
 
+    PROVIDER_LABEL: ClassVar[str] = "DeepInfra"
+
     # Model context lengths (in tokens) - most modern models support 128k
     MODEL_CONTEXT_LENGTHS: ClassVar[dict[str, int]] = {
         "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8": 128000,
@@ -3005,6 +3093,10 @@ class DeepInfra(RemoteFullOpenLike):
         "meta-llama/Llama-3.3-70B-Instruct-Turbo": 84,
         "deepseek-ai/DeepSeek-R1-0528-Turbo": 90,
     }
+
+    @classmethod
+    def config_status(cls) -> Tuple[str, Optional[str]]:
+        return cls._classify_env_keys("DEEPINFRA_API")
 
     def __init__(self, model: str, dual_mode: bool = False):
         api_base = "https://api.deepinfra.com/v1/openai"
@@ -3410,19 +3502,17 @@ class RemoteGroq(RateLimitedRemoteOpenLike):
         return None
 
     @classmethod
-    def models(cls) -> List[ModelDescription]:
-        """
-        Return available Groq models with cost tiers.
+    def config_status(cls) -> Tuple[str, Optional[str]]:
+        return cls._classify_env_keys("GROQ_API_KEY")
+
+    @classmethod
+    def model_catalog(cls) -> List[ModelDescription]:
+        """Groq models with cost tiers, independent of configuration.
 
         Quality tier models (Versatile) have lower cost to be preferred
         over DeepInfra. Speed tier (Instant) has higher cost to only be
         used as fallback. Only Groq-hosted models are listed here.
         """
-        # Check if API key is configured
-        if not os.getenv("GROQ_API_KEY"):
-            logger.debug("RemoteGroq.models: GROQ_API_KEY not set, skipping")
-            return []
-
         return [
             # Quality tier - cost=4 (between AlphaRemoteInternal=3 and DeepInfra>=8)
             ModelDescription(
@@ -3437,6 +3527,14 @@ class RemoteGroq(RateLimitedRemoteOpenLike):
                 internal_name="llama-3.1-8b-instant",
             ),
         ]
+
+    @classmethod
+    def models(cls) -> List[ModelDescription]:
+        """Return available Groq models (empty when GROQ_API_KEY is not set)."""
+        if not os.getenv("GROQ_API_KEY"):
+            logger.debug("RemoteGroq.models: GROQ_API_KEY not set, skipping")
+            return []
+        return cls.model_catalog()
 
     def model_is_ok(self) -> bool:
         """
@@ -3528,19 +3626,18 @@ class RemoteAnthropic(RateLimitedRemoteOpenLike):
         return self.MODEL_SPECS.get(self.model, {}).get("tier", "unknown")
 
     @classmethod
-    def models(cls) -> List[ModelDescription]:
-        """
-        Return available Anthropic Claude models with cost tiers.
+    def config_status(cls) -> Tuple[str, Optional[str]]:
+        return cls._classify_env_keys("ANTHROPIC_API_KEY")
+
+    @classmethod
+    def model_catalog(cls) -> List[ModelDescription]:
+        """Anthropic Claude models with cost tiers, independent of configuration.
 
         Costs are set to reflect Anthropic's pricing tiers relative to other
         external backends. Haiku is positioned as a mid-cost speed option,
         Sonnet as a quality option comparable to Llama-4-Maverick, and Opus
         as a premium option for the highest-quality output.
         """
-        if not os.getenv("ANTHROPIC_API_KEY"):
-            logger.debug("RemoteAnthropic.models: ANTHROPIC_API_KEY not set, skipping")
-            return []
-
         return [
             ModelDescription(
                 cost=50,
@@ -3558,6 +3655,14 @@ class RemoteAnthropic(RateLimitedRemoteOpenLike):
                 internal_name="claude-opus-4-8",
             ),
         ]
+
+    @classmethod
+    def models(cls) -> List[ModelDescription]:
+        """Available Claude models (empty when ANTHROPIC_API_KEY is not set)."""
+        if not os.getenv("ANTHROPIC_API_KEY"):
+            logger.debug("RemoteAnthropic.models: ANTHROPIC_API_KEY not set, skipping")
+            return []
+        return cls.model_catalog()
 
     def model_is_ok(self) -> bool:
         """
@@ -3684,6 +3789,28 @@ class RemoteAzureOpenLike(RateLimitedRemoteOpenLike):
         return "unknown"
 
     @classmethod
+    def config_status(cls) -> Tuple[str, Optional[str]]:
+        if not cls.API_KEY_ENV or not cls.ENDPOINT_ENV:
+            # The shared base carries no configuration of its own.
+            return ("not_configured", "abstract Azure base")
+        return cls._classify_env_keys(cls.API_KEY_ENV, cls.ENDPOINT_ENV)
+
+    @classmethod
+    def model_catalog(cls) -> List[ModelDescription]:
+        """The deployments this provider would register (honors the optional
+        ``MODELS_ENV`` override), independent of key/endpoint presence."""
+        if not cls.API_KEY_ENV or not cls.ENDPOINT_ENV:
+            return []  # the shared base carries no configuration of its own
+        return [
+            ModelDescription(
+                cost=cost,
+                name=f"{cls.NAME_PREFIX}/{deployment}",
+                internal_name=deployment,
+            )
+            for deployment, cost, _tier in cls._configured_deployments()
+        ]
+
+    @classmethod
     def models(cls) -> List[ModelDescription]:
         """Configured Azure deployments; empty (disabled) unless the base class
         is subclassed and both the key and endpoint env vars are set."""
@@ -3695,15 +3822,7 @@ class RemoteAzureOpenLike(RateLimitedRemoteOpenLike):
                 f"not both set, skipping"
             )
             return []
-
-        return [
-            ModelDescription(
-                cost=cost,
-                name=f"{cls.NAME_PREFIX}/{deployment}",
-                internal_name=deployment,
-            )
-            for deployment, cost, _tier in cls._configured_deployments()
-        ]
+        return cls.model_catalog()
 
     def model_is_ok(self) -> bool:
         """Available if env is configured and not rate limited. (No ``/models``

@@ -4,9 +4,18 @@ Background task generation for the Chooser (Best-Of Selection) system.
 This module provides utilities for:
 - Checking and refilling the pool of READY ChooserTasks
 - Generating synthetic candidates using existing ML pipelines
+
+Note on external models: chooser tasks are built ONLY from synthetic,
+model-generated scenarios (no patient data), so candidate generation opts
+into external backends (``use_external=True``). The chooser exists precisely
+to compare backends against each other — leaving external providers
+(Anthropic, Azure, Groq, ...) out of it meant they never appeared in the
+selection UI or the model-usage dashboard, which is what happened when these
+calls relied on the router's internal-only default.
 """
 
 import asyncio
+import random
 from typing import List, Optional
 
 from django.conf import settings
@@ -29,6 +38,49 @@ CHOOSER_NUM_CANDIDATES = getattr(settings, "CHOOSER_NUM_CANDIDATES", 4)
 # Whether to add a synthesized candidate (combining the per-model outputs)
 # to each task so the chooser can measure synthesis vs. single models.
 CHOOSER_INCLUDE_SYNTHESIS = getattr(settings, "CHOOSER_INCLUDE_SYNTHESIS", True)
+
+
+def _model_display_name(model) -> str:
+    """The friendly registry name stamped by MLRouter, with a str() fallback
+    (RemoteModelLike.__str__ never yields an opaque object repr)."""
+    return getattr(model, "name", None) or str(model)
+
+
+def _select_candidate_models(models: List, limit: int) -> List:
+    """Pick up to ``limit`` distinct-by-name backends for candidate generation.
+
+    The router's backend lists intentionally repeat models (e.g. the primary
+    fhi model twice for chat) and lead with internal models; taking a plain
+    prefix slice would burn candidate slots on duplicates and leave external
+    backends unmeasured. Instead: dedupe by friendly name, then alternate
+    internal/external so both pools get compared, shuffling the external pool
+    so different external providers get coverage across tasks.
+    """
+    internal: List = []
+    external: List = []
+    seen: set = set()
+    for m in models:
+        name = _model_display_name(m)
+        if name in seen:
+            continue
+        seen.add(name)
+        if getattr(m, "external", False):
+            external.append(m)
+        else:
+            internal.append(m)
+    # Randomize external order for coverage across tasks; keep the internal
+    # ordering (cost/quality ranked by the router).
+    random.shuffle(external)
+    selected: List = []
+    i = e = 0
+    while len(selected) < limit and (i < len(internal) or e < len(external)):
+        if i < len(internal):
+            selected.append(internal[i])
+            i += 1
+        if len(selected) < limit and e < len(external):
+            selected.append(external[e])
+            e += 1
+    return selected
 
 
 async def check_and_refill_task_pool():
@@ -169,8 +221,9 @@ async def _generate_appeal_candidates(task: ChooserTask):
     """Generate appeal letter candidates for a task using ONLY synthetic data from ML."""
     from asgiref.sync import sync_to_async
 
-    # Use ML to generate a synthetic denial scenario
-    generation_models = ml_router.generate_text_backends()
+    # Use ML to generate a synthetic denial scenario. Synthetic data only, so
+    # external backends are allowed (and wanted — see module docstring).
+    generation_models = ml_router.generate_text_backends(use_external=True)
     if not generation_models:
         logger.warning("No models available for generating synthetic denial scenarios")
         # Cannot proceed without models - mark task as disabled
@@ -253,17 +306,25 @@ async def _generate_appeal_candidates(task: ChooserTask):
         await sync_to_async(task.save)()
         return
 
-    # Generate candidates using different models
-    models = ml_router.generate_text_backends()
+    # Generate candidates using different models. Synthetic context only, so
+    # external backends (Anthropic/Azure/Groq/...) participate — the chooser
+    # is how they get compared and how they show up in usage reporting.
+    models = _select_candidate_models(
+        ml_router.generate_text_backends(use_external=True), CHOOSER_NUM_CANDIDATES
+    )
     if not models:
         logger.warning("No models available for appeal candidate generation")
         return
+    logger.debug(
+        f"Chooser appeal candidates for task {task.id} using models: "
+        f"{[_model_display_name(m) for m in models]}"
+    )
 
     prompt = _build_appeal_prompt(task.context_json)
 
     candidate_index = 0
     # First pass: try each model once
-    for model in models[:CHOOSER_NUM_CANDIDATES]:
+    for model in models:
         try:
             response = await model._infer_no_context(
                 system_prompts=[
@@ -277,7 +338,7 @@ async def _generate_appeal_candidates(task: ChooserTask):
                     task=task,
                     candidate_index=candidate_index,
                     kind="appeal_letter",
-                    model_name=getattr(model, "name", str(model)),
+                    model_name=_model_display_name(model),
                     content=response.strip(),
                     metadata={"source": "synthetic"},
                 )
@@ -308,7 +369,7 @@ async def _generate_appeal_candidates(task: ChooserTask):
                         task=task,
                         candidate_index=candidate_index,
                         kind="appeal_letter",
-                        model_name=getattr(model, "name", str(model)),
+                        model_name=_model_display_name(model),
                         content=response.strip(),
                         metadata={"source": "synthetic", "retry": True},
                     )
@@ -330,8 +391,9 @@ async def _generate_chat_candidates(task: ChooserTask):
     from asgiref.sync import sync_to_async
 
     # Generate synthetic chat prompt using ML
-    # Use ML to generate a synthetic conversation with some back-and-forth
-    generation_models = ml_router.generate_text_backends()
+    # Use ML to generate a synthetic conversation with some back-and-forth.
+    # Synthetic data only, so external backends are allowed (see module docstring).
+    generation_models = ml_router.generate_text_backends(use_external=True)
     if not generation_models:
         logger.warning("No models available for generating synthetic chat prompts")
         # Cannot proceed without models - mark task as disabled
@@ -464,21 +526,31 @@ async def _generate_chat_candidates(task: ChooserTask):
         await sync_to_async(task.save)()
         return
 
-    # Generate candidates using different models
-    models = ml_router.get_chat_backends()
+    # Generate candidates using different models. Synthetic context only, so
+    # external backends participate (they are what the chooser compares).
+    models = _select_candidate_models(
+        ml_router.get_chat_backends(use_external=True), CHOOSER_NUM_CANDIDATES
+    )
     if not models:
         logger.warning("No models available for chat candidate generation")
         return
+    logger.debug(
+        f"Chooser chat candidates for task {task.id} using models: "
+        f"{[_model_display_name(m) for m in models]}"
+    )
 
     # Extract history for the chat models
     chat_history = task.context_json.get("history", [])
     user_prompt = task.context_json.get("prompt", "")
 
     candidate_index = 0
-    for model in models[:CHOOSER_NUM_CANDIDATES]:
+    for model in models:
         try:
+            # NOTE: the parameter is current_message_for_llm — passing
+            # current_message= raised TypeError for EVERY backend and silently
+            # produced zero chat candidates.
             response, _ = await model.generate_chat_response(
-                current_message=user_prompt,
+                current_message_for_llm=user_prompt,
                 previous_context_summary=None,
                 history=chat_history,
                 is_professional=True,
@@ -489,7 +561,7 @@ async def _generate_chat_candidates(task: ChooserTask):
                     task=task,
                     candidate_index=candidate_index,
                     kind="chat_response",
-                    model_name=getattr(model, "name", str(model)),
+                    model_name=_model_display_name(model),
                     content=response.strip(),
                     metadata={
                         "source": "synthetic",
@@ -511,7 +583,7 @@ async def _generate_chat_candidates(task: ChooserTask):
                 break
             try:
                 response, _ = await model.generate_chat_response(
-                    current_message=user_prompt,
+                    current_message_for_llm=user_prompt,
                     previous_context_summary=None,
                     history=chat_history,
                     is_professional=True,
@@ -522,7 +594,7 @@ async def _generate_chat_candidates(task: ChooserTask):
                         task=task,
                         candidate_index=candidate_index,
                         kind="chat_response",
-                        model_name=getattr(model, "name", str(model)),
+                        model_name=_model_display_name(model),
                         content=response.strip(),
                         metadata={
                             "source": "synthetic",

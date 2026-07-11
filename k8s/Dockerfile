@@ -58,4 +58,8 @@ EXPOSE 80
 STOPSIGNAL SIGTERM
 RUN mkdir -p /var/lib/nginx/body && chown -R www-data /var/lib/nginx/body
 ARG RELEASE=unknown
+# Expose the image version to the app so the deployment-time model-backend
+# health check can record which deployment it ran for (see
+# fighthealthinsurance/ml/model_health_check.py deployment_id()).
+ENV FHI_RELEASE=${RELEASE}
 CMD ["/opt/fighthealthinsurance/start-server.sh"]

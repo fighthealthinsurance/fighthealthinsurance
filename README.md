@@ -132,6 +132,81 @@ default), every configured model is enabled.
 export ENABLED_REMOTE_MODELS="azure-anthropic/claude-opus-4-8,azure-openai/gpt-5"
 ```
 
+### Model backend health checks
+
+Every deployment runs an end-to-end health check of all **enabled** model
+backends (`fighthealthinsurance/ml/model_health_check.py`): each backend gets
+one tiny "Reply with exactly: OK" inference through the exact same client,
+credentials, endpoint, and router registration real requests use. Results are
+categorized (`PASS`, `PASS_UNREGISTERED`, `NOT_CONFIGURED`, `DISABLED`,
+`FAIL_MISSING_CREDENTIALS`, `FAIL_CLIENT_INIT`, `FAIL_AUTH`,
+`FAIL_MODEL_NOT_FOUND`, `FAIL_RATE_LIMITED`, `FAIL_TIMEOUT`, `FAIL_NETWORK`,
+`FAIL_MALFORMED_RESPONSE`, `FAIL_OTHER`), persisted for the staff status page,
+and logged as a greppable summary block.
+
+**How the deployment hook is invoked:** `scripts/start-server.sh` runs
+`python manage.py check_model_backends --deploy-hook` in the
+`web-actor-launch` job (the `POLLING_ACTORS=1` container in
+`k8s/deploy.yaml`), right after the polling actors launch — i.e. once the
+migrations job has done its work and the app image is live.
+
+**Leader election / duplicate-run prevention:** `--deploy-hook` first claims a
+row in the shared database (`ModelHealthAlertState.try_claim`, a single
+atomic conditional UPDATE) keyed on the deployment identifier
+(`FHI_DEPLOYMENT_ID` > `FHI_RELEASE` — baked into the image from the build
+`RELEASE` arg > `FHI_VERSION`, with an hourly timestamp fallback). Exactly one
+process per deployment wins; every other pod/worker/job-retry sees the claim
+taken and skips, so the check runs — and the alert email is sent — at most
+once per deployment. Claims expire after 6 hours, so re-deploying the same
+version later still re-checks.
+
+**Running it manually** (any pod or local shell with the env configured):
+```bash
+# All enabled backends; exits non-zero if any check fails
+python manage.py check_model_backends
+
+# One model (friendly registry name or wire/internal name), custom timeout
+python manage.py check_model_backends --model anthropic/claude-sonnet-4-6 --timeout 15
+
+# Skip writing rows to the results table
+python manage.py check_model_backends --no-persist
+```
+
+**Alerting:** when any enabled backend fails, the deploy hook sends **one**
+consolidated email to `support42@fighthealthinsurance.com` listing every
+failing backend (provider, model, internal key, failure category, sanitized
+error, registry state) plus the deployment id, environment, timestamp, and
+where to look next. Controlled by `FHI_MODEL_HEALTH_ALERT_EMAIL`: unset =
+enabled in production, disabled under `DEBUG`/tests; `1` forces on anywhere;
+`0` forces off. Only the leader can send it, and only for `--deploy-hook`
+runs. Error text is sanitized — API keys, Authorization/x-api-key headers,
+and secret-looking environment values are redacted before logging, storing,
+or emailing.
+
+**Strict mode:** by default a failing backend does NOT fail the deployment
+(healthy backends keep serving; the failure is logged and emailed). Set
+`FHI_MODEL_HEALTH_STRICT=1` in environments where a dead required backend
+should fail the `web-actor-launch` job instead.
+
+**Where to inspect results:**
+- Deployment logs: search for `MODEL_BACKEND_HEALTH_SUMMARY` in the
+  `web-actor-launch` job output — one line per backend with category,
+  latency, and sanitized detail.
+- Staff dashboard: `/timbit/help/model_backends` shows, per configured model,
+  enabled/disabled state, provider, registry name, internal key,
+  selection-UI/reporting registration, the latest check result + timestamp,
+  and the last stored generation. `/timbit/help/model_usage` shows which
+  models users actually pick.
+- Database: `ModelBackendHealthCheckResult` keeps one row per backend per run.
+
+**Backfilling historical metadata:** `python manage.py
+backfill_model_metadata` normalizes legacy `model_name` values on
+`ProposedAppeal`/`ChooserCandidate` rows (old object reprs,
+`ClassName(model)` descriptors, unambiguous bare wire ids) to the canonical
+registry names the dashboard aggregates. Dry-run by default; `--apply` to
+write. Ambiguous or unrecognized values are reported and left untouched, and
+NULL rows stay in the dashboard's "(unknown)" bucket.
+
 ### Troubleshooting
 
 If you see `django.core.exceptions.AppRegistryNotReady`, make sure you're using Python 3.10+.

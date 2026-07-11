@@ -48,7 +48,7 @@ class MockChatModel:
 
     async def generate_chat_response(
         self,
-        message: str,
+        current_message_for_llm: str,
         previous_context_summary: Optional[Dict[str, Any]] = None,
         history: Optional[list[dict[str, str]]] = None,
         is_professional: Optional[bool] = True,
@@ -57,8 +57,13 @@ class MockChatModel:
         """
         Generate a mock response to a chat message.
 
+        The first parameter is named ``current_message_for_llm`` to match
+        ``RemoteModelLike.generate_chat_response`` exactly — callers (like the
+        chooser) pass it by keyword, so a mismatched mock signature would hide
+        real TypeErrors.
+
         Args:
-            message: The user's message
+            current_message_for_llm: The user's message
             previous_context_summary: Optional context from previous interactions
             history: Optional history of messages
             is_professional: Optional boolean indicating if the user is a professional
@@ -67,6 +72,7 @@ class MockChatModel:
         Returns:
             A tuple of (response_text, updated_context)
         """
+        message = current_message_for_llm
         # Use the next response that was set or the default
         response, context = self._next_response
 
