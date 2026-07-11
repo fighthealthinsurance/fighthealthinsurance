@@ -776,7 +776,11 @@ def signups_by_day(request):
         )
         # Convert query results to a DataFrame
         df = pd.DataFrame(list(signups_per_day))
-    except NotSupportedError:
+    except (NotSupportedError, NotImplementedError):
+        # SQLite raises NotSupportedError because DISTINCT ON (distinct with
+        # field names) is unsupported; PostgreSQL supports it but raises the
+        # builtin NotImplementedError at compile time when it is combined with
+        # annotate()'s GROUP BY. Fall back to a portable distinct count.
         signups_per_day = (
             _interested_professionals_excluding_test_emails()
             .order_by("signup_date")
@@ -1248,7 +1252,11 @@ def pro_signups_cumulative(request):
             .annotate(count=Count("email"))
         )
         df = pd.DataFrame(list(signups_per_day))
-    except NotSupportedError:
+    except (NotSupportedError, NotImplementedError):
+        # SQLite raises NotSupportedError because DISTINCT ON (distinct with
+        # field names) is unsupported; PostgreSQL supports it but raises the
+        # builtin NotImplementedError at compile time when it is combined with
+        # annotate()'s GROUP BY. Fall back to a portable distinct count.
         signups_per_day = (
             _interested_professionals_excluding_test_emails()
             .order_by("signup_date")

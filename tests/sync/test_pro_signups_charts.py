@@ -1,12 +1,35 @@
 """Tests for InterestedProfessional chart views."""
 
+from unittest import mock
+
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.urls import reverse
 
+from charts import views as charts_views
 from fighthealthinsurance.models import InterestedProfessional
 
 User = get_user_model()
+
+
+def _make_postgres_distinct_poison():
+    """Build a queryset-like mock that mimics PostgreSQL's behavior for
+    ``distinct(*fields)`` combined with ``annotate()``.
+
+    On PostgreSQL that combination raises the builtin ``NotImplementedError``
+    at SQL-compile time (i.e. when the queryset is evaluated), rather than the
+    ``NotSupportedError`` that SQLite raises. Every chained call returns the
+    same object; iterating it (as ``list(qs)`` does) raises.
+    """
+    poison = mock.MagicMock()
+    poison.distinct.return_value = poison
+    poison.order_by.return_value = poison
+    poison.values.return_value = poison
+    poison.annotate.return_value = poison
+    poison.__iter__.side_effect = NotImplementedError(
+        "annotate() + distinct(fields) is not implemented."
+    )
+    return poison
 
 
 class ProSignupChartViewTestBase(TestCase):
@@ -78,6 +101,53 @@ class ProSignupCumulativeChartTest(ProSignupChartViewTestBase):
         response = self.client.get(reverse("charts:pro_signups_cumulative"))
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"No signup data available", response.content)
+
+    def test_falls_back_when_distinct_annotate_not_implemented(self):
+        """Regression: PostgreSQL raises NotImplementedError for
+        distinct(fields) + annotate(); the view must fall back, not 500."""
+        self._create_pro("a@example.com", clicked_for_paid=True)
+
+        orig = charts_views._interested_professionals_excluding_test_emails
+        with mock.patch.object(
+            charts_views,
+            "_interested_professionals_excluding_test_emails",
+            side_effect=[_make_postgres_distinct_poison(), orig()],
+        ):
+            response = self.client.get(reverse("charts:pro_signups_cumulative"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Cumulative Pro Signups", response.content)
+
+
+class SignupsByDayChartTest(ProSignupChartViewTestBase):
+    def test_empty_returns_no_data_message(self):
+        response = self.client.get(reverse("charts:signups_by_day"))
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"No signup data available", response.content)
+
+    def test_renders_chart_with_data(self):
+        self._create_pro("a@example.com", clicked_for_paid=True)
+        self._create_pro("b@example.com", clicked_for_paid=False)
+
+        response = self.client.get(reverse("charts:signups_by_day"))
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"bokeh", response.content.lower())
+
+    def test_falls_back_when_distinct_annotate_not_implemented(self):
+        """Regression: PostgreSQL raises NotImplementedError for
+        distinct(fields) + annotate(); the view must fall back, not 500."""
+        self._create_pro("a@example.com", clicked_for_paid=True)
+
+        orig = charts_views._interested_professionals_excluding_test_emails
+        with mock.patch.object(
+            charts_views,
+            "_interested_professionals_excluding_test_emails",
+            side_effect=[_make_postgres_distinct_poison(), orig()],
+        ):
+            response = self.client.get(reverse("charts:signups_by_day"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"bokeh", response.content.lower())
 
 
 class ProSignupsByProviderTypeChartTest(ProSignupChartViewTestBase):
