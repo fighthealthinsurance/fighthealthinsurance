@@ -466,11 +466,19 @@ safety copy. Do not proceed without a validated dump.
 DUMP_DIR=/secure/backups/pg8-cutover ./scripts/restore-pg9-from-dump.sh
 ```
 
+> **How the app DB is loaded:** parallel `pg_restore -j` cannot read from a pipe,
+> so the script `kubectl cp`s the dump into `-9` first (onto the PVC volume root,
+> which has space — safe, `-9` is empty) and restores from that file, then removes
+> it. `kubectl cp` needs `tar` in the pod image; if it is missing, re-run with
+> `COPY_DUMP=false` to restore serially from stdin (slower, `JOBS` ignored). Tune
+> parallelism with `JOBS=<n>`. (Copying onto `-8` is never done — see the dump step.)
+
 **VALIDATION / GATE:** the script self-gates — it confirms `-9` is a writable
 primary, restores globals (tolerating the expected "role already exists" for
-`postgres`/`ziggystardust`), `pg_restore`s the `app` DB, then verifies user tables
-exist, `django_migrations` is populated, and tables are owned by `ziggystardust`.
-Investigate any `[FAIL]` before continuing.
+`postgres`/`ziggystardust`), copies + `pg_restore`s the `app` DB (verifying the
+copied size matches), then verifies user tables exist, `django_migrations` is
+populated, and tables are owned by `ziggystardust`. Investigate any `[FAIL]` before
+continuing.
 
 ---
 

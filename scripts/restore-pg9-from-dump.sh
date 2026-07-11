@@ -30,6 +30,13 @@ DUMP_DIR="${DUMP_DIR:-./pg8-safety-dump}"    # where backup-pg8-live-base.sh wro
 APP_DUMP="${APP_DUMP:-}"                      # explicit app-*.dump (else newest)
 GLOBALS_SQL="${GLOBALS_SQL:-}"               # explicit globals-*.sql (else newest)
 JOBS="${JOBS:-4}"                            # pg_restore parallelism
+# Parallel pg_restore (-j) needs a SEEKABLE file, not stdin, so we kubectl cp the
+# app dump into the pod first. REMOTE_TMP_DIR is where it lands INSIDE the pod --
+# default is on the PVC volume root (has the 50Gi, writable by postgres), not the
+# small container rootfs. Set COPY_DUMP=false to force the old stdin path (serial;
+# JOBS is then ignored) if the image lacks tar (kubectl cp needs tar in the pod).
+REMOTE_TMP_DIR="${REMOTE_TMP_DIR:-/var/lib/postgresql/data/restore-tmp}"
+COPY_DUMP="${COPY_DUMP:-true}"
 FORCE="${FORCE:-false}"
 ASSUME_YES="${ASSUME_YES:-false}"
 
@@ -107,13 +114,41 @@ kubectl -n "$NAMESPACE" exec -i "$TGT_POD" -c "$PG_CONTAINER" -- \
   psql -U postgres -f - < "$GLOBALS_SQL" 2>&1 | grep -vi 'already exists' || true
 
 # --- 2. app database (custom format) ---------------------------------------
-info "restoring database '$APP_DB' (pg_restore -j$JOBS) ..."
-# --no-comments avoids noise; ownership (OWNER TO ziggystardust) is preserved
-# because we restore as superuser. --exit-on-error would abort on the first
-# benign notice, so we DON'T use it; we validate row counts explicitly below.
-kubectl -n "$NAMESPACE" exec -i "$TGT_POD" -c "$PG_CONTAINER" -- \
-  pg_restore -U postgres -d "$APP_DB" -j "$JOBS" --no-password < "$APP_DUMP" \
-  || warn "pg_restore reported non-zero (often benign notices) -- verifying by row counts next."
+# Ownership (OWNER TO ziggystardust) is preserved because we restore as superuser.
+# We deliberately do NOT use --exit-on-error (benign notices would abort it); we
+# validate row counts explicitly below instead.
+if [ "$COPY_DUMP" = "true" ]; then
+  # Parallel path: copy the dump into the pod (a real seekable file), then -j.
+  REMOTE_DUMP="$REMOTE_TMP_DIR/$(basename "$APP_DUMP")"
+  # ensure the temp dir exists and is always cleaned up (even on failure/interrupt)
+  kubectl -n "$NAMESPACE" exec "$TGT_POD" -c "$PG_CONTAINER" -- mkdir -p "$REMOTE_TMP_DIR" \
+    || die "could not create $REMOTE_TMP_DIR in $TGT_POD"
+  cleanup_remote() { kubectl -n "$NAMESPACE" exec "$TGT_POD" -c "$PG_CONTAINER" -- rm -rf "$REMOTE_TMP_DIR" >/dev/null 2>&1 || true; }
+  trap cleanup_remote EXIT
+
+  info "copying $(basename "$APP_DUMP") into $TGT_POD:$REMOTE_DUMP (kubectl cp) ..."
+  # kubectl cp needs tar in the pod; namespace is embedded in the dest path.
+  kubectl cp "$APP_DUMP" "$NAMESPACE/$TGT_POD:$REMOTE_DUMP" -c "$PG_CONTAINER" \
+    || die "kubectl cp failed (does the image have 'tar'? if not, re-run with COPY_DUMP=false)"
+  # verify the copy landed with the right size before restoring
+  LOCAL_SZ="$(wc -c < "$APP_DUMP" | tr -d ' ')"
+  REMOTE_SZ="$(kubectl -n "$NAMESPACE" exec "$TGT_POD" -c "$PG_CONTAINER" -- stat -c '%s' "$REMOTE_DUMP" 2>/dev/null | tr -d '[:space:]')"
+  [ "${REMOTE_SZ:-0}" = "$LOCAL_SZ" ] || die "copied dump size mismatch (local=$LOCAL_SZ remote=${REMOTE_SZ:-missing})"
+  pass "dump copied ($REMOTE_SZ bytes)"
+
+  info "restoring database '$APP_DB' (pg_restore -j$JOBS from $REMOTE_DUMP) ..."
+  kubectl -n "$NAMESPACE" exec "$TGT_POD" -c "$PG_CONTAINER" -- \
+    pg_restore -U postgres -d "$APP_DB" -j "$JOBS" --no-password "$REMOTE_DUMP" \
+    || warn "pg_restore reported non-zero (often benign notices) -- verifying by row counts next."
+  cleanup_remote; trap - EXIT
+else
+  # Fallback: serial restore straight from stdin (no -j; parallel is unsupported
+  # over a pipe). Slower, but needs no tar and writes nothing extra to the pod.
+  info "restoring database '$APP_DB' (serial pg_restore from stdin; COPY_DUMP=false) ..."
+  kubectl -n "$NAMESPACE" exec -i "$TGT_POD" -c "$PG_CONTAINER" -- \
+    pg_restore -U postgres -d "$APP_DB" --no-password < "$APP_DUMP" \
+    || warn "pg_restore reported non-zero (often benign notices) -- verifying by row counts next."
+fi
 
 # --- 3. validate -----------------------------------------------------------
 info "=== post-restore validation ==="
