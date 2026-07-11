@@ -872,11 +872,13 @@ class FindNextStepsHelper:
             )
         # These rows are rendered with ``{% autoescape off %}`` in
         # outside_help.html, so escape the DB-sourced values and only
-        # linkify http(s) URLs.
+        # linkify http(s) URLs. Reuse sanitize_http_url so the scheme check
+        # is case-insensitive (a valid ``HTTPS://`` URL must not be dropped)
+        # and consistent with the escalation-packet path.
+        from fighthealthinsurance.escalation_addresses import sanitize_http_url
+
         regulator = denial.regulator
-        website = (regulator.website or "").strip() if regulator else ""
-        if not website.startswith(("http://", "https://")):
-            website = ""
+        website = sanitize_http_url(regulator.website) if regulator else ""
         if regulator is not None and (regulator.phone or website):
             how_to_parts = []
             if regulator.phone:

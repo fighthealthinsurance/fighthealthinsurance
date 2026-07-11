@@ -874,6 +874,22 @@ class RegulatorContactInfoTest(TestCase):
         denial.save()
         self.assertNotIn("javascript:", self._outside_help_text(denial))
 
+    def test_outside_help_linkifies_uppercase_scheme_website(self):
+        """The scheme check must be case-insensitive so a valid HTTPS:// URL
+        is still linkified rather than silently dropped."""
+        regulator = Regulator.objects.create(
+            name="Shouty Regulator",
+            website="HTTPS://example.gov/complaint",
+            alt_name="SHOUT",
+            regex="zzz-never-matches",
+            negative_regex="",
+            phone="1-800-555-0102",
+        )
+        denial = self._make_denial()
+        denial.regulator = regulator
+        denial.save()
+        self.assertIn("HTTPS://example.gov/complaint", self._outside_help_text(denial))
+
     def test_migration_backfill_fills_blank_regulator_phones(self):
         """The regulator-phone data migration must backfill phones for
         pre-existing deployments whose seeded rows predate the fixture
