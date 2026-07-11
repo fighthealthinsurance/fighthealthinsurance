@@ -120,6 +120,19 @@ def test_medicare_internal_appeal_is_60_days():
     )
 
 
+def test_medicare_external_review_shows_no_concrete_date():
+    # The Part D 60-day IRE clock runs from the plan's redetermination decision,
+    # not from the denial-received date, so we must not emit a concrete date
+    # even though a denial date was supplied.
+    result = compute_deadlines(
+        "medicare_advantage_partd", "pre_service", False, DENIAL
+    )
+    assert result.external_review_filing.deadline is None
+    assert result.external_review_filing.varies is True
+    # The plain-language label is still shown so the row is informative.
+    assert result.external_review_filing.label
+
+
 # ---------------------------------------------------------------------------
 # Medicaid: figures are flagged as varying by state.
 # ---------------------------------------------------------------------------
