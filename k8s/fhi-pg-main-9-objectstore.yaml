@@ -1,18 +1,25 @@
 # =============================================================================
 # ObjectStore for fhi-pg-main-9  (barman-cloud CNPG plugin backend)
 # =============================================================================
-# Field shapes verified OFFLINE against the plugin-barman-cloud v0.13.0 CRD
+# Field shapes verified against the installed plugin-barman-cloud CRD
 #   config/crd/bases/barmancloud.cnpg.io_objectstores.yaml  (apiVersion v1):
 #     spec.configuration      (required; contains destinationPath[required],
-#                              endpointURL, s3Credentials, data, wal, serverName)
+#                              endpointURL, s3Credentials, data, wal)
 #     spec.retentionPolicy    (TOP-LEVEL under spec, NOT under configuration)
 #     spec.instanceSidecarConfiguration.env  (list of {name,value|valueFrom})
 #   compression enums: data -> [bzip2,gzip,lz4,snappy]; wal -> +[xz,zstd].
 #
-# This ObjectStore is DEDICATED to fhi-pg-main-9. It reuses the SAME Backblaze
-# bucket + endpoint + credentials secret as the -8 store, but with a DISTINCT
-# serverName so -9's backups/WAL never collide with or overwrite -8's history.
-# NEVER set serverName to fhi-pg-main-8 here (that is -8's prefix in the bucket).
+# IMPORTANT: serverName is NOT set here. The installed plugin FORBIDS
+# spec.configuration.serverName ("use the 'serverName' plugin parameter in the
+# Cluster resource"). This ObjectStore is a REUSABLE backup-store definition; the
+# per-cluster namespacing (which prefix in the bucket) is set on the CLUSTER via
+# plugins[].parameters.serverName -- see fhi-pg-main-9-cluster.yaml, which sets
+# serverName: fhi-pg-main-9 so -9's objects land under s3://.../fhi-pg-main-9/ and
+# never collide with -8's fhi-pg-main-8/ history.
+#
+# This ObjectStore is DEDICATED to fhi-pg-main-9 (same Backblaze bucket/endpoint/
+# creds as the -8 store). Do NOT point any -8 cluster at it with serverName
+# fhi-pg-main-8, or you would overwrite -8's backup lineage.
 # =============================================================================
 apiVersion: barmancloud.cnpg.io/v1
 kind: ObjectStore
@@ -25,12 +32,10 @@ spec:
     destinationPath: s3://fhi-pg-backup-second/
     endpointURL: https://s3.us-west-004.backblazeb2.com
 
-    # DISTINCT server name -> object keys land under
-    #   s3://fhi-pg-backup-second/fhi-pg-main-9/...
-    # keeping -9's base backups + WAL fully separate from fhi-pg-main-8/.
-    # (If omitted, the plugin defaults serverName to the Cluster name, which is
-    #  also fhi-pg-main-9 -- but we set it explicitly so it can never drift.)
-    serverName: fhi-pg-main-9
+    # NOTE: serverName is intentionally NOT here (the plugin forbids it in the
+    # ObjectStore). It is set on the Cluster as plugins[].parameters.serverName:
+    # fhi-pg-main-9 -- that is what puts -9's objects under
+    # s3://fhi-pg-backup-second/fhi-pg-main-9/, isolated from -8's prefix.
 
     # REUSE the existing pg-backup2 secret keys EXACTLY (do not invent new keys).
     s3Credentials:
