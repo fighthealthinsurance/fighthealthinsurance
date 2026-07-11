@@ -14,6 +14,8 @@ It checks if actors are alive and returns their status.
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
+from django.conf import settings
+
 import ray
 from loguru import logger
 
@@ -37,12 +39,15 @@ def check_actor_health() -> Dict[str, Any]:
     """
     actors_to_check = [
         ("email_polling_actor", "fhi"),
-        ("fax_polling_actor", "fhi"),
         ("chooser_refill_actor", "fhi"),
         ("imr_refresh_actor", "fhi"),
         ("ucr_refresh_actor", "fhi"),
         ("pa_refresh_actor", "fhi"),
     ]
+    # When Temporal owns fax sending, the FaxPollingActor isn't launched, so it
+    # shouldn't be health-checked -- it would always report "actor not found".
+    if not getattr(settings, "TEMPORAL_ENABLED", False):
+        actors_to_check.insert(1, ("fax_polling_actor", "fhi"))
 
     details: List[ActorHealthDetail] = []
     alive_count = 0
@@ -130,7 +135,6 @@ def relaunch_actors(force: bool = False) -> Dict[str, Any]:
 
     results: Dict[str, Dict[str, Any]] = {
         "email_polling_actor": {"status": "pending"},
-        "fax_polling_actor": {"status": "pending"},
         "chooser_refill_actor": {"status": "pending"},
         "imr_refresh_actor": {"status": "pending"},
         "ucr_refresh_actor": {"status": "pending"},
@@ -139,12 +143,17 @@ def relaunch_actors(force: bool = False) -> Dict[str, Any]:
 
     actors = [
         ("email_polling_actor", email_polling_actor_ref),
-        ("fax_polling_actor", fax_polling_actor_ref),
         ("chooser_refill_actor", chooser_refill_actor_ref),
         ("imr_refresh_actor", imr_refresh_actor_ref),
         ("ucr_refresh_actor", ucr_refresh_actor_ref),
         ("pa_refresh_actor", pa_refresh_actor_ref),
     ]
+
+    # When Temporal owns fax sending, don't relaunch the (now unused)
+    # FaxPollingActor -- otherwise the health monitor would resurrect it.
+    if not getattr(settings, "TEMPORAL_ENABLED", False):
+        results["fax_polling_actor"] = {"status": "pending"}
+        actors.insert(1, ("fax_polling_actor", fax_polling_actor_ref))
 
     for actor_name, actor_ref in actors:
         try:

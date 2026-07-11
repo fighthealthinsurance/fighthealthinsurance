@@ -31,8 +31,12 @@ class FaxFollowUpView(generic.FormView):
 
 class SendFaxView(View):
     def get(self, request, **kwargs):
-        SendFaxHelper.remote_send_fax(**self.kwargs)
-        return render(self.request, "fax_thankyou.html")
+        result = SendFaxHelper.remote_send_fax(**self.kwargs)
+        return render(
+            self.request,
+            "fax_thankyou.html",
+            {"already_sent": result == "already_sent"},
+        )
 
 
 class StageFaxView(generic.FormView):
