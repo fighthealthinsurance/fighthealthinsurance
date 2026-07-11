@@ -5,11 +5,12 @@ from django.core.management.base import BaseCommand
 
 class Command(BaseCommand):
     help = (
-        "Probe every configured model backend with a tiny 'Hello' inference and "
-        "email a report of any unreachable backends to the support alias. Intended "
-        "to run once per deployment from a single container (e.g. right after "
-        "launch_polling_actors). No-ops under the test configs and when "
-        "FHI_STARTUP_MODEL_PROBE=0."
+        "DEPRECATED: superseded by `check_model_backends`, which adds "
+        "categorized failures, leader election, persistence, and a "
+        "consolidated alert email (start-server.sh now runs that on deploy). "
+        "This older probe hits every configured backend with a tiny 'Hello' "
+        "inference and emails a report of any unreachable backends. No-ops "
+        "under the test configs and when FHI_STARTUP_MODEL_PROBE=0."
     )
 
     def handle(self, *args: str, **options: Any):

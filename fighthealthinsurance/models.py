@@ -3708,6 +3708,63 @@ class ModelHealthAlertState(models.Model):
         return f"ModelHealthAlertState<{self.key}@{self.last_alert_sent}>"
 
 
+class ModelBackendHealthCheckResult(models.Model):
+    """One row per model backend per health-check run.
+
+    Written by the deployment-time model-backend health check (see
+    ``fighthealthinsurance.ml.model_health_check``) and by the manual
+    ``check_model_backends`` management command. Read by the staff-only
+    model-backend status dashboard, which shows the latest row per backend.
+
+    ``category`` is one of the ``model_health_check`` category constants
+    (PASS, FAIL_AUTH, FAIL_MODEL_NOT_FOUND, ...). ``error`` is sanitized
+    before persisting — API keys/headers are redacted upstream — but treat it
+    as diagnostic text, never re-log it with lower sanitization standards.
+    """
+
+    # Groups all rows written by a single check run.
+    run_id = models.CharField(max_length=64, db_index=True)
+    # Deployment/version identifier (FHI_DEPLOYMENT_ID / FHI_RELEASE /
+    # FHI_VERSION, or a coarse timestamp fallback when unversioned).
+    deployment_id = models.CharField(max_length=128, blank=True, default="")
+    # DJANGO_CONFIGURATION at run time (Prod/Dev/Test/...).
+    environment = models.CharField(max_length=64, blank=True, default="")
+    # Provider label, e.g. "Anthropic", "Azure OpenAI", "DeepInfra".
+    provider = models.CharField(max_length=100, blank=True, default="")
+    # Friendly registry name recorded on generations (e.g.
+    # "anthropic/claude-sonnet-4-6"); matches ProposedAppeal.model_name.
+    model_name = models.CharField(max_length=200, db_index=True)
+    # Wire-level model id / Azure deployment name (e.g. "claude-sonnet-4-6").
+    internal_name = models.CharField(max_length=200, blank=True, default="")
+    # Whether the backend was enabled for this run (not filtered out by
+    # configuration or the ENABLED_REMOTE_MODELS allow-list).
+    enabled = models.BooleanField(default=True)
+    ok = models.BooleanField(default=False)
+    category = models.CharField(max_length=64, db_index=True)
+    error = models.TextField(blank=True, default="")
+    latency_ms = models.IntegerField(null=True, blank=True)
+    # Whether the model was registered in the router pools used for
+    # generation (and therefore can appear in the selection UI) and under a
+    # name reporting recognizes at the time of the check.
+    ui_registered = models.BooleanField(default=False)
+    reporting_registered = models.BooleanField(default=False)
+    started_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        indexes = [
+            models.Index(
+                fields=["model_name", "-created_at"], name="mbhc_model_created_idx"
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return (
+            f"ModelBackendHealthCheckResult<{self.model_name}: {self.category} "
+            f"@ {self.created_at}>"
+        )
+
+
 class SiteBanner(models.Model):
     """Admin-controlled banner shown in the site header to every visitor.
 

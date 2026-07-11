@@ -20,10 +20,21 @@ if [ -n "$MIGRATIONS" ]; then
 elif [ -n "$POLLING_ACTORS" ]; then
   # Some for polling actors
   python manage.py launch_polling_actors || (echo "Error starting ray actor?" && sleep 480)
-  # Probe model backends once per deploy from this single container and email a
-  # report of any unreachable backends to support. Non-blocking: a probe
-  # failure must never fail the actor container's deploy.
-  python manage.py probe_models || echo "Model probe failed (non-blocking)"
+  # Deployment-time model-backend health check (supersedes probe_models).
+  # Runs once per deployment: the command claims a database leader slot keyed
+  # on the deployment id, so even if this job retries (or another pod races
+  # it) the check and its consolidated alert email happen at most once. It
+  # tests every enabled backend with a tiny prompt, logs a
+  # MODEL_BACKEND_HEALTH_SUMMARY block, and emails support on failures.
+  # Non-blocking by default: a failing model backend must not fail the
+  # deploy. Set FHI_MODEL_HEALTH_STRICT=1 to fail this job instead.
+  if ! python manage.py check_model_backends --deploy-hook; then
+    if [ "${FHI_MODEL_HEALTH_STRICT:-0}" = "1" ]; then
+      echo "Model backend health check failed and FHI_MODEL_HEALTH_STRICT=1; failing deploy job"
+      exit 1
+    fi
+    echo "Model backend health check failed (non-blocking)"
+  fi
   sleep 10
   exit 0
 elif [ -n "$PREFETCH_EXTRALINKS" ]; then

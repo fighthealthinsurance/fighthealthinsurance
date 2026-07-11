@@ -31,6 +31,7 @@ from fighthealthinsurance.models import (
     FollowUpSched,
     InterestedProfessional,
     MailingListSubscriber,
+    ModelBackendHealthCheckResult,
     ProfessionalDomainRelation,
     ProfessionalUser,
     ProposedAppeal,
@@ -637,6 +638,113 @@ class ModelUsageDashboardView(generic.TemplateView):
             if mn:
                 presented[mn] += n
         return _merge_stats(chosen, dict(presented))
+
+
+class ModelBackendStatusView(generic.TemplateView):
+    """Staff page showing the state of every configured model backend.
+
+    Per model: enabled/disabled, provider, configured (friendly) name,
+    internal/wire key, whether it is registered in the router pools that feed
+    the selection UI and recognized by usage reporting, the latest health
+    check outcome (category, latency, timestamp, sanitized error), and the
+    last time the model actually produced a stored generation
+    (ProposedAppeal / ChooserCandidate rows).
+
+    Enumeration reuses the health-check module's configuration classification
+    but performs NO model invocations — this page must stay cheap to load.
+    Run ``python manage.py check_model_backends`` (or deploy) to refresh the
+    health data.
+    """
+
+    template_name = "model_backend_status.html"
+
+    def get_context_data(self, **kwargs):
+        from fighthealthinsurance.ml import model_health_check as mhc
+
+        ctx = super().get_context_data(**kwargs)
+
+        static_results, checkable = mhc.enumerate_backend_checks()
+        entries = list(static_results) + [pending for pending, _ in checkable]
+        entries.sort(key=lambda r: (not r.enabled, r.provider, r.model_name))
+
+        names = [r.model_name for r in entries]
+        latest_checks = self._latest_check_by_model(names)
+        last_generation = self._last_generation_by_model(names)
+
+        rows: List[Dict[str, Any]] = []
+        for r in entries:
+            check = latest_checks.get(r.model_name)
+            rows.append(
+                {
+                    "provider": r.provider,
+                    "model_name": r.model_name,
+                    "internal_name": r.internal_name,
+                    "enabled": r.enabled,
+                    # Static category from configuration classification (e.g.
+                    # NOT_CONFIGURED / DISABLED / FAIL_MISSING_CREDENTIALS);
+                    # empty for backends that need a live probe to judge.
+                    "config_category": (
+                        r.category if r.category != mhc.CATEGORY_OTHER else ""
+                    ),
+                    "config_detail": r.error,
+                    "ui_registered": r.ui_registered,
+                    "reporting_registered": r.reporting_registered,
+                    "last_check": check,
+                    "last_generation": last_generation.get(r.model_name),
+                }
+            )
+
+        ctx["title"] = "Model Backend Status"
+        ctx["rows"] = rows
+        ctx["healthy_count"] = sum(
+            1 for row in rows if row["last_check"] is not None and row["last_check"].ok
+        )
+        return ctx
+
+    @staticmethod
+    def _latest_check_by_model(
+        names: List[str],
+    ) -> Dict[str, ModelBackendHealthCheckResult]:
+        """Most recent health-check row per model name (one query, newest
+        first, first-seen wins)."""
+        latest: Dict[str, ModelBackendHealthCheckResult] = {}
+        qs = ModelBackendHealthCheckResult.objects.filter(
+            model_name__in=names
+        ).order_by("-created_at")[:2000]
+        for row in qs:
+            if row.model_name not in latest:
+                latest[row.model_name] = row
+        return latest
+
+    @staticmethod
+    def _last_generation_by_model(
+        names: List[str],
+    ) -> Dict[str, datetime.datetime]:
+        """Latest stored generation per model across ProposedAppeal and
+        ChooserCandidate — evidence the model was actually invoked (and its
+        metadata persisted) in a real flow."""
+        from django.db.models import Max
+
+        last: Dict[str, datetime.datetime] = {}
+        # .order_by() clears any Meta ordering, which would otherwise leak
+        # into the GROUP BY and break the aggregation.
+        for name, ts in (
+            ProposedAppeal.objects.filter(model_name__in=names)
+            .order_by()
+            .values_list("model_name")
+            .annotate(latest=Max("created_at"))
+        ):
+            if ts is not None:
+                last[name] = ts
+        for name, ts in (
+            ChooserCandidate.objects.filter(model_name__in=names)
+            .order_by()
+            .values_list("model_name")
+            .annotate(latest=Max("created_at"))
+        ):
+            if ts is not None and (name not in last or ts > last[name]):
+                last[name] = ts
+        return last
 
 
 class ProConnectorProcessView(View):
