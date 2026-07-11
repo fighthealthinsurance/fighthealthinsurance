@@ -52,6 +52,14 @@ class TestValidation:
         with pytest.raises(ValueError, match="period"):
             validate_report_dict(data)
 
+    def test_rejects_non_dict_state_block(self):
+        # A non-dict state block would AttributeError deep in load_report_dict;
+        # validation must reject it up front with a clean ValueError.
+        data = sample_report()
+        data["states"]["TX"] = "not-an-object"
+        with pytest.raises(ValueError, match="TX"):
+            validate_report_dict(data)
+
 
 @pytest.mark.django_db
 class TestLoadReport:
@@ -175,3 +183,32 @@ class TestManagementCommand:
 
         with pytest.raises(CommandError, match="--url or --file"):
             call_command("ingest_worst_insurance", stdout=StringIO())
+
+    def test_rejects_both_url_and_file(self):
+        from django.core.management.base import CommandError
+
+        with pytest.raises(CommandError, match="not both"):
+            call_command(
+                "ingest_worst_insurance",
+                url="https://example.com/rankings.json",
+                file=str(SAMPLE_PATH),
+                stdout=StringIO(),
+            )
+
+    def test_ingests_from_url(self):
+        from unittest.mock import patch
+
+        out = StringIO()
+        with patch(
+            "fighthealthinsurance.management.commands.ingest_worst_insurance.fetch_json",
+            return_value=sample_report(),
+        ) as mock_fetch:
+            call_command(
+                "ingest_worst_insurance",
+                url="https://example.com/rankings.json",
+                stdout=out,
+            )
+        mock_fetch.assert_called_once_with("https://example.com/rankings.json")
+        report = WorstInsuranceReport.objects.get(period="2026-07")
+        assert report.source_url == "https://example.com/rankings.json"
+        assert "4 created" in out.getvalue()

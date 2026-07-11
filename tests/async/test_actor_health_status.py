@@ -16,6 +16,7 @@ def _patched_actor_refs():
         "imr_refresh_actor_ref",
         "pa_refresh_actor_ref",
         "ucr_refresh_actor_ref",
+        "worst_insurance_refresh_actor_ref",
     ]
     stack = contextlib.ExitStack()
     for module_name in modules:

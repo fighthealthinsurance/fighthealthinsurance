@@ -17,7 +17,7 @@
                     <h1 class="hero-headline">{{ rankings.0.issuer_name }} ranks worst in {{ state.name }}</h1>
                     {% with top=table.rows.0 %}
                     {% if top.cells.0 %}
-                    <p class="hero-subcopy">We estimate {{ rankings.0.issuer_name }}'s denials cost {{ state.name }} patients and providers <strong>~{{ top.cells.0.display|cut:"~" }} hours</strong> in this period ({{ top.cells.0.detail }}). It's an estimate from public data &mdash; <a href="{% url 'worst_insurance_methodology' %}" class="text-white text-decoration-underline">how we calculate it</a>. Every underlying number is below.</p>
+                    <p class="hero-subcopy">We estimate {{ rankings.0.issuer_name }}'s denials cost {{ state.name }} patients and providers <strong>{{ top.cells.0.display }} hours</strong> in this period ({{ top.cells.0.detail }}). It's an estimate from public data &mdash; <a href="{% url 'worst_insurance_methodology' %}" class="text-white text-decoration-underline">how we calculate it</a>. Every underlying number is below.</p>
                     {% else %}
                     <p class="hero-subcopy">Based on public regulator data. Full rankings and every underlying number below.</p>
                     {% endif %}

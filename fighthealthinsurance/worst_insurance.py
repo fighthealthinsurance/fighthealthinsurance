@@ -121,13 +121,16 @@ def estimated_hours(ranking: "WorstInsuranceRanking") -> Optional[int]:
 
 
 def _format_metric(key: str, metric: dict) -> dict:
-    value = metric.get("value", 0)
-    numerator = int(metric.get("numerator", 0))
-    denominator = int(metric.get("denominator", 0))
+    # ``.get(k, 0)`` returns None when the key exists with a null value, so
+    # coalesce with ``or 0`` — a metric dict carrying nulls must render a dash,
+    # not 500 the page.
+    value = metric.get("value") or 0
+    numerator = int(metric.get("numerator") or 0)
+    denominator = int(metric.get("denominator") or 0)
     if key == "time_burden":
         detail_data = metric.get("detail") or {}
-        won = int(detail_data.get("won_appeal_hours", 0))
-        est = int(detail_data.get("unappealed_denial_hours", 0))
+        won = int(detail_data.get("won_appeal_hours") or 0)
+        est = int(detail_data.get("unappealed_denial_hours") or 0)
         display = f"~{int(value):,}"
         if est:
             detail = f"{won:,} from overturned appeals + ~{est:,} estimated"

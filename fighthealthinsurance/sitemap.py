@@ -175,7 +175,7 @@ class WorstInsuranceSitemap(Sitemap):
                 state_help = get_state_help_by_abbreviation(state)
                 if state_help:
                     slugs.append(state_help.slug)
-            return ["index", "methodology"] + slugs
+            return ["index", "methodology", *slugs]
         except Exception as e:
             logger.warning(f"Could not load worst-insurance rankings for sitemap: {e}")
             return []

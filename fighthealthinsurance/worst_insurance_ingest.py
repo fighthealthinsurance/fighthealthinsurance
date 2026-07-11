@@ -58,6 +58,12 @@ def validate_report_dict(data: Dict) -> None:
         raise ValueError(f"rankings 'period' must be YYYY-MM, got {data['period']!r}")
     if not isinstance(data["states"], dict):
         raise ValueError("rankings 'states' must be an object")
+    # Each state block must be a dict; otherwise load_report_dict's
+    # ``block.get(...)`` would raise AttributeError (which the management
+    # command doesn't catch) instead of a clean ValueError.
+    for state, block in data["states"].items():
+        if not isinstance(block, dict):
+            raise ValueError(f"rankings state {state!r} must be an object")
 
 
 def match_insurance_company(issuer_name: str) -> Optional[InsuranceCompany]:
