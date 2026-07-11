@@ -32,7 +32,7 @@
                     <h1 class="hero-headline">{{ reason.title }}</h1>
                     <p class="hero-subcopy">{{ reason.subtitle }}</p>
                     <div class="hero-cta-group">
-                        <a href="{% url 'scan' %}?denial_reason={{ reason.slug|urlencode }}" class="section-btn btn btn-default smoothScroll primary-cta">
+                        <a href="{% url 'scan' %}" class="section-btn btn btn-default smoothScroll primary-cta">
                             Appeal This Denial →
                         </a>
                     </div>
@@ -125,7 +125,7 @@
                 <h2 class="mb-3">Ready to Fight Your Denial?</h2>
                 <p class="lead mb-4">{{ reason.cta_text }}</p>
                 <div class="d-flex justify-content-center gap-3 flex-wrap">
-                    <a href="{% url 'scan' %}?denial_reason={{ reason.slug|urlencode }}" class="btn btn-green btn-lg">
+                    <a href="{% url 'scan' %}" class="btn btn-green btn-lg">
                         Generate Your Appeal Letter
                     </a>
                     <a href="{% url 'chat' %}" class="btn btn-outline-green btn-lg">
