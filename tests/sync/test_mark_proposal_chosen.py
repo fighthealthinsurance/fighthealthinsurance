@@ -130,6 +130,18 @@ class MarkProposalChosenTest(TestCase):
         pa = mark_proposal_chosen(self.denial, "user authored text", editted=True)
         self.assertIsNone(pa.model_name)
 
+    def test_blank_sole_draft_model_name_not_inferred(self):
+        # model_name is blank=True; a blank/whitespace sole-draft label is
+        # not usable evidence and must not be stamped onto the pick.
+        ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="blank-named draft",
+            chosen=False,
+            model_name="   ",
+        )
+        pa = mark_proposal_chosen(self.denial, "edited-text")
+        self.assertIsNone(pa.model_name)
+
     def test_sole_draft_inference_carries_synthesized_flag(self):
         ProposedAppeal.objects.create(
             for_denial=self.denial,

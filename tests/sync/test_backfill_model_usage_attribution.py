@@ -182,6 +182,27 @@ class BackfillProposedAppealTest(TestCase):
         draft.refresh_from_db()
         self.assertIsNone(draft.model_name)
 
+    def test_blank_draft_model_name_not_copied(self):
+        # model_name is blank=True. A matching draft whose model_name is an
+        # empty/whitespace string is not usable evidence: the pick must not
+        # inherit it (pre-tracking pick => labeled legacy instead).
+        ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="draft text",
+            chosen=False,
+            model_name="  ",
+        )
+        pick = ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="draft text",
+            chosen=True,
+            model_name=None,
+        )
+        ProposedAppeal.objects.filter(pk=pick.pk).update(created_at=None)
+        run_command("--apply")
+        pick.refresh_from_db()
+        self.assertEqual(pick.model_name, LEGACY_UNATTRIBUTED_LABEL)
+
     def test_valid_names_never_overwritten(self):
         pick = ProposedAppeal.objects.create(
             for_denial=self.denial,

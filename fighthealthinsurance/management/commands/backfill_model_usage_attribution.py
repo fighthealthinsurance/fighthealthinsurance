@@ -92,6 +92,8 @@ class Command(BaseCommand):
         records, or None when the database lacks sufficient evidence."""
         if pa.for_denial_id is None:
             return None
+        # model_name is blank=True, so exclude empty strings too — a blank
+        # label is not usable evidence and must not be copied onto the pick.
         original = (
             ProposedAppeal.objects.filter(
                 for_denial_id=pa.for_denial_id,
@@ -99,12 +101,17 @@ class Command(BaseCommand):
                 appeal_text=pa.appeal_text,
                 model_name__isnull=False,
             )
+            .exclude(model_name="")
             .order_by("-id")
             .first()
         )
         if original is not None:
             original_name = original.model_name
-            if original_name is not None and not is_object_repr(original_name):
+            if (
+                original_name
+                and original_name.strip()
+                and not is_object_repr(original_name)
+            ):
                 return (original_name, original.synthesized, "text_match")
         if not pa.editted:
             inferred = ProposedAppeal.sole_draft_attribution(pa.for_denial_id)
@@ -304,7 +311,15 @@ class Command(BaseCommand):
                 f"distinct model_name values: {len(distinct)} "
                 f"({len(repr_cands)} are object reprs)"
             )
-            normalized = sorted({str(normalize_model_label(v)) for v in distinct if v})
+            # Drop labels that normalize to None (blank/whitespace) rather
+            # than stringifying them into a misleading literal "None".
+            normalized = sorted(
+                {
+                    label
+                    for v in distinct
+                    if (label := normalize_model_label(v)) is not None
+                }
+            )
             self.stdout.write(f"distinct labels after normalization: {normalized}")
 
         self.stdout.write("\n-- Dashboard aggregates by window --")

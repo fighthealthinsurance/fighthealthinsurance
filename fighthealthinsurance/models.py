@@ -2566,8 +2566,10 @@ class ProposedAppeal(ExportModelOperationsMixin("ProposedAppeal"), models.Model)
         denial's presented drafts, so a pick can safely inherit the drafts'
         model when they all share one. Any draft with a NULL model_name makes
         the inference ambiguous (the pick could have come from it), so no
-        attribution is returned in that case. Used by mark_proposal_chosen as
-        a fallback and by the attribution backfill; must never guess.
+        attribution is returned in that case. A blank/whitespace model_name
+        (the field is ``blank=True``) is treated as missing for the same
+        reason. Used by mark_proposal_chosen as a fallback and by the
+        attribution backfill; must never guess.
         """
         pairs = list(
             ProposedAppeal.objects.filter(for_denial_id=denial_id, chosen=False)
@@ -2576,7 +2578,7 @@ class ProposedAppeal(ExportModelOperationsMixin("ProposedAppeal"), models.Model)
         )
         if len(pairs) == 1:
             model_name, synthesized = pairs[0]
-            if model_name is not None:
+            if model_name is not None and model_name.strip():
                 return (model_name, synthesized)
         return None
 
