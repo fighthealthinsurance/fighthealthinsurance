@@ -459,6 +459,59 @@ class AppealDeadlineCalculatorView(generic.TemplateView):
         return context
 
 
+class StartAppealView(generic.TemplateView):
+    """Conversion-focused, no-login landing page that funnels visitors into the
+    existing scan/chat appeal flow.
+
+    Reuses the scan view's already-supported deep-link GET params
+    (``default_procedure``, ``default_condition``, ``microsite_slug``,
+    ``microsite_title``) so that, when a campaign or internal link lands here
+    with those params, the primary CTA carries them straight through to the
+    scan (and chat) flow to pre-fill the appeal. This page does not change any
+    appeal-generation behavior; it only builds entry links.
+    """
+
+    template_name = "start_appeal.html"
+
+    # The deep-link params the scan view (InitialProcessView) already accepts.
+    # Keep this list in sync with the GET params read in InitialProcessView.
+    SCAN_DEEP_LINK_PARAMS = (
+        "default_procedure",
+        "default_condition",
+        "microsite_slug",
+        "microsite_title",
+    )
+
+    def _passthrough_params(self) -> dict[str, str]:
+        """Collect the supported scan deep-link params present on this request."""
+        params: dict[str, str] = {}
+        for key in self.SCAN_DEEP_LINK_PARAMS:
+            value = self.request.GET.get(key, "").strip()
+            if value:
+                params[key] = value
+        return params
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context["title"] = "Start Your Health Insurance Appeal Free"
+
+        params = self._passthrough_params()
+        query = urlencode(params) if params else ""
+
+        scan_url = reverse("scan")
+        chat_url = reverse("chat")
+        if query:
+            scan_url = f"{scan_url}?{query}"
+            chat_url = f"{chat_url}?{query}"
+
+        context["scan_url"] = scan_url
+        context["chat_url"] = chat_url
+        context["has_prefill"] = bool(params)
+        context["prefill_procedure"] = params.get("default_procedure", "")
+        context["prefill_condition"] = params.get("default_condition", "")
+        return context
+
+
 class PBSNewsHourView(generic.TemplateView):
     """Page about the PBS NewsHour feature."""
 
