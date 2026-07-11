@@ -205,6 +205,46 @@ class TestMLCitationsHelper:
 
     @pytest.mark.django_db
     @pytest.mark.asyncio
+    @patch("fighthealthinsurance.ml.ml_citations_helper.ml_router")
+    async def test_generic_citations_supplemental_not_duplicated_on_cache_hit(
+        self, mock_ml_router
+    ):
+        """Supplemental citations appear exactly once when reading from cache.
+
+        Regression: a cache miss used to store the combined (ML + supplemental)
+        list, so a later cache hit read the supplemental citations from the
+        blob *and* re-appended freshly-fetched ones, duplicating them. The
+        cache must hold only the ML-only citations.
+        """
+        mock_ml_router.partial_find_citation_backends.return_value = [self.mock_backend]
+
+        with patch(
+            "fighthealthinsurance.ml.ml_citations_helper.best_within_timelimit",
+            new_callable=AsyncMock,
+            return_value=["ML Citation 1", "ML Citation 2"],
+        ), patch.object(
+            MLCitationsHelper,
+            "_get_supplemental_citations",
+            new_callable=AsyncMock,
+            return_value=["Supplemental snippet"],
+        ):
+            # First call: cache miss -> generates, appends supplemental, caches.
+            first = await MLCitationsHelper.generate_generic_citations(
+                procedure_opt="widget install",
+                diagnosis_opt="widget deficiency",
+            )
+            # Second call: cache hit -> reads cached blob, appends supplemental.
+            second = await MLCitationsHelper.generate_generic_citations(
+                procedure_opt="widget install",
+                diagnosis_opt="widget deficiency",
+            )
+
+        assert first.count("Supplemental snippet") == 1
+        assert second.count("Supplemental snippet") == 1
+        assert second == ["ML Citation 1", "ML Citation 2", "Supplemental snippet"]
+
+    @pytest.mark.django_db
+    @pytest.mark.asyncio
     async def test_supplemental_citations_empty_when_no_match(self):
         denial = MagicMock(spec=Denial)
         denial.microsite_slug = None
