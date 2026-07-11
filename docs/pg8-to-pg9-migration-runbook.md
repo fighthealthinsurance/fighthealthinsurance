@@ -196,8 +196,7 @@ just pre-positions the flip that Phase 9 will use. Rationale + the
 
 ```bash
 kubectl apply -f k8s/db-config.yaml        # defaults PDBHOST = fhi-pg-main-8-rw...
-kubectl apply -f k8s/deploy.yaml           # workloads now read PDBHOST from it
-kubectl apply -f k8s/ray/cluster.yaml
+./scripts/build.sh --no-build
 ```
 
 **VALIDATION** — confirm it was a true no-op (still pointing at `-8`):
