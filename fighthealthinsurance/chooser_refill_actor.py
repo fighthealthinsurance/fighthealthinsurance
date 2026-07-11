@@ -5,7 +5,7 @@ import time
 import ray
 from asgiref.sync import sync_to_async
 
-from fighthealthinsurance.utils import get_env_variable
+from fighthealthinsurance.utils import aclose_old_connections, get_env_variable
 
 name = "ChooserRefillActor"
 
@@ -43,12 +43,15 @@ class ChooserRefillActor:
                 # Check and refill the task pool
                 await check_and_refill_task_pool()
 
+                # Don't hold a Postgres slot while idling between checks.
+                await aclose_old_connections()
                 # Sleep for 5 minutes between checks
                 await asyncio.sleep(300)
             except Exception:
                 self._logger.opt(exception=True).error(
                     "Error while checking/refilling chooser task pool"
                 )
+                await aclose_old_connections()
                 # On error, wait a bit longer before retrying
                 await asyncio.sleep(60)
 
