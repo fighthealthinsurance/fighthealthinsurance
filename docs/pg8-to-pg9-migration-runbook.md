@@ -1,13 +1,50 @@
 # Runbook — migrate `fhi-pg-main-8` → `fhi-pg-main-9` (CloudNativePG)
 
-Master, gated runbook for standing up **`fhi-pg-main-9`** as a continuously
-streaming **replica** of the live **`fhi-pg-main-8`**, verifying it, then cutting
-the app over. Grounded in `notes/incident-evidence.md` and
-`notes/plan-01-fhi-pg-9-and-backups.md`.
+**Single, master, gated runbook** for standing up **`fhi-pg-main-9`** as a
+continuously streaming **replica** of the live **`fhi-pg-main-8`**, verifying it
+end-to-end, then cutting the application over — while never interrupting the
+only healthy production primary (`fhi-pg-main-8-3`).
 
-> **Every step is `ACTION → VALIDATION → GATE`. Do not proceed past a step until
-> its own validation is green.** Commands are copy-pasteable. Destructive/
+This document consolidates everything: the provisioning side (ObjectStore,
+replica Cluster, source prep, streaming/backup verification) **and** the cutover
+side (app DB-host parameterization, promotion, app switch, rollback). All
+supporting artifacts live in this same branch — see
+[Deliverables](#deliverables-all-in-this-branch).
+
+> **Every step is `ACTION → VALIDATION → GATE`. Do NOT proceed past a step until
+> its own validation is green.** Commands are copy-pasteable. Destructive /
 > promotion steps require explicit confirmation and are called out.
+
+Grounding evidence: `notes/incident-evidence.md`,
+`notes/plan-01-fhi-pg-9-and-backups.md`. Deep dives:
+[`docs/pg-reliability-hardening.md`](./pg-reliability-hardening.md) (why `-8`
+broke + how the plugin was repaired) and
+[`k8s/db-host-configurability.md`](../k8s/db-host-configurability.md) (how the
+app DB host became one reversible switch).
+
+---
+
+## At-a-glance — the whole migration in order
+
+Run top to bottom. Each phase has its own gate; a red gate stops the line.
+
+| # | Phase | One-line goal | Green gate |
+|---|---|---|---|
+| 0 | [Fix `-8` archiving](#phase-0--fix--8-archiving--drain-stuck-wal-live-human-run) | Unwedge WAL archiving + shrink pgdata on `-8` | fresh `-8` backup `completed`; archiver advancing |
+| 1 | [Prereqs on `-8`](#phase-1--migration-prerequisites-on--8-role--pg_hba--wal-retention) | Migration role + `pg_hba` replication + WAL retention | `check-pg8-source.sh` → `SOURCE PREFLIGHT PASSED` |
+| 2 | [Parameterize app DB host](#phase-2--parameterize-the-app-db-host-safe-no-op-now-the-cutover-switch-later) | Apply `fhi-db-config` (no-op today) so cutover is one flip | app still talks to `-8`; ConfigMap = current host |
+| 3 | [Safety-net dump](#phase-3--safety-net-logical-dump-of--8) | Off-cluster logical dump of `-8` | validated dump in hand off-cluster |
+| 4 | [Apply ObjectStore + Cluster](#phase-4--apply-the-objectstore-then-the-cluster) | Create `-9` ObjectStore then replica Cluster | `-9-1` Running, in recovery (replica) |
+| 5 | [Verify streaming](#phase-5--verify-streaming-no-slot-expected) | Prove `-9` streams from `-8` | `check-pg9-replication.sh` → `-9 REPLICATION HEALTHY` |
+| 6 | [Verify `-9` backups](#phase-6--verify--9-archiving--a-fresh--9-backup) | `-9`'s OWN archiver + first backup work | `-9` Backup `completed`; objects in bucket |
+| 7 | [Scale 1→2→3](#phase-7--scale-123-with-per-step-validation) | Add healthy `-9` replicas one at a time | each new replica ready + sidecar + bounded lag |
+| 8 | [Data validation](#phase-8--data-validation) | Compare `-8` vs `-9` data | `validate-pg8-vs-pg9.sh` → `DATA VALIDATION PASSED` |
+| 9 | [Quiesce, zero-lag, promote](#phase-9--quiesce-zero-lag-promote) | Stop `-8` writes, promote `-9` | `pg_is_in_recovery()=f` on `-9`; `-8` fenced |
+| 10 | [App cutover](#phase-10--app-cutover-keep--8-as-rollback) | Flip `PDBHOST` to `-9`, roll the app | app healthy on `-9`; `-8` kept as rollback |
+| 11 | [Rollback semantics](#phase-11--rollback-semantics) | Know how to reverse, pre- and post-write | exactly one writable primary always |
+| — | [Decommission `-8`](#decommission--8-only-after-a-verified--9-restore) | Only after a verified `-9` restore drill | `-9` restore drill green |
+
+---
 
 ## Hard environment facts
 
@@ -16,7 +53,7 @@ the app over. Grounded in `notes/incident-evidence.md` and
 | Namespace | `totallylegitco` |
 | Source cluster | `fhi-pg-main-8` (only healthy primary: `fhi-pg-main-8-3`) |
 | Source rw service | `fhi-pg-main-8-rw.totallylegitco.svc` |
-| Target cluster | `fhi-pg-main-9` |
+| Target cluster | `fhi-pg-main-9` (rw service `fhi-pg-main-9-rw.totallylegitco.svc`) |
 | PG image | `ghcr.io/cloudnative-pg/postgresql:18.1-system-trixie` |
 | Operator | CloudNativePG `v1.28.0` |
 | Backup plugin | barman-cloud `v0.13` (sidecar image `…/plugin-barman-cloud:v0.13.0`) |
@@ -29,25 +66,33 @@ the app over. Grounded in `notes/incident-evidence.md` and
 | Backup creds | `pg-backup2` (`PG_ACCESS_KEY_ID` / `PG_ACCESS_SECRET_KEY`) |
 | Bucket / endpoint | `s3://fhi-pg-backup-second/` @ `https://s3.us-west-004.backblazeb2.com` |
 | -9 ObjectStore | `fhi-backup-store-9`, serverName `fhi-pg-main-9` |
+| App DB-host switch | ConfigMap `fhi-db-config`, key `PDBHOST` (the single cutover flip) |
 
-## Deliverables referenced by this runbook
+## Deliverables (all in this branch)
 
-Authored in **this** PR (`polly/pg9-provision`):
+Manifests:
 
-- `k8s/fhi-pg-main-9-objectstore.yaml`
-- `k8s/fhi-pg-main-9-cluster.yaml`
-- `scripts/check-pg8-source.sh`
-- `scripts/backup-pg8-live-base.sh`
-- `scripts/create-or-fix-pg9-migration-role.sh`
-- `scripts/check-pg9-replication.sh`
-- `scripts/validate-pg8-vs-pg9.sh`
+- `k8s/fhi-pg-main-9-objectstore.yaml` — `-9`'s isolated Barman ObjectStore.
+- `k8s/fhi-pg-main-9-cluster.yaml` — the `-9` replica Cluster.
+- `k8s/db-config.yaml` — `fhi-db-config` ConfigMap holding `PDBHOST` (the cutover switch).
+- `k8s/deploy.yaml`, `k8s/ray/cluster.yaml` — prod workloads wired to `PDBHOST` from that ConfigMap.
 
-Authored in the **sibling** PR (`polly/pg9-cutover`) — referenced here, run at
-cutover:
+Scripts (all `set -euo pipefail`, context-checked, namespace-defaulted, password-safe, idempotent where practical):
 
-- `scripts/promote-pg9.sh`
-- `scripts/cutover-app-to-pg9.sh`
-- `scripts/rollback-pre-write-cutover.sh`
+- `scripts/check-pg8-source.sh` — read-only source preflight.
+- `scripts/backup-pg8-live-base.sh` — safety-net logical dump of `-8`.
+- `scripts/create-or-fix-pg9-migration-role.sh` — create/repair the migration role.
+- `scripts/check-pg9-replication.sh` — verify `-9` streaming + sidecar + archiver.
+- `scripts/validate-pg8-vs-pg9.sh` — data consistency `-8` vs `-9`.
+- `scripts/promote-pg9.sh` — promote `-9` (self-gates on lag==0 + single-primary).
+- `scripts/cutover-app-to-pg9.sh` — flip `PDBHOST` → `-9`, roll the app.
+- `scripts/rollback-pre-write-cutover.sh` — pre-write rollback of the cutover.
+
+Docs:
+
+- `docs/pg8-to-pg9-migration-runbook.md` — **this file**.
+- `docs/pg-reliability-hardening.md` — root cause + prevention.
+- `k8s/db-host-configurability.md` — the DB-host refactor rationale + reversibility.
 
 ---
 
@@ -69,7 +114,7 @@ cutover:
   the operator own them; scale via `spec.instances`.
 - **Do not uninstall the old barman-cloud Helm release** without first
   transferring ownership of shared resources (the `barman-cloud` Service, certs)
-  — a blind uninstall re-breaks archiving (see hardening doc).
+  — a blind uninstall re-breaks archiving (see the hardening doc).
 - **Never** put a generated password in a committed manifest, a log line, or a
   command-line argument.
 
@@ -84,7 +129,7 @@ clone takes far longer / may not fit 50Gi. (Full P0 plugin hotfix — Service
 selector + leader lease — is in `notes/incident-evidence.md` and the hardening
 doc; do that FIRST if the plugin itself is still unreachable.)
 
-> **HARD GATE — this whole phase must be GREEN before the clone (Phase 3).** The
+> **HARD GATE — this whole phase must be GREEN before the clone (Phase 4).** The
 > clone's WAL-retention safety net is `-8`'s `restore_command` reading `-8`'s
 > **object-store archive** (see cluster manifest externalCluster `plugin`).
 > That fallback is worthless if the archive is dead. Therefore "archive verified
@@ -268,7 +313,56 @@ based on whether the computed size fit the disk.
 
 ---
 
-## Phase 2 — Safety-net logical dump of `-8`
+## Phase 2 — Parameterize the app DB host (safe no-op now, the cutover switch later)
+
+**Why now:** the app's Postgres host is read from the `PDBHOST` env var. Before
+this refactor it came ONLY from opaque, un-versioned cluster Secrets, so the
+cutover would have meant hand-editing a live Secret. Instead we introduce one
+version-controlled switch — the `fhi-db-config` ConfigMap — and wire every
+DB-consuming prod workload to read `PDBHOST` from it via an explicit container
+`env` entry (which takes precedence over the `envFrom` Secret value for the same
+key). **The ConfigMap defaults to the current `-8` host, so applying this now
+changes nothing at runtime** — it just pre-positions the single flip that
+Phase 10 will use. Full rationale + the "deliberately not changed" list:
+[`k8s/db-host-configurability.md`](../k8s/db-host-configurability.md).
+
+Applying this early (rather than at cutover) de-risks Phase 10: the ConfigMap
+and env wiring are proven live and harmless well before they matter.
+
+**ACTION**
+
+```bash
+# 1) create the switch (defaults PDBHOST = fhi-pg-main-8-rw.totallylegitco.svc)
+kubectl apply -f k8s/db-config.yaml
+
+# 2) roll out the workloads that now read PDBHOST from the ConfigMap.
+#    (Substitute your deploy pipeline's env expansion for ${FHI_BASE}/${FHI_VERSION};
+#     these manifests use envsubst-style placeholders.)
+kubectl apply -f k8s/deploy.yaml
+kubectl apply -f k8s/ray/cluster.yaml   # if the Ray workers are managed this way
+```
+
+**VALIDATION** — confirm it was a true no-op (still pointing at `-8`):
+
+```bash
+# ConfigMap holds the CURRENT -8 host
+kubectl -n totallylegitco get configmap fhi-db-config -o jsonpath='{.data.PDBHOST}{"\n"}'
+# a fresh web pod actually resolved PDBHOST to -8
+kubectl -n totallylegitco get pods -l app=fight-health-insurance-prod -o name | head -1 | \
+  xargs -I{} kubectl -n totallylegitco exec {} -- printenv PDBHOST
+# the app is still healthy against -8
+kubectl -n totallylegitco rollout status deployment/web --timeout=300s
+```
+
+**GATE:** `PDBHOST` in both the ConfigMap and a running web pod is
+`fhi-pg-main-8-rw.totallylegitco.svc`, and `deployment/web` is healthy. Nothing
+about production traffic changed — you have only installed the switch. **Do NOT
+change `PDBHOST` yet**; the flip to `-9` happens only in Phase 10, after `-9` is
+promoted.
+
+---
+
+## Phase 3 — Safety-net logical dump of `-8`
 
 **Why:** independent of the streaming clone, so if the live-raw seed fails we can
 still recover.
@@ -286,7 +380,7 @@ Do not proceed without a validated dump in hand.
 
 ---
 
-## Phase 3 — Apply the ObjectStore, then the Cluster
+## Phase 4 — Apply the ObjectStore, then the Cluster
 
 **ACTION** (order matters — the ObjectStore must exist before the Cluster that
 references it):
@@ -321,7 +415,7 @@ healthy, and it is a **replica** (in recovery), not a fresh empty primary.
 
 ---
 
-## Phase 4 — Verify streaming (no slot expected)
+## Phase 5 — Verify streaming (no slot expected)
 
 **ACTION / VALIDATION**
 
@@ -329,7 +423,7 @@ healthy, and it is a **replica** (in recovery), not a fresh empty primary.
 ./scripts/check-pg9-replication.sh
 ```
 
-**GATE:** `-9 REPLICATION HEALTHY` — the script now proves `-9` is the connection
+**GATE:** `-9 REPLICATION HEALTHY` — the script proves `-9` is the connection
 actually streaming by correlating `pg_stat_replication` on `-8` (matching `-9`'s
 client address/`application_name`, `state=streaming`, and `sent_lsn`
 **advancing** across two samples) rather than accepting "some physical slot is
@@ -338,12 +432,12 @@ active" (a stale `-8` HA slot could satisfy that). It also checks
 `plugin-barman-cloud:v0.13` sidecar in **every** `-9` pod. **No slot is expected
 on `-8`** (CNPG streams the replica cluster slotless — see Phase 1c); retention
 is `wal_keep_size` + the archive `restore_command`. The archiver verdict is
-reported **separately** and does not mask streaming health (see Phase 5 for the
+reported **separately** and does not mask streaming health (see Phase 6 for the
 real archiving gate).
 
 ---
 
-## Phase 5 — Verify `-9` archiving + a fresh `-9` backup
+## Phase 6 — Verify `-9` archiving + a fresh `-9` backup
 
 **Why:** prove `-9`'s OWN backup path works before we depend on it. (`-9` must
 never inherit `-8`'s dead archive.)
@@ -371,7 +465,7 @@ env vars in the ObjectStore.
 
 ---
 
-## Phase 6 — Scale `1 → 2 → 3` with per-step validation
+## Phase 7 — Scale `1 → 2 → 3` with per-step validation
 
 **ACTION** (one step at a time; validate between each):
 
@@ -391,7 +485,7 @@ the next instance until the current one is green.
 
 ---
 
-## Phase 7 — Data validation
+## Phase 8 — Data validation
 
 **ACTION** (run when `-8` writes are quiet so counts are stable):
 
@@ -408,7 +502,7 @@ not FAIL).
 
 ---
 
-## Phase 8 — Quiesce, zero lag, promote
+## Phase 9 — Quiesce, zero lag, promote
 
 **Destructive / one-way-ish. Requires confirmation.**
 
@@ -419,7 +513,7 @@ not FAIL).
 # 2) confirm zero replay lag on -9:
 kubectl -n totallylegitco exec fhi-pg-main-9-1 -c postgres -- psql -U postgres -Atc \
  "SELECT pg_wal_lsn_diff(pg_last_wal_receive_lsn(), pg_last_wal_replay_lsn());"   # want 0
-# 3) promote -9 (sibling PR script; self-gates on lag==0 and single-primary):
+# 3) promote -9 (self-gates on lag==0 and single-primary):
 ./scripts/promote-pg9.sh
 ```
 
@@ -435,23 +529,48 @@ kubectl -n totallylegitco get cluster fhi-pg-main-9
 is **read-only** / write-fenced (app still pointed away). **Never** promote with
 non-zero lag or with `-8` still writable.
 
+> `promote-pg9.sh` refuses to auto-run the DISTRIBUTED-topology token dance
+> (it needs the `-8` manifest and cannot be validated offline) — for a
+> standalone promotion it sets `.spec.replica.enabled: false`; for a distributed
+> topology it prints the documented human procedure. Read its output.
+
 ---
 
-## Phase 9 — App cutover (keep `-8` as rollback)
+## Phase 10 — App cutover (keep `-8` as rollback)
+
+This is where the Phase 2 switch finally flips. `cutover-app-to-pg9.sh`:
+refuses unless `-9` promotion is verified; scales the write-producing workloads
+to zero and confirms `-8` has no active client backends; **saves the reverse
+patch to disk**; patches `fhi-db-config/PDBHOST` → `fhi-pg-main-9-rw`; brings the
+app back and restarts Ray; then smoke-checks that app backends appear on `-9`
+and NOT on `-8`.
 
 **ACTION**
 
 ```bash
-./scripts/cutover-app-to-pg9.sh      # repoints DATABASE_URL / rw service to -9
+./scripts/cutover-app-to-pg9.sh      # flips PDBHOST -> -9 and rolls the app
+```
+
+**VALIDATION**
+
+```bash
+# the switch now points at -9
+kubectl -n totallylegitco get configmap fhi-db-config -o jsonpath='{.data.PDBHOST}{"\n"}'
+# app health + a canary write/read against -9
+kubectl -n totallylegitco rollout status deployment/web --timeout=300s
+# confirm NO app backends remain on -8
+kubectl -n totallylegitco exec fhi-pg-main-8-3 -c postgres -- psql -U postgres -Atc \
+ "SELECT count(*) FROM pg_stat_activity WHERE usename='ziggystardust';"   # want 0
 ```
 
 **VALIDATION / GATE:** app health checks green against `-9`; write a canary row
-and read it back; error rates normal. **Keep `-8` intact and write-fenced** as
-the rollback target — do NOT decommission `-8` yet.
+and read it back; error rates normal; zero app backends left on `-8`. **Keep
+`-8` intact and write-fenced** as the rollback target — do NOT decommission `-8`
+yet.
 
 ---
 
-## Phase 10 — Rollback semantics
+## Phase 11 — Rollback semantics
 
 Choose by whether the app has written to `-9` since cutover:
 
@@ -459,7 +578,8 @@ Choose by whether the app has written to `-9` since cutover:
   ```bash
   ./scripts/rollback-pre-write-cutover.sh
   ```
-  `-8` was only write-fenced, not changed; this is the safe, fast path.
+  `-8` was only write-fenced, not changed; this is the safe, fast path. The
+  script DETECTS likely writes on `-9` and REFUSES if any are found.
 - **Post-write** (writes landed on `-9`): you cannot simply repoint — `-8` is now
   stale. Options, in order of preference:
   1. **Reverse replication:** stand `-8` (or a fresh cluster) up as a replica of
@@ -487,6 +607,6 @@ then `-8` is the rollback of last resort.
    Retention is `wal_keep_size` + archive `restore_command` (Phase 0 + 1c). No
    live check needed.
 2. Managed roles + superuser reconciliation timing on a read-only replica
-   (`cluster.spec.managed.roles`, `cluster.spec.superuserSecret`). Phase 3.
+   (`cluster.spec.managed.roles`, `cluster.spec.superuserSecret`). Phase 4.
 3. `archive_mode on` vs `always` for a replica archiving its own WAL pre-
-   promotion. Phase 5.
+   promotion. Phase 6.
