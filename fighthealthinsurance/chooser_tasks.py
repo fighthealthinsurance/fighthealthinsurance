@@ -23,6 +23,10 @@ from django.conf import settings
 from loguru import logger
 
 from fighthealthinsurance.ml.ml_router import ml_router
+from fighthealthinsurance.ml.model_identity import (
+    SYNTHESIZED_MODEL_NAME,
+    canonical_model_name,
+)
 from fighthealthinsurance.models import ChooserCandidate, ChooserTask
 from fighthealthinsurance.utils import fire_and_forget_in_new_threadpool
 
@@ -338,7 +342,7 @@ async def _generate_appeal_candidates(task: ChooserTask):
                     task=task,
                     candidate_index=candidate_index,
                     kind="appeal_letter",
-                    model_name=_model_display_name(model),
+                    model_name=canonical_model_name(model),
                     content=response.strip(),
                     metadata={"source": "synthetic"},
                 )
@@ -369,7 +373,7 @@ async def _generate_appeal_candidates(task: ChooserTask):
                         task=task,
                         candidate_index=candidate_index,
                         kind="appeal_letter",
-                        model_name=_model_display_name(model),
+                        model_name=canonical_model_name(model),
                         content=response.strip(),
                         metadata={"source": "synthetic", "retry": True},
                     )
@@ -561,7 +565,7 @@ async def _generate_chat_candidates(task: ChooserTask):
                     task=task,
                     candidate_index=candidate_index,
                     kind="chat_response",
-                    model_name=_model_display_name(model),
+                    model_name=canonical_model_name(model),
                     content=response.strip(),
                     metadata={
                         "source": "synthetic",
@@ -594,7 +598,7 @@ async def _generate_chat_candidates(task: ChooserTask):
                         task=task,
                         candidate_index=candidate_index,
                         kind="chat_response",
-                        model_name=_model_display_name(model),
+                        model_name=canonical_model_name(model),
                         content=response.strip(),
                         metadata={
                             "source": "synthetic",
@@ -706,7 +710,7 @@ async def _maybe_add_synthesized_candidate(task: ChooserTask, kind: str) -> None
             task=task,
             candidate_index=next_index,
             kind=kind,
-            model_name="synthesized",
+            model_name=SYNTHESIZED_MODEL_NAME,
             synthesized=True,
             content=normalized,
             metadata={"source": "synthetic", "synthesized": True},

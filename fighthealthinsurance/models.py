@@ -2557,6 +2557,31 @@ class ProposedAppeal(ExportModelOperationsMixin("ProposedAppeal"), models.Model)
         else:
             return f"{self.appeal_text}"
 
+    @staticmethod
+    def sole_draft_attribution(denial_id) -> typing.Optional[typing.Tuple[str, bool]]:
+        """Return ``(model_name, synthesized)`` when every generated draft for
+        the denial is attributed to exactly one model, else ``None``.
+
+        The choose flow always picks (possibly after editing) one of the
+        denial's presented drafts, so a pick can safely inherit the drafts'
+        model when they all share one. Any draft with a NULL model_name makes
+        the inference ambiguous (the pick could have come from it), so no
+        attribution is returned in that case. A blank/whitespace model_name
+        (the field is ``blank=True``) is treated as missing for the same
+        reason. Used by mark_proposal_chosen as a fallback and by the
+        attribution backfill; must never guess.
+        """
+        pairs = list(
+            ProposedAppeal.objects.filter(for_denial_id=denial_id, chosen=False)
+            .values_list("model_name", "synthesized")
+            .distinct()[:2]
+        )
+        if len(pairs) == 1:
+            model_name, synthesized = pairs[0]
+            if model_name is not None and model_name.strip():
+                return (model_name, synthesized)
+        return None
+
 
 class RegulatorEscalation(ExportModelOperationsMixin("RegulatorEscalation"), models.Model):  # type: ignore
     """

@@ -526,8 +526,13 @@ def mark_proposal_chosen(
       2. exact appeal_text match against a chosen=False row for the same
          denial. Useful as a fallback when the frontend did not echo the id
          (older clients, share-appeal flow).
-      3. model_name=None - the user edited the draft heavily, or the
-         proposal predates the model_name field.
+      3. sole-draft inference - when every draft generated for the denial
+         came from one model, the pick necessarily did too (even after
+         edits or sub_in_appeals rewrites). Skipped for editted=True calls:
+         the share-appeal flow submits arbitrary text that may never have
+         been a draft.
+      4. model_name=None - the user edited the draft heavily and multiple
+         models were in play, or the proposal predates the model_name field.
     """
     original: Optional[ProposedAppeal] = None
     if proposed_appeal_id is not None:
@@ -542,8 +547,15 @@ def mark_proposal_chosen(
             .order_by("-id")
             .first()
         )
-    model_name = original.model_name if original is not None else None
-    synthesized = original.synthesized if original is not None else False
+    model_name: Optional[str] = None
+    synthesized = False
+    if original is not None:
+        model_name = original.model_name
+        synthesized = original.synthesized
+    elif not editted:
+        inferred = ProposedAppeal.sole_draft_attribution(denial.denial_id)
+        if inferred is not None:
+            model_name, synthesized = inferred
     pa = ProposedAppeal(
         appeal_text=appeal_text,
         for_denial=denial,

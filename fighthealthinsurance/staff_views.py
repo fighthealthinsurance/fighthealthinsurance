@@ -1,7 +1,7 @@
 import csv
 import datetime
 import json
-from collections import Counter, defaultdict
+from collections import Counter
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from django.db import transaction
@@ -40,6 +40,10 @@ from fighthealthinsurance.models import (
 )
 from fighthealthinsurance.email_utils import is_sendable_email
 from fighthealthinsurance.business_hours import describe_send_window
+from fighthealthinsurance.ml.model_identity import (
+    LEGACY_UNATTRIBUTED_LABEL,
+    normalize_model_label,
+)
 from fighthealthinsurance.proconnector import (
     PROCONNECTOR_INTRO_SUBJECT,
     build_base_intro_letter,
@@ -458,22 +462,31 @@ class SendMailingListMailView(generic.FormView):
             )
 
 
-# Bucket label for chosen ProposedAppeal rows whose model_name is NULL —
-# i.e. the user picked something we couldn't attribute back to a generated
-# draft (heavy edit, share-appeal flow, or a row predating the model_name
-# field). Surfacing them keeps the dashboard's total-picks number honest.
-UNKNOWN_MODEL_LABEL = "(unknown)"
+# Bucket label for chosen ProposedAppeal rows whose model_name is NULL and
+# whose created_at is set — i.e. a pick recorded after model tracking began
+# that still couldn't be attributed back to a generated draft (heavy edit
+# with multiple models in play, or the share-appeal flow). Surfacing them
+# keeps the dashboard's total-picks number honest. Rows predating tracking
+# (created_at NULL) or explicitly stamped by the backfill are reported under
+# LEGACY_UNATTRIBUTED_LABEL instead so legacy gaps stay distinguishable.
+UNKNOWN_MODEL_LABEL = "(unattributed)"
 
 
 def _merge_stats(
     chosen: Dict[str, int], presented: Dict[str, int]
 ) -> List[Dict[str, Any]]:
-    """Combine per-model chosen + presented counts into a sorted list of dicts."""
+    """Combine per-model chosen + presented counts into a sorted list of dicts.
+
+    ``win_rate`` is chosen/presented as a percentage, or ``None`` when the
+    model has no presented count (no denominator — e.g. legacy chosen rows
+    without presentation records). Templates render ``None`` as an em dash;
+    it must never be displayed as 0.0%.
+    """
     rows: List[Dict[str, Any]] = []
     for model_name in set(chosen) | set(presented):
         c = chosen.get(model_name, 0)
         p = presented.get(model_name, 0)
-        win_rate = (c / p * 100.0) if p > 0 else 0.0
+        win_rate = (c / p * 100.0) if p > 0 else None
         rows.append(
             {
                 "model_name": model_name,
@@ -482,17 +495,41 @@ def _merge_stats(
                 "win_rate": win_rate,
             }
         )
-    rows.sort(key=lambda r: (-r["chosen"], -r["win_rate"], r["model_name"]))
+    rows.sort(
+        key=lambda r: (
+            -r["chosen"],
+            -(r["win_rate"] if r["win_rate"] is not None else -1.0),
+            r["model_name"],
+        )
+    )
     return rows
 
 
 class ModelUsageDashboardView(generic.TemplateView):
     """Staff dashboard showing which ML models users pick most often.
 
-    Aggregates three signal sources across three time windows:
+    Aggregates three signal sources across four time windows:
       * ProposedAppeal.chosen=True  - implicit pick from real denial flow
       * ChooserVote (kind=appeal_letter) - synthetic chooser appeal vote
       * ChooserVote (kind=chat_response) - synthetic chooser chat vote
+
+    Time-window semantics (all timezone-aware, anchored on timezone.now()):
+      * Windows are rolling: "Last 1 Day" = the preceding 24 hours, "Last 7
+        Days" / "Last 30 Days" = the preceding 7/30 days. "All Time" has no
+        lower bound and additionally includes rows that predate timestamp
+        tracking (ProposedAppeal.created_at NULL, pre-migration-0182), which
+        no bounded window can include.
+      * The event timestamp is the *selection* event: the chosen
+        ProposedAppeal row's created_at (the pick), or ChooserVote.created_at
+        (the vote). Presented counts use the same event set: for votes, the
+        candidates listed on the in-window votes; for ProposedAppeal, the
+        drafts generated for denials picked in the window (a draft generated
+        on day 0 and picked on day 1 still counts as presented in a 1-day
+        window anchored on the pick).
+
+    All stored model names pass through normalize_model_label so historical
+    object-repr values aggregate per class (without memory addresses) even
+    before the backfill_model_usage_attribution command has run.
     """
 
     template_name = "model_usage_dashboard.html"
@@ -503,6 +540,7 @@ class ModelUsageDashboardView(generic.TemplateView):
         windows = [
             ("global", "All Time", None),
             ("1d", "Last 1 Day", now - datetime.timedelta(days=1)),
+            ("7d", "Last 7 Days", now - datetime.timedelta(days=7)),
             ("30d", "Last 30 Days", now - datetime.timedelta(days=30)),
         ]
         windows_ctx = []
@@ -570,22 +608,25 @@ class ModelUsageDashboardView(generic.TemplateView):
     def _proposed_appeal_stats(
         since: Optional[datetime.datetime],
     ) -> List[Dict[str, Any]]:
-        # Keep chosen rows with model_name=NULL in the chosen aggregation —
-        # mark_proposal_chosen intentionally falls back to None when the
-        # picked text can't be matched to a generated draft, and those are
-        # still real user picks worth surfacing. They are bucketed under
-        # "(unknown)" below so they don't get silently dropped.
+        # Keep chosen rows with model_name=NULL: mark_proposal_chosen falls
+        # back to None when a pick can't be matched to a draft, and those are
+        # still real picks. NULL rows predating model tracking (created_at
+        # NULL, pre-migration-0182) bucket as LEGACY_UNATTRIBUTED_LABEL —
+        # matching what the backfill stamps — while later rows fall under
+        # UNKNOWN_MODEL_LABEL, so legacy gaps stay distinct from current
+        # attribution misses.
         chosen_qs = ProposedAppeal.objects.filter(chosen=True)
         if since is not None:
             chosen_qs = chosen_qs.filter(created_at__gte=since)
 
-        # Tie the presented universe to denials that were picked within
-        # the window. We intentionally do NOT filter presented_qs by
-        # created_at: a user can generate appeals on day 0 and pick one on
-        # day 1, and a 1-day window anchored on the pick should still count
-        # the drafts that were actually presented. Pass the subquery
-        # straight into __in to avoid materializing a potentially huge id
-        # list (Django keeps it as a SQL subquery).
+        # Tie the presented universe to denials picked within the window,
+        # NOT to draft created_at: a draft generated on day 0 and picked on
+        # day 1 should still count as presented in a 1-day window anchored on
+        # the pick. Pass the subquery straight into __in so Django emits SQL
+        # rather than materializing a large id list. Drafts without a
+        # model_name (pre-tracking) are excluded — attributing them to any
+        # bucket would fabricate a win-rate denominator — so legacy chosen
+        # rows report presented=0 and an em-dash win rate.
         chosen_denial_ids = chosen_qs.values_list("for_denial_id", flat=True).distinct()
         presented_qs = ProposedAppeal.objects.filter(
             chosen=False,
@@ -593,52 +634,72 @@ class ModelUsageDashboardView(generic.TemplateView):
             for_denial_id__in=chosen_denial_ids,
         )
 
-        chosen: Dict[str, int] = {}
-        for name, count in chosen_qs.values_list("model_name").annotate(c=Count("id")):
-            label = name if name is not None else UNKNOWN_MODEL_LABEL
-            chosen[label] = chosen.get(label, 0) + count
-        presented = {
-            name: count
-            for name, count in presented_qs.values_list("model_name").annotate(
-                c=Count("id")
-            )
-        }
-        return _merge_stats(chosen, presented)
+        chosen: Counter = Counter()
+        for name, count in (
+            chosen_qs.filter(model_name__isnull=False)
+            .values_list("model_name")
+            .annotate(c=Count("id"))
+        ):
+            label = normalize_model_label(name) or UNKNOWN_MODEL_LABEL
+            chosen[label] += count
+        null_named = chosen_qs.filter(model_name__isnull=True)
+        legacy_count = null_named.filter(created_at__isnull=True).count()
+        unattributed_count = null_named.filter(created_at__isnull=False).count()
+        if legacy_count:
+            chosen[LEGACY_UNATTRIBUTED_LABEL] += legacy_count
+        if unattributed_count:
+            chosen[UNKNOWN_MODEL_LABEL] += unattributed_count
+        presented: Counter = Counter()
+        for name, count in presented_qs.values_list("model_name").annotate(
+            c=Count("id")
+        ):
+            presented_label = normalize_model_label(name)
+            if presented_label is not None:
+                presented[presented_label] += count
+        return _merge_stats(dict(chosen), dict(presented))
 
     @staticmethod
     def _chooser_stats(
         kind: str, since: Optional[datetime.datetime]
     ) -> List[Dict[str, Any]]:
+        # Both chosen and presented derive from the same vote set (filtered
+        # by ChooserVote.created_at), so a window's win rates compare like
+        # with like: every vote event contributes its chosen candidate once
+        # and each distinct presented candidate once. Candidate creation
+        # time is irrelevant — candidates are generated ahead of votes.
         chosen_qs = ChooserVote.objects.filter(chosen_candidate__kind=kind)
         if since is not None:
             chosen_qs = chosen_qs.filter(created_at__gte=since)
-        chosen = {
-            name: count
-            for name, count in chosen_qs.values_list(
-                "chosen_candidate__model_name"
-            ).annotate(c=Count("id"))
-        }
+        chosen: Counter = Counter()
+        for name, count in chosen_qs.values_list(
+            "chosen_candidate__model_name"
+        ).annotate(c=Count("id")):
+            label = normalize_model_label(name) or UNKNOWN_MODEL_LABEL
+            chosen[label] += count
 
         # Presented: walk votes' presented_candidate_ids JSON lists into a
         # counter. We reuse chosen_qs (same filter) and call .iterator() so
         # the All Time window doesn't load every vote into a result cache.
+        # Dedupe ids within a vote: a candidate was shown once per vote
+        # event, and a duplicated id (buggy/hostile client, pre-dedupe
+        # historical rows) must not inflate the denominator.
         counter: Counter = Counter()
         for ids in chosen_qs.values_list(
             "presented_candidate_ids", flat=True
         ).iterator():
             if ids:
-                counter.update(ids)
+                counter.update(set(ids))
         cand_to_model = dict(
             ChooserCandidate.objects.filter(
                 id__in=list(counter.keys()), kind=kind
             ).values_list("id", "model_name")
         )
-        presented: Dict[str, int] = defaultdict(int)
+        presented: Counter = Counter()
         for cid, n in counter.items():
-            mn = cand_to_model.get(cid)
-            if mn:
-                presented[mn] += n
-        return _merge_stats(chosen, dict(presented))
+            presented_label = normalize_model_label(cand_to_model.get(cid))
+            if presented_label is not None:
+                presented[presented_label] += n
+        return _merge_stats(dict(chosen), dict(presented))
 
 
 class ModelBackendStatusView(generic.TemplateView):

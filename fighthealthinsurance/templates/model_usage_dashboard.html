@@ -30,7 +30,17 @@
     <span class="legend-key" style="background:#1f77b4;"></span>ProposedAppeal (denial flow),
     <span class="legend-key" style="background:#ff7f0e;"></span>Chooser&mdash;Appeal,
     <span class="legend-key" style="background:#2ca02c;"></span>Chooser&mdash;Chat.
-    Win rate = chosen / presented. Synthesized appeals are bucketed as model_name &ldquo;synthesized&rdquo;.
+    Win rate = chosen / presented, shown as &ldquo;&mdash;&rdquo; when nothing was
+    presented (no denominator). Windows are rolling (last 24 hours / 7 days /
+    30 days, anchored on the pick or vote time); All Time additionally includes
+    rows predating timestamp tracking. Synthesized appeals are bucketed as
+    model_name &ldquo;synthesized&rdquo;. Special buckets:
+    &ldquo;legacy-unattributed&rdquo; = historical picks recorded before model
+    tracking whose generating model cannot be recovered;
+    &ldquo;legacy-unresolved (Class)&rdquo; = legacy chooser rows that stored a
+    Python object repr, aggregated by model class;
+    &ldquo;(unattributed)&rdquo; = post-tracking picks that could not be matched
+    to a generated draft. Legacy buckets have no presented counts by design.
   </p>
 
   {% for w in windows %}

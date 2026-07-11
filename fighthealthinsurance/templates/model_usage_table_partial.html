@@ -14,7 +14,12 @@
       <td>{{ r.model_name }}</td>
       <td class="num">{{ r.chosen }}</td>
       <td class="num">{{ r.presented }}</td>
+      {% if r.win_rate is None %}
+      {# No presented count => no denominator; never show this as 0.0%. #}
+      <td class="num">&mdash;</td>
+      {% else %}
       <td class="num">{{ r.win_rate|floatformat:1 }}%</td>
+      {% endif %}
     </tr>
     {% endfor %}
   </tbody>
