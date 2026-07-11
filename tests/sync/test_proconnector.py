@@ -18,9 +18,12 @@ from fighthealthinsurance import proconnector
 from fighthealthinsurance.models import InterestedProfessional, ScheduledEmail
 from fighthealthinsurance.proconnector import (
     BASE_INTRO_EMAIL,
+    BASE_INTRO_LETTER,
     _claims_cofactor_relationship,
     _is_safe_intro_draft,
+    build_address_search_link,
     build_base_intro_email,
+    build_base_intro_letter,
     build_search_links,
     describe_known_info,
     generate_intro_email,
@@ -1210,6 +1213,35 @@ class DashboardLinkTest(TestCase):
         self.assertIsNotNone(links["google"])
         self.assertIn("Jane", links["google"])
 
+    def test_search_links_include_address_lookup(self):
+        # build_search_links exposes a Google address lookup for the physical
+        # letter, distinct from the name/org research search.
+        pro = _make_pro(name="Jane Smith", business_name="Acme Health")
+        links = build_search_links(pro)
+        self.assertIn("google_address", links)
+        self.assertIsNotNone(links["google_address"])
+
+    def test_address_search_uses_address_on_file_when_present(self):
+        # An address on file is searched directly (to locate / verify it).
+        pro = _make_pro(name="Jane Smith", address="123 Main St, Springfield IL")
+        link = build_address_search_link(pro)
+        self.assertIsNotNone(link)
+        self.assertIn("google.com/search", link)
+        self.assertIn("Main", link)
+
+    def test_address_search_falls_back_to_name_org_plus_address_word(self):
+        # With no address on file, search the name/org plus the word "address"
+        # so staff can track a mailing address down.
+        pro = _make_pro(name="Jane Smith", business_name="Acme Health", address="")
+        link = build_address_search_link(pro)
+        self.assertIsNotNone(link)
+        self.assertIn("Jane", link)
+        self.assertIn("address", link.lower())
+
+    def test_address_search_none_when_nothing_to_search(self):
+        pro = _make_pro(name="", business_name="", address="", email="x@xclinic.com")
+        self.assertIsNone(build_address_search_link(pro))
+
     def test_describe_known_info_handles_all_missing(self):
         pro = _make_pro(
             name="",
@@ -1258,6 +1290,104 @@ class BaseEmailWordingTest(TestCase):
         # Uses the agreed framing and includes the compensation disclosure.
         self.assertIn("sourcing agreement", BASE_INTRO_EMAIL)
         self.assertIn("compensation", BASE_INTRO_EMAIL)
+
+
+# ---------------------------------------------------------------------------
+# Physical intro letter (print-only wording + view)
+# ---------------------------------------------------------------------------
+class IntroLetterWordingTest(TestCase):
+    def test_letter_wording_constraints(self):
+        # Same hard rules as the email: no "partner" framing, keeps the sourcing
+        # agreement framing and the compensation disclosure.
+        self.assertNotIn("partner", BASE_INTRO_LETTER.lower())
+        self.assertIn("sourcing agreement", BASE_INTRO_LETTER)
+        self.assertIn("compensation", BASE_INTRO_LETTER)
+
+    def test_letter_does_not_mention_cc(self):
+        # A physical letter can't CC anyone; the print wording must not claim it.
+        self.assertNotIn("cc", BASE_INTRO_LETTER.lower())
+
+    def test_letter_directs_recipient_to_professional_email(self):
+        pro = _make_pro(name="Dr. Jane")
+        letter = build_base_intro_letter(pro)
+        self.assertIn("Dear Dr. Jane,", letter)
+        # Points them at the professional contact address for the introduction.
+        self.assertIn("professional@fighthealthinsurance.com", letter)
+
+    def test_letter_uses_neutral_greeting_when_no_name(self):
+        pro = _make_pro(name="", email="x@xclinic.com")
+        self.assertIn("Dear there,", build_base_intro_letter(pro))
+
+    def test_letter_passes_email_wording_rules(self):
+        # The letter keeps the compensation disclosure and avoids partner
+        # framing, so it also satisfies the shared wording guard.
+        pro = _make_pro(name="Dr. Jane")
+        self.assertIsNone(
+            proconnector.intro_wording_problem(build_base_intro_letter(pro))
+        )
+
+
+class LetterViewTest(TestCase):
+    def setUp(self):
+        self.pro = _make_pro(
+            name="Dr. Jane Smith",
+            business_name="Acme Health Clinic",
+            address="123 Main St, Springfield IL",
+            email="jane@janeclinic.com",
+        )
+        self.url = reverse("proconnector_letter", args=[self.pro.id])
+
+    def test_requires_staff(self):
+        response = self.client.get(self.url)
+        self.assertRedirects(
+            response,
+            f"{reverse('admin:login')}?next={self.url}",
+            fetch_redirect_response=False,
+        )
+
+    def test_staff_sees_printable_letter(self):
+        _login(self.client, is_staff=True)
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "proconnector_letter.html")
+        # Recipient address block + print-specific wording.
+        self.assertContains(response, "Dr. Jane Smith")
+        self.assertContains(response, "Acme Health Clinic")
+        self.assertContains(response, "123 Main St")
+        self.assertContains(response, "professional@fighthealthinsurance.com")
+        # An easy print button and a print stylesheet.
+        self.assertContains(response, "window.print()")
+
+    def test_missing_record_redirects_to_process(self):
+        _login(self.client, is_staff=True)
+        response = self.client.get(reverse("proconnector_letter", args=[999999]))
+        self.assertRedirects(
+            response, reverse("proconnector_process"), fetch_redirect_response=False
+        )
+
+    def test_letter_view_does_not_record_anything(self):
+        # Rendering the letter must not claim / send / mark the record.
+        _login(self.client, is_staff=True)
+        self.client.get(self.url)
+        self.pro.refresh_from_db()
+        self.assertFalse(self.pro.proconnector_attempted)
+        self.assertFalse(self.pro.proconnector_skipped)
+        self.assertIsNone(self.pro.proconnector_sent_at)
+
+    @patch(
+        "fighthealthinsurance.staff_views.generate_intro_email",
+        return_value="A draft body with compensation disclosure.",
+    )
+    def test_process_page_links_to_printable_letter(self, _mock_gen):
+        _login(self.client, is_staff=True)
+        response = self.client.get(reverse("proconnector_process"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response, reverse("proconnector_letter", args=[self.pro.id])
+        )
+        self.assertContains(response, "printable letter")
+        # The Google address lookup link is offered for finding a mailing address.
+        self.assertContains(response, "Google address")
 
 
 # ---------------------------------------------------------------------------

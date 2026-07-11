@@ -129,6 +129,31 @@ Sincerely,
 Holden Karau, Melanie Warrick, and the Fight Health Insurance team"""
 
 
+# The print-only physical letter. Same warm framing and compensation disclosure
+# as the email, but written to be mailed: a printed letter can't CC Cofactor AI,
+# so instead of naming a CC it asks the recipient to email the professional
+# contact address for the introduction. ``{greeting_name}`` is the recipient's
+# name (or a neutral greeting) and ``{contact_email}`` is the professional
+# contact address they should reach out to.
+BASE_INTRO_LETTER = """Dear {greeting_name},
+
+Thank you so much for your interest in the professional version of Fight Health Insurance.
+
+We'd like to introduce you to Cofactor AI. After our initial work launching Fight Paperwork, we've refocused Fight Health Insurance on our consumer mission, and we now have a sourcing agreement with Cofactor AI to introduce interested professionals who may benefit from their AI-powered support for appeals, prior authorization, and related backend workflows.
+
+As part of this sourcing agreement, Fight Health Insurance may receive compensation if you choose to work with Cofactor AI; that support helps us continue our consumer-focused mission.
+
+We've spent a lot of time talking with the Cofactor AI team, and they've built some truly impressive AI agents for appeals and administrative tasks. We think they may be a strong fit for the kinds of professional workflows many of you reached out to us about.
+
+If you're interested in an introduction, please email us at {contact_email} and we'll connect you with the Cofactor AI team.
+
+Thank you again for your interest and for trusting us with this work.
+
+Sincerely,
+
+Holden Karau, Melanie Warrick, and the Fight Health Insurance team"""
+
+
 INTRO_SYSTEM_PROMPT = (
     "You are an assistant for Fight Health Insurance (FHI) drafting a warm, "
     "professional, concise introduction email to a healthcare professional who "
@@ -171,21 +196,59 @@ def build_base_intro_email(pro: InterestedProfessional) -> str:
     return BASE_INTRO_EMAIL.format(greeting_name=_greeting_name(pro))
 
 
-def build_search_links(pro: InterestedProfessional) -> dict[str, Optional[str]]:
-    """Google + LinkedIn search URLs for the person's name plus organization.
+def build_base_intro_letter(pro: InterestedProfessional) -> str:
+    """Render the print-only physical intro letter for ``pro``.
 
-    Organization (``business_name``) is included only when present. Returns
-    ``None`` for each link when there is nothing to search on.
+    Uses the same warm framing and compensation disclosure as the email, but the
+    print-specific wording: a mailed letter can't CC Cofactor AI, so it asks the
+    recipient to email the professional contact address for the introduction
+    instead of naming a CC.
+    """
+    return BASE_INTRO_LETTER.format(
+        greeting_name=_greeting_name(pro),
+        contact_email=get_professional_cc_email(),
+    )
+
+
+def build_search_links(pro: InterestedProfessional) -> dict[str, Optional[str]]:
+    """Research search URLs for a professional.
+
+    ``google``/``linkedin`` search the person's name plus organization (the
+    organization is included only when present) to help staff research them.
+    ``google_address`` searches for a mailing address to help staff address the
+    physical intro letter (see :func:`build_address_search_link`). Each value is
+    ``None`` when there is nothing to search on.
     """
     parts = [p.strip() for p in (pro.name, pro.business_name) if p and p.strip()]
     terms = " ".join(parts).strip()
+    address_link = build_address_search_link(pro)
     if not terms:
-        return {"google": None, "linkedin": None}
+        return {"google": None, "linkedin": None, "google_address": address_link}
     q = urllib.parse.quote(terms)
     return {
         "google": f"https://www.google.com/search?q={q}",
         "linkedin": f"https://www.linkedin.com/search/results/all/?keywords={q}",
+        "google_address": address_link,
     }
+
+
+def build_address_search_link(pro: InterestedProfessional) -> Optional[str]:
+    """Google search URL to find or verify the professional's mailing address.
+
+    When an address is already on file it is searched directly (to locate /
+    verify it, e.g. on maps); otherwise the name and organization are searched
+    together with the word "address" to help staff track one down for the
+    physical intro letter. Returns ``None`` when there is nothing to search on.
+    """
+    address = (pro.address or "").strip()
+    if address:
+        terms = address
+    else:
+        parts = [p.strip() for p in (pro.name, pro.business_name) if p and p.strip()]
+        if not parts:
+            return None
+        terms = " ".join(parts + ["address"])
+    return f"https://www.google.com/search?q={urllib.parse.quote(terms)}"
 
 
 def describe_known_info(pro: InterestedProfessional) -> str:
