@@ -350,6 +350,20 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         ),
         name="state_help",
     ),
+    path(
+        "glossary/",
+        cache_control(public=True)(
+            cache_page(60 * 60 * 2)(views.GlossaryIndexView.as_view())
+        ),
+        name="glossary_index",
+    ),
+    path(
+        "glossary/<slug:slug>/",
+        cache_control(public=True)(
+            cache_page(60 * 60 * 2)(views.GlossaryView.as_view())
+        ),
+        name="glossary_term",
+    ),
     path("pro_version", views.ProVersionView.as_view(), name="pro_version"),
     # Cross-origin classic-form intake for the interested-professional lead form
     # hosted on the static site (fightpaperwork.com). csrf_exempt because that
