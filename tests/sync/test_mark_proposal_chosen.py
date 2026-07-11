@@ -68,7 +68,10 @@ class MarkProposalChosenTest(TestCase):
         self.assertTrue(pa.synthesized)
         self.assertEqual(pa.model_name, "synthesized")
 
-    def test_no_match_falls_back_to_none(self):
+    def test_no_match_single_model_denial_infers_that_model(self):
+        # sub_in_appeals rewrote the displayed text so no exact match exists,
+        # but every draft for this denial came from one model - the pick is
+        # attributable to it.
         ProposedAppeal.objects.create(
             for_denial=self.denial,
             appeal_text="original-text",
@@ -77,7 +80,67 @@ class MarkProposalChosenTest(TestCase):
         )
         pa = mark_proposal_chosen(self.denial, "edited-text")
         self.assertTrue(pa.chosen)
+        self.assertEqual(pa.model_name, "model-x")
+
+    def test_no_match_multiple_models_falls_back_to_none(self):
+        ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="text-a",
+            chosen=False,
+            model_name="model-a",
+        )
+        ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="text-b",
+            chosen=False,
+            model_name="model-b",
+        )
+        pa = mark_proposal_chosen(self.denial, "edited-text")
+        self.assertTrue(pa.chosen)
+        # Ambiguous - never guess between the candidate models.
         self.assertIsNone(pa.model_name)
+
+    def test_no_match_unnamed_draft_blocks_inference(self):
+        # A NULL-model draft could equally have been the pick's source, so
+        # the sole-draft inference must not fire.
+        ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="named draft",
+            chosen=False,
+            model_name="model-x",
+        )
+        ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="legacy draft",
+            chosen=False,
+            model_name=None,
+        )
+        pa = mark_proposal_chosen(self.denial, "edited-text")
+        self.assertIsNone(pa.model_name)
+
+    def test_editted_share_flow_never_infers(self):
+        # The share-appeal flow submits arbitrary user text (editted=True);
+        # even a single-model denial must not claim it.
+        ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="only draft",
+            chosen=False,
+            model_name="model-x",
+        )
+        pa = mark_proposal_chosen(self.denial, "user authored text", editted=True)
+        self.assertIsNone(pa.model_name)
+
+    def test_sole_draft_inference_carries_synthesized_flag(self):
+        ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="synth draft",
+            chosen=False,
+            model_name="synthesized",
+            synthesized=True,
+        )
+        pa = mark_proposal_chosen(self.denial, "rewritten synth pick")
+        self.assertEqual(pa.model_name, "synthesized")
+        self.assertTrue(pa.synthesized)
 
     def test_editted_flag_propagated(self):
         pa = mark_proposal_chosen(self.denial, "any-text", editted=True)

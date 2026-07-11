@@ -23,6 +23,10 @@ from django.conf import settings
 from loguru import logger
 
 from fighthealthinsurance.ml.ml_router import ml_router
+from fighthealthinsurance.ml.model_identity import (
+    SYNTHESIZED_MODEL_NAME,
+    canonical_model_name,
+)
 from fighthealthinsurance.models import ChooserCandidate, ChooserTask
 from fighthealthinsurance.utils import fire_and_forget_in_new_threadpool
 
@@ -334,13 +338,14 @@ async def _generate_appeal_candidates(task: ChooserTask):
                 prompt=prompt,
             )
             if response and len(response.strip()) > 100:
+                model_name = canonical_model_name(model)
                 await sync_to_async(ChooserCandidate.objects.create)(
                     task=task,
                     candidate_index=candidate_index,
                     kind="appeal_letter",
-                    model_name=_model_display_name(model),
+                    model_name=model_name,
                     content=response.strip(),
-                    metadata={"source": "synthetic"},
+                    metadata={"source": "synthetic", "model_name": model_name},
                 )
                 candidate_index += 1
                 task.num_candidates_generated = candidate_index
@@ -365,13 +370,18 @@ async def _generate_appeal_candidates(task: ChooserTask):
                     prompt=prompt,
                 )
                 if response and len(response.strip()) > 100:
+                    model_name = canonical_model_name(model)
                     await sync_to_async(ChooserCandidate.objects.create)(
                         task=task,
                         candidate_index=candidate_index,
                         kind="appeal_letter",
-                        model_name=_model_display_name(model),
+                        model_name=model_name,
                         content=response.strip(),
-                        metadata={"source": "synthetic", "retry": True},
+                        metadata={
+                            "source": "synthetic",
+                            "model_name": model_name,
+                            "retry": True,
+                        },
                     )
                     candidate_index += 1
                     task.num_candidates_generated = candidate_index
@@ -557,14 +567,16 @@ async def _generate_chat_candidates(task: ChooserTask):
                 is_logged_in=True,
             )
             if response and len(response.strip()) > 50:
+                model_name = canonical_model_name(model)
                 await sync_to_async(ChooserCandidate.objects.create)(
                     task=task,
                     candidate_index=candidate_index,
                     kind="chat_response",
-                    model_name=_model_display_name(model),
+                    model_name=model_name,
                     content=response.strip(),
                     metadata={
                         "source": "synthetic",
+                        "model_name": model_name,
                         "has_history": len(chat_history) > 0,
                     },
                 )
@@ -590,14 +602,16 @@ async def _generate_chat_candidates(task: ChooserTask):
                     is_logged_in=True,
                 )
                 if response and len(response.strip()) > 50:
+                    model_name = canonical_model_name(model)
                     await sync_to_async(ChooserCandidate.objects.create)(
                         task=task,
                         candidate_index=candidate_index,
                         kind="chat_response",
-                        model_name=_model_display_name(model),
+                        model_name=model_name,
                         content=response.strip(),
                         metadata={
                             "source": "synthetic",
+                            "model_name": model_name,
                             "has_history": len(chat_history) > 0,
                             "retry": True,
                         },
@@ -706,7 +720,7 @@ async def _maybe_add_synthesized_candidate(task: ChooserTask, kind: str) -> None
             task=task,
             candidate_index=next_index,
             kind=kind,
-            model_name="synthesized",
+            model_name=SYNTHESIZED_MODEL_NAME,
             synthesized=True,
             content=normalized,
             metadata={"source": "synthetic", "synthesized": True},
