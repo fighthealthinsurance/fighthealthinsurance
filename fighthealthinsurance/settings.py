@@ -23,6 +23,7 @@ from django.core.files.storage import Storage
 
 import minio as m
 from configurations import Configuration
+from django.core.exceptions import ImproperlyConfigured
 from corsheaders.defaults import default_methods
 from dj_easy_log import load_loguru
 from minio_storage.storage import MinioStorage
@@ -56,6 +57,22 @@ def _ucr_int(name: str, default: int, minimum: int) -> int:
     except ValueError:
         value = default
     return max(value, minimum)
+
+
+def _require_prod_secret(env_name: str) -> str:
+    """Return a required production secret from the environment.
+
+    Raises ImproperlyConfigured rather than returning a built-in default, so a
+    misconfigured production deploy fails fast at startup instead of silently
+    using a non-secret placeholder (e.g. for document-encryption keys).
+    """
+    value = os.getenv(env_name)
+    if not value:
+        raise ImproperlyConfigured(
+            f"{env_name} must be set in the production environment; refusing to "
+            "fall back to a built-in default."
+        )
+    return value
 
 
 class Base(Configuration):
@@ -792,6 +809,16 @@ class Prod(Base):
     FIGHT_HEALTH_INSURANCE_DOMAIN = "www.fighthealthinsurance.com"
 
     STRIPE_LIVE_MODE = True
+
+    # Fail closed on the document-encryption secrets: unlike Base/Dev/Test,
+    # production must never inherit the built-in default values for these.
+    @property
+    def DEFF_SALT(self):  # type: ignore
+        return _require_prod_secret("DEFF_SALT")
+
+    @property
+    def DEFF_PASSWORD(self):  # type: ignore
+        return _require_prod_secret("DEFF_PASSWORD")
 
     @property
     def SECRET_KEY(self):  # type: ignore
