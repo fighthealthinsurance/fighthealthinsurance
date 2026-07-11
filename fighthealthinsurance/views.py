@@ -3102,8 +3102,23 @@ class DenialReasonDecoderView(TemplateView):
             context["canonical_url"] = (
                 f"https://www.fighthealthinsurance.com/tools/denial-reason-decoder/{reason.slug}/"
             )
-            context["faq_jsonld"] = _json.dumps(reason.faq_jsonld())
-            context["breadcrumb_jsonld"] = _json.dumps(reason.breadcrumb_jsonld())
-            context["article_jsonld"] = _json.dumps(reason.article_jsonld())
+            context["faq_jsonld"] = (
+                _json.dumps(reason.faq_jsonld())
+                .replace("&", "\\u0026")
+                .replace("<", "\\u003c")
+                .replace(">", "\\u003e")
+            )
+            context["breadcrumb_jsonld"] = (
+                _json.dumps(reason.breadcrumb_jsonld())
+                .replace("&", "\\u0026")
+                .replace("<", "\\u003c")
+                .replace(">", "\\u003e")
+            )
+            context["article_jsonld"] = (
+                _json.dumps(reason.article_jsonld())
+                .replace("&", "\\u0026")
+                .replace("<", "\\u003c")
+                .replace(">", "\\u003e")
+            )
             context["related_reasons"] = reason.related_reasons(all_reasons)
         return context
