@@ -1,0 +1,64 @@
+# =============================================================================
+# ObjectStore for fhi-pg-main-9  (barman-cloud CNPG plugin backend)
+# =============================================================================
+# Field shapes verified OFFLINE against the plugin-barman-cloud v0.13.0 CRD
+#   config/crd/bases/barmancloud.cnpg.io_objectstores.yaml  (apiVersion v1):
+#     spec.configuration      (required; contains destinationPath[required],
+#                              endpointURL, s3Credentials, data, wal, serverName)
+#     spec.retentionPolicy    (TOP-LEVEL under spec, NOT under configuration)
+#     spec.instanceSidecarConfiguration.env  (list of {name,value|valueFrom})
+#   compression enums: data -> [bzip2,gzip,lz4,snappy]; wal -> +[xz,zstd].
+#
+# This ObjectStore is DEDICATED to fhi-pg-main-9. It reuses the SAME Backblaze
+# bucket + endpoint + credentials secret as the -8 store, but with a DISTINCT
+# serverName so -9's backups/WAL never collide with or overwrite -8's history.
+# NEVER set serverName to fhi-pg-main-8 here (that is -8's prefix in the bucket).
+# =============================================================================
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: fhi-backup-store-9
+  namespace: totallylegitco
+spec:
+  configuration:
+    # Same bucket + endpoint as the existing fhi-backup-store (Backblaze B2).
+    destinationPath: s3://fhi-pg-backup-second/
+    endpointURL: https://s3.us-west-004.backblazeb2.com
+
+    # DISTINCT server name -> object keys land under
+    #   s3://fhi-pg-backup-second/fhi-pg-main-9/...
+    # keeping -9's base backups + WAL fully separate from fhi-pg-main-8/.
+    # (If omitted, the plugin defaults serverName to the Cluster name, which is
+    #  also fhi-pg-main-9 -- but we set it explicitly so it can never drift.)
+    serverName: fhi-pg-main-9
+
+    # REUSE the existing pg-backup2 secret keys EXACTLY (do not invent new keys).
+    s3Credentials:
+      accessKeyId:
+        name: pg-backup2
+        key: PG_ACCESS_KEY_ID
+      secretAccessKey:
+        name: pg-backup2
+        key: PG_ACCESS_SECRET_KEY
+
+    # gzip for both data + WAL (portable, good ratio, matches -8 store intent).
+    data:
+      compression: gzip
+    wal:
+      compression: gzip
+      maxParallel: 4
+
+  # Retention for -9's OWN backups. Tunable -- 30d is a sane starting RPO window.
+  # NOTE: retention only prunes what actually gets archived; it does not protect
+  # against archiving being broken (that is the -8 failure mode we are fixing).
+  retentionPolicy: "30d"
+
+  # Backblaze B2 rejects the AWS SDK's newer default request/response checksums.
+  # These two env vars are the known workaround and MUST be preserved verbatim
+  # from the working -8 store, or WAL archive/backup uploads will fail on B2.
+  instanceSidecarConfiguration:
+    env:
+      - name: AWS_REQUEST_CHECKSUM_CALCULATION
+        value: when_required
+      - name: AWS_RESPONSE_CHECKSUM_VALIDATION
+        value: when_required
