@@ -1,0 +1,177 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Health Insurance & Appeals Glossary - Fight Health Insurance{% endblock title %}
+{% block metatitle %}Health Insurance & Appeals Glossary - Fight Health Insurance{% endblock metatitle %}
+{% block metadescription %}Plain-language definitions of {{ term_count }} health insurance and appeals terms — from prior authorization and medical necessity to external review — to help you understand and fight coverage denials.{% endblock metadescription %}
+
+{% block content %}
+<script type="application/ld+json">{{ json_ld }}</script>
+
+<!-- Hero Section -->
+<section id="glossary-index-hero" class="slider" data-stellar-background-ratio="0.5">
+    <div class="row">
+        <div class="item item-first">
+            <div class="caption d-flex flex-column align-items-center justify-content-center">
+                <div class="hero-inner">
+                    <h3 class="hero-tagline">Know Your Terms</h3>
+                    <h1 class="hero-headline">Health Insurance &amp; Appeals Glossary</h1>
+                    <p class="hero-subcopy">Insurance denials are full of jargon. These {{ term_count }} plain-language definitions explain the words that show up in denial letters, plan documents, and appeals — so you can push back with confidence.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Glossary Section -->
+<section id="glossary-list" class="py-5">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-10 mx-auto">
+
+                <!-- Quick Jump -->
+                <div class="quick-jump text-center mb-4">
+                    <div class="btn-group flex-wrap" role="group" aria-label="Jump to letter">
+                        {% for letter in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ' %}
+                        {% if letter in active_letters %}
+                        <a href="#letter-{{ letter }}" class="btn btn-outline-secondary btn-sm letter-btn">{{ letter }}</a>
+                        {% else %}
+                        <span class="btn btn-outline-secondary btn-sm letter-btn disabled" aria-disabled="true">{{ letter }}</span>
+                        {% endif %}
+                        {% endfor %}
+                    </div>
+                </div>
+
+                <!-- Term Groups -->
+                <div class="glossary-grid">
+                    {% for letter, terms in letter_groups %}
+                    <div id="letter-{{ letter }}" class="letter-section mb-4">
+                        <h2 class="letter-header">{{ letter }}</h2>
+                        <div class="row">
+                            {% for term in terms %}
+                            <div class="col-md-6 mb-3">
+                                <a href="{% url 'glossary_term' term.slug %}" class="term-card d-block">
+                                    <div class="card h-100">
+                                        <div class="card-body">
+                                            <h3 class="card-title h5 mb-1">{{ term.term }}</h3>
+                                            <p class="card-text text-muted small mb-0">{{ term.short }}</p>
+                                        </div>
+                                    </div>
+                                </a>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Final CTA Section -->
+<section id="final-cta" class="py-5 bg-light">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto text-center">
+                <h2 class="mb-3">Ready to Fight a Denial?</h2>
+                <p class="lead mb-4">Now that the jargon makes sense, our free AI-powered tool can help you generate a compelling appeal letter in minutes.</p>
+                <div class="d-flex justify-content-center gap-3 flex-wrap">
+                    <a href="{% url 'scan' %}" class="btn btn-green btn-lg">
+                        Start Your Appeal
+                    </a>
+                    <a href="{% url 'chat' %}" class="btn btn-outline-green btn-lg">
+                        Chat with AI Assistant
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Disclaimer Section -->
+<section id="disclaimer" class="py-4">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto">
+                <div class="disclaimer-box p-3 bg-light border rounded">
+                    <p class="text-muted small mb-0">
+                        <strong>Disclaimer:</strong> These definitions are provided for general educational purposes only and are not legal, medical, or insurance advice. Insurance rules, deadlines, and terminology vary by plan, state, and over time. Always check your own plan documents and confirm current details before acting.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+{% endblock content %}
+
+{% block extra_style %}
+<style>
+    #glossary-index-hero .hero-inner {
+        max-width: 820px;
+        padding: 2rem;
+    }
+
+    .quick-jump {
+        background: #fff;
+        padding: 1rem;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        position: sticky;
+        top: 0;
+        z-index: 5;
+    }
+
+    .letter-btn {
+        margin: 2px;
+        min-width: 32px;
+    }
+
+    .letter-btn.disabled {
+        opacity: 0.4;
+        pointer-events: none;
+    }
+
+    .letter-header {
+        border-bottom: 2px solid #28a745;
+        padding-bottom: 0.5rem;
+        margin-bottom: 1rem;
+        color: #28a745;
+    }
+
+    .term-card {
+        text-decoration: none;
+        color: inherit;
+    }
+
+    .term-card:hover {
+        text-decoration: none;
+    }
+
+    .term-card .card {
+        transition: all 0.2s ease;
+        border-left: 3px solid transparent;
+    }
+
+    .term-card:hover .card {
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        border-left-color: #28a745;
+    }
+
+    .disclaimer-box {
+        border-color: #dee2e6 !important;
+    }
+
+    #final-cta {
+        background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+    }
+
+    html {
+        scroll-behavior: smooth;
+    }
+
+    .letter-section {
+        scroll-margin-top: 80px;
+    }
+</style>
+{% endblock extra_style %}
