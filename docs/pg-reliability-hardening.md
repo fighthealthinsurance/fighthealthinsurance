@@ -135,6 +135,13 @@ Add infra alerts (wired via the PodMonitor — `-9` sets
 
 ## Should we bump the CNPG operator / plugin version?
 
+> **Current live state (verified on-cluster):** `-8-2` and `-8-3` both run sidecar
+> **`v0.9.0`** — `-8` was rolled back to v0.9 to recover from the outage, and
+> there is no longer an `-8-1` pod (it died disk-full). **Decision: move to
+> `v0.13.0`** for `-9`. This section is therefore not hypothetical — we ARE
+> re-attempting the v0.9→v0.13 jump that caused the incident, so §2 (selector) and
+> §3 (CA) are hard prerequisites, not advice.
+
 **Short answer: a version bump alone is NOT the fix — the durable fixes are the
 selector, the version *pin*, and the CA (§2/§3). But yes, converging to a single,
 recent, pinned plugin version materially reduces risk.**

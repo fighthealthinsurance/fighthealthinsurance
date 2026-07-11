@@ -57,7 +57,8 @@ Run top to bottom. Each phase has its own gate; a red gate stops the line.
 | Target cluster | `fhi-pg-main-9` (rw service `fhi-pg-main-9-rw.totallylegitco.svc`) |
 | PG image | `ghcr.io/cloudnative-pg/postgresql:18.1-system-trixie` |
 | Operator | CloudNativePG `v1.28.0` |
-| Backup plugin | barman-cloud `v0.13` (sidecar image `…/plugin-barman-cloud:v0.13.0`) |
+| Backup plugin — **current `-8`** | barman-cloud sidecar `v0.9.0` on `-8-2`/`-8-3` (rolled back to v0.9 to recover from the outage) |
+| Backup plugin — **target `-9`** | barman-cloud `v0.13.0` (sidecar `ghcr.io/cloudnative-pg/plugin-barman-cloud-sidecar:v0.13.0`) — a **deliberate re-upgrade**; apply the §2/§3 hardening fixes first |
 | Storage class | `encrypted-local-path` (RWO) |
 | App DB / owner | `app` / `ziggystardust` |
 | Migration role | `fhi_pg9_migration` (LOGIN REPLICATION) |
@@ -133,6 +134,24 @@ clone takes far longer / may not fit 50Gi. (Full P0 plugin hotfix — Service
 selector + leader lease — is in `notes/incident-evidence.md` and the hardening
 doc; do that FIRST if the plugin itself is still unreachable.)
 
+> **⚠️ PLUGIN VERSION — `-8` is currently on sidecar `v0.9.0`; `-9` targets
+> `v0.13.0`.** After the outage, `-8` was rolled back to `v0.9.0` (confirm:
+> `kubectl -n totallylegitco get pod fhi-pg-main-8-3 -o jsonpath='{range
+> .spec.initContainers[*]}{.name}={.image}{"\n"}{end}'` shows
+> `plugin-barman-cloud-sidecar:v0.9.0`). The v0.9→v0.13 upgrade is **exactly what
+> broke `-8`** (version-coupled Service selector + dual leader lease + bad CA —
+> hardening doc §1/§2/§3). Re-attempting v0.13.0 is fine **only after** those
+> colo-scripts fixes are live: a **single** pinned `v0.13.x` deployment, a
+> Service selector on the stable `app: barman-cloud` label, and a correctly
+> issued CA. Verify the plugin endpoint is non-empty before trusting archiving:
+> `kubectl -n cnpg-system get endpointslice -l
+> kubernetes.io/service-name=barman-cloud -o
+> jsonpath='{range .items[*]}{.endpoints[*].conditions.ready}{"\n"}{end}'`.
+> Because `-9` bootstraps by **streaming from `-8`** (not restoring `-8`'s
+> archive), `-9` can run its own `v0.13.0` sidecar even while `-8` is still on
+> `v0.9.0` — but the Phase 0 archive gate below still requires `-8`'s archiver to
+> be healthy on whichever version `-8` runs.
+
 > **HARD GATE — this whole phase must be GREEN before the clone (Phase 4).** The
 > clone's WAL-retention safety net is `-8`'s `restore_command` reading `-8`'s
 > **object-store archive** (see cluster manifest externalCluster `plugin`).
@@ -149,31 +168,33 @@ doc; do that FIRST if the plugin itself is still unreachable.)
 
 **ACTION** — fix archiving using non-primary-disruptive steps only:
 
+> **Live topology (verified on-cluster):** there is **no `fhi-pg-main-8-1`** — it
+> died disk-full in the incident. Only `-8-2` (a replica, `1/2 Running`, thousands
+> of restarts — the "suspect" pod) and `-8-3` (the healthy primary) exist. **Do
+> NOT delete either pod** to clear the archive queue: `-8-3` is the only healthy
+> primary and `-8-2` is already unstable — deleting it risks leaving you on a
+> single pod if its rebuild stalls. Use only the non-destructive SQL path below.
+
 ```bash
-# inspect which plugin image each pod actually runs (skew is the root cause)
-for pod in fhi-pg-main-8-1 fhi-pg-main-8-2 fhi-pg-main-8-3; do
+# inspect which plugin image each pod actually runs (records the current version)
+for pod in fhi-pg-main-8-2 fhi-pg-main-8-3; do
   kubectl -n totallylegitco get pod "$pod" \
     -o jsonpath='{.metadata.name}: {range .spec.initContainers[*]}{.name}={.image} {end}{"\n"}' 2>/dev/null
 done
 
 # (a) drop STALE/inactive replication slots that retain WAL for dead -8 replicas
-#     (these both bloat pgdata and can mask a healthy stream in later checks):
+#     (these are a top cause of the pgdata bloat — the -8-1 slot may still exist):
 kubectl -n totallylegitco exec fhi-pg-main-8-3 -c postgres -- psql -U postgres -c \
  "SELECT slot_name, active, pg_size_pretty(pg_wal_lsn_diff(pg_current_wal_lsn(),restart_lsn)) retained
     FROM pg_replication_slots WHERE NOT active ORDER BY retained DESC;"
-# review the list, then drop only confirmed-stale ones:
+# review the list, then drop only confirmed-stale ones (e.g. a leftover -8-1 slot):
 #   SELECT pg_drop_replication_slot('<stale_slot_name>');
-
-# (b) clear the wedged archive queue WITHOUT touching -3: recreate only a
-#     REPLICA pod so CNPG rebuilds its pg_wal/archive_status (PVC preserved).
-kubectl -n totallylegitco delete pod fhi-pg-main-8-1     # a REPLICA (never -8-3)
-kubectl -n totallylegitco logs fhi-pg-main-8-1 -c plugin-barman-cloud -f
 ```
 
-If a specific orphaned `*.history` / `*.partial` marker is still wedged, clear
-only its stuck `archive_status/*.ready` marker per CNPG guidance (targeted, on a
-**replica** pod — never on `-3`), then force WAL to advance from the primary
-(a plain SQL call, no restart):
+To clear a wedged archive queue **without deleting any pod**, clear the stuck
+`archive_status/*.ready` marker in place on the pod that holds it (per CNPG
+guidance) and then force WAL to advance from the primary (a plain SQL call, no
+restart):
 
 ```bash
 kubectl -n totallylegitco exec fhi-pg-main-8-3 -c postgres -- \
