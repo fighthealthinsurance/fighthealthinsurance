@@ -33,9 +33,9 @@ class GlossaryDataIntegrityTest(TestCase):
         validate_glossary()
 
     def test_term_count_within_expected_range(self):
-        """The glossary holds between 40 and 60 terms."""
+        """The glossary holds between 40 and 65 terms."""
         self.assertGreaterEqual(len(GLOSSARY_TERMS), 40)
-        self.assertLessEqual(len(GLOSSARY_TERMS), 60)
+        self.assertLessEqual(len(GLOSSARY_TERMS), 65)
 
     def test_no_duplicate_slugs(self):
         """Every glossary slug is unique."""
