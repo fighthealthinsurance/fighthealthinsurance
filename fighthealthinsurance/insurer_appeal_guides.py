@@ -22,7 +22,6 @@ is general information, not legal advice.
 from dataclasses import dataclass, field
 from functools import lru_cache
 
-
 # Date the guide content was last editorially reviewed (YYYY-MM-DD).
 # Surfaced on every page so readers know how current the general guidance is.
 LAST_REVIEWED = "2026-07-10"
