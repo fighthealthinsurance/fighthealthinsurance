@@ -899,7 +899,7 @@ class RegulatorContactInfoTest(TestCase):
         from django.apps import apps
 
         migration = importlib.import_module(
-            "fighthealthinsurance.migrations.0193_regulator_phone"
+            "fighthealthinsurance.migrations.0194_regulator_phone"
         )
         Regulator.objects.update(phone="")
         migration._seed_regulator_phones(apps, None)
