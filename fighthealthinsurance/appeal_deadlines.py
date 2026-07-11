@@ -270,13 +270,17 @@ _MEDICARE_ADVANTAGE_PARTD = CoverageRule(
         days=60,
     ),
     external_review_filing=Window(
+        # No concrete date is emitted here (days=None): the Part D 60-day IRE
+        # clock legally runs from the plan's REDETERMINATION decision, not from
+        # the denial-received date this calculator collects, so computing a date
+        # from the denial would be misleading (it would land ~1-2 weeks early).
         label=(
             "If the plan upholds the denial, Part C appeals are forwarded "
-            "automatically to an Independent Review Entity; Part D gives you "
-            "60 days to request Independent Review Entity reconsideration"
+            "automatically to an Independent Review Entity; for Part D you have "
+            "60 days from the plan's redetermination decision to request "
+            "Independent Review Entity reconsideration"
         ),
         citation="42 CFR 422.592 (Part C auto-forward) / 42 CFR 423.600(b) (Part D)",
-        days=60,
         varies=True,
     ),
     external_review_label="Independent Review Entity (IRE) reconsideration",
