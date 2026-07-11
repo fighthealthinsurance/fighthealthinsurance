@@ -807,6 +807,18 @@ class RegulatorContactInfoTest(TestCase):
         denial.refresh_from_db()
         self.assertEqual(denial.regulator.alt_name, "CMS")
 
+    def test_extract_set_regulator_multi_match_is_deterministic(self):
+        """When denial text matches more than one regulator, the lowest-pk
+        match wins deterministically (get_regulator orders by pk). ERISA is
+        pk=1 and CMS pk=2 in the fixture, so ERISA wins."""
+        denial = self._make_denial(
+            "You may have the right to file a civil action under ERISA. "
+            "Centers for Medicare and Medicaid."
+        )
+        async_to_sync(DenialCreatorHelper.extract_set_regulator)(denial.denial_id)
+        denial.refresh_from_db()
+        self.assertEqual(denial.regulator.alt_name, "ERISA")
+
     def test_extract_entity_sets_regulator_even_when_extraction_already_done(self):
         """extract_entity early-returns when procedure/diagnosis are already
         populated (e.g. entered manually); regulator matching must still run

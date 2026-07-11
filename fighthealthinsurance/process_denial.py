@@ -123,7 +123,6 @@ class ProcessDenialRegex(DenialBase):
 
     def __init__(self):
         self.planTypes = PlanType.objects.all()
-        self.regulators = Regulator.objects.all()
         self.denialTypes = DenialTypes.objects.all()
         self.diagnosis = Diagnosis.objects.all()
         self.procedures = Procedures.objects.all()
@@ -205,7 +204,11 @@ class ProcessDenialRegex(DenialBase):
 
     async def get_regulator(self, text):
         regulators = []
-        async for r in self.regulators:
+        # Query fresh (not a cached instance queryset) so admin/runtime edits
+        # to regulators are picked up without a restart, and order by pk so the
+        # match list is deterministic — extract_set_regulator persists
+        # regulators[0], so a stable first match matters.
+        async for r in Regulator.objects.order_by("pk"):
             # An empty pattern compiles to a match-everything regex, so an
             # unset negative_regex would otherwise veto every regulator.
             if r.regex.pattern != "" and r.regex.search(text) is not None:
