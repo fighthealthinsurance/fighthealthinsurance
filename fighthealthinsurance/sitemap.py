@@ -38,6 +38,7 @@ class StaticViewSitemap(Sitemap):
             "pbs-newshour",
             "preparing-2026",
             "turning-26",
+            "appeal_deadline_calculator",
             "other-resources",
             "faq",
             "medicaid-faq",
