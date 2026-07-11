@@ -227,7 +227,7 @@ class TestMLCitationsHelper:
             "_get_supplemental_citations",
             new_callable=AsyncMock,
             return_value=["Supplemental snippet"],
-        ):
+        ) as mock_supplemental:
             # First call: cache miss -> generates, appends supplemental, caches.
             first = await MLCitationsHelper.generate_generic_citations(
                 procedure_opt="widget install",
@@ -242,6 +242,9 @@ class TestMLCitationsHelper:
         assert first.count("Supplemental snippet") == 1
         assert second.count("Supplemental snippet") == 1
         assert second == ["ML Citation 1", "ML Citation 2", "Supplemental snippet"]
+        # Prove we exercised the cache-miss-then-cache-hit path (supplemental
+        # fetched once per call), not two cache misses.
+        assert mock_supplemental.call_count == 2
 
     @pytest.mark.django_db
     @pytest.mark.asyncio
