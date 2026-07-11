@@ -482,6 +482,9 @@ class SshHylaFaxClient(HylaFaxClient):
 
     username = os.getenv("USERNAME", "idk")
     remote_host: Optional[str]
+    # Scratch/staging directory on the remote fax host. Fax payloads contain
+    # PII, so we stage them under the encrypted mount rather than plaintext /tmp.
+    remote_scratch_dir = "/db/encrypted/fax"
 
     def _create_ssh_client(self) -> SSHClient:
         if self.remote_host is None:
@@ -501,10 +504,10 @@ class SshHylaFaxClient(HylaFaxClient):
 
     async def _upload_file(self, path: str) -> Optional[str]:
         ssh = self._create_ssh_client()
-        target = f"/tmp/{self.username}/{path}"
+        target = f"{self.remote_scratch_dir}/{self.username}/{path}"
         # Avoid //s
         if path[0] == "/":
-            target = f"/tmp/{self.username}{path}"
+            target = f"{self.remote_scratch_dir}/{self.username}{path}"
         try:
             sftp_client = ssh.open_sftp()
             # Make the remote directory if needed.

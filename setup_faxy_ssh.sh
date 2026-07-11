@@ -6,7 +6,7 @@ SECRET_NAME="faxymcfaxface-ssh"
 KEY_NAME="faxy-id_ed25519"
 KEY_PATH="$HOME/.ssh/$KEY_NAME"
 PUB_PATH="${KEY_PATH}.pub"
-FAXY_HOST="faxymcfaxface"
+FAXY_HOST="turo.local.pigscanfly.ca"
 FAXY_USER="ray"
 
 echo "==> Generating SSH keypair (if missing)"
