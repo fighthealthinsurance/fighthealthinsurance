@@ -16,7 +16,6 @@ def _patched_actor_refs():
         "imr_refresh_actor_ref",
         "pa_refresh_actor_ref",
         "ucr_refresh_actor_ref",
-        "worst_insurance_refresh_actor_ref",
     ]
     stack = contextlib.ExitStack()
     for module_name in modules:
@@ -48,8 +47,8 @@ class TestActorHealthStatus(TestCase):
         assert "total_actors" in data
         assert "details" in data
         # Total actors: email, fax, chooser, IMR refresh, UCR refresh,
-        # PA refresh, worst-insurance refresh
-        assert data["total_actors"] == 7
+        # PA refresh
+        assert data["total_actors"] == 6
 
     @mock.patch("fighthealthinsurance.actor_health_status.ray")
     def test_actor_health_all_down(self, mock_ray):
@@ -61,8 +60,8 @@ class TestActorHealthStatus(TestCase):
 
         result = check_actor_health()
         assert result["alive_actors"] == 0
-        assert result["total_actors"] == 7
-        assert len(result["details"]) == 7
+        assert result["total_actors"] == 6
+        assert len(result["details"]) == 6
         # All should have error messages
         for detail in result["details"]:
             assert detail["alive"] is False
@@ -82,9 +81,9 @@ class TestActorHealthStatus(TestCase):
         from fighthealthinsurance.actor_health_status import check_actor_health
 
         result = check_actor_health()
-        assert result["alive_actors"] == 7
-        assert result["total_actors"] == 7
-        assert len(result["details"]) == 7
+        assert result["alive_actors"] == 6
+        assert result["total_actors"] == 6
+        assert len(result["details"]) == 6
         # All should be alive
         for detail in result["details"]:
             assert detail["alive"] is True
@@ -112,8 +111,8 @@ class TestActorHealthStatus(TestCase):
 
         result = check_actor_health()
         assert result["alive_actors"] == 1
-        assert result["total_actors"] == 7
-        assert len(result["details"]) == 7
+        assert result["total_actors"] == 6
+        assert len(result["details"]) == 6
 
     def test_actor_health_endpoint_caching(self):
         """Test that the actor health endpoint has appropriate cache headers."""
@@ -135,10 +134,9 @@ class TestActorHealthStatus(TestCase):
         from fighthealthinsurance.actor_health_status import check_actor_health
 
         result = check_actor_health()
-        # Six actors remain: email, chooser, IMR, UCR, PA, worst-insurance
-        # (no fax).
-        assert result["total_actors"] == 6
-        assert result["alive_actors"] == 6
+        # Five actors remain: email, chooser, IMR, UCR, PA (no fax).
+        assert result["total_actors"] == 5
+        assert result["alive_actors"] == 5
         names = [d["name"] for d in result["details"]]
         assert "fax_polling_actor" not in names
 
@@ -151,7 +149,7 @@ class TestActorHealthStatus(TestCase):
             results = relaunch_actors(force=False)
 
         assert "fax_polling_actor" not in results
-        assert len(results) == 6
+        assert len(results) == 5
         assert all(r["status"] == "launched" for r in results.values())
 
     @override_settings(TEMPORAL_ENABLED=False)
@@ -163,4 +161,4 @@ class TestActorHealthStatus(TestCase):
             results = relaunch_actors(force=False)
 
         assert "fax_polling_actor" in results
-        assert len(results) == 7
+        assert len(results) == 6
