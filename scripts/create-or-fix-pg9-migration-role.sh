@@ -79,8 +79,9 @@ info "=== creating/repairing role on $SRC_POD ==="
 # $B64/$PGROLE_PW must expand there, not locally. This is intentional.
 # shellcheck disable=SC2016
 kubectl -n "$NAMESPACE" exec -i "$SRC_POD" -c "$PG_CONTAINER" -- \
-  sh -c 'IFS= read -r B64; PGROLE_PW="$(printf %s "$B64" | base64 -d)"; export PGROLE_PW; exec psql -U postgres -d postgres -v ON_ERROR_STOP=1' <<SQL
+  sh -c 'IFS= read -r B64; PGROLE_PW="$(printf %s "$B64" | base64 -d)"; export PGROLE_PW; exec psql -q -U postgres -d postgres -v ON_ERROR_STOP=1 -v VERBOSITY=terse' <<SQL
 $PW_B64
+\\set QUIET on
 \\getenv pw PGROLE_PW
 -- create only if absent (idempotent; WHERE NOT EXISTS on pg_roles)
 SELECT format('CREATE ROLE %I WITH LOGIN REPLICATION PASSWORD %L', 'fhi_pg9_migration', :'pw')

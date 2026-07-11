@@ -84,9 +84,21 @@ clone takes far longer / may not fit 50Gi. (Full P0 plugin hotfix — Service
 selector + leader lease — is in `notes/incident-evidence.md` and the hardening
 doc; do that FIRST if the plugin itself is still unreachable.)
 
-**ACTION** — clear the archive wedge by rolling-recreating the **replica** pods
-(replicas first, primary `-8-3` LAST — and only if it must be touched at all),
-so CNPG rebuilds `pg_wal/archive_status` and re-derives the archive queue:
+> **HARD GATE — this whole phase must be GREEN before the clone (Phase 3).** The
+> clone's WAL-retention safety net is `-8`'s `restore_command` reading `-8`'s
+> **object-store archive** (see cluster manifest externalCluster `plugin`).
+> That fallback is worthless if the archive is dead. Therefore "archive verified
+> healthy on -8" is a **prerequisite for cloning**, not a nice-to-have.
+
+> **DO NOT touch `fhi-pg-main-8-3`.** Everything below is achievable WITHOUT
+> deleting/restarting/​recreating the only healthy primary. Never `delete pod
+> fhi-pg-main-8-3` and never delete its PVC. If — and only if — fixing archiving
+> genuinely required restarting `-3`, that is a **separate live-incident
+> escalation**: first stand up and verify a healthy replacement primary
+> (promote a caught-up replica), THEN handle `-3`. That escalation is out of
+> scope for this runbook and must never be green-lit here.
+
+**ACTION** — fix archiving using non-primary-disruptive steps only:
 
 ```bash
 # inspect which plugin image each pod actually runs (skew is the root cause)
@@ -95,19 +107,29 @@ for pod in fhi-pg-main-8-1 fhi-pg-main-8-2 fhi-pg-main-8-3; do
     -o jsonpath='{.metadata.name}: {range .spec.initContainers[*]}{.name}={.image} {end}{"\n"}' 2>/dev/null
 done
 
-# recreate a REPLICA first (never -8-3 here). PVC is preserved.
-kubectl -n totallylegitco delete pod fhi-pg-main-8-1
-kubectl -n totallylegitco logs fhi-pg-main-8-1 -c plugin-barman-cloud -f   # watch it come back
+# (a) drop STALE/inactive replication slots that retain WAL for dead -8 replicas
+#     (these both bloat pgdata and can mask a healthy stream in later checks):
+kubectl -n totallylegitco exec fhi-pg-main-8-3 -c postgres -- psql -U postgres -c \
+ "SELECT slot_name, active, pg_size_pretty(pg_wal_lsn_diff(pg_current_wal_lsn(),restart_lsn)) retained
+    FROM pg_replication_slots WHERE NOT active ORDER BY retained DESC;"
+# review the list, then drop only confirmed-stale ones:
+#   SELECT pg_drop_replication_slot('<stale_slot_name>');
+
+# (b) clear the wedged archive queue WITHOUT touching -3: recreate only a
+#     REPLICA pod so CNPG rebuilds its pg_wal/archive_status (PVC preserved).
+kubectl -n totallylegitco delete pod fhi-pg-main-8-1     # a REPLICA (never -8-3)
+kubectl -n totallylegitco logs fhi-pg-main-8-1 -c plugin-barman-cloud -f
 ```
 
-If a specific orphaned `*.history` / `*.partial` marker remains stuck, clear
-only its `archive_status/*.ready` marker per CNPG guidance (targeted, on a
-replica), then force WAL to advance:
+If a specific orphaned `*.history` / `*.partial` marker is still wedged, clear
+only its stuck `archive_status/*.ready` marker per CNPG guidance (targeted, on a
+**replica** pod — never on `-3`), then force WAL to advance from the primary
+(a plain SQL call, no restart):
 
 ```bash
-# force a WAL switch so a fresh segment must archive
 kubectl -n totallylegitco exec fhi-pg-main-8-3 -c postgres -- \
-  psql -U postgres -c 'SELECT pg_switch_wal();'
+  psql -U postgres -c 'SELECT pg_switch_wal();'   # SQL only; does NOT restart -3
+sleep 15
 ```
 
 **VALIDATION**
@@ -116,16 +138,20 @@ kubectl -n totallylegitco exec fhi-pg-main-8-3 -c postgres -- \
 kubectl -n totallylegitco exec fhi-pg-main-8-3 -c postgres -- psql -U postgres -xc \
  "SELECT archived_count, failed_count, last_archived_wal, last_archived_time, last_failed_wal
     FROM pg_stat_archiver;"
+# then confirm a FRESH base backup of -8 actually completes (proves end-to-end):
+kubectl -n totallylegitco cnpg backup fhi-pg-main-8
+kubectl -n totallylegitco get backup -l cnpg.io/cluster=fhi-pg-main-8
 ```
 
-**GATE:** `archived_count` is **increasing**, `last_archived_time` is recent, and
-`failed_count` is **flat** (not climbing). pgdata usage is trending **down** as
-archived WAL is recycled. If archiving is still failing → **stop**; fix the
-plugin/CA per the hardening doc before going further.
+**GATE (HARD):** `archived_count` **increased** after the forced switch,
+`last_archived_time` is recent, `failed_count` is **flat**, pgdata usage is
+trending **down**, **and** a fresh `-8` base backup reaches `phase=completed`.
+If any of these is red → **stop**; fix the plugin/CA per the hardening doc. Do
+not clone `-9` off a source whose archive cannot serve `restore_command`.
 
 ---
 
-## Phase 1 — Migration prerequisites on `-8` (role + pg_hba + slot)
+## Phase 1 — Migration prerequisites on `-8` (role + pg_hba + WAL retention)
 
 ### 1a. Create/repair the migration role
 
@@ -157,44 +183,73 @@ spec:
 ```
 
 ```bash
-kubectl -n totallylegitco rollout status cluster/fhi-pg-main-8   # wait for reconcile
+# CNPG Cluster is a CRD; `kubectl rollout status` does NOT understand it.
+# Wait on the CNPG Ready condition (or use the cnpg plugin status):
+kubectl -n totallylegitco wait --for=condition=Ready --timeout=300s cluster/fhi-pg-main-8
+# alternative: kubectl cnpg status fhi-pg-main-8 -n totallylegitco
 ./scripts/create-or-fix-pg9-migration-role.sh                    # re-run; probe B must PASS
 ```
 
 **GATE:** probe B (physical replication) PASSES.
 
-### 1c. Physical replication slot + retention guard on `-8`
+### 1c. WAL retention on `-8` for the clone window (NO no-op slot)
 
-**Why:** during the clone `-8` must **retain** the WAL `-9` still needs, but a
-stuck slot must **never** be able to fill `-8`'s disk again (that is exactly what
-killed `-8-1`).
+**Resolved design (not a VERIFY-LIVE guess).** A named physical slot on `-8`
+**cannot** protect this clone: CNPG 1.28 treats `primary_slot_name` /
+`primary_conninfo` as **fixed, user-unsettable** parameters
+(`pkg/postgres/configuration.go`), the `externalClusters` schema has no slot
+field, and the replica-cluster docs stream **slotless**. A hand-made slot would
+retain WAL that `-9` never consumes → disk pressure on the only healthy primary
+with **zero** protection, then invalidation at `max_slot_wal_keep_size`. **Do not
+create one.**
 
-> **VERIFY-LIVE (flagged in the cluster manifest):** CNPG 1.28's
-> `externalClusters[]` has **no field** to bind `-9`'s streaming connection to a
-> *named* physical slot on `-8`, and `replicationSlots.highAvailability` only
-> manages `-9`'s **internal** slots. Confirm with
-> `kubectl explain cluster.spec.externalClusters` and
-> `kubectl explain cluster.spec.replica`. Until confirmed, treat `-8`'s
-> `wal_keep_size` as the primary retention guarantee and the manual slot below
-> as defence-in-depth.
+The retention guarantee is therefore **two real mechanisms**:
 
-**ACTION** (human, on `-8`):
+1. **`restore_command` fallback from `-8`'s repaired archive** (the actual
+   guarantee) — wired in the manifest's externalCluster `plugin` stanza and
+   gated by Phase 0. If a segment is recycled on `-8` before `-9` streams it,
+   `-9`'s designated primary fetches it from the object store.
+2. **A COMPUTED `wal_keep_size` on `-8`** (the belt that minimizes how often #1
+   is exercised) — sized from observed WAL rate, **not** a fixed default.
+
+**ACTION** — compute `wal_keep_size` from live data, validate against free disk,
+then set it (and bound slot retention so `-8` can never fill again):
 
 ```bash
-# 1) bound slot retention so no slot can fill the disk (tune to taste)
+# (1) observe peak WAL generation rate on -8 over a representative window.
+#     Sample current_wal_lsn twice, spaced by WINDOW seconds:
+WINDOW=300
+L1=$(kubectl -n totallylegitco exec fhi-pg-main-8-3 -c postgres -- psql -U postgres -Atc "SELECT pg_current_wal_lsn();")
+sleep "$WINDOW"
+L2=$(kubectl -n totallylegitco exec fhi-pg-main-8-3 -c postgres -- psql -U postgres -Atc "SELECT pg_current_wal_lsn();")
+BYTES=$(kubectl -n totallylegitco exec fhi-pg-main-8-3 -c postgres -- psql -U postgres -Atc "SELECT pg_wal_lsn_diff('$L2','$L1');")
+RATE_MBs=$(python3 -c "print(($BYTES)/$WINDOW/1048576)")
+echo "observed WAL rate: ${RATE_MBs} MB/s  (sample this at PEAK load, not idle)"
+
+# (2) size wal_keep_size = peak_rate * worst_case_clone_seconds * safety_margin.
+#     Estimate clone seconds from pgdata size / expected basebackup throughput,
+#     rounded UP, then apply a large margin (>=3x) for load spikes + retries:
+CLONE_SECONDS=${CLONE_SECONDS:-7200}   # worst-case; MEASURE, do not guess low
+MARGIN=${MARGIN:-3}
+KEEP_MB=$(python3 -c "import math;print(int(math.ceil($RATE_MBs*$CLONE_SECONDS*$MARGIN)))")
+echo "recommended wal_keep_size >= ${KEEP_MB} MB"
+
+# (3) VALIDATE it fits: KEEP_MB must be well under -8's FREE disk on the pgdata PVC.
+kubectl -n totallylegitco exec fhi-pg-main-8-3 -c postgres -- df -Pm /var/lib/postgresql/data
+# CONFIRM: free MB on that filesystem >> KEEP_MB (leave headroom for normal WAL +
+# the archive backlog). If it does NOT fit, you MUST rely on mechanism #1
+# (archive restore_command) and keep wal_keep_size modest -- do NOT set a
+# wal_keep_size that could itself fill -8. Record which mechanism is in force.
+
+# (4) apply (prefer -8's CNPG spec.postgresql.parameters so it survives a pod
+#     recreate; ALTER SYSTEM shown as the fast path for the window):
 kubectl -n totallylegitco exec fhi-pg-main-8-3 -c postgres -- \
-  psql -U postgres -c "ALTER SYSTEM SET max_slot_wal_keep_size = '80GB';"
-# 2) keep a generous WAL floor for the clone window
+  psql -U postgres -c "ALTER SYSTEM SET wal_keep_size = '${KEEP_MB}MB';"
+# bound slot retention so NO slot can ever fill -8's disk (the -8-1 failure mode):
 kubectl -n totallylegitco exec fhi-pg-main-8-3 -c postgres -- \
-  psql -U postgres -c "ALTER SYSTEM SET wal_keep_size = '8GB';"
+  psql -U postgres -c "ALTER SYSTEM SET max_slot_wal_keep_size = '80GB';"  # < free disk
 kubectl -n totallylegitco exec fhi-pg-main-8-3 -c postgres -- \
   psql -U postgres -c "SELECT pg_reload_conf();"
-# NOTE: prefer setting these via -8's CNPG spec.postgresql.parameters so they
-# survive a pod recreate; ALTER SYSTEM here is the fast path for the window.
-
-# 3) defence-in-depth slot dedicated to -9
-kubectl -n totallylegitco exec fhi-pg-main-8-3 -c postgres -- psql -U postgres -c \
-  "SELECT pg_create_physical_replication_slot('fhi_pg9_migration_slot', true);"
 ```
 
 **VALIDATION**
@@ -203,9 +258,13 @@ kubectl -n totallylegitco exec fhi-pg-main-8-3 -c postgres -- psql -U postgres -
 ./scripts/check-pg8-source.sh
 ```
 
-**GATE:** `check-pg8-source.sh` prints `SOURCE PREFLIGHT PASSED` — free normal
-connection slots ≥ threshold, `max_wal_senders`/`max_replication_slots` have
-headroom, and `max_slot_wal_keep_size` is **bounded** (not `-1`).
+**GATE:** `check-pg8-source.sh` prints `SOURCE PREFLIGHT PASSED` — it now FAILS
+(not warns) if `max_slot_wal_keep_size` is unbounded/unset, if there is no FREE
+`wal_sender`/`replication_slot` headroom, or if any stale/inactive slot retains
+WAL beyond threshold. Confirm the computed `wal_keep_size` from step (2) is
+applied and fits free disk from step (3). **State explicitly in your change log
+which retention mechanism is primary** (archive restore_command vs wal_keep_size)
+based on whether the computed size fit the disk.
 
 ---
 
@@ -262,7 +321,7 @@ healthy, and it is a **replica** (in recovery), not a fresh empty primary.
 
 ---
 
-## Phase 4 — Verify streaming + slot
+## Phase 4 — Verify streaming (no slot expected)
 
 **ACTION / VALIDATION**
 
@@ -270,9 +329,17 @@ healthy, and it is a **replica** (in recovery), not a fresh empty primary.
 ./scripts/check-pg9-replication.sh
 ```
 
-**GATE:** `-9 REPLICATION HEALTHY` — `-8` shows `-9` `state=streaming`, a physical
-slot is active on `-8`, `pg_is_in_recovery()=t` on `-9`, replay lag is bounded,
-and the `plugin-barman-cloud:v0.13` sidecar is injected in **every** `-9` pod.
+**GATE:** `-9 REPLICATION HEALTHY` — the script now proves `-9` is the connection
+actually streaming by correlating `pg_stat_replication` on `-8` (matching `-9`'s
+client address/`application_name`, `state=streaming`, and `sent_lsn`
+**advancing** across two samples) rather than accepting "some physical slot is
+active" (a stale `-8` HA slot could satisfy that). It also checks
+`pg_is_in_recovery()=t` on `-9`, bounded replay lag, and the
+`plugin-barman-cloud:v0.13` sidecar in **every** `-9` pod. **No slot is expected
+on `-8`** (CNPG streams the replica cluster slotless — see Phase 1c); retention
+is `wal_keep_size` + the archive `restore_command`. The archiver verdict is
+reported **separately** and does not mask streaming health (see Phase 5 for the
+real archiving gate).
 
 ---
 
@@ -415,8 +482,10 @@ then `-8` is the rollback of last resort.
 
 ## Consolidated VERIFY-LIVE checklist (confirm with `kubectl explain`)
 
-1. External-primary physical slot binding for a replica cluster
-   (`cluster.spec.externalClusters`, `cluster.spec.replica`). Phase 1c.
+1. ~~External-primary physical slot binding~~ — **RESOLVED offline** against the
+   CNPG 1.28 source/CRD/docs: not possible; replica clusters stream slotless.
+   Retention is `wal_keep_size` + archive `restore_command` (Phase 0 + 1c). No
+   live check needed.
 2. Managed roles + superuser reconciliation timing on a read-only replica
    (`cluster.spec.managed.roles`, `cluster.spec.superuserSecret`). Phase 3.
 3. `archive_mode on` vs `always` for a replica archiving its own WAL pre-

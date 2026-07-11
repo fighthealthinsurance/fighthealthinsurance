@@ -62,24 +62,51 @@ MAX_SENDERS="$(get max_wal_senders)"
 MAX_SLOTS="$(get max_replication_slots)"
 MAX_SLOT_KEEP="$(get max_slot_wal_keep_size)"
 
-# a streaming replica needs >=1 wal sender + >=1 replication slot headroom
-if [ "${MAX_SENDERS:-0}" -ge 1 ] 2>/dev/null; then
-  pass "max_wal_senders=$MAX_SENDERS (>=1 available for -9)"
+# Threshold (bytes) beyond which an INACTIVE slot's retained WAL is dangerous.
+STALE_SLOT_MAX_BYTES="${STALE_SLOT_MAX_BYTES:-1073741824}"   # 1 GiB
+
+# max_slot_wal_keep_size is read LIVE from -8 (pg_settings), in MB; -1 = disabled
+# (UNBOUNDED) -- a stuck slot can then fill -8's disk (the -8-1 failure mode).
+# This is a HARD FAIL, not a warning: unset / non-numeric / -1 all fail.
+if ! printf '%s' "$MAX_SLOT_KEEP" | grep -Eq '^-?[0-9]+$'; then
+  fail "max_slot_wal_keep_size='$MAX_SLOT_KEEP' is unset/non-numeric on LIVE -8 -- cannot verify bound"; FAILED=1
+elif [ "$MAX_SLOT_KEEP" = "-1" ]; then
+  fail "max_slot_wal_keep_size=-1 (UNBOUNDED) on LIVE -8 -- a stuck slot could fill -8's disk."
+  fail "  Set a bound on -8 (runbook Phase 1c) BEFORE cloning."; FAILED=1
 else
-  fail "max_wal_senders=$MAX_SENDERS -- no room for -9 to stream"; FAILED=1
+  pass "max_slot_wal_keep_size=${MAX_SLOT_KEEP}MB (bounded) on LIVE -8"
 fi
-if [ "${MAX_SLOTS:-0}" -ge 1 ] 2>/dev/null; then
-  pass "max_replication_slots=$MAX_SLOTS (>=1 for the -9 migration slot)"
+
+# --- FREE replication headroom (configured - actual usage), not just >=1 ----
+# -9 needs a genuinely FREE wal_sender AND (for -8's own HA) slot headroom.
+ACTIVE_SENDERS="$(psql_ro "SELECT count(*) FROM pg_stat_replication;")"
+USED_SLOTS="$(psql_ro "SELECT count(*) FROM pg_replication_slots;")"
+FREE_SENDERS=$(( ${MAX_SENDERS:-0} - ${ACTIVE_SENDERS:-0} ))
+FREE_SLOTS=$(( ${MAX_SLOTS:-0} - ${USED_SLOTS:-0} ))
+log "wal_senders: max=$MAX_SENDERS active=$ACTIVE_SENDERS free=$FREE_SENDERS"
+log "repl_slots : max=$MAX_SLOTS used=$USED_SLOTS free=$FREE_SLOTS"
+if [ "$FREE_SENDERS" -ge 1 ]; then
+  pass "free wal_sender headroom ($FREE_SENDERS) for -9's stream"
 else
-  fail "max_replication_slots=$MAX_SLOTS -- cannot create a slot for -9"; FAILED=1
+  fail "NO free wal_sender (max=$MAX_SENDERS all in use) -- -9 cannot stream"; FAILED=1
 fi
-# max_slot_wal_keep_size == -1 means UNBOUNDED: a stuck slot can fill the disk
-# (this is the fhi-pg-main-8-1 failure mode). Warn loudly; the runbook sets it.
-if [ "$MAX_SLOT_KEEP" = "-1" ]; then
-  warn "max_slot_wal_keep_size=-1 (UNBOUNDED) -- a stuck slot could fill -8's disk."
-  warn "  Set a bound on -8 BEFORE creating the -9 slot (see runbook Phase 1)."
+if [ "$FREE_SLOTS" -ge 1 ]; then
+  pass "free replication_slot headroom ($FREE_SLOTS)"
 else
-  pass "max_slot_wal_keep_size=$MAX_SLOT_KEEP (bounded)"
+  fail "NO free replication_slot (max=$MAX_SLOTS all used) -- -8 HA/backup slots exhausted"; FAILED=1
+fi
+
+# --- stale/inactive slots retaining WAL beyond threshold -> FAIL -----------
+STALE="$(psql_ro "
+  SELECT count(*) FROM pg_replication_slots
+  WHERE NOT active
+    AND restart_lsn IS NOT NULL
+    AND pg_wal_lsn_diff(pg_current_wal_lsn(), restart_lsn) > $STALE_SLOT_MAX_BYTES;")"
+if [ "${STALE:-0}" -eq 0 ] 2>/dev/null; then
+  pass "no inactive slot retains WAL beyond ${STALE_SLOT_MAX_BYTES} bytes"
+else
+  fail "$STALE inactive slot(s) retain WAL beyond ${STALE_SLOT_MAX_BYTES} bytes on -8 --"
+  fail "  drop confirmed-stale slots (runbook Phase 0) before cloning; they bloat pgdata."; FAILED=1
 fi
 
 # --- 2. free normal connection slots ---------------------------------------

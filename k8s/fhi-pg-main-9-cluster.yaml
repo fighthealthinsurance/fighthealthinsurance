@@ -118,6 +118,7 @@ spec:
 
   externalClusters:
     - name: fhi-pg-main-8-live
+      # (1) STREAMING path: -9 streams live from -8 via this connection.
       connectionParameters:
         host: fhi-pg-main-8-rw.totallylegitco.svc
         user: fhi_pg9_migration
@@ -128,23 +129,29 @@ spec:
       password:
         name: fhi-pg-main-9-source
         key: password
-      # VERIFY-LIVE (physical replication slot on the EXTERNAL primary):
-      # The externalClusters[] schema in 1.28 has NO field to bind this
-      # streaming connection to a NAMED physical slot on -8, and
-      # replicationSlots.highAvailability (below) only manages -9's INTERNAL
-      # primary->replica slots -- NOT a slot on -8. CNPG will therefore stream
-      # from -8 WITHOUT a slot unless one is arranged manually.
-      # => RUNBOOK PREREQ on -8 (documented, human-run):
-      #      1. create a physical slot for -9 on -8, e.g.
-      #           SELECT pg_create_physical_replication_slot('fhi_pg9_migration_slot', true);
-      #      2. keep -8's wal_keep_size generous during the clone window (belt),
-      #      3. set -8's max_slot_wal_keep_size so this slot (or any stuck slot)
-      #         can NEVER fill -8's disk again -- recycled WAL + a dead archive
-      #         is EXACTLY what killed fhi-pg-main-8-1.
-      #    Whether CNPG can be told to USE that slot as primary_slot_name for an
-      #    external replica in 1.28 is unverified offline -- confirm with the
-      #    operator; if not, wal_keep_size on -8 is the retention guarantee and
-      #    the manual slot is defence-in-depth. See runbook Phase 1.
+      # (2) WAL-RESTORE FALLBACK path (this is the ACTUAL WAL-retention guarantee
+      # for the clone). RESOLVED, not a VERIFY-LIVE guess:
+      #   * A NAMED physical slot on -8 CANNOT protect this clone. CNPG 1.28
+      #     treats `primary_slot_name`/`primary_conninfo` as FIXED (operator-
+      #     managed, user-unsettable -- see pkg/postgres/configuration.go), the
+      #     externalClusters schema has NO slot field, and the replica-cluster
+      #     docs never use a slot. So -9 streams SLOTLESS; a hand-made slot on -8
+      #     would just retain WAL that -9 never consumes -> disk pressure on the
+      #     only healthy primary with ZERO protection. We DO NOT create one.
+      #   * The supported, operator-managed retention mechanism is the
+      #     `restore_command`: when a WAL segment is recycled on -8 before -9
+      #     streams it, CNPG's designated primary fetches it from -8's OBJECT
+      #     STORE archive via this plugin (CNPG 1.28 replica_cluster docs:
+      #     "...retrieves them for the replica cluster via the restore_command").
+      #   * `fhi-backup-store` is -8's EXISTING ObjectStore (serverName
+      #     fhi-pg-main-8). This ONLY works if -8's archiving is HEALTHY -- hence
+      #     runbook Phase 0 "archive verified healthy on -8" is a HARD GATE before
+      #     the clone. `wal_keep_size` on -8 (COMPUTED in Phase 1, not a fixed
+      #     value) is the belt that minimizes how often restore_command is needed.
+      plugin:
+        name: barman-cloud.cloudnative-pg.io
+        parameters:
+          barmanObjectName: fhi-backup-store
 
   # ---------------------------------------------------------------------------
   # PostgreSQL configuration -- RELIABILITY tuning (security is intentionally

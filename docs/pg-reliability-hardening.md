@@ -91,15 +91,23 @@ The outage was a **label/selector mismatch across versions**. Durable fix:
   by *that* CA. Validate the chain (`openssl verify`) after any rotation.
 - **Monitor cert expiry** and alert well before expiry.
 
-### 4. Replication slots WITH a retention bound
+### 4. Replication slots WITH a retention bound (and NO no-op slot)
 - `fhi-pg-main-9` enables HA replication slots
   (`spec.replicationSlots.highAvailability.enabled: true`) for its own
   primary→replica streaming.
 - **Crucially**, `max_slot_wal_keep_size` is set (`16GB` on `-9`; recommend a
   bounded value on `-8` too) so a **stuck/inactive slot can never fill the
-  disk** — the direct antidote to the `-8-1` failure. `wal_keep_size` provides a
-  floor for the clone window; `max_slot_wal_keep_size` provides the ceiling.
-- The migration slot on `-8` (Phase 1c of the runbook) is likewise bounded.
+  disk** — the direct antidote to the `-8-1` failure. `max_slot_wal_keep_size`
+  provides the ceiling.
+- **We deliberately do NOT create a physical slot on `-8` for the clone.** CNPG
+  1.28 cannot make a replica cluster consume a named slot on an external primary
+  (`primary_slot_name`/`primary_conninfo` are fixed, user-unsettable GUCs — see
+  `pkg/postgres/configuration.go`; the replica-cluster docs stream slotless).
+  Such a slot would retain WAL nothing consumes → disk pressure on the only
+  healthy primary with zero protection. The clone's WAL retention is instead a
+  **computed `wal_keep_size` on `-8`** (belt, sized from live WAL rate) plus the
+  **`restore_command` fallback** to `-8`'s repaired object-store archive (wired
+  via `externalClusters[].plugin`, hard-gated on Phase 0). Runbook Phase 0/1c.
 
 ### 5. Replication timeouts that don't self-inflict failover
 - The draft used `wal_sender_timeout=wal_receiver_timeout=5s`. Under load that
@@ -149,13 +157,17 @@ recent, pinned plugin version materially reduces risk.**
 
 ## Offline-verification caveats (confirm live)
 
-These behaviours could not be verified without a cluster and are flagged inline
-in `k8s/fhi-pg-main-9-cluster.yaml` and the runbook's VERIFY-LIVE checklist:
+These behaviours are flagged inline in `k8s/fhi-pg-main-9-cluster.yaml` and the
+runbook's VERIFY-LIVE checklist:
 
-1. Binding `-9`'s external streaming to a **named physical slot on `-8`** — no
-   such field in the 1.28 `externalClusters`/`replica` CRD; `wal_keep_size` +
-   manual slot is the workaround.
+1. **RESOLVED (was: named slot on `-8`).** Verified offline against the CNPG
+   1.28 source (`primary_slot_name` is a fixed, user-unsettable GUC), CRD
+   (`externalClusters` has no slot field), and the replica-cluster docs (stream
+   slotless; WAL comes back via `restore_command`). No named slot is possible or
+   created — retention is computed `wal_keep_size` + archive `restore_command`.
+   No live check required.
 2. **Managed roles / superuser** reconciliation timing on a **read-only
-   replica** (deferred until promotion).
+   replica** (deferred until promotion) — confirm live.
 3. **`archive_mode on` vs `always`** for a replica archiving its own WAL before
-   promotion.
+   promotion — confirm live; the real archiving gate is a completed `-9` backup
+   (runbook Phase 5).
