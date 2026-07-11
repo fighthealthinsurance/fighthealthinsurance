@@ -2803,3 +2803,65 @@ class StateHelpView(TemplateView):
             context["title"] = f"{state.name} Health Insurance Help"
 
         return context
+
+
+class DenialReasonDecoderIndexView(TemplateView):
+    """Public index page for the Denial Reason Decoder tool – lists all reasons."""
+
+    template_name = "denial_reason_decoder_index.html"
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        from fighthealthinsurance.denial_reason_decoder import load_reasons
+
+        reasons = load_reasons()
+        context["reasons"] = reasons
+        context["title"] = (
+            "Denial Reason Decoder – Understand Why Your Health Insurance Claim Was Denied"
+        )
+        context["meta_description"] = (
+            "Learn what common health insurance denial reasons really mean, why insurers use them, "
+            "and the strongest appeal strategies and evidence for each. Free educational tool."
+        )
+        context["canonical_url"] = (
+            "https://www.fighthealthinsurance.com/tools/denial-reason-decoder/"
+        )
+        return context
+
+
+class DenialReasonDecoderView(TemplateView):
+    """Public detail page for a single denial reason (slug-based)."""
+
+    template_name = "denial_reason_decoder_detail.html"
+
+    def get(self, request, slug, *args, **kwargs):
+        from fighthealthinsurance.denial_reason_decoder import get_reason
+
+        self._reason = get_reason(slug)
+        if self._reason is None:
+            from django.http import Http404
+
+            raise Http404(f"Denial reason '{slug}' not found")
+        return super().get(request, *args, **kwargs)
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        import json as _json
+        from fighthealthinsurance.denial_reason_decoder import get_reasons_map
+
+        reason = getattr(self, "_reason", None)
+        if reason:
+            all_reasons = get_reasons_map()
+            context["reason"] = reason
+            context["title"] = (
+                f"{reason.title} Denial – Appeal Guide | Fight Health Insurance"
+            )
+            context["meta_description"] = reason.meta_description
+            context["canonical_url"] = (
+                f"https://www.fighthealthinsurance.com/tools/denial-reason-decoder/{reason.slug}/"
+            )
+            context["faq_jsonld"] = _json.dumps(reason.faq_jsonld())
+            context["breadcrumb_jsonld"] = _json.dumps(reason.breadcrumb_jsonld())
+            context["article_jsonld"] = _json.dumps(reason.article_jsonld())
+            context["related_reasons"] = reason.related_reasons(all_reasons)
+        return context
