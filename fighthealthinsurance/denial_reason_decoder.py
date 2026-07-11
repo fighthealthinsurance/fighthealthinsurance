@@ -141,7 +141,7 @@ class DenialReason:
     def related_reasons(
         self, all_reasons: Dict[str, DenialReason]
     ) -> List[DenialReason]:
-        """Return up to 3 other reasons for cross-linking, sorted by slug."""
+        """Return up to 3 other reasons for cross-linking, in display order."""
         others = [r for slug, r in all_reasons.items() if slug != self.slug]
         return others[:3]
 
@@ -233,7 +233,7 @@ def _build_reasons() -> List[DenialReason]:
                 "treatment, test, or procedure does not meet their internal criteria for appropriate care. "
                 "This does not mean your doctor is wrong or that the treatment is unnecessary — it means "
                 "the insurer's definition of 'necessary' differs from your doctor's clinical judgment. "
-                "This is the single most common reason given for claim denials."
+                "This is one of the most common reasons given for claim denials."
             ),
             why_insurers_use_it=(
                 "Insurers rely on 'not medically necessary' because it is broad, subjective, and shifts the "
