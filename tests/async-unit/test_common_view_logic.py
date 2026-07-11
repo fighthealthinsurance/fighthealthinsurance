@@ -778,14 +778,17 @@ class RegulatorContactInfoTest(TestCase):
             hashed_email=Denial.get_hashed_email("regulator@example.com"),
         )
 
+    def _outside_help_text(self, denial):
+        details = FindNextStepsHelper._get_outside_help_details(denial)
+        return " ".join(f"{option} {how}" for option, how in details)
+
     def test_extract_set_regulator_links_erisa_denial(self):
         denial = self._make_denial(
             "You may have the right to file a civil action under ERISA."
         )
         async_to_sync(DenialCreatorHelper.extract_set_regulator)(denial.denial_id)
         denial.refresh_from_db()
-        self.assertIsNotNone(denial.regulator)
-        self.assertEqual(denial.regulator.alt_name, "ERISA")
+        self.assertEqual(getattr(denial.regulator, "alt_name", None), "ERISA")
 
     def test_extract_set_regulator_leaves_unmatched_denial_null(self):
         denial = self._make_denial("Nothing relevant in this text.")
@@ -804,18 +807,93 @@ class RegulatorContactInfoTest(TestCase):
         denial.refresh_from_db()
         self.assertEqual(denial.regulator.alt_name, "CMS")
 
+    def test_extract_entity_sets_regulator_even_when_extraction_already_done(self):
+        """extract_entity early-returns when procedure/diagnosis are already
+        populated (e.g. entered manually); regulator matching must still run
+        on that path so those denials get regulator contact info."""
+        denial = self._make_denial(
+            "You may have the right to file a civil action under ERISA."
+        )
+        denial.procedure = "MRI"
+        denial.save()
+
+        async def _consume():
+            async for _ in DenialCreatorHelper.extract_entity(denial.denial_id):
+                pass
+
+        async_to_sync(_consume)()
+        denial.refresh_from_db()
+        self.assertEqual(getattr(denial.regulator, "alt_name", None), "ERISA")
+
     def test_outside_help_includes_regulator_phone_number(self):
         erisa = Regulator.objects.get(alt_name="ERISA")
         denial = self._make_denial()
         denial.regulator = erisa
         denial.save()
-        details = FindNextStepsHelper._get_outside_help_details(denial)
-        flattened = " ".join(f"{option} {how}" for option, how in details)
-        self.assertIn("1-866-444-3272", flattened)
-        self.assertIn("Federal Department of Labor", flattened)
+        self.assertIn("Call 1-866-444-3272", self._outside_help_text(denial))
+
+    def test_outside_help_names_the_matched_regulator(self):
+        erisa = Regulator.objects.get(alt_name="ERISA")
+        denial = self._make_denial()
+        denial.regulator = erisa
+        denial.save()
+        self.assertIn("Federal Department of Labor", self._outside_help_text(denial))
 
     def test_outside_help_has_no_contact_row_without_matched_regulator(self):
         denial = self._make_denial()
-        details = FindNextStepsHelper._get_outside_help_details(denial)
-        flattened = " ".join(f"{option} {how}" for option, how in details)
-        self.assertNotIn("file a complaint online", flattened)
+        self.assertNotIn("file a complaint online", self._outside_help_text(denial))
+
+    def test_outside_help_escapes_html_in_regulator_name(self):
+        """The outside-help rows render with autoescape off, so DB-sourced
+        regulator fields must be escaped before being embedded in HTML."""
+        regulator = Regulator.objects.create(
+            name="Weird <b>Dept</b> & Co",
+            website="https://example.com/",
+            alt_name="WEIRD",
+            regex="zzz-never-matches",
+            negative_regex="",
+            phone="1-800-555-0100",
+        )
+        denial = self._make_denial()
+        denial.regulator = regulator
+        denial.save()
+        text = self._outside_help_text(denial)
+        self.assertIn("Weird &lt;b&gt;Dept&lt;/b&gt; &amp; Co", text)
+
+    def test_outside_help_does_not_linkify_non_http_website(self):
+        regulator = Regulator.objects.create(
+            name="Odd Regulator",
+            website="javascript:alert(1)",
+            alt_name="ODD",
+            regex="zzz-never-matches",
+            negative_regex="",
+            phone="1-800-555-0101",
+        )
+        denial = self._make_denial()
+        denial.regulator = regulator
+        denial.save()
+        self.assertNotIn("javascript:", self._outside_help_text(denial))
+
+    def test_migration_backfill_fills_blank_regulator_phones(self):
+        """The 0192 data migration must backfill phones for pre-existing
+        deployments whose seeded rows predate the fixture change; keep its
+        identifier→phone mapping in sync with the fixture."""
+        import importlib
+
+        from django.apps import apps
+
+        migration = importlib.import_module(
+            "fighthealthinsurance.migrations.0192_regulator_phone"
+        )
+        Regulator.objects.update(phone="")
+        migration._seed_regulator_phones(apps, None)
+        phones = set(Regulator.objects.values_list("phone", flat=True))
+        self.assertEqual(
+            phones,
+            {
+                "1-866-444-3272",
+                "1-800-633-4227",
+                "1-888-466-2219",
+                "1-800-368-1019",
+            },
+        )

@@ -39,6 +39,7 @@ from django.db.models import F, Q, QuerySet
 from django.forms import Form
 from django.template.loader import render_to_string
 from django.urls import reverse
+from django.utils.html import escape as html_escape
 
 import asyncstdlib as a
 import ray
@@ -869,20 +870,26 @@ class FindNextStepsHelper:
                     "Talk to your employer's HR if you are on good terms with them.",
                 )
             )
+        # These rows are rendered with ``{% autoescape off %}`` in
+        # outside_help.html, so escape the DB-sourced values and only
+        # linkify http(s) URLs.
         regulator = denial.regulator
-        if regulator is not None and (regulator.phone or regulator.website):
+        website = (regulator.website or "").strip() if regulator else ""
+        if not website.startswith(("http://", "https://")):
+            website = ""
+        if regulator is not None and (regulator.phone or website):
             how_to_parts = []
             if regulator.phone:
-                how_to_parts.append(f"Call {regulator.phone}")
-            if regulator.website:
+                how_to_parts.append(f"Call {html_escape(regulator.phone)}")
+            if website:
                 how_to_parts.append(
-                    f"<a href='{regulator.website}' target='_blank' rel='noopener'>"
+                    f"<a href='{html_escape(website)}' target='_blank' rel='noopener'>"
                     "file a complaint online</a>"
                 )
             outside_help_details.append(
                 (
                     (
-                        f"Your denial letter mentions <strong>{regulator.name}</strong>, "
+                        f"Your denial letter mentions <strong>{html_escape(regulator.name)}</strong>, "
                         "a regulator that oversees this kind of plan. They take consumer "
                         "complaints about denials and can require the plan to respond."
                     ),
@@ -1464,6 +1471,17 @@ class DenialCreatorHelper:
             or denial.procedure
         ):
             logger.debug(f"extract_entity({denial_id}): skipping, already done")
+            # Regulator matching is cheap (a handful of regexes), idempotent,
+            # and independent of the procedure/diagnosis extraction this gate
+            # protects — run it even when the denial was manually populated or
+            # extraction already finished, so those denials still get
+            # regulator contact info.
+            try:
+                await cls.extract_set_regulator(denial_id)
+            except Exception:
+                logger.opt(exception=True).warning(
+                    f"extract_set_regulator failed for denial {denial_id}"
+                )
             return
         # Bound persistent extraction failures: extract_entity runs once per
         # WebSocket connection (websockets.StreamingEntityBackend.receive)

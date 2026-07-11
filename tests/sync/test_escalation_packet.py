@@ -139,6 +139,24 @@ class EscalationAddressesTest(TestCase):
         self.assertIn("PO Box 14463", md.address)
         self.assertEqual(md.url, "https://www.aetna.com/contact-us.html")
 
+    def test_medical_director_falls_back_to_insurer_website_url(self):
+        denial = _FakeDenial(state="", insurance_company="Aetna")
+        denial.insurance_company_obj = type(
+            "ICO",
+            (),
+            {
+                "is_tpa": False,
+                "name": "Aetna",
+                "appeal_address": "",
+                "appeal_phone_number": "",
+                "member_services_url": "",
+                "website": "https://www.aetna.com/",
+            },
+        )()
+        recipients = get_recipients_for_denial(denial)
+        md = next(r for r in recipients if r.recipient_type == "medical_director")
+        self.assertEqual(md.url, "https://www.aetna.com/")
+
     def test_medical_director_keeps_placeholder_without_matched_insurer(self):
         denial = _FakeDenial(state="", insurance_company="Cigna")
         denial.insurance_company_obj = None
