@@ -49,6 +49,17 @@
       text-decoration: none;
     }
     .research a:hover { background-color: #dbe6ff; }
+    a.print-letter {
+      display: inline-block;
+      margin-top: 6px;
+      padding: 10px 18px;
+      background-color: #6f42c1;
+      color: white;
+      border-radius: 4px;
+      text-decoration: none;
+      font-size: 15px;
+    }
+    a.print-letter:hover { background-color: #59339d; }
     label { display: block; font-weight: bold; margin-top: 14px; color: #444; }
     input[type=text], textarea {
       width: 100%;
@@ -158,13 +169,27 @@
         <tr><th>Last modified</th><td>{{ pro.mod_date }}</td></tr>
       </table>
 
-      {% if google_search_url or linkedin_search_url %}
+      {% if google_search_url or linkedin_search_url or google_address_search_url %}
         <h3>Research</h3>
         <div class="research">
           {% if google_search_url %}<a href="{{ google_search_url }}" target="_blank" rel="noopener noreferrer">Google search &#8599;</a>{% endif %}
           {% if linkedin_search_url %}<a href="{{ linkedin_search_url }}" target="_blank" rel="noopener noreferrer">LinkedIn search &#8599;</a>{% endif %}
+          {% if google_address_search_url %}<a href="{{ google_address_search_url }}" target="_blank" rel="noopener noreferrer">Google address &#8599;</a>{% endif %}
         </div>
       {% endif %}
+    </div>
+
+    <div class="card">
+      <h2>Physical letter (optional)</h2>
+      <p>
+        For professionals worth reaching by mail as well as email, print a
+        physical introduction letter to send by post. The printed letter uses
+        different wording &mdash; it can't CC Cofactor AI, so it asks the
+        recipient to email <strong>{{ cc_email }}</strong> for the introduction.
+        Use the <em>Google address</em> link above to find or verify a mailing
+        address.
+      </p>
+      <a class="print-letter" href="{% url 'proconnector_letter' pro.id %}" target="_blank" rel="noopener noreferrer">🖨 Open printable letter &#8599;</a>
     </div>
 
     <div class="card">

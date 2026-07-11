@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>{{ title|default:"Pro Connector Letter" }}</title>
+  <style>
+    body {
+      font-family: "Times New Roman", Georgia, serif;
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 40px 20px;
+      color: #111;
+      background-color: #f5f5f5;
+    }
+    .toolbar {
+      max-width: 720px;
+      margin: 0 auto 20px;
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      font-family: Arial, sans-serif;
+    }
+    .toolbar button {
+      padding: 10px 18px;
+      border: none;
+      border-radius: 4px;
+      font-size: 15px;
+      cursor: pointer;
+      background-color: #6f42c1;
+      color: white;
+    }
+    .toolbar button:hover { background-color: #59339d; }
+    .toolbar a { color: #007bff; text-decoration: none; }
+    .letter {
+      background: white;
+      padding: 56px 64px;
+      border-radius: 4px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      line-height: 1.5;
+    }
+    .letterhead {
+      border-bottom: 2px solid #333;
+      padding-bottom: 10px;
+      margin-bottom: 28px;
+    }
+    .letterhead .org { font-size: 1.4em; font-weight: bold; }
+    .letterhead .contact { font-size: 0.9em; color: #444; margin-top: 4px; }
+    .date { margin-bottom: 24px; }
+    .recipient { margin-bottom: 28px; }
+    .recipient .line { display: block; }
+    .muted { color: #888; font-style: italic; }
+    .body { white-space: pre-wrap; }
+    @media print {
+      body { background: white; padding: 0; max-width: none; }
+      .toolbar { display: none; }
+      .letter { box-shadow: none; border-radius: 0; padding: 0; }
+    }
+  </style>
+</head>
+<body>
+  <div class="toolbar">
+    <button type="button" onclick="window.print()">🖨 Print letter</button>
+    <a href="{% url 'proconnector_process' %}">&larr; Back to Pro Connector</a>
+  </div>
+
+  <div class="letter">
+    <div class="letterhead">
+      <div class="org">Fight Health Insurance</div>
+      <div class="contact">
+        <a href="https://www.fighthealthinsurance.com">www.fighthealthinsurance.com</a>
+        &middot; {{ contact_email }}
+      </div>
+    </div>
+
+    <div class="date">{{ today|date:"F j, Y" }}</div>
+
+    <div class="recipient">
+      {% if pro.name %}<span class="line">{{ pro.name }}</span>{% endif %}
+      {% if pro.business_name %}<span class="line">{{ pro.business_name }}</span>{% endif %}
+      {% if pro.address %}<span class="line">{{ pro.address|linebreaksbr }}</span>{% else %}<span class="line muted">[mailing address &mdash; fill in before mailing]</span>{% endif %}
+    </div>
+
+    <div class="body">{{ letter_body }}</div>
+  </div>
+</body>
+</html>

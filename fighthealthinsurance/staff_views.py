@@ -42,6 +42,7 @@ from fighthealthinsurance.email_utils import is_sendable_email
 from fighthealthinsurance.business_hours import describe_send_window
 from fighthealthinsurance.proconnector import (
     PROCONNECTOR_INTRO_SUBJECT,
+    build_base_intro_letter,
     build_search_links,
     claim_email_for_send,
     generate_intro_email,
@@ -800,6 +801,7 @@ class ProConnectorProcessView(View):
             "cc_email": get_professional_cc_email(),
             "google_search_url": links["google"],
             "linkedin_search_url": links["linkedin"],
+            "google_address_search_url": links["google_address"],
             "skip_reason": skip_reason,
             "test_email": test_email,
             "error": error,
@@ -1030,6 +1032,37 @@ class ProConnectorProcessView(View):
                 "record -- the real intro has NOT been sent."
             ),
         )
+
+
+class ProConnectorLetterView(View):
+    """Print-friendly physical intro letter for an interested professional.
+
+    A companion to :class:`ProConnectorProcessView`: for professionals worth
+    reaching by mail in addition to email, this renders the Cofactor AI
+    introduction as a physical business letter that staff open, print, and mail.
+    The wording differs from the email -- a printed letter can't CC Cofactor AI,
+    so instead of naming a CC it asks the recipient to email the professional
+    contact address for the introduction. This view only renders the letter; it
+    never claims, sends, or records anything on the professional's record, so it
+    can be opened without affecting the processing queue.
+    """
+
+    template_name = "proconnector_letter.html"
+
+    def get(self, request, pro_id: int) -> HttpResponse:
+        pro = InterestedProfessional.objects.filter(pk=pro_id).first()
+        if pro is None:
+            # Bad / stale id (deleted record, hand-edited URL). Send staff back
+            # to the processing page rather than 404 on a transient link.
+            return redirect("proconnector_process")
+        context = {
+            "title": "Pro Connector Letter",
+            "pro": pro,
+            "letter_body": build_base_intro_letter(pro),
+            "contact_email": get_professional_cc_email(),
+            "today": timezone.now().date(),
+        }
+        return render(request, self.template_name, context)
 
 
 class _CSVEcho:
