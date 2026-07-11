@@ -1,0 +1,237 @@
+# =============================================================================
+# fhi-pg-main-9  --  hardened CloudNativePG cluster, seeded as a REPLICA that
+# continuously streams from the live fhi-pg-main-8, then promoted at cutover.
+# =============================================================================
+# CRD field shapes verified OFFLINE against cloudnative-pg v1.28.0
+#   config/crd/bases/postgresql.cnpg.io_clusters.yaml (apiVersion v1). Notable:
+#     spec.plugins[]                {name[req], enabled, isWALArchiver, parameters}
+#     spec.bootstrap.pg_basebackup  {source[req], database, owner, secret}
+#     spec.replica                  {enabled, source[req], primary, self,
+#                                    minApplyDelay, promotionToken}
+#     spec.externalClusters[]       {name[req], connectionParameters, password,
+#                                    sslCert, sslKey, sslRootCert, barmanObjectStore}
+#     spec.replicationSlots.highAvailability {enabled, slotPrefix,
+#                                             synchronizeLogicalDecoding}
+#     spec.probes.liveness.isolationCheck    {enabled, connectionTimeout,
+#                                             requestTimeout}
+#     spec.superuserSecret {name} ; managed.roles[] {name[req],ensure,login,
+#                                    replication,passwordSecret,...}
+#     primaryUpdateStrategy enum [unsupervised, supervised]
+#
+# ==>  FLAGS the operator MUST confirm live with `kubectl explain` before apply,
+#      because they concern runtime BEHAVIOR that cannot be checked from the CRD
+#      schema alone.  Each is tagged  # VERIFY-LIVE:  inline below and collected
+#      in docs/pg8-to-pg9-migration-runbook.md.
+# =============================================================================
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: fhi-pg-main-9
+  namespace: totallylegitco
+spec:
+  # Start as a SINGLE instance while it clones + catches up from -8. Scale to 3
+  # (1 -> 2 -> 3) only after streaming is verified healthy; see runbook.
+  # NOTE: scale-to-3 later by bumping this to 3 and re-applying.
+  instances: 1
+
+  imageName: ghcr.io/cloudnative-pg/postgresql:18.1-system-trixie
+
+  # ---------------------------------------------------------------------------
+  # Storage. 50Gi REQUEST here is deliberate for the fresh -9 volume; the -8
+  # PVCs show ~229GB actual, almost all stuck/unarchivable WAL that we drain in
+  # Phase 0 BEFORE cloning so -9 does not inherit the bloat. resizeInUseVolumes
+  # lets us grow later without recreating the PVC.
+  # ---------------------------------------------------------------------------
+  storage:
+    resizeInUseVolumes: true
+    pvcTemplate:
+      accessModes:
+        - ReadWriteOnce
+      resources:
+        requests:
+          storage: 50Gi
+      storageClassName: encrypted-local-path
+      volumeMode: Filesystem
+
+  # Spread instances across nodes once scaled past 1.
+  affinity:
+    enablePodAntiAffinity: true
+    podAntiAffinityType: preferred
+    topologyKey: kubernetes.io/hostname
+
+  # Plan 02 (alerting) consumes these metrics -- enable the PodMonitor.
+  monitoring:
+    enablePodMonitor: true
+
+  # ---------------------------------------------------------------------------
+  # Superuser + managed app role.
+  #
+  # VERIFY-LIVE (read-only replica gotcha): while -9 is a REPLICA every instance
+  # is in recovery (read-only), so CNPG CANNOT run ALTER ROLE / password DDL on
+  # -9. Both of the following are only truly RECONCILED once -9 is promoted:
+  #   * superuserSecret password sync
+  #   * managed.roles[] (ziggystardust) reconciliation
+  # Until promotion, the superuser + ziggystardust credentials on -9 are the
+  # PHYSICAL COPY streamed from -8. Therefore, to avoid an auth surprise at
+  # cutover, the passwords in fhi-superuser-pg-secret and fhi-internal-pg-secret
+  # MUST equal what -8 actually uses today (or you must expect them to change the
+  # instant -9 is promoted and reconciliation runs). Confirm ordering in the
+  # runbook step "promote"; do NOT assume managed roles work pre-promotion.
+  # ---------------------------------------------------------------------------
+  superuserSecret:
+    name: fhi-superuser-pg-secret
+
+  managed:
+    roles:
+      - name: ziggystardust
+        ensure: present
+        login: true
+        superuser: false
+        createdb: false
+        createrole: false
+        inherit: true
+        replication: false
+        passwordSecret:
+          name: fhi-internal-pg-secret
+
+  # ---------------------------------------------------------------------------
+  # BOOTSTRAP: physical clone (pg_basebackup) directly from the LIVE -8 primary,
+  # NOT a restore from the (broken) object store. Combined with the replica
+  # stanza below this makes -9 a continuously-streaming standby, not a one-shot
+  # snapshot.
+  # ---------------------------------------------------------------------------
+  bootstrap:
+    pg_basebackup:
+      source: fhi-pg-main-8-live
+
+  # ---------------------------------------------------------------------------
+  # REPLICA CLUSTER: keep streaming from -8 until we deliberately promote.
+  # `source` must match an entry in externalClusters below.
+  # NOTE: 1.28 also offers the newer distributed-topology fields
+  #   replica.primary / replica.self / replica.promotionToken.
+  # We use the classic enabled+source form (still supported in 1.28); at cutover
+  # we promote with `kubectl cnpg promote` (see runbook), NOT by editing this.
+  # ---------------------------------------------------------------------------
+  replica:
+    enabled: true
+    source: fhi-pg-main-8-live
+
+  externalClusters:
+    - name: fhi-pg-main-8-live
+      # (1) STREAMING path: -9 streams live from -8 via this connection.
+      connectionParameters:
+        host: fhi-pg-main-8-rw.totallylegitco.svc
+        user: fhi_pg9_migration
+        dbname: postgres
+        sslmode: require
+      # Only the PASSWORD is taken from the secret; the username is supplied in
+      # connectionParameters above (a username key in the secret is NOT needed).
+      password:
+        name: fhi-pg-main-9-source
+        key: password
+      # (2) WAL-RESTORE FALLBACK path (this is the ACTUAL WAL-retention guarantee
+      # for the clone). RESOLVED, not a VERIFY-LIVE guess:
+      #   * A NAMED physical slot on -8 CANNOT protect this clone. CNPG 1.28
+      #     treats `primary_slot_name`/`primary_conninfo` as FIXED (operator-
+      #     managed, user-unsettable -- see pkg/postgres/configuration.go), the
+      #     externalClusters schema has NO slot field, and the replica-cluster
+      #     docs never use a slot. So -9 streams SLOTLESS; a hand-made slot on -8
+      #     would just retain WAL that -9 never consumes -> disk pressure on the
+      #     only healthy primary with ZERO protection. We DO NOT create one.
+      #   * The supported, operator-managed retention mechanism is the
+      #     `restore_command`: when a WAL segment is recycled on -8 before -9
+      #     streams it, CNPG's designated primary fetches it from -8's OBJECT
+      #     STORE archive via this plugin (CNPG 1.28 replica_cluster docs:
+      #     "...retrieves them for the replica cluster via the restore_command").
+      #   * `fhi-backup-store` is -8's EXISTING ObjectStore (serverName
+      #     fhi-pg-main-8). This ONLY works if -8's archiving is HEALTHY -- hence
+      #     runbook Phase 0 "archive verified healthy on -8" is a HARD GATE before
+      #     the clone. `wal_keep_size` on -8 (COMPUTED in Phase 1, not a fixed
+      #     value) is the belt that minimizes how often restore_command is needed.
+      plugin:
+        name: barman-cloud.cloudnative-pg.io
+        parameters:
+          barmanObjectName: fhi-backup-store
+
+  # ---------------------------------------------------------------------------
+  # PostgreSQL configuration -- RELIABILITY tuning (security is intentionally
+  # NOT the focus this round; auth is left as-is, see pg_hba note).
+  # ---------------------------------------------------------------------------
+  postgresql:
+    parameters:
+      # archive_mode on: -9 archives its own WAL to fhi-backup-store-9 via the
+      # barman-cloud plugin (isWALArchiver below).
+      # VERIFY-LIVE: a standby only archives when archive_mode=ALWAYS; with
+      # archive_mode=on only an out-of-recovery primary archives. CNPG manages
+      # archive_mode via the plugin, so whether -9 archives its OWN WAL while
+      # still a replica (vs only after promotion) must be confirmed with the
+      # operator. Set to "on" per spec; revisit if pre-promotion -9 archiving
+      # is required.
+      archive_mode: "on"
+
+      wal_level: logical
+      wal_log_hints: "on"
+
+      # RELIABILITY, not aggressiveness: the draft used 5s here, which under
+      # load causes the receiver/sender to declare the peer dead -> replication
+      # flap -> spurious unsupervised failover. 60s (both equal) is the safe
+      # value. THIS is a direct fix for a self-inflicted-outage risk.
+      wal_receiver_timeout: "60s"
+      wal_sender_timeout: "60s"
+
+      # Cap how much WAL any replication slot may retain, so a stuck/inactive
+      # slot cannot fill -9's disk the way a dead archive + retained WAL filled
+      # -8's. Applies to -9's OWN HA slots (below). Tunable; large enough to
+      # survive a brief replica outage, small enough to protect the 50Gi PVC.
+      max_slot_wal_keep_size: "16GB"
+
+      # Headroom for HA slots + future logical consumers.
+      max_replication_slots: "32"
+      max_wal_senders: "32"
+
+      max_worker_processes: "32"
+      max_parallel_workers: "32"
+
+    # Auth is INTENTIONALLY unchanged this round: the cluster sits on a trusted
+    # all-local-network, and security hardening (hostssl + scram-sha-256, CIDR
+    # scoping) is explicitly out of scope here. Keep the -8 behaviour faithful.
+    pg_hba:
+      - host all all all md5
+
+  # ---------------------------------------------------------------------------
+  # Backup: barman-cloud PLUGIN (1.28 removed in-tree spec.backup.barmanObjectStore).
+  # isWALArchiver:true makes this plugin the WAL archiver; barmanObjectName points
+  # at the DEDICATED -9 ObjectStore (distinct serverName -> no collision with -8).
+  # ---------------------------------------------------------------------------
+  plugins:
+    - name: barman-cloud.cloudnative-pg.io
+      isWALArchiver: true
+      parameters:
+        barmanObjectName: fhi-backup-store-9
+
+  # ---------------------------------------------------------------------------
+  # HA replication slots for -9's OWN primary->replica streaming (used once
+  # scaled past 1). Bounded by max_slot_wal_keep_size above.
+  # ---------------------------------------------------------------------------
+  replicationSlots:
+    highAvailability:
+      enabled: true
+      slotPrefix: _cnpg_
+    synchronizeReplicas:
+      enabled: true
+    updateInterval: 30
+
+  # Keep the isolation-check liveness probe (fences a partitioned primary).
+  probes:
+    liveness:
+      isolationCheck:
+        enabled: true
+        connectionTimeout: 1000
+        requestTimeout: 1000
+
+  # supervised for the cutover window: do NOT let the operator auto-promote/
+  # roll the primary mid-migration on local-path storage. Trade-off: a human
+  # must approve restarts/switchovers (kubectl cnpg promote / `kubectl cnpg
+  # maintenance`); that is the point during a delicate cutover. Revert to
+  # unsupervised for steady-state after -9 is the promoted primary and stable.
+  primaryUpdateStrategy: supervised
