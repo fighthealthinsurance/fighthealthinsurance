@@ -320,9 +320,47 @@ archives immediately (no standby/`always` ambiguity).
 ```bash
 kubectl -n totallylegitco exec fhi-pg-main-9-1 -c postgres -- psql -U postgres -c 'SELECT pg_switch_wal();'
 sleep 20
-kubectl -n totallylegitco cnpg backup fhi-pg-main-9
+# Trigger an on-demand backup. PLUGIN-FREE: this creates a Backup CR directly, so
+# it needs only the operator (NOT the `kubectl cnpg` plugin). method: plugin +
+# pluginConfiguration.name routes it through barman-cloud, same as the plugin does.
+kubectl create -f - <<'YAML'
+apiVersion: postgresql.cnpg.io/v1
+kind: Backup
+metadata:
+  generateName: fhi-pg-main-9-manual-
+  namespace: totallylegitco
+spec:
+  cluster:
+    name: fhi-pg-main-9
+  method: plugin
+  pluginConfiguration:
+    name: barman-cloud.cloudnative-pg.io
+YAML
 kubectl -n totallylegitco get backup -l cnpg.io/cluster=fhi-pg-main-9 -w
 ```
+
+> **`kubectl cnpg` not installed?** The `cnpg` subcommand is a separate kubectl
+> plugin (`kubectl-cnpg`); `error: unknown command "cnpg"` means it is not on your
+> PATH. You do **not** need it — the Backup CR above is the plugin-free equivalent.
+> If you do want the plugin's conveniences (`cnpg status`, `cnpg backup`), install
+> it once (match operator v1.28):
+> ```bash
+> kubectl krew install cnpg          # if you have krew, OR:
+> curl -sSfL https://github.com/cloudnative-pg/cloudnative-pg/raw/release-1.28/hack/install-cnpg-plugin.sh \
+>   | sudo sh -s -- -b /usr/local/bin
+> ```
+> Then the shorthand is (note the METHOD flags — without them the plugin defaults
+> to `method: barmanObjectStore`, the in-tree method, and fails with *"cannot
+> proceed with the backup as the cluster has no backup section"* because we use
+> the barman-cloud **plugin**, not `spec.backup`):
+> ```bash
+> kubectl cnpg backup fhi-pg-main-9 -n totallylegitco \
+>   -m plugin --plugin-name barman-cloud.cloudnative-pg.io
+> ```
+> (Plugin flags go AFTER the subcommand.) A `plugin-barman-cloud` sidecar image
+> newer than the operator, e.g. plugin v1.30 with operator v1.28, is fine for
+> these commands. A failed Backup object from a wrong-method attempt is harmless —
+> delete it: `kubectl -n totallylegitco delete backup <name>`.
 
 **VALIDATION**
 
@@ -532,7 +570,22 @@ Phase 3 proved backups worked while `-9` was empty; now prove it with real data.
 
 **ACTION**
 ```bash
-kubectl -n totallylegitco cnpg backup fhi-pg-main-9
+# Same plugin-free trigger as Phase 3 (method: plugin -> barman-cloud). No cnpg
+# kubectl plugin required; if you have it, the shorthand is
+#   kubectl cnpg backup fhi-pg-main-9 -n totallylegitco -m plugin --plugin-name barman-cloud.cloudnative-pg.io
+kubectl create -f - <<'YAML'
+apiVersion: postgresql.cnpg.io/v1
+kind: Backup
+metadata:
+  generateName: fhi-pg-main-9-postload-
+  namespace: totallylegitco
+spec:
+  cluster:
+    name: fhi-pg-main-9
+  method: plugin
+  pluginConfiguration:
+    name: barman-cloud.cloudnative-pg.io
+YAML
 kubectl -n totallylegitco get backup -l cnpg.io/cluster=fhi-pg-main-9 -w
 ```
 
