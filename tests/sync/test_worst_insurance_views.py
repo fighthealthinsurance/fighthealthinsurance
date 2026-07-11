@@ -139,6 +139,18 @@ class TestStatePage:
         # 0.31 denial rate renders as 31.0% with its numerator/denominator.
         assert "31.0%" in content
 
+    def test_state_page_shows_estimated_hours_headline(self, client):
+        load_sample_report()
+        response = client.get(
+            reverse("worst_insurance_state", kwargs={"slug": "texas"})
+        )
+        content = response.content.decode()
+        # Estimated hours (250,000) surfaced with the measured-floor breakdown.
+        assert "250,000 hours" in content
+        assert "10,000 from overturned appeals" in content
+        # Framed as an estimate, not a fact.
+        assert "estimate" in content.lower()
+
     def test_known_state_without_rankings_shows_insufficient_data(self, client):
         load_sample_report()
         response = client.get(
@@ -164,6 +176,15 @@ class TestMethodologyPage:
         content = response.content.decode()
         assert "test.v1" in content
         assert "CMS Transparency in Coverage PUF" in content
+
+    def test_methodology_shows_time_burden_citations(self, client):
+        load_sample_report()
+        response = client.get(reverse("worst_insurance_methodology"))
+        content = response.content.decode()
+        # The cited assumptions and their sources render as clickable links.
+        assert "AMA 2024 Prior Authorization" in content
+        assert "KFF" in content
+        assert 'href="https://www.kff.org/example"' in content
 
 
 @pytest.mark.django_db

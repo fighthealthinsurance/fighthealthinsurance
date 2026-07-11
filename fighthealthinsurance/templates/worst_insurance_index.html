@@ -14,7 +14,7 @@
                 <div class="hero-inner">
                     <h3 class="hero-tagline">Public Regulator Data, Ranked</h3>
                     <h1 class="hero-headline">The Worst Health Insurance Company in Each State</h1>
-                    <p class="hero-subcopy">Updated monthly from government data: claim denial rates, complaints regulators confirmed, overturned appeals, and enforcement actions &mdash; normalized by how many people each insurer covers.</p>
+                    <p class="hero-subcopy">Updated monthly from government data. We estimate the <strong>hours of patients' and providers' time</strong> each insurer's denials cost people &mdash; from claim denial rates, overturned appeals, confirmed complaints, and enforcement actions. Every number is an estimate from public data; <a href="{% url 'worst_insurance_methodology' %}" class="text-white text-decoration-underline">see how we calculate it</a>.</p>
                 </div>
             </div>
         </div>
@@ -62,6 +62,9 @@
                                 <p class="card-text mb-1">
                                     <span class="text-danger fw-bold">{{ row.worst.issuer_name }}</span>
                                 </p>
+                                {% if row.worst_est_hours %}
+                                <small class="d-block text-muted mb-1">est. ~{{ row.worst_est_hours|floatformat:0 }} hrs/yr of people's time</small>
+                                {% endif %}
                                 <small class="text-muted">
                                     Score {{ row.worst.composite_score|floatformat:0 }}/100
                                     &middot; <a href="{% url 'worst_insurance_state' row.slug %}">full rankings</a>

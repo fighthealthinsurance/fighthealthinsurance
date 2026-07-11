@@ -29,10 +29,49 @@
                     The worst-ranked insurer in a state has the <strong>worst composite score on the public
                     regulator metrics available for that state, among insurers with enough volume to measure
                     fairly</strong>. It is not a legal finding, an allegation of fraud, or a statement about any
-                    individual claim. Every underlying numerator and denominator is displayed on the state pages.
+                    individual claim or any company's intent. Every underlying numerator and denominator is
+                    displayed on the state pages.
                 </p>
 
-                <h2 class="mt-5">The metrics</h2>
+                <h2 class="mt-5">Our headline: estimated hours of people's time wasted</h2>
+                <p>
+                    The number we lead with is an <strong>estimate</strong> of the hours of patient and provider
+                    time an insurer's denials cost people in a state each year. It is built from public denial
+                    and appeal <em>counts</em> and explicit, conservative, cited assumptions &mdash; it is not a
+                    measurement of anyone's actual time. We show every input so you can check the math.
+                </p>
+                <div class="bg-light border rounded p-3 mb-3">
+                    <code>
+                        estimated hours = (overturned appeals &times; hours per appeal)
+                        + (estimated un-appealed improper denials &times; hours per un-appealed denial)
+                    </code>
+                </div>
+                <ul>
+                    <li><strong>Term 1 (measured floor):</strong> every overturned appeal is a denial the plan or an
+                        external reviewer reversed &mdash; someone spent time to win it back. Uses only published counts.</li>
+                    <li><strong>Term 2 (estimated):</strong> fewer than 0.2% of denials are ever appealed, so we estimate
+                        how many <em>un-appealed</em> denials were likely improper by applying the plan's own overturn
+                        rate to its denials, discounted (people appeal the clearest cases first). This term is a
+                        transparent extrapolation, labeled as such; the measured floor is always shown separately.</li>
+                </ul>
+                {% if time_burden %}
+                <p class="mb-1">The assumptions used for the current rankings ({{ report.methodology_version }}):</p>
+                <ul>
+                    <li><strong>{{ time_burden.hours_per_appeal }} hours</strong> of combined patient + provider time per appeal.</li>
+                    <li><strong>{{ time_burden.hours_per_unappealed_wrong_denial }} hours</strong> lost per likely-improper denial that was never appealed.</li>
+                    <li>Un-appealed denials assumed improper at <strong>{{ time_burden.unappealed_wrongness_discount }}&times;</strong> the plan's own appeal-overturn rate.</li>
+                </ul>
+                {% if time_burden.citations %}
+                <p class="mb-1"><strong>Sources for these assumptions:</strong></p>
+                <ul class="small text-muted">
+                    {% for key, text in time_burden.citations.items %}
+                    <li>{{ text|urlize }}</li>
+                    {% endfor %}
+                </ul>
+                {% endif %}
+                {% endif %}
+
+                <h2 class="mt-5">The underlying metrics</h2>
                 <div class="table-responsive">
                     <table class="table table-striped">
                         <thead><tr><th>Metric</th><th>Formula</th><th>Source</th></tr></thead>

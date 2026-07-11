@@ -4,8 +4,17 @@
   "period": "2026-07",
   "generated_at": "2026-07-03T09:00:00Z",
   "window": {"start": "2025-07-01", "end": "2026-06-30"},
-  "weights": {"denial_rate": 0.45, "complaint_rate": 0.25, "overturn_rate": 0.15, "enforcement_rate": 0.15},
+  "weights": {"time_burden": 0.45, "denial_rate": 0.20, "complaint_rate": 0.15, "overturn_rate": 0.05, "enforcement_rate": 0.15},
   "thresholds": {"min_member_months": 10000, "min_claims": 500},
+  "time_burden_assumptions": {
+    "hours_per_appeal": 6.0,
+    "hours_per_unappealed_wrong_denial": 2.0,
+    "unappealed_wrongness_discount": 0.5,
+    "citations": {
+      "hours_per_appeal": "AMA 2024 Prior Authorization Physician Survey. https://www.ama-assn.org/example",
+      "appeal_and_overturn_rates": "KFF Claims Denials and Appeals in ACA Marketplace Plans. https://www.kff.org/example"
+    }
+  },
   "sources": [
     {
       "source_id": "cms_tc_puf",
@@ -41,6 +50,24 @@
           "weight_coverage": 1.0,
           "member_months": 1200000,
           "metrics": {
+            "time_burden": {
+              "value": 250000,
+              "numerator": 250000,
+              "denominator": 1.0,
+              "normalized": 1.0,
+              "unit": "estimated_patient_and_provider_hours_per_year",
+              "source_ids": ["cms_tc_puf"],
+              "detail": {
+                "estimated_hours_per_year": 250000,
+                "won_appeal_hours": 10000,
+                "unappealed_denial_hours": 240000,
+                "appeals_overturned": 1667,
+                "appeals_decided": 3000,
+                "overturn_rate": 0.5556,
+                "denials": 124000,
+                "estimated_unappealed_improper_denials": 120000
+              }
+            },
             "denial_rate": {
               "value": 0.31,
               "numerator": 124000,
@@ -58,8 +85,8 @@
               "source_ids": ["tx_tdi", "cms_mlr"]
             }
           },
-          "metrics_available": ["complaint_rate", "denial_rate"],
-          "weights_used": {"denial_rate": 0.6429, "complaint_rate": 0.3571}
+          "metrics_available": ["time_burden", "complaint_rate", "denial_rate"],
+          "weights_used": {"time_burden": 0.6, "denial_rate": 0.27, "complaint_rate": 0.13}
         },
         {
           "rank": 2,

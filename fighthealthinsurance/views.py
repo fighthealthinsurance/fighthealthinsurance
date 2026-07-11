@@ -2889,7 +2889,12 @@ class WorstInsuranceMethodologyView(TemplateView):
         return super().get(request, *args, **kwargs)
 
     def get_context_data(self, **kwargs):
+        from fighthealthinsurance.worst_insurance import get_time_burden_assumptions
+
         context = super().get_context_data(**kwargs)
-        context["report"] = self._report
+        report = self._report
+        assert report is not None  # guaranteed by get()
+        context["report"] = report
+        context["time_burden"] = get_time_burden_assumptions(report)
         context["title"] = "Worst Insurance Rankings Methodology"
         return context

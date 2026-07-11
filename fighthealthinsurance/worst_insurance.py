@@ -21,6 +21,7 @@ class StateRankingRow:
     status: str  # "ok" | "insufficient_data"
     reason: str
     worst: Optional[WorstInsuranceRanking]
+    worst_est_hours: Optional[int] = None
 
     @property
     def slug(self) -> str:
@@ -50,7 +51,13 @@ def get_index_rows(report: WorstInsuranceReport) -> List[StateRankingRow]:
         worst = worst_by_state.get(state.abbreviation)
         if worst is not None:
             rows.append(
-                StateRankingRow(state_help=state, status="ok", reason="", worst=worst)
+                StateRankingRow(
+                    state_help=state,
+                    status="ok",
+                    reason="",
+                    worst=worst,
+                    worst_est_hours=estimated_hours(worst),
+                )
             )
         else:
             status_block = statuses.get(state.abbreviation, {})
@@ -71,8 +78,20 @@ def get_state_rankings(
     return list(report.rankings.filter(state=abbreviation.upper()).order_by("rank"))
 
 
-# Display metadata for the ranking-table columns, in column order.
+def get_time_burden_assumptions(report: WorstInsuranceReport) -> dict:
+    """The cited estimated-hours assumptions from the ingested artifact."""
+    raw = report.raw_data or {}
+    return raw.get("time_burden_assumptions", {}) or {}
+
+
+# Display metadata for the ranking-table columns, in column order. The
+# estimated-hours metric leads.
 METRIC_COLUMNS = [
+    (
+        "time_burden",
+        "Est. hours wasted / year",
+        "estimated patient + provider time (see methodology)",
+    ),
     ("denial_rate", "Claims denied", "of in-network claims (marketplace plans)"),
     (
         "complaint_rate",
@@ -88,11 +107,33 @@ METRIC_COLUMNS = [
 ]
 
 
+def estimated_hours(ranking: "WorstInsuranceRanking") -> Optional[int]:
+    """The plan's estimated hours-wasted-per-year, or None if not computed."""
+    metric = (ranking.metrics or {}).get("time_burden")
+    if not metric:
+        return None
+    detail = metric.get("detail") or {}
+    hours = detail.get("estimated_hours_per_year", metric.get("value"))
+    try:
+        return int(hours)
+    except (TypeError, ValueError):
+        return None
+
+
 def _format_metric(key: str, metric: dict) -> dict:
     value = metric.get("value", 0)
     numerator = int(metric.get("numerator", 0))
     denominator = int(metric.get("denominator", 0))
-    if key in ("denial_rate", "overturn_rate"):
+    if key == "time_burden":
+        detail_data = metric.get("detail") or {}
+        won = int(detail_data.get("won_appeal_hours", 0))
+        est = int(detail_data.get("unappealed_denial_hours", 0))
+        display = f"~{int(value):,}"
+        if est:
+            detail = f"{won:,} from overturned appeals + ~{est:,} estimated"
+        else:
+            detail = f"{won:,} from overturned appeals"
+    elif key in ("denial_rate", "overturn_rate"):
         display = f"{value * 100:.1f}%"
         detail = f"{numerator:,} of {denominator:,}"
     elif key == "complaint_rate":
