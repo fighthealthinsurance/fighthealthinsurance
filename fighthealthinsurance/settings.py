@@ -807,6 +807,11 @@ class Prod(Base):
 
     @property
     def DATABASES(self):  # type: ignore
+        # Postgres connection pooling (requires psycopg 3 + psycopg-pool,
+        # installed via deploy-requirements.txt). We serve with uvicorn/ASGI,
+        # where Django documents that persistent connections (CONN_MAX_AGE > 0)
+        # should stay disabled and a pool be used instead:
+        # https://docs.djangoproject.com/en/5.2/ref/databases/#connection-pool
         mysql_engine = "django_prometheus.db.backends.mysql"
         postgres_engine = "django_prometheus.db.backends.postgresql"
         return {
@@ -817,7 +822,30 @@ class Prod(Base):
                 "PASSWORD": os.getenv("PDBPASSWORD"),
                 "HOST": os.getenv("PDBHOST"),
                 "ATOMIC_REQUESTS": False,
-                "pool": True,
+                # Django refuses to pool with CONN_MAX_AGE != 0; connection
+                # reuse and max age are governed by the pool options below.
+                "CONN_MAX_AGE": 0,
+                # With a pool, this makes Django verify connections on
+                # checkout, transparently replacing ones severed by
+                # failovers or server-side timeouts.
+                "CONN_HEALTH_CHECKS": True,
+                "OPTIONS": {
+                    # Every uvicorn worker (and Ray actor process) keeps its
+                    # own pool: size the server's max_connections to fit
+                    # (processes * max_size) plus headroom.
+                    "pool": {
+                        "min_size": int(os.getenv("PG_POOL_MIN_SIZE", "2")),
+                        "max_size": int(os.getenv("PG_POOL_MAX_SIZE", "10")),
+                        # Fail after 10s waiting for a free connection instead
+                        # of stalling requests for the default 30s.
+                        "timeout": 10,
+                        # Recycle connections after 30 minutes (and drop idle
+                        # ones after 5) so pooled connections never trip the
+                        # server-side 120min idle_session_timeout.
+                        "max_lifetime": 1800,
+                        "max_idle": 300,
+                    },
+                },
             },
             "mysql": {
                 "ENGINE": mysql_engine,
