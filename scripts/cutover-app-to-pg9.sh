@@ -1,11 +1,16 @@
 #!/bin/bash
 #
-# cutover-app-to-pg9.sh -- Point the application at the promoted fhi-pg-main-9
-# primary by flipping the single configurable DB host (fhi-db-config/PDBHOST)
-# from fhi-pg-main-8-rw to fhi-pg-main-9-rw, then rolling the app.
+# cutover-app-to-pg9.sh -- Point the application at the fhi-pg-main-9 primary by
+# flipping the single configurable DB host (fhi-db-config/PDBHOST) from
+# fhi-pg-main-8-rw to fhi-pg-main-9-rw, then rolling the app.
+#
+# In the dump/restore migration, -9 is a FRESH PRIMARY (not a promoted replica),
+# so gate 1 below is trivially satisfied; it stays as a safety assertion that -9
+# is writable before we point the app at it. Run this only AFTER the logical
+# restore into -9 is validated (runbook cutover window).
 #
 # ORDER OF SAFETY (never allow writes to BOTH clusters):
-#   1. Refuse unless -9 promotion is verified (pg_is_in_recovery == false on -9).
+#   1. Refuse unless -9 is writable (pg_is_in_recovery == false on -9).
 #   2. Scale the write-producing app workloads to ZERO (so nothing writes during
 #      the flip) and confirm -8 has no active client backends.
 #   3. Save the REVERSE patch (current PDBHOST) to disk.
@@ -82,7 +87,7 @@ psql_on() {
 TGT_PRIMARY="$(kubectl -n "$NAMESPACE" get cluster.postgresql.cnpg.io "$TARGET_CLUSTER" -o jsonpath='{.status.currentPrimary}' 2>/dev/null || true)"
 [ -n "$TGT_PRIMARY" ] || fail "Could not resolve primary pod of $TARGET_CLUSTER."
 IN_REC="$(psql_on "$TGT_PRIMARY" 'SELECT pg_is_in_recovery();' | tr -d '[:space:]')"
-[ "$IN_REC" = "f" ] || fail "$TARGET_CLUSTER is still in recovery (pg_is_in_recovery='$IN_REC'). Run scripts/promote-pg9.sh first."
+[ "$IN_REC" = "f" ] || fail "$TARGET_CLUSTER is in recovery (pg_is_in_recovery='$IN_REC') -- it must be a writable primary. A fresh initdb -9 should already be 'f'; investigate before flipping."
 ok "$TARGET_CLUSTER promotion verified (not in recovery)."
 
 # Idempotency: already cut over?

@@ -99,15 +99,15 @@ The outage was a **label/selector mismatch across versions**. Durable fix:
   bounded value on `-8` too) so a **stuck/inactive slot can never fill the
   disk** — the direct antidote to the `-8-1` failure. `max_slot_wal_keep_size`
   provides the ceiling.
-- **We deliberately do NOT create a physical slot on `-8` for the clone.** CNPG
-  1.28 cannot make a replica cluster consume a named slot on an external primary
-  (`primary_slot_name`/`primary_conninfo` are fixed, user-unsettable GUCs — see
-  `pkg/postgres/configuration.go`; the replica-cluster docs stream slotless).
-  Such a slot would retain WAL nothing consumes → disk pressure on the only
-  healthy primary with zero protection. The clone's WAL retention is instead a
-  **computed `wal_keep_size` on `-8`** (belt, sized from live WAL rate) plus the
-  **`restore_command` fallback** to `-8`'s repaired object-store archive (wired
-  via `externalClusters[].plugin`, hard-gated on Phase 0). Runbook Phase 0/1c.
+- **No clone-window WAL retention is needed at all.** The migration seeds `-9` by
+  **logical dump/restore**, not physical streaming, so there is no clone window to
+  protect on `-8` — no named slot, no computed `wal_keep_size`, no
+  `restore_command` dependence on `-8`'s (broken) archive. This removes the most
+  fragile part of the earlier design. `-8`'s own bounded `max_slot_wal_keep_size`
+  is still recommended purely for `-8`'s self-protection as the rollback target.
+- The `16GB` ceiling on `-9` is enforced on `-9`'s OWN HA slots
+  (primary→replica), and is alerted at 20GB of `pg_wal` by
+  `k8s/fhi-pg-main-9-alerts.yaml` (`FhiPg9WalGrowingBeyond20GB`).
 
 ### 5. Replication timeouts that don't self-inflict failover
 - The draft used `wal_sender_timeout=wal_receiver_timeout=5s`. Under load that
@@ -164,17 +164,18 @@ recent, pinned plugin version materially reduces risk.**
 
 ## Offline-verification caveats (confirm live)
 
-These behaviours are flagged inline in `k8s/fhi-pg-main-9-cluster.yaml` and the
-runbook's VERIFY-LIVE checklist:
+The dump/restore approach **eliminated** the three streaming-era caveats — `-9` is
+never a replica of `-8`, so:
 
-1. **RESOLVED (was: named slot on `-8`).** Verified offline against the CNPG
-   1.28 source (`primary_slot_name` is a fixed, user-unsettable GUC), CRD
-   (`externalClusters` has no slot field), and the replica-cluster docs (stream
-   slotless; WAL comes back via `restore_command`). No named slot is possible or
-   created — retention is computed `wal_keep_size` + archive `restore_command`.
-   No live check required.
-2. **Managed roles / superuser** reconciliation timing on a **read-only
-   replica** (deferred until promotion) — confirm live.
-3. **`archive_mode on` vs `always`** for a replica archiving its own WAL before
-   promotion — confirm live; the real archiving gate is a completed `-9` backup
-   (runbook Phase 5).
+1. ~~Named slot on `-8` for the clone~~ — **N/A.** No clone; no slot; no
+   `wal_keep_size`/`restore_command` dependence on `-8`'s archive.
+2. ~~Managed roles / superuser reconciliation on a read-only replica~~ — **N/A.**
+   `-9` is a primary from birth, so roles + the superuser reconcile immediately.
+3. ~~`archive_mode on` vs `always` for a replica~~ — **N/A.** `-9` archives as a
+   primary from birth; the archiving gate is a completed `-9` backup while empty
+   (runbook Phase 3).
+
+The one remaining live check is the **alert metric names** in
+`k8s/fhi-pg-main-9-alerts.yaml` (e.g. `cnpg_pg_wal_files`) — confirm they exist on
+your operator/plugin build and adjust the `expr` if not, keeping the 20GB WAL and
+26h backup-age thresholds. Runbook Phase 11d.
