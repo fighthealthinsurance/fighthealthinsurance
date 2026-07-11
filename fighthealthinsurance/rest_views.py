@@ -1,6 +1,7 @@
 import asyncio
 import datetime
 import json
+import math
 import typing
 from typing import Optional
 
@@ -1044,6 +1045,7 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
             denial.professional_to_finish = serializer.validated_data[
                 "professional_to_finish"
             ]
+            denial.save(update_fields=["professional_to_finish"])
         # Notifying the patient makes it visible.
         if not appeal.patient_visible:
             appeal.patient_visible = True
@@ -1106,8 +1108,9 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
         appeal = get_object_or_404(
             Appeal.filter_to_allowed_appeals(current_user), pk=appeal_id
         )
-        if serializer["fax_number"] is not None:
-            appeal.fax_number = serializer["fax_number"]
+        fax_number = serializer.validated_data.get("fax_number")
+        if fax_number is not None:
+            appeal.fax_number = fax_number
             appeal.save()
         patient_user = None
         try:
@@ -1483,17 +1486,19 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
         search_results.sort(key=lambda x: x["mod_date"], reverse=True)
 
         # Paginate results
-        page_size = int(request.GET.get("page_size", 10))
-        page = int(request.GET.get("page", 1))
+        page_size = max(1, int(request.GET.get("page_size", 10)))
+        page = max(1, int(request.GET.get("page", 1)))
         start_idx = (page - 1) * page_size
         end_idx = start_idx + page_size
 
         paginated_results = search_results[start_idx:end_idx]
 
+        total_pages = math.ceil(len(search_results) / page_size)
+
         return Response(
             {
                 "count": len(search_results),
-                "next": page < len(search_results) // page_size + 1,
+                "next": page < total_pages,
                 "previous": page > 1,
                 "results": paginated_results,
             }
@@ -1733,9 +1738,22 @@ class SendToUserViewSet(viewsets.ViewSet, SerializerMixin):
         current_user: User = request.user  # type: ignore
         serializer = self.deserialize(request.data)
         serializer.is_valid(raise_exception=True)
-        # TODO: Send an e-mail to the patient
-        appeal = Appeal.filter_to_allowed_appeals(current_user).get(
-            id=serializer.validated_data["appeal_id"]
+        # Ensure the appeal exists and the current user is allowed to access it.
+        get_object_or_404(
+            Appeal.filter_to_allowed_appeals(current_user),
+            id=serializer.validated_data["appeal_id"],
+        )
+        # TODO: Send an e-mail to the patient for this appeal. The
+        # AppealViewSet.notify_patient flow (PatientNotificationHelper) is the
+        # existing pattern to reuse when this is implemented.
+        return Response(
+            data=serializers.StatusResponseSerializer(
+                {
+                    "message": "Sending appeals to users is not yet implemented",
+                    "status": "not_implemented",
+                }
+            ).data,
+            status=status.HTTP_501_NOT_IMPLEMENTED,
         )
 
 

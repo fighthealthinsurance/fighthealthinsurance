@@ -1060,6 +1060,26 @@ class NotifyPatientTest(APITestCase):
         self.assertIn("message", response.json())
         self.assertEqual(response.json()["message"], "Notification sent")
 
+    def test_notify_patient_persists_professional_to_finish(self):
+        """Regression: professional_to_finish must be saved to the denial.
+
+        Previously the value was assigned to the in-memory denial but never
+        persisted (no denial.save()), so it was silently discarded.
+        """
+        self.denial.professional_to_finish = False
+        self.denial.save()
+
+        url = reverse("appeals-notify-patient")
+        response = self.client.post(
+            url,
+            json.dumps({"id": self.appeal.id, "professional_to_finish": True}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.denial.refresh_from_db()
+        self.assertTrue(self.denial.professional_to_finish)
+
 
 class SendFaxTest(APITestCase):
     """Test the send_fax API endpoint."""
