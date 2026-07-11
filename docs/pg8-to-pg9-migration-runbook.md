@@ -37,6 +37,7 @@ Authored in **this** PR (`polly/pg9-provision`):
 - `k8s/fhi-pg-main-9-objectstore.yaml`
 - `k8s/fhi-pg-main-9-cluster.yaml`
 - `scripts/check-pg8-source.sh`
+- `scripts/set-pg8-wal-retention.sh`
 - `scripts/backup-pg8-live-base.sh`
 - `scripts/create-or-fix-pg9-migration-role.sh`
 - `scripts/check-pg9-replication.sh`
@@ -212,45 +213,37 @@ The retention guarantee is therefore **two real mechanisms**:
 2. **A COMPUTED `wal_keep_size` on `-8`** (the belt that minimizes how often #1
    is exercised) — sized from observed WAL rate, **not** a fixed default.
 
-**ACTION** — compute `wal_keep_size` from live data, validate against free disk,
-then set it (and bound slot retention so `-8` can never fill again):
+**ACTION** — run the **fail-closed** retention script. It does the whole
+compute → validate-against-free-disk → apply cycle atomically and **refuses to
+change anything** (exit non-zero) if the safe bound cannot be guaranteed. It
+**never blindly raises** either cap — if the computed `wal_keep_size` does not
+fit the disk budget it leaves `-8` untouched and you fall back to mechanism #1
+(the archive `restore_command`, `serverName fhi-pg-main-8`).
 
 ```bash
-# (1) observe peak WAL generation rate on -8 over a representative window.
-#     Sample current_wal_lsn twice, spaced by WINDOW seconds:
-WINDOW=300
-L1=$(kubectl -n totallylegitco exec fhi-pg-main-8-3 -c postgres -- psql -U postgres -Atc "SELECT pg_current_wal_lsn();")
-sleep "$WINDOW"
-L2=$(kubectl -n totallylegitco exec fhi-pg-main-8-3 -c postgres -- psql -U postgres -Atc "SELECT pg_current_wal_lsn();")
-BYTES=$(kubectl -n totallylegitco exec fhi-pg-main-8-3 -c postgres -- psql -U postgres -Atc "SELECT pg_wal_lsn_diff('$L2','$L1');")
-RATE_MBs=$(python3 -c "print(($BYTES)/$WINDOW/1048576)")
-echo "observed WAL rate: ${RATE_MBs} MB/s  (sample this at PEAK load, not idle)"
-
-# (2) size wal_keep_size = peak_rate * worst_case_clone_seconds * safety_margin.
-#     Estimate clone seconds from pgdata size / expected basebackup throughput,
-#     rounded UP, then apply a large margin (>=3x) for load spikes + retries:
-CLONE_SECONDS=${CLONE_SECONDS:-7200}   # worst-case; MEASURE, do not guess low
-MARGIN=${MARGIN:-3}
-KEEP_MB=$(python3 -c "import math;print(int(math.ceil($RATE_MBs*$CLONE_SECONDS*$MARGIN)))")
-echo "recommended wal_keep_size >= ${KEEP_MB} MB"
-
-# (3) VALIDATE it fits: KEEP_MB must be well under -8's FREE disk on the pgdata PVC.
-kubectl -n totallylegitco exec fhi-pg-main-8-3 -c postgres -- df -Pm /var/lib/postgresql/data
-# CONFIRM: free MB on that filesystem >> KEEP_MB (leave headroom for normal WAL +
-# the archive backlog). If it does NOT fit, you MUST rely on mechanism #1
-# (archive restore_command) and keep wal_keep_size modest -- do NOT set a
-# wal_keep_size that could itself fill -8. Record which mechanism is in force.
-
-# (4) apply (prefer -8's CNPG spec.postgresql.parameters so it survives a pod
-#     recreate; ALTER SYSTEM shown as the fast path for the window):
-kubectl -n totallylegitco exec fhi-pg-main-8-3 -c postgres -- \
-  psql -U postgres -c "ALTER SYSTEM SET wal_keep_size = '${KEEP_MB}MB';"
-# bound slot retention so NO slot can ever fill -8's disk (the -8-1 failure mode):
-kubectl -n totallylegitco exec fhi-pg-main-8-3 -c postgres -- \
-  psql -U postgres -c "ALTER SYSTEM SET max_slot_wal_keep_size = '80GB';"  # < free disk
-kubectl -n totallylegitco exec fhi-pg-main-8-3 -c postgres -- \
-  psql -U postgres -c "SELECT pg_reload_conf();"
+# What the script does (all inside one fail-closed run — see scripts/set-pg8-wal-retention.sh):
+#   1. sample the WAL rate over WINDOW seconds (run at PEAK load, not idle),
+#   2. size wal_keep_size = rate * CLONE_SECONDS * MARGIN (ceil),
+#   3. read ACTUAL free disk on -8's pgdata filesystem,
+#   4. FAIL CLOSED unless the computed size fits a safe budget:
+#        <= MAX_KEEP_FRACTION of free disk AND leaves RESERVE_MB free.
+#        If it does not fit -> exit 1, apply NOTHING, rely on restore_command.
+#   5. bound max_slot_wal_keep_size to a disk-safe value, only ever TIGHTENING
+#        an existing bound (never raising it; the -8-1 disk-full was an
+#        unbounded slot + dead archive),
+#   6. apply ALTER SYSTEM + pg_reload_conf, then read the live values back.
+#
+# Tunables (env; conservative defaults): WINDOW=300 CLONE_SECONDS=7200 MARGIN=3
+#   MAX_KEEP_FRACTION=0.25 RESERVE_MB=20480 MAX_SLOT_FRACTION=0.5
+# MEASURE CLONE_SECONDS from real basebackup throughput; do not guess it low.
+CLONE_SECONDS=7200 MARGIN=3 ./scripts/set-pg8-wal-retention.sh
 ```
+
+> **This step is deliberately fail-closed.** A red exit here means the safe
+> `wal_keep_size` could not be guaranteed to fit `-8`'s free disk — that is the
+> script protecting the only healthy primary, **not** a bug. When it refuses,
+> proceed on mechanism #1 alone (archive `restore_command`) and record that in
+> the change log; do **not** hand-set a larger `wal_keep_size` to force it.
 
 **VALIDATION**
 
@@ -261,10 +254,12 @@ kubectl -n totallylegitco exec fhi-pg-main-8-3 -c postgres -- \
 **GATE:** `check-pg8-source.sh` prints `SOURCE PREFLIGHT PASSED` — it now FAILS
 (not warns) if `max_slot_wal_keep_size` is unbounded/unset, if there is no FREE
 `wal_sender`/`replication_slot` headroom, or if any stale/inactive slot retains
-WAL beyond threshold. Confirm the computed `wal_keep_size` from step (2) is
-applied and fits free disk from step (3). **State explicitly in your change log
-which retention mechanism is primary** (archive restore_command vs wal_keep_size)
-based on whether the computed size fit the disk.
+WAL beyond threshold. Either `set-pg8-wal-retention.sh` printed
+`WAL RETENTION SET (fail-closed)` (the computed `wal_keep_size` fit the disk
+budget and was applied) **or** it exited non-zero and you are proceeding on the
+archive `restore_command` alone. **State explicitly in your change log which
+retention mechanism is primary** (archive restore_command vs computed
+`wal_keep_size`) based on whether the script applied a size or refused.
 
 ---
 
@@ -327,6 +322,8 @@ healthy, and it is a **replica** (in recovery), not a fresh empty primary.
 
 ```bash
 ./scripts/check-pg9-replication.sh
+# under real -8 write load, enforce forward progress (idle -8 no longer excused):
+REQUIRE_LSN_ADVANCE=true ./scripts/check-pg9-replication.sh
 ```
 
 **GATE:** `-9 REPLICATION HEALTHY` — the script now proves `-9` is the connection

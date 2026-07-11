@@ -152,6 +152,14 @@ spec:
         name: barman-cloud.cloudnative-pg.io
         parameters:
           barmanObjectName: fhi-backup-store
+          # serverName MUST be -8's archive prefix (fhi-pg-main-8), NOT -9's.
+          # This is the RESTORE/WAL-fallback side: restore_command reads WAL that
+          # -8 wrote, which lives under s3://.../fhi-pg-main-8/. Without this the
+          # plugin defaults serverName to THIS cluster's name (fhi-pg-main-9) and
+          # looks in the empty -9 prefix -> the WAL fallback silently resolves to
+          # nothing. (Contrast: the -9 ObjectStore/archiver uses serverName
+          # fhi-pg-main-9; only this recovery source points back at -8.)
+          serverName: fhi-pg-main-8
 
   # ---------------------------------------------------------------------------
   # PostgreSQL configuration -- RELIABILITY tuning (security is intentionally

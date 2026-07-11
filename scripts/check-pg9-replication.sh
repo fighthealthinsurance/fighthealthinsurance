@@ -5,12 +5,14 @@
 # its barman-cloud v0.13 sidecar + archiver are in place.
 #
 # Checks (all READ-ONLY):
-#   1. -8 sees -9 in pg_stat_replication with state=streaming
-#   2. the physical slot feeding -9 is active on -8
+#   1. -8 sees -9 in pg_stat_replication (correlated by -9's REAL pod IPs),
+#      state=streaming, same pid across two samples, and sent_lsn advancing
+#   2. -8 physical slots are reported for VISIBILITY only -- NOT a gate: replica
+#      clusters stream slotless, so retention is wal_keep_size + restore_command
 #   3. -9 is in recovery (pg_is_in_recovery() = true)
 #   4. -9 receive/replay LSN + replay lag are sane
 #   5. the plugin-barman-cloud v0.13 sidecar is injected into EVERY -9 pod
-#   6. -9's archiver is advancing (no rising failures)
+#   6. -9's archiver verdict (separate; a rising failed_count FAILS the run)
 # =============================================================================
 set -euo pipefail
 
@@ -22,6 +24,10 @@ SRC_CLUSTER="${SRC_CLUSTER:-fhi-pg-main-8}"
 PLUGIN_IMAGE_MATCH="${PLUGIN_IMAGE_MATCH:-plugin-barman-cloud}"
 PLUGIN_VERSION_MATCH="${PLUGIN_VERSION_MATCH:-:v0.13}"
 MAX_REPLAY_LAG_BYTES="${MAX_REPLAY_LAG_BYTES:-104857600}"   # 100 MiB soft ceiling
+# When true, sent_lsn MUST advance across the two samples (set this for the
+# under-load Phase 4 re-run). Default false so a genuinely IDLE -8 -- which
+# produces no new WAL -- does not fail a structurally-healthy stream.
+REQUIRE_LSN_ADVANCE="${REQUIRE_LSN_ADVANCE:-false}"
 
 info() { printf '\033[0;36m[INFO]\033[0m %s\n' "$*"; }
 pass() { printf '\033[0;32m[PASS]\033[0m %s\n' "$*"; }
@@ -98,10 +104,14 @@ else
       ADV="$(psql_src "SELECT (pg_wal_lsn_diff('$SENT2','$SENT1') > 0);" 2>/dev/null || echo '?')"
       if [ "$ADV" = "t" ]; then
         pass "-9 is streaming from -8 AND sent_lsn advanced ($SENT1 -> $SENT2)"
+      elif [ "$REQUIRE_LSN_ADVANCE" = "true" ]; then
+        # strict (under-load) mode: no forward progress is a real failure.
+        fail "-9 sent_lsn did NOT advance in ${SAMPLE_INTERVAL}s while REQUIRE_LSN_ADVANCE=true"
+        fail "  -> stream is not making forward progress under load ($SENT1 -> $SENT2)."; FAILED=1
       else
         # -8 may simply be idle (no new WAL); streaming+stable pid still holds.
         warn "-9 streaming (stable pid $PID1) but sent_lsn did not advance in ${SAMPLE_INTERVAL}s"
-        warn "  -> likely -8 idle. Re-run under load to confirm forward progress."
+        warn "  -> likely -8 idle. Re-run under load (REQUIRE_LSN_ADVANCE=true) to enforce progress."
         pass "-9 is the active streaming connection from -8 (pid stable)"
       fi
     fi
