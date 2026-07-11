@@ -823,23 +823,30 @@ class ShareAppealView(View):
 
     def post(self, request):
         form = core_forms.ShareAppealForm(request.POST)
-        if form.is_valid():
-            denial_id = form.cleaned_data["denial_id"]
-            hashed_email = models.Denial.get_hashed_email(form.cleaned_data["email"])
+        if not form.is_valid():
+            logger.debug(form)
+            return redirect("scan")
 
-            # Update the denial
+        denial_id = form.cleaned_data["denial_id"]
+        hashed_email = models.Denial.get_hashed_email(form.cleaned_data["email"])
+
+        # Update the denial
+        try:
             denial = models.Denial.objects.filter(
                 denial_id=denial_id,
                 # Include the hashed e-mail so folks can't brute force denial_id
                 hashed_email=hashed_email,
             ).get()
-            logger.debug(form.cleaned_data)
-            denial.appeal_text = form.cleaned_data["appeal_text"]
-            denial.save()
-            common_view_logic.mark_proposal_chosen(
-                denial, form.cleaned_data["appeal_text"], editted=True
-            )
-            return render(request, "thankyou.html")
+        except models.Denial.DoesNotExist:
+            # Wrong denial_id/email combo: redirect instead of raising a 500.
+            return redirect("scan")
+        logger.debug(form.cleaned_data)
+        denial.appeal_text = form.cleaned_data["appeal_text"]
+        denial.save()
+        common_view_logic.mark_proposal_chosen(
+            denial, form.cleaned_data["appeal_text"], editted=True
+        )
+        return render(request, "thankyou.html")
 
 
 DELETE_CONFIRMATION_SUBJECT = (
@@ -1014,7 +1021,9 @@ class RecommendAppeal(View):
     """View for recommending appeal templates (placeholder)."""
 
     def post(self, request):
-        return render(request, "")
+        # Placeholder view: no template exists yet, so signal "not implemented"
+        # instead of rendering an empty template name (which raises a 500).
+        return HttpResponse(status=501)
 
 
 class CategorizeReview(View):
@@ -1215,7 +1224,7 @@ class ChooseAppeal(View):
 
         if not form.is_valid():
             logger.debug(form)
-            return
+            return redirect("scan")
 
         (
             appeal_fax_number,
@@ -1336,8 +1345,10 @@ class GenerateAppeal(View):
     def post(self, request):
         form = core_forms.DenialRefForm(request.POST)
         if not form.is_valid():
-            # TODO: Send user back to fix the form.
-            return
+            # Invalid input: redirect back to the start instead of returning
+            # None (which raises "didn't return an HttpResponse" -> 500).
+            logger.debug(form)
+            return redirect("scan")
 
         logger.debug("Finishing up prior to appeal gen.")
         denial_id = form.cleaned_data["denial_id"]
