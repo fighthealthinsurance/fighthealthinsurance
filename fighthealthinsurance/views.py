@@ -2799,7 +2799,74 @@ class StateHelpView(TemplateView):
         # Use cached state from get() to avoid duplicate lookup
         state = getattr(self, "_state", None)
         if state:
+            from fighthealthinsurance.state_help import LAST_REVIEWED
+
             context["state"] = state
-            context["title"] = f"{state.name} Health Insurance Help"
+            context["title"] = (
+                f"{state.name} External Review & Insurance Complaint Guide"
+            )
+            context["last_reviewed"] = LAST_REVIEWED
+
+            # Absolute URLs for canonical + JSON-LD.
+            index_url = self.request.build_absolute_uri(reverse("state_help_index"))
+            page_url = self.request.build_absolute_uri(
+                reverse("state_help", kwargs={"slug": state.slug})
+            )
+            home_url = self.request.build_absolute_uri("/")
+            context["canonical_url"] = page_url
+
+            # Structured data: a WebPage describing this state's external-review
+            # guidance plus a BreadcrumbList for the navigation path. Serialized
+            # here so the template just prints it.
+            page_title = f"{state.name} External Review & Insurance Complaint Guide"
+            page_description = (
+                f"How to request an external review and file a complaint with the "
+                f"{state.insurance_department.name} after a health insurance denial "
+                f"in {state.name}."
+            )
+            structured_data = {
+                "@context": "https://schema.org",
+                "@graph": [
+                    {
+                        "@type": "WebPage",
+                        "@id": page_url,
+                        "url": page_url,
+                        "name": page_title,
+                        "description": page_description,
+                        "inLanguage": "en-US",
+                        "isPartOf": {"@type": "WebSite", "@id": home_url},
+                        "about": {
+                            "@type": "Thing",
+                            "name": (
+                                f"Health insurance external review in {state.name}"
+                            ),
+                        },
+                    },
+                    {
+                        "@type": "BreadcrumbList",
+                        "itemListElement": [
+                            {
+                                "@type": "ListItem",
+                                "position": 1,
+                                "name": "Home",
+                                "item": home_url,
+                            },
+                            {
+                                "@type": "ListItem",
+                                "position": 2,
+                                "name": "State Health Insurance Help",
+                                "item": index_url,
+                            },
+                            {
+                                "@type": "ListItem",
+                                "position": 3,
+                                "name": state.name,
+                                "item": page_url,
+                            },
+                        ],
+                    },
+                ],
+            }
+            context["structured_data_json"] = json.dumps(structured_data)
 
         return context
