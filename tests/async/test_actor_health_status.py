@@ -134,9 +134,10 @@ class TestActorHealthStatus(TestCase):
         from fighthealthinsurance.actor_health_status import check_actor_health
 
         result = check_actor_health()
-        # Five actors remain: email, chooser, IMR, UCR, PA (no fax).
-        assert result["total_actors"] == 5
-        assert result["alive_actors"] == 5
+        # Six actors remain: email, chooser, IMR, UCR, PA, worst-insurance
+        # (no fax).
+        assert result["total_actors"] == 6
+        assert result["alive_actors"] == 6
         names = [d["name"] for d in result["details"]]
         assert "fax_polling_actor" not in names
 
@@ -149,7 +150,7 @@ class TestActorHealthStatus(TestCase):
             results = relaunch_actors(force=False)
 
         assert "fax_polling_actor" not in results
-        assert len(results) == 5
+        assert len(results) == 6
         assert all(r["status"] == "launched" for r in results.values())
 
     @override_settings(TEMPORAL_ENABLED=False)
@@ -161,4 +162,4 @@ class TestActorHealthStatus(TestCase):
             results = relaunch_actors(force=False)
 
         assert "fax_polling_actor" in results
-        assert len(results) == 6
+        assert len(results) == 7

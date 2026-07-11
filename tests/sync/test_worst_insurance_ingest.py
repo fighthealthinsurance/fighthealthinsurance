@@ -1,6 +1,5 @@
 """Tests for the worst-insurance rankings ingestion loader and command."""
 
-import copy
 import json
 from io import StringIO
 from pathlib import Path
@@ -42,6 +41,15 @@ class TestValidation:
         data = sample_report()
         del data["states"]
         with pytest.raises(ValueError, match="states"):
+            validate_report_dict(data)
+
+    @pytest.mark.parametrize(
+        "bad_period", ["2026-9", "2026-07-01", "July 2026", "26-07"]
+    )
+    def test_rejects_malformed_period(self, bad_period):
+        data = sample_report()
+        data["period"] = bad_period
+        with pytest.raises(ValueError, match="period"):
             validate_report_dict(data)
 
 
@@ -91,6 +99,21 @@ class TestLoadReport:
         load_report_dict(data)
         assert WorstInsuranceReport.objects.count() == 2
         assert WorstInsuranceRanking.objects.count() == 8
+
+    def test_malformed_row_rolls_back_and_preserves_previous_report(self):
+        load_report_dict(sample_report())
+        before = set(WorstInsuranceRanking.objects.values_list("state", "issuer_slug"))
+        # Re-ingest the same period, but with a malformed row and a dropped
+        # issuer (which would trigger a stale delete if it committed).
+        data = sample_report()
+        data["states"]["TX"]["issuers"] = data["states"]["TX"]["issuers"][:1]
+        data["states"]["TX"]["issuers"][0]["composite_score"] = "not-a-number"
+        with pytest.raises(Exception):
+            load_report_dict(data)
+        # The prior report and all its rows survive untouched.
+        after = set(WorstInsuranceRanking.objects.values_list("state", "issuer_slug"))
+        assert after == before
+        assert WorstInsuranceReport.objects.count() == 1
 
 
 @pytest.mark.django_db

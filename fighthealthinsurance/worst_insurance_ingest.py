@@ -7,6 +7,7 @@ one ``WorstInsuranceReport`` per period plus its ``WorstInsuranceRanking``
 rows, mirroring the structure of ``imr_ingest.py``.
 """
 
+import re
 from datetime import date, datetime
 from typing import Dict, Optional, Tuple
 
@@ -50,6 +51,11 @@ def validate_report_dict(data: Dict) -> None:
     for key in ("period", "states"):
         if not data.get(key):
             raise ValueError(f"rankings document missing required key: {key}")
+    # period must be zero-padded YYYY-MM: it is stored in a max_length=7 field
+    # and ordered lexicographically to pick the latest report, so a malformed
+    # value (e.g. "2026-9" or "2026-07-01") would sort wrong.
+    if not re.fullmatch(r"\d{4}-\d{2}", str(data["period"])):
+        raise ValueError(f"rankings 'period' must be YYYY-MM, got {data['period']!r}")
     if not isinstance(data["states"], dict):
         raise ValueError("rankings 'states' must be an object")
 
@@ -138,11 +144,15 @@ def _parse_iso_datetime(raw: object) -> Optional[datetime]:
 
 
 def load_report_dict(data: Dict, source_url: str = "") -> Tuple[int, int, int, int]:
-    """Upsert a validated rankings document.
+    """Upsert a validated rankings document, atomically.
 
     Returns ``(created, updated, deleted, match_failures)`` ranking-row
     counts; ``match_failures`` counts rows with no InsuranceCompany match
     (they still load — the FK is a nice-to-have for cross-linking).
+
+    The whole upsert runs in a single transaction: if any row is malformed
+    the transaction rolls back and the previously-ingested report is left
+    untouched, rather than publishing a partially-updated report.
     """
     validate_report_dict(data)
     window = data.get("window") or {}
@@ -193,36 +203,33 @@ def load_report_dict(data: Dict, source_url: str = "") -> Tuple[int, int, int, i
                 company = company_cache[issuer_name]
                 if company is None:
                     match_failures += 1
-                try:
-                    _, was_created = WorstInsuranceRanking.objects.update_or_create(
-                        report=report,
-                        state=state,
-                        issuer_slug=issuer_slug,
-                        defaults={
-                            "rank": int(issuer.get("rank", 0)),
-                            "issuer_name": issuer_name,
-                            "group_affiliation": str(
-                                issuer.get("group_affiliation", "") or ""
-                            ),
-                            "composite_score": float(
-                                issuer.get("composite_score", 0.0)
-                            ),
-                            "weight_coverage": issuer.get("weight_coverage"),
-                            "member_months": issuer.get("member_months"),
-                            "metrics": issuer.get("metrics"),
-                            "metrics_available": issuer.get("metrics_available"),
-                            "insurance_company": company,
-                        },
-                    )
-                    seen_keys.add((state, issuer_slug))
-                    if was_created:
-                        created += 1
-                    else:
-                        updated += 1
-                except Exception as e:
-                    logger.opt(exception=True).warning(
-                        f"Failed to upsert ranking {state}/{issuer_slug}: {e}"
-                    )
+                # No per-row try/except: a malformed row must abort the whole
+                # transaction.atomic() below so a partial report is never
+                # committed and the previous report (and its rows) survive
+                # intact. This data is public-facing.
+                _, was_created = WorstInsuranceRanking.objects.update_or_create(
+                    report=report,
+                    state=state,
+                    issuer_slug=issuer_slug,
+                    defaults={
+                        "rank": int(issuer.get("rank", 0)),
+                        "issuer_name": issuer_name,
+                        "group_affiliation": str(
+                            issuer.get("group_affiliation", "") or ""
+                        ),
+                        "composite_score": float(issuer.get("composite_score", 0.0)),
+                        "weight_coverage": issuer.get("weight_coverage"),
+                        "member_months": issuer.get("member_months"),
+                        "metrics": issuer.get("metrics"),
+                        "metrics_available": issuer.get("metrics_available"),
+                        "insurance_company": company,
+                    },
+                )
+                seen_keys.add((state, issuer_slug))
+                if was_created:
+                    created += 1
+                else:
+                    updated += 1
 
         # Issuers renamed or dropped between re-ingests of the same period
         # must not linger.
