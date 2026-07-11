@@ -103,8 +103,12 @@ class MLCitationsHelper:
         logger.debug(f"Generating specific citations for {denial}")
         result: List[str] = []
         try:
-            # Get the appropriate citation backends
-            full_citation_backends = ml_router.full_find_citation_backends()
+            # Get the appropriate citation backends. `use_external=True` is
+            # required: the router returns an empty list for the default
+            # (internal-only) case, which would make this path unreachable.
+            full_citation_backends = ml_router.full_find_citation_backends(
+                use_external=True
+            )
 
             # Only proceed if we have backends to use
             if not full_citation_backends:
@@ -309,6 +313,13 @@ class MLCitationsHelper:
                     )
                     result = []
 
+                # Snapshot the ML-only citations *before* appending
+                # supplemental ones. We cache only the ML-only list so that a
+                # later cache hit (which re-fetches and appends supplemental
+                # citations itself) does not end up with the supplemental
+                # citations duplicated.
+                ml_only = list(result)
+
                 extras = await cls._get_supplemental_citations(
                     denial=denial, procedure=procedure, diagnosis=diagnosis
                 )
@@ -318,16 +329,16 @@ class MLCitationsHelper:
                     )
                     result.extend(extras)
 
-                # If we have citations, cache them for future use
-                if result:
+                # If we have ML citations, cache them (ML-only) for future use.
+                if ml_only:
                     try:
                         await GenericContextGeneration.objects.acreate(
                             procedure=procedure,
                             diagnosis=diagnosis,
-                            generated_context=result,
+                            generated_context=ml_only,
                         )
                         logger.debug(
-                            f"Stored cached generic citations for {procedure}/{diagnosis} -- {result}"
+                            f"Stored cached generic citations for {procedure}/{diagnosis} -- {ml_only}"
                         )
                     except Exception as e:
                         logger.opt(exception=True).warning(
