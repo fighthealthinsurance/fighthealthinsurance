@@ -243,6 +243,70 @@ primary), the `app` database exists owned by `ziggystardust`, and it has **0** u
 tables (a clean seed target). The `plugin-barman-cloud-sidecar:v0.13.0` sidecar is
 present in the pod.
 
+### Troubleshooting — `fhi-pg-main-9-1` stuck `Pending` (encrypted-local-path PVC not binding)
+
+A common failure here is the pod sitting `Pending` with its PVC unbound:
+
+```
+fhi-pg-main-9-1   Pending   ...   encrypted-local-path   <unset>   2m
+```
+
+`encrypted-local-path` is a **local** provisioner, almost always
+`volumeBindingMode: WaitForFirstConsumer` — so the PVC will not bind until the pod
+is **scheduled to a node**, and the volume is then created **on that node**. If the
+pod can't be scheduled, the PVC stays `Pending` forever (and vice-versa). Walk it
+top-down:
+
+```bash
+# 1. WHY is the PVC pending? read its events.
+kubectl -n totallylegitco describe pvc fhi-pg-main-9-1 | sed -n '/Events/,$p'
+#   "waiting for first consumer to be created before binding"  -> NORMAL; the
+#      problem is pod SCHEDULING (go to step 2).
+#   "no volume plugin matched" / provisioner errors            -> SC/provisioner
+#      problem (steps 3-4).
+
+# 2. WHY can't the pod schedule? read its events.
+kubectl -n totallylegitco describe pod fhi-pg-main-9-1 | sed -n '/Events/,$p'
+#   Look for FailedScheduling reasons:
+#     "Insufficient cpu/memory"                  -> no node has room; free capacity
+#     "volume node affinity conflict"            -> the PVC/volume is pinned to a
+#         node that no longer fits the pod (or a stale PV from a prior attempt)
+#     "didn't match pod anti-affinity rules" /
+#     "had taint {..}, that the pod didn't tolerate" -> placement blocked
+
+# 3. Does the StorageClass exist and is it WaitForFirstConsumer?
+kubectl get storageclass encrypted-local-path -o \
+  custom-columns=NAME:.metadata.name,PROV:.provisioner,BIND:.volumeBindingMode
+#   -8 uses this same SC, so it should exist. If BIND=WaitForFirstConsumer, the
+#   PVC WILL show Pending until the pod is placed -- that alone is not the bug.
+
+# 4. Is the local-path provisioner actually running? (it creates the dir on-node)
+kubectl get pods -A | grep -i local-path
+kubectl -n local-path-storage logs -l app=local-path-provisioner --tail=50 2>/dev/null || \
+  echo "adjust namespace/label to your provisioner's deployment"
+#   A crashed/absent provisioner = PVCs never provision. Restart it if needed.
+
+# 5. Node capacity / taints (local-path needs room on the TARGET node's disk):
+kubectl get nodes
+kubectl describe node <node> | sed -n '/Taints/,/Allocated/p'
+#   Confirm a schedulable node has enough DISK for the 50Gi request AND no taint
+#   the pod can't tolerate. On this cluster -3 lives on 'plushy', -2 on 'turo'.
+```
+
+**Most common causes here, in order:**
+1. **`WaitForFirstConsumer` + an unschedulable pod** — the real blocker is
+   scheduling (step 2), not storage. Fix the scheduling reason and the PVC binds.
+2. **Stale PV/PVC from a prior apply** pinning the volume to a full/wrong node —
+   delete the orphaned PVC **only for `-9`** (never `-8`'s) and let CNPG recreate:
+   `kubectl -n totallylegitco delete pvc fhi-pg-main-9-1` (safe: `-9` is empty here).
+3. **Provisioner down** (step 4) — restart the local-path provisioner deployment.
+4. **No node with 50Gi free** — free disk or lower the `storage:` request in
+   `k8s/fhi-pg-main-9-cluster.yaml` (it is resizable later).
+
+**GATE (recovery):** after the fix, `kubectl -n totallylegitco get pvc,pod -l
+cnpg.io/cluster=fhi-pg-main-9` shows the PVC `Bound` and the pod `Running`. Then
+re-run the Phase 2 validation.
+
 ---
 
 ## Phase 3 — Verify `-9` backups (while empty)
@@ -256,9 +320,47 @@ archives immediately (no standby/`always` ambiguity).
 ```bash
 kubectl -n totallylegitco exec fhi-pg-main-9-1 -c postgres -- psql -U postgres -c 'SELECT pg_switch_wal();'
 sleep 20
-kubectl -n totallylegitco cnpg backup fhi-pg-main-9
+# Trigger an on-demand backup. PLUGIN-FREE: this creates a Backup CR directly, so
+# it needs only the operator (NOT the `kubectl cnpg` plugin). method: plugin +
+# pluginConfiguration.name routes it through barman-cloud, same as the plugin does.
+kubectl create -f - <<'YAML'
+apiVersion: postgresql.cnpg.io/v1
+kind: Backup
+metadata:
+  generateName: fhi-pg-main-9-manual-
+  namespace: totallylegitco
+spec:
+  cluster:
+    name: fhi-pg-main-9
+  method: plugin
+  pluginConfiguration:
+    name: barman-cloud.cloudnative-pg.io
+YAML
 kubectl -n totallylegitco get backup -l cnpg.io/cluster=fhi-pg-main-9 -w
 ```
+
+> **`kubectl cnpg` not installed?** The `cnpg` subcommand is a separate kubectl
+> plugin (`kubectl-cnpg`); `error: unknown command "cnpg"` means it is not on your
+> PATH. You do **not** need it — the Backup CR above is the plugin-free equivalent.
+> If you do want the plugin's conveniences (`cnpg status`, `cnpg backup`), install
+> it once (match operator v1.28):
+> ```bash
+> kubectl krew install cnpg          # if you have krew, OR:
+> curl -sSfL https://github.com/cloudnative-pg/cloudnative-pg/raw/release-1.28/hack/install-cnpg-plugin.sh \
+>   | sudo sh -s -- -b /usr/local/bin
+> ```
+> Then the shorthand is (note the METHOD flags — without them the plugin defaults
+> to `method: barmanObjectStore`, the in-tree method, and fails with *"cannot
+> proceed with the backup as the cluster has no backup section"* because we use
+> the barman-cloud **plugin**, not `spec.backup`):
+> ```bash
+> kubectl cnpg backup fhi-pg-main-9 -n totallylegitco \
+>   -m plugin --plugin-name barman-cloud.cloudnative-pg.io
+> ```
+> (Plugin flags go AFTER the subcommand.) A `plugin-barman-cloud` sidecar image
+> newer than the operator, e.g. plugin v1.30 with operator v1.28, is fine for
+> these commands. A failed Backup object from a wrong-method attempt is harmless —
+> delete it: `kubectl -n totallylegitco delete backup <name>`.
 
 **VALIDATION**
 
@@ -364,11 +466,19 @@ safety copy. Do not proceed without a validated dump.
 DUMP_DIR=/secure/backups/pg8-cutover ./scripts/restore-pg9-from-dump.sh
 ```
 
+> **How the app DB is loaded:** parallel `pg_restore -j` cannot read from a pipe,
+> so the script `kubectl cp`s the dump into `-9` first (onto the PVC volume root,
+> which has space — safe, `-9` is empty) and restores from that file, then removes
+> it. `kubectl cp` needs `tar` in the pod image; if it is missing, re-run with
+> `COPY_DUMP=false` to restore serially from stdin (slower, `JOBS` ignored). Tune
+> parallelism with `JOBS=<n>`. (Copying onto `-8` is never done — see the dump step.)
+
 **VALIDATION / GATE:** the script self-gates — it confirms `-9` is a writable
 primary, restores globals (tolerating the expected "role already exists" for
-`postgres`/`ziggystardust`), `pg_restore`s the `app` DB, then verifies user tables
-exist, `django_migrations` is populated, and tables are owned by `ziggystardust`.
-Investigate any `[FAIL]` before continuing.
+`postgres`/`ziggystardust`), copies + `pg_restore`s the `app` DB (verifying the
+copied size matches), then verifies user tables exist, `django_migrations` is
+populated, and tables are owned by `ziggystardust`. Investigate any `[FAIL]` before
+continuing.
 
 ---
 
@@ -468,7 +578,22 @@ Phase 3 proved backups worked while `-9` was empty; now prove it with real data.
 
 **ACTION**
 ```bash
-kubectl -n totallylegitco cnpg backup fhi-pg-main-9
+# Same plugin-free trigger as Phase 3 (method: plugin -> barman-cloud). No cnpg
+# kubectl plugin required; if you have it, the shorthand is
+#   kubectl cnpg backup fhi-pg-main-9 -n totallylegitco -m plugin --plugin-name barman-cloud.cloudnative-pg.io
+kubectl create -f - <<'YAML'
+apiVersion: postgresql.cnpg.io/v1
+kind: Backup
+metadata:
+  generateName: fhi-pg-main-9-postload-
+  namespace: totallylegitco
+spec:
+  cluster:
+    name: fhi-pg-main-9
+  method: plugin
+  pluginConfiguration:
+    name: barman-cloud.cloudnative-pg.io
+YAML
 kubectl -n totallylegitco get backup -l cnpg.io/cluster=fhi-pg-main-9 -w
 ```
 

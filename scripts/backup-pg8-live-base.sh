@@ -78,11 +78,26 @@ if [ "${SIZE:-0}" -lt "$MIN_DUMP_BYTES" ] 2>/dev/null; then
   die "app dump is suspiciously small (<$MIN_DUMP_BYTES bytes) -- treat as FAILED"
 fi
 
-# pg_restore --list proves the archive is readable + structurally sane. Run it
-# inside the pod (pg_restore is guaranteed present there).
+# pg_restore --list proves the archive is readable + structurally sane. The dump
+# is ALREADY a local file, so validate it LOCALLY when possible -- no stdin pipe,
+# and (critically) NO kubectl cp INTO -8: SRC_POD is the disk-pressured, only-
+# healthy primary, and writing a multi-GB dump onto its PVC could tip it over.
+# Fall back to streaming through the pod's pg_restore over stdin (which reads the
+# stream and writes NOTHING to -8's disk) if there is no usable local pg_restore.
 info "pg_restore --list sanity (table of contents) ..."
-TOC_LINES="$(kubectl -n "$NAMESPACE" exec -i "$SRC_POD" -c "$PG_CONTAINER" -- \
-  pg_restore --list < "$APP_OUT" | grep -c ';' || true)"
+TOC_LINES=0
+if command -v pg_restore >/dev/null 2>&1; then
+  # 2>/dev/null: an older local pg_restore may reject a newer archive version;
+  # that yields 0 lines and we fall back to the in-pod check below (not a failure).
+  TOC_LINES="$(pg_restore --list "$APP_OUT" 2>/dev/null | grep -c ';' || true)"
+  [ "${TOC_LINES:-0}" -gt 0 ] 2>/dev/null \
+    && info "(validated locally with $(pg_restore --version 2>/dev/null | head -1))"
+fi
+if [ "${TOC_LINES:-0}" -eq 0 ] 2>/dev/null; then
+  info "(validating via $SRC_POD over stdin -- reads the stream, writes nothing to -8's disk)"
+  TOC_LINES="$(kubectl -n "$NAMESPACE" exec -i "$SRC_POD" -c "$PG_CONTAINER" -- \
+    pg_restore --list < "$APP_OUT" | grep -c ';' || true)"
+fi
 if [ "${TOC_LINES:-0}" -gt 0 ] 2>/dev/null; then
   pass "app dump TOC readable ($TOC_LINES entries)"
 else
