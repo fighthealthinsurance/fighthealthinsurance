@@ -109,6 +109,8 @@ esac
 #    permission error on the probe query is acceptable, an auth/pg_hba
 #    rejection is NOT.
 # ---------------------------------------------------------------------------
+# Invoked indirectly via the EXIT trap below, so shellcheck can't see the call.
+# shellcheck disable=SC2317
 cleanup() { kubectl -n "$NAMESPACE" delete pod "$TEST_POD" --ignore-not-found --wait=false >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 

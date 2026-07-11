@@ -59,10 +59,14 @@ kubectl -n "$NAMESPACE" get pod "$TGT_POD" >/dev/null 2>&1 \
   || die "target pod $TGT_POD not found in $NAMESPACE"
 
 # locate dump files (newest by name if not pinned; names sort by timestamp)
-[ -n "$APP_DUMP" ]   || APP_DUMP="$(ls -1 "$DUMP_DIR"/app-*.dump 2>/dev/null | sort | tail -1 || true)"
-[ -n "$GLOBALS_SQL" ] || GLOBALS_SQL="$(ls -1 "$DUMP_DIR"/globals-*.sql 2>/dev/null | sort | tail -1 || true)"
-[ -n "$APP_DUMP" ] && [ -f "$APP_DUMP" ]       || die "no app dump found (looked in $DUMP_DIR/app-*.dump). Set APP_DUMP."
-[ -n "$GLOBALS_SQL" ] && [ -f "$GLOBALS_SQL" ] || die "no globals dump found ($DUMP_DIR/globals-*.sql). Set GLOBALS_SQL."
+[ -n "$APP_DUMP" ]   || APP_DUMP="$(find "$DUMP_DIR" -maxdepth 1 -name 'app-*.dump' 2>/dev/null | sort | tail -1 || true)"
+[ -n "$GLOBALS_SQL" ] || GLOBALS_SQL="$(find "$DUMP_DIR" -maxdepth 1 -name 'globals-*.sql' 2>/dev/null | sort | tail -1 || true)"
+if [ -z "$APP_DUMP" ] || [ ! -f "$APP_DUMP" ]; then
+  die "no app dump found (looked in $DUMP_DIR/app-*.dump). Set APP_DUMP."
+fi
+if [ -z "$GLOBALS_SQL" ] || [ ! -f "$GLOBALS_SQL" ]; then
+  die "no globals dump found ($DUMP_DIR/globals-*.sql). Set GLOBALS_SQL."
+fi
 
 psql_t() { kubectl -n "$NAMESPACE" exec -i "$TGT_POD" -c "$PG_CONTAINER" -- psql -U postgres -Atc "$1"; }
 
@@ -134,9 +138,11 @@ fi
 OWNED="$(kubectl -n "$NAMESPACE" exec -i "$TGT_POD" -c "$PG_CONTAINER" -- \
   psql -U postgres -d "$APP_DB" -Atc \
   "SELECT count(*) FROM pg_tables WHERE tableowner='$APP_ROLE';" | tr -d '[:space:]')"
-[ "${OWNED:-0}" -gt 0 ] 2>/dev/null \
-  && pass "tables owned by $APP_ROLE: $OWNED" \
-  || warn "no tables owned by $APP_ROLE -- check ownership (app may fail on permissions)"
+if [ "${OWNED:-0}" -gt 0 ] 2>/dev/null; then
+  pass "tables owned by $APP_ROLE: $OWNED"
+else
+  warn "no tables owned by $APP_ROLE -- check ownership (app may fail on permissions)"
+fi
 
 echo
 pass "RESTORE INTO $TGT_CLUSTER COMPLETE."
