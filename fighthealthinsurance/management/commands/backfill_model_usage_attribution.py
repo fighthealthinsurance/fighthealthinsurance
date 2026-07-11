@@ -15,20 +15,20 @@ Repairs the two data problems behind the ML model usage dashboard's bad rows:
 
 * ``ChooserCandidate`` rows whose ``model_name`` is a default Python object
   repr (``<...DeepInfra object at 0x7f81...>``), written before model
-  instances had stable names. The configured model is unrecoverable (the
-  candidate metadata recorded no model identifier historically), so these
+  instances had stable names. The configured model is unrecoverable (no
+  related record captured a model identifier historically), so these
   normalize to ``legacy-unresolved (ClassName)`` — the class is the only
   stable information in the repr; the memory address is dropped so instances
-  aggregate. Newer rows that recorded ``metadata["model_name"]`` recover the
-  real name from there instead.
+  aggregate.
 
 Safety properties:
   * Dry run by default; ``--apply`` is required to write.
   * Idempotent: repaired rows no longer match any repair condition, and
     ``legacy-unattributed`` rows are only re-touched if recovery newly
     succeeds (it never overwrites a valid canonical name).
-  * Rows created after the command started are left for the live write
-    paths, which are fixed separately.
+  * Only pre-tracking chosen rows (``created_at`` NULL) are labeled; a chosen
+    row's ``model_name`` is already final when it appears, so there is no
+    live-write race to guard against.
 
 ``--audit`` prints a read-only data audit (totals, attribution gaps,
 distinct labels, per-window counts, chosen>presented anomalies) without
@@ -78,8 +78,7 @@ class Command(BaseCommand):
         apply_changes: bool = options["apply"]
         mode = "APPLY" if apply_changes else "DRY RUN (pass --apply to write)"
         self.stdout.write(f"== Model usage attribution backfill: {mode} ==")
-        started_at = timezone.now()
-        self._backfill_proposed_appeals(apply_changes, started_at)
+        self._backfill_proposed_appeals(apply_changes)
         self._backfill_chooser_candidates(apply_changes)
         if not apply_changes:
             self.stdout.write("Dry run complete; no rows were modified.")
@@ -113,19 +112,17 @@ class Command(BaseCommand):
                 return (inferred[0], inferred[1], "sole_draft")
         return None
 
-    def _backfill_proposed_appeals(
-        self, apply_changes: bool, started_at: datetime.datetime
-    ) -> None:
+    def _backfill_proposed_appeals(self, apply_changes: bool) -> None:
         self.stdout.write("\n-- ProposedAppeal (chosen rows) --")
         total_chosen = ProposedAppeal.objects.filter(chosen=True).count()
         # Rows needing attention: never attributed, previously stamped as
-        # legacy (retry recovery only), or somehow carrying an object repr.
+        # legacy (re-checked in case drafts have since appeared), or somehow
+        # carrying an object repr.
         targets = ProposedAppeal.objects.filter(chosen=True).filter(
             Q(model_name__isnull=True)
             | Q(model_name=LEGACY_UNATTRIBUTED_LABEL)
             | Q(model_name__startswith="<")
         )
-        # Snapshot before repairs: rows valid prior to this run.
         target_total = targets.count()
         counts: Counter = Counter()
         for pa in targets.iterator():
@@ -139,20 +136,19 @@ class Command(BaseCommand):
             elif raw is not None and is_object_repr(raw):
                 new_name = normalize_model_label(raw)
                 counts["normalized_repr"] += 1
-            elif raw == LEGACY_UNATTRIBUTED_LABEL:
-                # Still unrecoverable; keep the explicit label untouched.
-                counts["already_labeled_unrecoverable"] += 1
-                continue
-            elif pa.created_at is None or pa.created_at < started_at:
-                # No evidence in the database ties this pick to a model —
-                # its drafts predate model_name tracking (or were never
-                # saved). Label explicitly instead of guessing.
+            elif pa.created_at is None:
+                # Pre-tracking pick (model_name column didn't exist yet): its
+                # drafts can't be joined back, so it is genuinely
+                # unrecoverable. Label it rather than guess. Already-labeled
+                # rows re-derive the same label and fall through as no-ops.
                 new_name = LEGACY_UNATTRIBUTED_LABEL
                 counts["labeled_legacy_unattributed"] += 1
             else:
-                # Created while the command was running; the fixed live
-                # write path owns it.
-                counts["skipped_concurrent"] += 1
+                # Post-tracking pick with no recoverable model (e.g. several
+                # models in play and the draft was edited away). Leave it NULL
+                # so it reports as "(unattributed)" and stays recoverable if
+                # matching drafts appear later.
+                counts["left_unattributed"] += 1
                 continue
             if new_name == raw and (
                 new_synthesized is None or new_synthesized == pa.synthesized
@@ -185,13 +181,8 @@ class Command(BaseCommand):
             f"{counts['labeled_legacy_unattributed']}"
         )
         self.stdout.write(
-            f"previously labeled, still unrecoverable: "
-            f"{counts['already_labeled_unrecoverable']}"
+            f"left NULL -> (unattributed):          {counts['left_unattributed']}"
         )
-        if counts["skipped_concurrent"]:
-            self.stdout.write(
-                f"skipped (created mid-run):            {counts['skipped_concurrent']}"
-            )
         verb = "changed" if apply_changes else "would change"
         self.stdout.write(f"rows {verb}: {counts['rows_changed']}")
 
@@ -213,22 +204,11 @@ class Command(BaseCommand):
                 # than mangling a name we don't understand.
                 counts["skipped_unrecognized"] += 1
                 continue
+            # No related data records which configured model produced a
+            # repr-era candidate, so the class name inside the repr is the
+            # only stable evidence. Normalize to it; never guess a model.
             distinct_before.add(raw)
-            metadata = cand.metadata or {}
-            meta_name = metadata.get("model_name")
-            if (
-                isinstance(meta_name, str)
-                and meta_name.strip()
-                and not is_object_repr(meta_name)
-            ):
-                new_name = normalize_model_label(meta_name)
-                counts["recovered_from_metadata"] += 1
-            else:
-                # No related data records which configured model produced
-                # this candidate; the class name inside the repr is the only
-                # stable evidence. Do not guess a specific model.
-                new_name = normalize_model_label(raw)
-                counts["normalized_repr_class_only"] += 1
+            new_name = normalize_model_label(raw)
             distinct_after.add(new_name)
             counts["rows_changed"] += 1
             if apply_changes and new_name:
@@ -239,12 +219,7 @@ class Command(BaseCommand):
         self.stdout.write(
             f"already valid:                   {total - counts['rows_changed'] - counts['skipped_unrecognized']}"
         )
-        self.stdout.write(
-            f"recovered from stored metadata:  {counts['recovered_from_metadata']}"
-        )
-        self.stdout.write(
-            f"normalized to legacy-unresolved: {counts['normalized_repr_class_only']}"
-        )
+        self.stdout.write(f"normalized to legacy-unresolved: {counts['rows_changed']}")
         if counts["skipped_unrecognized"]:
             self.stdout.write(
                 f"skipped (unrecognized '<' name): {counts['skipped_unrecognized']}"

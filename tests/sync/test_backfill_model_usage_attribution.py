@@ -131,8 +131,10 @@ class BackfillProposedAppealTest(TestCase):
         )
         run_command("--apply")
         pick.refresh_from_db()
-        # Ambiguous: must be labeled, never guessed onto model-a or model-b.
-        self.assertEqual(pick.model_name, LEGACY_UNATTRIBUTED_LABEL)
+        # Ambiguous AND post-tracking (created_at set): never guessed onto
+        # model-a/model-b, and left NULL so it reports as "(unattributed)"
+        # rather than being mislabeled legacy.
+        self.assertIsNone(pick.model_name)
 
     def test_does_not_sole_draft_infer_for_editted_rows(self):
         # editted=True rows come from the share-appeal flow and may contain
@@ -152,7 +154,8 @@ class BackfillProposedAppealTest(TestCase):
         )
         run_command("--apply")
         pick.refresh_from_db()
-        self.assertEqual(pick.model_name, LEGACY_UNATTRIBUTED_LABEL)
+        # Post-tracking + unrecoverable => left NULL, not force-labeled.
+        self.assertIsNone(pick.model_name)
 
     def test_legacy_row_without_drafts_labeled_unattributed(self):
         pick = ProposedAppeal.objects.create(
@@ -197,6 +200,8 @@ class BackfillProposedAppealTest(TestCase):
             chosen=True,
             model_name=None,
         )
+        # Pre-tracking so it is a labelable legacy row (would change).
+        ProposedAppeal.objects.filter(pk=pick.pk).update(created_at=None)
         out = run_command()
         pick.refresh_from_db()
         self.assertIsNone(pick.model_name)
@@ -217,12 +222,14 @@ class BackfillProposedAppealTest(TestCase):
             model_name=None,
         )
         unrecoverable_denial = self._denial("legacy")
-        ProposedAppeal.objects.create(
+        ancient = ProposedAppeal.objects.create(
             for_denial=unrecoverable_denial,
             appeal_text="ancient",
             chosen=True,
             model_name=None,
         )
+        # Pre-tracking: labeled legacy (post-tracking NULL picks stay NULL).
+        ProposedAppeal.objects.filter(pk=ancient.pk).update(created_at=None)
         first = run_command("--apply")
         self.assertIn("rows changed: 2", first)
         second = run_command("--apply")
@@ -260,14 +267,13 @@ class BackfillChooserCandidateTest(TestCase):
             task_type="appeal", status="EXHAUSTED", source="synthetic"
         )
 
-    def _candidate(self, index, model_name, metadata=None, kind="appeal_letter"):
+    def _candidate(self, index, model_name, kind="appeal_letter"):
         return ChooserCandidate.objects.create(
             task=self.task,
             candidate_index=index,
             kind=kind,
             model_name=model_name,
             content="x",
-            metadata=metadata,
         )
 
     def test_object_reprs_normalized_to_class_label(self):
@@ -278,14 +284,6 @@ class BackfillChooserCandidateTest(TestCase):
         c2.refresh_from_db()
         self.assertEqual(c1.model_name, legacy_unresolved_label("DeepInfra"))
         self.assertEqual(c2.model_name, legacy_unresolved_label("NewRemoteInternal"))
-
-    def test_metadata_model_name_preferred_over_class_label(self):
-        cand = self._candidate(
-            0, REPR_DEEPINFRA, metadata={"model_name": "google/gemma-4-26B-A4B-it"}
-        )
-        run_command("--apply")
-        cand.refresh_from_db()
-        self.assertEqual(cand.model_name, "google/gemma-4-26B-A4B-it")
 
     def test_clean_names_and_synthesized_untouched(self):
         clean = self._candidate(0, "fhi-legacy")

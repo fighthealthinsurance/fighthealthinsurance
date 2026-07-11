@@ -338,14 +338,13 @@ async def _generate_appeal_candidates(task: ChooserTask):
                 prompt=prompt,
             )
             if response and len(response.strip()) > 100:
-                model_name = canonical_model_name(model)
                 await sync_to_async(ChooserCandidate.objects.create)(
                     task=task,
                     candidate_index=candidate_index,
                     kind="appeal_letter",
-                    model_name=model_name,
+                    model_name=canonical_model_name(model),
                     content=response.strip(),
-                    metadata={"source": "synthetic", "model_name": model_name},
+                    metadata={"source": "synthetic"},
                 )
                 candidate_index += 1
                 task.num_candidates_generated = candidate_index
@@ -370,18 +369,13 @@ async def _generate_appeal_candidates(task: ChooserTask):
                     prompt=prompt,
                 )
                 if response and len(response.strip()) > 100:
-                    model_name = canonical_model_name(model)
                     await sync_to_async(ChooserCandidate.objects.create)(
                         task=task,
                         candidate_index=candidate_index,
                         kind="appeal_letter",
-                        model_name=model_name,
+                        model_name=canonical_model_name(model),
                         content=response.strip(),
-                        metadata={
-                            "source": "synthetic",
-                            "model_name": model_name,
-                            "retry": True,
-                        },
+                        metadata={"source": "synthetic", "retry": True},
                     )
                     candidate_index += 1
                     task.num_candidates_generated = candidate_index
@@ -567,16 +561,14 @@ async def _generate_chat_candidates(task: ChooserTask):
                 is_logged_in=True,
             )
             if response and len(response.strip()) > 50:
-                model_name = canonical_model_name(model)
                 await sync_to_async(ChooserCandidate.objects.create)(
                     task=task,
                     candidate_index=candidate_index,
                     kind="chat_response",
-                    model_name=model_name,
+                    model_name=canonical_model_name(model),
                     content=response.strip(),
                     metadata={
                         "source": "synthetic",
-                        "model_name": model_name,
                         "has_history": len(chat_history) > 0,
                     },
                 )
@@ -602,16 +594,14 @@ async def _generate_chat_candidates(task: ChooserTask):
                     is_logged_in=True,
                 )
                 if response and len(response.strip()) > 50:
-                    model_name = canonical_model_name(model)
                     await sync_to_async(ChooserCandidate.objects.create)(
                         task=task,
                         candidate_index=candidate_index,
                         kind="chat_response",
-                        model_name=model_name,
+                        model_name=canonical_model_name(model),
                         content=response.strip(),
                         metadata={
                             "source": "synthetic",
-                            "model_name": model_name,
                             "has_history": len(chat_history) > 0,
                             "retry": True,
                         },

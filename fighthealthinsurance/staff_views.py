@@ -607,38 +607,31 @@ class ModelUsageDashboardView(generic.TemplateView):
     def _proposed_appeal_stats(
         since: Optional[datetime.datetime],
     ) -> List[Dict[str, Any]]:
-        # Keep chosen rows with model_name=NULL in the chosen aggregation —
-        # mark_proposal_chosen intentionally falls back to None when the
-        # picked text can't be matched to a generated draft, and those are
-        # still real user picks worth surfacing. NULL rows that predate model
-        # tracking entirely (created_at NULL, pre-migration-0182) are
-        # bucketed as LEGACY_UNATTRIBUTED_LABEL — matching what the backfill
-        # stamps — while post-tracking rows fall under UNKNOWN_MODEL_LABEL,
-        # so legacy gaps stay distinguishable from current attribution
-        # misses.
+        # Keep chosen rows with model_name=NULL: mark_proposal_chosen falls
+        # back to None when a pick can't be matched to a draft, and those are
+        # still real picks. NULL rows predating model tracking (created_at
+        # NULL, pre-migration-0182) bucket as LEGACY_UNATTRIBUTED_LABEL —
+        # matching what the backfill stamps — while later rows fall under
+        # UNKNOWN_MODEL_LABEL, so legacy gaps stay distinct from current
+        # attribution misses.
         chosen_qs = ProposedAppeal.objects.filter(chosen=True)
         if since is not None:
             chosen_qs = chosen_qs.filter(created_at__gte=since)
 
-        # Tie the presented universe to denials that were picked within
-        # the window. We intentionally do NOT filter presented_qs by
-        # created_at: a user can generate appeals on day 0 and pick one on
-        # day 1, and a 1-day window anchored on the pick should still count
-        # the drafts that were actually presented. Pass the subquery
-        # straight into __in to avoid materializing a potentially huge id
-        # list (Django keeps it as a SQL subquery). Drafts without a
-        # model_name (pre-tracking) stay excluded: attributing them to any
-        # bucket would fabricate a win-rate denominator we cannot back up,
-        # so legacy/unattributed chosen rows deliberately report presented=0
-        # and an em-dash win rate. Excluding LEGACY_UNATTRIBUTED_LABEL is
-        # defensive — the backfill only stamps chosen rows, so no draft
-        # should ever carry it.
+        # Tie the presented universe to denials picked within the window,
+        # NOT to draft created_at: a draft generated on day 0 and picked on
+        # day 1 should still count as presented in a 1-day window anchored on
+        # the pick. Pass the subquery straight into __in so Django emits SQL
+        # rather than materializing a large id list. Drafts without a
+        # model_name (pre-tracking) are excluded — attributing them to any
+        # bucket would fabricate a win-rate denominator — so legacy chosen
+        # rows report presented=0 and an em-dash win rate.
         chosen_denial_ids = chosen_qs.values_list("for_denial_id", flat=True).distinct()
         presented_qs = ProposedAppeal.objects.filter(
             chosen=False,
             model_name__isnull=False,
             for_denial_id__in=chosen_denial_ids,
-        ).exclude(model_name=LEGACY_UNATTRIBUTED_LABEL)
+        )
 
         chosen: Counter = Counter()
         for name, count in (
@@ -659,9 +652,9 @@ class ModelUsageDashboardView(generic.TemplateView):
         for name, count in presented_qs.values_list("model_name").annotate(
             c=Count("id")
         ):
-            label = normalize_model_label(name)
-            if label is not None:
-                presented[label] += count
+            presented_label = normalize_model_label(name)
+            if presented_label is not None:
+                presented[presented_label] += count
         return _merge_stats(dict(chosen), dict(presented))
 
     @staticmethod
