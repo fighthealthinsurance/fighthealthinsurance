@@ -86,6 +86,24 @@ class _FakeDenial:
         self.plan_source = _PlanSourceManager()
 
 
+def _make_ico(**overrides):
+    """Build a stand-in matched ``InsuranceCompany`` object for recipient tests.
+
+    Defaults model a plain (non-TPA) carrier with no appeal-routing info;
+    pass keyword overrides for the fields a given test exercises.
+    """
+    attrs = {
+        "is_tpa": False,
+        "name": "Aetna",
+        "appeal_address": "",
+        "appeal_phone_number": "",
+        "member_services_url": "",
+        "website": "",
+    }
+    attrs.update(overrides)
+    return type("ICO", (), attrs)()
+
+
 class EscalationAddressesTest(TestCase):
     """Recipient assembly logic."""
 
@@ -120,18 +138,12 @@ class EscalationAddressesTest(TestCase):
 
     def test_medical_director_uses_insurer_appeal_contact_info(self):
         denial = _FakeDenial(state="", insurance_company="Aetna")
-        denial.insurance_company_obj = type(
-            "ICO",
-            (),
-            {
-                "is_tpa": False,
-                "name": "Aetna",
-                "appeal_address": "Aetna Appeals\nPO Box 14463\nLexington, KY 40512",
-                "appeal_phone_number": "1-800-872-3862",
-                "member_services_url": "https://www.aetna.com/contact-us.html",
-                "website": "https://www.aetna.com/",
-            },
-        )()
+        denial.insurance_company_obj = _make_ico(
+            appeal_address="Aetna Appeals\nPO Box 14463\nLexington, KY 40512",
+            appeal_phone_number="1-800-872-3862",
+            member_services_url="https://www.aetna.com/contact-us.html",
+            website="https://www.aetna.com/",
+        )
         recipients = get_recipients_for_denial(denial)
         md = next(r for r in recipients if r.recipient_type == "medical_director")
         self.assertEqual(md.phone, "1-800-872-3862")
@@ -141,18 +153,7 @@ class EscalationAddressesTest(TestCase):
 
     def test_medical_director_falls_back_to_insurer_website_url(self):
         denial = _FakeDenial(state="", insurance_company="Aetna")
-        denial.insurance_company_obj = type(
-            "ICO",
-            (),
-            {
-                "is_tpa": False,
-                "name": "Aetna",
-                "appeal_address": "",
-                "appeal_phone_number": "",
-                "member_services_url": "",
-                "website": "https://www.aetna.com/",
-            },
-        )()
+        denial.insurance_company_obj = _make_ico(website="https://www.aetna.com/")
         recipients = get_recipients_for_denial(denial)
         md = next(r for r in recipients if r.recipient_type == "medical_director")
         self.assertEqual(md.url, "https://www.aetna.com/")
@@ -169,18 +170,9 @@ class EscalationAddressesTest(TestCase):
         """Recipient URLs become clickable links, so schemes other than
         http(s) must be dropped at construction."""
         denial = _FakeDenial(state="", insurance_company="Aetna")
-        denial.insurance_company_obj = type(
-            "ICO",
-            (),
-            {
-                "is_tpa": False,
-                "name": "Aetna",
-                "appeal_address": "",
-                "appeal_phone_number": "",
-                "member_services_url": "javascript:alert(1)",
-                "website": "",
-            },
-        )()
+        denial.insurance_company_obj = _make_ico(
+            member_services_url="javascript:alert(1)"
+        )
         recipients = get_recipients_for_denial(denial)
         md = next(r for r in recipients if r.recipient_type == "medical_director")
         self.assertEqual(md.url, "")
