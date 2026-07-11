@@ -1331,11 +1331,20 @@ class GenerateAppeal(View):
         logger.debug("Finishing up prior to appeal gen.")
         denial_id = form.cleaned_data["denial_id"]
         email = form.cleaned_data["email"]
-        denial = models.Denial.objects.filter(
-            denial_id=denial_id,
-            hashed_email=models.Denial.get_hashed_email(email),
-            semi_sekret=form.cleaned_data["semi_sekret"],
-        ).get()
+        try:
+            denial = models.Denial.objects.get(
+                denial_id=denial_id,
+                hashed_email=models.Denial.get_hashed_email(email),
+                semi_sekret=form.cleaned_data["semi_sekret"],
+            )
+        except models.Denial.DoesNotExist:
+            # The form only validates the triple's shape, so a well-formed
+            # reference that matches no denial (unknown id or mismatched
+            # email/secret) would otherwise 500 here. Fall back to the start
+            # of the flow like the GET handler and the invalid-form path.
+            # Log no PHI / submitted values.
+            logger.warning("generate_appeal: no denial matches the submitted reference")
+            return redirect("scan")
 
         # We copy _most_ of the input over for the form context
         elems = dict(request.POST)

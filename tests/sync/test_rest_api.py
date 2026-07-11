@@ -1004,6 +1004,20 @@ class AppealFlowInvalidFormTest(APITestCase):
         self.assertEqual(response.status_code, 302)
         self.assertEqual(response["Location"], reverse("scan"))
 
+    def test_generate_appeal_post_wellformed_but_unmatched_ref_redirects(self):
+        """A well-formed triple that matches no denial (real id + email, wrong
+        semi_sekret) must redirect, not 500 on the .get() lookup."""
+        response = self.client.post(
+            reverse("generate_appeal"),
+            {
+                "denial_id": str(self.denial.denial_id),
+                "email": self.email,
+                "semi_sekret": "wrong-secret",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response["Location"], reverse("scan"))
+
 
 class NotifyPatientTest(APITestCase):
     """Test the notify_patient API endpoint."""
