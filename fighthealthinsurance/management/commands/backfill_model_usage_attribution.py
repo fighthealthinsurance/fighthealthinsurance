@@ -40,7 +40,8 @@ from collections import Counter
 from typing import Optional, Tuple
 
 from django.core.management.base import BaseCommand
-from django.db.models import Q
+from django.db.models import Q, Value
+from django.db.models.functions import Coalesce, Trim
 from django.utils import timezone
 
 from fighthealthinsurance.ml.model_identity import (
@@ -122,32 +123,40 @@ class Command(BaseCommand):
     def _backfill_proposed_appeals(self, apply_changes: bool) -> None:
         self.stdout.write("\n-- ProposedAppeal (chosen rows) --")
         total_chosen = ProposedAppeal.objects.filter(chosen=True).count()
-        # Rows needing attention: never attributed, previously stamped as
-        # legacy (re-checked in case drafts have since appeared), or possibly
-        # carrying an object repr. The ``startswith("<")`` clause is a cheap
-        # SQL prefilter for object reprs (is_object_repr is a regex that can't
-        # run in the DB); the loop below refines it, so a non-repr value that
-        # merely starts with "<" is fetched but left untouched.
-        targets = ProposedAppeal.objects.filter(chosen=True).filter(
-            Q(model_name__isnull=True)
-            | Q(model_name=LEGACY_UNATTRIBUTED_LABEL)
-            | Q(model_name__startswith="<")
+        # Rows needing attention: missing attribution (NULL, empty, or
+        # whitespace-only model_name), previously stamped as legacy (re-checked
+        # in case drafts have since appeared), or possibly carrying an object
+        # repr. Blank labels are matched with a trimmed annotation so that ""
+        # and "  " are treated exactly like NULL (both mean "missing" once
+        # normalize_model_label strips them). The ``startswith("<")`` clause is
+        # a cheap SQL prefilter for object reprs (is_object_repr is a regex
+        # that can't run in the DB); the loop below refines it, so a non-repr
+        # value that merely starts with "<" is fetched but left untouched.
+        targets = (
+            ProposedAppeal.objects.filter(chosen=True)
+            .annotate(_trimmed_model=Trim(Coalesce("model_name", Value(""))))
+            .filter(
+                Q(_trimmed_model="")  # NULL, empty, or whitespace-only
+                | Q(model_name=LEGACY_UNATTRIBUTED_LABEL)
+                | Q(model_name__startswith="<")
+            )
         )
         target_total = targets.count()
         counts: Counter = Counter()
         for pa in targets.iterator():
             raw = pa.model_name
+            raw_blank = raw is None or not raw.strip()
             recovered = self._recover_proposed(pa)
             new_name: Optional[str] = None
             new_synthesized: Optional[bool] = None
             if recovered is not None:
                 new_name, new_synthesized, method = recovered
                 counts[f"recovered_{method}"] += 1
-            elif raw is not None and is_object_repr(raw):
+            elif not raw_blank and is_object_repr(raw):
                 new_name = normalize_model_label(raw)
                 counts["normalized_repr"] += 1
-            elif raw is not None:
-                # A non-null label that is neither an object repr nor
+            elif not raw_blank:
+                # A non-blank label that is neither an object repr nor
                 # recoverable: the legacy-unattributed marker itself, or a
                 # malformed/hand-entered value that merely starts with "<".
                 # Leave it exactly as-is — never relabel a value we don't
@@ -155,18 +164,25 @@ class Command(BaseCommand):
                 counts["left_unchanged"] += 1
                 continue
             elif pa.created_at is None:
-                # NULL model_name on a pre-tracking pick (the column didn't
-                # exist yet): its drafts can't be joined back, so it is
-                # genuinely unrecoverable. Label it rather than guess.
+                # Missing model_name (NULL/empty/whitespace) on a pre-tracking
+                # pick (the column didn't exist yet): its drafts can't be
+                # joined back, so it is genuinely unrecoverable. Label it
+                # rather than guess.
                 new_name = LEGACY_UNATTRIBUTED_LABEL
                 counts["labeled_legacy_unattributed"] += 1
-            else:
-                # NULL model_name on a post-tracking pick (e.g. several models
-                # in play and the draft was edited away). Leave it NULL so it
-                # reports as "(unattributed)" and stays recoverable if matching
-                # drafts appear later.
+            elif raw is None:
+                # Already-NULL post-tracking pick (e.g. several models in play
+                # and the draft was edited away). Leave it NULL so it reports
+                # as "(unattributed)" and stays recoverable if matching drafts
+                # appear later.
                 counts["left_unattributed"] += 1
                 continue
+            else:
+                # Blank (empty/whitespace) post-tracking pick: collapse the
+                # blank to NULL, the canonical "missing" value, so it reports
+                # as "(unattributed)" consistently with NULL rows.
+                new_name = None
+                counts["normalized_blank_to_null"] += 1
             if new_name == raw and (
                 new_synthesized is None or new_synthesized == pa.synthesized
             ):
@@ -199,6 +215,9 @@ class Command(BaseCommand):
         )
         self.stdout.write(
             f"left NULL -> (unattributed):          {counts['left_unattributed']}"
+        )
+        self.stdout.write(
+            f"blank -> NULL (unattributed):         {counts['normalized_blank_to_null']}"
         )
         self.stdout.write(
             f"left unchanged (already labeled/other): {counts['left_unchanged']}"

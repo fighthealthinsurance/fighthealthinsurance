@@ -231,6 +231,67 @@ class BackfillProposedAppealTest(TestCase):
         self.assertEqual(pick.model_name, "<not-a-repr>")
         self.assertIn("rows changed: 0", out)
 
+    def test_blank_pre_tracking_row_labeled_legacy(self):
+        # model_name is blank=True, so an empty-string chosen pick is "missing"
+        # just like NULL. A pre-tracking blank must be labeled legacy, not left
+        # to report as a current unattributed row.
+        pick = ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="blank pick",
+            chosen=True,
+            model_name="",
+        )
+        ProposedAppeal.objects.filter(pk=pick.pk).update(created_at=None)
+        run_command("--apply")
+        pick.refresh_from_db()
+        self.assertEqual(pick.model_name, LEGACY_UNATTRIBUTED_LABEL)
+
+    def test_whitespace_pre_tracking_row_labeled_legacy(self):
+        pick = ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="whitespace pick",
+            chosen=True,
+            model_name="   ",
+        )
+        ProposedAppeal.objects.filter(pk=pick.pk).update(created_at=None)
+        run_command("--apply")
+        pick.refresh_from_db()
+        self.assertEqual(pick.model_name, LEGACY_UNATTRIBUTED_LABEL)
+
+    def test_blank_post_tracking_row_normalized_to_null(self):
+        # A post-tracking blank pick is unrecoverable but shouldn't stay blank:
+        # collapse it to NULL, the canonical "missing" value, so it aggregates
+        # with other unattributed rows rather than forming its own bucket.
+        pick = ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="post blank",
+            chosen=True,
+            model_name="",
+        )
+        run_command("--apply")
+        pick.refresh_from_db()
+        self.assertIsNone(pick.model_name)
+
+    def test_blank_row_recovered_when_sole_draft_exists(self):
+        # A blank chosen pick with a single-model draft set is recoverable and
+        # must be attributed to that model, not labeled legacy.
+        ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="draft a",
+            chosen=False,
+            model_name="model-x",
+        )
+        pick = ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="chosen text",
+            chosen=True,
+            model_name="",
+        )
+        ProposedAppeal.objects.filter(pk=pick.pk).update(created_at=None)
+        run_command("--apply")
+        pick.refresh_from_db()
+        self.assertEqual(pick.model_name, "model-x")
+
     def test_dry_run_by_default(self):
         pick = ProposedAppeal.objects.create(
             for_denial=self.denial,
