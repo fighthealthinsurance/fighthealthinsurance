@@ -243,6 +243,70 @@ primary), the `app` database exists owned by `ziggystardust`, and it has **0** u
 tables (a clean seed target). The `plugin-barman-cloud-sidecar:v0.13.0` sidecar is
 present in the pod.
 
+### Troubleshooting — `fhi-pg-main-9-1` stuck `Pending` (encrypted-local-path PVC not binding)
+
+A common failure here is the pod sitting `Pending` with its PVC unbound:
+
+```
+fhi-pg-main-9-1   Pending   ...   encrypted-local-path   <unset>   2m
+```
+
+`encrypted-local-path` is a **local** provisioner, almost always
+`volumeBindingMode: WaitForFirstConsumer` — so the PVC will not bind until the pod
+is **scheduled to a node**, and the volume is then created **on that node**. If the
+pod can't be scheduled, the PVC stays `Pending` forever (and vice-versa). Walk it
+top-down:
+
+```bash
+# 1. WHY is the PVC pending? read its events.
+kubectl -n totallylegitco describe pvc fhi-pg-main-9-1 | sed -n '/Events/,$p'
+#   "waiting for first consumer to be created before binding"  -> NORMAL; the
+#      problem is pod SCHEDULING (go to step 2).
+#   "no volume plugin matched" / provisioner errors            -> SC/provisioner
+#      problem (steps 3-4).
+
+# 2. WHY can't the pod schedule? read its events.
+kubectl -n totallylegitco describe pod fhi-pg-main-9-1 | sed -n '/Events/,$p'
+#   Look for FailedScheduling reasons:
+#     "Insufficient cpu/memory"                  -> no node has room; free capacity
+#     "volume node affinity conflict"            -> the PVC/volume is pinned to a
+#         node that no longer fits the pod (or a stale PV from a prior attempt)
+#     "didn't match pod anti-affinity rules" /
+#     "had taint {..}, that the pod didn't tolerate" -> placement blocked
+
+# 3. Does the StorageClass exist and is it WaitForFirstConsumer?
+kubectl get storageclass encrypted-local-path -o \
+  custom-columns=NAME:.metadata.name,PROV:.provisioner,BIND:.volumeBindingMode
+#   -8 uses this same SC, so it should exist. If BIND=WaitForFirstConsumer, the
+#   PVC WILL show Pending until the pod is placed -- that alone is not the bug.
+
+# 4. Is the local-path provisioner actually running? (it creates the dir on-node)
+kubectl get pods -A | grep -i local-path
+kubectl -n local-path-storage logs -l app=local-path-provisioner --tail=50 2>/dev/null || \
+  echo "adjust namespace/label to your provisioner's deployment"
+#   A crashed/absent provisioner = PVCs never provision. Restart it if needed.
+
+# 5. Node capacity / taints (local-path needs room on the TARGET node's disk):
+kubectl get nodes
+kubectl describe node <node> | sed -n '/Taints/,/Allocated/p'
+#   Confirm a schedulable node has enough DISK for the 50Gi request AND no taint
+#   the pod can't tolerate. On this cluster -3 lives on 'plushy', -2 on 'turo'.
+```
+
+**Most common causes here, in order:**
+1. **`WaitForFirstConsumer` + an unschedulable pod** — the real blocker is
+   scheduling (step 2), not storage. Fix the scheduling reason and the PVC binds.
+2. **Stale PV/PVC from a prior apply** pinning the volume to a full/wrong node —
+   delete the orphaned PVC **only for `-9`** (never `-8`'s) and let CNPG recreate:
+   `kubectl -n totallylegitco delete pvc fhi-pg-main-9-1` (safe: `-9` is empty here).
+3. **Provisioner down** (step 4) — restart the local-path provisioner deployment.
+4. **No node with 50Gi free** — free disk or lower the `storage:` request in
+   `k8s/fhi-pg-main-9-cluster.yaml` (it is resizable later).
+
+**GATE (recovery):** after the fix, `kubectl -n totallylegitco get pvc,pod -l
+cnpg.io/cluster=fhi-pg-main-9` shows the PVC `Bound` and the pod `Running`. Then
+re-run the Phase 2 validation.
+
 ---
 
 ## Phase 3 — Verify `-9` backups (while empty)
