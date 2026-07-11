@@ -1,0 +1,206 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}How to Appeal a Health Insurance Denial by Insurer - Fight Health Insurance{% endblock title %}
+{% block metatitle %}How to Appeal a Health Insurance Denial by Insurer - Fight Health Insurance{% endblock metatitle %}
+{% block metadescription %}General, step-by-step guides on how to appeal a denied claim from major U.S. health insurers and pharmacy benefit managers, including internal appeals and external review.{% endblock metadescription %}
+
+{% block scriptmagic %}
+{% if jsonld %}<script type="application/ld+json">{{ jsonld|safe }}</script>{% endif %}
+{% endblock scriptmagic %}
+
+{% block content %}
+<!-- Hero Section -->
+<section id="insurer-index-hero" class="slider" data-stellar-background-ratio="0.5">
+    <div class="row">
+        <div class="item item-first">
+            <div class="caption d-flex flex-column align-items-center justify-content-center">
+                <div class="hero-inner">
+                    <h3 class="hero-tagline">Appeal Guides by Insurer</h3>
+                    <h1 class="hero-headline">How to Appeal a Health Insurance Denial</h1>
+                    <p class="hero-subcopy">Pick your insurer or pharmacy benefit manager for a general guide to appealing a denied claim — from the internal appeal through independent external review.</p>
+                    <div class="hero-cta-group">
+                        <a href="{% url 'scan' %}" class="section-btn btn btn-default smoothScroll primary-cta">
+                            Start Your Appeal
+                        </a>
+                    </div>
+                    <div class="hero-cta-group hero-cta-secondary">
+                        <a href="{% url 'chat' %}" class="btn btn-outline-green secondary-cta smoothScroll">
+                            Chat with AI Assistant
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Introduction Section -->
+<section id="intro" class="py-5">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto text-center">
+                <h2 class="mb-4">Choose Your Insurer</h2>
+                <p class="lead">The appeal process is similar across insurers, but the exact deadlines, addresses, and plan rules differ. These guides explain the general steps for each major insurer so you know what to expect. Then let our free tool help you draft your appeal.</p>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Insurer Grid Section -->
+<section id="insurer-list" class="py-5 bg-light">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-10 mx-auto">
+                <h2 class="text-center mb-4">Insurer Appeal Guides</h2>
+                <div class="row">
+                    {% for insurer in insurers %}
+                    <div class="col-md-6 col-lg-4 mb-4">
+                        <a href="{% url 'insurer_appeal_guide' insurer.slug %}" class="insurer-card d-block h-100">
+                            <div class="card h-100">
+                                <div class="card-body d-flex flex-column">
+                                    <h5 class="card-title mb-2">{{ insurer.name }}</h5>
+                                    <div class="plan-type-badges mb-2">
+                                        {% for plan_type in insurer.plan_types %}
+                                        <span class="badge plan-badge">{{ plan_type }}</span>
+                                        {% endfor %}
+                                    </div>
+                                    <p class="card-text text-muted small mb-3">{{ insurer.summary }}</p>
+                                    <span class="mt-auto guide-link">How to appeal &rarr;</span>
+                                </div>
+                            </div>
+                        </a>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- How Appeals Work Section -->
+<section id="how-appeals-work" class="py-5">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto">
+                <h2 class="text-center mb-4">How Appeals Generally Work</h2>
+                <p class="text-center text-muted mb-4">No matter which insurer denied your claim, the path is usually the same.</p>
+                <div class="row">
+                    <div class="col-md-6 mb-3">
+                        <div class="how-step">
+                            <h6><i class="bi bi-1-circle-fill me-2 text-success"></i>Internal Appeal</h6>
+                            <p class="small text-muted mb-0">You ask the insurer to reconsider its own decision, answering the specific denial reason with evidence.</p>
+                        </div>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <div class="how-step">
+                            <h6><i class="bi bi-2-circle-fill me-2 text-success"></i>External Review</h6>
+                            <p class="small text-muted mb-0">If the internal appeal fails, an independent reviewer who does not work for the insurer can look at your case.</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="text-center mt-3">
+                    <a href="{% url 'faq' %}" class="btn btn-outline-secondary">Read our appeal FAQ</a>
+                    <a href="{% url 'other-resources' %}" class="btn btn-outline-secondary">More resources</a>
+                    <a href="{% url 'state_help_index' %}" class="btn btn-outline-secondary">State-by-state help</a>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Final CTA Section -->
+<section id="final-cta" class="py-5 bg-light">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto text-center">
+                <h2 class="mb-3">Ready to Fight Your Denial?</h2>
+                <p class="lead mb-4">Our free AI-powered tool can help you generate a compelling appeal letter in minutes.</p>
+                <div class="d-flex justify-content-center gap-3 flex-wrap">
+                    <a href="{% url 'scan' %}" class="btn btn-green btn-lg">
+                        Start Your Appeal
+                    </a>
+                    <a href="{% url 'chat' %}" class="btn btn-outline-green btn-lg">
+                        Chat with AI Assistant
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Disclaimer Section -->
+<section id="disclaimer" class="py-4">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto">
+                <div class="disclaimer-box p-3 bg-light border rounded">
+                    <p class="text-muted small mb-2">
+                        <strong>Disclaimer:</strong> This page provides general information, not legal advice. Insurance rules, deadlines, and processes change frequently and vary by plan — always verify the specifics with your denial letter and plan documents. Fight Health Insurance is not affiliated with any insurer named on this page.
+                    </p>
+                    {% if last_reviewed %}<p class="text-muted small mb-0"><strong>Last reviewed:</strong> {{ last_reviewed }}</p>{% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+{% endblock content %}
+
+{% block extra_style %}
+<style>
+    #insurer-index-hero .hero-inner {
+        max-width: 800px;
+        padding: 2rem;
+    }
+
+    .insurer-card {
+        text-decoration: none;
+        color: inherit;
+    }
+
+    .insurer-card:hover {
+        text-decoration: none;
+    }
+
+    .insurer-card .card {
+        transition: all 0.2s ease;
+        border-left: 3px solid transparent;
+    }
+
+    .insurer-card:hover .card {
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        border-left-color: #28a745;
+    }
+
+    .plan-badge {
+        background-color: #e9ecef;
+        color: #495057;
+        font-weight: 500;
+        margin-right: 4px;
+        margin-bottom: 4px;
+    }
+
+    .guide-link {
+        color: #28a745;
+        font-weight: 600;
+    }
+
+    .how-step {
+        background: #fff;
+        padding: 1.25rem;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        height: 100%;
+    }
+
+    .disclaimer-box {
+        border-color: #dee2e6 !important;
+    }
+
+    #final-cta {
+        background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+    }
+
+    /* btn-green and btn-outline-green are defined in custom.css */
+</style>
+{% endblock extra_style %}
