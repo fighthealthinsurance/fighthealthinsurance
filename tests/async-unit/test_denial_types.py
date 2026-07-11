@@ -196,6 +196,33 @@ class TestDenialTypes(TestCase):
         )
         assert not any(r.name == "TestRegulator" for r in excluded)
 
+    @pytest.mark.asyncio
+    async def test_get_regulator_matches_seeded_erisa_with_empty_negative_regex(self):
+        """The seeded regulators ship without a negative_regex (stored as ""),
+        which compiles to a match-everything pattern. get_regulator must not
+        let the empty pattern veto the match — standard ERISA denial language
+        should match the fixture's ERISA regulator."""
+        checker = ProcessDenialRegex()
+        matched = await checker.get_regulator(
+            "You may have the right to file a civil action under ERISA."
+        )
+        assert any(r.alt_name == "ERISA" for r in matched)
+
+    @pytest.mark.asyncio
+    async def test_get_regulator_skips_rows_with_empty_match_regex(self):
+        """Seeded regulators without a match regex (e.g. the California DMHC
+        row) must not match arbitrary denial text just because an empty
+        pattern matches everything."""
+        checker = ProcessDenialRegex()
+        matched = await checker.get_regulator("A denial with no regulator hints.")
+        assert matched == []
+
+    def test_seeded_regulators_have_contact_phone_numbers(self):
+        """Every seeded regulator should carry a consumer phone number so the
+        UI can tell users who to call."""
+        for regulator in Regulator.objects.all():
+            assert regulator.phone, f"{regulator.name} is missing a phone number"
+
     # ------------------------------------------------------------------
     # ProcessDenialCodes — ICD-10 and CPT preventive-care classification
     # ------------------------------------------------------------------

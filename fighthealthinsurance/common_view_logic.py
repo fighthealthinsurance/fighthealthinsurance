@@ -39,6 +39,7 @@ from django.db.models import F, Q, QuerySet
 from django.forms import Form
 from django.template.loader import render_to_string
 from django.urls import reverse
+from django.utils.html import escape as html_escape
 
 import asyncstdlib as a
 import ray
@@ -881,6 +882,34 @@ class FindNextStepsHelper:
                     "Talk to your employer's HR if you are on good terms with them.",
                 )
             )
+        # These rows are rendered with ``{% autoescape off %}`` in
+        # outside_help.html, so escape the DB-sourced values and only
+        # linkify http(s) URLs. Reuse sanitize_http_url so the scheme check
+        # is case-insensitive (a valid ``HTTPS://`` URL must not be dropped)
+        # and consistent with the escalation-packet path.
+        from fighthealthinsurance.escalation_addresses import sanitize_http_url
+
+        regulator = denial.regulator
+        website = sanitize_http_url(regulator.website) if regulator else ""
+        if regulator is not None and (regulator.phone or website):
+            how_to_parts = []
+            if regulator.phone:
+                how_to_parts.append(f"Call {html_escape(regulator.phone)}")
+            if website:
+                how_to_parts.append(
+                    f"<a href='{html_escape(website)}' target='_blank' rel='noopener'>"
+                    "file a complaint online</a>"
+                )
+            outside_help_details.append(
+                (
+                    (
+                        f"Your denial letter mentions <strong>{html_escape(regulator.name)}</strong>, "
+                        "a regulator that oversees this kind of plan. They take consumer "
+                        "complaints about denials and can require the plan to respond."
+                    ),
+                    " or ".join(how_to_parts) + ".",
+                )
+            )
         return outside_help_details
 
     @classmethod
@@ -1456,6 +1485,17 @@ class DenialCreatorHelper:
             or denial.procedure
         ):
             logger.debug(f"extract_entity({denial_id}): skipping, already done")
+            # Regulator matching is cheap (a handful of regexes), idempotent,
+            # and independent of the procedure/diagnosis extraction this gate
+            # protects — run it even when the denial was manually populated or
+            # extraction already finished, so those denials still get
+            # regulator contact info.
+            try:
+                await cls.extract_set_regulator(denial_id)
+            except Exception:
+                logger.opt(exception=True).warning(
+                    f"extract_set_regulator failed for denial {denial_id}"
+                )
             return
         # Bound persistent extraction failures: extract_entity runs once per
         # WebSocket connection (websockets.StreamingEntityBackend.receive)
@@ -1492,6 +1532,7 @@ class DenialCreatorHelper:
             named_task(cls.extract_set_plan_id(denial_id), "plan id"),
             named_task(cls.extract_set_claim_id(denial_id), "claim id"),
             named_task(cls.extract_set_date_of_service(denial_id), "date of service"),
+            named_task(cls.extract_set_regulator(denial_id), "regulator"),
             named_task(
                 MLPlanDocHelper.generate_plan_documents_summary(denial_id),
                 "plan document summary",
@@ -2292,6 +2333,26 @@ class DenialCreatorHelper:
                 .afirst()
             )
         return None
+
+    @classmethod
+    async def extract_set_regulator(cls, denial_id):
+        """Match the denial text against known regulators and store the match.
+
+        Populates ``Denial.regulator`` so downstream flows (outside help,
+        the escalation packet's ERISA detection) can surface the right
+        regulator along with its complaint phone number.
+        """
+        denial = await Denial.objects.filter(denial_id=denial_id).aget()
+        if denial.regulator_id is not None:
+            return
+        regulators = await cls.regex_denial_processor.get_regulator(
+            denial.denial_text or ""
+        )
+        if regulators:
+            # First match wins; the seeded regexes are mutually specific.
+            await Denial.objects.filter(
+                denial_id=denial_id, regulator__isnull=True
+            ).aupdate(regulator=regulators[0])
 
     @classmethod
     async def extract_set_denialtype(cls, denial_id):

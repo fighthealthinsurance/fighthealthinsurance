@@ -45,6 +45,19 @@ DOL_EBSA_PHONE = "1-866-444-3272"
 DOL_EBSA_URL = "https://www.dol.gov/agencies/ebsa"
 
 
+def sanitize_http_url(value: Optional[str]) -> str:
+    """Return *value* only if it is an http(s) URL, else an empty string.
+
+    Recipient URLs end up in ``<a href>`` attributes (server templates and
+    the escalation packet's client-side rendering), so unexpected schemes
+    like ``javascript:`` must never propagate into a clickable link.
+    """
+    url = (value or "").strip()
+    if url.lower().startswith(("http://", "https://")):
+        return url
+    return ""
+
+
 @dataclass
 class EscalationRecipient:
     """A single recipient on an escalation packet."""
@@ -77,7 +90,7 @@ def _doi_recipient(state: StateHelp) -> Optional[EscalationRecipient]:
         name=dept.name,
         address=dept.complaint_url or dept.url or "",
         phone=dept.consumer_line or dept.phone or "",
-        url=dept.url or "",
+        url=sanitize_http_url(dept.url),
         rationale=rationale,
         extra={
             "state_name": state.name,
@@ -94,22 +107,40 @@ def _doi_recipient(state: StateHelp) -> Optional[EscalationRecipient]:
 
 def _medical_director_recipient(
     insurance_company: Optional[str],
+    insurance_company_obj: Any = None,
 ) -> EscalationRecipient:
-    """Build a generic 'Medical Director' recipient for the plan."""
+    """Build a 'Medical Director' recipient for the plan.
+
+    When the denial matched a known ``InsuranceCompany`` row we use its
+    appeal-routing info (mailing address, member services / appeals phone,
+    website) so the user gets a real number to call instead of a blank.
+    """
     company = (
         insurance_company
         if insurance_company and insurance_company != "UNKNOWN"
         else "Your Health Plan"
     )
+    # The plan's address isn't always known; the letter renders with an
+    # obvious bracketed placeholder for the user to fill from the denial
+    # letter when we don't have it on file.
+    address = "[Insurance company mailing address from your denial letter]"
+    phone = ""
+    url = ""
+    if insurance_company_obj is not None:
+        known_address = getattr(insurance_company_obj, "appeal_address", "") or ""
+        if known_address.strip():
+            address = f"Medical Director\n{known_address.strip()}"
+        phone = getattr(insurance_company_obj, "appeal_phone_number", "") or ""
+        url = sanitize_http_url(
+            getattr(insurance_company_obj, "member_services_url", "")
+            or getattr(insurance_company_obj, "website", "")
+        )
     return EscalationRecipient(
         recipient_type=RECIPIENT_MEDICAL_DIRECTOR,
         name=f"Medical Director, {company}",
-        # The plan's address isn't known; the letter renders with an
-        # obvious bracketed placeholder for the user to fill from the
-        # denial letter.
-        address="[Insurance company mailing address from your denial letter]",
-        phone="",
-        url="",
+        address=address,
+        phone=phone,
+        url=url,
         rationale=(
             "The plan's medical director is the physician responsible for "
             "coverage decisions. A direct, peer-to-peer-style letter to the "
@@ -185,11 +216,10 @@ def get_recipients_for_denial(denial: Any) -> List[EscalationRecipient]:
                 recipients.append(doi)
 
     insurance_company = getattr(denial, "insurance_company", None)
-    if not insurance_company:
-        ic_obj = getattr(denial, "insurance_company_obj", None)
-        if ic_obj is not None:
-            insurance_company = getattr(ic_obj, "name", None)
-    recipients.append(_medical_director_recipient(insurance_company))
+    ic_obj = getattr(denial, "insurance_company_obj", None)
+    if not insurance_company and ic_obj is not None:
+        insurance_company = getattr(ic_obj, "name", None)
+    recipients.append(_medical_director_recipient(insurance_company, ic_obj))
 
     if _is_erisa_likely(denial):
         recipients.append(_dol_ebsa_recipient())

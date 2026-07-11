@@ -471,6 +471,12 @@ class Regulator(models.Model):
     name = models.CharField(max_length=300, primary_key=False)
     website = models.CharField(max_length=300, primary_key=False)
     alt_name = models.CharField(max_length=300, primary_key=False)
+    phone = models.CharField(
+        max_length=40,
+        blank=True,
+        default="",
+        help_text="Consumer assistance / complaint line for this regulator (e.g., 1-866-444-3272 for DOL EBSA)",
+    )
     regex = RegexField(max_length=400, re_flags=re.IGNORECASE | re.UNICODE | re.M)
     negative_regex = RegexField(
         max_length=400, re_flags=re.IGNORECASE | re.UNICODE | re.M
