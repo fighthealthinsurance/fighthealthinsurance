@@ -2000,27 +2000,45 @@ class RemoteOpenLike(RemoteModel):
 
                     # Wait for the first task to complete
                     done, pending = await asyncio.wait(
-                        [primary_task, backup_task], return_when=asyncio.FIRST_COMPLETED
+                        [primary_task, backup_task],
+                        return_when=asyncio.FIRST_COMPLETED,
                     )
 
-                    # Get the result from the completed task
+                    # Take the first valid result from whichever finished first.
                     for task in done:
                         try:
                             result = await task
                             if result and result[0]:
                                 raw_response = result
                                 break
-                        except Exception:
-                            pass
-                    # If the first result was not valid grab the pending task.
-                    for task in pending:
-                        try:
-                            result = await task
-                            if result and result[0]:
-                                raw_response = result
-                                break
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            # Log the type only: exception text can embed the
+                            # prompt / patient context.
+                            logger.debug(f"dual-mode task failed: {type(e).__name__}")
+
+                    # Only wait on a still-pending task if the first result was
+                    # unusable; otherwise the loser is pure added latency, so we
+                    # cancel it below rather than await its full backup timeout.
+                    if not (raw_response and raw_response[0]):
+                        for task in pending:
+                            try:
+                                result = await task
+                                if result and result[0]:
+                                    raw_response = result
+                                    break
+                            except Exception as e:
+                                logger.debug(
+                                    f"dual-mode fallback task failed: {type(e).__name__}"
+                                )
+
+                    # Cancel and drain anything still running so a losing task
+                    # can't leak or emit "Task was destroyed but it is pending!".
+                    for task in (primary_task, backup_task):
+                        if not task.done():
+                            task.cancel()
+                    await asyncio.gather(
+                        primary_task, backup_task, return_exceptions=True
+                    )
                 else:
                     raw_response = await self.__timeout_infer(
                         system_prompt=system_prompt,

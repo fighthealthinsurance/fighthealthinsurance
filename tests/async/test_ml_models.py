@@ -486,3 +486,67 @@ class TestRemoteFullOpenLike(TestCase):
             len(generic_prompts) > 0,
             "Should return default prompts when specific ones don't exist",
         )
+
+
+class TestDualModeInfer(TestCase):
+    """_infer's dual-mode path must not await the losing task (which added the
+    full backup timeout as latency on every call) and must fall back to the
+    still-pending task only when the first result is unusable.
+    """
+
+    def _make_dual_model(self):
+        return RemoteOpenLike(
+            api_base="http://primary",
+            token="test_token",
+            model="primary_model",
+            system_prompts_map={"test": ["p"]},
+            dual_mode=True,
+            backup_api_base="http://backup",
+            backup_model="backup_model",
+        )
+
+    async def async_test_valid_winner_cancels_loser(self):
+        backup_cancelled = asyncio.Event()
+
+        async def fake_infer(*args, **kwargs):
+            if kwargs.get("model") == "primary_model":
+                return ("primary result", ["c1"])
+            # The losing backup would block for 30s if it were awaited.
+            try:
+                await asyncio.sleep(30)
+                return ("backup result", ["c2"])
+            except asyncio.CancelledError:
+                backup_cancelled.set()
+                raise
+
+        model = self._make_dual_model()
+        with patch.object(model, "_RemoteOpenLike__timeout_infer", new=fake_infer):
+            # Old behaviour awaited the loser (~30s) and would time out here;
+            # the fix cancels it, so this returns promptly.
+            result = await asyncio.wait_for(
+                model._infer(system_prompts=["p"], prompt="q"), timeout=5
+            )
+
+        self.assertEqual(result, ("primary result", ["c1"]))
+        self.assertTrue(backup_cancelled.is_set())
+
+    def test_valid_winner_cancels_loser(self):
+        asyncio.run(self.async_test_valid_winner_cancels_loser())
+
+    async def async_test_falls_back_when_first_result_invalid(self):
+        async def fake_infer(*args, **kwargs):
+            if kwargs.get("model") == "primary_model":
+                return (None, None)  # completes first, but unusable
+            await asyncio.sleep(0.05)
+            return ("backup result", ["c2"])
+
+        model = self._make_dual_model()
+        with patch.object(model, "_RemoteOpenLike__timeout_infer", new=fake_infer):
+            result = await asyncio.wait_for(
+                model._infer(system_prompts=["p"], prompt="q"), timeout=5
+            )
+
+        self.assertEqual(result, ("backup result", ["c2"]))
+
+    def test_falls_back_when_first_result_invalid(self):
+        asyncio.run(self.async_test_falls_back_when_first_result_invalid())
