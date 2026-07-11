@@ -538,7 +538,7 @@ def get_unsubscribe_url(email: str) -> Optional[str]:
         return None
 
 
-async def cancel_tasks(tasks: List[asyncio.Task]) -> None:
+async def cancel_tasks(tasks: List[asyncio.Task[Any]]) -> None:
     """
     Cancel a list of asyncio tasks.
     """
