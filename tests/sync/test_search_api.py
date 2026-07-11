@@ -119,6 +119,31 @@ class SearchAPITest(APITestCase):
             self.assertFalse(response.data["next"])
             self.assertTrue(response.data["previous"])
 
+    def test_search_appeals_no_next_at_exact_page_size_multiple(self):
+        """Exact multiples of page_size should not report a phantom next page."""
+        with suppress_deprecation_warnings():
+            Appeal.objects.all().delete()
+            for i in range(20):
+                Appeal.objects.create(
+                    uuid=str(uuid.uuid4()),
+                    appeal_text=f"Exact multiple appeal {i}",
+                    pending=True,
+                    sent=False,
+                    creating_professional=self.professional_user,
+                    mod_date=timezone.now().date(),
+                    hashed_email="test@example.com",
+                )
+
+            self.client.force_authenticate(user=self.user)
+            url = reverse("appeals-search")
+            response = self.client.get(f"{url}?q=exact&page=2&page_size=10")
+
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+            self.assertEqual(response.data["count"], 20)
+            self.assertEqual(len(response.data["results"]), 10)
+            self.assertFalse(response.data["next"])
+            self.assertTrue(response.data["previous"])
+
     def test_search_appeals_no_query(self):
         """Test search without query parameter"""
         with suppress_deprecation_warnings():
@@ -151,6 +176,42 @@ class SearchAPITest(APITestCase):
             response = self.client.get(f"{url}?q=DiAbEtEs")
             self.assertEqual(response.status_code, status.HTTP_200_OK)
             self.assertEqual(response.data["count"], 1)
+
+    def test_search_appeals_zero_page_size_returns_400(self):
+        """page_size=0 must 400, not 500 with ZeroDivisionError."""
+        with suppress_deprecation_warnings():
+            self.client.force_authenticate(user=self.user)
+            url = reverse("appeals-search")
+            response = self.client.get(f"{url}?q=appeal&page_size=0")
+            self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_search_appeals_non_int_page_size_returns_400(self):
+        """Non-integer page_size must 400, not 500 with ValueError."""
+        with suppress_deprecation_warnings():
+            self.client.force_authenticate(user=self.user)
+            url = reverse("appeals-search")
+            response = self.client.get(f"{url}?q=appeal&page_size=abc")
+            self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_search_appeals_page_size_is_bounded(self):
+        """An oversized page_size is clamped rather than honored verbatim."""
+        with suppress_deprecation_warnings():
+            for i in range(5):
+                Appeal.objects.create(
+                    uuid=str(uuid.uuid4()),
+                    appeal_text=f"Bounded test appeal {i}",
+                    pending=True,
+                    sent=False,
+                    creating_professional=self.professional_user,
+                    mod_date=timezone.now().date(),
+                    hashed_email="test@example.com",
+                )
+            self.client.force_authenticate(user=self.user)
+            url = reverse("appeals-search")
+            response = self.client.get(f"{url}?q=bounded&page_size=100000")
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+            # Should not error and should return the (small) result set.
+            self.assertEqual(len(response.data["results"]), 5)
 
     def test_search_appeals_special_characters(self):
         """Test search with special characters"""

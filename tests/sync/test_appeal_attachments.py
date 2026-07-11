@@ -142,6 +142,25 @@ class AppealAttachmentTests(TestCase):
         self.assertEqual(len(loaded), 1)
         self.assertEqual(loaded[0]["filename"], "test.pdf")
 
+    def test_download_attachment_round_trips_content(self):
+        """Regression: retrieve() must read from AppealAttachment.file (the
+        EncryptedFileField), not a non-existent ``document_enc`` attribute
+        which raised AttributeError. Upload then download and verify bytes."""
+        upload_response = self.client.post(
+            reverse("appeal_attachments-list"),
+            {"appeal_id": self.appeal.id, "file": self.test_file},
+            format="multipart",
+        )
+        self.assertEqual(upload_response.status_code, 201)
+        attachment_id = json.loads(upload_response.content)["id"]
+
+        response = self.client.get(
+            reverse("appeal_attachments-detail", kwargs={"pk": attachment_id})
+        )
+        self.assertEqual(response.status_code, 200)
+        content = b"".join(response.streaming_content)
+        self.assertEqual(content, b"file_content")
+
     def test_delete_attachment(self):
         attachment = AppealAttachment.objects.create(
             appeal=self.appeal,

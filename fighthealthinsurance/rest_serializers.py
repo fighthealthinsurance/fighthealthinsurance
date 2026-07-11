@@ -162,6 +162,15 @@ class ProposedAppealSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = ProposedAppeal
+        # ModelSerializer requires an explicit fields/exclude; without one it
+        # raises at instantiation. Expose a minimal, non-sensitive set.
+        fields = [
+            "id",
+            "for_denial",
+            "appeal_text",
+            "chosen",
+            "created_at",
+        ]
 
 
 class AppealListRequestSerializer(serializers.Serializer):

@@ -1,5 +1,6 @@
 import asyncio
 import datetime
+import io
 import json
 import typing
 from typing import Optional
@@ -35,7 +36,13 @@ from rest_framework.views import APIView
 from stopit import ThreadingTimeout as Timeout
 
 from fhi_users.auth import auth_utils
-from fhi_users.models import PatientUser, ProfessionalUser, UserDomain
+from fhi_users.models import (
+    PatientDomainRelation,
+    PatientUser,
+    ProfessionalDomainRelation,
+    ProfessionalUser,
+    UserDomain,
+)
 from fighthealthinsurance import (
     common_view_logic,
     context_utils,
@@ -84,6 +91,91 @@ appeal_assembly_helper = AppealAssemblyHelper()
 pubmed_tools = PubMedTools()
 
 
+def _resolve_request_domain_id(request) -> Optional[str]:
+    """Best-effort resolution of the caller's domain id.
+
+    Returns None instead of raising so callers can treat "no domain" the same
+    as "out of domain" and fail closed (404) rather than 500.
+    """
+    try:
+        domain_id = auth_utils.get_domain_id_from_request(request)
+        return str(domain_id) if domain_id else None
+    except Exception:
+        return None
+
+
+def _user_belongs_to_domain(user, domain_id) -> bool:
+    """True if the auth ``user``'s domain-scoped username targets ``domain_id``.
+
+    Usernames are ``{raw}🐼{domain_id}`` (see
+    ``auth_utils.combine_domain_and_username``); this mirrors how
+    ``get_domain_id_from_request`` derives the caller's own domain.
+    """
+    if not domain_id or user is None:
+        return False
+    username = getattr(user, "username", "") or ""
+    return username.split("🐼")[-1] == str(domain_id)
+
+
+def _professional_in_domain(professional_id, domain_id) -> Optional[ProfessionalUser]:
+    """Return the professional iff they share ``domain_id`` with the caller.
+
+    A professional is considered in-domain when they have an active
+    ``ProfessionalDomainRelation`` to the domain or their username is scoped to
+    it. Unknown ids and out-of-domain professionals return None so callers can
+    respond 404 without leaking cross-tenant existence.
+    """
+    if not domain_id or professional_id is None:
+        return None
+    professional = (
+        ProfessionalUser.objects.filter(id=professional_id)
+        .select_related("user")
+        .first()
+    )
+    if professional is None:
+        return None
+    if ProfessionalDomainRelation.objects.filter(
+        professional=professional,
+        domain_id=domain_id,
+        active_domain_relation=True,
+    ).exists():
+        return professional
+    if _user_belongs_to_domain(professional.user, domain_id):
+        return professional
+    return None
+
+
+def _patient_in_domain(patient_id, domain_id) -> Optional[PatientUser]:
+    """Return the patient iff they share ``domain_id`` with the caller.
+
+    A patient is considered in-domain when they have a ``PatientDomainRelation``
+    to the domain or their username is scoped to it (pending patients created
+    via ``get_patient_or_create_pending_patient`` only have the latter).
+    """
+    if not domain_id or patient_id is None:
+        return None
+    patient = PatientUser.objects.filter(id=patient_id).select_related("user").first()
+    if patient is None:
+        return None
+    if PatientDomainRelation.objects.filter(
+        patient=patient,
+        domain_id=domain_id,
+    ).exists():
+        return patient
+    if _user_belongs_to_domain(patient.user, domain_id):
+        return patient
+    return None
+
+
+def _allowed_professional_chats(request, professional_user):
+    domain_id = _resolve_request_domain_id(request)
+    if not _professional_in_domain(professional_user.id, domain_id):
+        return OngoingChat.objects.none()
+    return OngoingChat.objects.filter(
+        professional_user=professional_user,
+    ).filter(Q(domain_id=domain_id) | Q(domain__isnull=True))
+
+
 class ChatViewSet(viewsets.ViewSet):
     """
     ViewSet for managing ongoing chats with the LLM assistant.
@@ -102,10 +194,10 @@ class ChatViewSet(viewsets.ViewSet):
             logger.warning(f"Professional user not found for user {user.id}")
             return Response({"error": "Professional user not found"}, status=404)
 
-        # Get all chats for this professional user, ordered by most recently updated
-        chats = OngoingChat.objects.filter(
-            professional_user=professional_user
-        ).order_by("-updated_at")
+        # Get all chats for this professional user in the resolved domain.
+        chats = _allowed_professional_chats(request, professional_user).order_by(
+            "-updated_at"
+        )
 
         # Prepare the response data
         chat_list = []
@@ -161,7 +253,7 @@ class ChatViewSet(viewsets.ViewSet):
             return Response({"error": "Professional user not found"}, status=404)
 
         try:
-            chat = OngoingChat.objects.get(id=pk, professional_user=professional_user)
+            chat = _allowed_professional_chats(request, professional_user).get(id=pk)
             chat.delete()
             return Response(
                 {"status": "success", "message": "Chat deleted successfully"}
@@ -318,9 +410,22 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
             and serializer_data["primary_professional"] is not None
             and is_convertible_to_int(serializer_data["primary_professional"])
         ):
-            primary_professional = ProfessionalUser.objects.get(
-                id=serializer_data.pop("primary_professional")
+            # Scope the primary professional to the caller's domain so a
+            # professional in domain A cannot attach one from domain B.
+            requested_primary_professional_id = serializer_data.pop(
+                "primary_professional"
             )
+            primary_professional = _professional_in_domain(
+                requested_primary_professional_id,
+                _resolve_request_domain_id(request),
+            )
+            if primary_professional is None:
+                return Response(
+                    serializers.ErrorSerializer(
+                        {"error": "Professional not found in your domain"}
+                    ).data,
+                    status=status.HTTP_404_NOT_FOUND,
+                )
             serializer_data["primary_professional"] = primary_professional
         denial: Optional[Denial] = None
         if "denial_id" in serializer_data:
@@ -342,13 +447,27 @@ class DenialViewSet(viewsets.ViewSet, CreateMixin):
         ):
             patient_id = serializer_data.pop("patient_id")
             if patient_id:
-                serializer_data["patient_user"] = PatientUser.objects.get(id=patient_id)
-            if (
-                "email" not in serializer_data
-                or serializer_data["email"] is None
-                or len(serializer_data["email"]) == 0
-            ):
-                serializer_data["email"] = serializer_data["patient_user"].user.email
+                # Scope the patient to the caller's domain so a professional in
+                # domain A cannot attach/read a patient from domain B.
+                patient_user = _patient_in_domain(
+                    patient_id, _resolve_request_domain_id(request)
+                )
+                if patient_user is None:
+                    return Response(
+                        serializers.ErrorSerializer(
+                            {"error": "Patient not found in your domain"}
+                        ).data,
+                        status=status.HTTP_404_NOT_FOUND,
+                    )
+                serializer_data["patient_user"] = patient_user
+                if (
+                    "email" not in serializer_data
+                    or serializer_data["email"] is None
+                    or len(serializer_data["email"]) == 0
+                ):
+                    serializer_data["email"] = serializer_data[
+                        "patient_user"
+                    ].user.email
         # Handle subscription separately - pop from serializer data before passing
         subscribe = serializer_data.pop("subscribe", False)
 
@@ -476,8 +595,9 @@ class QAResponseViewSet(viewsets.ViewSet, CreateMixin):
     def perform_create(self, request: Request, serializer) -> Response:
         """Bulk save Q&A responses and update denial context."""
         user: User = request.user  # type: ignore
-        denial = Denial.filter_to_allowed_denials(user).get(
-            denial_id=serializer.validated_data["denial_id"]
+        denial = get_object_or_404(
+            Denial.filter_to_allowed_denials(user),
+            denial_id=serializer.validated_data["denial_id"],
         )
         # Fetch all existing DenialQA objects for this denial in a single query (N+1 fix)
         existing_qa = {
@@ -1062,21 +1182,21 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
         user: User = patient_user.user
         if not user.is_active:
             # Send an invitation to sign up for an account (mention it's free)
+            domain_id = _resolve_request_domain_id(request)
+            domain = get_object_or_404(UserDomain, id=domain_id)
             common_view_logic.PatientNotificationHelper.send_signup_invitation(
                 email=user.email,
                 professional_name=professional_name,
-                practice_number=UserDomain.objects.get(
-                    id=auth_utils.get_domain_id_from_request(request)
-                ).visible_phone_number,
+                practice_number=domain.visible_phone_number,
             )
         else:
             # Notify the patient that there's a free draft appeal to fill in
+            domain_id = _resolve_request_domain_id(request)
+            domain = get_object_or_404(UserDomain, id=domain_id)
             common_view_logic.PatientNotificationHelper.notify_of_draft_appeal(
                 email=user.email,
                 professional_name=professional_name,
-                practice_number=UserDomain.objects.get(
-                    id=auth_utils.get_domain_id_from_request(request)
-                ).visible_phone_number,
+                practice_number=domain.visible_phone_number,
             )
         return Response(
             serializers.SuccessSerializer({"message": "Notification sent"}).data,
@@ -1106,9 +1226,21 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
         appeal = get_object_or_404(
             Appeal.filter_to_allowed_appeals(current_user), pk=appeal_id
         )
-        if serializer["fax_number"] is not None:
-            appeal.fax_number = serializer["fax_number"]
-            appeal.save()
+        # Appeal has no fax_number field; the fax destination lives on the
+        # denial (Denial.appeal_fax_number) which SendFaxHelper reads when
+        # staging. Validate the requested number and persist it there.
+        fax_number = serializer.validated_data.get("fax_number")
+        if fax_number is not None and len(fax_number) > 0:
+            normalized_fax_number = auth_utils.normalize_phone_number(fax_number)
+            if not normalized_fax_number:
+                return Response(
+                    serializers.ErrorSerializer({"error": "Invalid fax number"}).data,
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            denial = appeal.for_denial
+            if denial is not None:
+                denial.appeal_fax_number = normalized_fax_number
+                denial.save()
         patient_user = None
         try:
             patient_user = PatientUser.objects.get(user=current_user)
@@ -1156,16 +1288,17 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
         if "denial_uuid" in serializer.validated_data:
             denial_uuid = serializer.validated_data["denial_uuid"]
         if denial_uuid:
-            denial_opt = Denial.filter_to_allowed_denials(current_user).get(
-                denial_uuid=denial_uuid
+            # The Denial field is ``uuid`` (not ``denial_uuid``); look it up
+            # within the caller's allowed denials and 404 rather than 500 when
+            # missing or out of scope.
+            denial_opt = get_object_or_404(
+                Denial.filter_to_allowed_denials(current_user), uuid=denial_uuid
             )
         else:
             denial_id = serializer.validated_data["denial_id"]
-            denial_opt = Denial.filter_to_allowed_denials(current_user).get(
-                denial_id=denial_id
+            denial_opt = get_object_or_404(
+                Denial.filter_to_allowed_denials(current_user), denial_id=denial_id
             )
-        if denial_opt is None:
-            raise Exception("Denial not found")
         denial: Denial = denial_opt  # type: ignore
         appeal = None
         try:
@@ -1177,8 +1310,8 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
         patient_user = denial.patient_user
         if patient_user is None:
             raise Exception("Patient user not found on denial")
-        user_domain = UserDomain.objects.get(
-            id=auth_utils.get_domain_id_from_request(request)
+        user_domain = get_object_or_404(
+            UserDomain, id=_resolve_request_domain_id(request)
         )
         completed_appeal_text = serializer.validated_data["completed_appeal_text"]
         insurance_company = serializer.validated_data["insurance_company"] or ""
@@ -1248,23 +1381,41 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
         email = serializer.validated_data.get("email")
 
         if professional_id:
-            professional = get_object_or_404(ProfessionalUser, id=professional_id)
+            # An appeal carries PHI; only share it with a professional who
+            # shares the caller's domain, not any professional by id.
+            professional = _professional_in_domain(
+                professional_id, _resolve_request_domain_id(request)
+            )
+            if professional is None:
+                return Response(
+                    serializers.ErrorSerializer(
+                        {"error": "Professional not found in your domain"}
+                    ).data,
+                    status=status.HTTP_404_NOT_FOUND,
+                )
             SecondaryAppealProfessionalRelation.objects.create(
                 appeal=appeal, professional=professional
             )
         else:
-            try:
-                professional_user = ProfessionalUser.objects.get(user__email=email)
+            domain_id = _resolve_request_domain_id(request)
+            professional_user = None
+            for candidate in ProfessionalUser.objects.filter(
+                user__email=email
+            ).select_related("user"):
+                if _professional_in_domain(candidate.id, domain_id) is not None:
+                    professional_user = candidate
+                    break
+            if professional_user is not None:
                 SecondaryAppealProfessionalRelation.objects.create(
                     appeal=appeal, professional=professional_user
                 )
-            except ProfessionalUser.DoesNotExist:
+            else:
                 inviting_professional = ProfessionalUser.objects.get(user=current_user)
                 common_view_logic.ProfessionalNotificationHelper.send_signup_invitation(
                     email=email,
                     professional_name=inviting_professional.get_display_name(),
-                    practice_number=UserDomain.objects.get(
-                        id=auth_utils.get_domain_id_from_request(request)
+                    practice_number=get_object_or_404(
+                        UserDomain, id=_resolve_request_domain_id(request)
                     ).visible_phone_number,
                 )
 
@@ -1301,7 +1452,7 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
         previous_period_end = current_period_start - relativedelta(microseconds=1)
 
         # Get user domain to calculate patients
-        domain_id = auth_utils.get_domain_id_from_request(request)
+        domain_id = _resolve_request_domain_id(request)
         user_domain = None
         if domain_id:
             try:
@@ -1388,7 +1539,7 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
         user: User = request.user  # type: ignore
 
         # Get user domain to calculate patients
-        domain_id = auth_utils.get_domain_id_from_request(request)
+        domain_id = _resolve_request_domain_id(request)
         user_domain = None
         if domain_id:
             try:
@@ -1482,9 +1633,28 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
         # Sort results by modification date (newest first)
         search_results.sort(key=lambda x: x["mod_date"], reverse=True)
 
-        # Paginate results
-        page_size = int(request.GET.get("page_size", 10))
-        page = int(request.GET.get("page", 1))
+        # Paginate results. Guard page/page_size against non-int and 0 (which
+        # would raise ValueError or ZeroDivisionError below) and bound the max
+        # page_size so a caller can't request an unbounded slice.
+        MAX_PAGE_SIZE = 100
+        try:
+            page_size = int(request.GET.get("page_size", 10))
+            page = int(request.GET.get("page", 1))
+        except (TypeError, ValueError):
+            return Response(
+                serializers.ErrorSerializer(
+                    {"error": "page and page_size must be integers"}
+                ).data,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if page_size < 1 or page < 1:
+            return Response(
+                serializers.ErrorSerializer(
+                    {"error": "page and page_size must be positive"}
+                ).data,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        page_size = min(page_size, MAX_PAGE_SIZE)
         start_idx = (page - 1) * page_size
         end_idx = start_idx + page_size
 
@@ -1493,7 +1663,7 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
         return Response(
             {
                 "count": len(search_results),
-                "next": page < len(search_results) // page_size + 1,
+                "next": end_idx < len(search_results),
                 "previous": page > 1,
                 "results": paginated_results,
             }
@@ -1838,10 +2008,16 @@ class AppealAttachmentViewSet(viewsets.ViewSet):
         attachment = get_object_or_404(
             AppealAttachment.filter_to_allowed_attachments(current_user), id=pk
         )
-        file = attachment.document_enc.open()
-        content = Cryptographer.decrypted(file.read())
+        # The encrypted file lives on ``AppealAttachment.file`` (there is no
+        # ``document_enc`` field on this model).
+        file = attachment.file.open()
+        decrypted_content = Cryptographer.decrypted(file.read())
+        if isinstance(decrypted_content, str):
+            content = decrypted_content.encode()
+        else:
+            content = bytes(decrypted_content)
         response = FileResponse(
-            content,
+            io.BytesIO(content),
             content_type=attachment.mime_type,
             as_attachment=True,
             filename=attachment.filename,
@@ -2033,17 +2209,25 @@ class PriorAuthViewSet(viewsets.ViewSet, SerializerMixin):
                 created_for_professional_user_id
             )
         )
-        created_for_professional_user = None
-        if created_for_professional_user_id:
-            created_for_professional_user = get_object_or_404(
-                ProfessionalUser, id=created_for_professional_user_id
-            )
-
-        # Extract domain from session
-        domain_id = request.session.get("domain_id")
+        domain_id = _resolve_request_domain_id(request)
         domain = None
         if domain_id:
             domain = get_object_or_404(UserDomain, id=domain_id)
+
+        created_for_professional_user = None
+        if created_for_professional_user_id:
+            # Only allow creating a request for a professional the caller can
+            # act for (i.e. sharing the caller's domain), never an arbitrary id.
+            created_for_professional_user = _professional_in_domain(
+                created_for_professional_user_id, domain_id
+            )
+            if created_for_professional_user is None:
+                return Response(
+                    serializers.ErrorSerializer(
+                        {"error": "Professional not found in your domain"}
+                    ).data,
+                    status=status.HTTP_404_NOT_FOUND,
+                )
 
         patient_name = None
         if "patient_name" in serializer.validated_data:
@@ -2273,8 +2457,19 @@ class PriorAuthViewSet(viewsets.ViewSet, SerializerMixin):
         if status_filter:
             prior_auths = prior_auths.filter(status=status_filter)
 
-        # Sorting
+        # Sorting. Restrict sort_by to a known allowlist so an attacker can't
+        # order_by arbitrary/related fields (info disclosure / errors).
+        allowed_sort_fields = {
+            "created_at",
+            "-created_at",
+            "updated_at",
+            "-updated_at",
+            "status",
+            "-status",
+        }
         sort_by = request.query_params.get("sort_by", "-created_at")
+        if sort_by not in allowed_sort_fields:
+            sort_by = "-created_at"
         prior_auths = prior_auths.order_by(sort_by)
 
         return Response(
