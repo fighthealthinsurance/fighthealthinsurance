@@ -17,6 +17,14 @@ spec:
           env:
           - name: MIGRATIONS
             value: "1"
+          # DB host is sourced from the fhi-db-config ConfigMap (see k8s/db-config.yaml).
+          # An explicit env entry overrides any PDBHOST carried by the envFrom Secrets,
+          # so this ConfigMap is the single, reversible switch point for the pg8->pg9 cutover.
+          - name: PDBHOST
+            valueFrom:
+              configMapKeyRef:
+                name: fhi-db-config
+                key: PDBHOST
           envFrom:
           - secretRef:
               name: fight-health-insurance-secret
@@ -46,6 +54,12 @@ spec:
             value: "1"
           - name: BRB
             value: "LIVE"
+          # DB host sourced from fhi-db-config ConfigMap (see k8s/db-config.yaml).
+          - name: PDBHOST
+            valueFrom:
+              configMapKeyRef:
+                name: fhi-db-config
+                key: PDBHOST
           envFrom:
           - secretRef:
               name: fight-health-insurance-secret
@@ -87,6 +101,12 @@ spec:
             value: "1"
           - name: BRB
             value: "LIVE"
+          # DB host sourced from fhi-db-config ConfigMap (see k8s/db-config.yaml).
+          - name: PDBHOST
+            valueFrom:
+              configMapKeyRef:
+                name: fhi-db-config
+                key: PDBHOST
           envFrom:
           - secretRef:
               name: fight-health-insurance-secret
@@ -132,6 +152,12 @@ spec:
           env:
           - name: BRB
             value: "LIVE"
+          # DB host sourced from fhi-db-config ConfigMap (see k8s/db-config.yaml).
+          - name: PDBHOST
+            valueFrom:
+              configMapKeyRef:
+                name: fhi-db-config
+                key: PDBHOST
           envFrom:
           - secretRef:
               name: fight-health-insurance-secret

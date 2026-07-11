@@ -22,6 +22,14 @@ spec:
             env:
               - name: RAY_gcs_server_request_timeout_seconds
                 value: "20"
+              # DB host sourced from fhi-db-config ConfigMap (see k8s/db-config.yaml).
+              # Explicit env overrides any PDBHOST from the envFrom Secret, keeping the
+              # ConfigMap the single switch point for the pg8->pg9 cutover.
+              - name: PDBHOST
+                valueFrom:
+                  configMapKeyRef:
+                    name: fhi-db-config
+                    key: PDBHOST
             envFrom:
               - secretRef:
                   name: fight-health-insurance-secret
@@ -65,6 +73,12 @@ spec:
             env:
               - name: RAY_gcs_server_request_timeout_seconds
                 value: "30"
+              # DB host sourced from fhi-db-config ConfigMap (see k8s/db-config.yaml).
+              - name: PDBHOST
+                valueFrom:
+                  configMapKeyRef:
+                    name: fhi-db-config
+                    key: PDBHOST
             envFrom:
               - secretRef:
                   name: fight-health-insurance-secret

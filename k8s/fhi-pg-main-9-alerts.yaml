@@ -1,0 +1,121 @@
+# =============================================================================
+# PrometheusRule for fhi-pg-main-9 -- backup + WAL-growth alerting.
+#
+# The entire -8 incident was SILENT: dead archiver for months, no PITR, pgdata
+# bloated to ~229GB of unarchivable WAL, and NO infra alert fired. These rules
+# are the direct antidote -- they make the two failure modes (backups broken /
+# WAL growing unbounded) page instead of hide. Consumed via the PodMonitor that
+# fhi-pg-main-9-cluster.yaml enables (monitoring.enablePodMonitor: true).
+#
+# ==> VERIFY-LIVE (metric names): confirm the exact CNPG metric names exported by
+#     YOUR operator/plugin version before relying on these -- run, e.g.:
+#       kubectl -n totallylegitco exec fhi-pg-main-9-1 -c postgres -- \
+#         curl -s localhost:9187/metrics | grep -E 'wal|archiver|backup'
+#     CNPG's default metric set has historically used the names below; adjust the
+#     expr if your build differs. The THRESHOLDS (20GB WAL, 26h backup age) are
+#     the intent -- keep them even if you must rename a metric.
+#
+# WAL threshold math: pg_wal size is not exported directly as bytes, so we alert
+# on WAL FILE COUNT. Default WAL segment = 16MB, so 20GB / 16MB = 1280 segments.
+# If your wal_segment_size differs, recompute FILES = 20GiB / segment_size.
+# =============================================================================
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: fhi-pg-main-9-backup-wal
+  namespace: totallylegitco
+  labels:
+    app: fight-health-insurance
+    cnpg.io/cluster: fhi-pg-main-9
+    role: alert-rules
+spec:
+  groups:
+    - name: fhi-pg-main-9.backup-and-wal
+      rules:
+        # ---- WAL GROWTH (the -8-1 disk-full failure mode) --------------------
+        - alert: FhiPg9WalGrowingBeyond20GB
+          # 1280 * 16MB = 20GiB. This is the hard "WAL won't grow" guard the
+          # runbook's end-state verification requires. max_slot_wal_keep_size=16GB
+          # should keep this from ever firing; if it does, a slot is stuck or the
+          # archiver is wedged -- exactly the -8 pattern.
+          expr: cnpg_pg_wal_files{namespace="totallylegitco", pod=~"fhi-pg-main-9-.*"} > 1280
+          for: 10m
+          labels:
+            severity: critical
+            cluster: fhi-pg-main-9
+          annotations:
+            summary: "fhi-pg-main-9 WAL exceeds 20GB ({{ $value }} segments on {{ $labels.pod }})"
+            description: >-
+              pg_wal on {{ $labels.pod }} holds {{ $value }} WAL segments
+              (>20GiB). max_slot_wal_keep_size (16GB) should cap this. Check for a
+              stuck/inactive replication slot and a wedged archiver
+              (FhiPg9ArchiverFailing). This is the exact bloat that killed
+              fhi-pg-main-8-1. Runbook: end-state WAL-bounded verification.
+
+        - alert: FhiPg9WalWarning10GB
+          expr: cnpg_pg_wal_files{namespace="totallylegitco", pod=~"fhi-pg-main-9-.*"} > 640
+          for: 15m
+          labels:
+            severity: warning
+            cluster: fhi-pg-main-9
+          annotations:
+            summary: "fhi-pg-main-9 WAL above 10GB on {{ $labels.pod }} (early warning)"
+            description: >-
+              Early warning at half the 20GB ceiling. Investigate slot retention
+              and archiver health before it reaches critical.
+
+        # ---- ARCHIVER (Fault B: dead archiving = no PITR) --------------------
+        - alert: FhiPg9ArchiverFailing
+          expr: increase(cnpg_pg_stat_archiver_failed_count{namespace="totallylegitco", pod=~"fhi-pg-main-9-.*"}[15m]) > 0
+          for: 15m
+          labels:
+            severity: critical
+            cluster: fhi-pg-main-9
+          annotations:
+            summary: "fhi-pg-main-9 WAL archiver is FAILING on {{ $labels.pod }}"
+            description: >-
+              pg_stat_archiver.failed_count is rising -- WAL is not reaching the
+              object store, so PITR is silently broken and pg_wal will grow. This
+              is Fault B from the -8 incident. Check the barman-cloud plugin
+              endpoint, B2 creds, and the serving-cert CA.
+
+        - alert: FhiPg9ArchiverStalled
+          expr: cnpg_pg_stat_archiver_seconds_since_last_archival{namespace="totallylegitco", pod=~"fhi-pg-main-9-.*"} > 3600
+          for: 15m
+          labels:
+            severity: critical
+            cluster: fhi-pg-main-9
+          annotations:
+            summary: "fhi-pg-main-9 has not archived WAL in over 1h ({{ $labels.pod }})"
+            description: >-
+              No successful WAL archival in >1h. Even without rising failures, a
+              stalled archiver means no new PITR coverage and growing pg_wal.
+
+        # ---- BACKUP AGE (silent backup failure) -----------------------------
+        - alert: FhiPg9BackupTooOld
+          # daily schedule -> anything older than 26h is a missed/failed backup.
+          expr: (time() - cnpg_collector_last_available_backup_timestamp{namespace="totallylegitco", pod=~"fhi-pg-main-9-.*"}) > 93600
+          for: 30m
+          labels:
+            severity: critical
+            cluster: fhi-pg-main-9
+          annotations:
+            summary: "fhi-pg-main-9 last successful backup is >26h old"
+            description: >-
+              No completed backup in over 26h (daily schedule). A restore would
+              lose >1 day. The -8 cluster went from 2026-03-30 with NO alert --
+              do not let -9 repeat that.
+
+        # ---- CLUSTER DEGRADED (Fault A: the outage itself) ------------------
+        - alert: FhiPg9ClusterDegraded
+          expr: cnpg_pg_replication_streaming_replicas{namespace="totallylegitco", cluster="fhi-pg-main-9"} < 2
+          for: 10m
+          labels:
+            severity: warning
+            cluster: fhi-pg-main-9
+          annotations:
+            summary: "fhi-pg-main-9 has fewer than 2 streaming replicas"
+            description: >-
+              Ready replica count dropped. If this coincides with a plugin
+              upgrade, check that the barman-cloud Service EndpointSlice is
+              non-empty (the v0.9->v0.13 selector break that took -8 down).
