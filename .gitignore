@@ -181,3 +181,6 @@ default/
 
 # Claude Code agent worktrees (transient, created by background agents)
 .claude/worktrees/
+
+# pg8->pg9 cutover runtime state (reverse ConfigMap patch)
+.pg9-cutover-state/
