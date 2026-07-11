@@ -123,8 +123,11 @@ class Command(BaseCommand):
         self.stdout.write("\n-- ProposedAppeal (chosen rows) --")
         total_chosen = ProposedAppeal.objects.filter(chosen=True).count()
         # Rows needing attention: never attributed, previously stamped as
-        # legacy (re-checked in case drafts have since appeared), or somehow
-        # carrying an object repr.
+        # legacy (re-checked in case drafts have since appeared), or possibly
+        # carrying an object repr. The ``startswith("<")`` clause is a cheap
+        # SQL prefilter for object reprs (is_object_repr is a regex that can't
+        # run in the DB); the loop below refines it, so a non-repr value that
+        # merely starts with "<" is fetched but left untouched.
         targets = ProposedAppeal.objects.filter(chosen=True).filter(
             Q(model_name__isnull=True)
             | Q(model_name=LEGACY_UNATTRIBUTED_LABEL)
@@ -143,18 +146,25 @@ class Command(BaseCommand):
             elif raw is not None and is_object_repr(raw):
                 new_name = normalize_model_label(raw)
                 counts["normalized_repr"] += 1
+            elif raw is not None:
+                # A non-null label that is neither an object repr nor
+                # recoverable: the legacy-unattributed marker itself, or a
+                # malformed/hand-entered value that merely starts with "<".
+                # Leave it exactly as-is — never relabel a value we don't
+                # understand.
+                counts["left_unchanged"] += 1
+                continue
             elif pa.created_at is None:
-                # Pre-tracking pick (model_name column didn't exist yet): its
-                # drafts can't be joined back, so it is genuinely
-                # unrecoverable. Label it rather than guess. Already-labeled
-                # rows re-derive the same label and fall through as no-ops.
+                # NULL model_name on a pre-tracking pick (the column didn't
+                # exist yet): its drafts can't be joined back, so it is
+                # genuinely unrecoverable. Label it rather than guess.
                 new_name = LEGACY_UNATTRIBUTED_LABEL
                 counts["labeled_legacy_unattributed"] += 1
             else:
-                # Post-tracking pick with no recoverable model (e.g. several
-                # models in play and the draft was edited away). Leave it NULL
-                # so it reports as "(unattributed)" and stays recoverable if
-                # matching drafts appear later.
+                # NULL model_name on a post-tracking pick (e.g. several models
+                # in play and the draft was edited away). Leave it NULL so it
+                # reports as "(unattributed)" and stays recoverable if matching
+                # drafts appear later.
                 counts["left_unattributed"] += 1
                 continue
             if new_name == raw and (
@@ -189,6 +199,9 @@ class Command(BaseCommand):
         )
         self.stdout.write(
             f"left NULL -> (unattributed):          {counts['left_unattributed']}"
+        )
+        self.stdout.write(
+            f"left unchanged (already labeled/other): {counts['left_unchanged']}"
         )
         verb = "changed" if apply_changes else "would change"
         self.stdout.write(f"rows {verb}: {counts['rows_changed']}")

@@ -214,6 +214,23 @@ class BackfillProposedAppealTest(TestCase):
         pick.refresh_from_db()
         self.assertEqual(pick.model_name, "model-x")
 
+    def test_malformed_angle_bracket_name_not_relabeled(self):
+        # The target queryset prefilters on startswith("<") to catch object
+        # reprs cheaply, but a non-repr value that merely starts with "<" is
+        # not an object repr and must be left exactly as-is - even on a
+        # pre-tracking row, it must not be swept into legacy-unattributed.
+        pick = ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="text",
+            chosen=True,
+            model_name="<not-a-repr>",
+        )
+        ProposedAppeal.objects.filter(pk=pick.pk).update(created_at=None)
+        out = run_command("--apply")
+        pick.refresh_from_db()
+        self.assertEqual(pick.model_name, "<not-a-repr>")
+        self.assertIn("rows changed: 0", out)
+
     def test_dry_run_by_default(self):
         pick = ProposedAppeal.objects.create(
             for_denial=self.denial,
