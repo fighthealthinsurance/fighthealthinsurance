@@ -261,6 +261,13 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         name="pbs-newshour",
     ),
     path(
+        "tools/appeal-deadline-calculator",
+        cache_control(public=True)(
+            cache_page(60 * 60 * 2)(views.AppealDeadlineCalculatorView.as_view())
+        ),
+        name="appeal_deadline_calculator",
+    ),
+    path(
         "bingo",
         cache_control(public=True)(cache_page(60 * 60 * 2)(views.BingoView.as_view())),
         name="bingo",

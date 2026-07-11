@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 else:
     _ReCaptchaMixinBase = object
 
+from fighthealthinsurance import appeal_deadlines
 from fighthealthinsurance.form_utils import *
 from fighthealthinsurance.models import (
     DenialTypes,
@@ -518,3 +519,52 @@ class SendMailingListMailForm(forms.Form):
         label="Test Email (optional)",
         help_text="If provided, the email will only be sent to this address for testing.",
     )
+
+
+class AppealDeadlineCalculatorForm(forms.Form):
+    """Inputs for the public Appeal Deadline Calculator tool.
+
+    The form is bound to ``request.GET`` so results are bookmarkable and
+    shareable via the query string. All fields are optional so an empty page
+    (no query string) renders cleanly without validation errors; ``is_bound``
+    plus ``coverage_type`` presence tells the view whether to compute a result.
+    The coverage/timing vocabularies live in ``appeal_deadlines`` so the form
+    and the rules table cannot drift apart.
+    """
+
+    coverage_type = forms.ChoiceField(
+        choices=appeal_deadlines.COVERAGE_CHOICES,
+        required=True,
+        label="What kind of coverage is this?",
+        widget=forms.Select(attrs={"class": "form-select"}),
+    )
+    service_timing = forms.ChoiceField(
+        choices=appeal_deadlines.TIMING_CHOICES,
+        required=True,
+        label="When is/was the service?",
+        initial="pre_service",
+        widget=forms.Select(attrs={"class": "form-select"}),
+    )
+    expedited = forms.BooleanField(
+        required=False,
+        label="Is this urgent / expedited?",
+        help_text="Check this if a delay could seriously jeopardize your health.",
+        widget=forms.CheckboxInput(attrs={"class": "form-check-input"}),
+    )
+    denial_received = forms.DateField(
+        required=False,
+        label="Date the denial was received",
+        help_text="Used to estimate your filing deadlines. Optional.",
+        widget=forms.DateInput(
+            attrs={"type": "date", "class": "form-control"}, format="%Y-%m-%d"
+        ),
+    )
+
+    def compute(self) -> "appeal_deadlines.DeadlineResult":
+        """Return the computed deadlines for this (valid) form's inputs."""
+        return appeal_deadlines.compute_deadlines(
+            coverage_type=self.cleaned_data["coverage_type"],
+            service_timing=self.cleaned_data["service_timing"],
+            expedited=bool(self.cleaned_data.get("expedited")),
+            denial_received=self.cleaned_data.get("denial_received"),
+        )
