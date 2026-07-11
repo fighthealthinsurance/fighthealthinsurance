@@ -28,15 +28,25 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Don't leave the job's write token in the local git config: the
+          # updater step below runs third-party npm code, and create-pull-request
+          # authenticates its own push via its `token` input, so nothing here
+          # needs persisted checkout credentials.
+          persist-credentials: false
 
       - name: Setup node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 22
 
       - name: Update Browserslist database
         working-directory: fighthealthinsurance/static/js
-        run: npx --yes update-browserslist-db@latest
+        # Pin the updater tool to a known-good version (bump intentionally)
+        # rather than @latest, so a scheduled run can't pull and execute an
+        # unvetted release. The tool still fetches the newest browser DATA
+        # (caniuse-lite / baseline-browser-mapping), which is the point.
+        run: npx --yes update-browserslist-db@1.1.3
 
       - name: Create Pull Request
         uses: peter-evans/create-pull-request@v7
@@ -52,7 +62,7 @@ jobs:
           title: "chore(deps): update Browserslist DB"
           body: |
             Automated refresh of the Browserslist database via
-            `npx update-browserslist-db@latest`, run from
+            `npx update-browserslist-db`, run from
             `fighthealthinsurance/static/js`.
 
             This bumps the `caniuse-lite` and `baseline-browser-mapping` entries
