@@ -29,7 +29,7 @@ def _seed_regulator_phones(apps, schema_editor):
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("fighthealthinsurance", "0191_scheduledemail"),
+        ("fighthealthinsurance", "0192_faxestosend_vendor_send_completed"),
     ]
 
     operations = [

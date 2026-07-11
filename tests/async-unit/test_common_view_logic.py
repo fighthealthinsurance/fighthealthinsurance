@@ -875,15 +875,15 @@ class RegulatorContactInfoTest(TestCase):
         self.assertNotIn("javascript:", self._outside_help_text(denial))
 
     def test_migration_backfill_fills_blank_regulator_phones(self):
-        """The 0192 data migration must backfill phones for pre-existing
-        deployments whose seeded rows predate the fixture change; keep its
-        identifier→phone mapping in sync with the fixture."""
+        """The regulator-phone data migration must backfill phones for
+        pre-existing deployments whose seeded rows predate the fixture
+        change; keep its identifier→phone mapping in sync with the fixture."""
         import importlib
 
         from django.apps import apps
 
         migration = importlib.import_module(
-            "fighthealthinsurance.migrations.0192_regulator_phone"
+            "fighthealthinsurance.migrations.0193_regulator_phone"
         )
         Regulator.objects.update(phone="")
         migration._seed_regulator_phones(apps, None)
