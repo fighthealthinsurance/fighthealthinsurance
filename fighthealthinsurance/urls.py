@@ -364,6 +364,20 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         ),
         name="glossary_term",
     ),
+    path(
+        "insurance-appeals/",
+        cache_control(public=True)(
+            cache_page(60 * 60 * 2)(views.InsurerAppealGuideIndexView.as_view())
+        ),
+        name="insurer_appeal_guide_index",
+    ),
+    path(
+        "insurance-appeals/<slug:slug>/",
+        cache_control(public=True)(
+            cache_page(60 * 60 * 2)(views.InsurerAppealGuideView.as_view())
+        ),
+        name="insurer_appeal_guide",
+    ),
     path("pro_version", views.ProVersionView.as_view(), name="pro_version"),
     # Cross-origin classic-form intake for the interested-professional lead form
     # hosted on the static site (fightpaperwork.com). csrf_exempt because that
