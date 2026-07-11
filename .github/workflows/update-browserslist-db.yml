@@ -1,0 +1,64 @@
+name: Update Browserslist DB
+
+# Keeps the frontend browser support baseline current by refreshing the
+# Browserslist database (the `caniuse-lite` + `baseline-browser-mapping`
+# packages) that webpack/babel consult when compiling the React/TS bundle.
+# Stale data produces "Browserslist: caniuse-lite is outdated" build warnings
+# and can miss newer browsers, so we refresh it on a schedule and open a PR
+# with the change for review.
+
+on:
+  schedule:
+    # 06:00 UTC on the 1st day of every 3rd month (Jan, Apr, Jul, Oct),
+    # i.e. roughly once a quarter / every few months.
+    - cron: "0 6 1 */3 *"
+  # Allow maintainers to trigger the refresh on demand from the Actions tab.
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: update-browserslist-db
+  cancel-in-progress: false
+
+jobs:
+  update-browserslist:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Update Browserslist database
+        working-directory: fighthealthinsurance/static/js
+        run: npx --yes update-browserslist-db@latest
+
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v7
+        with:
+          # Prefer a PAT (secret BROWSERSLIST_UPDATE_TOKEN) so the resulting PR
+          # triggers the CI workflows; fall back to the default GITHUB_TOKEN,
+          # which opens the PR but (by design) will not kick off other workflows.
+          token: ${{ secrets.BROWSERSLIST_UPDATE_TOKEN || github.token }}
+          add-paths: fighthealthinsurance/static/js/package-lock.json
+          branch: chore/update-browserslist-db
+          delete-branch: true
+          commit-message: "chore(deps): update Browserslist DB (caniuse-lite)"
+          title: "chore(deps): update Browserslist DB"
+          body: |
+            Automated refresh of the Browserslist database via
+            `npx update-browserslist-db@latest`, run from
+            `fighthealthinsurance/static/js`.
+
+            This bumps the `caniuse-lite` and `baseline-browser-mapping` entries
+            in `package-lock.json` so the browser support baseline used by
+            webpack/babel stays current and the "caniuse-lite is outdated" build
+            warning stays quiet.
+
+            Opened automatically by the `Update Browserslist DB` workflow. If no
+            update was available this PR will not be created.
