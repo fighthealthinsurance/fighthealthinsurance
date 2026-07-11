@@ -41,7 +41,12 @@ from django_encrypted_filefield.crypt import Cryptographer
 from loguru import logger
 from PIL import Image
 
-from fighthealthinsurance import common_view_logic, forms as core_forms, models
+from fighthealthinsurance import (
+    appeal_deadlines,
+    common_view_logic,
+    forms as core_forms,
+    models,
+)
 from fighthealthinsurance.chat_forms import UnderstandPolicyForm, UserConsentForm
 from fighthealthinsurance.denial_context import merge_qa
 from fighthealthinsurance.followup_emails import ThankyouEmailSender
@@ -449,6 +454,43 @@ class Turning26View(StaticIshView):
     """SEO page for young adults aging off a parent's health insurance at 26."""
 
     template_name = "turning_26.html"
+
+
+class AppealDeadlineCalculatorView(generic.TemplateView):
+    """Public, no-login tool that estimates health-insurance appeal deadlines.
+
+    The form is bound to ``request.GET`` so a filled-in result is bookmarkable,
+    shareable, and printable via its URL. All computation lives in
+    ``appeal_deadlines`` and the inputs in ``AppealDeadlineCalculatorForm``; this
+    view only wires them to the template.
+    """
+
+    template_name = "appeal_deadline_calculator.html"
+
+    def get_context_data(self, **kwargs: typing.Any) -> dict[str, typing.Any]:
+        context = super().get_context_data(**kwargs)
+        context["title"] = "Health Insurance Appeal Deadline Calculator"
+
+        # Only treat the form as submitted when the user actually chose a
+        # coverage type; a bare visit (no query string) should render blank
+        # rather than showing "this field is required" errors.
+        submitted = bool(self.request.GET.get("coverage_type"))
+        form = core_forms.AppealDeadlineCalculatorForm(
+            self.request.GET if submitted else None
+        )
+
+        result = None
+        if submitted and form.is_valid():
+            result = form.compute()
+
+        context["form"] = form
+        context["result"] = result
+        context["submitted"] = submitted
+        context["last_reviewed"] = appeal_deadlines.LAST_REVIEWED
+        context["canonical_url"] = self.request.build_absolute_uri(
+            reverse("appeal_deadline_calculator")
+        )
+        return context
 
 
 class PBSNewsHourView(StaticIshView):
