@@ -28,11 +28,8 @@ metadata:
   name: fhi-pg-main-9
   namespace: totallylegitco
 spec:
-  # Start as a SINGLE instance. It comes up as an empty primary; we verify its
-  # OWN backups work, then scale to 3 (1 -> 2 -> 3) with per-step validation
-  # BEFORE the cutover window loads data into it. See runbook.
-  # NOTE: scale-to-3 later by bumping this to 3 and re-applying.
-  instances: 1
+  # Note: we need to start at 3 because of the rest of our config
+  instances: 3
 
   imageName: ghcr.io/cloudnative-pg/postgresql:18.1-system-trixie
 
