@@ -1442,6 +1442,8 @@ class ChooseEscalationLetter(View):
         if escalation is None:
             return HttpResponseRedirect(reverse("scan"))
 
+        from fighthealthinsurance.escalation_addresses import sanitize_http_url
+
         return render(
             request,
             "escalation_packet_review.html",
@@ -1450,7 +1452,9 @@ class ChooseEscalationLetter(View):
                 "recipient_name": escalation.recipient_name,
                 "recipient_address": escalation.recipient_address,
                 "recipient_phone": escalation.recipient_phone,
-                "recipient_url": escalation.recipient_url,
+                # The stored URL is linkified in the template; never render
+                # a non-http(s) scheme as a clickable link.
+                "recipient_url": sanitize_http_url(escalation.recipient_url),
                 "recipient_type": escalation.recipient_type,
                 "user_email": cleaned["email"],
                 "denial_id": cleaned["denial_id"],

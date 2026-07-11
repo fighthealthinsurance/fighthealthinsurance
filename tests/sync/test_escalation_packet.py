@@ -165,6 +165,26 @@ class EscalationAddressesTest(TestCase):
         self.assertEqual(md.phone, "")
         self.assertIn("[Insurance company mailing address", md.address)
 
+    def test_medical_director_drops_non_http_insurer_url(self):
+        """Recipient URLs become clickable links, so schemes other than
+        http(s) must be dropped at construction."""
+        denial = _FakeDenial(state="", insurance_company="Aetna")
+        denial.insurance_company_obj = type(
+            "ICO",
+            (),
+            {
+                "is_tpa": False,
+                "name": "Aetna",
+                "appeal_address": "",
+                "appeal_phone_number": "",
+                "member_services_url": "javascript:alert(1)",
+                "website": "",
+            },
+        )()
+        recipients = get_recipients_for_denial(denial)
+        md = next(r for r in recipients if r.recipient_type == "medical_director")
+        self.assertEqual(md.url, "")
+
     def test_erisa_branch_via_tpa_flag_adds_dol_ebsa(self):
         denial = _FakeDenial(
             state="",
@@ -395,6 +415,29 @@ class EscalationPacketViewTest(TestCase):
         self.assertTrue(escalation.chosen)
         self.assertTrue(escalation.edited)
         self.assertEqual(escalation.letter_text, "User-edited text.")
+
+    def test_review_page_does_not_linkify_non_http_stored_url(self):
+        """Stored recipient URLs are linkified on the review page; a
+        non-http(s) scheme (e.g. from hand-edited data) must not render."""
+        escalation = RegulatorEscalation.objects.create(
+            for_denial=self.denial,
+            hashed_email=self.denial.hashed_email,
+            recipient_type=RegulatorEscalation.RECIPIENT_DOI,
+            recipient_name="California Department of Insurance",
+            recipient_url="javascript:alert(1)",
+            letter_text="Original draft.",
+        )
+        response = self.client.post(
+            reverse("choose_escalation_letter"),
+            {
+                "denial_id": str(self.denial.denial_id),
+                "email": self.email,
+                "semi_sekret": self.denial.semi_sekret,
+                "escalation_uuid": escalation.uuid,
+                "letter_text": "Final text.",
+            },
+        )
+        self.assertNotContains(response, "javascript:")
 
     def test_choose_escalation_letter_rejects_malformed_uuid(self):
         url = reverse("choose_escalation_letter")

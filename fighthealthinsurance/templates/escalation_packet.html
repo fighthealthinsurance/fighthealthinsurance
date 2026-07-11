@@ -103,7 +103,9 @@ Fight Your Health Insurance Denial: Regulator Escalation Letters
         phone.textContent = '📞 ' + payload.recipient_phone;
         wrapper.appendChild(phone);
       }
-      if (payload.recipient_url) {
+      // Only linkify http(s) URLs so an unexpected scheme (e.g.
+      // javascript:) can never become clickable.
+      if (payload.recipient_url && /^https?:\/\//i.test(payload.recipient_url)) {
         const linkLine = document.createElement('p');
         linkLine.style.cssText = 'margin:0.25rem 0; font-size:0.95rem;';
         linkLine.appendChild(document.createTextNode('🔗 '));

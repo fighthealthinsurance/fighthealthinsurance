@@ -45,6 +45,19 @@ DOL_EBSA_PHONE = "1-866-444-3272"
 DOL_EBSA_URL = "https://www.dol.gov/agencies/ebsa"
 
 
+def sanitize_http_url(value: Optional[str]) -> str:
+    """Return *value* only if it is an http(s) URL, else an empty string.
+
+    Recipient URLs end up in ``<a href>`` attributes (server templates and
+    the escalation packet's client-side rendering), so unexpected schemes
+    like ``javascript:`` must never propagate into a clickable link.
+    """
+    url = (value or "").strip()
+    if url.lower().startswith(("http://", "https://")):
+        return url
+    return ""
+
+
 @dataclass
 class EscalationRecipient:
     """A single recipient on an escalation packet."""
@@ -77,7 +90,7 @@ def _doi_recipient(state: StateHelp) -> Optional[EscalationRecipient]:
         name=dept.name,
         address=dept.complaint_url or dept.url or "",
         phone=dept.consumer_line or dept.phone or "",
-        url=dept.url or "",
+        url=sanitize_http_url(dept.url),
         rationale=rationale,
         extra={
             "state_name": state.name,
@@ -118,8 +131,9 @@ def _medical_director_recipient(
         if known_address.strip():
             address = f"Medical Director\n{known_address.strip()}"
         phone = getattr(insurance_company_obj, "appeal_phone_number", "") or ""
-        url = getattr(insurance_company_obj, "member_services_url", "") or getattr(
-            insurance_company_obj, "website", ""
+        url = sanitize_http_url(
+            getattr(insurance_company_obj, "member_services_url", "")
+            or getattr(insurance_company_obj, "website", "")
         )
     return EscalationRecipient(
         recipient_type=RECIPIENT_MEDICAL_DIRECTOR,
