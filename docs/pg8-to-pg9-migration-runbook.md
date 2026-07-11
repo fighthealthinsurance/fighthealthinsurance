@@ -84,7 +84,7 @@ Scripts (all `set -euo pipefail`, context-checked, namespace-defaulted, password
 - `scripts/create-or-fix-pg9-migration-role.sh` — create/repair the migration role.
 - `scripts/check-pg9-replication.sh` — verify `-9` streaming + sidecar + archiver.
 - `scripts/validate-pg8-vs-pg9.sh` — data consistency `-8` vs `-9`.
-- `scripts/promote-pg9.sh` — promote `-9` (self-gates on lag==0 + single-primary).
+- `scripts/promote-pg9.sh` — promote `-9` (self-gates on **quiesced `-8` writes** (zero active client backends) + **zero replay lag**; it does NOT itself fence `-8` — you must scale writers to 0 first).
 - `scripts/cutover-app-to-pg9.sh` — flip `PDBHOST` → `-9`, roll the app.
 - `scripts/rollback-pre-write-cutover.sh` — pre-write rollback of the cutover.
 
@@ -498,7 +498,9 @@ CRITICAL_TABLES="django_migrations auth_user <add-your-critical-tables>" \
 **exact** `COUNT(*)` for critical tables, migration history, and app-role
 presence all match between `-8` and `-9`. Investigate any mismatch before
 cutover (transient sequence drift while `-8` still writes is reported as WARN,
-not FAIL).
+not FAIL). **Caveat:** a name in `CRITICAL_TABLES` that does not exist on `-8` is
+reported **WARN and skipped** (not FAIL) — double-check every table name so a
+typo can't silently hide a real gap. List only tables you know exist on `-8`.
 
 ---
 
@@ -513,7 +515,7 @@ not FAIL).
 # 2) confirm zero replay lag on -9:
 kubectl -n totallylegitco exec fhi-pg-main-9-1 -c postgres -- psql -U postgres -Atc \
  "SELECT pg_wal_lsn_diff(pg_last_wal_receive_lsn(), pg_last_wal_replay_lsn());"   # want 0
-# 3) promote -9 (self-gates on lag==0 and single-primary):
+# 3) promote -9 (self-gates on: -8 has zero active client backends AND zero replay lag):
 ./scripts/promote-pg9.sh
 ```
 
@@ -525,14 +527,25 @@ kubectl -n totallylegitco exec fhi-pg-main-9-1 -c postgres -- psql -U postgres -
 kubectl -n totallylegitco get cluster fhi-pg-main-9
 ```
 
-**GATE:** `pg_is_in_recovery()=f` on the new `-9` primary; `-9` is healthy; `-8`
-is **read-only** / write-fenced (app still pointed away). **Never** promote with
-non-zero lag or with `-8` still writable.
+**GATE:** `pg_is_in_recovery()=f` on the new `-9` primary; `-9` is healthy; and
+`-8` has **no active client backends** (you quiesced its writers in step 1).
+**Important:** nothing in this step makes `-8` technically read-only — it remains
+a writable primary. Split-brain is prevented only by keeping every client
+pointed away from `-8` (writers scaled to 0 now; `PDBHOST` still on `-8` until
+Phase 10 flips it to `-9`). Keep `-8` clientless until decommission. **Never**
+promote with non-zero lag or before `-8`'s writers are scaled to zero.
 
 > `promote-pg9.sh` refuses to auto-run the DISTRIBUTED-topology token dance
 > (it needs the `-8` manifest and cannot be validated offline) — for a
 > standalone promotion it sets `.spec.replica.enabled: false`; for a distributed
 > topology it prints the documented human procedure. Read its output.
+>
+> **Source-name check:** the script confirms `-9` really replicates from `-8`
+> before promoting. The checked-in Cluster sets `spec.replica.source:
+> fhi-pg-main-8-live` (the `externalClusters[].name`), which is intentionally
+> distinct from the CNPG source cluster name `fhi-pg-main-8`. The script accepts
+> this externalCluster name out of the box — if you renamed either, verify the
+> source really is `-8` first, then re-run.
 
 ---
 
@@ -541,7 +554,7 @@ non-zero lag or with `-8` still writable.
 This is where the Phase 2 switch finally flips. `cutover-app-to-pg9.sh`:
 refuses unless `-9` promotion is verified; scales the write-producing workloads
 to zero and confirms `-8` has no active client backends; **saves the reverse
-patch to disk**; patches `fhi-db-config/PDBHOST` → `fhi-pg-main-9-rw`; brings the
+patch to disk**; patches `fhi-db-config/PDBHOST` → `fhi-pg-main-9-rw.totallylegitco.svc` (the `-rw` service FQDN); brings the
 app back and restarts Ray; then smoke-checks that app backends appear on `-9`
 and NOT on `-8`.
 
