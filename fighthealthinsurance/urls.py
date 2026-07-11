@@ -317,6 +317,30 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         ),
         name="state_help",
     ),
+    # Monthly worst-insurance rankings; views 404 until a report is ingested
+    # so these stay unpublished until data is present.
+    path(
+        "worst-insurance/",
+        cache_control(public=True)(
+            cache_page(60 * 60 * 2)(views.WorstInsuranceIndexView.as_view())
+        ),
+        name="worst_insurance_index",
+    ),
+    # Registered before the slug route so "methodology" isn't swallowed.
+    path(
+        "worst-insurance/methodology/",
+        cache_control(public=True)(
+            cache_page(60 * 60 * 2)(views.WorstInsuranceMethodologyView.as_view())
+        ),
+        name="worst_insurance_methodology",
+    ),
+    path(
+        "worst-insurance/<slug:slug>/",
+        cache_control(public=True)(
+            cache_page(60 * 60 * 2)(views.WorstInsuranceStateView.as_view())
+        ),
+        name="worst_insurance_state",
+    ),
     path("pro_version", views.ProVersionView.as_view(), name="pro_version"),
     # Cross-origin classic-form intake for the interested-professional lead form
     # hosted on the static site (fightpaperwork.com). csrf_exempt because that

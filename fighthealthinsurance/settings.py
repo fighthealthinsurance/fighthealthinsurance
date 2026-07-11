@@ -82,6 +82,20 @@ class Base(Configuration):
     except ValueError:
         # Misconfigured env var should not block app startup.
         IMR_REFRESH_INTERVAL_HOURS = 168
+
+    # Worst-insurance-by-state rankings ingest (see worst_insurance_ingest.py).
+    # Unset URL keeps the feature dark: nothing ingests and the public pages
+    # 404 until data is present. Production points this at the pipeline
+    # repo's data/latest.json raw URL. The actor re-checks daily; ingest is
+    # idempotent so re-pulling an unchanged month is a no-op.
+    WORST_INSURANCE_RANKINGS_URL = os.getenv("WORST_INSURANCE_RANKINGS_URL", "")
+    try:
+        WORST_INSURANCE_REFRESH_INTERVAL_HOURS = int(
+            os.getenv("WORST_INSURANCE_REFRESH_INTERVAL_HOURS") or 24
+        )
+    except ValueError:
+        # Misconfigured env var should not block app startup.
+        WORST_INSURANCE_REFRESH_INTERVAL_HOURS = 24
     ENABLE_VOICE_INTAKE = os.getenv("ENABLE_VOICE_INTAKE", "false").lower() == "true"
     ENABLE_LOCAL_STT = os.getenv("ENABLE_LOCAL_STT", "true").lower() == "true"
     # When true, /pro_version shows a "professional version is here" page with

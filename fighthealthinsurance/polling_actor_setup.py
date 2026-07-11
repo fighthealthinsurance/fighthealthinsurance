@@ -10,6 +10,9 @@ from fighthealthinsurance.fax_polling_actor_ref import fax_polling_actor_ref
 from fighthealthinsurance.imr_refresh_actor_ref import imr_refresh_actor_ref
 from fighthealthinsurance.pa_refresh_actor_ref import pa_refresh_actor_ref
 from fighthealthinsurance.ucr_refresh_actor_ref import ucr_refresh_actor_ref
+from fighthealthinsurance.worst_insurance_refresh_actor_ref import (
+    worst_insurance_refresh_actor_ref,
+)
 
 logger.info("Waiting for ray to (probably) launch.")
 time.sleep(60)
@@ -27,6 +30,7 @@ cpar = None
 ipar = None
 upar = None
 ppar = None
+wpar = None
 while not success and attempt < 10:
     logger.info("Attempting to launch actors.")
     attempt = attempt + 1
@@ -36,16 +40,18 @@ while not success and attempt < 10:
         ipar, itask = imr_refresh_actor_ref.get
         upar, utask = ucr_refresh_actor_ref.get
         ppar, ptask = pa_refresh_actor_ref.get
+        wpar, wtask = worst_insurance_refresh_actor_ref.get
         logger.info(f"Launched email polling actor {epar}")
         logger.info(f"Launched chooser refill actor {cpar}")
         logger.info(f"Launched IMR refresh actor {ipar}")
         logger.info(f"Launched UCR refresh actor {upar}")
         logger.info(f"Launched PA refresh actor {ppar}")
+        logger.info(f"Launched worst-insurance refresh actor {wpar}")
 
         # Collect the running-task and actor handles so the fax polling actor
         # can be conditionally excluded when Temporal owns fax sending.
-        tasks = [etask, ctask, itask, utask, ptask]
-        actors = [epar, cpar, ipar, upar, ppar]
+        tasks = [etask, ctask, itask, utask, ptask, wtask]
+        actors = [epar, cpar, ipar, upar, ppar, wpar]
         if not _temporal_enabled:
             fpar, ftask = fax_polling_actor_ref.get
             logger.info(f"Launched fax polling actor {fpar}")
@@ -76,4 +82,4 @@ while not success and attempt < 10:
 if not success:
     logger.error("Failed to launch polling actors after all attempts")
 
-__all__ = ["epar", "fpar", "cpar", "ipar", "upar", "ppar"]
+__all__ = ["epar", "fpar", "cpar", "ipar", "upar", "ppar", "wpar"]

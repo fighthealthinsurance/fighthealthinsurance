@@ -220,6 +220,98 @@ class IMRDecision(ExportModelOperationsMixin("IMRDecision"), models.Model):  # t
         return f"IMR {self.source}/{self.case_id}: {self.determination} {self.treatment} for {self.diagnosis}"
 
 
+class WorstInsuranceReport(ExportModelOperationsMixin("WorstInsuranceReport"), models.Model):  # type: ignore
+    """
+    One monthly "worst insurance company by state" report ingested from the
+    worst-insurance-pipeline-by-state repo's published rankings.json.
+
+    The pipeline computes rankings from public regulator data (CMS
+    transparency and MLR files, state complaint/enforcement feeds),
+    normalized by insured population. This model stores the report-level
+    metadata verbatim; per-issuer rows live in ``WorstInsuranceRanking``.
+    """
+
+    id = models.AutoField(primary_key=True)
+    # "YYYY-MM" publication period; unique so re-ingesting a month upserts.
+    period = models.CharField(max_length=7)
+    methodology_version = models.CharField(max_length=40, default="", blank=True)
+    generated_at = models.DateTimeField(null=True, blank=True)
+    window_start = models.DateField(null=True, blank=True)
+    window_end = models.DateField(null=True, blank=True)
+    weights = models.JSONField(null=True, blank=True)
+    thresholds = models.JSONField(null=True, blank=True)
+    # sources[] block verbatim: per-source vintage/status for display.
+    sources = models.JSONField(null=True, blank=True)
+    # {"WY": {"status": "insufficient_data", "reason": ...}, ...} for states
+    # without rankings.
+    state_statuses = models.JSONField(null=True, blank=True)
+    source_url = models.URLField(max_length=500, default="", blank=True)
+    # Full rankings.json for audit / reprocessing.
+    raw_data = models.JSONField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["period"], name="worstins_report_period_uniq"
+            ),
+        ]
+
+    def __str__(self):
+        return f"WorstInsuranceReport {self.period} ({self.methodology_version})"
+
+
+class WorstInsuranceRanking(ExportModelOperationsMixin("WorstInsuranceRanking"), models.Model):  # type: ignore
+    """One issuer's ranking within a state for a monthly report."""
+
+    id = models.AutoField(primary_key=True)
+    report = models.ForeignKey(
+        WorstInsuranceReport, on_delete=models.CASCADE, related_name="rankings"
+    )
+    state = models.CharField(max_length=2)
+    rank = models.IntegerField()
+    issuer_name = models.CharField(max_length=300)
+    # Stable join key from the pipeline (slugified canonical brand name).
+    issuer_slug = models.SlugField(max_length=300)
+    group_affiliation = models.CharField(max_length=300, default="", blank=True)
+    composite_score = models.FloatField()
+    # Share of the state's measured metric weight this issuer was scored on.
+    weight_coverage = models.FloatField(null=True, blank=True)
+    member_months = models.BigIntegerField(null=True, blank=True)
+    # metrics dict verbatim from rankings.json (value/numerator/denominator/
+    # normalized/unit/source_ids per metric).
+    metrics = models.JSONField(null=True, blank=True)
+    metrics_available = models.JSONField(null=True, blank=True)
+    insurance_company = models.ForeignKey(
+        "InsuranceCompany",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="worst_insurance_rankings",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["report", "state", "issuer_slug"],
+                name="worstins_rank_report_state_issuer_uniq",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["state", "rank"], name="worstins_state_rank_idx"),
+            models.Index(fields=["report", "state"], name="worstins_report_state_idx"),
+        ]
+
+    def __str__(self):
+        return (
+            f"{self.report.period} {self.state} #{self.rank}: "
+            f"{self.issuer_name} ({self.composite_score})"
+        )
+
+
 # Money related :p
 class InterestedProfessional(ExportModelOperationsMixin("InterestedProfessional"), models.Model):  # type: ignore
     """

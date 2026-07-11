@@ -7,6 +7,7 @@ This module provides health checks for the polling actors:
 - ChooserRefillActor
 - IMRRefreshActor
 - UCRRefreshActor
+- WorstInsuranceRefreshActor
 
 It checks if actors are alive and returns their status.
 """
@@ -43,6 +44,7 @@ def check_actor_health() -> Dict[str, Any]:
         ("imr_refresh_actor", "fhi"),
         ("ucr_refresh_actor", "fhi"),
         ("pa_refresh_actor", "fhi"),
+        ("worst_insurance_refresh_actor", "fhi"),
     ]
     # When Temporal owns fax sending, the FaxPollingActor isn't launched, so it
     # shouldn't be health-checked -- it would always report "actor not found".
@@ -132,6 +134,9 @@ def relaunch_actors(force: bool = False) -> Dict[str, Any]:
     from fighthealthinsurance.imr_refresh_actor_ref import imr_refresh_actor_ref
     from fighthealthinsurance.pa_refresh_actor_ref import pa_refresh_actor_ref
     from fighthealthinsurance.ucr_refresh_actor_ref import ucr_refresh_actor_ref
+    from fighthealthinsurance.worst_insurance_refresh_actor_ref import (
+        worst_insurance_refresh_actor_ref,
+    )
 
     results: Dict[str, Dict[str, Any]] = {
         "email_polling_actor": {"status": "pending"},
@@ -139,6 +144,7 @@ def relaunch_actors(force: bool = False) -> Dict[str, Any]:
         "imr_refresh_actor": {"status": "pending"},
         "ucr_refresh_actor": {"status": "pending"},
         "pa_refresh_actor": {"status": "pending"},
+        "worst_insurance_refresh_actor": {"status": "pending"},
     }
 
     actors = [
@@ -147,6 +153,7 @@ def relaunch_actors(force: bool = False) -> Dict[str, Any]:
         ("imr_refresh_actor", imr_refresh_actor_ref),
         ("ucr_refresh_actor", ucr_refresh_actor_ref),
         ("pa_refresh_actor", pa_refresh_actor_ref),
+        ("worst_insurance_refresh_actor", worst_insurance_refresh_actor_ref),
     ]
 
     # When Temporal owns fax sending, don't relaunch the (now unused)
