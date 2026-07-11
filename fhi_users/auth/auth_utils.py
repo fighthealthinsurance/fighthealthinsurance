@@ -6,7 +6,6 @@ import uuid
 
 import re
 
-from fhi_users.models import UserDomain
 from django.contrib.auth import get_user_model
 
 # See https://github.com/typeddjango/django-stubs/issues/599
@@ -35,7 +34,12 @@ def get_domain_id_from_request(request):
     separator. The recovered value is cached back onto the session.
     """
     session = request.session
-    domain_id = session.get("domain_id")
+    try:
+        domain_id = session.get("domain_id")
+    except Exception:
+        # A session-backend error (e.g. django.db.OperationalError) should not
+        # 500 the request -- fall through to the username-based recovery path.
+        domain_id = None
     if domain_id:
         return domain_id
     current_user = getattr(request, "user", None)
@@ -128,8 +132,9 @@ def resolve_domain_id(
         # Try and resolve with domain name then fall back to phone number if it fails
         # Use the new find_by_name method that strips URLs
         domains = UserDomain.find_by_name(domain_name)
-        if domains.exists():
-            return domains.first().id  # type: ignore
+        domain_id = domains.values_list("id", flat=True).first()
+        if domain_id is not None:
+            return domain_id
         if phone_number:
             return UserDomain.objects.get(visible_phone_number=phone_number).id
         raise UserDomain.DoesNotExist()

@@ -237,3 +237,22 @@ class TestGetDomainIdFromRequest(TestCase):
         result = get_domain_id_from_request(request)
 
         self.assertEqual(result, "session-domain")
+
+    def test_unauthenticated_user_raises(self):
+        """An unauthenticated user with no session domain_id raises."""
+        from django.contrib.auth.models import AnonymousUser
+
+        request = self._build_request(AnonymousUser())
+        self.assertFalse(request.user.is_authenticated)
+
+        with self.assertRaises(Exception):
+            get_domain_id_from_request(request)
+
+    def test_missing_user_attribute_raises(self):
+        """A request without a .user attribute raises."""
+        request = RequestFactory().get("/")
+        request.session = SessionStore()
+        self.assertFalse(hasattr(request, "user"))
+
+        with self.assertRaises(Exception):
+            get_domain_id_from_request(request)
