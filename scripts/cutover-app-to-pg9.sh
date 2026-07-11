@@ -41,6 +41,8 @@ WEB_TARGET_REPLICAS="${WEB_TARGET_REPLICAS:-3}"
 RAYCLUSTER="${RAYCLUSTER:-raycluster-kuberay}"
 REVERSE_PATCH_DIR="${REVERSE_PATCH_DIR:-./.pg9-cutover-state}"
 ROLLOUT_TIMEOUT="${ROLLOUT_TIMEOUT:-300s}"
+KUBECTL_EXEC_TIMEOUT="${KUBECTL_EXEC_TIMEOUT:-30s}"      # bounds every kubectl exec
+RAY_TERMINATION_TIMEOUT="${RAY_TERMINATION_TIMEOUT:-120}" # secs to wait for Ray pods to actually terminate
 CONFIRM_PHRASE="cutover to ${NEW_DB_HOST}"
 
 RED=$'\033[31m'; GRN=$'\033[32m'; YEL=$'\033[33m'; BLD=$'\033[1m'; RST=$'\033[0m'
@@ -69,7 +71,12 @@ CUR_HOST="$(kubectl -n "$NAMESPACE" get configmap "$CONFIGMAP" -o jsonpath="{.da
 [ -n "$CUR_HOST" ] || fail "ConfigMap $CONFIGMAP has no key $CONFIGMAP_KEY."
 info "Current $CONFIGMAP_KEY = $CUR_HOST"
 
-psql_on() { kubectl -n "$NAMESPACE" exec "$1" -c postgres -- psql -U postgres -qtAX -c "$2"; }
+# Single-scalar psql helper: exec bounded by --request-timeout; ON_ERROR_STOP so a
+# failed query exits non-zero; psql stderr dropped so notices can't garble results.
+psql_on() {
+  kubectl -n "$NAMESPACE" --request-timeout="$KUBECTL_EXEC_TIMEOUT" exec "$1" -c postgres -- \
+    psql -U postgres -qtAX -v ON_ERROR_STOP=1 -c "$2" 2>/dev/null
+}
 
 # --- gate 1: -9 promotion verified ------------------------------------------
 TGT_PRIMARY="$(kubectl -n "$NAMESPACE" get cluster.postgresql.cnpg.io "$TARGET_CLUSTER" -o jsonpath='{.status.currentPrimary}' 2>/dev/null || true)"
@@ -107,15 +114,48 @@ for dep in $WRITE_DEPLOYMENTS; do
   if [ "${cur:-0}" != "0" ]; then
     info "Scaling $dep -> 0 to quiesce writes during the flip ..."
     kubectl -n "$NAMESPACE" scale deployment "$dep" --replicas=0
-    kubectl -n "$NAMESPACE" rollout status deployment "$dep" --timeout="$ROLLOUT_TIMEOUT" || true
+    if ! kubectl -n "$NAMESPACE" rollout status deployment "$dep" --timeout="$ROLLOUT_TIMEOUT"; then
+      warn "$dep did not reach 0 replicas within $ROLLOUT_TIMEOUT; re-issuing scale and retrying once ..."
+      kubectl -n "$NAMESPACE" scale deployment "$dep" --replicas=0
+      kubectl -n "$NAMESPACE" rollout status deployment "$dep" --timeout="$ROLLOUT_TIMEOUT" || true
+    fi
+    # Verify actual running/available replicas are truly 0 before we dare flip the host.
+    avail="$(kubectl -n "$NAMESPACE" get deployment "$dep" -o jsonpath='{.status.replicas}' 2>/dev/null || echo '?')"
+    if [ "${avail:-0}" != "0" ] && [ -n "${avail}" ]; then
+      fail "$dep still reports ${avail} running replicas after scale-to-0 -- refusing to flip (would risk writes to both clusters). Investigate the stuck pods."
+    fi
+    ok "$dep confirmed at 0 replicas."
   fi
 done
 
-# Stop Ray write-producers too (kuberay recreates pods after cutover).
+# Stop Ray write-producers too (kuberay recreates pods after cutover). We must
+# wait for them to ACTUALLY terminate before flipping -- a still-terminating Ray
+# pod can keep writing to -8. stderr is intentionally NOT suppressed so a typo'd
+# label or RBAC error is visible rather than silently skipped.
+RAY_LABEL="ray.io/cluster=$RAYCLUSTER"
 if [ -n "$RAYCLUSTER" ] && kubectl -n "$NAMESPACE" get raycluster "$RAYCLUSTER" >/dev/null 2>&1; then
-  info "Deleting Ray pods for $RAYCLUSTER so they drop their -8 connections (operator recreates them post-flip)."
-  kubectl -n "$NAMESPACE" delete pod -l "ray.io/cluster=$RAYCLUSTER" --wait=false 2>/dev/null \
-    || warn "Could not delete Ray pods by label ray.io/cluster=$RAYCLUSTER (check the label)."
+  before="$(kubectl -n "$NAMESPACE" get pods -l "$RAY_LABEL" --no-headers 2>/dev/null | wc -l | tr -d '[:space:]')"
+  info "Ray pods matching $RAY_LABEL: ${before}. Deleting so they drop their -8 connections ..."
+  if [ "${before:-0}" = "0" ]; then
+    warn "No pods matched $RAY_LABEL -- verify the label; skipping Ray termination wait."
+  else
+    kubectl -n "$NAMESPACE" delete pod -l "$RAY_LABEL" --wait=false \
+      || fail "Failed to issue delete for Ray pods ($RAY_LABEL) -- fix before flipping the host."
+    info "Waiting up to ${RAY_TERMINATION_TIMEOUT}s for Ray pods to terminate ..."
+    SECONDS=0
+    while :; do
+      remaining="$(kubectl -n "$NAMESPACE" get pods -l "$RAY_LABEL" --no-headers 2>/dev/null | wc -l | tr -d '[:space:]')"
+      if [ "${remaining:-0}" = "0" ]; then
+        ok "All Ray pods terminated."
+        break
+      fi
+      if [ "$SECONDS" -ge "$RAY_TERMINATION_TIMEOUT" ]; then
+        fail "Ray pods ($RAY_LABEL) still present (${remaining}) after ${RAY_TERMINATION_TIMEOUT}s -- refusing to flip (they may still be writing to -8)."
+      fi
+      info "  ${remaining} Ray pod(s) still terminating; re-checking ..."
+      sleep 5
+    done
+  fi
 else
   [ -n "$RAYCLUSTER" ] && warn "RayCluster $RAYCLUSTER not found; skipping Ray restart (do it manually if it exists under another name)."
 fi

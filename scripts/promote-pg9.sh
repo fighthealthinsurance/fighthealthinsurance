@@ -44,6 +44,7 @@ NAMESPACE="${NAMESPACE:-totallylegitco}"
 SOURCE_CLUSTER="${SOURCE_CLUSTER:-fhi-pg-main-8}"
 TARGET_CLUSTER="${TARGET_CLUSTER:-fhi-pg-main-9}"
 PROMOTE_TIMEOUT_SECS="${PROMOTE_TIMEOUT_SECS:-300}"
+KUBECTL_EXEC_TIMEOUT="${KUBECTL_EXEC_TIMEOUT:-30s}"   # bounds every kubectl exec so a hung pod can't stall the script
 CONFIRM_PHRASE="promote ${TARGET_CLUSTER}"
 
 RED=$'\033[31m'; GRN=$'\033[32m'; YEL=$'\033[33m'; BLD=$'\033[1m'; RST=$'\033[0m'
@@ -81,10 +82,13 @@ info "Source primary pod  : $SRC_PRIMARY"
 info "Target primary pod  : $TGT_PRIMARY (designated primary while in recovery)"
 
 # psql helper: local superuser over the unix socket inside the pod -> no password
-# ever appears on a command line or in output.
+# ever appears on a command line or in output. Returns a single scalar on stdout.
+# --request-timeout bounds a hung exec; ON_ERROR_STOP makes a failed query exit
+# non-zero (callers treat empty output as failure); psql stderr (NOTICE/WARNING)
+# is dropped so it can never garble the numeric/boolean result being parsed.
 psql_on() { # <pod> <sql>
-  kubectl -n "$NAMESPACE" exec "$1" -c postgres -- \
-    psql -U postgres -qtAX -c "$2"
+  kubectl -n "$NAMESPACE" --request-timeout="$KUBECTL_EXEC_TIMEOUT" exec "$1" -c postgres -- \
+    psql -U postgres -qtAX -v ON_ERROR_STOP=1 -c "$2" 2>/dev/null
 }
 
 # --- precondition 0: -9 must currently be a replica (in recovery) ------------
@@ -111,10 +115,17 @@ ACTIVE_WRITERS="$(psql_on "$SRC_PRIMARY" \
 info "Active (non-idle) client backends on $SOURCE_CLUSTER: ${ACTIVE_WRITERS:-?}"
 if [ "${ACTIVE_WRITERS:-1}" != "0" ]; then
   warn "There are still active client backends on $SOURCE_CLUSTER."
-  warn "Quiesce writes first: scale the write-path workloads to zero, e.g."
+  warn "This script deliberately does NOT scale anything down -- YOU must quiesce all"
+  warn "write producers to ZERO *before* running promote (the same quiescing that"
+  warn "scripts/cutover-app-to-pg9.sh performs in its 'gate 2'). Run these first:"
+  warn "  # 1. web tier"
   warn "  kubectl -n $NAMESPACE scale deployment/web --replicas=0"
-  warn "  kubectl -n $NAMESPACE scale rayclusters.ray.io/raycluster-kuberay ... (or delete the RayCluster workers)"
-  warn "  and ensure no web-migrations / web-actor-launch / web-extralink-prefetch Jobs are running."
+  warn "  kubectl -n $NAMESPACE rollout status deployment/web --timeout=300s"
+  warn "  # 2. Ray background workers (kuberay recreates pods later)"
+  warn "  kubectl -n $NAMESPACE delete pod -l ray.io/cluster=raycluster-kuberay"
+  warn "  # 3. ensure no write Jobs are running"
+  warn "  kubectl -n $NAMESPACE get jobs | grep -E 'web-migrations|web-actor-launch|web-extralink-prefetch'"
+  warn "Then re-run this script. (Re-check with: pg_stat_activity active client backends == 0.)"
   fail "Precondition FAILED: application writes are NOT quiesced on $SOURCE_CLUSTER."
 fi
 ok "No active client backends on $SOURCE_CLUSTER (writes quiesced)."
@@ -142,6 +153,23 @@ REPLICA_SOURCE="$(kubectl -n "$NAMESPACE" get cluster.postgresql.cnpg.io "$TARGE
 info "spec.replica.primary   : ${REPLICA_PRIMARY:-<unset>}"
 info "spec.replica.enabled   : ${REPLICA_ENABLED:-<unset>}"
 info "spec.replica.source    : ${REPLICA_SOURCE:-<unset>}"
+
+# SAFETY: confirm -9 actually replicates from the expected source cluster. The
+# spec.replica.source names an entry in spec.externalClusters, which is normally
+# the source cluster name (fhi-pg-main-8). Promoting a cluster fed from the wrong
+# source is an irreversible way to strand data -- refuse unless it matches.
+if [ -n "$REPLICA_SOURCE" ]; then
+  if [ "$REPLICA_SOURCE" != "$SOURCE_CLUSTER" ]; then
+    warn "spec.replica.source='$REPLICA_SOURCE' does NOT equal expected source '$SOURCE_CLUSTER'."
+    warn "If the externalCluster is legitimately named differently but still points at"
+    warn "$SOURCE_CLUSTER, re-run with SOURCE_CLUSTER='$REPLICA_SOURCE' after verifying."
+    fail "SAFETY: refusing to promote -- $TARGET_CLUSTER may be replicating from the wrong source."
+  fi
+  ok "Replica source '$REPLICA_SOURCE' matches expected source $SOURCE_CLUSTER."
+else
+  warn "spec.replica.source is unset/empty on $TARGET_CLUSTER -- cannot confirm it replicates"
+  warn "from $SOURCE_CLUSTER. Verify the source manually before promoting."
+fi
 
 TOPOLOGY=""
 if [ -n "$REPLICA_PRIMARY" ]; then

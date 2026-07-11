@@ -44,6 +44,7 @@ WRITE_DEPLOYMENTS="${WRITE_DEPLOYMENTS:-web}"
 WEB_TARGET_REPLICAS="${WEB_TARGET_REPLICAS:-3}"
 REVERSE_PATCH_DIR="${REVERSE_PATCH_DIR:-./.pg9-cutover-state}"
 ROLLOUT_TIMEOUT="${ROLLOUT_TIMEOUT:-300s}"
+KUBECTL_EXEC_TIMEOUT="${KUBECTL_EXEC_TIMEOUT:-30s}"   # bounds every kubectl exec
 ACK_PHRASE="no writes reached ${TARGET_CLUSTER}"
 
 RED=$'\033[31m'; GRN=$'\033[32m'; YEL=$'\033[33m'; BLD=$'\033[1m'; RST=$'\033[0m'
@@ -67,7 +68,12 @@ CUR_HOST="$(kubectl -n "$NAMESPACE" get configmap "$CONFIGMAP" -o jsonpath="{.da
 [ -n "$CUR_HOST" ] || fail "ConfigMap $CONFIGMAP has no key $CONFIGMAP_KEY."
 info "Current $CONFIGMAP_KEY = $CUR_HOST"
 
-psql_on() { kubectl -n "$NAMESPACE" exec "$1" -c postgres -- psql -U postgres -qtAX -c "$2"; }
+# Single-scalar psql helper: exec bounded by --request-timeout; ON_ERROR_STOP so a
+# failed query exits non-zero; psql stderr dropped so notices can't garble results.
+psql_on() {
+  kubectl -n "$NAMESPACE" --request-timeout="$KUBECTL_EXEC_TIMEOUT" exec "$1" -c postgres -- \
+    psql -U postgres -qtAX -v ON_ERROR_STOP=1 -c "$2" 2>/dev/null
+}
 
 TGT_PRIMARY="$(kubectl -n "$NAMESPACE" get cluster.postgresql.cnpg.io "$TARGET_CLUSTER" -o jsonpath='{.status.currentPrimary}' 2>/dev/null || true)"
 
