@@ -254,6 +254,13 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         name="turning-26",
     ),
     path(
+        "start-appeal/",
+        cache_control(public=True)(
+            cache_page(60 * 60 * 2)(views.StartAppealView.as_view())
+        ),
+        name="start_appeal",
+    ),
+    path(
         "as-seen-on-pbs",
         cache_control(public=True)(
             cache_page(60 * 60 * 2)(views.PBSNewsHourView.as_view())
