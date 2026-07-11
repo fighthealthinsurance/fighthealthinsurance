@@ -211,6 +211,12 @@ class InsurerAppealGuideIndexViewTest(TestCase):
         response = self.client.get(self.url)
         self.assertContains(response, LAST_REVIEWED)
 
+    def test_index_has_canonical_url(self):
+        """The index page emits a canonical link to its own path."""
+        response = self.client.get(self.url)
+        self.assertContains(response, 'rel="canonical"')
+        self.assertContains(response, "/insurance-appeals/")
+
 
 class InsurerAppealGuideViewTest(TestCase):
     """Tests for individual insurer appeal guide pages."""
@@ -266,6 +272,17 @@ class InsurerAppealGuideViewTest(TestCase):
         self.assertIn("FAQPage", types)
         self.assertIn("BreadcrumbList", types)
         self.assertIn("WebPage", types)
+
+        # The FAQPage mainEntity must mirror the data-module FAQs exactly:
+        # same count and the same question texts in order.
+        faqpage = next(b for b in payload if b.get("@type") == "FAQPage")
+        main_entity = faqpage["mainEntity"]
+        self.assertEqual(len(main_entity), len(guide.faqs))
+        emitted_questions = [q["name"] for q in main_entity]
+        self.assertEqual(emitted_questions, [faq.question for faq in guide.faqs])
+        # Answers should round-trip as well.
+        emitted_answers = [q["acceptedAnswer"]["text"] for q in main_entity]
+        self.assertEqual(emitted_answers, [faq.answer for faq in guide.faqs])
 
     def test_page_cross_links_to_related_guides(self):
         """The page links to its related insurer guides (the mesh)."""
