@@ -4,8 +4,10 @@ Replaces separate invocations of migrate, loaddata, ensure_adminuser, and make_u
 with a single management command to avoid repeated Django startup overhead.
 """
 
+import os
 from typing import Any
 
+from django.conf import settings
 from django.core.management import call_command
 from django.core.management.base import BaseCommand
 
@@ -14,6 +16,12 @@ class Command(BaseCommand):
     help = "Run all local dev DB setup: migrate, load fixtures, create test users."
 
     def handle(self, *args: str, **options: Any) -> None:
+        if not settings.DEBUG:
+            self.stderr.write(
+                self.style.ERROR("This command can only be run with DEBUG=True.")
+            )
+            return
+
         self.stdout.write("Running migrations...")
         call_command("migrate", verbosity=1)
 
@@ -28,14 +36,16 @@ class Command(BaseCommand):
         call_command("loaddata", "pa_requirements")
 
         self.stdout.write("Ensuring admin user...")
-        call_command("ensure_adminuser", username="admin", password="admin")
+        admin_password = os.environ.get("LOCAL_ADMIN_PASSWORD", "admin")
+        call_command("ensure_adminuser", username="admin", password=admin_password)
 
         self.stdout.write("Creating test users...")
+        test_password = os.environ.get("LOCAL_TEST_PASSWORD", "farts12345678")
         call_command(
             "make_user",
             username="test@test.com",
             domain="testfarts1",
-            password="farts12345678",
+            password=test_password,
             email="test@test.com",
             visible_phone_number="42",
             is_provider=True,
@@ -45,7 +55,7 @@ class Command(BaseCommand):
             "make_user",
             username="test-patient@test.com",
             domain="testfarts1",
-            password="farts12345678",
+            password=test_password,
             email="test-patient@test.com",
             visible_phone_number="42",
             is_provider=False,
