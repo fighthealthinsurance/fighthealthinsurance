@@ -108,21 +108,7 @@ spec:
       data:
         compression: bzip2
     retentionPolicy: "30d"
----
-apiVersion: postgresql.cnpg.io/v1
-kind: Backup
-metadata:
-  name: fhi-pg-backup-manual
-spec:
-  cluster:
-    name: fhi-pg-main-7
----
-apiVersion: postgresql.cnpg.io/v1
-kind: ScheduledBackup
-metadata:
-  name: backup-example
-spec:
-  schedule: "0 0 0 * * *"
-  backupOwnerReference: self
-  cluster:
-    name: fhi-pg-main-7
+# The manual Backup and daily ScheduledBackup ("backup-example") that used to
+# live here targeted fhi-pg-main-7, which is decommissioned. Removed so a
+# re-apply can never resurrect backups of a dead cluster; -9's backups are
+# defined in k8s/fhi-pg-main-9-objectstore.yaml + the runbook's schedule.
