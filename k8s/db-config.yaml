@@ -34,5 +34,7 @@ metadata:
     component: db-config
 data:
   # Primary (read-write) Postgres endpoint. This is the ONLY value the cutover
-  # scripts change. Current cluster: fhi-pg-main-8 (CNPG -rw service = primary).
-  PDBHOST: "fhi-pg-main-8-rw.totallylegitco.svc"
+  # scripts change. Current cluster: fhi-pg-main-9 (CNPG -rw service = primary).
+  # MUST match the live ConfigMap before build.sh runs, or the deploy silently
+  # re-points the app at the old cluster (see the pg8->pg9 runbook).
+  PDBHOST: "fhi-pg-main-9-rw.totallylegitco.svc"
