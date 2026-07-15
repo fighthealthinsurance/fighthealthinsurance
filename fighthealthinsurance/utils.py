@@ -85,7 +85,6 @@ def is_real_appeal(x: Optional[str]) -> TypeGuard[str]:
 import asyncstdlib
 import requests
 from loguru import logger
-from markdown_strings import esc_format
 from metapub import PubMedFetcher
 from requests.exceptions import RequestException
 
@@ -565,11 +564,17 @@ async def check_call(cmd, max_retries=0, **kwargs):
             return await check_call(cmd, max_retries=max_retries - 1, **kwargs)
 
 
+# Local replacement for markdown_strings.esc_format: the package was deleted
+# from both PyPI and GitHub, breaking installs. Escaped ASCII punctuation is
+# consumed by markdown renderers, so escaping this superset renders the same
+# while keeping emphasis/code/heading/link syntax from forming in raw text.
+_MARKDOWN_ESCAPE_TABLE = str.maketrans({c: f"\\{c}" for c in "\\`*_#[]"})
+
+
 def markdown_escape(string: Optional[str]) -> str:
     if string is None:
         return ""
-    result: str = esc_format(string, esc=True)
-    return result
+    return string.translate(_MARKDOWN_ESCAPE_TABLE)
 
 
 def sekret_gen():
