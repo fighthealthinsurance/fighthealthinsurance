@@ -510,9 +510,15 @@ class SshHylaFaxClient(HylaFaxClient):
             target = f"{self.remote_scratch_dir}/{self.username}{path}"
         try:
             sftp_client = ssh.open_sftp()
-            # Make the remote directory if needed.
+            # Make the remote directory if needed. umask 007: both fax
+            # identities (root Temporal worker, ray actor) share this tree, so
+            # dirs must be group-writable (the scratch root is setgid fax) --
+            # with the default 022 whichever identity mkdirs first locks the
+            # other out, and PII dirs shouldn't be world-readable anyway.
             dir = os.path.dirname(target)
-            exit_code, _result_text = await self._run_command(["mkdir", "-p", dir])
+            exit_code, _result_text = await self._run_command(
+                ["sh", "-c", f"umask 007 && mkdir -p {shlex.quote(dir)}"]
+            )
             if exit_code != 0:
                 logger.warning("Failed to make dir")
                 return None
