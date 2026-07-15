@@ -698,72 +698,23 @@ class CrisisRedirectIntegrationTests(TestCase):
 
 
 # ---------------------------------------------------------------------------
-# Checklist: rate limits enabled for public endpoints
+# Checklist: default rate limiting intentionally disabled
 # ---------------------------------------------------------------------------
 
 
-class RateLimitedPublicEndpointTests(TestCase):
-    """Verify that the DRF anon throttle defined in ``settings.py:92-99`` is
-    both **configured globally** and **actually rejects** repeated callers.
+class DefaultThrottlingDisabledTests(TestCase):
+    """Default DRF throttling is intentionally OFF (see settings.py).
 
-    We split this into two checks:
-    1. The settings have the right throttle classes and rates wired up
-       (a regression here would silently disable rate limiting).
-    2. The throttle machinery itself denies a caller after the budget is
-       exhausted. The ``TestSync`` config uses ``DummyCache`` so we swap in
-       a real ``LocMemCache`` for this test only — the throttle persists
-       state via the cache, not the throttle object itself.
+    Behind Cloudflare many users (and uptime monitors) can share one edge
+    IP, so the blanket per-IP anon bucket throttled the wrong callers, and
+    the LocMemCache backend made enforcement per-worker and inconsistent.
+    Abuse control belongs on expensive endpoints as scoped throttles backed
+    by a shared cache. This guard catches anyone quietly reintroducing a
+    blanket default instead.
     """
 
-    def test_settings_register_anon_and_user_throttles(self):
+    def test_no_default_throttling_is_configured(self):
         from django.conf import settings
 
-        throttle_classes = settings.REST_FRAMEWORK["DEFAULT_THROTTLE_CLASSES"]
-        self.assertIn("rest_framework.throttling.AnonRateThrottle", throttle_classes)
-        self.assertIn("rest_framework.throttling.UserRateThrottle", throttle_classes)
-
-        rates = settings.REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"]
-        # Sanity-bound the configured rates so this test catches an
-        # accidental "anon: 0/hour" (disables everything) or
-        # "anon: 1000000/hour" (effectively unlimited).
-        for scope in ("anon", "user"):
-            self.assertIn(scope, rates)
-            value = rates[scope]
-            self.assertRegex(value, r"^\d+/(?:second|minute|hour|day)$")
-
-    @override_settings(
-        CACHES={
-            "default": {
-                "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
-                "LOCATION": "safety-appeal-throttle-test",
-            }
-        }
-    )
-    def test_anon_throttle_rejects_caller_after_budget_exhausted(self):
-        # Drive the production throttle class directly so the test is
-        # independent of api_settings propagation. The fresh LocMemCache
-        # above gives the throttle state somewhere to persist (the default
-        # TestSync cache is DummyCache which would let every call through).
-        from rest_framework.throttling import AnonRateThrottle
-
-        cache.clear()
-
-        def fresh_throttle() -> AnonRateThrottle:
-            t = AnonRateThrottle()
-            t.rate = "2/hour"
-            t.num_requests, t.duration = t.parse_rate(t.rate)
-            return t
-
-        request = MagicMock()
-        request.user = MagicMock(is_authenticated=False)
-        request.META = {"REMOTE_ADDR": "203.0.113.42"}
-
-        # Two callers from the same IP are within budget.
-        self.assertTrue(fresh_throttle().allow_request(request, view=None))
-        self.assertTrue(fresh_throttle().allow_request(request, view=None))
-        # Third call must be denied — the budget is two per hour.
-        self.assertFalse(
-            fresh_throttle().allow_request(request, view=None),
-            "Third call from the same anonymous IP must be denied once the "
-            "rate budget is exhausted.",
-        )
+        self.assertNotIn("DEFAULT_THROTTLE_CLASSES", settings.REST_FRAMEWORK)
+        self.assertNotIn("DEFAULT_THROTTLE_RATES", settings.REST_FRAMEWORK)

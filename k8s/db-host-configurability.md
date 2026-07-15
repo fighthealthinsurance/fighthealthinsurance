@@ -67,9 +67,10 @@ workers.
   stale `-back` backup copies, not applied by the deploy pipeline. Left as-is to
   avoid drift; update them only if they are ever reactivated.
 - **`pg-*.yaml`, `k8s/deploy.yaml` service names** — the only `fhi-pg*` strings in
-  the repo are CNPG **Cluster manifests** (`pg-copy.yaml`, `pg-recover.yaml`,
-  `pg-bootstrap-raw.yaml`) naming clusters/buckets, and app **Service** names
-  (`web-svc` etc). Neither is an app DB host; not touched.
+  the repo are CNPG **Cluster manifests** (`pg-copy.yaml`, `pg-recover.yaml`)
+  naming clusters/buckets, and app **Service** names (`web-svc` etc). Neither is
+  an app DB host; not touched. (`pg-bootstrap-raw.yaml`, the old -7 bootstrap,
+  has since been deleted outright.)
 
 ## Reversibility
 
