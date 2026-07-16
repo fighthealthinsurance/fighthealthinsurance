@@ -78,13 +78,15 @@ class MLRouter(object):
                                 f"{m.internal_name}: {e}"
                             )
                     # Context-only models (e.g. Perplexity) are reserved for
-                    # building context such as citations and must never appear
-                    # in the general generation pools. They remain reachable by
-                    # name via models_by_name for the context-building methods.
+                    # building context such as citations, web-informed research,
+                    # and QA question generation (QA is a form of context
+                    # building). They must never appear in the general generation
+                    # pools but remain reachable by name via models_by_name for
+                    # the context-building and QA methods.
                     if m.model.context_only:
                         building_context_only_models_by_cost.append(m)
                     else:
-                        if not m.model.external:
+
                             building_internal_models_by_cost.append(m)
                         else:
                             building_external_models_by_cost.append(m)

@@ -1250,8 +1250,11 @@ Remember in the last three sentences GLP-1 is just an _example_ check what the u
     def context_only(self):
         """
         Whether this model should only be used for building context (e.g.
-        gathering citations / web-informed research) and never for general
-        text generation such as appeals, chat, or prior auth.
+        gathering citations, web-informed research, or QA question generation)
+        and never for general text generation such as appeals, chat, or prior
+        auth. Note: QA (question answering for appeal generation) is itself a
+        form of context building, so context-only models are also eligible for
+        use in QA pipelines.
         """
         return False
 
@@ -3040,7 +3043,8 @@ class RemotePerplexity(RemoteFullOpenLike):
     @property
     def context_only(self):
         # Perplexity is only used for building context (web-informed
-        # citations / research), never for generating appeals or chat.
+        # citations / research / QA question generation), never for
+        # generating appeals or chat. QA is a form of context building.
         return True
 
     @classmethod
