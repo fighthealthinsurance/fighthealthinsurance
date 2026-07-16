@@ -16,14 +16,15 @@
 # ConfigMap is authoritative for the host regardless of what the Secrets still
 # carry -- passwords/users stay in the Secrets and are never duplicated here.
 #
-# DEFAULT = CURRENT behaviour. PDBHOST defaults to the existing fhi-pg-main-8
-# read-write service, so applying this changes nothing at runtime. The
-# migration cutover (scripts/cutover-app-to-pg9.sh) flips ONLY this value to
-# fhi-pg-main-9-rw and rolls the app; the reverse is a one-line patch back.
+# DEFAULT = CURRENT behaviour. PDBHOST points at fhi-pg-main-9, which prod has
+# used since the July 2026 pg8->pg9 cutover (scripts/cutover-app-to-pg9.sh), so
+# applying this changes nothing at runtime. Rolling back to -8 is only safe via
+# scripts/rollback-pre-write-cutover.sh while -8 is still write-consistent; see
+# the runbook's Phase 10 for the post-write options.
 #
 # NOTE: FQDN (`.totallylegitco.svc`) vs the short service name resolve to the
 # same ClusterIP inside the namespace, so pinning the FQDN here is behaviourally
-# identical to the short `fhi-pg-main-8-rw` the Secret most likely carried.
+# identical to the short `fhi-pg-main-9-rw`.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -34,5 +35,7 @@ metadata:
     component: db-config
 data:
   # Primary (read-write) Postgres endpoint. This is the ONLY value the cutover
-  # scripts change. Current cluster: fhi-pg-main-8 (CNPG -rw service = primary).
-  PDBHOST: "fhi-pg-main-8-rw.totallylegitco.svc"
+  # scripts change. Current cluster: fhi-pg-main-9 (CNPG -rw service = primary).
+  # MUST match the live ConfigMap before build.sh runs, or the deploy silently
+  # re-points the app at the old cluster (see the pg8->pg9 runbook).
+  PDBHOST: "fhi-pg-main-9-rw.totallylegitco.svc"

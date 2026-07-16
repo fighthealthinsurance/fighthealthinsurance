@@ -133,15 +133,12 @@ class Base(Configuration):
             "rest_framework.authentication.SessionAuthentication",
         ],
         "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
-        # Rate limiting to prevent abuse (adjust as needed based on usage patterns)
-        "DEFAULT_THROTTLE_CLASSES": [
-            "rest_framework.throttling.AnonRateThrottle",
-            "rest_framework.throttling.UserRateThrottle",
-        ],
-        "DEFAULT_THROTTLE_RATES": {
-            "anon": "100/hour",  # Unauthenticated users
-            "user": "1000/hour",  # Authenticated users
-        },
+        # Default DRF throttling is intentionally disabled: behind Cloudflare
+        # the anon per-IP bucket lumps many users (and uptime monitors) into a
+        # shared edge-IP bucket, and with LocMemCache the counters are
+        # per-worker so enforcement was inconsistent anyway. If abuse resumes,
+        # add scoped throttles on the expensive endpoints (health checks
+        # exempt) backed by a shared cache, not a blanket default.
     }
 
     FIGHT_PAPERWORK_DOMAIN = "localhost:3000"
