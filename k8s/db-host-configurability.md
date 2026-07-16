@@ -66,11 +66,14 @@ workers.
 - **`k8s/deploy-back.yaml`, `k8s/deploy_staging-back.yaml`, `k8s/ray/cluster-back.yaml`** —
   stale `-back` backup copies, not applied by the deploy pipeline. Left as-is to
   avoid drift; update them only if they are ever reactivated.
-- **`pg-*.yaml`, `k8s/deploy.yaml` service names** — the only `fhi-pg*` strings in
-  the repo are CNPG **Cluster manifests** (`pg-copy.yaml`, `pg-recover.yaml`)
-  naming clusters/buckets, and app **Service** names (`web-svc` etc). Neither is
-  an app DB host; not touched. (`pg-bootstrap-raw.yaml`, the old -7 bootstrap,
-  has since been deleted outright.)
+- **`pg-*.yaml`, `k8s/deploy.yaml` service names** — the remaining legacy
+  `fhi-pg*` references are CNPG **Cluster manifests** (`pg-copy.yaml`,
+  `pg-recover.yaml`) naming clusters/buckets, and app **Service** names
+  (`web-svc` etc). Neither is an app DB host; not touched. The live host
+  endpoints in `k8s/db-config.yaml` and `scripts/cutover-app-to-pg9.sh` are
+  intentional — they are the config/cutover point this doc describes.
+  (`pg-bootstrap-raw.yaml`, the old -7 bootstrap, has since been deleted
+  outright.)
 
 ## Reversibility
 
