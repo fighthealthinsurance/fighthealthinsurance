@@ -83,88 +83,116 @@ function processResponseChunk(chunk: string): void {
   }
 }
 
-function done(): void {
-  console.log("Moving to the next step :)");
+// Guard so the user is advanced to the next step at most once, no matter how
+// many close / error / retry events fire for one extraction attempt.
+let advanceScheduled = false;
+
+// Move the user to the next step. `afterFailure` marks a give-up-after-failure
+// (vs a genuine completion): we still advance so the user is never stranded on
+// this page, but we show a notice and wait a little longer so they can read it.
+function advance(afterFailure = false): void {
+  if (advanceScheduled) {
+    return;
+  }
+  advanceScheduled = true;
+
+  console.log(
+    afterFailure
+      ? "Automatic extraction did not finish; moving on."
+      : "Moving to the next step :)",
+  );
 
   // Stop the timer
   if (timerInterval) {
     clearInterval(timerInterval);
   }
 
-  // Update status to complete
+  // Reflect success vs failure in the status indicator.
   const statusIndicator = document.getElementById('entity-status-indicator');
   if (statusIndicator) {
-    statusIndicator.style.borderColor = '#28a745';
+    statusIndicator.style.borderColor = afterFailure ? '#dc3545' : '#28a745';
     const titleEl = statusIndicator.querySelector('div');
     if (titleEl) {
-      titleEl.innerHTML = '✅ Extraction Complete!';
+      titleEl.innerHTML = afterFailure
+        ? '⚠️ Automatic extraction didn’t finish — you can fill in the details on the next page.'
+        : '✅ Extraction Complete!';
     }
   }
 
-  // Auto-advance after a brief delay
+  // Give the user a moment to read a failure notice before advancing.
+  const delayMs = afterFailure ? 4000 : 1000;
   setTimeout(() => {
     if (nextButton) {
       (nextButton as HTMLButtonElement).click();
     } else {
-      const warningMsg = 'entity_fetcher.ts:done() - nextButton (id "next") not found; cannot auto-click to proceed.';
+      const warningMsg = 'entity_fetcher.ts: nextButton (id "next") not found; cannot auto-advance.';
       console.warn(warningMsg);
       Sentry.captureMessage(warningMsg, 'warning');
     }
-  }, 1000);
+  }, delayMs);
 }
 
 function connectWebSocket(
   websocketUrl: string,
   data: object,
   processResponseChunk: (chunk: string) => void,
-  done: () => void,
   retries = 0,
   maxRetries = 5,
 ) {
   const ws = new WebSocket(websocketUrl);
+  // Whether this socket delivered any extraction data, and whether it has
+  // already resolved. An error is normally followed by a close, so we must
+  // not act on both.
+  let receivedData = false;
+  let settled = false;
 
-  // Open the connection and send data
-  ws.onopen = () => {
-    console.log("WebSocket connection opened");
-    ws.send(JSON.stringify(data));
-  };
+  // Both onclose and onerror funnel here; only the first resolves this
+  // connection into exactly one of: advance (success), retry, or
+  // advance-with-notice (out of retries). Without this guard a connection
+  // that closed before any data auto-advanced the user past extraction, and
+  // an error+close pair could advance/submit twice.
+  const settle = () => {
+    if (settled) {
+      return;
+    }
+    settled = true;
 
-  // Handle incoming messages
-  ws.onmessage = (event) => {
-    const chunk = event.data;
-    processResponseChunk(chunk);
-  };
-
-  // Handle connection closure
-  ws.onclose = (event) => {
-    console.log("WebSocket connection closed:", event.reason);
-    done();
-  };
-
-  // Handle errors
-  ws.onerror = (error) => {
-    console.error("WebSocket error:", error);
-    if (retries < maxRetries) {
-      console.log(
-        `Retrying WebSocket connection (${retries + 1}/${maxRetries})...`,
-      );
+    if (receivedData) {
+      // Got extraction data — a close is normal completion.
+      advance(false);
+    } else if (retries < maxRetries) {
+      // Never got data: retry once more before giving up, rather than
+      // advancing past extraction on a transient connection blip.
+      console.log(`Retrying entity extraction (${retries + 1}/${maxRetries})...`);
       setTimeout(
         () =>
           connectWebSocket(
             websocketUrl,
             data,
             processResponseChunk,
-            done,
             retries + 1,
             maxRetries,
           ),
         1000,
       );
     } else {
-      console.error("Max retries reached. Closing connection.");
-      done();
+      // Out of retries with no data — advance with a visible notice rather
+      // than silently sending the user forward with nothing extracted.
+      advance(true);
     }
   };
+
+  ws.onopen = () => {
+    ws.send(JSON.stringify(data));
+  };
+
+  ws.onmessage = (event) => {
+    receivedData = true;
+    processResponseChunk(event.data);
+  };
+
+  ws.onclose = () => settle();
+  ws.onerror = () => settle();
 }
 
 export function doQuery(
@@ -187,7 +215,6 @@ export function doQuery(
     backend_url,
     data,
     processResponseChunk,
-    done,
     0,
     retries,
   );
