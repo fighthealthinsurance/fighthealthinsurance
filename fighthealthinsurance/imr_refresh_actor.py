@@ -39,9 +39,17 @@ class IMRRefreshActor(BaseRefreshActor):
     @staticmethod
     def _refresh_source(source: str, url: str) -> Tuple[int, int, int, int]:
         from fighthealthinsurance.imr_ingest import fetch_csv, load_csv_text
+        from fighthealthinsurance.utils import close_old_connections_quietly
 
-        csv_text = fetch_csv(url)
-        return load_csv_text(csv_text, source=source, source_url=url)
+        try:
+            csv_text = fetch_csv(url)
+            return load_csv_text(csv_text, source=source, source_url=url)
+        finally:
+            # This runs via sync_to_async(thread_sensitive=False), i.e. on a
+            # reused executor thread that BaseRefreshActor's thread-sensitive
+            # cleanup can't reach — release this thread's own connection so
+            # it doesn't pin a Postgres slot across the hourly sleep.
+            close_old_connections_quietly()
 
     async def _refresh_due(self, interval_hours: int) -> bool:
         sources = self._configured_sources()

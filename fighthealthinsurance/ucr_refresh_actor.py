@@ -18,7 +18,7 @@ import time
 import ray
 from asgiref.sync import sync_to_async
 
-from fighthealthinsurance.utils import get_env_variable
+from fighthealthinsurance.utils import aclose_old_connections, get_env_variable
 
 name = "UCRRefreshActor"
 
@@ -69,6 +69,8 @@ class UCRRefreshController:
                 self._logger.opt(exception=True).error(
                     "UCR source refresh failed (#{})", self._actor_error_count
                 )
+            # Don't hold a Postgres slot across the hours-long sleep below.
+            await aclose_old_connections()
             base = settings.UCR_SOURCE_REFRESH_INTERVAL_HOURS * 3600
             await asyncio.sleep(random.uniform(base * 0.85, base * 1.15))
 
@@ -93,6 +95,8 @@ class UCRRefreshController:
                     "UCR denial refresh loop crashed (#{})",
                     self._actor_error_count,
                 )
+            # Don't hold a Postgres slot while idling between polls.
+            await aclose_old_connections()
             base = settings.UCR_DENIAL_REFRESH_INTERVAL_MINUTES * 60
             await asyncio.sleep(random.uniform(base * 0.75, base * 1.25))
 

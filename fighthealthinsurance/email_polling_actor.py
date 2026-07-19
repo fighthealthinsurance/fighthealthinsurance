@@ -10,7 +10,7 @@ from django.utils import timezone
 import ray
 from asgiref.sync import sync_to_async
 
-from fighthealthinsurance.utils import get_env_variable
+from fighthealthinsurance.utils import aclose_old_connections, get_env_variable
 
 name = "EmailPollingActor"
 
@@ -134,6 +134,8 @@ class EmailPollingActor:
                     await self._clear_expired_emails()
                     self.last_email_clear_check = now
 
+                # Don't hold a Postgres slot while idling between polls.
+                await aclose_old_connections()
                 # Jittered poll interval
                 await asyncio.sleep(random.uniform(8, 15))
                 error_count = 0
@@ -148,6 +150,7 @@ class EmailPollingActor:
                     f"Error #{error_count} while checking messages, "
                     f"backing off {total_wait:.0f}s"
                 )
+                await aclose_old_connections()
                 await asyncio.sleep(total_wait)
 
         self._logger.warning("EmailPollingActor stopped running")
@@ -155,6 +158,8 @@ class EmailPollingActor:
 
     async def _jittered_send_delay(self, sent_count: int) -> None:
         """Apply jittered delay proportional to emails sent."""
+        # This delay can run for hours; release the DB connection first.
+        await aclose_old_connections()
         base_delay = 600 * sent_count + 42
         jitter = random.uniform(-60, 60)
         await asyncio.sleep(max(10, base_delay + jitter))

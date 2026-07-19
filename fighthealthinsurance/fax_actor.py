@@ -79,6 +79,7 @@ class FaxActor:
         from django.conf import settings
 
         from fighthealthinsurance.models import FaxesToSend
+        from fighthealthinsurance.utils import close_old_connections_quietly
 
         if getattr(settings, "TEMPORAL_ENABLED", False):
             # Temporal's SendFaxWorkflow (delay_send timer) owns delayed sending;
@@ -88,34 +89,40 @@ class FaxActor:
             )
             return (0, 0)
 
-        target_time = timezone.now() - timedelta(hours=1)
-        self._logger.info(f"Sending faxes older than target: {target_time}")
+        try:
+            target_time = timezone.now() - timedelta(hours=1)
+            self._logger.info(f"Sending faxes older than target: {target_time}")
 
-        delayed_faxes = FaxesToSend.objects.filter(
-            should_send=True,
-            sent=False,
-            date__lt=target_time,
-        )
-        t = 0
-        f = 0
-        for fax in delayed_faxes:
-            try:
-                self._logger.debug(f"Attempting to send fax {fax}")
-                t = t + 1
-                response = self.do_send_fax_object(fax)
-                if response:
-                    self._logger.info(f"Sent fax {fax} successfully")
-                else:
-                    self._logger.warning(f"Failed to send fax {fax}")
+            delayed_faxes = FaxesToSend.objects.filter(
+                should_send=True,
+                sent=False,
+                date__lt=target_time,
+            )
+            t = 0
+            f = 0
+            for fax in delayed_faxes:
+                try:
+                    self._logger.debug(f"Attempting to send fax {fax}")
+                    t = t + 1
+                    response = self.do_send_fax_object(fax)
+                    if response:
+                        self._logger.info(f"Sent fax {fax} successfully")
+                    else:
+                        self._logger.warning(f"Failed to send fax {fax}")
+                        f = f + 1
+                except Exception:
+                    self._logger.opt(exception=True).error(f"Error sending fax {fax}")
                     f = f + 1
-            except Exception:
-                self._logger.opt(exception=True).error(f"Error sending fax {fax}")
-                f = f + 1
-        if t > 0:
-            self._logger.info(f"Tried sending {t} faxes with {f} failures")
-        else:
-            self._logger.debug("No old faxes found to send")
-        return (t, f)
+            if t > 0:
+                self._logger.info(f"Tried sending {t} faxes with {f} failures")
+            else:
+                self._logger.debug("No old faxes found to send")
+            return (t, f)
+        finally:
+            # Polled every ~60s from FaxPollingActor with no request
+            # lifecycle; drop the connection so this thread doesn't pin a
+            # Postgres slot while idle between polls.
+            close_old_connections_quietly()
 
     def do_send_fax(self, hashed_email: str, uuid_val: Union[str, uuid.UUID]) -> bool:
         # Now that we have an app instance we can import faxes to send

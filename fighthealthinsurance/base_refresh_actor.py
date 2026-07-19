@@ -25,7 +25,7 @@ import os
 import time
 from typing import Optional
 
-from fighthealthinsurance.utils import get_env_variable
+from fighthealthinsurance.utils import aclose_old_connections, get_env_variable
 
 # How long to sleep after an unhandled exception in the run loop. Matches
 # the value used in every existing refresh actor so retry pressure on
@@ -95,6 +95,8 @@ class BaseRefreshActor:
             try:
                 interval_hours = self._interval_hours()
                 await self._maybe_refresh(interval_hours)
+                # Don't hold a Postgres slot while idling between checks.
+                await aclose_old_connections()
                 # Re-check hourly so configuration changes get picked up
                 # without restarting the actor.
                 await asyncio.sleep(3600)
@@ -102,6 +104,7 @@ class BaseRefreshActor:
                 self._logger.opt(exception=True).error(
                     f"Error in {self.actor_log_name} refresh cycle"
                 )
+                await aclose_old_connections()
                 await asyncio.sleep(self.error_backoff_seconds)
 
         self._logger.warning(f"{self.actor_log_name} stopped running")

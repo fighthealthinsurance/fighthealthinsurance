@@ -100,6 +100,40 @@ pubmed_fetcher = (
 )
 
 
+def close_old_connections_quietly() -> None:
+    """Release this thread's stale/idle Django DB connections; never raise.
+
+    Long-lived Ray actors and background loops never get Django's
+    per-request connection cleanup, so with CONN_MAX_AGE=0 an idle
+    connection would otherwise hold a Postgres slot until the process
+    dies. Runs in ``finally`` blocks of poll loops and worker threads,
+    where raising would mask the real work's outcome — and under
+    pytest-django's no-DB guard, even touching connection state raises in
+    tests that never used the database.
+    """
+    try:
+        from django.db import close_old_connections
+
+        close_old_connections()
+    except Exception:
+        logger.opt(exception=True).warning("Failed to close old DB connections")
+
+
+async def aclose_old_connections() -> None:
+    """Async flavor of ``close_old_connections_quietly``; never raises.
+
+    Runs through the thread-sensitive executor (asgiref's default, stated
+    explicitly) — the same thread the async ORM uses — so it closes the
+    connection that thread actually owns.
+    """
+    try:
+        from asgiref.sync import sync_to_async
+
+        await sync_to_async(close_old_connections_quietly, thread_sensitive=True)()
+    except Exception:
+        logger.opt(exception=True).warning("Failed to close old DB connections")
+
+
 def warn_too_short_appeal(text: Optional[str], context: str) -> None:
     """Log a warning that a too-short appeal is being filtered out.
 
