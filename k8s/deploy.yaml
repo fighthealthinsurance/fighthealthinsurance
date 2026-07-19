@@ -173,6 +173,22 @@ spec:
               path: /ziggy/rest/ping
               port: 80
             periodSeconds: 180
+            timeoutSeconds: 5
+          # A pod with a wedged uvicorn worker answers some requests fast and
+          # hangs others for 60s+; without a readinessProbe it stays in the
+          # Service and times out ~1/N of all traffic (the UptimeRobot
+          # "Connection Timeout" incidents). Repeated failures here pull the
+          # pod from rotation while liveness decides whether to restart it.
+          readinessProbe:
+            httpGet:
+              httpHeaders:
+                - name: Host
+                  value: "www.fighthealthinsurance.com"
+              path: /ziggy/rest/ping
+              port: 80
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 2
           startupProbe:
             httpGet:
               httpHeaders:
