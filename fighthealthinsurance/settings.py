@@ -831,10 +831,11 @@ class Prod(Base):
 
     @property
     def DATABASES(self):  # type: ignore
-        # Postgres connection pooling (requires psycopg 3 + psycopg-pool,
-        # installed via deploy-requirements.txt). We serve with uvicorn/ASGI,
-        # where Django documents that persistent connections (CONN_MAX_AGE > 0)
-        # should stay disabled and a pool be used instead:
+        # Postgres connection handling. We serve with uvicorn/ASGI, where
+        # Django documents that persistent connections (CONN_MAX_AGE > 0) must
+        # stay disabled; client-side pooling (psycopg 3 + psycopg-pool via
+        # deploy-requirements.txt) is OPT-IN through PG_USE_POOL=1 and OFF by
+        # default -- see the OPTIONS comment below for why.
         # https://docs.djangoproject.com/en/5.2/ref/databases/#connection-pool
         mysql_engine = "django_prometheus.db.backends.mysql"
         postgres_engine = "django_prometheus.db.backends.postgresql"
@@ -869,12 +870,11 @@ class Prod(Base):
                         # its own pool: size the server's max_connections to
                         # fit (processes * max_size) plus headroom.
                         "pool": {
-                            "min_size": int(os.getenv("PG_POOL_MIN_SIZE", "2")),
-                            "max_size": int(os.getenv("PG_POOL_MAX_SIZE", "10")),
-                            # Fail fast: each waiter occupies the worker's
-                            # serialized sync lane, so N queued requests stack
-                            # N*timeout of latency onto everything behind them.
-                            "timeout": int(os.getenv("PG_POOL_TIMEOUT", "5")),
+                            "min_size": _ucr_int("PG_POOL_MIN_SIZE", 2, 0),
+                            "max_size": _ucr_int("PG_POOL_MAX_SIZE", 10, 1),
+                            # Fail fast: pool waiters stack their timeout onto
+                            # every request queued behind them.
+                            "timeout": _ucr_int("PG_POOL_TIMEOUT", 5, 1),
                             "max_lifetime": 1800,
                             "max_idle": 300,
                         },
