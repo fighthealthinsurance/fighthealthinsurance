@@ -96,7 +96,7 @@ async def check_and_refill_task_pool():
     """
     from django.core.cache import cache
 
-    from asgiref.sync import sync_to_async
+    from channels.db import database_sync_to_async as sync_to_async
 
     lock_key = "chooser_task_refill_lock"
     lock_timeout = 5  # 5 seconds - non-blocking, quick return if already running
@@ -136,7 +136,7 @@ async def check_and_refill_task_pool():
 
 async def _count_ready_tasks(task_type: str) -> int:
     """Count the number of READY tasks for a given type."""
-    from asgiref.sync import sync_to_async
+    from channels.db import database_sync_to_async as sync_to_async
 
     return await sync_to_async(
         ChooserTask.objects.filter(task_type=task_type, status="READY").count
@@ -150,7 +150,7 @@ async def _count_unscored_tasks(task_type: str) -> int:
     task has any vote it is "scored" and contributes diminishing value, so we
     track unscored tasks separately from the overall READY pool.
     """
-    from asgiref.sync import sync_to_async
+    from channels.db import database_sync_to_async as sync_to_async
 
     from django.db.models import Count
 
@@ -182,7 +182,7 @@ async def _generate_single_task(task_type: str):
     For appeals: generates multiple synthetic appeal letters for a sample context
     For chat: generates multiple synthetic chat responses for a sample prompt
     """
-    from asgiref.sync import sync_to_async
+    from channels.db import database_sync_to_async as sync_to_async
 
     # Create the task in QUEUED state
     task = await sync_to_async(ChooserTask.objects.create)(
@@ -223,7 +223,7 @@ async def _generate_single_task(task_type: str):
 
 async def _generate_appeal_candidates(task: ChooserTask):
     """Generate appeal letter candidates for a task using ONLY synthetic data from ML."""
-    from asgiref.sync import sync_to_async
+    from channels.db import database_sync_to_async as sync_to_async
 
     # Use ML to generate a synthetic denial scenario. Synthetic data only, so
     # external backends are allowed (and wanted — see module docstring).
@@ -392,7 +392,7 @@ async def _generate_appeal_candidates(task: ChooserTask):
 
 async def _generate_chat_candidates(task: ChooserTask):
     """Generate chat response candidates for a task using ONLY synthetic data from ML."""
-    from asgiref.sync import sync_to_async
+    from channels.db import database_sync_to_async as sync_to_async
 
     # Generate synthetic chat prompt using ML
     # Use ML to generate a synthetic conversation with some back-and-forth.
@@ -653,7 +653,7 @@ async def _maybe_add_synthesized_candidate(task: ChooserTask, kind: str) -> None
     if not CHOOSER_INCLUDE_SYNTHESIS:
         return
 
-    from asgiref.sync import sync_to_async
+    from channels.db import database_sync_to_async as sync_to_async
 
     # Best-effort: synthesis runs AFTER the base candidates are already
     # persisted, so nothing here may propagate. Otherwise a transient error
@@ -806,7 +806,7 @@ async def prefill_if_needed(min_ready: int = 1):
     Args:
         min_ready: Minimum number of ready tasks required for each type.
     """
-    from asgiref.sync import sync_to_async
+    from channels.db import database_sync_to_async as sync_to_async
 
     for task_type in ["appeal", "chat"]:
         ready_count = await _count_ready_tasks(task_type)
