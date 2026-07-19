@@ -5,10 +5,10 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 from django.utils import timezone
 
-# database_sync_to_async, not plain sync_to_async: chat runs under websocket
-# consumers outside the HTTP request cycle, so nothing else ever closes the DB
-# connections these calls open -- the channels variant cleans them up.
-from channels.db import database_sync_to_async as sync_to_async
+# channels' database_sync_to_async (NOT asgiref's sync_to_async): chat runs
+# outside the HTTP request cycle, so only its close_old_connections wrapping
+# ever closes the DB connections these calls open.
+from channels.db import database_sync_to_async
 from loguru import logger
 
 from fhi_users.models import User
@@ -170,7 +170,7 @@ class ChatInterface:
     async def _get_user_info(self) -> str:
         """Generates a descriptive string for the user (either professional or patient)."""
         try:
-            return await sync_to_async(self.chat.summarize_user)()
+            return await database_sync_to_async(self.chat.summarize_user)()
         except Exception as e:
             logger.warning(f"Could not generate detailed user info: {e}")
             return "a user"
@@ -650,7 +650,7 @@ class ChatInterface:
                             if await chat.appeals.aexists():
                                 appeal = await chat.appeals.afirst()
                                 if appeal:
-                                    linked_denial = await sync_to_async(
+                                    linked_denial = await database_sync_to_async(
                                         lambda x: x.denial
                                     )(appeal)
                                     if linked_denial:
@@ -755,7 +755,7 @@ class ChatInterface:
         # Also we require their is a pro user to enable linking.
         if iterate_on_appeal and user:
             await self.send_status_message("Linking appeal into chat")
-            appeal = await sync_to_async(Appeal.get_optional_for_user)(
+            appeal = await database_sync_to_async(Appeal.get_optional_for_user)(
                 user, id=iterate_on_appeal
             )
             if not appeal:
@@ -763,7 +763,7 @@ class ChatInterface:
                     "Appeal not found, or you do not have permission to access it."
                 )
                 return
-            appeal_details = await sync_to_async(appeal.details)()
+            appeal_details = await database_sync_to_async(appeal.details)()
             if appeal.chat_id != chat.id:
                 appeal.chat = chat
                 await appeal.asave()
@@ -776,15 +776,15 @@ class ChatInterface:
             await self.send_status_message(
                 "Linking prior authorization request into chat"
             )
-            prior_auth = await sync_to_async(PriorAuthRequest.get_optional_for_user)(
-                user, id=iterate_on_prior_auth
-            )
+            prior_auth = await database_sync_to_async(
+                PriorAuthRequest.get_optional_for_user
+            )(user, id=iterate_on_prior_auth)
             if not prior_auth:
                 await self.send_error_message(
                     "Prior Auth Request not found or you do not have permission to access it."
                 )
                 return
-            prior_auth_details = await sync_to_async(prior_auth.details)()
+            prior_auth_details = await database_sync_to_async(prior_auth.details)()
             if prior_auth.chat_id != chat.id:
                 prior_auth.chat = chat
                 await prior_auth.asave()
@@ -1099,7 +1099,7 @@ class ChatInterface:
                     session = SessionStore(session_key=sk)
                     return session.get("policy_document_id")
 
-                doc_id = await sync_to_async(_get_session_doc_id)(session_key)
+                doc_id = await database_sync_to_async(_get_session_doc_id)(session_key)
                 if doc_id:
                     policy_doc = await PolicyDocument.objects.filter(
                         id=doc_id,

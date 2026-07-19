@@ -145,13 +145,13 @@ class ExtraLinkPrefetchActor:
         logger.info("Starting PubMed pre-fetch")
 
         try:
-            from asgiref.sync import sync_to_async
+            from channels.db import database_sync_to_async
 
             from fighthealthinsurance.microsites import get_all_microsites
             from fighthealthinsurance.pubmed_tools import PubMedTools
 
             pubmed_tools = PubMedTools()
-            microsites = await sync_to_async(get_all_microsites)()
+            microsites = await database_sync_to_async(get_all_microsites)()
 
             stats = {"fetched": 0, "failed": 0, "total": 0}
 

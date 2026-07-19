@@ -20,6 +20,7 @@ from typing import List, Optional
 
 from django.conf import settings
 
+from channels.db import database_sync_to_async
 from loguru import logger
 
 from fighthealthinsurance.ml.ml_router import ml_router
@@ -96,13 +97,13 @@ async def check_and_refill_task_pool():
     """
     from django.core.cache import cache
 
-    from channels.db import database_sync_to_async as sync_to_async
-
     lock_key = "chooser_task_refill_lock"
     lock_timeout = 5  # 5 seconds - non-blocking, quick return if already running
 
     # Try to acquire the lock
-    lock_acquired = await sync_to_async(cache.add)(lock_key, "locked", lock_timeout)
+    lock_acquired = await database_sync_to_async(cache.add)(
+        lock_key, "locked", lock_timeout
+    )
 
     if not lock_acquired:
         logger.debug("Another instance is already refilling chooser tasks, skipping")
@@ -131,14 +132,13 @@ async def check_and_refill_task_pool():
                 )
     finally:
         # Release the lock
-        await sync_to_async(cache.delete)(lock_key)
+        await database_sync_to_async(cache.delete)(lock_key)
 
 
 async def _count_ready_tasks(task_type: str) -> int:
     """Count the number of READY tasks for a given type."""
-    from channels.db import database_sync_to_async as sync_to_async
 
-    return await sync_to_async(
+    return await database_sync_to_async(
         ChooserTask.objects.filter(task_type=task_type, status="READY").count
     )()
 
@@ -150,11 +150,10 @@ async def _count_unscored_tasks(task_type: str) -> int:
     task has any vote it is "scored" and contributes diminishing value, so we
     track unscored tasks separately from the overall READY pool.
     """
-    from channels.db import database_sync_to_async as sync_to_async
 
     from django.db.models import Count
 
-    return await sync_to_async(
+    return await database_sync_to_async(
         ChooserTask.objects.filter(
             task_type=task_type, status="READY", source="synthetic"
         )
@@ -182,10 +181,9 @@ async def _generate_single_task(task_type: str):
     For appeals: generates multiple synthetic appeal letters for a sample context
     For chat: generates multiple synthetic chat responses for a sample prompt
     """
-    from channels.db import database_sync_to_async as sync_to_async
 
     # Create the task in QUEUED state
-    task = await sync_to_async(ChooserTask.objects.create)(
+    task = await database_sync_to_async(ChooserTask.objects.create)(
         task_type=task_type,
         status="QUEUED",
         source="synthetic",
@@ -199,16 +197,18 @@ async def _generate_single_task(task_type: str):
         else:
             await _generate_chat_candidates(task)
 
-        # Mark task as READY if we generated enough candidates
+        # Mark task as READY if we generated enough candidates. The counter
+        # was persisted by the generator's end-of-run save (not once per
+        # candidate); this save records the final status.
         if task.num_candidates_generated >= 2:  # Minimum 2 candidates needed
             task.status = "READY"
-            await sync_to_async(task.save)()
+            await database_sync_to_async(task.save)()
             logger.info(
                 f"ChooserTask {task.id} is now READY with {task.num_candidates_generated} candidates"
             )
         else:
             task.status = "DISABLED"
-            await sync_to_async(task.save)()
+            await database_sync_to_async(task.save)()
             logger.warning(
                 f"ChooserTask {task.id} disabled - insufficient candidates generated"
             )
@@ -218,12 +218,11 @@ async def _generate_single_task(task_type: str):
             f"Error generating candidates for task {task.id}: {e}"
         )
         task.status = "DISABLED"
-        await sync_to_async(task.save)()
+        await database_sync_to_async(task.save)()
 
 
 async def _generate_appeal_candidates(task: ChooserTask):
     """Generate appeal letter candidates for a task using ONLY synthetic data from ML."""
-    from channels.db import database_sync_to_async as sync_to_async
 
     # Use ML to generate a synthetic denial scenario. Synthetic data only, so
     # external backends are allowed (and wanted — see module docstring).
@@ -232,7 +231,7 @@ async def _generate_appeal_candidates(task: ChooserTask):
         logger.warning("No models available for generating synthetic denial scenarios")
         # Cannot proceed without models - mark task as disabled
         task.status = "DISABLED"
-        await sync_to_async(task.save)()
+        await database_sync_to_async(task.save)()
         return
 
     # Use first model to generate synthetic denial scenario
@@ -299,7 +298,7 @@ async def _generate_appeal_candidates(task: ChooserTask):
             )
 
         task.context_json = context
-        await sync_to_async(task.save)()
+        await database_sync_to_async(task.save)()
 
     except Exception as e:
         logger.opt(exception=True).warning(
@@ -307,7 +306,7 @@ async def _generate_appeal_candidates(task: ChooserTask):
         )
         # Cannot proceed without a valid scenario - mark task as disabled
         task.status = "DISABLED"
-        await sync_to_async(task.save)()
+        await database_sync_to_async(task.save)()
         return
 
     # Generate candidates using different models. Synthetic context only, so
@@ -338,7 +337,7 @@ async def _generate_appeal_candidates(task: ChooserTask):
                 prompt=prompt,
             )
             if response and len(response.strip()) > 100:
-                await sync_to_async(ChooserCandidate.objects.create)(
+                await database_sync_to_async(ChooserCandidate.objects.create)(
                     task=task,
                     candidate_index=candidate_index,
                     kind="appeal_letter",
@@ -348,7 +347,6 @@ async def _generate_appeal_candidates(task: ChooserTask):
                 )
                 candidate_index += 1
                 task.num_candidates_generated = candidate_index
-                await sync_to_async(task.save)()
         except Exception as e:
             logger.warning(f"Error generating appeal candidate with model {model}: {e}")
 
@@ -369,7 +367,7 @@ async def _generate_appeal_candidates(task: ChooserTask):
                     prompt=prompt,
                 )
                 if response and len(response.strip()) > 100:
-                    await sync_to_async(ChooserCandidate.objects.create)(
+                    await database_sync_to_async(ChooserCandidate.objects.create)(
                         task=task,
                         candidate_index=candidate_index,
                         kind="appeal_letter",
@@ -379,12 +377,15 @@ async def _generate_appeal_candidates(task: ChooserTask):
                     )
                     candidate_index += 1
                     task.num_candidates_generated = candidate_index
-                    await sync_to_async(task.save)()
             except Exception as e:
                 logger.warning(
                     f"Error generating appeal candidate (retry) with model {model}: {e}"
                 )
             retry_count += 1
+
+    # One save covers every candidate generated above; candidates are
+    # created durably as they complete, only the counter waits.
+    await database_sync_to_async(task.save)()
 
     # Add a synthesized candidate combining the per-model drafts.
     await _maybe_add_synthesized_candidate(task, "appeal_letter")
@@ -392,7 +393,6 @@ async def _generate_appeal_candidates(task: ChooserTask):
 
 async def _generate_chat_candidates(task: ChooserTask):
     """Generate chat response candidates for a task using ONLY synthetic data from ML."""
-    from channels.db import database_sync_to_async as sync_to_async
 
     # Generate synthetic chat prompt using ML
     # Use ML to generate a synthetic conversation with some back-and-forth.
@@ -402,7 +402,7 @@ async def _generate_chat_candidates(task: ChooserTask):
         logger.warning("No models available for generating synthetic chat prompts")
         # Cannot proceed without models - mark task as disabled
         task.status = "DISABLED"
-        await sync_to_async(task.save)()
+        await database_sync_to_async(task.save)()
         return
 
     # Use first model to generate synthetic conversation
@@ -512,14 +512,14 @@ async def _generate_chat_candidates(task: ChooserTask):
 
         if len(final_user_prompt) < 10 or len(final_user_prompt) > 1000:
             task.status = "DISABLED"
-            await sync_to_async(task.save)()
+            await database_sync_to_async(task.save)()
             return
 
         task.context_json = {
             "prompt": final_user_prompt,
             "history": history,
         }
-        await sync_to_async(task.save)()
+        await database_sync_to_async(task.save)()
 
     except Exception as e:
         logger.opt(exception=True).warning(
@@ -527,7 +527,7 @@ async def _generate_chat_candidates(task: ChooserTask):
         )
         # Cannot proceed without a valid prompt - mark task as disabled
         task.status = "DISABLED"
-        await sync_to_async(task.save)()
+        await database_sync_to_async(task.save)()
         return
 
     # Generate candidates using different models. Synthetic context only, so
@@ -561,7 +561,7 @@ async def _generate_chat_candidates(task: ChooserTask):
                 is_logged_in=True,
             )
             if response and len(response.strip()) > 50:
-                await sync_to_async(ChooserCandidate.objects.create)(
+                await database_sync_to_async(ChooserCandidate.objects.create)(
                     task=task,
                     candidate_index=candidate_index,
                     kind="chat_response",
@@ -574,7 +574,6 @@ async def _generate_chat_candidates(task: ChooserTask):
                 )
                 candidate_index += 1
                 task.num_candidates_generated = candidate_index
-                await sync_to_async(task.save)()
         except Exception as e:
             logger.warning(f"Error generating chat candidate with model {model}: {e}")
 
@@ -594,7 +593,7 @@ async def _generate_chat_candidates(task: ChooserTask):
                     is_logged_in=True,
                 )
                 if response and len(response.strip()) > 50:
-                    await sync_to_async(ChooserCandidate.objects.create)(
+                    await database_sync_to_async(ChooserCandidate.objects.create)(
                         task=task,
                         candidate_index=candidate_index,
                         kind="chat_response",
@@ -608,12 +607,15 @@ async def _generate_chat_candidates(task: ChooserTask):
                     )
                     candidate_index += 1
                     task.num_candidates_generated = candidate_index
-                    await sync_to_async(task.save)()
             except Exception as e:
                 logger.warning(
                     f"Error generating chat candidate (retry) with model {model}: {e}"
                 )
             retry_count += 1
+
+    # One save covers every candidate generated above; candidates are
+    # created durably as they complete, only the counter waits.
+    await database_sync_to_async(task.save)()
 
     # Add a synthesized candidate combining the per-model responses.
     await _maybe_add_synthesized_candidate(task, "chat_response")
@@ -652,8 +654,6 @@ async def _maybe_add_synthesized_candidate(task: ChooserTask, kind: str) -> None
     """
     if not CHOOSER_INCLUDE_SYNTHESIS:
         return
-
-    from channels.db import database_sync_to_async as sync_to_async
 
     # Best-effort: synthesis runs AFTER the base candidates are already
     # persisted, so nothing here may propagate. Otherwise a transient error
@@ -703,10 +703,10 @@ async def _maybe_add_synthesized_candidate(task: ChooserTask, kind: str) -> None
             return
 
         # Next free index: base candidates occupy 0..N-1 contiguously.
-        next_index = await sync_to_async(
+        next_index = await database_sync_to_async(
             ChooserCandidate.objects.filter(task=task).count
         )()
-        await sync_to_async(ChooserCandidate.objects.create)(
+        await database_sync_to_async(ChooserCandidate.objects.create)(
             task=task,
             candidate_index=next_index,
             kind=kind,
@@ -716,7 +716,7 @@ async def _maybe_add_synthesized_candidate(task: ChooserTask, kind: str) -> None
             metadata={"source": "synthetic", "synthesized": True},
         )
         task.num_candidates_generated = next_index + 1
-        await sync_to_async(task.save)()
+        await database_sync_to_async(task.save)()
         logger.info(
             f"Added synthesized {kind} candidate to task {task.id} "
             f"from {len(contents)} drafts"
@@ -806,7 +806,6 @@ async def prefill_if_needed(min_ready: int = 1):
     Args:
         min_ready: Minimum number of ready tasks required for each type.
     """
-    from channels.db import database_sync_to_async as sync_to_async
 
     for task_type in ["appeal", "chat"]:
         ready_count = await _count_ready_tasks(task_type)

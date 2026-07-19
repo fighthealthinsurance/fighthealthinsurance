@@ -16,7 +16,7 @@ import random
 import time
 
 import ray
-from asgiref.sync import sync_to_async
+from channels.db import database_sync_to_async
 
 from fighthealthinsurance.utils import get_env_variable
 
@@ -45,12 +45,12 @@ class UCRRefreshController:
         from fighthealthinsurance.ucr_helper import UCREnrichmentHelper
 
         try:
-            denial = await sync_to_async(Denial.objects.get)(pk=denial_id)
+            denial = await database_sync_to_async(Denial.objects.get)(pk=denial_id)
         except Denial.DoesNotExist:
             self._logger.warning("UCR refresh_denial: denial {} not found", denial_id)
             return False
 
-        result = await sync_to_async(UCREnrichmentHelper.maybe_enrich)(
+        result = await database_sync_to_async(UCREnrichmentHelper.maybe_enrich)(
             denial, force=True
         )
         return result is not None
@@ -162,7 +162,7 @@ class UCRRefreshController:
                     "UCR Medicare PFS auto-download failed"
                 )
 
-        latest = await sync_to_async(
+        latest = await database_sync_to_async(
             lambda: UCRRate.objects.filter(source=UCRSource.MEDICARE_PFS)
             .order_by("-effective_date")
             .values_list("effective_date", flat=True)
@@ -192,7 +192,7 @@ class UCRRefreshController:
         # that have already moved to a different source.
         from fighthealthinsurance.models import Denial
 
-        return await sync_to_async(
+        return await database_sync_to_async(
             lambda: Denial.objects.filter(
                 appeal_result__isnull=True,
                 latest_ucr_lookup__rates_snapshot__contains=[{"source": source}],
@@ -213,7 +213,7 @@ class UCRRefreshController:
         batch_size = settings.UCR_DENIAL_REFRESH_BATCH_SIZE
 
         cutoff = timezone.now() - datetime.timedelta(days=ttl)
-        stale = await sync_to_async(
+        stale = await database_sync_to_async(
             lambda: list(
                 Denial.objects.filter(appeal_result__isnull=True)
                 .filter(
@@ -226,7 +226,9 @@ class UCRRefreshController:
         if not stale:
             return 0, 0
 
-        rate_cache = await sync_to_async(UCREnrichmentHelper.bulk_load_rates)(stale)
+        rate_cache = await database_sync_to_async(UCREnrichmentHelper.bulk_load_rates)(
+            stale
+        )
 
         # return_exceptions=True so one bad denial doesn't cancel the batch
         # and we get per-denial visibility into failures.
@@ -235,7 +237,9 @@ class UCRRefreshController:
         # bumped by the helper either way, so the stale-batch query advances.
         results = await asyncio.gather(
             *(
-                sync_to_async(UCREnrichmentHelper.maybe_enrich)(d, rates=rate_cache)
+                database_sync_to_async(UCREnrichmentHelper.maybe_enrich)(
+                    d, rates=rate_cache
+                )
                 for d in stale
             ),
             return_exceptions=True,

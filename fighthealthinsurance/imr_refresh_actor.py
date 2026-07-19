@@ -11,7 +11,7 @@ The run-loop / health-check / backoff scaffolding lives in
 from typing import Tuple
 
 import ray
-from asgiref.sync import sync_to_async
+from channels.db import database_sync_to_async
 
 from fighthealthinsurance.base_refresh_actor import BaseRefreshActor
 
@@ -52,7 +52,7 @@ class IMRRefreshActor(BaseRefreshActor):
         any_success = False
         for source, url in sources:
             try:
-                created, updated, skipped, failed = await sync_to_async(
+                created, updated, skipped, failed = await database_sync_to_async(
                     self._refresh_source, thread_sensitive=False
                 )(source, url)
                 any_success = True

@@ -9,10 +9,10 @@ from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
 from django.db import transaction
 
-# database_sync_to_async, not plain sync_to_async: consumers run outside the
-# HTTP request cycle, so nothing else ever closes the DB connections these
-# calls open -- the channels variant cleans them up around each call.
-from channels.db import database_sync_to_async as sync_to_async
+# channels' database_sync_to_async (NOT asgiref's sync_to_async): consumers run
+# outside the HTTP request cycle, so only its close_old_connections wrapping
+# ever closes the DB connections these calls open.
+from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncWebsocketConsumer
 from loguru import logger
 
@@ -570,7 +570,7 @@ async def resolve_chat_type(
         return ChatType.PATIENT, None
 
     # Authenticated user — always check ProfessionalUser
-    professional_user = await sync_to_async(get_professional_user_fn)(user)
+    professional_user = await database_sync_to_async(get_professional_user_fn)(user)
     if professional_user:
         return ChatType.PROFESSIONAL, professional_user
 
@@ -661,8 +661,10 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                 # Get the analysis from the model
                 response_text, _ = await model.generate_chat_response(
                     full_prompt,
-                    is_professional=await sync_to_async(chat.is_professional_user)(),
-                    is_logged_in=await sync_to_async(chat.is_logged_in_user)(),
+                    is_professional=await database_sync_to_async(
+                        chat.is_professional_user
+                    )(),
+                    is_logged_in=await database_sync_to_async(chat.is_logged_in_user)(),
                 )
 
                 if response_text:
@@ -722,7 +724,7 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                                 chat.denied_reason = denied_reason[:_MAX_LEN]
                                 updated = True
                             if updated:
-                                await sync_to_async(
+                                await database_sync_to_async(
                                     self._persist_denied_items_transactional
                                 )(
                                     chat.id,
