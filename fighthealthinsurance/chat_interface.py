@@ -5,7 +5,10 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 from django.utils import timezone
 
-from asgiref.sync import sync_to_async
+# database_sync_to_async, not plain sync_to_async: chat runs under websocket
+# consumers outside the HTTP request cycle, so nothing else ever closes the DB
+# connections these calls open -- the channels variant cleans them up.
+from channels.db import database_sync_to_async as sync_to_async
 from loguru import logger
 
 from fhi_users.models import User

@@ -9,7 +9,10 @@ from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
 from django.db import transaction
 
-from asgiref.sync import sync_to_async
+# database_sync_to_async, not plain sync_to_async: consumers run outside the
+# HTTP request cycle, so nothing else ever closes the DB connections these
+# calls open -- the channels variant cleans them up around each call.
+from channels.db import database_sync_to_async as sync_to_async
 from channels.generic.websocket import AsyncWebsocketConsumer
 from loguru import logger
 

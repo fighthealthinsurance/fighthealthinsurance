@@ -853,26 +853,35 @@ class Prod(Base):
                 # checkout, transparently replacing ones severed by
                 # failovers or server-side timeouts.
                 "CONN_HEALTH_CHECKS": True,
-                "OPTIONS": {
-                    # Every uvicorn worker (and Ray actor process) keeps its
-                    # own pool: size the server's max_connections to fit
-                    # (processes * max_size) plus headroom.
-                    "pool": {
-                        "min_size": int(os.getenv("PG_POOL_MIN_SIZE", "2")),
-                        "max_size": int(os.getenv("PG_POOL_MAX_SIZE", "10")),
-                        # Fail fast waiting for a free connection: each waiter
-                        # occupies the worker's serialized sync lane, so under
-                        # pool exhaustion N queued requests stack N*timeout of
-                        # latency onto everything behind them (observed as 60s
-                        # ingress 504s / monitor timeouts at timeout=10).
-                        "timeout": int(os.getenv("PG_POOL_TIMEOUT", "5")),
-                        # Recycle connections after 30 minutes (and drop idle
-                        # ones after 5) so pooled connections never trip the
-                        # server-side 120min idle_session_timeout.
-                        "max_lifetime": 1800,
-                        "max_idle": 300,
-                    },
-                },
+                # Client-side pooling is OPT-IN (PG_USE_POOL=1) and off by
+                # default: executor threads that touch the ORM outside the
+                # request cycle never return their checkout, and a starved
+                # pool turns every DB request into a PoolTimeout wait that
+                # stalls the whole worker (the 60s ingress 504s / uptime
+                # monitor incidents). Without the pool those leaked
+                # connections burden only the server, where fhi-pg-main-9's
+                # idle_session_timeout reaps them (see
+                # k8s/fhi-pg-main-9-cluster.yaml). Re-enable pooling only
+                # once thread connection hygiene is proven.
+                "OPTIONS": (
+                    {
+                        # Every uvicorn worker (and Ray actor process) keeps
+                        # its own pool: size the server's max_connections to
+                        # fit (processes * max_size) plus headroom.
+                        "pool": {
+                            "min_size": int(os.getenv("PG_POOL_MIN_SIZE", "2")),
+                            "max_size": int(os.getenv("PG_POOL_MAX_SIZE", "10")),
+                            # Fail fast: each waiter occupies the worker's
+                            # serialized sync lane, so N queued requests stack
+                            # N*timeout of latency onto everything behind them.
+                            "timeout": int(os.getenv("PG_POOL_TIMEOUT", "5")),
+                            "max_lifetime": 1800,
+                            "max_idle": 300,
+                        },
+                    }
+                    if os.getenv("PG_USE_POOL", "0") == "1"
+                    else {}
+                ),
             },
             "mysql": {
                 "ENGINE": mysql_engine,
