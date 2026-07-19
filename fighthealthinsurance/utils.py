@@ -1,5 +1,6 @@
 import asyncio
 import concurrent
+import hashlib
 import os
 import random
 import re
@@ -456,15 +457,19 @@ def notify_professional_signup(subject: str, body: str) -> None:
 
     Shared by the web /pro_version interest form and the Fight Paperwork REST
     professional sign-up endpoint. Recipients default to
-    professional@fighthealthinsurance.com and can be extended via
-    settings.PROFESSIONAL_SIGNUP_NOTIFICATION_EMAILS. A mail failure is logged
-    and swallowed so it never breaks the signup it is reporting on.
+    support42@fighthealthinsurance.com and professional@fighthealthinsurance.com
+    and can be extended via settings.PROFESSIONAL_SIGNUP_NOTIFICATION_EMAILS. A
+    mail failure is logged and swallowed so it never breaks the signup it is
+    reporting on.
     """
     recipients = list(
         getattr(
             settings,
             "PROFESSIONAL_SIGNUP_NOTIFICATION_EMAILS",
-            ["professional@fighthealthinsurance.com"],
+            [
+                "support42@fighthealthinsurance.com",
+                "professional@fighthealthinsurance.com",
+            ],
         )
     )
     if not recipients:
@@ -479,6 +484,38 @@ def notify_professional_signup(subject: str, body: str) -> None:
         logger.opt(exception=True).error(
             f"Error sending professional signup notification email to {recipients}"
         )
+
+
+RETURNING_LEAD_NOTIFY_COOLDOWN_SECONDS = 15 * 60
+
+
+def should_notify_returning_lead(email: str) -> bool:
+    """Cross-pod cooldown gate for returning-lead team notifications.
+
+    A returning lead (an email that already has an InterestedProfessional row)
+    re-notifies the team on resubmission, which without a bound is an
+    inbox-amplification vector: anyone re-POSTing the same address would mail
+    the signup inboxes on every request. This grants at most one returning
+    notification per address per RETURNING_LEAD_NOTIFY_COOLDOWN_SECONDS across
+    all pods (via ModelHealthAlertState.try_claim). The key is a hash of the
+    lowercased address so it fits the 64-char key column and keeps the address
+    itself out of the throttle table. New-lead notifications never pass
+    through here — a brand-new email always notifies. Fails open: if the claim
+    check errors, the notification is sent, since a repeat notification beats
+    silently dropping real signal.
+    """
+    from fighthealthinsurance.models import ModelHealthAlertState
+
+    key = f"prl:{hashlib.sha256(email.strip().lower().encode()).hexdigest()[:48]}"
+    try:
+        return ModelHealthAlertState.try_claim(
+            key, RETURNING_LEAD_NOTIFY_COOLDOWN_SECONDS
+        )
+    except Exception:
+        logger.opt(exception=True).warning(
+            "Returning-lead notify cooldown check failed; sending anyway"
+        )
+        return True
 
 
 def notify_interested_professional(

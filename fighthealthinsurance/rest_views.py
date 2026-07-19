@@ -1667,8 +1667,9 @@ class InterestedProfessionalViewSet(viewsets.ViewSet, CreateMixin):
     REST API.
 
     Public counterpart to the web /pro_version interest form: it records an
-    InterestedProfessional lead and notifies the professional-signup inbox
-    (defaults to professional@fighthealthinsurance.com, extendable via
+    InterestedProfessional lead and notifies the professional-signup inboxes
+    (default to support42@fighthealthinsurance.com and
+    professional@fighthealthinsurance.com, extendable via
     settings.PROFESSIONAL_SIGNUP_NOTIFICATION_EMAILS). Create-only: this is a
     public, unauthenticated endpoint, so lead removal is intentionally not
     exposed here (an email-only delete would let anyone erase a lead); data
@@ -1685,15 +1686,30 @@ class InterestedProfessionalViewSet(viewsets.ViewSet, CreateMixin):
     def perform_create(self, request: Request, serializer) -> Response:
         """Save the lead, then notify the professional-signup inbox."""
         # Dedup by email: a returning lead reuses the existing record rather
-        # than accumulating duplicate rows or re-notifying the professional
-        # inbox. Repeat submissions still get the standard success response.
-        # Case-insensitive to match how the pro-connector queue collapses
-        # duplicates (email__iexact).
+        # than accumulating duplicate rows (case-insensitive to match how the
+        # pro-connector queue collapses duplicates, email__iexact). The team
+        # notification still fires — flagged "(returning)" — so repeat
+        # interest is never silently swallowed. Repeat submissions get the
+        # standard success response either way.
         email = serializer.validated_data.get("email")
-        if (
-            email
-            and InterestedProfessional.objects.filter(email__iexact=email).exists()
-        ):
+        existing = (
+            InterestedProfessional.objects.filter(email__iexact=email).first()
+            if email
+            else None
+        )
+        if existing is not None:
+            # Notify with the freshly submitted values (a new phone number or
+            # comment is the interesting part), borrowing the stored row's pk
+            # only so the admin deep-link resolves. The transient instance is
+            # never saved — matching the web-form returning path — so the
+            # stored lead is not overwritten. The shared cooldown gate bounds
+            # inbox amplification across every intake path.
+            from fighthealthinsurance.utils import should_notify_returning_lead
+
+            if should_notify_returning_lead(existing.email):
+                fresh = InterestedProfessional(**serializer.validated_data)
+                fresh.id = existing.id
+                self._notify_interested_professional(fresh, returning=True)
             return Response(
                 serializers.StatusResponseSerializer({"status": "subscribed"}).data,
                 status=status.HTTP_201_CREATED,
@@ -1710,20 +1726,26 @@ class InterestedProfessionalViewSet(viewsets.ViewSet, CreateMixin):
 
     @staticmethod
     def _notify_interested_professional(
-        interested_pro: InterestedProfessional,
+        interested_pro: InterestedProfessional, *, returning: bool = False
     ) -> None:
-        """Notify the professional-signup inbox about a new REST interest lead.
+        """Notify the professional-signup inbox about a REST interest lead.
 
         Delegates to the shared notify_interested_professional helper so the web
         /pro_version form and this endpoint send an identical inbox format.
+        `returning=True` marks a repeat submission from an email that already
+        has a lead (the caller passes a transient instance carrying the fresh
+        submission with the stored row's pk for the admin link).
         Best-effort: mail failures are logged, not raised, so they never fail
         the already-persisted lead."""
         from fighthealthinsurance.utils import notify_interested_professional
 
+        subject = f"New pro REST signup #{interested_pro.id}"
+        if returning:
+            subject += " (returning)"
         notify_interested_professional(
             interested_pro,
             source="the Fight Paperwork REST API",
-            subject=f"New pro REST signup #{interested_pro.id}",
+            subject=subject,
         )
 
 

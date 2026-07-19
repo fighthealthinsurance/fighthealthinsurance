@@ -3701,6 +3701,10 @@ class ModelHealthAlertState(models.Model):
     dead. This single-row-per-key table records when the last alert email was
     sent so that, across all pods sharing the database, at most one email goes
     out per throttle window.
+
+    Also reused as a general cross-pod one-per-window email throttle under
+    other key prefixes (e.g. returning-lead signup notifications via
+    utils.should_notify_returning_lead).
     """
 
     key = models.CharField(max_length=64, unique=True)

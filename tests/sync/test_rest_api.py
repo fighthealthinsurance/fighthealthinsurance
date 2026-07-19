@@ -2173,7 +2173,8 @@ class DemoRequestEndpointTest(APITestCase):
 
     def test_demo_request_notifies_professional_inbox(self):
         # The lead notification goes through the shared
-        # notify_interested_professional helper, i.e. to the professional inbox.
+        # notify_interested_professional helper, i.e. to the professional-signup
+        # inboxes (support42@ + professional@).
         response = self.client.post(
             reverse("demorequest-list"),
             data=json.dumps({"email": "lead6@example.com"}),
@@ -2181,8 +2182,9 @@ class DemoRequestEndpointTest(APITestCase):
         )
         self.assertEqual(response.status_code, 201)
         notification = next(
-            m for m in mail.outbox if m.to == ["professional@fighthealthinsurance.com"]
+            m for m in mail.outbox if "professional@fighthealthinsurance.com" in m.to
         )
+        self.assertIn("support42@fighthealthinsurance.com", notification.to)
         self.assertIn("lead6@example.com", notification.body)
         self.assertIn("a Fight Paperwork demo request", notification.body)
 
@@ -2210,7 +2212,8 @@ class DemoRequestEndpointTest(APITestCase):
 class InterestedProfessionalEndpointTest(APITestCase):
     """The interested_professional REST endpoint records a professional-interest
     lead (the FPW counterpart to the web /pro_version form) and notifies the
-    professional-signup inbox (defaults to professional@fighthealthinsurance.com).
+    professional-signup inboxes (default to support42@fighthealthinsurance.com
+    and professional@fighthealthinsurance.com).
     The notification flows through fighthealthinsurance.utils.notify_professional_signup,
     so that is the send_mail patch target."""
 
@@ -2240,6 +2243,7 @@ class InterestedProfessionalEndpointTest(APITestCase):
         mock_send.assert_called_once()
         # send_mail(subject, body, from_email, recipients)
         subject, body, _from, recipients = mock_send.call_args.args
+        self.assertIn("support42@fighthealthinsurance.com", recipients)
         self.assertIn("professional@fighthealthinsurance.com", recipients)
         self.assertIn("pro@example.com", body)
         self.assertIn(str(pro.id), subject)
@@ -2259,6 +2263,63 @@ class InterestedProfessionalEndpointTest(APITestCase):
         self.assertEqual(response.status_code, 201)
         recipients = mock_send.call_args.args[3]
         self.assertIn("sales@example.com", recipients)
+
+    def test_repeat_submission_notifies_as_returning_without_duplicate_row(self):
+        # The row is deduped (case-insensitively), but the team is still
+        # notified — flagged "(returning)" and carrying the freshly submitted
+        # values — instead of the repeat being silently swallowed.
+        from fighthealthinsurance.models import InterestedProfessional
+
+        first = self.client.post(
+            reverse("interested-professional-list"),
+            data=json.dumps({"email": "again@example.com", "name": "First Try"}),
+            content_type="application/json",
+        )
+        with patch("fighthealthinsurance.utils.send_mail") as mock_send:
+            second = self.client.post(
+                reverse("interested-professional-list"),
+                data=json.dumps(
+                    {"email": "Again@example.com", "phone_number": "555-0888"}
+                ),
+                content_type="application/json",
+            )
+        self.assertEqual(first.status_code, 201)
+        self.assertEqual(second.status_code, 201)
+        self.assertEqual(
+            InterestedProfessional.objects.filter(
+                email__iexact="again@example.com"
+            ).count(),
+            1,
+        )
+        pro = InterestedProfessional.objects.get(email__iexact="again@example.com")
+        mock_send.assert_called_once()
+        subject, body = mock_send.call_args.args[0], mock_send.call_args.args[1]
+        self.assertEqual(subject, f"New pro REST signup #{pro.id} (returning)")
+        # Body reflects the repeat submission, not the stored row (which keeps
+        # its original values).
+        self.assertIn("555-0888", body)
+        self.assertEqual(pro.name, "First Try")
+        self.assertEqual(pro.phone_number, "")
+
+    def test_second_repeat_within_cooldown_suppresses_notification(self):
+        # The first repeat claims the per-email notification slot; a second
+        # repeat inside the cooldown window must not email the team again
+        # (bounds inbox amplification), while still returning the standard
+        # success response.
+        for _ in range(2):  # new lead, then first repeat (claims the slot)
+            self.client.post(
+                reverse("interested-professional-list"),
+                data=json.dumps({"email": "again2@example.com"}),
+                content_type="application/json",
+            )
+        with patch("fighthealthinsurance.utils.send_mail") as mock_send:
+            response = self.client.post(
+                reverse("interested-professional-list"),
+                data=json.dumps({"email": "again2@example.com"}),
+                content_type="application/json",
+            )
+        self.assertEqual(response.status_code, 201)
+        mock_send.assert_not_called()
 
     def test_mail_failure_does_not_fail_request(self):
         # The lead is persisted before the notification is attempted, so a mail
