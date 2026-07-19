@@ -860,9 +860,12 @@ class Prod(Base):
                     "pool": {
                         "min_size": int(os.getenv("PG_POOL_MIN_SIZE", "2")),
                         "max_size": int(os.getenv("PG_POOL_MAX_SIZE", "10")),
-                        # Fail after 10s waiting for a free connection instead
-                        # of stalling requests for the default 30s.
-                        "timeout": 10,
+                        # Fail fast waiting for a free connection: each waiter
+                        # occupies the worker's serialized sync lane, so under
+                        # pool exhaustion N queued requests stack N*timeout of
+                        # latency onto everything behind them (observed as 60s
+                        # ingress 504s / monitor timeouts at timeout=10).
+                        "timeout": int(os.getenv("PG_POOL_TIMEOUT", "5")),
                         # Recycle connections after 30 minutes (and drop idle
                         # ones after 5) so pooled connections never trip the
                         # server-side 120min idle_session_timeout.

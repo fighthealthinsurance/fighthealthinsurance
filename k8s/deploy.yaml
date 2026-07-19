@@ -129,7 +129,11 @@ metadata:
   labels:
     app: fight-health-insurance-prod
 spec:
-  replicas: 3
+  # 4 single-worker pods (UVICORN_WORKERS=1 below) rather than 3 dual-worker
+  # pods: same total workers, but probes see each worker directly, so one
+  # wedged worker (e.g. an exhausted psycopg pool) gets its pod pulled from
+  # rotation and restarted instead of silently timing out half a pod's traffic.
+  replicas: 4
   selector:
     matchLabels:
       app: fight-health-insurance-prod
@@ -152,6 +156,10 @@ spec:
           env:
           - name: BRB
             value: "LIVE"
+          # One uvicorn worker per pod so the probes below can see a wedged
+          # worker; scale via replicas, not workers (see start-server.sh).
+          - name: UVICORN_WORKERS
+            value: "1"
           # DB host sourced from fhi-db-config ConfigMap (see k8s/db-config.yaml).
           - name: PDBHOST
             valueFrom:

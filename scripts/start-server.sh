@@ -65,6 +65,10 @@ HOME=$(pwd)
 export HOME
 PYTHONUNBUFFERED=1
 export PYTHONUNBUFFERED
-sudo -E -u www-data uvicorn fighthealthinsurance.asgi:application --host 0.0.0.0 --port 8010 --workers 2 --proxy-headers --access-log --use-colors --log-config conf/uvlog_config.yaml 2>&1 | grep -v kube-probe  | grep -v kube-proxy &
+# UVICORN_WORKERS defaults to 2 for standalone use; prod sets 1 so each pod is
+# a single worker whose health the readiness/liveness probes can actually see
+# (with 2+ workers a wedged worker hides behind its healthy sibling: probes
+# mostly pass while a share of real traffic hangs).
+sudo -E -u www-data uvicorn fighthealthinsurance.asgi:application --host 0.0.0.0 --port 8010 --workers "${UVICORN_WORKERS:-2}" --proxy-headers --access-log --use-colors --log-config conf/uvlog_config.yaml 2>&1 | grep -v kube-probe  | grep -v kube-proxy &
 sleep 2
 nginx -g "daemon off;" 2>&1 |grep -v kube-proxy |grep -v kube-probe
