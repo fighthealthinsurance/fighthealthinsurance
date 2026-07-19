@@ -783,6 +783,7 @@ class Prod(Base):
         "www.fightpaperwork.com",
         "api.fightpaperwork.com",
         "staging.fighthealthinsurance.com",
+        "monitor.fighthealthinsurance.com",
         "fuckhealthinsurance.com",
         "www.fuckhealthinsurance.com",
         "fightinsurance.ai",
