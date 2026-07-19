@@ -1,0 +1,219 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Health Insurance Appeal Deadline Calculator{% endblock title %}
+{% block metatitle %}Health Insurance Appeal Deadline Calculator - Fight Health Insurance{% endblock metatitle %}
+{% block metadescription %}Free tool to estimate your health insurance appeal deadlines. Enter your coverage type, timing, and denial date to see the insurer's decision window and your deadlines to file an internal appeal and request external review.{% endblock metadescription %}
+
+{% block scriptmagic %}
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "WebApplication",
+  "name": "Health Insurance Appeal Deadline Calculator",
+  "applicationCategory": "HealthApplication",
+  "operatingSystem": "All",
+  "description": "Estimate health insurance appeal deadlines: the insurer's decision window and your deadlines to file an internal appeal and request external or independent review.",
+  "offers": {
+    "@type": "Offer",
+    "price": "0",
+    "priceCurrency": "USD"
+  }
+}
+</script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  "itemListElement": [
+    {
+      "@type": "ListItem",
+      "position": 1,
+      "name": "Home",
+      "item": "{{ request.scheme }}://{{ request.get_host }}{% url 'root' %}"
+    },
+    {
+      "@type": "ListItem",
+      "position": 2,
+      "name": "Appeal Deadline Calculator",
+      "item": "{{ canonical_url }}"
+    }
+  ]
+}
+</script>
+{% endblock scriptmagic %}
+
+{% block content %}
+<!-- Hero Section -->
+<section id="deadline-calc-hero" class="slider" data-stellar-background-ratio="0.5">
+    <div class="row">
+        <div class="item item-first">
+            <div class="caption d-flex flex-column align-items-center justify-content-center">
+                <div class="hero-inner" style="max-width: 900px;">
+                    <h3 class="hero-tagline">Don't miss your window</h3>
+                    <h1 class="hero-headline">Appeal Deadline Calculator</h1>
+                    <p class="hero-subcopy">Insurance denials come with clocks. Tell us a few things about your coverage and we'll estimate the general timeframes that apply&mdash;so you know how long the insurer has to decide and how long you have to appeal.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<section id="deadline-calc" class="py-5">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-10 mx-auto">
+
+                <!-- Disclaimer (shown before results so it can't be missed) -->
+                <div class="alert alert-warning" role="alert">
+                    <strong>General information only.</strong> These are common federal
+                    baseline timeframes. Your actual deadlines depend on your specific plan,
+                    your state, and the exact type of claim. <strong>Always verify against
+                    your plan documents and the appeal-rights section of your denial letter
+                    or Explanation of Benefits (EOB).</strong> This tool is not legal advice.
+                </div>
+
+                <!-- Calculator form -->
+                <div class="card shadow-sm mb-4">
+                    <div class="card-body p-4">
+                        <h2 class="card-title mb-4">Tell us about your denial</h2>
+
+                        {% if form.errors %}
+                        <div class="alert alert-danger">
+                            Please correct the highlighted fields below.
+                        </div>
+                        {% endif %}
+
+                        <form method="get" action="{% url 'appeal_deadline_calculator' %}" id="deadline_calculator_form">
+                            <div class="row g-3">
+                                <div class="col-md-6">
+                                    <label for="{{ form.coverage_type.id_for_label }}" class="form-label">{{ form.coverage_type.label }}</label>
+                                    {{ form.coverage_type }}
+                                    {% if form.coverage_type.errors %}<div class="text-danger small mt-1">{{ form.coverage_type.errors|join:", " }}</div>{% endif %}
+                                </div>
+                                <div class="col-md-6">
+                                    <label for="{{ form.service_timing.id_for_label }}" class="form-label">{{ form.service_timing.label }}</label>
+                                    {{ form.service_timing }}
+                                    {% if form.service_timing.errors %}<div class="text-danger small mt-1">{{ form.service_timing.errors|join:", " }}</div>{% endif %}
+                                </div>
+                                <div class="col-md-6">
+                                    <label for="{{ form.denial_received.id_for_label }}" class="form-label">{{ form.denial_received.label }}</label>
+                                    {{ form.denial_received }}
+                                    <div class="form-text">{{ form.denial_received.help_text }}</div>
+                                    {% if form.denial_received.errors %}<div class="text-danger small mt-1">{{ form.denial_received.errors|join:", " }}</div>{% endif %}
+                                </div>
+                                <div class="col-md-6 d-flex align-items-center">
+                                    <div class="form-check mt-4">
+                                        {{ form.expedited }}
+                                        <label for="{{ form.expedited.id_for_label }}" class="form-check-label">{{ form.expedited.label }}</label>
+                                        <div class="form-text">{{ form.expedited.help_text }}</div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="mt-4">
+                                <button type="submit" class="btn btn-primary btn-lg">Calculate my deadlines</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+
+                {% if result %}
+                <!-- Results -->
+                <div class="card shadow-sm mb-4" id="results">
+                    <div class="card-body p-4">
+                        <div class="d-flex justify-content-between align-items-start flex-wrap">
+                            <h2 class="card-title">Your estimated timeframes</h2>
+                            <button type="button" class="btn btn-outline-secondary d-print-none" onclick="window.print()">Print / Save</button>
+                        </div>
+                        <p class="text-muted">{{ result.coverage_name }} &middot; {{ result.situation_label }}</p>
+                        <p>{{ result.coverage_summary }}</p>
+
+                        {% if result.denial_received %}
+                        <p class="small text-muted">Estimates below are measured from the denial received on <strong>{{ result.denial_received|date:"F j, Y" }}</strong>.</p>
+                        {% else %}
+                        <p class="small text-muted">Add the date your denial was received above to see estimated calendar deadlines.</p>
+                        {% endif %}
+
+                        <div class="row g-3 mt-1">
+                            <!-- Insurer decision window -->
+                            <div class="col-md-4">
+                                <div class="card h-100 border-info">
+                                    <div class="card-body">
+                                        <h6 class="card-subtitle mb-2 text-info">Insurer's decision window</h6>
+                                        <p class="card-text">{{ result.insurer_decision.label }}.</p>
+                                        {% if result.insurer_decision.varies %}<p class="small text-muted mb-0"><em>Varies &mdash; check your plan.</em></p>{% endif %}
+                                    </div>
+                                </div>
+                            </div>
+                            <!-- Internal appeal filing -->
+                            <div class="col-md-4">
+                                <div class="card h-100 border-primary">
+                                    <div class="card-body">
+                                        <h6 class="card-subtitle mb-2 text-primary">Your deadline to file an internal appeal</h6>
+                                        <p class="card-text">{{ result.internal_appeal_filing.label }}.</p>
+                                        {% if result.internal_appeal_filing.deadline %}
+                                        <p class="card-text"><strong>Estimated by: {{ result.internal_appeal_filing.deadline|date:"F j, Y" }}</strong></p>
+                                        {% endif %}
+                                        {% if result.internal_appeal_filing.varies %}<p class="small text-muted mb-0"><em>Varies &mdash; check your plan.</em></p>{% endif %}
+                                    </div>
+                                </div>
+                            </div>
+                            <!-- External review filing -->
+                            <div class="col-md-4">
+                                <div class="card h-100 border-success">
+                                    <div class="card-body">
+                                        <h6 class="card-subtitle mb-2 text-success">{{ result.external_review_label }}</h6>
+                                        <p class="card-text">{{ result.external_review_filing.label }}.</p>
+                                        {% if result.external_review_filing.deadline %}
+                                        <p class="card-text"><strong>Estimated by: {{ result.external_review_filing.deadline|date:"F j, Y" }}</strong></p>
+                                        {% endif %}
+                                        {% if result.external_review_filing.varies %}<p class="small text-muted mb-0"><em>Varies &mdash; check your plan.</em></p>{% endif %}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        {% if result.notes %}
+                        <div class="mt-4">
+                            <h6>Good to know</h6>
+                            <ul>
+                                {% for note in result.notes %}
+                                <li>{{ note }}</li>
+                                {% endfor %}
+                            </ul>
+                        </div>
+                        {% endif %}
+
+                        <div class="alert alert-secondary mt-3 mb-0">
+                            <strong>Verify before you rely on these dates.</strong> Confirm every
+                            deadline against your plan documents and the appeal-rights notice on
+                            your denial letter or EOB. When in doubt, appeal as early as possible.
+                            If a deadline lands on a weekend or federal holiday, it may extend to
+                            the next business day &mdash; but don't count on it; aim to file early.
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Call to action into the appeal-generation flow -->
+                <div class="card shadow-sm mb-4 border-primary">
+                    <div class="card-body p-4 text-center">
+                        <h3 class="card-title">Ready to fight the denial?</h3>
+                        <p class="card-text">Don't just watch the clock&mdash;use it. We can help you generate a persuasive appeal letter for free.</p>
+                        <a href="{% url 'scan' %}" class="btn btn-primary btn-lg me-2">Generate my appeal</a>
+                        <a href="{% url 'chat' %}" class="btn btn-outline-primary btn-lg">Ask the AI assistant</a>
+                    </div>
+                </div>
+                {% endif %}
+
+                <p class="text-center text-muted small">
+                    Last reviewed: {{ last_reviewed|date:"F j, Y" }}. Sources include the DOL/ERISA
+                    claims-procedure rule (29 CFR 2560.503-1), ACA internal-appeal and
+                    external-review rules (45 CFR 147.136), and CMS Medicare Parts C &amp; D and
+                    Medicaid appeal regulations.
+                </p>
+
+            </div>
+        </div>
+    </div>
+</section>
+{% endblock content %}

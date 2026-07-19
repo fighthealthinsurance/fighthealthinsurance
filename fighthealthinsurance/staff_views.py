@@ -68,6 +68,18 @@ from fighthealthinsurance.type_utils import User
 from fighthealthinsurance.utils import mask_email_for_logging
 
 
+def parse_count(field: Optional[str]) -> Optional[int]:
+    """Parse a form field as a non-negative integer count.
+
+    Returns the int count when the field is all digits (rejecting
+    negatives, whitespace, and non-numeric values), otherwise None so
+    callers can fall back to treating the field as an email/target.
+    """
+    if field is not None and field.isdigit():
+        return int(field)
+    return None
+
+
 class AdminDeleteDataView(generic.FormView):
     """Staff view to delete all data for a user by email address.
 
@@ -306,10 +318,10 @@ class FollowUpEmailSenderView(generic.FormView):
     def form_valid(self, form):
         s = FollowUpEmailSender()
         field = form.cleaned_data.get("email")
-        try:
-            count = int(field)
-            sent = s.send_all(count=field)
-        except ValueError:
+        count = parse_count(field)
+        if count is not None:
+            sent = s.send_all(count=count)
+        else:
             sent = s.dosend(email=field)
         return HttpResponse(str(sent))
 
@@ -323,10 +335,10 @@ class ThankyouSenderView(generic.FormView):
     def form_valid(self, form):
         s = ThankyouEmailSender()
         field = form.cleaned_data.get("email")
-        try:
-            count = int(field)
-            sent = s.send_all(count=field)
-        except ValueError:
+        count = parse_count(field)
+        if count is not None:
+            sent = s.send_all(count=count)
+        else:
             sent = s.dosend(email=field)
         return HttpResponse(str(sent))
 
@@ -415,8 +427,9 @@ class FollowUpFaxSenderView(generic.FormView):
     def form_valid(self, form):
         field = form.cleaned_data.get("email")
 
-        if field.isdigit():
-            sent = SendFaxHelper.blocking_dosend_all(count=field)
+        count = parse_count(field)
+        if count is not None:
+            sent = SendFaxHelper.blocking_dosend_all(count=count)
         else:
             sent = SendFaxHelper.blocking_dosend_target(email=field)
 
