@@ -27,7 +27,7 @@ from typing import Any, Dict, List, Optional, Union
 from urllib.parse import urlparse
 
 import aiohttp
-from asgiref.sync import sync_to_async
+from channels.db import database_sync_to_async
 from django.db import transaction
 from loguru import logger
 
@@ -88,7 +88,7 @@ class PaRequirementsFetcher:
             "entries": 0,
             "retired": 0,
         }
-        companies = await sync_to_async(
+        companies = await database_sync_to_async(
             lambda: list(
                 InsuranceCompany.objects.filter(
                     pa_requirement_list_url_is_parseable=True,
@@ -141,7 +141,7 @@ class PaRequirementsFetcher:
 
         stats["fetched"] += 1
         source_name = f"{AUTO_SOURCE_PREFIX}{company.pa_requirement_list_url}"
-        written, retired = await sync_to_async(self._persist_company)(
+        written, retired = await database_sync_to_async(self._persist_company)(
             company, parsed, source_name
         )
         stats["entries"] += written
@@ -192,7 +192,7 @@ class PaRequirementsFetcher:
             apply_enrichment(reqs, enrichment_for_host(urlparse(url).hostname or ""))
             return reqs
 
-        result: List[ParsedPARequirement] = await sync_to_async(
+        result: List[ParsedPARequirement] = await database_sync_to_async(
             _parse_and_enrich, thread_sensitive=False
         )()
         return result

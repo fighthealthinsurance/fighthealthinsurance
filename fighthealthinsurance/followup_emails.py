@@ -4,7 +4,7 @@ import random
 from collections import defaultdict
 from typing import Any, Optional
 
-from asgiref.sync import sync_to_async
+from channels.db import database_sync_to_async
 from django.db.utils import NotSupportedError, ProgrammingError
 from django.urls import reverse
 from django.utils import timezone
@@ -22,10 +22,10 @@ class AsyncEmailSenderMixin:
     """
 
     async def afind_candidates(self) -> list[Any]:
-        return await sync_to_async(self.find_candidates)()  # type: ignore[attr-defined, no-any-return]
+        return await database_sync_to_async(self.find_candidates)()  # type: ignore[attr-defined, no-any-return]
 
     async def adosend(self, **kwargs: Any) -> bool:
-        return await sync_to_async(self.dosend)(**kwargs)  # type: ignore[attr-defined, no-any-return]
+        return await database_sync_to_async(self.dosend)(**kwargs)  # type: ignore[attr-defined, no-any-return]
 
     async def asend_all(
         self, count: Optional[int] = None, candidates: Optional[list] = None
@@ -350,13 +350,15 @@ class FollowUpEmailSender(AsyncEmailSenderMixin):
         skips stale ones, sends the first valid one, and marks the rest as sent.
         """
         if candidates is None:
-            candidates = await sync_to_async(self.find_all_due)()
-        grouped = await sync_to_async(self._group_candidates_by_email)(candidates)
+            candidates = await database_sync_to_async(self.find_all_due)()
+        grouped = await database_sync_to_async(self._group_candidates_by_email)(
+            candidates
+        )
         if count is not None:
             grouped = grouped[:count]
         sent = 0
         for best, others in grouped:
-            result = await sync_to_async(self._send_grouped)([best] + others)
+            result = await database_sync_to_async(self._send_grouped)([best] + others)
             if result:
                 sent += 1
                 await asyncio.sleep(random.uniform(1.0, 3.0))

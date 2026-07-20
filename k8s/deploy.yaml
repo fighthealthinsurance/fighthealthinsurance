@@ -129,7 +129,11 @@ metadata:
   labels:
     app: fight-health-insurance-prod
 spec:
-  replicas: 3
+  # 6 single-worker pods (UVICORN_WORKERS=1 below) rather than 3 dual-worker
+  # pods: the same 6 uvicorn workers as before, but probes see each worker
+  # directly, so one wedged worker gets its pod pulled from rotation and
+  # restarted instead of silently timing out half a pod's traffic.
+  replicas: 6
   selector:
     matchLabels:
       app: fight-health-insurance-prod
@@ -152,6 +156,10 @@ spec:
           env:
           - name: BRB
             value: "LIVE"
+          # One uvicorn worker per pod so the probes below can see a wedged
+          # worker; scale via replicas, not workers (see start-server.sh).
+          - name: UVICORN_WORKERS
+            value: "1"
           # DB host sourced from fhi-db-config ConfigMap (see k8s/db-config.yaml).
           - name: PDBHOST
             valueFrom:
@@ -162,6 +170,13 @@ spec:
           - secretRef:
               name: fight-health-insurance-secret
           imagePullPolicy: Always
+          # Requests only (no limits): sized from observed worker RSS (~0.9GB)
+          # so the scheduler places 6 pods with real headroom; limits omitted
+          # to avoid OOM-killing legitimate spikes.
+          resources:
+            requests:
+              memory: "1Gi"
+              cpu: "250m"
           ports:
             - containerPort: 80
               name: web
@@ -172,7 +187,25 @@ spec:
                   value: "www.fighthealthinsurance.com"
               path: /ziggy/rest/ping
               port: 80
-            periodSeconds: 180
+            # 3 failures x 60s: a truly wedged pod restarts in ~3min instead
+            # of ~9 (readiness below evicts it from the Service in ~40s).
+            periodSeconds: 60
+            timeoutSeconds: 5
+          # A pod with a wedged uvicorn worker answers some requests fast and
+          # hangs others for 60s+; without a readinessProbe it stays in the
+          # Service and times out ~1/N of all traffic (the UptimeRobot
+          # "Connection Timeout" incidents). Repeated failures here pull the
+          # pod from rotation while liveness decides whether to restart it.
+          readinessProbe:
+            httpGet:
+              httpHeaders:
+                - name: Host
+                  value: "www.fighthealthinsurance.com"
+              path: /ziggy/rest/ping
+              port: 80
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 2
           startupProbe:
             httpGet:
               httpHeaders:

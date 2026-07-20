@@ -141,6 +141,18 @@ spec:
       max_worker_processes: "32"
       max_parallel_workers: "32"
 
+      # Connection capacity + leak reapers. These lived on -8 (see the pg
+      # pooling/connection PR) but were lost in the -9 rewrite, leaving -9 at
+      # the default max_connections=100 while the app fleet holds ~50+ and
+      # client threads that leak connections push it higher. The idle reapers
+      # make leaked (client-side unpooled) connections self-heal server-side.
+      # NOTE: max_connections requires a Postgres restart; with
+      # primaryUpdateStrategy: supervised that restart waits for a human
+      # (kubectl cnpg restart fhi-pg-main-9).
+      max_connections: "200"
+      idle_session_timeout: "30min"
+      idle_in_transaction_session_timeout: "10min"
+
     # Auth is INTENTIONALLY unchanged this round: the cluster sits on a trusted
     # all-local-network, and security hardening (hostssl + scram-sha-256, CIDR
     # scoping) is explicitly out of scope here. Keep the -8 behaviour faithful.

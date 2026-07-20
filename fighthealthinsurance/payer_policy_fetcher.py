@@ -17,7 +17,7 @@ from typing import Optional
 from urllib.parse import urlparse
 
 import aiohttp
-from asgiref.sync import sync_to_async
+from channels.db import database_sync_to_async
 from django.db import transaction
 from loguru import logger
 
@@ -63,7 +63,7 @@ class PayerPolicyFetcher:
         Returns a small ``{fetched, failed, entries}`` summary.
         """
         stats = {"fetched": 0, "failed": 0, "entries": 0}
-        companies = await sync_to_async(
+        companies = await database_sync_to_async(
             lambda: list(
                 InsuranceCompany.objects.filter(
                     medical_policy_url_is_static_index=True,
@@ -135,7 +135,7 @@ class PayerPolicyFetcher:
             return data.decode(encoding, errors="replace")
 
     @staticmethod
-    @sync_to_async
+    @database_sync_to_async
     def _replace_entries(
         company: InsuranceCompany,
         entries: list[ParsedPolicyEntry],

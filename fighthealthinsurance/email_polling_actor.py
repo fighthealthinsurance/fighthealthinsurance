@@ -8,7 +8,7 @@ from typing import Optional
 from django.utils import timezone
 
 import ray
-from asgiref.sync import sync_to_async
+from channels.db import database_sync_to_async
 
 from fighthealthinsurance.utils import get_env_variable
 
@@ -171,7 +171,7 @@ class EmailPollingActor:
             safety_cutoff_date = datetime.date.today() - datetime.timedelta(days=90)
 
             # Find follow-up schedules that were sent more than 30 days ago
-            denial_ids_with_sent_followups = await sync_to_async(
+            denial_ids_with_sent_followups = await database_sync_to_async(
                 lambda: set(
                     FollowUpSched.objects.filter(
                         follow_up_sent=True,
@@ -181,7 +181,7 @@ class EmailPollingActor:
             )()
 
             # Get denials that have recent or pending follow-ups (should NOT be cleared)
-            denials_with_recent_or_pending = await sync_to_async(
+            denials_with_recent_or_pending = await database_sync_to_async(
                 lambda: set(
                     FollowUpSched.objects.filter(
                         Q(follow_up_sent=False)
@@ -209,20 +209,20 @@ class EmailPollingActor:
             )
 
             # Capture denial IDs before the update
-            denial_ids_to_clear = await sync_to_async(
+            denial_ids_to_clear = await database_sync_to_async(
                 lambda: list(candidates.values_list("denial_id", flat=True))
             )()
 
             if denial_ids_to_clear:
                 # Clear the raw_email field
-                cleared_count = await sync_to_async(
+                cleared_count = await database_sync_to_async(
                     lambda: Denial.objects.filter(
                         denial_id__in=denial_ids_to_clear
                     ).update(raw_email=None)
                 )()
 
                 # Also clear emails from FollowUpSched entries
-                await sync_to_async(
+                await database_sync_to_async(
                     lambda: FollowUpSched.objects.filter(
                         denial_id__in=denial_ids_to_clear
                     ).update(email="")
