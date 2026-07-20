@@ -1,7 +1,7 @@
 import asyncio
 import re
 from dataclasses import replace
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, cast
 
 from django.utils import timezone
 
@@ -170,7 +170,7 @@ class ChatInterface:
     async def _get_user_info(self) -> str:
         """Generates a descriptive string for the user (either professional or patient)."""
         try:
-            return await database_sync_to_async(self.chat.summarize_user)()
+            return cast(str, await database_sync_to_async(self.chat.summarize_user)())
         except Exception as e:
             logger.warning(f"Could not generate detailed user info: {e}")
             return "a user"
@@ -651,7 +651,7 @@ class ChatInterface:
                                 appeal = await chat.appeals.afirst()
                                 if appeal:
                                     linked_denial = await database_sync_to_async(
-                                        lambda x: x.denial
+                                        lambda x: x.for_denial
                                     )(appeal)
                                     if linked_denial:
                                         rag_state = linked_denial.state

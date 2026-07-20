@@ -16,6 +16,8 @@ import random
 import time
 
 import ray
+from typing import cast
+
 from channels.db import database_sync_to_async
 
 from fighthealthinsurance.utils import get_env_variable
@@ -192,12 +194,15 @@ class UCRRefreshController:
         # that have already moved to a different source.
         from fighthealthinsurance.models import Denial
 
-        return await database_sync_to_async(
-            lambda: Denial.objects.filter(
-                appeal_result__isnull=True,
-                latest_ucr_lookup__rates_snapshot__contains=[{"source": source}],
-            ).update(ucr_refreshed_at=None)
-        )()
+        return cast(
+            int,
+            await database_sync_to_async(
+                lambda: Denial.objects.filter(
+                    appeal_result__isnull=True,
+                    latest_ucr_lookup__rates_snapshot__contains=[{"source": source}],
+                ).update(ucr_refreshed_at=None)
+            )(),
+        )
 
     # -------------------------------------------------------- denial helpers
 

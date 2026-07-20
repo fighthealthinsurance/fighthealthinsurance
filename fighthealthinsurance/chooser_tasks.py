@@ -16,7 +16,7 @@ calls relied on the router's internal-only default.
 
 import asyncio
 import random
-from typing import List, Optional
+from typing import List, Optional, cast
 
 from django.conf import settings
 
@@ -138,9 +138,12 @@ async def check_and_refill_task_pool():
 async def _count_ready_tasks(task_type: str) -> int:
     """Count the number of READY tasks for a given type."""
 
-    return await database_sync_to_async(
-        ChooserTask.objects.filter(task_type=task_type, status="READY").count
-    )()
+    return cast(
+        int,
+        await database_sync_to_async(
+            ChooserTask.objects.filter(task_type=task_type, status="READY").count
+        )(),
+    )
 
 
 async def _count_unscored_tasks(task_type: str) -> int:
@@ -153,14 +156,17 @@ async def _count_unscored_tasks(task_type: str) -> int:
 
     from django.db.models import Count
 
-    return await database_sync_to_async(
-        ChooserTask.objects.filter(
-            task_type=task_type, status="READY", source="synthetic"
-        )
-        .annotate(vote_count=Count("votes"))
-        .filter(vote_count=0)
-        .count
-    )()
+    return cast(
+        int,
+        await database_sync_to_async(
+            ChooserTask.objects.filter(
+                task_type=task_type, status="READY", source="synthetic"
+            )
+            .annotate(vote_count=Count("votes"))
+            .filter(vote_count=0)
+            .count
+        )(),
+    )
 
 
 async def _generate_batch_tasks(task_type: str, batch_size: int):
