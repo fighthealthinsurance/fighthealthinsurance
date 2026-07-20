@@ -3802,9 +3802,12 @@ class SiteBanner(models.Model):
     Lets staff post a temporary notice -- e.g. "Our AI models are having
     difficulty, please try again tomorrow" -- without a deploy. Rows are
     managed by staff in the Django admin (see ``admin.SiteBannerAdmin``) and
-    read from the DB at request time by
-    ``context_processors.site_banner_context`` (cached briefly), then rendered
-    by ``partials/site_banner.html`` in ``base.html``.
+    read by ``context_processors.site_banner_context`` on every request, then
+    rendered by ``partials/site_banner.html`` in ``base.html``. To keep that
+    per-request read off the database, the active-banner list is served from a
+    cache that a per-worker background thread refreshes on a fixed interval
+    (see ``site_banner_refresh``); ``CACHE_TTL_SECONDS`` below is only a fallback
+    for if that thread stops.
     """
 
     LEVEL_INFO = "info"
@@ -3816,11 +3819,18 @@ class SiteBanner(models.Model):
         (LEVEL_DANGER, "Critical (red)"),
     ]
 
-    # Short cache so toggling a banner shows up quickly while still sparing the
-    # DB a query on every page load under traffic. Invalidated on save/delete
-    # (see signal below) so staff changes are effectively immediate.
+    # The active-banner list is read on every page render, so it is cached and
+    # kept warm by a per-worker background refresher
+    # (site_banner_refresh.site_banner_refresher): request threads only ever
+    # read this cache and never query the DB themselves. The TTL is a safety
+    # net rather than the primary refresh mechanism -- it is comfortably longer
+    # than the refresher's interval, so the entry only lapses if that thread
+    # stops, at which point the next request repopulates it synchronously.
+    # Invalidated on save/delete (see signal below) so an edit shows up
+    # immediately on the worker that handled it (and within the refresh interval
+    # on the others).
     CACHE_KEY = "site_banner:active_v1"
-    CACHE_TTL_SECONDS = 30
+    CACHE_TTL_SECONDS = 600  # 10 minutes
 
     message = models.TextField(
         help_text=(
@@ -3879,24 +3889,17 @@ class SiteBanner(models.Model):
         return True
 
     @classmethod
-    def get_active_banners(cls) -> typing.List[typing.Dict[str, typing.Any]]:
-        """Active, unexpired banners as lightweight dicts, cached briefly.
+    def _active_banner_payload(cls) -> typing.List[typing.Dict[str, typing.Any]]:
+        """Query active, unexpired banners as lightweight dicts (no caching).
 
-        Returned newest-first (most recently edited on top). Read by the
-        context processor on every request, so the short cache keeps that
-        cheap; ``clear_cache`` (wired to save/delete) drops it on edits.
+        Returned newest-first (most recently edited on top), per
+        ``Meta.ordering``.
         """
-        from django.core.cache import cache
-
-        cached = cache.get(cls.CACHE_KEY)
-        if cached is not None:
-            return typing.cast(typing.List[typing.Dict[str, typing.Any]], cached)
-
         now = timezone.now()
         banners = cls.objects.filter(active=True).filter(
             Q(expires_at__isnull=True) | Q(expires_at__gt=now)
         )
-        result = [
+        return [
             {
                 "id": banner.id,
                 "message": banner.message,
@@ -3908,8 +3911,44 @@ class SiteBanner(models.Model):
             }
             for banner in banners
         ]
+
+    @classmethod
+    def refresh_cache(cls) -> typing.List[typing.Dict[str, typing.Any]]:
+        """Re-query the active banners and overwrite the cache, returning them.
+
+        This is the write side of the cache: the per-worker background refresher
+        (``site_banner_refresh``) calls it on a timer to keep the entry warm, and
+        ``get_active_banners`` calls it to repopulate on a cold miss.
+        """
+        from django.core.cache import cache
+
+        result = cls._active_banner_payload()
         cache.set(cls.CACHE_KEY, result, cls.CACHE_TTL_SECONDS)
         return result
+
+    @classmethod
+    def get_active_banners(cls) -> typing.List[typing.Dict[str, typing.Any]]:
+        """Active, unexpired banners as lightweight dicts, served from cache.
+
+        Read by the context processor on every request. A per-worker background
+        refresher keeps the cache warm so this stays a pure cache read; on a
+        cold miss (worker just started, the entry lapsed, or an edit cleared it)
+        it repopulates synchronously this once so the caller still gets fresh
+        data.
+        """
+        from django.core.cache import cache
+        from fighthealthinsurance.site_banner_refresh import site_banner_refresher
+
+        # Ensure the background refresher is running for this worker so the cache
+        # stays warm without any request hitting the DB. Idempotent and cheap --
+        # safe to call on every request.
+        site_banner_refresher.ensure_started()
+
+        cached = cache.get(cls.CACHE_KEY)
+        if cached is not None:
+            return typing.cast(typing.List[typing.Dict[str, typing.Any]], cached)
+
+        return cls.refresh_cache()
 
     @classmethod
     def clear_cache(cls) -> None:

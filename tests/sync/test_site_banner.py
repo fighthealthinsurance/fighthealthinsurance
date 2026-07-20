@@ -4,7 +4,7 @@ from datetime import timedelta
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
-from django.test import Client, RequestFactory, TestCase
+from django.test import Client, RequestFactory, TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
@@ -82,6 +82,109 @@ class TestSiteBannerModel(TestCase):
         self.assertIn("warning", text)
         self.assertIn("active", text)
         self.assertIn("Models are down", text)
+
+
+@override_settings(
+    CACHES={
+        "default": {
+            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+            "LOCATION": "test-site-banner-cache",
+        }
+    },
+    # Exercise the cache directly; keep the background refresh thread out of it.
+    SITE_BANNER_BACKGROUND_REFRESH=False,
+)
+class TestSiteBannerCache(TestCase):
+    """The active-banner list is cached and refreshed off the request path."""
+
+    def setUp(self):
+        from django.core.cache import cache
+
+        cache.clear()
+
+    def test_refresh_cache_populates_and_returns_active_banners(self):
+        from django.core.cache import cache
+
+        banner = SiteBanner.objects.create(message="Warm me")
+        result = SiteBanner.refresh_cache()
+
+        self.assertEqual([b["id"] for b in result], [banner.id])
+        self.assertEqual(cache.get(SiteBanner.CACHE_KEY), result)
+
+    def test_get_active_banners_serves_warm_cache_without_query(self):
+        SiteBanner.objects.create(message="Cached")
+        # Warm the cache, then a subsequent read must not touch the DB.
+        SiteBanner.refresh_cache()
+
+        with self.assertNumQueries(0):
+            banners = SiteBanner.get_active_banners()
+
+        self.assertEqual([b["message"] for b in banners], ["Cached"])
+
+    def test_get_active_banners_repopulates_on_cold_miss(self):
+        from django.core.cache import cache
+
+        banner = SiteBanner.objects.create(message="Cold")
+        cache.delete(SiteBanner.CACHE_KEY)
+
+        banners = SiteBanner.get_active_banners()
+
+        self.assertEqual([b["id"] for b in banners], [banner.id])
+        # The miss also warmed the cache for the next reader.
+        self.assertIsNotNone(cache.get(SiteBanner.CACHE_KEY))
+
+    def test_saving_a_banner_invalidates_the_cache(self):
+        from django.core.cache import cache
+
+        SiteBanner.refresh_cache()
+        self.assertIsNotNone(cache.get(SiteBanner.CACHE_KEY))
+
+        # The post_save signal should drop the cached list.
+        SiteBanner.objects.create(message="New banner")
+        self.assertIsNone(cache.get(SiteBanner.CACHE_KEY))
+
+
+class TestSiteBannerRefresher(TestCase):
+    """The per-worker background refresher (site_banner_refresh)."""
+
+    def _make_refresher(self):
+        from fighthealthinsurance.site_banner_refresh import _SiteBannerRefresher
+
+        return _SiteBannerRefresher()
+
+    @override_settings(SITE_BANNER_BACKGROUND_REFRESH=False)
+    def test_ensure_started_is_noop_when_disabled(self):
+        refresher = self._make_refresher()
+        with patch.object(refresher, "_schedule_next") as schedule:
+            refresher.ensure_started()
+        schedule.assert_not_called()
+
+    @override_settings(SITE_BANNER_BACKGROUND_REFRESH=True)
+    def test_ensure_started_schedules_exactly_once(self):
+        refresher = self._make_refresher()
+        with patch.object(refresher, "_schedule_next") as schedule:
+            refresher.ensure_started()
+            refresher.ensure_started()  # idempotent
+        schedule.assert_called_once()
+
+    def test_run_refreshes_cache_and_reschedules(self):
+        refresher = self._make_refresher()
+        with patch.object(refresher, "_schedule_next") as schedule, patch.object(
+            SiteBanner, "refresh_cache"
+        ) as refresh:
+            refresher._run()
+        refresh.assert_called_once()
+        schedule.assert_called_once()
+
+    def test_run_reschedules_even_when_refresh_fails(self):
+        refresher = self._make_refresher()
+        with patch.object(refresher, "_schedule_next") as schedule, patch.object(
+            SiteBanner, "refresh_cache", side_effect=RuntimeError("boom")
+        ):
+            # A failed refresh must not propagate...
+            refresher._run()
+        # ...and must still reschedule so the timer chain survives.
+        schedule.assert_called_once()
 
 
 class TestSiteBannerContextProcessor(TestCase):
