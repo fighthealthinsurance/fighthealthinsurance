@@ -175,8 +175,8 @@ spec:
           # to avoid OOM-killing legitimate spikes.
           resources:
             requests:
-              memory: "1Gi"
-              cpu: "250m"
+              memory: "1.5Gi"
+              cpu: "500m"
           ports:
             - containerPort: 80
               name: web
