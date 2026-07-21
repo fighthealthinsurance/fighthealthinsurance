@@ -434,7 +434,11 @@ else:
         path(
             "",
             cache_control(public=True)(
-                cache_page(60 * 60 * 2)(views.IndexView.as_view())
+                # Shorter than the standard 2h page cache: the landing page is
+                # where an admin-posted SiteBanner (incident notice) most needs
+                # to show up / come down promptly, and the cached response bakes
+                # the banner in.
+                cache_page(60 * 30)(views.IndexView.as_view())
             ),
             name="root",
         )
