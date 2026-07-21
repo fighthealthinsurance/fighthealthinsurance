@@ -1453,12 +1453,12 @@ class AppealGenerator(object):
         # Load known companies from database dynamically
         known_companies: list[str] = []
         try:
-            from asgiref.sync import sync_to_async
+            from channels.db import database_sync_to_async
 
             from fighthealthinsurance.models import InsuranceCompany
 
             # Get all insurance companies from database
-            companies = await sync_to_async(
+            companies = await database_sync_to_async(
                 lambda: list(InsuranceCompany.objects.values_list("name", "alt_names"))
             )()
             for name, alt_names in companies:

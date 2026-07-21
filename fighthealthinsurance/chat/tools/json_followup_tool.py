@@ -3,7 +3,7 @@ Reusable base class for chat tools that follow this shape:
 
     1. Detect a ``**tool_name {JSON}**`` invocation in the LLM response.
     2. Parse the JSON payload.
-    3. Run a synchronous lookup via ``sync_to_async``.
+    3. Run a synchronous lookup via ``database_sync_to_async``.
     4. Re-invoke the LLM with the lookup result so the next reply can quote it.
     5. Merge the additional response and context back in.
 

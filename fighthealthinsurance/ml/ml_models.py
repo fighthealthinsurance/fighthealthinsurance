@@ -13,7 +13,7 @@ from typing import Any, Callable, ClassVar, Iterable, List, Optional, Tuple, Uni
 
 import aiohttp
 import requests
-from asgiref.sync import async_to_sync, sync_to_async
+from asgiref.sync import async_to_sync
 from loguru import logger
 
 

@@ -10,7 +10,7 @@ for preventive-care denial appeals.
 
 from typing import Tuple
 
-from asgiref.sync import sync_to_async
+from channels.db import database_sync_to_async
 
 from .json_followup_tool import JsonFollowupTool
 from .patterns import USPSTF_LOOKUP_REGEX
@@ -41,7 +41,7 @@ class USPSTFLookupTool(JsonFollowupTool):
     ) -> Tuple[str, str]:
         from fighthealthinsurance.uspstf_api import get_uspstf_info
 
-        info = await sync_to_async(get_uspstf_info)(params)
+        info = await database_sync_to_async(get_uspstf_info)(params)
         if not info:
             return "", ""
 

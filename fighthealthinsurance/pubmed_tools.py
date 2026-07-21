@@ -25,6 +25,10 @@ from urllib.parse import quote, urlencode, urljoin
 
 import aiohttp
 import PyPDF2
+
+# Plain asgiref sync_to_async ON PURPOSE: every wrapped callable here is
+# metapub/network work with no ORM inside; the channels database variant
+# would close the connections this module's interleaved async ORM reuses.
 from asgiref.sync import async_to_sync, sync_to_async
 from django.core.cache import cache
 from django.utils import timezone

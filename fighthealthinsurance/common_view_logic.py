@@ -44,7 +44,8 @@ from django.utils.html import escape as html_escape
 import asyncstdlib as a
 import ray
 import uszipcode
-from asgiref.sync import async_to_sync, sync_to_async
+from asgiref.sync import async_to_sync
+from channels.db import database_sync_to_async
 from loguru import logger
 from PyPDF2 import PdfMerger
 from stopit.utils import TimeoutException
@@ -1583,7 +1584,7 @@ class DenialCreatorHelper:
             denial = await Denial.objects.filter(denial_id=denial_id).aget()
             if not is_under_reimbursement_claim(denial.denial_text):
                 return
-            await sync_to_async(dispatch_ucr_refresh)(denial.pk)
+            await database_sync_to_async(dispatch_ucr_refresh)(denial.pk)
         except Exception:
             logger.opt(exception=True).warning(
                 "UCR fire-and-forget dispatch failed for denial {}", denial_id
@@ -2480,7 +2481,7 @@ async def _refresh_sync_denial_context(
     """
     try:
         getter = getter_factory()
-        return await sync_to_async(getter)(denial) or None
+        return await database_sync_to_async(getter)(denial) or None
     except Exception as e:
         logger.opt(exception=True).debug(f"{label} context refresh failed: {e}")
         return None
@@ -2840,7 +2841,7 @@ class AppealsBackendHelper:
         # Apply all of our 'expert system'
         # (aka six regexes in a trench coat hiding behind a database).
         async for dt in denial.denial_type.all():
-            form = await sync_to_async(dt.get_form)()
+            form = await database_sync_to_async(dt.get_form)()
             if form is not None:
                 parsed = form(parameters)
                 if parsed.is_valid():
@@ -3103,7 +3104,7 @@ class AppealsBackendHelper:
 
             pa_context_awaitable = tracked_awaitable(
                 asyncio.wait_for(
-                    sync_to_async(get_pa_context_for_denial)(denial),
+                    database_sync_to_async(get_pa_context_for_denial)(denial),
                     timeout=10,
                 ),
                 substep="pa_requirements",
@@ -3121,7 +3122,7 @@ class AppealsBackendHelper:
 
             uspstf_context_awaitable = tracked_awaitable(
                 asyncio.wait_for(
-                    sync_to_async(get_uspstf_context_for_denial)(denial),
+                    database_sync_to_async(get_uspstf_context_for_denial)(denial),
                     timeout=10,
                 ),
                 substep="uspstf",
@@ -3280,7 +3281,7 @@ class AppealsBackendHelper:
                 # lose trial evidence. The reader is already async (DB-only — no
                 # live registry call), so it can't go through
                 # _refresh_sync_denial_context (which wraps a sync getter in
-                # sync_to_async); use an inline guard with the same
+                # database_sync_to_async); use an inline guard with the same
                 # degrade-to-None behavior. wait_for bounds the DB read with
                 # the same 10s budget the gather path uses so a stalled query
                 # can't hang this resilience path (TimeoutError is an
@@ -3329,7 +3330,7 @@ class AppealsBackendHelper:
             # ClinicalTrials lookup is also DB-only against the prefetched
             # cache, so re-render it on retries. The reader is async, so it
             # uses an inline guard rather than _refresh_sync_denial_context
-            # (which wraps a sync getter in sync_to_async). wait_for bounds
+            # (which wraps a sync getter in database_sync_to_async). wait_for bounds
             # the DB read with the same 10s budget as the gather path.
             try:
                 clinical_trials_context = await asyncio.wait_for(
@@ -3425,7 +3426,7 @@ class AppealsBackendHelper:
             plan_parts.append(denial.plan_documents_summary)
         model_plan_context: Optional[str] = "\n\n".join(plan_parts) or None
 
-        appeals: Iterator[GeneratedAppeal] = await sync_to_async(
+        appeals: Iterator[GeneratedAppeal] = await database_sync_to_async(
             appealGenerator.make_appeals
         )(
             denial,
@@ -3708,7 +3709,7 @@ class EscalationPacketHelper:
             yield json.dumps({"type": "error", "message": "Denial not found"}) + "\n"
             return
 
-        recipients = await sync_to_async(get_recipients_for_denial)(denial)
+        recipients = await database_sync_to_async(get_recipients_for_denial)(denial)
         if not recipients:
             yield json.dumps(
                 {"type": "error", "message": "No regulator recipients available"}

@@ -214,7 +214,7 @@ class TestAppealsBackendHelperWithCitations:
                 return_value="PubMed context data",
             ),
             patch(
-                "fighthealthinsurance.common_view_logic.sync_to_async",
+                "fighthealthinsurance.common_view_logic.database_sync_to_async",
             ) as mock_sync_to_async,
             patch(
                 "fighthealthinsurance.common_view_logic.interleave_iterator_for_keep_alive",
@@ -302,7 +302,7 @@ class TestAppealsBackendHelperWithCitations:
                 side_effect=asyncio.TimeoutError("PubMed timeout"),
             ),
             patch(
-                "fighthealthinsurance.common_view_logic.sync_to_async",
+                "fighthealthinsurance.common_view_logic.database_sync_to_async",
             ) as mock_sync_to_async,
             patch(
                 "fighthealthinsurance.common_view_logic.interleave_iterator_for_keep_alive",
@@ -388,7 +388,7 @@ class TestAppealsBackendHelperWithCitations:
                 return_value="PubMed context data",
             ) as mock_find_pubmed,
             patch(
-                "fighthealthinsurance.common_view_logic.sync_to_async",
+                "fighthealthinsurance.common_view_logic.database_sync_to_async",
             ) as mock_sync_to_async,
             patch(
                 "fighthealthinsurance.common_view_logic.interleave_iterator_for_keep_alive",
@@ -481,7 +481,7 @@ class TestAppealsBackendHelperWithCitations:
                 return_value="PubMed context data",
             ),
             patch(
-                "fighthealthinsurance.common_view_logic.sync_to_async",
+                "fighthealthinsurance.common_view_logic.database_sync_to_async",
             ) as mock_sync_to_async,
             patch(
                 "fighthealthinsurance.common_view_logic.interleave_iterator_for_keep_alive",
@@ -575,7 +575,7 @@ class TestAppealsBackendHelperWithCitations:
                 return_value=ct_payload,
             ) as mock_get_ct_context,
             patch(
-                "fighthealthinsurance.common_view_logic.sync_to_async",
+                "fighthealthinsurance.common_view_logic.database_sync_to_async",
             ) as mock_sync_to_async,
             patch(
                 "fighthealthinsurance.common_view_logic.interleave_iterator_for_keep_alive",
@@ -661,7 +661,7 @@ async def test_synthesis_threshold(saved_texts, synthesis_should_run):
             return_value="",
         ),
         patch(
-            "fighthealthinsurance.common_view_logic.sync_to_async",
+            "fighthealthinsurance.common_view_logic.database_sync_to_async",
         ) as mock_sync_to_async,
         patch(
             "fighthealthinsurance.common_view_logic.interleave_iterator_for_keep_alive",
@@ -744,7 +744,7 @@ async def test_synthesis_skips_verbatim_duplicate():
             return_value="",
         ),
         patch(
-            "fighthealthinsurance.common_view_logic.sync_to_async",
+            "fighthealthinsurance.common_view_logic.database_sync_to_async",
         ) as mock_sync_to_async,
         patch(
             "fighthealthinsurance.common_view_logic.interleave_iterator_for_keep_alive",
@@ -831,7 +831,7 @@ async def test_synthesis_too_short_output_is_filtered():
             return_value="",
         ),
         patch(
-            "fighthealthinsurance.common_view_logic.sync_to_async",
+            "fighthealthinsurance.common_view_logic.database_sync_to_async",
         ) as mock_sync_to_async,
         patch(
             "fighthealthinsurance.common_view_logic.interleave_iterator_for_keep_alive",
@@ -909,7 +909,7 @@ async def test_existing_too_short_appeal_is_skipped():
             return_value="",
         ),
         patch(
-            "fighthealthinsurance.common_view_logic.sync_to_async",
+            "fighthealthinsurance.common_view_logic.database_sync_to_async",
         ) as mock_sync_to_async,
         patch(
             "fighthealthinsurance.common_view_logic.interleave_iterator_for_keep_alive",

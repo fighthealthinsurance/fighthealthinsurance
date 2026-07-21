@@ -264,8 +264,8 @@ class PriorAuthToolUseTests(TestCase):
 
     def test_tool_async_run_matches_sync_lookup(self):
         # The tool's production entry point is ``run`` (an async method that
-        # wraps ``_run_lookup`` via sync_to_async). Drive it the same way
-        # the chat consumer does and confirm the (block, summary) result is
+        # wraps ``_run_lookup`` via database_sync_to_async). Drive it the same
+        # way the chat consumer does and confirm the (block, summary) result is
         # the same as calling the sync core directly. We use async_to_sync
         # rather than asyncio.run so Django manages DB connections cleanly.
         tool = PaRequirementLookupTool(AsyncMock())

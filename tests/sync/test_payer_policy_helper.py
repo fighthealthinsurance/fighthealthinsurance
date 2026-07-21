@@ -372,7 +372,7 @@ class FetcherIngestTests(TransactionTestCase):
     surfaces them via keyword match.
 
     Uses TransactionTestCase because the fetcher runs DB writes inside an
-    asyncio loop via sync_to_async; under SQLite, the regular TestCase's
+    asyncio loop via database_sync_to_async; under SQLite, the regular TestCase's
     outer transaction would lock the connection from the inner sync call.
     """
 
