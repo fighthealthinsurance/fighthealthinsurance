@@ -64,6 +64,7 @@ class TestSiteBannerModel(TestCase):
         self.assertEqual(payload["message"], "Hi")
         self.assertEqual(payload["level"], SiteBanner.LEVEL_DANGER)
         self.assertFalse(payload["dismissible"])
+        self.assertIsNone(payload["expires_at"])
         self.assertIsInstance(payload["version"], int)
 
     def test_get_active_banners_orders_newest_first(self):
@@ -132,6 +133,44 @@ class TestSiteBannerCache(TestCase):
         self.assertEqual([b["id"] for b in banners], [banner.id])
         # The miss also warmed the cache for the next reader.
         self.assertIsNotNone(cache.get(SiteBanner.CACHE_KEY))
+
+    def test_banner_expiring_while_cached_is_dropped_at_read_time(self):
+        from django.core.cache import cache
+
+        # Simulate a payload cached before the banner's expires_at passed: the
+        # refresher only rewrites it on its interval, but reads must still
+        # honor the staff-selected stop time exactly.
+        stale_payload = [
+            {
+                "id": 1,
+                "message": "Maintenance window",
+                "level": SiteBanner.LEVEL_WARNING,
+                "dismissible": True,
+                "expires_at": (timezone.now() - timedelta(seconds=1)).timestamp(),
+                "version": 1,
+            }
+        ]
+        cache.set(SiteBanner.CACHE_KEY, stale_payload, SiteBanner.CACHE_TTL_SECONDS)
+
+        self.assertEqual(SiteBanner.get_active_banners(), [])
+
+    def test_cached_banner_with_future_expiry_is_still_served(self):
+        from django.core.cache import cache
+
+        payload = [
+            {
+                "id": 1,
+                "message": "Still on",
+                "level": SiteBanner.LEVEL_INFO,
+                "dismissible": True,
+                "expires_at": (timezone.now() + timedelta(hours=1)).timestamp(),
+                "version": 1,
+            }
+        ]
+        cache.set(SiteBanner.CACHE_KEY, payload, SiteBanner.CACHE_TTL_SECONDS)
+
+        banners = SiteBanner.get_active_banners()
+        self.assertEqual([b["message"] for b in banners], ["Still on"])
 
     def test_saving_a_banner_invalidates_the_cache(self):
         from django.core.cache import cache

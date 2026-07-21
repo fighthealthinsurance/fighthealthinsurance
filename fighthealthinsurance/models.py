@@ -3905,11 +3905,34 @@ class SiteBanner(models.Model):
                 "message": banner.message,
                 "level": banner.level,
                 "dismissible": banner.dismissible,
+                # Carried so reads can drop a banner the moment it expires,
+                # even when serving a cached payload written before then.
+                "expires_at": (
+                    banner.expires_at.timestamp() if banner.expires_at else None
+                ),
                 # Changes when the banner is edited, so a visitor who dismissed
                 # an earlier version still sees the updated message.
                 "version": int(banner.updated_at.timestamp()),
             }
             for banner in banners
+        ]
+
+    @staticmethod
+    def _drop_expired(
+        banners: typing.List[typing.Dict[str, typing.Any]],
+    ) -> typing.List[typing.Dict[str, typing.Any]]:
+        """Drop entries whose ``expires_at`` has passed since they were cached.
+
+        The cached payload can outlive a banner's ``expires_at`` (it is only
+        rewritten on the refresh interval), so reads re-check expiry to honor
+        the staff-selected stop time exactly. ``.get()`` tolerates payloads
+        cached before this field existed.
+        """
+        now_ts = timezone.now().timestamp()
+        return [
+            b
+            for b in banners
+            if b.get("expires_at") is None or b["expires_at"] > now_ts
         ]
 
     @classmethod
@@ -3934,7 +3957,8 @@ class SiteBanner(models.Model):
         refresher keeps the cache warm so this stays a pure cache read; on a
         cold miss (worker just started, the entry lapsed, or an edit cleared it)
         it repopulates synchronously this once so the caller still gets fresh
-        data.
+        data. Expiry is re-checked at read time so a banner stops showing at
+        its ``expires_at`` even if it was cached before then.
         """
         from django.core.cache import cache
         from fighthealthinsurance.site_banner_refresh import site_banner_refresher
@@ -3946,9 +3970,11 @@ class SiteBanner(models.Model):
 
         cached = cache.get(cls.CACHE_KEY)
         if cached is not None:
-            return typing.cast(typing.List[typing.Dict[str, typing.Any]], cached)
+            return cls._drop_expired(
+                typing.cast(typing.List[typing.Dict[str, typing.Any]], cached)
+            )
 
-        return cls.refresh_cache()
+        return cls._drop_expired(cls.refresh_cache())
 
     @classmethod
     def clear_cache(cls) -> None:
