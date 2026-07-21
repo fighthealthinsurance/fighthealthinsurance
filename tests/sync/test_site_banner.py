@@ -155,36 +155,38 @@ class TestSiteBannerRefresher(TestCase):
     @override_settings(SITE_BANNER_BACKGROUND_REFRESH=False)
     def test_ensure_started_is_noop_when_disabled(self):
         refresher = self._make_refresher()
-        with patch.object(refresher, "_schedule_next") as schedule:
+        with patch.object(refresher, "_start_thread") as start:
             refresher.ensure_started()
-        schedule.assert_not_called()
+        start.assert_not_called()
 
     @override_settings(SITE_BANNER_BACKGROUND_REFRESH=True)
-    def test_ensure_started_schedules_exactly_once(self):
+    def test_ensure_started_starts_the_thread_exactly_once(self):
         refresher = self._make_refresher()
-        with patch.object(refresher, "_schedule_next") as schedule:
+        with patch.object(refresher, "_start_thread") as start:
             refresher.ensure_started()
             refresher.ensure_started()  # idempotent
-        schedule.assert_called_once()
+        start.assert_called_once()
 
-    def test_run_refreshes_cache_and_reschedules(self):
+    def test_refresh_once_refreshes_cache_and_returns_connections(self):
         refresher = self._make_refresher()
-        with patch.object(refresher, "_schedule_next") as schedule, patch.object(
-            SiteBanner, "refresh_cache"
-        ) as refresh:
-            refresher._run()
+        with patch.object(SiteBanner, "refresh_cache") as refresh, patch(
+            "fighthealthinsurance.site_banner_refresh.connections"
+        ) as conns:
+            refresher._refresh_once()
         refresh.assert_called_once()
-        schedule.assert_called_once()
+        # The refresh thread never gets per-request connection cleanup, so a
+        # cycle must always hand its connection back itself (leak prevention).
+        conns.close_all.assert_called_once()
 
-    def test_run_reschedules_even_when_refresh_fails(self):
+    def test_refresh_once_returns_connections_even_when_refresh_fails(self):
         refresher = self._make_refresher()
-        with patch.object(refresher, "_schedule_next") as schedule, patch.object(
+        with patch.object(
             SiteBanner, "refresh_cache", side_effect=RuntimeError("boom")
-        ):
-            # A failed refresh must not propagate...
-            refresher._run()
-        # ...and must still reschedule so the timer chain survives.
-        schedule.assert_called_once()
+        ), patch("fighthealthinsurance.site_banner_refresh.connections") as conns:
+            # A failed refresh must not propagate (it would kill the loop)...
+            refresher._refresh_once()
+        # ...and must still return the connection so failures don't leak.
+        conns.close_all.assert_called_once()
 
 
 class TestSiteBannerContextProcessor(TestCase):

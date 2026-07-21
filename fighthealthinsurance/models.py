@@ -3917,8 +3917,8 @@ class SiteBanner(models.Model):
         """Re-query the active banners and overwrite the cache, returning them.
 
         This is the write side of the cache: the per-worker background refresher
-        (``site_banner_refresh``) calls it on a timer to keep the entry warm, and
-        ``get_active_banners`` calls it to repopulate on a cold miss.
+        (``site_banner_refresh``) calls it on an interval to keep the entry warm,
+        and ``get_active_banners`` calls it to repopulate on a cold miss.
         """
         from django.core.cache import cache
 
