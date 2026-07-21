@@ -15,7 +15,7 @@ from channels.testing import WebsocketCommunicator
 from django.contrib.auth import get_user_model
 from rest_framework.test import APITestCase
 
-from asgiref.sync import sync_to_async
+from channels.db import database_sync_to_async
 
 from fighthealthinsurance.chat.context_manager import MISSING_CONTEXT_PREFIX
 from fighthealthinsurance.models import OngoingChat, ProfessionalUser
@@ -54,9 +54,7 @@ class BackgroundSummaryIntegrationTest(APITestCase):
 
         with contextlib.ExitStack() as stack:
             mock_get_chat_backends = stack.enter_context(
-                patch(
-                    "fighthealthinsurance.ml.ml_router.MLRouter.get_chat_backends"
-                )
+                patch("fighthealthinsurance.ml.ml_router.MLRouter.get_chat_backends")
             )
             mock_get_chat_backends.return_value = [mock_model]
 
@@ -74,16 +72,16 @@ class BackgroundSummaryIntegrationTest(APITestCase):
                 )
             )
 
-            user = await sync_to_async(User.objects.create_user)(
+            user = await database_sync_to_async(User.objects.create_user)(
                 username="bg_summary_user",
                 password="testpass",
                 email="bgsummary@example.com",
             )
-            professional = await sync_to_async(ProfessionalUser.objects.create)(
-                user=user, active=True, npi_number="5555555555"
-            )
+            professional = await database_sync_to_async(
+                ProfessionalUser.objects.create
+            )(user=user, active=True, npi_number="5555555555")
 
-            chat = await sync_to_async(OngoingChat.objects.create)(
+            chat = await database_sync_to_async(OngoingChat.objects.create)(
                 professional_user=professional,
                 chat_history=[],
                 summary_for_next_call=[],
@@ -139,9 +137,7 @@ class BackgroundSummaryIntegrationTest(APITestCase):
 
         with contextlib.ExitStack() as stack:
             mock_get_chat_backends = stack.enter_context(
-                patch(
-                    "fighthealthinsurance.ml.ml_router.MLRouter.get_chat_backends"
-                )
+                patch("fighthealthinsurance.ml.ml_router.MLRouter.get_chat_backends")
             )
             mock_get_chat_backends.return_value = [mock_model]
 
@@ -173,16 +169,16 @@ class BackgroundSummaryIntegrationTest(APITestCase):
                 "Patient denied GLP-1 coverage, asking for help"
             )
 
-            user = await sync_to_async(User.objects.create_user)(
+            user = await database_sync_to_async(User.objects.create_user)(
                 username="bg_replace_user",
                 password="testpass",
                 email="bgreplace@example.com",
             )
-            professional = await sync_to_async(ProfessionalUser.objects.create)(
-                user=user, active=True, npi_number="6666666666"
-            )
+            professional = await database_sync_to_async(
+                ProfessionalUser.objects.create
+            )(user=user, active=True, npi_number="6666666666")
 
-            chat = await sync_to_async(OngoingChat.objects.create)(
+            chat = await database_sync_to_async(OngoingChat.objects.create)(
                 professional_user=professional,
                 chat_history=[],
                 summary_for_next_call=[],
@@ -236,9 +232,7 @@ class BackgroundSummaryIntegrationTest(APITestCase):
 
         with contextlib.ExitStack() as stack:
             mock_get_chat_backends = stack.enter_context(
-                patch(
-                    "fighthealthinsurance.ml.ml_router.MLRouter.get_chat_backends"
-                )
+                patch("fighthealthinsurance.ml.ml_router.MLRouter.get_chat_backends")
             )
             mock_get_chat_backends.return_value = [mock_model]
 
@@ -256,16 +250,16 @@ class BackgroundSummaryIntegrationTest(APITestCase):
                 )
             )
 
-            user = await sync_to_async(User.objects.create_user)(
+            user = await database_sync_to_async(User.objects.create_user)(
                 username="normal_ctx_user",
                 password="testpass",
                 email="normalctx@example.com",
             )
-            professional = await sync_to_async(ProfessionalUser.objects.create)(
-                user=user, active=True, npi_number="7777777777"
-            )
+            professional = await database_sync_to_async(
+                ProfessionalUser.objects.create
+            )(user=user, active=True, npi_number="7777777777")
 
-            chat = await sync_to_async(OngoingChat.objects.create)(
+            chat = await database_sync_to_async(OngoingChat.objects.create)(
                 professional_user=professional,
                 chat_history=[],
                 summary_for_next_call=[],

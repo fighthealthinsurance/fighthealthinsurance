@@ -70,7 +70,21 @@ python manage.py loaddata initial followup plan_source insurance_companies pa_re
 ### Async Processing
 - Ray actors (`*_actor.py`) for distributed background tasks
 - WebSocket streaming for long-running ML operations
-- async/await patterns with sync-to-async bridges via asgiref
+- async/await patterns with sync-to-async bridges. **In async code, reach for
+  Django's native async ORM first** — `aget`/`acreate`/`asave`/`adelete`/
+  `acount`/`aexists`/`aget_or_create` and `async for` over querysets — which
+  needs no bridge at all; async-first is the preferred shape for new code.
+  When wrapping existing sync code instead, **bridge choice matters:**
+  use channels' `database_sync_to_async` for any wrapped callable that touches
+  the Django ORM — it closes the thread's DB connections around each call,
+  even when the awaiting task is cancelled, where plain asgiref leaks them
+  (the July 2026 connection-starvation incident). Use plain asgiref
+  `sync_to_async` ONLY for callables that touch no ORM (subprocess, network,
+  file work) and leave a comment saying so, since the database variant would
+  needlessly churn DB connections there. `async_to_sync` stays asgiref.
+  Don't flip existing functions between sync and async (or rewrite working
+  bridges into native-async) just to satisfy this preference — apply it to
+  new code and to call sites you're already changing.
 
 ### Frontend
 - React 19 + TypeScript components in `fighthealthinsurance/static/js/`

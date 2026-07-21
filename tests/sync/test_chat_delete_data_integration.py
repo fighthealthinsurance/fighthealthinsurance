@@ -12,7 +12,7 @@ Two end-to-end paths through `ChatInterface.handle_chat_message`:
 import typing
 from unittest.mock import AsyncMock, patch
 
-from asgiref.sync import sync_to_async
+from channels.db import database_sync_to_async
 from django.contrib.auth import get_user_model
 from rest_framework.test import APITestCase
 
@@ -71,15 +71,15 @@ class DeleteDataHandoffIntegrationTest(APITestCase):
         chat_history=None,
     ):
         """Create a professional user, chat, and ChatInterface wired to `captured`."""
-        user = await sync_to_async(User.objects.create_user)(
+        user = await database_sync_to_async(User.objects.create_user)(
             username=username,
             password="testpass",
             email=f"{username}@example.com",
         )
-        professional = await sync_to_async(ProfessionalUser.objects.create)(
+        professional = await database_sync_to_async(ProfessionalUser.objects.create)(
             user=user, active=True, npi_number=npi_number
         )
-        chat = await sync_to_async(OngoingChat.objects.create)(
+        chat = await database_sync_to_async(OngoingChat.objects.create)(
             professional_user=professional,
             chat_type=ChatType.PROFESSIONAL,
             chat_history=chat_history if chat_history is not None else [],
@@ -118,7 +118,7 @@ class DeleteDataHandoffIntegrationTest(APITestCase):
             self.assertEqual(len(assistant_payloads), 1)
             self.assertEqual(assistant_payloads[0]["content"], DELETE_DATA_RESPONSE)
 
-            await sync_to_async(chat.refresh_from_db)()
+            await database_sync_to_async(chat.refresh_from_db)()
             self.assertEqual(len(chat.chat_history), 2)
             self.assertEqual(chat.chat_history[0]["role"], "user")
             self.assertEqual(

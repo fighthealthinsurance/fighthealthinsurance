@@ -21,7 +21,7 @@ from fighthealthinsurance.models import OngoingChat, ProfessionalUser, Appeal, D
 from fighthealthinsurance.websockets import OngoingChatConsumer
 from tests.sync.mock_chat_model import MockChatModel
 
-from asgiref.sync import sync_to_async
+from channels.db import database_sync_to_async
 
 if typing.TYPE_CHECKING:
     from django.contrib.auth.models import User
@@ -39,15 +39,15 @@ class CrisisResponseHistoryTest(APITestCase):
         When a user sends a crisis-related message and chat_history is empty,
         both the user message and crisis response should be saved.
         """
-        user = await sync_to_async(User.objects.create_user)(
+        user = await database_sync_to_async(User.objects.create_user)(
             username="crisisuser1", password="testpass", email="crisis1@example.com"
         )
-        professional = await sync_to_async(ProfessionalUser.objects.create)(
+        professional = await database_sync_to_async(ProfessionalUser.objects.create)(
             user=user, active=True, npi_number="1111111112"
         )
 
         # Create a chat with empty history
-        chat = await sync_to_async(OngoingChat.objects.create)(
+        chat = await database_sync_to_async(OngoingChat.objects.create)(
             professional_user=professional,
             chat_history=[],
             summary_for_next_call=[],
@@ -77,7 +77,9 @@ class CrisisResponseHistoryTest(APITestCase):
             self.assertIn("988", response["content"])  # Crisis hotline number
 
             # Verify chat history was saved
-            chat_refreshed = await sync_to_async(OngoingChat.objects.get)(id=chat.id)
+            chat_refreshed = await database_sync_to_async(OngoingChat.objects.get)(
+                id=chat.id
+            )
             self.assertEqual(
                 len(chat_refreshed.chat_history),
                 2,
@@ -104,15 +106,15 @@ class CrisisResponseHistoryTest(APITestCase):
         This is a regression test to ensure that when chat_history is NOT empty,
         new messages are still appended and saved.
         """
-        user = await sync_to_async(User.objects.create_user)(
+        user = await database_sync_to_async(User.objects.create_user)(
             username="crisisuser2", password="testpass", email="crisis2@example.com"
         )
-        professional = await sync_to_async(ProfessionalUser.objects.create)(
+        professional = await database_sync_to_async(ProfessionalUser.objects.create)(
             user=user, active=True, npi_number="2222222223"
         )
 
         # Create a chat with EXISTING history
-        chat = await sync_to_async(OngoingChat.objects.create)(
+        chat = await database_sync_to_async(OngoingChat.objects.create)(
             professional_user=professional,
             chat_history=[
                 {
@@ -152,7 +154,9 @@ class CrisisResponseHistoryTest(APITestCase):
             self.assertIn("content", response)
 
             # Verify chat history was appended (should now have 4 messages)
-            chat_refreshed = await sync_to_async(OngoingChat.objects.get)(id=chat.id)
+            chat_refreshed = await database_sync_to_async(OngoingChat.objects.get)(
+                id=chat.id
+            )
             self.assertEqual(
                 len(chat_refreshed.chat_history),
                 4,
@@ -187,20 +191,20 @@ class LinkMessageHistoryTest(APITestCase):
         """
         Test that link message is saved when linking an appeal to a chat with empty history.
         """
-        user = await sync_to_async(User.objects.create_user)(
+        user = await database_sync_to_async(User.objects.create_user)(
             username="linkuser1", password="testpass", email="link1@example.com"
         )
-        professional = await sync_to_async(ProfessionalUser.objects.create)(
+        professional = await database_sync_to_async(ProfessionalUser.objects.create)(
             user=user, active=True, npi_number="3333333334"
         )
 
         # Create a denial first (required for appeal)
-        denial = await sync_to_async(Denial.objects.create)(
+        denial = await database_sync_to_async(Denial.objects.create)(
             creating_professional=professional,
         )
 
         # Create an appeal for linking
-        appeal = await sync_to_async(Appeal.objects.create)(
+        appeal = await database_sync_to_async(Appeal.objects.create)(
             creating_professional=professional,
             primary_professional=professional,
             hashed_email="linkhash1@example.com",
@@ -208,7 +212,7 @@ class LinkMessageHistoryTest(APITestCase):
         )
 
         # Create a chat with empty history
-        chat = await sync_to_async(OngoingChat.objects.create)(
+        chat = await database_sync_to_async(OngoingChat.objects.create)(
             professional_user=professional,
             chat_history=[],
             summary_for_next_call=[],
@@ -242,7 +246,9 @@ class LinkMessageHistoryTest(APITestCase):
             self.assertIn("linked", response["content"].lower())
 
             # Verify chat history was saved
-            chat_refreshed = await sync_to_async(OngoingChat.objects.get)(id=chat.id)
+            chat_refreshed = await database_sync_to_async(OngoingChat.objects.get)(
+                id=chat.id
+            )
             self.assertEqual(
                 len(chat_refreshed.chat_history),
                 2,
@@ -259,20 +265,20 @@ class LinkMessageHistoryTest(APITestCase):
         This is a regression test to ensure that when chat_history is NOT empty,
         new link messages are still appended and saved.
         """
-        user = await sync_to_async(User.objects.create_user)(
+        user = await database_sync_to_async(User.objects.create_user)(
             username="linkuser2", password="testpass", email="link2@example.com"
         )
-        professional = await sync_to_async(ProfessionalUser.objects.create)(
+        professional = await database_sync_to_async(ProfessionalUser.objects.create)(
             user=user, active=True, npi_number="4444444445"
         )
 
         # Create a denial first (required for appeal)
-        denial = await sync_to_async(Denial.objects.create)(
+        denial = await database_sync_to_async(Denial.objects.create)(
             creating_professional=professional,
         )
 
         # Create an appeal for linking
-        appeal = await sync_to_async(Appeal.objects.create)(
+        appeal = await database_sync_to_async(Appeal.objects.create)(
             creating_professional=professional,
             primary_professional=professional,
             hashed_email="linkhash2@example.com",
@@ -280,7 +286,7 @@ class LinkMessageHistoryTest(APITestCase):
         )
 
         # Create a chat with EXISTING history
-        chat = await sync_to_async(OngoingChat.objects.create)(
+        chat = await database_sync_to_async(OngoingChat.objects.create)(
             professional_user=professional,
             chat_history=[
                 {
@@ -324,7 +330,9 @@ class LinkMessageHistoryTest(APITestCase):
             self.assertIn("content", response)
 
             # Verify chat history was appended (should now have 4 messages)
-            chat_refreshed = await sync_to_async(OngoingChat.objects.get)(id=chat.id)
+            chat_refreshed = await database_sync_to_async(OngoingChat.objects.get)(
+                id=chat.id
+            )
             self.assertEqual(
                 len(chat_refreshed.chat_history),
                 4,

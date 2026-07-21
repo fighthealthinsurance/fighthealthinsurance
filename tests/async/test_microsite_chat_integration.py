@@ -17,7 +17,7 @@ from fighthealthinsurance.models import OngoingChat, ProfessionalUser, Appeal
 from fighthealthinsurance.websockets import OngoingChatConsumer
 from tests.sync.mock_chat_model import MockChatModel
 
-from asgiref.sync import sync_to_async
+from channels.db import database_sync_to_async
 
 if typing.TYPE_CHECKING:
     from django.contrib.auth.models import User
@@ -54,14 +54,14 @@ class MicrositeChatIntegrationTest(APITestCase):
         mock_get_microsite.return_value = mock_microsite
 
         try:
-            user = await sync_to_async(User.objects.create_user)(
+            user = await database_sync_to_async(User.objects.create_user)(
                 username="testuser", password="testpass", email="test@example.com"
             )
-            professional = await sync_to_async(ProfessionalUser.objects.create)(
-                user=user, active=True, npi_number="1111111111"
-            )
+            professional = await database_sync_to_async(
+                ProfessionalUser.objects.create
+            )(user=user, active=True, npi_number="1111111111")
 
-            chat = await sync_to_async(OngoingChat.objects.create)(
+            chat = await database_sync_to_async(OngoingChat.objects.create)(
                 professional_user=professional,
                 microsite_slug="test-microsite",
                 chat_history=[],
@@ -115,22 +115,22 @@ class ChatHistoryAppendingTest(APITestCase):
         mock_get_chat_backends.return_value = [mock_model]
 
         try:
-            user = await sync_to_async(User.objects.create_user)(
+            user = await database_sync_to_async(User.objects.create_user)(
                 username="historyuser", password="testpass", email="history@example.com"
             )
-            professional = await sync_to_async(ProfessionalUser.objects.create)(
-                user=user, active=True, npi_number="1234567890"
-            )
+            professional = await database_sync_to_async(
+                ProfessionalUser.objects.create
+            )(user=user, active=True, npi_number="1234567890")
 
             # Create an appeal for linking
-            appeal = await sync_to_async(Appeal.objects.create)(
+            appeal = await database_sync_to_async(Appeal.objects.create)(
                 creating_professional=professional,
                 primary_professional=professional,
                 hashed_email="hashtest@example.com",
             )
 
             # Create a chat with EXISTING history
-            chat = await sync_to_async(OngoingChat.objects.create)(
+            chat = await database_sync_to_async(OngoingChat.objects.create)(
                 professional_user=professional,
                 chat_history=[
                     {
@@ -171,7 +171,9 @@ class ChatHistoryAppendingTest(APITestCase):
             self.assertIn("content", response)
 
             # Verify that chat history was appended (should now have 4 messages)
-            chat_refreshed = await sync_to_async(OngoingChat.objects.get)(id=chat.id)
+            chat_refreshed = await database_sync_to_async(OngoingChat.objects.get)(
+                id=chat.id
+            )
             self.assertEqual(
                 len(chat_refreshed.chat_history),
                 4,
