@@ -11,8 +11,13 @@ from django.db import transaction
 
 # channels' database_sync_to_async (NOT asgiref's sync_to_async): consumers run
 # outside the HTTP request cycle, so only its close_old_connections wrapping
-# ever closes the DB connections these calls open.
-from channels.db import database_sync_to_async
+# ever closes the DB connections these calls open. aclose_old_connections is
+# called at receive() entry via _aclose_if_socket_was_idle: native async ORM
+# (aget/afirst/...) binds connections to this consumer's long-lived thread, and
+# the server's idle_session_timeout kills them while a socket sits idle --
+# closing first makes the next ORM call reconnect instead of raising
+# OperationalError.
+from channels.db import aclose_old_connections, database_sync_to_async
 from channels.generic.websocket import AsyncWebsocketConsumer
 from loguru import logger
 
@@ -33,6 +38,31 @@ from fighthealthinsurance.models import (
 )
 
 from .chat_interface import ChatInterface
+
+# Only sweep connections after a real idle gap. idle_session_timeout is 30min,
+# so anything over a minute of socket silence earns a sweep; on an active
+# socket the sweep is pure churn -- close_if_unusable_or_obsolete reconnects
+# initialized-but-closed wrappers just to read autocommit, so a per-message
+# sweep opens and closes a connection per frame, which hammers the shared
+# in-memory test database (lock-contention flakes) for zero benefit.
+_IDLE_SWEEP_THRESHOLD_SECONDS = 60.0
+
+
+async def _aclose_if_socket_was_idle(consumer: AsyncWebsocketConsumer) -> None:
+    """Drop idle-killed DB connections, but only after a real idle gap.
+
+    The first message after connect skips the sweep: the consumer's thread is
+    fresh then, and the incident this guards against (Sentry: "terminating
+    connection due to idle-session timeout") comes from sockets going quiet
+    MID-conversation. From the second message on, any gap over the threshold
+    sweeps before touching the ORM.
+    """
+    loop = asyncio.get_running_loop()
+    now = loop.time()
+    last = getattr(consumer, "_last_receive_monotonic", None)
+    consumer._last_receive_monotonic = now  # type: ignore[attr-defined]
+    if last is not None and (now - last) >= _IDLE_SWEEP_THRESHOLD_SECONDS:
+        await aclose_old_connections()
 
 
 async def enqueue_denied_items_analysis(*, chat_id: str) -> None:
@@ -233,6 +263,9 @@ class StreamingAppealsBackend(AsyncWebsocketConsumer):
         logger.debug(f"appeals ws: disconnect code={close_code}")
 
     async def receive(self, text_data):
+        # Drop connections the server's idle-session timeout may have
+        # killed while this socket sat idle (see channels.db import note).
+        await _aclose_if_socket_was_idle(self)
         # streaming_protocol=True so the client's type==='error' branch
         # in processResponseChunk fires instead of treating this as an
         # unrecognized frame. The helper also rejects non-object JSON
@@ -347,6 +380,9 @@ class StreamingEscalationBackend(AsyncWebsocketConsumer):
         logger.debug(f"escalation ws: disconnect code={close_code}")
 
     async def receive(self, text_data):
+        # Drop connections the server's idle-session timeout may have
+        # killed while this socket sat idle (see channels.db import note).
+        await _aclose_if_socket_was_idle(self)
         data = await _parse_json_or_close(
             self,
             text_data,
@@ -401,6 +437,9 @@ class StreamingEntityBackend(AsyncWebsocketConsumer):
         logger.debug(f"entity ws: disconnect code={close_code}")
 
     async def receive(self, text_data):
+        # Drop connections the server's idle-session timeout may have
+        # killed while this socket sat idle (see channels.db import note).
+        await _aclose_if_socket_was_idle(self)
         data = await _parse_json_or_close(
             self,
             text_data,
@@ -448,6 +487,9 @@ class PriorAuthConsumer(AsyncWebsocketConsumer):
         logger.debug(f"prior-auth ws: disconnect code={close_code}")
 
     async def receive(self, text_data):
+        # Drop connections the server's idle-session timeout may have
+        # killed while this socket sat idle (see channels.db import note).
+        await _aclose_if_socket_was_idle(self)
         data = await _parse_json_or_close(
             self,
             text_data,
@@ -770,6 +812,9 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
             chat.save(update_fields=["denied_item", "denied_reason"])
 
     async def receive(self, text_data):
+        # Drop connections the server's idle-session timeout may have
+        # killed while this socket sat idle (see channels.db import note).
+        await _aclose_if_socket_was_idle(self)
         data = await _parse_json_or_close(
             self,
             text_data,
