@@ -7,8 +7,9 @@ the failure mode behind the PoolTimeout / 60s-ingress-504 incidents -- so we
 surface them on the existing django_prometheus ``/metrics`` endpoint.
 
 Registered from ``FightHealthInsuranceConfig.ready()``. When pooling is off
-(the current default) no aliases have a pool and the collector yields
-nothing, so this is free everywhere except pooled processes.
+(the current default) no aliases have a pool and every family is emitted
+with zero samples (HELP/TYPE stanzas only), so this is nearly free
+everywhere except pooled processes.
 """
 
 from typing import Iterable, Iterator, Tuple
@@ -80,28 +81,45 @@ _LABELS = ["alias", "pool"]
 
 
 def _iter_pools() -> Iterator[Tuple[str, object]]:
-    """Yield (alias, psycopg_pool pool) for DB aliases that have a pool.
+    """Yield (alias, psycopg_pool pool) for DB aliases with an opened pool.
 
     Imported lazily so the collector can be constructed before Django's app
     registry is ready. Non-postgres backends have no ``pool`` attribute and
-    postgres without OPTIONS["pool"] returns None; both are skipped.
+    postgres without OPTIONS["pool"] returns None; both are skipped. So are
+    pools nothing has opened yet: an unopened pool reports
+    pool_size == min_size with pool_available == 0, which reads as "all
+    checked out" on the starvation dashboard while no connection exists.
+    Everything is guarded per alias -- Django's pool property raises
+    ImproperlyConfigured on several misconfigs (missing driver, empty NAME,
+    CONN_MAX_AGE != 0), and one bad alias must degrade to a log line, not
+    500 the whole /metrics endpoint mid-incident.
     """
     from django.db import connections
 
     for alias in connections:
-        pool = getattr(connections[alias], "pool", None)
-        if pool is not None:
-            yield alias, pool
+        try:
+            pool = getattr(connections[alias], "pool", None)
+            if pool is not None and getattr(pool, "_opened", True):
+                yield alias, pool
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"Skipping connection pool stats for alias {alias}"
+            )
 
 
 class DatabasePoolStatsCollector(Collector):
     """Expose psycopg_pool get_stats() per database alias."""
 
     def describe(self) -> Iterable[Metric]:
-        # A non-empty describe() (or none at all) would make the registry
-        # call collect() at register time, touching django.db.connections
-        # mid AppConfig.ready(); returning [] defers that to scrape time.
-        return []
+        # Static description straight from the tables: gives the registry
+        # real metric names for duplicate-registration detection without
+        # touching django.db.connections during AppConfig.ready(). (The
+        # registry only falls back to calling collect() at register time
+        # when a collector has no describe() at all.)
+        for name, doc in _GAUGE_STATS.values():
+            yield GaugeMetricFamily(name, doc, labels=_LABELS)
+        for name, doc in _COUNTER_STATS.values():
+            yield CounterMetricFamily(name, doc, labels=_LABELS)
 
     def collect(self) -> Iterator[Metric]:
         gauges = {

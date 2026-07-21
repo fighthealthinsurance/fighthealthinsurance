@@ -866,8 +866,9 @@ class Prod(Base):
             # open a fresh connection per request/ORM thread, so a failover or
             # network hiccup would wedge workers on connect for minutes (the
             # wedged-worker pattern the readiness probes catch late). Applies
-            # to pool-created connections too.
-            "connect_timeout": _ucr_int("PG_CONNECT_TIMEOUT", 10, 1),
+            # to pool-created connections too. Floor of 2 because libpq
+            # treats connect_timeout values below 2 as 2.
+            "connect_timeout": _ucr_int("PG_CONNECT_TIMEOUT", 10, 2),
         }
         # Client-side pooling is OPT-IN (PG_USE_POOL) and off by default:
         # executor threads that touch the ORM outside the request cycle and
@@ -889,7 +890,11 @@ class Prod(Base):
             # (2-4), the Temporal worker at least
             # TEMPORAL_MAX_ACTIVITY_WORKERS. Every process keeps its own
             # pool: size the server's max_connections to fit
-            # (processes * max_size) plus headroom.
+            # (processes * max_size) plus headroom. NOTE: every workload
+            # envFrom's the shared fight-health-insurance-secret, so putting
+            # PG_USE_POOL there enables pooling fleet-wide at this default
+            # size at once -- opt in per Deployment (with a per-workload
+            # PG_POOL_MAX_SIZE) instead.
             pool_max_size = max(
                 _ucr_int("PG_POOL_MAX_SIZE", 16, 1),
                 # A min above max would make ConnectionPool raise ValueError
@@ -989,12 +994,14 @@ class Prod(Base):
                 "level": "ERROR",
                 "propagate": True,
             },
-            # psycopg_pool logs connection setup/teardown and reconnect
-            # failures here; silent by default, which made the last pool
-            # starvation invisible until pg_stat_activity forensics.
+            # psycopg_pool warns here on discarded broken connections and
+            # reconnect failures. WARNING, not INFO: INFO is per-checkout
+            # chatter (3+ lines per DB request when pooled); starvation
+            # visibility comes from the fhi_pg_pool_* metrics
+            # (db_pool_metrics.py), not logs.
             "psycopg.pool": {
                 "handlers": ["console"],
-                "level": "INFO",
+                "level": "WARNING",
                 "propagate": False,
             },
         },

@@ -68,9 +68,10 @@ workers.
   reactivated. (The equivalent `k8s/deploy-back.yaml` and
   `k8s/deploy_staging-back.yaml` copies have been deleted — they defined the
   same `web`/`web-staging` Deployment names as the live manifests but with
-  pre-incident config and a secrets-sourced `PDBHOST`, so an accidental
-  `kubectl apply` would have clobbered the live Deployments and repointed them
-  at the old database. The uploads PVC they carried now lives in
+  pre-incident config, so an accidental `kubectl apply` would have clobbered
+  the live Deployments; for prod `web` it would also have repointed `PDBHOST`
+  at the old secrets-sourced database host (staging is secrets-sourced either
+  way, see above). The uploads PVC they carried now lives in
   `k8s/uploads-pvc.yaml`.)
 - **`pg-*.yaml`, `k8s/deploy.yaml` service names** — the remaining legacy
   `fhi-pg*` references are CNPG **Cluster manifests** (`pg-copy.yaml`,

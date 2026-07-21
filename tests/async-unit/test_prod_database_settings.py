@@ -25,8 +25,8 @@ class TestProdDatabasesUnpooled:
         db = _prod_default_db({})
         assert "pool" not in db["OPTIONS"]
 
-    @pytest.mark.parametrize("value", ["0", "false", "no", "off", ""])
-    def test_pool_absent_for_falsey_pg_use_pool(self, value):
+    @pytest.mark.parametrize("value", ["0", "false", "no", "off", "", "2", "banana"])
+    def test_pool_absent_for_falsey_or_unrecognized_pg_use_pool(self, value):
         db = _prod_default_db({"PG_USE_POOL": value})
         assert "pool" not in db["OPTIONS"]
 
@@ -42,9 +42,11 @@ class TestProdDatabasesUnpooled:
         db = _prod_default_db({"PG_CONNECT_TIMEOUT": "5"})
         assert db["OPTIONS"]["connect_timeout"] == 5
 
-    def test_connect_timeout_clamped_to_minimum_of_one(self):
+    def test_connect_timeout_clamped_to_libpq_minimum_of_two(self):
+        # libpq treats connect_timeout values below 2 as 2, so the clamp
+        # mirrors what the server-side behavior would be anyway.
         db = _prod_default_db({"PG_CONNECT_TIMEOUT": "0"})
-        assert db["OPTIONS"]["connect_timeout"] == 1
+        assert db["OPTIONS"]["connect_timeout"] == 2
 
     def test_connect_timeout_malformed_env_falls_back_to_default(self):
         db = _prod_default_db({"PG_CONNECT_TIMEOUT": "banana"})
@@ -85,6 +87,12 @@ class TestProdDatabasesPooled:
     def test_pool_max_waiting_env_override(self):
         db = _prod_default_db({"PG_USE_POOL": "1", "PG_POOL_MAX_WAITING": "5"})
         assert db["OPTIONS"]["pool"]["max_waiting"] == 5
+
+    def test_pool_max_waiting_zero_means_unbounded_is_passed_through(self):
+        # 0 is psycopg_pool's "no bound on the waiter queue" sentinel; the
+        # clamp floor must not turn an explicit 0 into something else.
+        db = _prod_default_db({"PG_USE_POOL": "1", "PG_POOL_MAX_WAITING": "0"})
+        assert db["OPTIONS"]["pool"]["max_waiting"] == 0
 
     def test_pool_malformed_max_size_falls_back_to_default(self):
         db = _prod_default_db({"PG_USE_POOL": "1", "PG_POOL_MAX_SIZE": "banana"})
