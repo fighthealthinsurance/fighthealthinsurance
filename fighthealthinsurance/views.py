@@ -23,9 +23,10 @@ from django.http import (
 from django.shortcuts import get_object_or_404, redirect, render
 from django.template import loader
 from django.urls import reverse
-from django.utils.decorators import method_decorator
+from django.utils.decorators import classonlymethod, method_decorator
 from django.utils.safestring import mark_safe
 from django.views import View, generic
+from django.views.decorators.cache import cache_control, cache_page
 from django.views.decorators.clickjacking import xframe_options_exempt
 from django.views.decorators.csrf import csrf_exempt, ensure_csrf_cookie
 from django.views.decorators.http import require_http_methods
@@ -369,55 +370,88 @@ class ExternalProSignupView(View):
         return HttpResponseRedirect(reverse("pro_version_thankyou"))
 
 
-class PatientAccessView(generic.TemplateView):
+# Whole-response cache TTL for static-ish pages (see StaticIshView). Also
+# emitted as Cache-Control max-age, so it bounds CDN/browser staleness too.
+# Kept short enough that an admin-posted SiteBanner (incident notice) baked
+# into these cached pages shows up / comes down within ~30 minutes.
+STATIC_ISH_PAGE_CACHE_SECONDS = 60 * 30
+
+
+class StaticIshView(generic.TemplateView):
+    """Base class for marketing/content pages cached as whole responses.
+
+    "Static-ish": the page content itself is fixed, but pages still render
+    through ``base.html`` with request context (e.g. the admin-controlled
+    ``SiteBanner``), so they can't be served as plain static files. Instead the
+    full response is cached per-URL for ``cache_timeout_seconds`` and marked
+    ``Cache-Control: public`` with a matching ``max-age`` (honored by
+    Cloudflare and browsers).
+
+    Subclasses only set ``template_name`` (and optionally override
+    ``cache_timeout_seconds`` for pages that can tolerate longer staleness).
+    The cache wrapping lives here, in ``as_view``, so ``urls.py`` stays free of
+    per-route decorator stacks.
+    """
+
+    cache_timeout_seconds = STATIC_ISH_PAGE_CACHE_SECONDS
+
+    @classonlymethod
+    def as_view(  # type: ignore[override]
+        cls, **initkwargs: typing.Any
+    ) -> typing.Callable[..., HttpResponseBase]:
+        view = super().as_view(**initkwargs)
+        return cache_control(public=True)(cache_page(cls.cache_timeout_seconds)(view))
+
+
+class PatientAccessView(StaticIshView):
     """Landing page for patient access and market access teams."""
 
     template_name = "patient_access.html"
 
 
-class IndexView(generic.TemplateView):
+class IndexView(StaticIshView):
     """Homepage view."""
 
     template_name = "index.html"
 
 
-class AboutView(generic.TemplateView):
+class AboutView(StaticIshView):
     """About us page."""
 
     template_name = "about_us.html"
 
 
-class AboutAIView(generic.TemplateView):
+class AboutAIView(StaticIshView):
     """About our AI page."""
 
     template_name = "about_ai.html"
 
 
-class HowToHelpView(generic.TemplateView):
+class HowToHelpView(StaticIshView):
     """Page describing ways to help the project."""
 
     template_name = "how_to_help.html"
 
 
-class Preparing2026View(generic.TemplateView):
+class Preparing2026View(StaticIshView):
     """Landing page helping users prepare for 2026 insurance changes."""
 
     template_name = "preparing_2026.html"
 
 
-class Turning26View(generic.TemplateView):
+class Turning26View(StaticIshView):
     """SEO page for young adults aging off a parent's health insurance at 26."""
 
     template_name = "turning_26.html"
 
 
-class PBSNewsHourView(generic.TemplateView):
+class PBSNewsHourView(StaticIshView):
     """Page about the PBS NewsHour feature."""
 
     template_name = "as_seen_on_pbs.html"
 
 
-class BingoView(generic.TemplateView):
+class BingoView(StaticIshView):
     """Insurance Bullshit Bingo page - a humorous coping resource."""
 
     template_name = "bingo.html"
@@ -552,7 +586,7 @@ class OtherResourcesView(generic.TemplateView):
         return context
 
 
-class BlogView(generic.TemplateView):
+class BlogView(StaticIshView):
     """Blog index page displaying list of blog posts."""
 
     template_name = "blog.html"
@@ -583,7 +617,7 @@ class BlogView(generic.TemplateView):
         return context
 
 
-class BlogPostView(generic.TemplateView):
+class BlogPostView(StaticIshView):
     """Individual blog post page loaded from markdown files."""
 
     template_name = "blog_post.html"
@@ -663,7 +697,7 @@ class ScanView(generic.TemplateView):
         return {"ocr_result": "", "upload_more": True}
 
 
-class PrivacyPolicyView(generic.TemplateView):
+class PrivacyPolicyView(StaticIshView):
     """Privacy policy page."""
 
     template_name = "privacy_policy.html"
@@ -672,7 +706,7 @@ class PrivacyPolicyView(generic.TemplateView):
         return {"title": "Privacy Policy"}
 
 
-class MHMDAView(generic.TemplateView):
+class MHMDAView(StaticIshView):
     """My Health My Data Act consumer privacy notice page."""
 
     template_name = "mhmda.html"
@@ -681,7 +715,7 @@ class MHMDAView(generic.TemplateView):
         return {"title": "Consumer Health Data Privacy Notice"}
 
 
-class TermsOfServiceView(generic.TemplateView):
+class TermsOfServiceView(StaticIshView):
     """Terms of service page."""
 
     template_name = "tos.html"
@@ -690,7 +724,7 @@ class TermsOfServiceView(generic.TemplateView):
         return {"title": "Terms of Service"}
 
 
-class ContactView(generic.TemplateView):
+class ContactView(StaticIshView):
     """Contact us page."""
 
     template_name = "contact.html"
@@ -699,7 +733,7 @@ class ContactView(generic.TemplateView):
         return {"title": "Contact Us"}
 
 
-class FAQView(generic.TemplateView):
+class FAQView(StaticIshView):
     """Frequently asked questions page."""
 
     template_name = "faq.html"
@@ -708,7 +742,7 @@ class FAQView(generic.TemplateView):
         return {"title": "Frequently Asked Questions"}
 
 
-class MedicaidFAQView(generic.TemplateView):
+class MedicaidFAQView(StaticIshView):
     """FAQ page specifically for Medicaid work requirements."""
 
     template_name = "faq_post.html"
@@ -741,7 +775,7 @@ class MedicaidFAQView(generic.TemplateView):
         return context
 
 
-class SMTPDomainFAQView(generic.TemplateView):
+class SMTPDomainFAQView(StaticIshView):
     """FAQ page about SMTP domain impersonation claims."""
 
     template_name = "faq_post.html"
@@ -2529,7 +2563,7 @@ class ChooserView(TemplateView):
         return context
 
 
-class MicrositeView(TemplateView):
+class MicrositeView(StaticIshView):
     """View for microsite landing pages."""
 
     template_name = "microsite.html"
@@ -2567,8 +2601,12 @@ class MicrositeView(TemplateView):
         return context
 
 
-class MicrositeDirectoryView(TemplateView):
+class MicrositeDirectoryView(StaticIshView):
     """View for the microsite directory page listing all treatment/drug-specific landing pages."""
+
+    # A crawler-oriented directory that only changes on deploy; banner
+    # freshness matters less here than on the visitor-facing pages.
+    cache_timeout_seconds = 60 * 60 * 24
 
     template_name = "microsite_directory.html"
 
@@ -2722,7 +2760,7 @@ class UnderstandPolicyView(FormView):
         return render(self.request, "chat_redirect.html", context)
 
 
-class DenialLanguageLibraryView(TemplateView):
+class DenialLanguageLibraryView(StaticIshView):
     """View for the public denial language library."""
 
     template_name = "denial_language_library.html"
@@ -2762,7 +2800,7 @@ class DenialLanguageLibraryView(TemplateView):
         return context
 
 
-class StateHelpIndexView(TemplateView):
+class StateHelpIndexView(StaticIshView):
     """View for the state-by-state help index page."""
 
     template_name = "state_help_index.html"
@@ -2776,7 +2814,7 @@ class StateHelpIndexView(TemplateView):
         return context
 
 
-class StateHelpView(TemplateView):
+class StateHelpView(StaticIshView):
     """View for individual state help pages."""
 
     template_name = "state_help.html"

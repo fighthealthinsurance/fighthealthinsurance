@@ -4,7 +4,7 @@ from datetime import timedelta
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
-from django.test import Client, RequestFactory, TestCase
+from django.test import Client, RequestFactory, TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
@@ -64,6 +64,7 @@ class TestSiteBannerModel(TestCase):
         self.assertEqual(payload["message"], "Hi")
         self.assertEqual(payload["level"], SiteBanner.LEVEL_DANGER)
         self.assertFalse(payload["dismissible"])
+        self.assertIsNone(payload["expires_at"])
         self.assertIsInstance(payload["version"], int)
 
     def test_get_active_banners_orders_newest_first(self):
@@ -82,6 +83,149 @@ class TestSiteBannerModel(TestCase):
         self.assertIn("warning", text)
         self.assertIn("active", text)
         self.assertIn("Models are down", text)
+
+
+@override_settings(
+    CACHES={
+        "default": {
+            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+            "LOCATION": "test-site-banner-cache",
+        }
+    },
+    # Exercise the cache directly; keep the background refresh thread out of it.
+    SITE_BANNER_BACKGROUND_REFRESH=False,
+)
+class TestSiteBannerCache(TestCase):
+    """The active-banner list is cached and refreshed off the request path."""
+
+    def setUp(self):
+        from django.core.cache import cache
+
+        cache.clear()
+
+    def test_refresh_cache_populates_and_returns_active_banners(self):
+        from django.core.cache import cache
+
+        banner = SiteBanner.objects.create(message="Warm me")
+        result = SiteBanner.refresh_cache()
+
+        self.assertEqual([b["id"] for b in result], [banner.id])
+        self.assertEqual(cache.get(SiteBanner.CACHE_KEY), result)
+
+    def test_get_active_banners_serves_warm_cache_without_query(self):
+        SiteBanner.objects.create(message="Cached")
+        # Warm the cache, then a subsequent read must not touch the DB.
+        SiteBanner.refresh_cache()
+
+        with self.assertNumQueries(0):
+            banners = SiteBanner.get_active_banners()
+
+        self.assertEqual([b["message"] for b in banners], ["Cached"])
+
+    def test_get_active_banners_repopulates_on_cold_miss(self):
+        from django.core.cache import cache
+
+        banner = SiteBanner.objects.create(message="Cold")
+        cache.delete(SiteBanner.CACHE_KEY)
+
+        banners = SiteBanner.get_active_banners()
+
+        self.assertEqual([b["id"] for b in banners], [banner.id])
+        # The miss also warmed the cache for the next reader.
+        self.assertIsNotNone(cache.get(SiteBanner.CACHE_KEY))
+
+    def test_banner_expiring_while_cached_is_dropped_at_read_time(self):
+        from django.core.cache import cache
+
+        # Simulate a payload cached before the banner's expires_at passed: the
+        # refresher only rewrites it on its interval, but reads must still
+        # honor the staff-selected stop time exactly.
+        stale_payload = [
+            {
+                "id": 1,
+                "message": "Maintenance window",
+                "level": SiteBanner.LEVEL_WARNING,
+                "dismissible": True,
+                "expires_at": (timezone.now() - timedelta(seconds=1)).timestamp(),
+                "version": 1,
+            }
+        ]
+        cache.set(SiteBanner.CACHE_KEY, stale_payload, SiteBanner.CACHE_TTL_SECONDS)
+
+        self.assertEqual(SiteBanner.get_active_banners(), [])
+
+    def test_cached_banner_with_future_expiry_is_still_served(self):
+        from django.core.cache import cache
+
+        payload = [
+            {
+                "id": 1,
+                "message": "Still on",
+                "level": SiteBanner.LEVEL_INFO,
+                "dismissible": True,
+                "expires_at": (timezone.now() + timedelta(hours=1)).timestamp(),
+                "version": 1,
+            }
+        ]
+        cache.set(SiteBanner.CACHE_KEY, payload, SiteBanner.CACHE_TTL_SECONDS)
+
+        banners = SiteBanner.get_active_banners()
+        self.assertEqual([b["message"] for b in banners], ["Still on"])
+
+    def test_saving_a_banner_invalidates_the_cache(self):
+        from django.core.cache import cache
+
+        SiteBanner.refresh_cache()
+        self.assertIsNotNone(cache.get(SiteBanner.CACHE_KEY))
+
+        # The post_save signal should drop the cached list.
+        SiteBanner.objects.create(message="New banner")
+        self.assertIsNone(cache.get(SiteBanner.CACHE_KEY))
+
+
+class TestSiteBannerRefresher(TestCase):
+    """The per-worker background refresher (site_banner_refresh)."""
+
+    def _make_refresher(self):
+        from fighthealthinsurance.site_banner_refresh import _SiteBannerRefresher
+
+        return _SiteBannerRefresher()
+
+    @override_settings(SITE_BANNER_BACKGROUND_REFRESH=False)
+    def test_ensure_started_is_noop_when_disabled(self):
+        refresher = self._make_refresher()
+        with patch.object(refresher, "_start_thread") as start:
+            refresher.ensure_started()
+        start.assert_not_called()
+
+    @override_settings(SITE_BANNER_BACKGROUND_REFRESH=True)
+    def test_ensure_started_starts_the_thread_exactly_once(self):
+        refresher = self._make_refresher()
+        with patch.object(refresher, "_start_thread") as start:
+            refresher.ensure_started()
+            refresher.ensure_started()  # idempotent
+        start.assert_called_once()
+
+    def test_refresh_once_refreshes_cache_and_returns_connections(self):
+        refresher = self._make_refresher()
+        with patch.object(SiteBanner, "refresh_cache") as refresh, patch(
+            "fighthealthinsurance.site_banner_refresh.connections"
+        ) as conns:
+            refresher._refresh_once()
+        refresh.assert_called_once()
+        # The refresh thread never gets per-request connection cleanup, so a
+        # cycle must always hand its connection back itself (leak prevention).
+        conns.close_all.assert_called_once()
+
+    def test_refresh_once_returns_connections_even_when_refresh_fails(self):
+        refresher = self._make_refresher()
+        with patch.object(
+            SiteBanner, "refresh_cache", side_effect=RuntimeError("boom")
+        ), patch("fighthealthinsurance.site_banner_refresh.connections") as conns:
+            # A failed refresh must not propagate (it would kill the loop)...
+            refresher._refresh_once()
+        # ...and must still return the connection so failures don't leak.
+        conns.close_all.assert_called_once()
 
 
 class TestSiteBannerContextProcessor(TestCase):

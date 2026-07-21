@@ -222,47 +222,37 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
     ),
     path(
         "about-us",
-        cache_control(public=True)(cache_page(60 * 60 * 2)(views.AboutView.as_view())),
+        views.AboutView.as_view(),
         name="about",
     ),
     path(
         "about-ai",
-        cache_control(public=True)(
-            cache_page(60 * 60 * 2)(views.AboutAIView.as_view())
-        ),
+        views.AboutAIView.as_view(),
         name="about-ai",
     ),
     path(
         "how-to-help",
-        cache_control(public=True)(
-            cache_page(60 * 60 * 2)(views.HowToHelpView.as_view())
-        ),
+        views.HowToHelpView.as_view(),
         name="how-to-help",
     ),
     path(
         "preparing-for-2026",
-        cache_control(public=True)(
-            cache_page(60 * 60 * 2)(views.Preparing2026View.as_view())
-        ),
+        views.Preparing2026View.as_view(),
         name="preparing-2026",
     ),
     path(
         "turning-26",
-        cache_control(public=True)(
-            cache_page(60 * 60 * 2)(views.Turning26View.as_view())
-        ),
+        views.Turning26View.as_view(),
         name="turning-26",
     ),
     path(
         "as-seen-on-pbs",
-        cache_control(public=True)(
-            cache_page(60 * 60 * 2)(views.PBSNewsHourView.as_view())
-        ),
+        views.PBSNewsHourView.as_view(),
         name="pbs-newshour",
     ),
     path(
         "bingo",
-        cache_control(public=True)(cache_page(60 * 60 * 2)(views.BingoView.as_view())),
+        views.BingoView.as_view(),
         name="bingo",
     ),
     path(
@@ -272,54 +262,42 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
     ),
     path(
         "blog/",
-        cache_control(public=True)(cache_page(60 * 60 * 2)(views.BlogView.as_view())),
+        views.BlogView.as_view(),
         name="blog",
     ),
     path(
         "blog/<slug:slug>/",
-        cache_control(public=True)(
-            cache_page(60 * 60 * 2)(views.BlogPostView.as_view())
-        ),
+        views.BlogPostView.as_view(),
         name="blog-post",
     ),
     path(
         "faq/",
-        cache_control(public=True)(cache_page(60 * 60 * 2)(views.FAQView.as_view())),
+        views.FAQView.as_view(),
         name="faq",
     ),
     path(
         "faq/medicaid/",
-        cache_control(public=True)(
-            cache_page(60 * 60 * 2)(views.MedicaidFAQView.as_view())
-        ),
+        views.MedicaidFAQView.as_view(),
         name="medicaid-faq",
     ),
     path(
         "faq/smtp-domain/",
-        cache_control(public=True)(
-            cache_page(60 * 60 * 2)(views.SMTPDomainFAQView.as_view())
-        ),
+        views.SMTPDomainFAQView.as_view(),
         name="smtp-domain-faq",
     ),
     path(
         "denial-language/",
-        cache_control(public=True)(
-            cache_page(60 * 60 * 2)(views.DenialLanguageLibraryView.as_view())
-        ),
+        views.DenialLanguageLibraryView.as_view(),
         name="denial-language-library",
     ),
     path(
         "state-help/",
-        cache_control(public=True)(
-            cache_page(60 * 60 * 2)(views.StateHelpIndexView.as_view())
-        ),
+        views.StateHelpIndexView.as_view(),
         name="state_help_index",
     ),
     path(
         "state-help/<slug:slug>/",
-        cache_control(public=True)(
-            cache_page(60 * 60 * 2)(views.StateHelpView.as_view())
-        ),
+        views.StateHelpView.as_view(),
         name="state_help",
     ),
     path("pro_version", views.ProVersionView.as_view(), name="pro_version"),
@@ -333,9 +311,7 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
     ),
     path(
         "professionals/patient-access",
-        cache_control(public=True)(
-            cache_page(60 * 60 * 2)(views.PatientAccessView.as_view())
-        ),
+        views.PatientAccessView.as_view(),
         name="patient_access",
     ),
     path(
@@ -355,21 +331,17 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
     ),
     path(
         "tos",
-        cache_control(public=True)(
-            cache_page(60 * 60 * 2)(views.TermsOfServiceView.as_view())
-        ),
+        views.TermsOfServiceView.as_view(),
         name="tos",
     ),
     path(
         "privacy_policy",
-        cache_control(public=True)(
-            cache_page(60 * 60 * 2)(views.PrivacyPolicyView.as_view())
-        ),
+        views.PrivacyPolicyView.as_view(),
         name="privacy_policy",
     ),
     path(
         "mhmda",
-        cache_control(public=True)(cache_page(60 * 60 * 2)(views.MHMDAView.as_view())),
+        views.MHMDAView.as_view(),
         name="mhmda",
     ),
     path(
@@ -408,9 +380,7 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
     ),
     path(
         "contact",
-        cache_control(public=True)(
-            cache_page(60 * 60 * 2)(views.ContactView.as_view())
-        ),
+        views.ContactView.as_view(),
         name="contact",
     ),
     path(
@@ -433,9 +403,7 @@ else:
     urlpatterns += [
         path(
             "",
-            cache_control(public=True)(
-                cache_page(60 * 60 * 2)(views.IndexView.as_view())
-            ),
+            views.IndexView.as_view(),
             name="root",
         )
     ]
@@ -471,17 +439,13 @@ urlpatterns += [
     # Microsites - condition-specific landing pages
     path(
         "microsite/<slug:slug>/",
-        cache_control(public=True)(
-            cache_page(60 * 60 * 2)(views.MicrositeView.as_view())
-        ),
+        views.MicrositeView.as_view(),
         name="microsite",
     ),
     # Microsite directory - lists all microsites for organic crawlers
     path(
         "treatments/",
-        cache_control(public=True)(
-            cache_page(60 * 60 * 24)(views.MicrositeDirectoryView.as_view())
-        ),
+        views.MicrositeDirectoryView.as_view(),
         name="microsite_directory",
     ),
     # Explain my Denial page

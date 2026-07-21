@@ -441,6 +441,12 @@ class Base(Configuration):
         }
     }
 
+    # Run the per-worker background thread that keeps the site-banner cache warm
+    # (see fighthealthinsurance.site_banner_refresh). Turned off in the Test*
+    # configs, where background DB access from another thread would break
+    # TestCase transaction isolation.
+    SITE_BANNER_BACKGROUND_REFRESH = True
+
     # Static files (CSS, JavaScript, Images)
     # https://docs.djangoproject.com/en/4.0/howto/static-files/
 
@@ -695,6 +701,8 @@ class Test(Dev):
             "BACKEND": "django.core.cache.backends.dummy.DummyCache",
         }
     }
+    # No background banner refresh thread in tests (see Base).
+    SITE_BANNER_BACKGROUND_REFRESH = False
 
 
 class TestSync(Dev):
@@ -719,6 +727,8 @@ class TestSync(Dev):
             "BACKEND": "django.core.cache.backends.dummy.DummyCache",
         }
     }
+    # No background banner refresh thread in tests (see Base).
+    SITE_BANNER_BACKGROUND_REFRESH = False
 
 
 class TestActor(Dev):
@@ -750,6 +760,8 @@ class TestActor(Dev):
             "BACKEND": "django.core.cache.backends.dummy.DummyCache",
         }
     }
+    # No background banner refresh thread in tests (see Base).
+    SITE_BANNER_BACKGROUND_REFRESH = False
 
 
 class Prod(Base):
