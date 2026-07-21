@@ -141,15 +141,28 @@ spec:
       max_worker_processes: "32"
       max_parallel_workers: "32"
 
-      # Connection capacity + leak reapers. These lived on -8 (see the pg
-      # pooling/connection PR) but were lost in the -9 rewrite, leaving -9 at
-      # the default max_connections=100 while the app fleet holds ~50+ and
-      # client threads that leak connections push it higher. The idle reapers
-      # make leaked (client-side unpooled) connections self-heal server-side.
+      # Connection capacity + leak reapers. Unpooled clients (PG_USE_POOL off)
+      # mean per-request connections, and aborted ASGI requests can strand
+      # connections until the idle reaper collects them -- bursts blew through
+      # 200 (Sentry: too many clients). 6000 is a deliberate never-again
+      # ceiling, far beyond direct-connection norms: mostly-idle backends cost
+      # a few MB each, so even half-full is ~10-20GB -- fits these nodes, but
+      # do not expect healthy operation anywhere near the cap. Actual usage is
+      # bounded by the idle reapers below plus the pressure reaper CronJob
+      # (k8s/pg-conn-pressure-reaper.yaml), which evicts the OLDEST idle app
+      # connections when usage crosses 50% of this cap.
       # NOTE: max_connections requires a Postgres restart; with
       # primaryUpdateStrategy: supervised that restart waits for a human
-      # (kubectl cnpg restart fhi-pg-main-9).
-      max_connections: "200"
+      # (kubectl cnpg restart fhi-pg-main-9). It is also a one-way ratchet in
+      # practice: standbys require max_connections >= the primary's, so any
+      # future DECREASE must restart the primary first (or lockstep) or the
+      # replicas refuse to start.
+      max_connections: "6000"
+      # Default is 3: at a 6000 cap a full-cap event would leave the CNPG
+      # operator, the isolationCheck liveness probe, and the pressure-reaper
+      # CronJob fighting over 3 slots -- the reaper must be able to connect
+      # exactly then.
+      superuser_reserved_connections: "10"
       idle_session_timeout: "30min"
       idle_in_transaction_session_timeout: "10min"
 
