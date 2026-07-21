@@ -1,4 +1,8 @@
-seleniumbase>=4.32
+# Exact pin: seleniumbase exact-pins beautifulsoup4 per release, and 4.35.0+
+# wants bs4==4.13.3 while requirements.txt pins bs4==4.12.3, so with only a
+# floor here pip probes ~130 releases (4.51 -> 4.34) on every tox env install
+# before landing on 4.34.6. To upgrade: bump beautifulsoup4 first, then this.
+seleniumbase==4.34.6
 urllib3>=2.0
 pytest
 pytest-django
