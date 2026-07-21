@@ -1,0 +1,19 @@
+# Shared uploads / fax-document PVC mounted at /external_data
+# (COMBINED_STORAGE). Consumed by the Temporal worker
+# (k8s/temporal/worker.yaml); the deleted stale deploy-back.yaml copies of the
+# web Deployment also mounted it, and the live cluster object predates this
+# file. Kept in-repo as the manifest of record for the claim; NOT applied by
+# scripts/build.sh (matching its prior state -- the PVC already exists in the
+# cluster and PVC specs are mostly immutable anyway).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: new-uploads-longhorn-backup4
+  namespace: totallylegitco
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: longhorn
+  resources:
+    requests:
+      storage: 51Gi

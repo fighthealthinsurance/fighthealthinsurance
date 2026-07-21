@@ -45,17 +45,27 @@ from rest_framework.authentication import SessionAuthentication
 
 
 def _ucr_int(name: str, default: int, minimum: int) -> int:
-    """Parse a UCR-related env-backed int and clamp to a sensible minimum.
+    """Parse an env-backed int and clamp to a sensible minimum.
 
-    Used for refresh intervals, TTL, batch size, and retention so a
-    misconfigured env can't zero out timing/TTL/batching math at runtime
-    or abort Django startup with a ValueError.
+    Used for refresh intervals, TTL, batch size, retention, and the pg
+    pool knobs so a misconfigured env can't zero out timing/TTL/batching
+    math at runtime or abort Django startup with a ValueError.
     """
     try:
         value = int(os.getenv(name) or default)
     except ValueError:
         value = default
     return max(value, minimum)
+
+
+def _env_flag(name: str, default: str = "0") -> bool:
+    """Parse an env-backed boolean flag.
+
+    Accepts 1/true/yes/on (case-insensitive) so an operator writing
+    PG_USE_POOL=true doesn't silently get the default the way a strict
+    == "1" comparison would.
+    """
+    return (os.getenv(name) or default).strip().lower() in ("1", "true", "yes", "on")
 
 
 class Base(Configuration):
@@ -846,11 +856,64 @@ class Prod(Base):
         # Postgres connection handling. We serve with uvicorn/ASGI, where
         # Django documents that persistent connections (CONN_MAX_AGE > 0) must
         # stay disabled; client-side pooling (psycopg 3 + psycopg-pool via
-        # deploy-requirements.txt) is OPT-IN through PG_USE_POOL=1 and OFF by
-        # default -- see the OPTIONS comment below for why.
+        # deploy-requirements.txt) is OPT-IN through PG_USE_POOL and OFF by
+        # default -- see the pool comment below for why.
         # https://docs.djangoproject.com/en/5.2/ref/databases/#connection-pool
         mysql_engine = "django_prometheus.db.backends.mysql"
         postgres_engine = "django_prometheus.db.backends.postgresql"
+        pg_options: dict = {
+            # libpq waits indefinitely for TCP connect by default. Unpooled we
+            # open a fresh connection per request/ORM thread, so a failover or
+            # network hiccup would wedge workers on connect for minutes (the
+            # wedged-worker pattern the readiness probes catch late). Applies
+            # to pool-created connections too.
+            "connect_timeout": _ucr_int("PG_CONNECT_TIMEOUT", 10, 1),
+        }
+        # Client-side pooling is OPT-IN (PG_USE_POOL) and off by default:
+        # executor threads that touch the ORM outside the request cycle and
+        # never return their checkout starve the pool, and psycopg_pool has
+        # no reaper for checked-out connections -- a starved pool turns every
+        # DB request into a PoolTimeout wait that stalls the whole worker
+        # (the 60s ingress 504s / uptime monitor incidents). Without the pool
+        # those leaked connections burden only the server, where
+        # fhi-pg-main-9's idle_session_timeout reaps them (see
+        # k8s/fhi-pg-main-9-cluster.yaml). Re-enable pooling only once thread
+        # connection hygiene is proven.
+        if _env_flag("PG_USE_POOL"):
+            pool_min_size = _ucr_int("PG_POOL_MIN_SIZE", 2, 0)
+            # Peak legitimate concurrent ORM users in one web worker: the
+            # single thread_sensitive sync lane (1) + exec.executor (10) +
+            # pubmed_executor (4) = 15; the default of 16 keeps a busy
+            # executor from starving the pool by itself. Non-web processes
+            # want other sizes via env: Ray actors / one-shot jobs small
+            # (2-4), the Temporal worker at least
+            # TEMPORAL_MAX_ACTIVITY_WORKERS. Every process keeps its own
+            # pool: size the server's max_connections to fit
+            # (processes * max_size) plus headroom.
+            pool_max_size = max(
+                _ucr_int("PG_POOL_MAX_SIZE", 16, 1),
+                # A min above max would make ConnectionPool raise ValueError
+                # on first DB access (every request 500s, no crash at boot);
+                # grow max instead.
+                pool_min_size,
+            )
+            pg_options["pool"] = {
+                # Label used by psycopg_pool log lines and our
+                # fhi_pg_pool_* metrics (db_pool_metrics.py).
+                "name": "fhi-default",
+                "min_size": pool_min_size,
+                "max_size": pool_max_size,
+                # Fail fast: pool waiters stack their timeout onto
+                # every request queued behind them.
+                "timeout": _ucr_int("PG_POOL_TIMEOUT", 5, 1),
+                # Bound the waiter queue: past this, checkouts fail
+                # immediately with TooManyRequests instead of each burning
+                # the full timeout on the serialized sync lane. 0 means
+                # unbounded (psycopg_pool semantics).
+                "max_waiting": _ucr_int("PG_POOL_MAX_WAITING", 2 * pool_max_size, 0),
+                "max_lifetime": 1800,
+                "max_idle": 300,
+            }
         return {
             "default": {
                 "ENGINE": postgres_engine,
@@ -860,40 +923,15 @@ class Prod(Base):
                 "HOST": os.getenv("PDBHOST"),
                 "ATOMIC_REQUESTS": False,
                 # Django refuses to pool with CONN_MAX_AGE != 0; connection
-                # reuse and max age are governed by the pool options below.
+                # reuse and max age are governed by the pool options above.
                 "CONN_MAX_AGE": 0,
-                # With a pool, this makes Django verify connections on
-                # checkout, transparently replacing ones severed by
-                # failovers or server-side timeouts.
+                # With a pool, Django passes this through as psycopg_pool's
+                # check callback, verifying connections on checkout and
+                # transparently replacing ones severed by failovers or
+                # server-side timeouts. (Unpooled with CONN_MAX_AGE=0 it has
+                # nothing to do: connections live for a single request.)
                 "CONN_HEALTH_CHECKS": True,
-                # Client-side pooling is OPT-IN (PG_USE_POOL=1) and off by
-                # default: executor threads that touch the ORM outside the
-                # request cycle never return their checkout, and a starved
-                # pool turns every DB request into a PoolTimeout wait that
-                # stalls the whole worker (the 60s ingress 504s / uptime
-                # monitor incidents). Without the pool those leaked
-                # connections burden only the server, where fhi-pg-main-9's
-                # idle_session_timeout reaps them (see
-                # k8s/fhi-pg-main-9-cluster.yaml). Re-enable pooling only
-                # once thread connection hygiene is proven.
-                "OPTIONS": (
-                    {
-                        # Every uvicorn worker (and Ray actor process) keeps
-                        # its own pool: size the server's max_connections to
-                        # fit (processes * max_size) plus headroom.
-                        "pool": {
-                            "min_size": _ucr_int("PG_POOL_MIN_SIZE", 2, 0),
-                            "max_size": _ucr_int("PG_POOL_MAX_SIZE", 10, 1),
-                            # Fail fast: pool waiters stack their timeout onto
-                            # every request queued behind them.
-                            "timeout": _ucr_int("PG_POOL_TIMEOUT", 5, 1),
-                            "max_lifetime": 1800,
-                            "max_idle": 300,
-                        },
-                    }
-                    if os.getenv("PG_USE_POOL", "0") == "1"
-                    else {}
-                ),
+                "OPTIONS": pg_options,
             },
             "mysql": {
                 "ENGINE": mysql_engine,
@@ -950,6 +988,14 @@ class Prod(Base):
                 "handlers": ["mail_admins"],
                 "level": "ERROR",
                 "propagate": True,
+            },
+            # psycopg_pool logs connection setup/teardown and reconnect
+            # failures here; silent by default, which made the last pool
+            # starvation invisible until pg_stat_activity forensics.
+            "psycopg.pool": {
+                "handlers": ["console"],
+                "level": "INFO",
+                "propagate": False,
             },
         },
     }

@@ -98,10 +98,11 @@ documents; confirm these against the **live** namespace rather than trusting
 any one yaml:
 
 1. **Fax-document PVC** — the worker mounts `new-uploads-longhorn-backup4` at
-   `/external_data` (matching the web pods in `deploy-back.yaml`, which write
-   the documents). The Ray back cluster (`ray/cluster-back.yaml`) mounts
-   `new-uploads-longhorn-backup3` at the same path — if that's the claim with
-   the real documents in your cluster, change the worker's claim to match:
+   `/external_data` (see `k8s/uploads-pvc.yaml`; note the live web Deployment
+   in `k8s/deploy.yaml` does not mount it). The Ray back cluster
+   (`ray/cluster-back.yaml`) mounts `new-uploads-longhorn-backup3` at the same
+   path — if that's the claim with the real documents in your cluster, change
+   the worker's claim to match:
 
    ```sh
    kubectl -n totallylegitco get pvc | grep new-uploads
