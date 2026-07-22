@@ -133,7 +133,7 @@
                         {% elif result.denial_received %}
                         <p class="small text-muted">For this coverage type the exact windows depend on your plan and state, so they're shown below as timeframes rather than fixed dates measured from your <strong>{{ result.denial_received|date:"F j, Y" }}</strong> denial. Always confirm the exact deadline on your denial letter.</p>
                         {% else %}
-                        <p class="small text-muted">Add the date your denial was received above to see an estimated calendar deadline for filing your internal appeal.</p>
+                        <p class="small text-muted">Add the date your denial was received above to estimate a calendar deadline for filing your internal appeal, where your coverage type allows one to be dated.</p>
                         {% endif %}
 
                         <div class="row g-3 mt-1">
