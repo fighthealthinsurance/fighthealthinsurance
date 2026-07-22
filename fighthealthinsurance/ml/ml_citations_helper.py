@@ -103,11 +103,15 @@ class MLCitationsHelper:
         logger.debug(f"Generating specific citations for {denial}")
         result: List[str] = []
         try:
-            # Get the appropriate citation backends. `use_external=True` is
-            # required: the router returns an empty list for the default
-            # (internal-only) case, which would make this path unreachable.
+            # Pass the denial's own external-model consent through: the full
+            # citation backends are external (Perplexity), and this call sends
+            # denial_text / health_history / plan_context to them, so a denial
+            # whose user declined external models (use_external=False) must get
+            # no backends here (the router returns [] and we bail below). For
+            # consenting denials this keeps the path reachable, which is why
+            # the router isn't left at its internal-only default.
             full_citation_backends = ml_router.full_find_citation_backends(
-                use_external=True
+                use_external=denial.use_external
             )
 
             # Only proceed if we have backends to use
