@@ -1471,6 +1471,20 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # Validate pagination params up front (before any DB work): a
+        # non-numeric ?page / ?page_size would otherwise raise ValueError out of
+        # int() and surface as a 500.
+        try:
+            page_size = max(1, int(request.GET.get("page_size", 10)))
+            page = max(1, int(request.GET.get("page", 1)))
+        except (TypeError, ValueError):
+            return Response(
+                serializers.ErrorSerializer(
+                    {"error": "page and page_size must be integers"}
+                ).data,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         # Search in Appeals with user permissions
         appeals = Appeal.filter_to_allowed_appeals(request.user).filter(
             Q(uuid__icontains=query)
@@ -1498,18 +1512,7 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
         # Sort results by modification date (newest first)
         search_results.sort(key=lambda x: x["mod_date"], reverse=True)
 
-        # Paginate results. Parse defensively: a non-numeric ?page / ?page_size
-        # would otherwise raise ValueError out of int() and surface as a 500.
-        try:
-            page_size = max(1, int(request.GET.get("page_size", 10)))
-            page = max(1, int(request.GET.get("page", 1)))
-        except (TypeError, ValueError):
-            return Response(
-                serializers.ErrorSerializer(
-                    {"error": "page and page_size must be integers"}
-                ).data,
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        # Paginate results (page/page_size already validated above).
         start_idx = (page - 1) * page_size
         end_idx = start_idx + page_size
 

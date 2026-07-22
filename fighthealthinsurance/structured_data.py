@@ -73,7 +73,9 @@ def _logo_url() -> str:
     return f"{CANONICAL_DOMAIN}{path}"
 
 
-def render_json_ld(data: Union[Mapping[str, Any], Sequence[Any]]) -> SafeString:
+def render_json_ld(
+    data: Union[Mapping[str, Any], Sequence[Mapping[str, Any]]],
+) -> SafeString:
     """Render ``data`` as a hardened ``<script type="application/ld+json">`` tag.
 
     This is the ONE sanctioned way to embed JSON-LD. ``data`` may be a single
