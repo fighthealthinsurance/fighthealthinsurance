@@ -119,3 +119,58 @@ spec:
               Ready replica count dropped. If this coincides with a plugin
               upgrade, check that the barman-cloud Service EndpointSlice is
               non-empty (the v0.9->v0.13 selector break that took -8 down).
+
+        # ---- CONNECTION SATURATION (the 'too many clients' failure mode) ----
+        # With max_connections=6000 the pressure reaper (50% threshold) is the
+        # load-bearing control; these fire if usage climbs anyway.
+        # VERIFY-LIVE: confirm the exact backends metric name your CNPG build
+        # exports (cnpg_backends_total is the historical default set).
+        # Per-pod (sum by): max_connections is a PER-INSTANCE limit, and only
+        # the primary holds app connections -- a cluster-wide sum would both
+        # false-positive on replica noise and hide which instance is full.
+        - alert: FhiPg9ConnectionsHighWarning
+          expr: sum by (pod) (cnpg_backends_total{namespace="totallylegitco", pod=~"fhi-pg-main-9-.*"}) > 2400
+          for: 10m
+          labels:
+            severity: warning
+            cluster: fhi-pg-main-9
+          annotations:
+            summary: "{{ $labels.pod }} backends above 40% of max_connections ({{ $value }})"
+            description: >-
+              Connection usage exceeds 2400 of 6000 for 10m. The pressure
+              reaper should be evicting idle connections above 3000 -- check
+              the pg-conn-pressure-reaper CronJob and run
+              scripts/pg-conn-census.sh to fingerprint the holders.
+
+        - alert: FhiPg9ConnectionsHighCritical
+          expr: sum by (pod) (cnpg_backends_total{namespace="totallylegitco", pod=~"fhi-pg-main-9-.*"}) > 4200
+          for: 5m
+          labels:
+            severity: critical
+            cluster: fhi-pg-main-9
+          annotations:
+            summary: "{{ $labels.pod }} backends above 70% of max_connections ({{ $value }})"
+            description: >-
+              Approaching the hard cap; new app connections will start failing
+              with 'too many clients'. The reaper is not keeping up or cannot
+              connect -- intervene now.
+
+        # ---- PRESSURE REAPER HEALTH (do not let the safety net fail silently)
+        # VERIFY-LIVE: requires kube-state-metrics job metrics; adjust the
+        # job_name pattern if the scrape labels differ.
+        # sum() is load-bearing: every CronJob run is a UNIQUE job_name series
+        # that (backoffLimit: 0) never exceeds 1, so a per-series increase()
+        # could never cross 2 and the alert would never fire.
+        - alert: FhiPg9PressureReaperFailing
+          expr: sum(increase(kube_job_status_failed{namespace="totallylegitco", job_name=~"pg-conn-pressure-reaper-.*"}[30m])) > 2
+          for: 5m
+          labels:
+            severity: warning
+            cluster: fhi-pg-main-9
+          annotations:
+            summary: "pg-conn-pressure-reaper jobs are failing"
+            description: >-
+              The connection pressure reaper has failed repeatedly in the last
+              30m (auth, DB unreachable, or SQL error -- pipefail makes psql
+              failures fail the Job). Connection pressure is unmanaged while
+              this persists.

@@ -4,7 +4,7 @@ from unittest.mock import patch
 import pytest
 
 # Test the denial_base including the regexes from the initial fixtures.
-from asgiref.sync import sync_to_async
+from channels.db import database_sync_to_async
 from django.test import TestCase
 
 from fighthealthinsurance.forms.questions import EmergencyServicesQuestions
@@ -148,10 +148,10 @@ class TestDenialTypes(TestCase):
         # Fixture PlanType rows have blank regexes (non-selective); create
         # two rows with explicit regexes so we can verify the positive match
         # and the negative_regex exclusion branch in isolation.
-        await sync_to_async(PlanType.objects.create)(
+        await database_sync_to_async(PlanType.objects.create)(
             name="TestHMO", alt_name="Test HMO plan", regex="HMO-only-text"
         )
-        await sync_to_async(PlanType.objects.create)(
+        await database_sync_to_async(PlanType.objects.create)(
             name="TestPPO",
             alt_name="Test PPO plan",
             regex="PPO-only-text",
@@ -176,7 +176,7 @@ class TestDenialTypes(TestCase):
     async def test_get_regulator_matches_erisa_and_respects_negative(self):
         # Create a regulator with a non-empty negative_regex so we can verify
         # the exclusion branch without perturbing the fixture rows.
-        await sync_to_async(Regulator.objects.create)(
+        await database_sync_to_async(Regulator.objects.create)(
             name="TestRegulator",
             website="https://example.test/",
             alt_name="TR",
@@ -229,7 +229,7 @@ class TestDenialTypes(TestCase):
 
     @pytest.mark.asyncio
     async def test_process_denial_codes_icd_block_description_preventive(self):
-        processor = await sync_to_async(ProcessDenialCodes)()
+        processor = await database_sync_to_async(ProcessDenialCodes)()
         fake_tag = SimpleNamespace(
             block_description="Encounter for preventive screening"
         )
@@ -250,7 +250,7 @@ class TestDenialTypes(TestCase):
         """Returns the preventive denial when the ICD code is in the
         preventive_diagnosis CSV override (even if block description does not
         contain 'preventive')."""
-        processor = await sync_to_async(ProcessDenialCodes)()
+        processor = await database_sync_to_async(ProcessDenialCodes)()
         # Inject a known code into the CSV override; keeps the test hermetic
         # regardless of whether ./data/preventive_diagnosis.csv is present.
         processor.preventive_diagnosis = {"Z00.00": "general exam"}
@@ -269,7 +269,7 @@ class TestDenialTypes(TestCase):
 
     @pytest.mark.asyncio
     async def test_process_denial_codes_preventive_cpt_override(self):
-        processor = await sync_to_async(ProcessDenialCodes)()
+        processor = await database_sync_to_async(ProcessDenialCodes)()
         # Inject a known CPT code into the CSV override. 99391 is a real
         # preventive medicine E/M code and matches the cpt_code_re
         # (\d{4}[A-Z0-9]) regex.
@@ -286,7 +286,7 @@ class TestDenialTypes(TestCase):
 
     @pytest.mark.asyncio
     async def test_process_denial_codes_unrelated_text_returns_empty(self):
-        processor = await sync_to_async(ProcessDenialCodes)()
+        processor = await database_sync_to_async(ProcessDenialCodes)()
         processor.preventive_diagnosis = {}
         processor.preventive_codes = {}
 
@@ -300,7 +300,7 @@ class TestDenialTypes(TestCase):
     async def test_process_denial_codes_icd_match_but_not_preventive(self):
         """Returns [] when an ICD-10 code matches but is neither a preventive
         block description nor in the preventive_diagnosis override."""
-        processor = await sync_to_async(ProcessDenialCodes)()
+        processor = await database_sync_to_async(ProcessDenialCodes)()
         processor.preventive_diagnosis = {}
         processor.preventive_codes = {}
         # Block description deliberately omits the substring "preventive" so
@@ -322,7 +322,7 @@ class TestDenialTypes(TestCase):
     @pytest.mark.asyncio
     async def test_process_denial_codes_uspstf_fallback_flags_preventive(self):
         """When CSV lookups miss but USPSTF matches the code, classify as preventive."""
-        processor = await sync_to_async(ProcessDenialCodes)()
+        processor = await database_sync_to_async(ProcessDenialCodes)()
         processor.preventive_diagnosis = {}
         processor.preventive_codes = {}
         fake_tag = SimpleNamespace(block_description="Some unrelated description")
@@ -346,7 +346,7 @@ class TestDenialTypes(TestCase):
     async def test_find_uspstf_evidence_extracts_cpt_and_hcpcs_codes(self):
         """find_uspstf_evidence should pass non-ICD procedure codes through
         to USPSTF lookup so CPT/HCPCS-only denials still surface guidance."""
-        processor = await sync_to_async(ProcessDenialCodes)()
+        processor = await database_sync_to_async(ProcessDenialCodes)()
         fake_recs = [{"id": "rec-1", "grade": "B"}]
 
         with patch(
@@ -364,7 +364,7 @@ class TestDenialTypes(TestCase):
     @pytest.mark.asyncio
     async def test_find_uspstf_evidence_returns_empty_on_error(self):
         """find_uspstf_evidence swallows exceptions so classification never breaks."""
-        processor = await sync_to_async(ProcessDenialCodes)()
+        processor = await database_sync_to_async(ProcessDenialCodes)()
         with patch(
             "fighthealthinsurance.uspstf_api.find_recommendations_for_codes",
             side_effect=RuntimeError("boom"),
@@ -378,7 +378,7 @@ class TestDenialTypes(TestCase):
         preventive_codes CSV override - the previous CPT-only branch
         silently dropped HCPCS-coded preventive items (e.g. supply
         codes for screening test strips)."""
-        processor = await sync_to_async(ProcessDenialCodes)()
+        processor = await database_sync_to_async(ProcessDenialCodes)()
         # Inject a known HCPCS code into the CSV override.
         processor.preventive_codes = {"A4253": "blood glucose test strips"}
         processor.preventive_diagnosis = {}
@@ -396,7 +396,7 @@ class TestDenialTypes(TestCase):
         identifies durable medical equipment (E/K) or orthotic /
         prosthetic items (L). Drug (J) and supply (A) codes are
         excluded."""
-        processor = await sync_to_async(ProcessDenialCodes)()
+        processor = await database_sync_to_async(ProcessDenialCodes)()
         result = await processor.get_dme_codes(
             "Patient prescribed E0260 hospital bed, K0001 wheelchair, "
             "L0631 brace, J3490 drug, A4253 strips."
@@ -405,7 +405,7 @@ class TestDenialTypes(TestCase):
 
     @pytest.mark.asyncio
     async def test_process_denial_codes_get_dme_codes_empty(self):
-        processor = await sync_to_async(ProcessDenialCodes)()
+        processor = await database_sync_to_async(ProcessDenialCodes)()
         result = await processor.get_dme_codes(
             "Generic denial with CPT 99213 only - no HCPCS items."
         )

@@ -26,7 +26,7 @@ from fighthealthinsurance.websockets import PriorAuthConsumer
 from fhi_users.models import ProfessionalDomainRelation
 from .mock_prior_auth_model import MockPriorAuthModel
 
-from asgiref.sync import sync_to_async, async_to_sync
+from channels.db import database_sync_to_async
 
 if typing.TYPE_CHECKING:
     from django.contrib.auth.models import User
@@ -341,14 +341,14 @@ class PriorAuthWebSocketTest(APITestCase):
         await self.asyncSetUp()
 
         # Create a user and a prior auth request with answers
-        user = await sync_to_async(User.objects.create_user)(
+        user = await database_sync_to_async(User.objects.create_user)(
             username="testuser", password="testpass", email="test@example.com"
         )
-        professional = await sync_to_async(ProfessionalUser.objects.create)(
+        professional = await database_sync_to_async(ProfessionalUser.objects.create)(
             user=user, active=True, npi_number="1234567890"
         )
 
-        prior_auth = await sync_to_async(PriorAuthRequest.objects.create)(
+        prior_auth = await database_sync_to_async(PriorAuthRequest.objects.create)(
             creator_professional_user=professional,
             diagnosis="Rheumatoid Arthritis",
             treatment="Biologic Therapy",
@@ -398,7 +398,9 @@ class PriorAuthWebSocketTest(APITestCase):
         await communicator.disconnect()
 
         # Verify prior auth status was updated
-        prior_auth = await sync_to_async(PriorAuthRequest.objects.get)(id=prior_auth.id)
+        prior_auth = await database_sync_to_async(PriorAuthRequest.objects.get)(
+            id=prior_auth.id
+        )
         self.assertEqual(prior_auth.status, "prior_auth_requested")
 
         # Clean up

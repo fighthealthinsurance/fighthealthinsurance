@@ -1,0 +1,95 @@
+# Pressure-based connection reaper for fhi-pg-main-9.
+#
+# Postgres has no built-in "close the oldest connection when near
+# max_connections" -- its only levers are age-based (idle_session_timeout,
+# already set on the cluster). This CronJob adds the pressure-based half:
+# once a minute, if total backends exceed REAP_THRESHOLD_PCT of
+# max_connections, it pg_terminate_backend()s the LONGEST-IDLE app
+# connections (never active queries, never replication/superuser sessions)
+# until usage is back under the threshold, up to REAP_MAX_PER_RUN per run.
+#
+# Victims must have been idle at least 5 minutes: a connection that is
+# merely between two queries of a live request/task is never touched, so
+# for unpooled clients a reap is behaviorally identical to the server's
+# idle_session_timeout firing early -- the client opens a fresh connection
+# on its next query. "idle in transaction" (the aborted-request stranding
+# state) is included; the 10min idle_in_transaction_session_timeout would
+# kill those anyway.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: pg-conn-pressure-reaper
+  namespace: totallylegitco
+spec:
+  schedule: "* * * * *"
+  # Bound missed-start counting: without this, >100 missed schedules
+  # (controller outage) permanently wedges the CronJob.
+  startingDeadlineSeconds: 30
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 55
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: reaper
+              # Same image as the cluster: guarantees a matching psql.
+              image: ghcr.io/cloudnative-pg/postgresql:18.1-system-trixie
+              env:
+                - name: PGHOST
+                  value: fhi-pg-main-9-rw.totallylegitco.svc
+                - name: PGDATABASE
+                  value: app
+                - name: PGUSER
+                  valueFrom:
+                    secretKeyRef:
+                      name: fhi-superuser-pg-secret
+                      key: username
+                - name: PGPASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: fhi-superuser-pg-secret
+                      key: password
+                - name: REAP_THRESHOLD_PCT
+                  value: "50"
+                - name: REAP_MAX_PER_RUN
+                  value: "500"
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 64Mi
+              command:
+                - /bin/bash
+                - -ec
+                - |
+                  set -o pipefail
+                  psql -v ON_ERROR_STOP=1 -Atc "
+                    WITH cap AS (
+                      SELECT current_setting('max_connections')::int AS max_conn
+                    ), usage AS (
+                      SELECT count(*) AS used FROM pg_stat_activity
+                    ), victims AS (
+                      SELECT pid, client_addr, now() - state_change AS idle_for
+                      FROM pg_stat_activity, cap, usage
+                      WHERE usage.used > cap.max_conn * ${REAP_THRESHOLD_PCT} / 100
+                        AND usename = 'ziggystardust'
+                        AND state LIKE 'idle%'
+                        AND now() - state_change > interval '5 min'
+                      ORDER BY state_change ASC
+                      LIMIT LEAST(
+                        ${REAP_MAX_PER_RUN},
+                        GREATEST(0, (SELECT used FROM usage)
+                                    - (SELECT max_conn * ${REAP_THRESHOLD_PCT} / 100
+                                       FROM cap))
+                      )
+                    )
+                    SELECT pg_terminate_backend(pid), pid, client_addr, idle_for
+                    FROM victims;
+                  " | while IFS='|' read -r ok pid addr idle; do
+                    echo "reaped pid=${pid} client=${addr} idle=${idle} ok=${ok}"
+                  done
+                  echo "pressure check done"

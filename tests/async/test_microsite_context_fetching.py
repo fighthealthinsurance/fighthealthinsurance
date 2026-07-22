@@ -19,7 +19,7 @@ from fighthealthinsurance.models import OngoingChat, ProfessionalUser
 from fighthealthinsurance.websockets import OngoingChatConsumer
 from tests.sync.mock_chat_model import MockChatModel
 
-from asgiref.sync import sync_to_async
+from channels.db import database_sync_to_async
 
 if typing.TYPE_CHECKING:
     from django.contrib.auth.models import User
@@ -75,16 +75,16 @@ class MicrositeContextFetchingTest(APITestCase):
         mock_get_microsite.return_value = mock_microsite
 
         try:
-            user = await sync_to_async(User.objects.create_user)(
+            user = await database_sync_to_async(User.objects.create_user)(
                 username="extralinkuser",
                 password="testpass",
                 email="extralink@example.com",
             )
-            professional = await sync_to_async(ProfessionalUser.objects.create)(
-                user=user, active=True, npi_number="1111111111"
-            )
+            professional = await database_sync_to_async(
+                ProfessionalUser.objects.create
+            )(user=user, active=True, npi_number="1111111111")
 
-            chat = await sync_to_async(OngoingChat.objects.create)(
+            chat = await database_sync_to_async(OngoingChat.objects.create)(
                 professional_user=professional,
                 microsite_slug="test-microsite",
                 chat_history=[],
@@ -173,14 +173,14 @@ class MicrositeContextFetchingTest(APITestCase):
         mock_get_microsite.return_value = mock_microsite
 
         try:
-            user = await sync_to_async(User.objects.create_user)(
+            user = await database_sync_to_async(User.objects.create_user)(
                 username="pubmeduser", password="testpass", email="pubmed@example.com"
             )
-            professional = await sync_to_async(ProfessionalUser.objects.create)(
-                user=user, active=True, npi_number="2222222222"
-            )
+            professional = await database_sync_to_async(
+                ProfessionalUser.objects.create
+            )(user=user, active=True, npi_number="2222222222")
 
-            chat = await sync_to_async(OngoingChat.objects.create)(
+            chat = await database_sync_to_async(OngoingChat.objects.create)(
                 professional_user=professional,
                 microsite_slug="test-pubmed-microsite",
                 chat_history=[],
@@ -268,14 +268,14 @@ class MicrositeContextFetchingTest(APITestCase):
         mock_get_microsite.return_value = mock_microsite
 
         try:
-            user = await sync_to_async(User.objects.create_user)(
+            user = await database_sync_to_async(User.objects.create_user)(
                 username="bothuser", password="testpass", email="both@example.com"
             )
-            professional = await sync_to_async(ProfessionalUser.objects.create)(
-                user=user, active=True, npi_number="3333333333"
-            )
+            professional = await database_sync_to_async(
+                ProfessionalUser.objects.create
+            )(user=user, active=True, npi_number="3333333333")
 
-            chat = await sync_to_async(OngoingChat.objects.create)(
+            chat = await database_sync_to_async(OngoingChat.objects.create)(
                 professional_user=professional,
                 microsite_slug="test-both-microsite",
                 chat_history=[],
@@ -344,16 +344,16 @@ class MicrositeContextFetchingTest(APITestCase):
         mock_fire_and_forget = fire_and_forget_patcher.start()
 
         try:
-            user = await sync_to_async(User.objects.create_user)(
+            user = await database_sync_to_async(User.objects.create_user)(
                 username="nomicrositeuser",
                 password="testpass",
                 email="nomicrosite@example.com",
             )
-            professional = await sync_to_async(ProfessionalUser.objects.create)(
-                user=user, active=True, npi_number="4444444444"
-            )
+            professional = await database_sync_to_async(
+                ProfessionalUser.objects.create
+            )(user=user, active=True, npi_number="4444444444")
 
-            chat = await sync_to_async(OngoingChat.objects.create)(
+            chat = await database_sync_to_async(OngoingChat.objects.create)(
                 professional_user=professional,
                 microsite_slug=None,  # No microsite
                 chat_history=[],
