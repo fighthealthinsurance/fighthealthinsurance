@@ -1,0 +1,57 @@
+{% extends 'base.html' %}
+{% load static %}
+{% block title %}Media References &amp; Press - Fight Health Insurance{% endblock title %}
+{% block metatitle %}Media References &amp; Press - Fight Health Insurance{% endblock metatitle %}
+{% block metadescription %}Press coverage and media references for Fight Health Insurance - featured on PBS NewsHour, Forbes, CBS News, STAT News, Business Insider, Fast Company, WBUR, NewsNation and more.{% endblock metadescription %}
+
+{% block content %}
+<section class="media-references-section">
+    <div class="container">
+        <div class="media-references-header">
+            <h1 class="media-references-title">Media References</h1>
+            <p class="media-references-subtitle">
+                Fight Health Insurance has been featured in national news, radio, and podcasts.
+                Here's a look at where our work to help patients appeal denied claims has been covered.
+            </p>
+        </div>
+
+        <div class="media-references-grid">
+            {% for ref in media_references %}
+            <article class="media-reference-card">
+                <div class="media-reference-card-top">
+                    {% if ref.logo %}
+                    <img src="{% static ref.logo %}" alt="{{ ref.outlet }} logo" class="media-reference-logo" loading="lazy">
+                    {% else %}
+                    <span class="media-reference-outlet-text">{{ ref.outlet }}</span>
+                    {% endif %}
+                    {% if ref.kind %}<span class="media-reference-kind">{{ ref.kind }}</span>{% endif %}
+                </div>
+                <div class="media-reference-body">
+                    <div class="media-reference-outlet">{{ ref.outlet }}{% if ref.date %} &middot; <span class="media-reference-date">{{ ref.date }}</span>{% endif %}</div>
+                    <h2 class="media-reference-headline">
+                        <a href="{{ ref.url }}" target="_blank" rel="noopener noreferrer">{{ ref.title }}</a>
+                    </h2>
+                    {% if ref.description %}<p class="media-reference-desc">{{ ref.description }}</p>{% endif %}
+                </div>
+                <div class="media-reference-links">
+                    <a href="{{ ref.url }}" class="media-reference-link" target="_blank" rel="noopener noreferrer">{{ ref.cta|default:"Read more" }} &rarr;</a>
+                    {% if ref.internal_url_name %}
+                    <a href="{% url ref.internal_url_name %}" class="media-reference-link media-reference-link-internal">See our page</a>
+                    {% endif %}
+                </div>
+            </article>
+            {% endfor %}
+        </div>
+
+        <div class="media-references-cta">
+            <p>Denied by your health insurance? You don't have to fight alone.</p>
+            <a href="{% url 'scan' %}" class="section-btn btn btn-default">Generate Your Appeal for Free</a>
+        </div>
+
+        <p class="media-references-contact">
+            Members of the press: reach us at
+            <a class="link" href="mailto:media@fighthealthinsurance.com">media@fighthealthinsurance.com</a>.
+        </p>
+    </div>
+</section>
+{% endblock content %}
