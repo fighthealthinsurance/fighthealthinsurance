@@ -71,20 +71,24 @@ class TestDualModeFirstWins:
             try:
                 await asyncio.sleep(STRAGGLER_SLEEP_S)
             except asyncio.CancelledError:
-                raise RuntimeError("straggler exploded during cancellation")
+                # `from None`: simulate a failure that replaces (not wraps)
+                # the cancellation.
+                raise RuntimeError("straggler exploded during cancellation") from None
             return None
 
         with patch.object(
             model, "_RemoteOpenLike__timeout_infer", new=fake_timeout_infer
         ):
             with log_capture() as cap:
-                result = await model._infer(system_prompts=["sys"], prompt="hi")
+                await model._infer(system_prompts=["sys"], prompt="hi")
                 # Give the cancelled straggler loop turns to run its exception
                 # path and for the done-callback to fire.
                 for _ in range(5):
                     await asyncio.sleep(0)
 
-        assert result is not None and result[0] == "fast answer"
+        # Winner preservation is pinned by
+        # test_fast_valid_result_returns_without_awaiting_straggler; this test
+        # only asserts the straggler's outcome was retrieved and logged.
         assert any(
             "Abandoned fan-out straggler failed" in m for m in cap.messages("DEBUG")
         )
