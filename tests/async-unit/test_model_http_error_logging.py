@@ -4,7 +4,9 @@ A backend that returns an expected operational error -- an exhausted quota
 (401), a billing problem (402), a forbidden resource (403), or rate limiting
 (429) -- should be logged concisely as a WARNING and degrade to ``None``,
 *not* emit an ERROR with a stack trace (which reads like a crash). Real
-failures (e.g. HTTP 500) keep the ERROR + traceback.
+failures (e.g. HTTP 500) keep an ERROR-level line, but a concise classified
+one: the traceback for an HTTP status error is aiohttp internals and buries
+the status.
 """
 
 from unittest.mock import AsyncMock, patch
@@ -98,8 +100,10 @@ class TestInferHttpErrorLogging:
         assert "quota" in warning_text.lower()
 
     @pytest.mark.asyncio
-    async def test_unexpected_error_still_logs_error_with_traceback(self):
-        """A 500 is a real failure and keeps the ERROR + traceback."""
+    async def test_unexpected_http_error_still_logs_error_concisely(self):
+        """A 500 is a real failure: it keeps an ERROR-level line, but as a
+        concise classified message (with the status) rather than a traceback
+        of aiohttp internals."""
         model = self._model()
         with patch.object(
             model,
@@ -111,7 +115,10 @@ class TestInferHttpErrorLogging:
                 result = await model._infer(system_prompts=["sys"], prompt="hi")
 
         assert result is None
-        assert "ERROR" in cap.levels
+        errors = [r for r in cap.records if r["level"].name == "ERROR"]
+        assert len(errors) == 1
+        assert "500" in errors[0]["message"]
+        assert errors[0]["exception"] is None
 
 
 class TestModelStr:

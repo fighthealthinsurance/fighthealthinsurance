@@ -3,6 +3,7 @@ import itertools
 import os
 import random
 import re
+import socket
 import sys
 import threading
 import traceback
@@ -69,6 +70,74 @@ EXPECTED_HTTP_STATUS_CODES: frozenset[int] = frozenset({401, 402, 403, 429})
 def _http_status_is_expected(status: Optional[int]) -> bool:
     """Whether ``status`` is an expected operational HTTP error (vs. a bug)."""
     return status in EXPECTED_HTTP_STATUS_CODES
+
+
+# Transport-level exception classes that represent an expected operational
+# failure of a remote backend -- the service being down, unreachable, slow, or
+# restarting -- rather than a bug in our code. aiohttp.ClientError covers the
+# HTTP-client zoo (connect/DNS/SSL/proxy/payload/disconnect), TimeoutError
+# covers our own async timeouts (asyncio.TimeoutError is TimeoutError on
+# 3.11+), and OSError covers raw socket failures (refused/reset/unreachable).
+# When one of these fires we log a single line via describe_model_error
+# instead of a multi-page stack trace of aiohttp/asyncio plumbing that buries
+# the actual cause.
+MODEL_TRANSPORT_ERRORS: tuple[type[BaseException], ...] = (
+    aiohttp.ClientError,
+    asyncio.TimeoutError,
+    TimeoutError,
+    OSError,
+)
+
+
+def describe_model_error(exc: BaseException) -> str:
+    """Map an exception from a model-backend call to a concise one-line reason.
+
+    Model calls fail in a handful of operational ways -- couldn't connect,
+    timed out, DNS lookup failed, server closed the connection, HTTP error
+    status -- and for those the stack trace is aiohttp/asyncio internals that
+    bury the cause (and, with loguru's ``diagnose``, can leak prompt/PHI
+    contents into logs). This yields log lines like "connection timeout
+    (could not reach backend)" or "HTTP 503 Service Unavailable" instead.
+    Unrecognized exceptions fall back to ``ExcType: message``.
+    """
+    if isinstance(exc, aiohttp.ContentTypeError):
+        return "unexpected (non-JSON) content type in response -- often a missing model"
+    if isinstance(exc, aiohttp.ClientResponseError):
+        message = f" {exc.message}" if exc.message else ""
+        return f"HTTP {exc.status}{message}"
+    # aiohttp >= 3.10 splits connect vs. read timeouts into dedicated
+    # ServerTimeoutError subclasses; getattr keeps older versions working.
+    if isinstance(exc, getattr(aiohttp, "ConnectionTimeoutError", ())):
+        return "connection timeout (could not reach backend)"
+    if isinstance(exc, getattr(aiohttp, "SocketTimeoutError", ())):
+        return "socket timeout (backend stopped responding mid-read)"
+    if isinstance(exc, aiohttp.ServerTimeoutError):
+        return "server timeout"
+    if isinstance(exc, aiohttp.ServerDisconnectedError):
+        return "server disconnected before sending a response"
+    if isinstance(exc, aiohttp.ClientConnectorError):
+        # Includes the DNS/SSL/proxy connector subclasses; the wrapped OS
+        # error says why the connection could not be established.
+        os_error = getattr(exc, "os_error", None)
+        if isinstance(os_error, socket.gaierror):
+            return f"DNS lookup failed ({os_error})"
+        if isinstance(os_error, ConnectionRefusedError):
+            return "connection refused"
+        return f"could not connect ({os_error or exc})"
+    if isinstance(exc, aiohttp.ClientOSError):
+        return f"connection error ({exc})"
+    if isinstance(exc, aiohttp.ClientPayloadError):
+        return f"malformed or truncated response payload ({exc})"
+    if isinstance(exc, (asyncio.TimeoutError, TimeoutError)):
+        return "timed out"
+    if isinstance(exc, socket.gaierror):
+        return f"DNS lookup failed ({exc})"
+    if isinstance(exc, ConnectionRefusedError):
+        return "connection refused"
+    if isinstance(exc, ConnectionResetError):
+        return "connection reset by peer"
+    text = str(exc).strip()
+    return f"{type(exc).__name__}: {text}" if text else type(exc).__name__
 
 
 def _http_error_indicates_unsupported_temperature(status: int, body: str) -> bool:
@@ -2065,8 +2134,11 @@ class RemoteOpenLike(RemoteModel):
                             if result and result[0]:
                                 raw_response = result
                                 break
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.debug(
+                                f"{self}: dual-mode candidate failed -- "
+                                f"{describe_model_error(e)}"
+                            )
                     # If the first result was not valid grab the pending task.
                     for task in pending:
                         try:
@@ -2074,8 +2146,11 @@ class RemoteOpenLike(RemoteModel):
                             if result and result[0]:
                                 raw_response = result
                                 break
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.debug(
+                                f"{self}: dual-mode candidate failed -- "
+                                f"{describe_model_error(e)}"
+                            )
                 else:
                     raw_response = await self.__timeout_infer(
                         system_prompt=system_prompt,
@@ -2125,9 +2200,23 @@ class RemoteOpenLike(RemoteModel):
                     f"check quota/billing/API key."
                 )
             else:
-                logger.opt(exception=True).error(f"HTTP error calling {self.api_base}")
-        except Exception as e:
-            logger.opt(exception=True).error(f"Error {e} calling {self.api_base}")
+                # __infer already logged the status with a body preview; the
+                # traceback for an HTTP status is aiohttp internals, so keep
+                # this to one actionable line.
+                logger.error(
+                    f"{self}: giving up on {self.api_base} -- "
+                    f"{describe_model_error(e)}"
+                )
+        except MODEL_TRANSPORT_ERRORS as e:
+            # Transport failures are logged (classified) per-attempt in
+            # __infer; anything landing here was raised outside that wrapper.
+            logger.warning(
+                f"{self}: giving up on {self.api_base} -- {describe_model_error(e)}"
+            )
+        except Exception:
+            logger.opt(exception=True).error(
+                f"Unexpected error calling {self.api_base} for {self}"
+            )
 
         return None
 
@@ -2345,6 +2434,12 @@ class RemoteOpenLike(RemoteModel):
                         if json_result.get("object") == "error":
                             logger.warning(f"Bad response from {self} with {model}")
                     break
+        except aiohttp.ContentTypeError as e:
+            # Raised by response.json() when the body isn't JSON (e.g. an HTML
+            # error page). Must be caught before ClientResponseError (it's a
+            # subclass) or it would be re-raised as a status error below.
+            logger.warning(f"{self}: {model} via {api_base}: {describe_model_error(e)}")
+            return None
         except aiohttp.ClientResponseError as e:
             # Already logged with a body preview above; keep this at debug to
             # avoid double-logging. Re-raise so _infer (and opted-in subclasses
@@ -2353,14 +2448,19 @@ class RemoteOpenLike(RemoteModel):
                 f"HTTP error {e.status} from {api_base} for model {model}: {e.message}"
             )
             raise
-        except aiohttp.client_exceptions.ContentTypeError:
+        except MODEL_TRANSPORT_ERRORS as e:
+            # Expected operational failures (backend down, unreachable, slow,
+            # DNS, disconnect): one concise classified line. The stack trace
+            # for these is aiohttp/asyncio plumbing that buries the cause.
             logger.warning(
-                f"Unexpected content type response (often missing model) on {api_base}"
+                f"{self}: {model} via {api_base} failed -- {describe_model_error(e)}"
             )
-        except aiohttp.client_exceptions.ClientConnectorError:
-            logger.warning(f"Network error calling {api_base}")
+            await asyncio.sleep(1)
+            return None
         except Exception:
-            logger.opt(exception=True).warning(f"Error calling {api_base}")
+            logger.opt(exception=True).warning(
+                f"Unexpected error calling {api_base} for model {model}"
+            )
             await asyncio.sleep(1)
             return None
         try:
@@ -3329,7 +3429,10 @@ class RateLimitedRemoteOpenLike(RemoteFullOpenLike):
                 return None
             raise
         except Exception as e:
-            logger.warning(f"{type(self).__name__}._infer error for {self.model}: {e}")
+            logger.warning(
+                f"{type(self).__name__}._infer: {self.model} failed -- "
+                f"{describe_model_error(e)}"
+            )
             return None
 
     async def _do_infer(

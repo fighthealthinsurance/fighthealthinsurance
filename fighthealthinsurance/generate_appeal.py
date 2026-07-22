@@ -33,7 +33,12 @@ from fighthealthinsurance.context_utils import estimate_tokens, truncate_at_boun
 from fighthealthinsurance.denial_base import DenialBase
 
 from .exec import executor
-from .ml.ml_models import RemoteFullOpenLike, RemoteModelLike, repetition_penalty
+from .ml.ml_models import (
+    RemoteFullOpenLike,
+    RemoteModelLike,
+    describe_model_error,
+    repetition_penalty,
+)
 from .ml.ml_router import ml_router
 from .payer_policy_helper import (
     get_combined_payer_policy_context,
@@ -1081,6 +1086,40 @@ def _peek_or_none(
         return None, iter([])
 
 
+def _generated_to_appeals_text(
+    model_name: Optional[str],
+    k_text_future: Future,
+    template_generator: AppealTemplateGenerator,
+) -> Iterator[GeneratedAppeal]:
+    """Map one model future's (infer_type, text) results to GeneratedAppeals.
+
+    Contains that model's failure: as_available_nested re-raises future
+    exceptions mid-iteration, so an uncaught error from one backend (e.g. an
+    external provider 500) would abort the whole appeal stream and drop every
+    other model's results. Instead we log one concise line and yield nothing.
+    """
+    try:
+        model_results = k_text_future.result()
+    except Exception as e:
+        logger.warning(
+            f"Appeal generation via {model_name} failed -- {describe_model_error(e)}"
+        )
+        return
+    if model_results is None:
+        return
+    for k, text in model_results:
+        if text is None:
+            continue
+        # It's either full or a reason to plug into a template
+        if k == "full":
+            logger.debug(f"Bubbling up full response ({len(text)} chars)")
+            yield GeneratedAppeal(text=text, model_name=model_name)
+        else:
+            templated = template_generator.generate(text)
+            if templated is not None:
+                yield GeneratedAppeal(text=templated, model_name=model_name)
+
+
 def _peek_real_or_none(
     it: Iterator["GeneratedAppeal"], denial_id: Any, stage: str
 ) -> Tuple[Optional["GeneratedAppeal"], Iterator["GeneratedAppeal"]]:
@@ -1254,9 +1293,12 @@ class AppealGenerator(object):
             for _ in range(3):
                 try:
                     extracted: Optional[str] = await method(denial_text)  # type: ignore
-                except Exception:
-                    logger.opt(exception=True).debug(
-                        f"Extraction call failed for {model} {model_method_name}"
+                except Exception as e:
+                    # One concise line: a down backend would otherwise emit a
+                    # full traceback for every entity type x model x retry.
+                    logger.debug(
+                        f"Extraction {model_method_name} via {model} failed -- "
+                        f"{describe_model_error(e)}"
                     )
                     extracted = None
                 if extracted is None:
@@ -1304,10 +1346,10 @@ class AppealGenerator(object):
             best = await best_within_timelimit(
                 awaitables, score_fn=use_score, timeout=30
             )
-        except Exception:
-            logger.opt(exception=True).debug(
-                "best_within_timelimit failed for entity extraction"
-            )
+        except Exception as e:
+            # Raised (with a self-explanatory message) when every backend
+            # struck out; per-model causes were already logged concisely.
+            logger.debug(f"Entity extraction fan-out produced no result: {e}")
             best = None
 
         # best_within_timelimit returns any truthy result regardless of score.
@@ -1696,10 +1738,10 @@ class AppealGenerator(object):
             best = await best_within_timelimit(
                 awaitables, score_fn=score_fn, timeout=30
             )
-        except Exception:
-            logger.opt(exception=True).debug(
-                "best_within_timelimit failed for get_procedure_and_diagnosis"
-            )
+        except Exception as e:
+            # Raised (with a self-explanatory message) when every backend
+            # struck out; per-model causes were already logged concisely.
+            logger.debug(f"Procedure/diagnosis fan-out produced no result: {e}")
             best = None
 
         if best is None:
@@ -2419,27 +2461,9 @@ class AppealGenerator(object):
                 for fut in get_model_result(**call):
                     model_futures.append((model_name, fut))
 
-            def generated_to_appeals_text(
-                model_name: Optional[str], k_text_future
-            ) -> Iterator[GeneratedAppeal]:
-                model_results = k_text_future.result()
-                if model_results is None:
-                    return
-                for k, text in model_results:
-                    if text is None:
-                        continue
-                    # It's either full or a reason to plug into a template
-                    if k == "full":
-                        logger.debug(f"Bubbling up full response ({len(text)} chars)")
-                        yield GeneratedAppeal(text=text, model_name=model_name)
-                    else:
-                        templated = template_generator.generate(text)
-                        if templated is not None:
-                            yield GeneratedAppeal(text=templated, model_name=model_name)
-
             # Python lack reasonable future chaining (ugh)
             generated_text_futures = [
-                executor.submit(generated_to_appeals_text, mn, f)
+                executor.submit(_generated_to_appeals_text, mn, f, template_generator)
                 for mn, f in model_futures
             ]
             return generated_text_futures
@@ -2609,8 +2633,10 @@ class AppealGenerator(object):
                         f"Synthesis candidate from {model}: {len(result)} chars"
                     )
                     return str(result)
-            except Exception:
-                logger.opt(exception=True).debug(f"Synthesis failed on {model}")
+            except Exception as e:
+                logger.debug(
+                    f"Synthesis via {model} failed -- {describe_model_error(e)}"
+                )
             return None
 
         # Build tasks and map each coroutine to its model's quality score
@@ -2636,8 +2662,6 @@ class AppealGenerator(object):
                     f"({len(best)} chars) using best of {len(all_internal)} models"
                 )
                 return str(best)
-        except Exception:
-            logger.opt(exception=True).warning(
-                "All synthesis models failed within time limit"
-            )
+        except Exception as e:
+            logger.warning(f"All synthesis models failed within time limit: {e}")
         return None

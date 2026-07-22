@@ -844,6 +844,27 @@ def join_fire_and_forget_threads(timeout: Optional[float] = None) -> None:
         thread.join(timeout)
 
 
+def _log_fanout_task_error(e: Exception, where: str) -> None:
+    """Log one failed task from a model fan-out.
+
+    The tasks these fan-outs run are ML backend calls, whose expected failure
+    modes (backend down, unreachable, timed out, HTTP error) deserve a single
+    classified line -- a stack trace of aiohttp/asyncio plumbing buries the
+    cause. Unexpected exceptions keep the full traceback.
+    """
+    # Imported here to avoid a utils <-> ml.ml_models import cycle
+    # (ml_models imports from utils at module load).
+    from fighthealthinsurance.ml.ml_models import (
+        MODEL_TRANSPORT_ERRORS,
+        describe_model_error,
+    )
+
+    if isinstance(e, MODEL_TRANSPORT_ERRORS):
+        logger.warning(f"Task failed in {where} -- {describe_model_error(e)}")
+    else:
+        logger.opt(exception=True).warning(f"Task error in {where}: {e}")
+
+
 async def best_within_timelimit(
     tasks: Sequence[Awaitable[T]],
     score_fn: Callable[[T, Awaitable[T]], float],
@@ -893,9 +914,7 @@ async def best_within_timelimit(
                 best_score = score
                 best_result_option = result
         except Exception as e:
-            logger.opt(exception=True).warning(
-                f"Task error in best_within_timelimit: {e}"
-            )
+            _log_fanout_task_error(e, "best_within_timelimit")
             continue
 
     # Did we find a non empty best result?!?
@@ -920,9 +939,7 @@ async def best_within_timelimit(
                 best_score = score
                 best_result_option = result
         except Exception as e:
-            logger.opt(exception=True).warning(
-                f"Task error in best_within_timelimit: {e}"
-            )
+            _log_fanout_task_error(e, "best_within_timelimit")
             continue
     if best_result_option:
         asyncio.create_task(cancel_tasks(list(pending)))
@@ -993,9 +1010,7 @@ async def best_within_timelimit_static(
                 return result
 
         except Exception as e:
-            logger.opt(exception=True).warning(
-                f"Task error in best_within_timelimit_static: {e}"
-            )
+            _log_fanout_task_error(e, "best_within_timelimit_static")
             continue
 
     # If we got here, timeout occurred or all tasks finished but none of the best ones succeeded
