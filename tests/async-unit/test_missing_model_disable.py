@@ -170,3 +170,31 @@ class TestMissingModelCooldown:
                 system_prompts=["sys"], prompt="hi", raise_http_errors=True
             )
         assert "does not exist" in excinfo.value.message
+
+    @pytest.mark.asyncio
+    async def test_rate_limited_provider_probe_raises_http_status(
+        self, monkeypatch, make_fake_model_post
+    ):
+        """raise_http_errors must survive RateLimitedRemoteOpenLike's
+        _do_infer delegation: a paid-provider probe against a missing model
+        reports the real 404, and is not silently absorbed into the
+        cooldown."""
+        from fighthealthinsurance.ml.ml_models import RateLimitedRemoteOpenLike
+
+        model = RateLimitedRemoteOpenLike(
+            "http://missing.example/v1", "test-token", "nope-model"
+        )
+        RateLimitedRemoteOpenLike._ensure_rate_limiter("nope-model")
+        fake_post = make_fake_model_post(404, VLLM_404_BODY)
+        monkeypatch.setattr(aiohttp.ClientSession, "post", fake_post)
+
+        with pytest.raises(aiohttp.ClientResponseError):
+            await model._infer(
+                system_prompts=["sys"], prompt="hi", raise_http_errors=True
+            )
+        # A second probe still hits the network despite the cooldown flag.
+        with pytest.raises(aiohttp.ClientResponseError):
+            await model._infer(
+                system_prompts=["sys"], prompt="hi", raise_http_errors=True
+            )
+        assert fake_post.calls == 2

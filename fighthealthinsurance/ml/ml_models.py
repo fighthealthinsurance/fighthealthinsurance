@@ -2175,6 +2175,9 @@ class RemoteOpenLike(RemoteModel):
             for system_prompt in system_prompts:
                 # Call the actual inference method
                 raw_response = None
+                # First HTTP error swallowed by the dual-mode race for this
+                # prompt; surfaced after all fallbacks fail (see below).
+                first_http_error: Optional[aiohttp.ClientResponseError] = None
                 if self.dual_mode and self.backup_api_base:
                     # In dual mode, run primary and backup concurrently and return the first result
                     primary_task = asyncio.create_task(
@@ -2213,7 +2216,11 @@ class RemoteOpenLike(RemoteModel):
                         [primary_task, backup_task], return_when=asyncio.FIRST_COMPLETED
                     )
 
-                    # Get the result from the completed task
+                    # Get the result from the completed task. HTTP errors from
+                    # the racing legs are remembered (first one wins) so they
+                    # can be surfaced to probes / status-handling subclasses
+                    # below -- swallowing them here would break the
+                    # raise_http_errors contract for dual-mode backends.
                     for task in done:
                         try:
                             result = await task
@@ -2221,6 +2228,11 @@ class RemoteOpenLike(RemoteModel):
                                 raw_response = result
                                 break
                         except Exception as e:
+                            if (
+                                isinstance(e, aiohttp.ClientResponseError)
+                                and first_http_error is None
+                            ):
+                                first_http_error = e
                             logger.debug(
                                 f"{self}: dual-mode candidate failed -- "
                                 f"{describe_model_error(e)}"
@@ -2239,6 +2251,11 @@ class RemoteOpenLike(RemoteModel):
                                     raw_response = result
                                     break
                             except Exception as e:
+                                if (
+                                    isinstance(e, aiohttp.ClientResponseError)
+                                    and first_http_error is None
+                                ):
+                                    first_http_error = e
                                 logger.debug(
                                     f"{self}: dual-mode candidate failed -- "
                                     f"{describe_model_error(e)}"
@@ -2276,7 +2293,19 @@ class RemoteOpenLike(RemoteModel):
                         api_base=self.backup_api_base,
                         raise_http_errors=raise_http_errors,
                     )
-                    return backup_response
+                    if backup_response and backup_response[0]:
+                        return backup_response
+                # Every fallback for this prompt struck out. If the dual-mode
+                # race swallowed an HTTP error above, surface it now to
+                # callers that opted in -- the startup probe reports the real
+                # status ("HTTP 404 model does not exist") instead of "empty
+                # or no response", and status-handling subclasses (429
+                # back-off) still see it. Otherwise fall through and try the
+                # next system prompt.
+                if first_http_error is not None and (
+                    raise_http_errors or self._propagate_http_errors
+                ):
+                    raise first_http_error
 
         except aiohttp.ClientResponseError as e:
             # Subclasses that opt in (via _propagate_http_errors) handle
@@ -2640,6 +2669,11 @@ class RemoteOpenLike(RemoteModel):
             # error page). Must be caught before ClientResponseError (it's a
             # subclass) or it would be re-raised as a status error below.
             logger.warning(f"{self}: {model} via {api_base}: {describe_model_error(e)}")
+            if raise_http_errors or self._propagate_http_errors:
+                # ContentTypeError is a ClientResponseError: probes and
+                # status-handling subclasses get it (with its status) exactly
+                # as they did before the concise-logging rework.
+                raise
             return None
         except aiohttp.ClientResponseError as e:
             # Already logged with a body preview above; keep this at debug to
@@ -3607,6 +3641,7 @@ class RateLimitedRemoteOpenLike(RemoteFullOpenLike):
                 ml_citations_context=ml_citations_context,
                 history=history,
                 temperature=temperature,
+                raise_http_errors=raise_http_errors,
             )
         except aiohttp.ClientResponseError as e:
             if raise_http_errors:
@@ -3646,6 +3681,7 @@ class RateLimitedRemoteOpenLike(RemoteFullOpenLike):
         ml_citations_context: Optional[List[str]] = None,
         history: Optional[List[dict[str, str]]] = None,
         temperature: float = 0.7,
+        raise_http_errors: bool = False,
     ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
         """The actual transport call wrapped by ``_infer``'s rate-limit gating
         and 429 back-off.
@@ -3655,6 +3691,11 @@ class RateLimitedRemoteOpenLike(RemoteFullOpenLike):
         ``RemoteAzureClaude`` with the Anthropic Messages API) override this and
         raise ``aiohttp.ClientResponseError`` on HTTP errors so the shared 429
         handling in ``_infer`` still applies.
+
+        ``raise_http_errors`` must be forwarded down to ``RemoteOpenLike``:
+        the missing-model/overflow branches in ``__infer`` consult it to decide
+        between degrading to ``None`` and surfacing the real status to the
+        startup probe (and its cooldown gate bypasses the skip for probes).
         """
         return await super()._infer(
             system_prompts=system_prompts,
@@ -3665,6 +3706,7 @@ class RateLimitedRemoteOpenLike(RemoteFullOpenLike):
             ml_citations_context=ml_citations_context,
             history=history,
             temperature=temperature,
+            raise_http_errors=raise_http_errors,
         )
 
 
@@ -4235,12 +4277,18 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
         ml_citations_context: Optional[List[str]] = None,
         history: Optional[List[dict[str, str]]] = None,
         temperature: float = 0.7,
+        raise_http_errors: bool = False,
     ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
         """Inference via the Anthropic Messages API exposed by Azure AI Foundry.
 
         Returns the first non-empty completion across ``system_prompts``. HTTP
         error statuses raise ``aiohttp.ClientResponseError`` (so the caller's
         429 back-off applies); transport/parse failures return ``None``.
+
+        ``raise_http_errors`` is accepted for signature compatibility with the
+        base ``_do_infer`` but needs no handling here: this transport already
+        raises ``ClientResponseError`` on every HTTP error status, which is
+        exactly what the probe wants surfaced.
         """
         if prompt is None:
             logger.debug("No prompt supplied; skipping inference")
