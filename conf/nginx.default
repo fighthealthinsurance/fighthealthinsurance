@@ -21,6 +21,12 @@ server {
 	proxy_http_version 1.1;
 	proxy_set_header Upgrade $http_upgrade;
 	proxy_set_header Connection "upgrade";
+	# Idle websocket timeout: without these nginx falls back to its 60s
+	# default and drops sockets that go quiet mid-conversation. Allow 10
+	# minutes of silence in either direction (the ingress already permits
+	# an hour, so this in-pod proxy was the real bottleneck).
+	proxy_read_timeout 600s;
+	proxy_send_timeout 600s;
     }
 
     location / {
