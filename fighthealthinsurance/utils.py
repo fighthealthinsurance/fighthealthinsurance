@@ -36,6 +36,7 @@ from uuid import UUID
 
 from django.conf import settings
 from django.core.mail import EmailMultiAlternatives, send_mail
+from django.db.models import ForeignKey, Model
 from django.template.loader import render_to_string
 from django.urls import reverse
 
@@ -538,6 +539,43 @@ def get_unsubscribe_url(email: str) -> Optional[str]:
         return subscriber.get_unsubscribe_url()
     except MailingListSubscriber.DoesNotExist:
         return None
+
+
+async def aget_related(instance: Model, field_name: str) -> Optional[Any]:
+    """Fetch a forward FK/OneToOne related object without leaving async code.
+
+    Django (as of 5.2) has no native async accessor for forward relations:
+    ``instance.some_fk`` raises ``SynchronousOnlyOperation`` from async code
+    on a cache miss, which is why call sites used to bridge a lambda through
+    ``database_sync_to_async``. Prefer ``select_related`` when you control
+    the queryset; reach for this when you're handed a bare instance.
+
+    Serves from the relation cache when warm (e.g. after ``select_related``),
+    otherwise runs a native ``aget`` — no thread bridge — and warms the cache
+    so later synchronous attribute access is safe. Returns ``None`` for null
+    FKs.
+    """
+    field = instance._meta.get_field(field_name)
+    if not isinstance(field, ForeignKey):
+        # (OneToOneField subclasses ForeignKey.) Reverse and many-to-many
+        # relations already have native async methods on their managers.
+        raise TypeError(
+            f"{field_name!r} on {type(instance).__name__} is not a forward "
+            "relation (ForeignKey/OneToOneField)"
+        )
+    if field.is_cached(instance):
+        return getattr(instance, field_name)
+    target_value = getattr(instance, field.attname)
+    if target_value is None:
+        return None
+    related_model = cast("type[Model]", field.related_model)
+    # _base_manager (not objects) mirrors how Django's own lazy relation
+    # loading resolves the object.
+    rel_obj = await related_model._base_manager.aget(
+        **{field.target_field.attname: target_value}
+    )
+    field.set_cached_value(instance, rel_obj)
+    return rel_obj
 
 
 async def cancel_tasks(tasks: List[asyncio.Task]) -> None:

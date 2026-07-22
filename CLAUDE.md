@@ -74,6 +74,11 @@ python manage.py loaddata initial followup plan_source insurance_companies pa_re
   Django's native async ORM first** — `aget`/`acreate`/`asave`/`adelete`/
   `acount`/`aexists`/`aget_or_create` and `async for` over querysets — which
   needs no bridge at all; async-first is the preferred shape for new code.
+  Forward FK/OneToOne access has no native async accessor: use
+  `select_related` when you control the queryset, or
+  `fighthealthinsurance.utils.aget_related(instance, "field_name")` when
+  handed a bare instance — don't bridge a lambda through
+  `database_sync_to_async` just to read a relation.
   When wrapping existing sync code instead, **bridge choice matters:**
   use channels' `database_sync_to_async` for any wrapped callable that touches
   the Django ORM — it closes the thread's DB connections around each call,
@@ -82,6 +87,12 @@ python manage.py loaddata initial followup plan_source insurance_companies pa_re
   `sync_to_async` ONLY for callables that touch no ORM (subprocess, network,
   file work) and leave a comment saying so, since the database variant would
   needlessly churn DB connections there. `async_to_sync` stays asgiref.
+  **Exception — tests only:** in `tests/`, wrap DB-touching callables with
+  plain asgiref `sync_to_async` instead — `database_sync_to_async`'s
+  per-call connection cleanup causes lock-contention storms against the
+  sqlite test database. App code is never exempt. And in tests as
+  everywhere, prefer the native async ORM / `aget_related` over any wrapper
+  when it can do the job.
   Don't flip existing functions between sync and async (or rewrite working
   bridges into native-async) just to satisfy this preference — apply it to
   new code and to call sites you're already changing.

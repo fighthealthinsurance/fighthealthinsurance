@@ -703,10 +703,10 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                 # Get the analysis from the model
                 response_text, _ = await model.generate_chat_response(
                     full_prompt,
-                    is_professional=await database_sync_to_async(
-                        chat.is_professional_user
-                    )(),
-                    is_logged_in=await database_sync_to_async(chat.is_logged_in_user)(),
+                    # Both helpers only read local columns (chat_type /
+                    # user_id) — no queries, so no bridge needed.
+                    is_professional=chat.is_professional_user(),
+                    is_logged_in=chat.is_logged_in_user(),
                 )
 
                 if response_text:

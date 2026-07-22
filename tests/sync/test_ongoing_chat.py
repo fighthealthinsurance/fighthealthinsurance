@@ -16,7 +16,7 @@ from fighthealthinsurance.websockets import OngoingChatConsumer
 from fhi_users.models import ProfessionalDomainRelation
 from .mock_chat_model import MockChatModel
 
-from channels.db import database_sync_to_async
+from asgiref.sync import sync_to_async
 
 if typing.TYPE_CHECKING:
     from django.contrib.auth.models import User
@@ -30,12 +30,12 @@ class OngoingChatWebSocketTest(APITestCase):
         """Test _analyze_denied_items stores denied_item and denied_reason independently and applies guardrails."""
         await self.asyncSetUp()
         consumer = OngoingChatConsumer()
-        user = await database_sync_to_async(User.objects.create_user)(
+        user = await sync_to_async(User.objects.create_user)(
             username="denieduser", password="testpass", email="denied@example.com"
         )
 
         # Case 1: Both denied_item and denied_reason are empty/unclear (patient)
-        chat1 = await database_sync_to_async(OngoingChat.objects.create)(
+        chat1 = await sync_to_async(OngoingChat.objects.create)(
             is_patient=True,
             user=user,
             chat_history=[
@@ -50,14 +50,12 @@ class OngoingChatWebSocketTest(APITestCase):
             '{"denied_item": null, "denied_reason": null}', ""
         )
         await consumer._analyze_denied_items(str(chat1.id))
-        refreshed1 = await database_sync_to_async(OngoingChat.objects.get)(
-            id=str(chat1.id)
-        )
+        refreshed1 = await sync_to_async(OngoingChat.objects.get)(id=str(chat1.id))
         self.assertIsNone(refreshed1.denied_item)
         self.assertIsNone(refreshed1.denied_reason)
 
         # Case 2: Only denied_item is clear (patient)
-        chat2 = await database_sync_to_async(OngoingChat.objects.create)(
+        chat2 = await sync_to_async(OngoingChat.objects.create)(
             is_patient=True,
             user=user,
             chat_history=[
@@ -72,14 +70,12 @@ class OngoingChatWebSocketTest(APITestCase):
             '{"denied_item": "MRI scan", "denied_reason": null}', ""
         )
         await consumer._analyze_denied_items(str(chat2.id))
-        refreshed2 = await database_sync_to_async(OngoingChat.objects.get)(
-            id=str(chat2.id)
-        )
+        refreshed2 = await sync_to_async(OngoingChat.objects.get)(id=str(chat2.id))
         self.assertEqual(refreshed2.denied_item, "MRI scan")
         self.assertIsNone(refreshed2.denied_reason)
 
         # Case 3: Only denied_reason is clear (patient)
-        chat3 = await database_sync_to_async(OngoingChat.objects.create)(
+        chat3 = await sync_to_async(OngoingChat.objects.create)(
             is_patient=True,
             user=user,
             chat_history=[
@@ -94,14 +90,12 @@ class OngoingChatWebSocketTest(APITestCase):
             '{"denied_item": null, "denied_reason": "Lack of medical necessity"}', ""
         )
         await consumer._analyze_denied_items(str(chat3.id))
-        refreshed3 = await database_sync_to_async(OngoingChat.objects.get)(
-            id=str(chat3.id)
-        )
+        refreshed3 = await sync_to_async(OngoingChat.objects.get)(id=str(chat3.id))
         self.assertIsNone(refreshed3.denied_item)
         self.assertEqual(refreshed3.denied_reason, "Lack of medical necessity")
 
         # Case 4: Both are clear (patient)
-        chat4 = await database_sync_to_async(OngoingChat.objects.create)(
+        chat4 = await sync_to_async(OngoingChat.objects.create)(
             is_patient=True,
             user=user,
             chat_history=[
@@ -117,14 +111,12 @@ class OngoingChatWebSocketTest(APITestCase):
             "",
         )
         await consumer._analyze_denied_items(str(chat4.id))
-        refreshed4 = await database_sync_to_async(OngoingChat.objects.get)(
-            id=str(chat4.id)
-        )
+        refreshed4 = await sync_to_async(OngoingChat.objects.get)(id=str(chat4.id))
         self.assertEqual(refreshed4.denied_item, "MRI scan")
         self.assertEqual(refreshed4.denied_reason, "Lack of medical necessity")
 
         # Case 5: Unclear/generic values (should not store) (patient)
-        chat5 = await database_sync_to_async(OngoingChat.objects.create)(
+        chat5 = await sync_to_async(OngoingChat.objects.create)(
             is_patient=True,
             user=user,
             chat_history=[
@@ -136,9 +128,7 @@ class OngoingChatWebSocketTest(APITestCase):
             '{"denied_item": "unknown", "denied_reason": "unclear"}', ""
         )
         await consumer._analyze_denied_items(str(chat5.id))
-        refreshed5 = await database_sync_to_async(OngoingChat.objects.get)(
-            id=str(chat5.id)
-        )
+        refreshed5 = await sync_to_async(OngoingChat.objects.get)(id=str(chat5.id))
         self.assertIsNone(refreshed5.denied_item)
         self.assertIsNone(refreshed5.denied_reason)
 
@@ -165,20 +155,20 @@ class OngoingChatWebSocketTest(APITestCase):
     async def test_link_chat_to_appeal_success(self):
         """Test linking a chat to an appeal with permission."""
         await self.asyncSetUp()
-        user = await database_sync_to_async(User.objects.create_user)(
+        user = await sync_to_async(User.objects.create_user)(
             username="appealuser", password="testpass", email="appeal@example.com"
         )
-        professional = await database_sync_to_async(ProfessionalUser.objects.create)(
+        professional = await sync_to_async(ProfessionalUser.objects.create)(
             user=user, active=True, npi_number="1111111111"
         )
-        chat = await database_sync_to_async(OngoingChat.objects.create)(
+        chat = await sync_to_async(OngoingChat.objects.create)(
             professional_user=professional,
             chat_history=[],
             summary_for_next_call=[],
         )
         from fighthealthinsurance.models import Appeal
 
-        appeal = await database_sync_to_async(Appeal.objects.create)(
+        appeal = await sync_to_async(Appeal.objects.create)(
             creating_professional=professional,
             primary_professional=professional,
             hashed_email="hashappeal@example.com",
@@ -202,7 +192,7 @@ class OngoingChatWebSocketTest(APITestCase):
         self.assertIn("content", response)
         self.assertIn("linked", response["content"])
         # Appeal is linked
-        appeal_refresh = await database_sync_to_async(Appeal.objects.get)(id=appeal.id)
+        appeal_refresh = await sync_to_async(Appeal.objects.get)(id=appeal.id)
         self.assertEqual(appeal_refresh.chat_id, chat.id)
         await communicator.disconnect()
         await self.asyncTearDown()
@@ -210,20 +200,20 @@ class OngoingChatWebSocketTest(APITestCase):
     async def test_link_chat_to_prior_auth_success(self):
         """Test linking a chat to a prior auth with permission."""
         await self.asyncSetUp()
-        user = await database_sync_to_async(User.objects.create_user)(
+        user = await sync_to_async(User.objects.create_user)(
             username="priorauthuser", password="testpass", email="priorauth@example.com"
         )
-        professional = await database_sync_to_async(ProfessionalUser.objects.create)(
+        professional = await sync_to_async(ProfessionalUser.objects.create)(
             user=user, active=True, npi_number="2222222222"
         )
-        chat = await database_sync_to_async(OngoingChat.objects.create)(
+        chat = await sync_to_async(OngoingChat.objects.create)(
             professional_user=professional,
             chat_history=[],
             summary_for_next_call=[],
         )
         from fighthealthinsurance.models import PriorAuthRequest
 
-        prior_auth = await database_sync_to_async(PriorAuthRequest.objects.create)(
+        prior_auth = await sync_to_async(PriorAuthRequest.objects.create)(
             creator_professional_user=professional,
             created_for_professional_user=professional,
             diagnosis="Test diagnosis",
@@ -249,7 +239,7 @@ class OngoingChatWebSocketTest(APITestCase):
         self.assertIn("content", response)
         self.assertIn("linked", response["content"])
         # PriorAuthRequest is linked
-        prior_auth_refresh = await database_sync_to_async(PriorAuthRequest.objects.get)(
+        prior_auth_refresh = await sync_to_async(PriorAuthRequest.objects.get)(
             id=prior_auth.id
         )
         self.assertEqual(prior_auth_refresh.chat_id, chat.id)
@@ -260,9 +250,9 @@ class OngoingChatWebSocketTest(APITestCase):
         await self.asyncSetUp()
         consumer = OngoingChatConsumer()
         consumer.chat_interface = object()
-        chat = await database_sync_to_async(OngoingChat.objects.create)(
+        chat = await sync_to_async(OngoingChat.objects.create)(
             is_patient=True,
-            user=await database_sync_to_async(User.objects.create_user)(
+            user=await sync_to_async(User.objects.create_user)(
                 username="enqueueuser", password="testpass", email="enqueue@example.com"
             ),
             chat_history=[],
@@ -285,9 +275,9 @@ class OngoingChatWebSocketTest(APITestCase):
         await self.asyncSetUp()
         consumer = OngoingChatConsumer()
         consumer.chat_interface = object()
-        chat = await database_sync_to_async(OngoingChat.objects.create)(
+        chat = await sync_to_async(OngoingChat.objects.create)(
             is_patient=True,
-            user=await database_sync_to_async(User.objects.create_user)(
+            user=await sync_to_async(User.objects.create_user)(
                 username="failuser", password="testpass", email="fail@example.com"
             ),
             chat_history=[],
@@ -319,26 +309,26 @@ class OngoingChatWebSocketTest(APITestCase):
     async def test_link_chat_to_appeal_permission_denied(self):
         """Test linking a chat to an appeal without permission is denied."""
         await self.asyncSetUp()
-        user1 = await database_sync_to_async(User.objects.create_user)(
+        user1 = await sync_to_async(User.objects.create_user)(
             username="user1", password="testpass", email="user1@example.com"
         )
-        user2 = await database_sync_to_async(User.objects.create_user)(
+        user2 = await sync_to_async(User.objects.create_user)(
             username="user2", password="testpass", email="user2@example.com"
         )
-        professional1 = await database_sync_to_async(ProfessionalUser.objects.create)(
+        professional1 = await sync_to_async(ProfessionalUser.objects.create)(
             user=user1, active=True, npi_number="3333333333"
         )
-        professional2 = await database_sync_to_async(ProfessionalUser.objects.create)(
+        professional2 = await sync_to_async(ProfessionalUser.objects.create)(
             user=user2, active=True, npi_number="4444444444"
         )
-        chat = await database_sync_to_async(OngoingChat.objects.create)(
+        chat = await sync_to_async(OngoingChat.objects.create)(
             professional_user=professional2,
             chat_history=[],
             summary_for_next_call=[],
         )
         from fighthealthinsurance.models import Appeal
 
-        appeal = await database_sync_to_async(Appeal.objects.create)(
+        appeal = await sync_to_async(Appeal.objects.create)(
             creating_professional=professional1,
             primary_professional=professional1,
             hashed_email="hashappeal2@example.com",
@@ -362,7 +352,7 @@ class OngoingChatWebSocketTest(APITestCase):
         self.assertIn("error", response)
         self.assertIn("permission", response["error"])
         # Appeal is not linked
-        appeal_refresh = await database_sync_to_async(Appeal.objects.get)(id=appeal.id)
+        appeal_refresh = await sync_to_async(Appeal.objects.get)(id=appeal.id)
         self.assertIsNone(appeal_refresh.chat_id)
         await communicator.disconnect()
         await self.asyncTearDown()
@@ -370,26 +360,26 @@ class OngoingChatWebSocketTest(APITestCase):
     async def test_link_chat_to_prior_auth_permission_denied(self):
         """Test linking a chat to a prior auth without permission is denied."""
         await self.asyncSetUp()
-        user1 = await database_sync_to_async(User.objects.create_user)(
+        user1 = await sync_to_async(User.objects.create_user)(
             username="user3", password="testpass", email="user3@example.com"
         )
-        user2 = await database_sync_to_async(User.objects.create_user)(
+        user2 = await sync_to_async(User.objects.create_user)(
             username="user4", password="testpass", email="user4@example.com"
         )
-        professional1 = await database_sync_to_async(ProfessionalUser.objects.create)(
+        professional1 = await sync_to_async(ProfessionalUser.objects.create)(
             user=user1, active=True, npi_number="5555555555"
         )
-        professional2 = await database_sync_to_async(ProfessionalUser.objects.create)(
+        professional2 = await sync_to_async(ProfessionalUser.objects.create)(
             user=user2, active=True, npi_number="6666666666"
         )
-        chat = await database_sync_to_async(OngoingChat.objects.create)(
+        chat = await sync_to_async(OngoingChat.objects.create)(
             professional_user=professional2,
             chat_history=[],
             summary_for_next_call=[],
         )
         from fighthealthinsurance.models import PriorAuthRequest
 
-        prior_auth = await database_sync_to_async(PriorAuthRequest.objects.create)(
+        prior_auth = await sync_to_async(PriorAuthRequest.objects.create)(
             creator_professional_user=professional1,
             created_for_professional_user=professional1,
             diagnosis="Test diagnosis",
@@ -415,7 +405,7 @@ class OngoingChatWebSocketTest(APITestCase):
         self.assertIn("error", response)
         self.assertIn("permission", response["error"])
         # PriorAuthRequest is not linked
-        prior_auth_refresh = await database_sync_to_async(PriorAuthRequest.objects.get)(
+        prior_auth_refresh = await sync_to_async(PriorAuthRequest.objects.get)(
             id=prior_auth.id
         )
         self.assertIsNone(prior_auth_refresh.chat_id)
@@ -428,15 +418,15 @@ class OngoingChatWebSocketTest(APITestCase):
         await self.asyncSetUp()
 
         # Create a user
-        user = await database_sync_to_async(User.objects.create_user)(
+        user = await sync_to_async(User.objects.create_user)(
             username="testuser", password="testpass", email="test@example.com"
         )
-        professional = await database_sync_to_async(ProfessionalUser.objects.create)(
+        professional = await sync_to_async(ProfessionalUser.objects.create)(
             user=user, active=True, npi_number="1234567890"
         )
 
         # Create a chat
-        chat = await database_sync_to_async(OngoingChat.objects.create)(
+        chat = await sync_to_async(OngoingChat.objects.create)(
             professional_user=professional,
             chat_history=[
                 {
@@ -487,7 +477,7 @@ class OngoingChatWebSocketTest(APITestCase):
         await communicator.disconnect()
 
         # Verify message was added to chat history
-        chat = await database_sync_to_async(OngoingChat.objects.get)(id=chat.id)
+        chat = await sync_to_async(OngoingChat.objects.get)(id=chat.id)
         self.assertEqual(
             len(chat.chat_history), 4
         )  # Original 2 messages + new user message + assistant response
@@ -514,10 +504,10 @@ class OngoingChatWebSocketTest(APITestCase):
         await self.asyncSetUp()
 
         # Create a user
-        user = await database_sync_to_async(User.objects.create_user)(
+        user = await sync_to_async(User.objects.create_user)(
             username="testuser", password="testpass", email="test@example.com"
         )
-        professional = await database_sync_to_async(ProfessionalUser.objects.create)(
+        professional = await sync_to_async(ProfessionalUser.objects.create)(
             user=user, active=True, npi_number="1234567890"
         )
 
@@ -555,7 +545,7 @@ class OngoingChatWebSocketTest(APITestCase):
         self.assertTrue(chat_exists)
 
         # Verify message was added to chat history
-        chat = await database_sync_to_async(OngoingChat.objects.get)(id=chat_id)
+        chat = await sync_to_async(OngoingChat.objects.get)(id=chat_id)
         self.assertEqual(len(chat.chat_history), 2)  # User message + assistant response
         self.assertEqual(chat.chat_history[0]["role"], "user")
         self.assertEqual(
@@ -625,15 +615,15 @@ class OngoingChatWebSocketTest(APITestCase):
         with patch(
             "django.conf.settings.FIGHT_PAPERWORK_DOMAIN", "test-domain.example.com"
         ):
-            user = await database_sync_to_async(User.objects.create_user)(
+            user = await sync_to_async(User.objects.create_user)(
                 username="appealurluser",
                 password="testpass",
                 email="appealurl@example.com",
             )
-            professional = await database_sync_to_async(
-                ProfessionalUser.objects.create
-            )(user=user, active=True, npi_number="5555555555")
-            chat = await database_sync_to_async(OngoingChat.objects.create)(
+            professional = await sync_to_async(ProfessionalUser.objects.create)(
+                user=user, active=True, npi_number="5555555555"
+            )
+            chat = await sync_to_async(OngoingChat.objects.create)(
                 professional_user=professional,
                 chat_history=[],
                 summary_for_next_call=[],
@@ -669,9 +659,7 @@ class OngoingChatWebSocketTest(APITestCase):
             # Check that the response contains a properly formatted URL with the domain
             from fighthealthinsurance.models import Appeal
 
-            appeals = await database_sync_to_async(list)(
-                Appeal.objects.filter(chat=chat)
-            )
+            appeals = await sync_to_async(list)(Appeal.objects.filter(chat=chat))
             self.assertTrue(len(appeals) > 0)
             appeal_id = appeals[0].id
             expected_url_part = f"/appeals/{appeal_id}"
@@ -687,15 +675,15 @@ class OngoingChatWebSocketTest(APITestCase):
         with patch(
             "django.conf.settings.FIGHT_PAPERWORK_DOMAIN", "test-domain.example.com"
         ):
-            user = await database_sync_to_async(User.objects.create_user)(
+            user = await sync_to_async(User.objects.create_user)(
                 username="priorauthurl",
                 password="testpass",
                 email="priorauthurl@example.com",
             )
-            professional = await database_sync_to_async(
-                ProfessionalUser.objects.create
-            )(user=user, active=True, npi_number="6666666666")
-            chat = await database_sync_to_async(OngoingChat.objects.create)(
+            professional = await sync_to_async(ProfessionalUser.objects.create)(
+                user=user, active=True, npi_number="6666666666"
+            )
+            chat = await sync_to_async(OngoingChat.objects.create)(
                 professional_user=professional,
                 chat_history=[],
                 summary_for_next_call=[],
@@ -731,7 +719,7 @@ class OngoingChatWebSocketTest(APITestCase):
             # Check that the response contains a properly formatted URL with the domain
             from fighthealthinsurance.models import PriorAuthRequest
 
-            prior_auths = await database_sync_to_async(list)(
+            prior_auths = await sync_to_async(list)(
                 PriorAuthRequest.objects.filter(chat=chat)
             )
             self.assertTrue(len(prior_auths) > 0)

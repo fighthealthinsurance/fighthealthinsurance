@@ -648,13 +648,14 @@ class ChatInterface:
                             # Try to get state from a linked denial if available
                             rag_state = None
                             if await chat.appeals.aexists():
-                                appeal = await chat.appeals.afirst()
-                                if appeal:
-                                    linked_denial = await database_sync_to_async(
-                                        lambda x: x.for_denial
-                                    )(appeal)
-                                    if linked_denial:
-                                        rag_state = linked_denial.state
+                                # select_related caches for_denial so the
+                                # attribute access below stays async-safe
+                                # without a bridge.
+                                appeal = await chat.appeals.select_related(
+                                    "for_denial"
+                                ).afirst()
+                                if appeal and appeal.for_denial:
+                                    rag_state = appeal.for_denial.state
 
                             rag_awaitable = get_rag_context_for_denial(
                                 denial_text=rag_query,

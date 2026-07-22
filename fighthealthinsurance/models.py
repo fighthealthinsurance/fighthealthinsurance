@@ -3214,7 +3214,9 @@ class OngoingChat(models.Model):
         return self.chat_type in (ChatType.PROFESSIONAL, ChatType.TRIAL_PROFESSIONAL)
 
     def is_logged_in_user(self):
-        return self.user is not None
+        # user_id rather than user: never triggers a query, so this stays
+        # safe to call directly from async code.
+        return self.user_id is not None
 
 
 class ChatDocument(models.Model):
