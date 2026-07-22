@@ -1246,7 +1246,13 @@ class SendFaxTest(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
 
-        # Verify the fax number was updated
+        # Verify the fax number was persisted on the denial's
+        # appeal_fax_number — the field the fax staging path actually reads.
+        # (Regression: it used to be assigned to a nonexistent
+        # appeal.fax_number attribute and silently dropped.)
+        self.denial.refresh_from_db()
+        self.assertEqual(self.denial.appeal_fax_number, "5559876543")
+
         updated_appeal = Appeal.objects.get(id=self.appeal.id)
         self.assertEqual(updated_appeal.pending, False)
         self.assertEqual(updated_appeal.pending_patient, False)

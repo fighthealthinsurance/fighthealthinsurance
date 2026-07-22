@@ -141,9 +141,24 @@ class DenialReason:
     def related_reasons(
         self, all_reasons: Dict[str, DenialReason]
     ) -> List[DenialReason]:
-        """Return up to 3 other reasons for cross-linking, in display order."""
+        """Return up to 3 other reasons for cross-linking.
+
+        Starts from the reason after this one's own display position and wraps
+        around, so each detail page links to different neighbors instead of
+        every page converging on the same first three entries. Rotation is
+        position-based rather than hash()-based on purpose: str hashing is
+        salted per process, which would make the cross-links change between
+        deploys/workers.
+        """
+        slugs = list(all_reasons)
         others = [r for slug, r in all_reasons.items() if slug != self.slug]
-        return others[:3]
+        if not others:
+            return []
+        start = slugs.index(self.slug) if self.slug in all_reasons else 0
+        # With self removed, others[start:] are exactly the reasons after self
+        # in display order; wrap around to the ones before it.
+        rotated = others[start:] + others[:start]
+        return rotated[:3]
 
 
 # ── curated data ──────────────────────────────────────────────────────────
@@ -804,10 +819,27 @@ def _build_reasons() -> List[DenialReason]:
 # ── public API (mirrors state_help.py) ─────────────────────────────────
 
 
+def validate_reasons(reasons: List[DenialReason]) -> None:
+    """Raise ``ValueError`` on duplicate slugs.
+
+    Mirrors ``validate_glossary`` / ``validate_insurer_guides``: without this a
+    duplicate slug would silently shadow one reason in ``get_reasons_map``
+    (dict comprehension — last entry wins), 404ing its page with no runtime
+    signal.
+    """
+    seen: set[str] = set()
+    for reason in reasons:
+        if reason.slug in seen:
+            raise ValueError(f"Duplicate denial reason slug: {reason.slug!r}")
+        seen.add(reason.slug)
+
+
 @lru_cache(maxsize=1)
 def _load_reasons_cached() -> List[DenialReason]:
     """Load denial reasons in display order (cached in memory)."""
-    return _build_reasons()
+    reasons = _build_reasons()
+    validate_reasons(reasons)
+    return reasons
 
 
 def load_reasons() -> List[DenialReason]:

@@ -83,6 +83,22 @@ class StartAppealDeepLinkPassthroughTest(TestCase):
         self.assertEqual(query["microsite_slug"], ["mri-denial"])
         self.assertEqual(query["microsite_title"], ["Appealing MRI Denials"])
 
+    def test_supported_params_pass_through_to_chat_url(self):
+        """The secondary chat CTA must carry the same prefill params as scan."""
+        params = {
+            "default_procedure": "MRI Scan",
+            "default_condition": "Back Pain",
+            "microsite_slug": "mri-denial",
+            "microsite_title": "Appealing MRI Denials",
+        }
+        response = self.client.get(self.url, params)
+        self.assertEqual(response.status_code, 200)
+
+        parsed = urlparse(response.context["chat_url"])
+        self.assertEqual(parsed.path, reverse("chat"))
+        query = parse_qs(parsed.query)
+        self.assertEqual(query, {key: [value] for key, value in params.items()})
+
     def test_unsupported_params_are_not_forwarded(self):
         response = self.client.get(
             self.url,

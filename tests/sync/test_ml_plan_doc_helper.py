@@ -59,8 +59,8 @@ class ExtractRelevantTextDecryptionTests(TransactionTestCase):
         )
 
         # Prior to the decryption fix this returned "" because the ciphertext
-        # was handed to the PDF parser. The decrypted text must now come back.
-        self.assertNotEqual(result, "")
+        # was handed to the PDF parser. The decrypted text must now come back
+        # (assertIn also proves the result is non-empty).
         self.assertIn("medical necessity", result.lower())
 
     def test_extract_relevant_text_skips_docs_without_matching_terms(self):

@@ -1117,11 +1117,17 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
             Appeal.filter_to_allowed_appeals(current_user), pk=appeal_id
         )
         fax_number = serializer.validated_data.get("fax_number")
-        # Treat an empty/blank fax_number as "not provided" so we don't clobber
-        # an existing appeal.fax_number with an empty value.
+        # Persist a provided fax number on the denial's appeal_fax_number: that
+        # is the field SendFaxHelper.stage_appeal_as_fax reads for the fax
+        # destination. (Appeal has no fax_number model field, so the previous
+        # `appeal.fax_number = ...` set a transient attribute and the number was
+        # silently dropped.) Blank/empty still means "not provided" so an
+        # existing number isn't clobbered.
         if fax_number:
-            appeal.fax_number = fax_number
-            appeal.save()
+            denial = appeal.for_denial
+            if denial is not None:
+                denial.appeal_fax_number = fax_number
+                denial.save(update_fields=["appeal_fax_number"])
         patient_user = None
         try:
             patient_user = PatientUser.objects.get(user=current_user)

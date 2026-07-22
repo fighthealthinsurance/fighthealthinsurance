@@ -66,15 +66,15 @@ class TestMLCitationsHelper:
 
     @pytest.mark.asyncio
     @patch("fighthealthinsurance.ml.ml_citations_helper.ml_router")
-    async def test_generate_specific_citations_respects_external_opt_out(
+    async def test_specific_citations_opted_out_denial_gets_no_external_backends(
         self, mock_ml_router
     ):
-        """The denial's use_external flag gates the external citation backends.
+        """use_external=False must reach the router so it returns no backends.
 
         Regression: the full citation backends are external (Perplexity) and
         receive denial_text/health_history/plan_context, so a denial whose user
-        declined external models must be passed through as use_external=False
-        (the router then returns no backends) — never a hardcoded True.
+        declined external models must be passed through as use_external=False —
+        never a hardcoded True.
         """
         mock_ml_router.full_find_citation_backends.return_value = []
 
@@ -83,6 +83,14 @@ class TestMLCitationsHelper:
         mock_ml_router.full_find_citation_backends.assert_called_with(
             use_external=False
         )
+
+    @pytest.mark.asyncio
+    @patch("fighthealthinsurance.ml.ml_citations_helper.ml_router")
+    async def test_specific_citations_opted_in_denial_uses_external_backends(
+        self, mock_ml_router
+    ):
+        """use_external=True passes through so the path stays reachable."""
+        mock_ml_router.full_find_citation_backends.return_value = []
 
         self.mock_denial.use_external = True
         await MLCitationsHelper.generate_specific_citations(denial=self.mock_denial)
@@ -246,7 +254,7 @@ class TestMLCitationsHelper:
             "fighthealthinsurance.ml.ml_citations_helper.best_within_timelimit",
             new_callable=AsyncMock,
             return_value=["ML Citation 1", "ML Citation 2"],
-        ), patch.object(
+        ) as mock_generate, patch.object(
             MLCitationsHelper,
             "_get_supplemental_citations",
             new_callable=AsyncMock,
@@ -266,8 +274,10 @@ class TestMLCitationsHelper:
         assert first.count("Supplemental snippet") == 1
         assert second.count("Supplemental snippet") == 1
         assert second == ["ML Citation 1", "ML Citation 2", "Supplemental snippet"]
-        # Prove we exercised the cache-miss-then-cache-hit path (supplemental
-        # fetched once per call), not two cache misses.
+        # Prove the second call was a genuine cache HIT: ML generation ran only
+        # for the first call. (Supplemental runs once per call on both paths,
+        # so its count alone can't distinguish hit from miss.)
+        assert mock_generate.await_count == 1
         assert mock_supplemental.call_count == 2
 
     @pytest.mark.django_db
