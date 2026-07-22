@@ -6,9 +6,10 @@ FK/OneToOne access without a sync-to-async bridge.
 import typing
 
 from django.contrib.auth import get_user_model
+from django.core.exceptions import ObjectDoesNotExist
 from rest_framework.test import APITestCase
 
-from fighthealthinsurance.models import OngoingChat
+from fighthealthinsurance.models import ChatDocument, OngoingChat
 from fighthealthinsurance.utils import aget_related
 
 if typing.TYPE_CHECKING:
@@ -64,3 +65,19 @@ class AgetRelatedTest(APITestCase):
         _, chat = await self._make_user_and_chat()
         with self.assertRaises(TypeError):
             await aget_related(chat, "appeals")
+
+    async def test_deferred_fk_column_is_refreshed_natively(self):
+        # only("id") defers user_id; a direct attribute read would lazy-load
+        # synchronously, but the helper refreshes the column natively first.
+        user, chat = await self._make_user_and_chat()
+        chat = await OngoingChat.objects.only("id").aget(id=chat.id)
+        fetched = await aget_related(chat, "user")
+        self.assertEqual(fetched.pk, user.pk)
+
+    async def test_non_null_fk_on_unsaved_instance_raises_like_descriptor(self):
+        # ChatDocument.chat is null=False: descriptor access on an unsaved
+        # instance raises RelatedObjectDoesNotExist, and so does the helper
+        # (instead of silently returning None).
+        doc = ChatDocument(document_name="doc", full_text="text")
+        with self.assertRaises(ObjectDoesNotExist):
+            await aget_related(doc, "chat")

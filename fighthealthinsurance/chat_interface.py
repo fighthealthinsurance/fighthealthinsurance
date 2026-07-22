@@ -785,7 +785,9 @@ class ChatInterface:
                     "Prior Auth Request not found or you do not have permission to access it."
                 )
                 return
-            prior_auth_details = await database_sync_to_async(prior_auth.details)()
+            # PriorAuthRequest.details() only reads local columns (unlike
+            # Appeal.details(), which walks relations) — no bridge needed.
+            prior_auth_details = prior_auth.details()
             if prior_auth.chat_id != chat.id:
                 prior_auth.chat = chat
                 await prior_auth.asave()

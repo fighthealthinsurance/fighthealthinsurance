@@ -11,6 +11,8 @@ from typing import Any, Awaitable, Callable, Optional, Tuple
 
 from loguru import logger
 
+from fighthealthinsurance.utils import aget_related
+
 from .base_tool import BaseTool
 from .patterns import CREATE_OR_UPDATE_PRIOR_AUTH_REGEX
 
@@ -152,7 +154,7 @@ class PriorAuthTool(BaseTool):
         else:
             prior_auth = await PriorAuthRequest.objects.acreate(
                 chat=chat,
-                creator_professional_user=chat.professional_user,
+                creator_professional_user=await aget_related(chat, "professional_user"),
             )
 
         return prior_auth

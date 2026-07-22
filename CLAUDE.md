@@ -89,8 +89,10 @@ python manage.py loaddata initial followup plan_source insurance_companies pa_re
   needlessly churn DB connections there. `async_to_sync` stays asgiref.
   **Exception — tests only:** in `tests/`, wrap DB-touching callables with
   plain asgiref `sync_to_async` instead — `database_sync_to_async`'s
-  per-call connection cleanup causes lock-contention storms against the
-  sqlite test database. App code is never exempt. And in tests as
+  per-call connection cleanup buys nothing against the in-memory sqlite
+  test database (closing an in-memory sqlite connection is a no-op) and
+  has been implicated in sqlite lock-contention storms. App code is never
+  exempt. And in tests as
   everywhere, prefer the native async ORM / `aget_related` over any wrapper
   when it can do the job.
   Don't flip existing functions between sync and async (or rewrite working

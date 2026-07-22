@@ -145,13 +145,15 @@ class ExtraLinkPrefetchActor:
         logger.info("Starting PubMed pre-fetch")
 
         try:
-            from channels.db import database_sync_to_async
+            # Plain asgiref sync_to_async ON PURPOSE: the microsites
+            # static-json load touches no ORM (same rule as extralink_fetcher).
+            from asgiref.sync import sync_to_async
 
             from fighthealthinsurance.microsites import get_all_microsites
             from fighthealthinsurance.pubmed_tools import PubMedTools
 
             pubmed_tools = PubMedTools()
-            microsites = await database_sync_to_async(get_all_microsites)()
+            microsites = await sync_to_async(get_all_microsites)()
 
             stats = {"fetched": 0, "failed": 0, "total": 0}
 

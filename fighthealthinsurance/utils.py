@@ -557,24 +557,39 @@ async def aget_related(instance: Model, field_name: str) -> Optional[Any]:
     """
     field = instance._meta.get_field(field_name)
     if not isinstance(field, ForeignKey):
-        # (OneToOneField subclasses ForeignKey.) Reverse and many-to-many
-        # relations already have native async methods on their managers.
+        # (OneToOneField subclasses ForeignKey.) Reverse FK and many-to-many
+        # relations have native async methods on their managers instead;
+        # reverse OneToOne has neither and isn't supported here.
         raise TypeError(
             f"{field_name!r} on {type(instance).__name__} is not a forward "
             "relation (ForeignKey/OneToOneField)"
         )
     if field.is_cached(instance):
         return getattr(instance, field_name)
+    if field.attname in instance.get_deferred_fields():
+        # A deferred FK column would lazy-load synchronously on attribute
+        # access (raising SynchronousOnlyOperation here); refresh natively.
+        await instance.arefresh_from_db(fields=[field.name])
     target_value = getattr(instance, field.attname)
     if target_value is None:
-        return None
+        if field.null:
+            return None
+        # Match the descriptor's behavior for non-null FKs on unsaved
+        # instances instead of silently returning None.
+        raise getattr(type(instance), field_name).RelatedObjectDoesNotExist(
+            f"{type(instance).__name__} has no {field.name}."
+        )
     related_model = cast("type[Model]", field.related_model)
-    # _base_manager (not objects) mirrors how Django's own lazy relation
-    # loading resolves the object.
-    rel_obj = await related_model._base_manager.aget(
-        **{field.target_field.attname: target_value}
-    )
+    # Mirror Django's descriptor: _base_manager (not objects) is how lazy
+    # relation loading resolves objects, and db_manager(hints=...) lets DB
+    # routers (and the instance's own alias) pick the right database.
+    rel_obj = await related_model._base_manager.db_manager(
+        hints={"instance": instance}
+    ).aget(**{field.target_field.attname: target_value})
     field.set_cached_value(instance, rel_obj)
+    if not field.remote_field.multiple:
+        # OneToOne: warm the reverse cache too, like the descriptor does.
+        field.remote_field.set_cached_value(rel_obj, instance)
     return rel_obj
 
 
