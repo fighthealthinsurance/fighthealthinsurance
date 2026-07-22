@@ -10,6 +10,21 @@ elif [ -f ./.venv/bin/activate ]; then
   source ./.venv/bin/activate
 fi
 
+# Materialize Git LFS assets before collectstatic. A few outlet logos on the
+# media-references page are stored via Git LFS (see .gitattributes). collectstatic
+# copies raw bytes, so if these are still LFS pointer stubs (e.g. the checkout ran
+# without git-lfs) the build would ship ~130-byte text files as .png. Smudge them
+# to real files now, and fail loudly rather than silently shipping broken images.
+if [ -f .gitattributes ] && grep -q "filter=lfs" .gitattributes; then
+  if command -v git-lfs >/dev/null 2>&1 && git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    git lfs pull
+  else
+    echo "ERROR: this checkout uses Git LFS (see .gitattributes) but git-lfs is unavailable;" >&2
+    echo "       logo images would ship as broken pointer files. Install git-lfs and re-run." >&2
+    exit 1
+  fi
+fi
+
 if command -v tox >/dev/null 2>&1; then
   # Check if fhi_users directory exists for mypy
   if [ -d "./fhi_users" ]; then
