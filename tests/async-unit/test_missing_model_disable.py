@@ -30,6 +30,21 @@ def _model(api_base: str) -> RemoteFullOpenLike:
     return RemoteFullOpenLike(api_base, "test-token", "nope-model")
 
 
+@pytest.fixture
+def missing_model_200_post(make_fake_model_post):
+    """ClientSession.post stand-in for a server that reports a missing model
+    inside a 200 {"object": "error"} body (shared by the flag/probe tests)."""
+    return make_fake_model_post(
+        200,
+        VLLM_404_BODY,
+        json_data={
+            "object": "error",
+            "message": "The model `nope-model` does not exist.",
+            "type": "NotFoundError",
+        },
+    )
+
+
 class TestMissingModelDetection:
     def test_vllm_not_found_body_matches(self):
         assert _error_text_indicates_missing_model(VLLM_404_BODY)
@@ -121,21 +136,12 @@ class TestMissingModelCooldown:
 
     @pytest.mark.asyncio
     async def test_error_object_in_200_body_flags_pair(
-        self, monkeypatch, make_fake_model_post, log_capture
+        self, monkeypatch, missing_model_200_post, log_capture
     ):
         """Servers that report missing models inside a 200 {"object":"error"}
         body get the same cooldown treatment as an HTTP 404."""
         model = _model("http://missing.example/v1")
-        fake_post = make_fake_model_post(
-            200,
-            VLLM_404_BODY,
-            json_data={
-                "object": "error",
-                "message": "The model `nope-model` does not exist.",
-                "type": "NotFoundError",
-            },
-        )
-        monkeypatch.setattr(aiohttp.ClientSession, "post", fake_post)
+        monkeypatch.setattr(aiohttp.ClientSession, "post", missing_model_200_post)
 
         with log_capture() as cap:
             result = await model._infer(system_prompts=["sys"], prompt="hi")
@@ -148,22 +154,13 @@ class TestMissingModelCooldown:
 
     @pytest.mark.asyncio
     async def test_error_object_in_200_body_still_raises_for_probe(
-        self, monkeypatch, make_fake_model_post
+        self, monkeypatch, missing_model_200_post
     ):
         """The startup probe must see the missing-model cause even when the
         transport said 200: a status-bearing error is raised (as in the 404
         branch) instead of degrading to "empty or no response"."""
         model = _model("http://missing.example/v1")
-        fake_post = make_fake_model_post(
-            200,
-            VLLM_404_BODY,
-            json_data={
-                "object": "error",
-                "message": "The model `nope-model` does not exist.",
-                "type": "NotFoundError",
-            },
-        )
-        monkeypatch.setattr(aiohttp.ClientSession, "post", fake_post)
+        monkeypatch.setattr(aiohttp.ClientSession, "post", missing_model_200_post)
 
         with pytest.raises(aiohttp.ClientResponseError) as excinfo:
             await model._infer(
