@@ -34,13 +34,16 @@ class TestMediaReferencesPage(TestCase):
     def test_media_references_page_lists_every_reference(self):
         response = self.client.get(reverse("media-references"))
         content = response.content.decode("utf-8")
-        # Both the press grid and the social grid should render every entry.
+        # Both the press grid and the social grid should render every entry,
+        # including the card body fields (guards the card partial from
+        # silently dropping a field). The template auto-escapes, so compare
+        # against escaped values (e.g. "&" -> "&amp;").
         for ref in ALL_REFERENCES:
-            # The template auto-escapes, so compare against escaped values
-            # (e.g. "&" -> "&amp;").
             self.assertIn(escape(ref["outlet"]), content)
             self.assertIn(escape(ref["title"]), content)
-            self.assertIn(ref["url"], content)
+            self.assertIn(escape(ref["url"]), content)
+            self.assertIn(escape(ref["description"]), content)
+            self.assertIn(escape(ref["cta"]), content)
 
     def test_media_references_page_renders_social_section(self):
         response = self.client.get(reverse("media-references"))

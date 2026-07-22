@@ -1883,6 +1883,10 @@ section:not(.slider) .share-subcopy {
     color: #333;
     margin: 3rem 0 1.75rem;
 }
+/* First subhead follows the header, which already has bottom margin. */
+.media-references-header + .media-references-subhead {
+    margin-top: 0;
+}
 .media-reference-card {
     display: flex;
     flex-direction: column;
@@ -1979,7 +1983,7 @@ section:not(.slider) .share-subcopy {
     text-decoration: none;
 }
 .media-reference-link-internal {
-    color: #888;
+    color: #6b6b6b;
     font-weight: 500;
 }
 .media-references-cta {

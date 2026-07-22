@@ -1,12 +1,14 @@
-"""Single source of truth for press / media coverage of Fight Health Insurance.
+"""Press / media coverage of Fight Health Insurance for the Media References page.
 
 ``MEDIA_REFERENCES`` powers the public "Media References" page
 (``MediaReferencesView``) and ``SOCIAL_MEDIA_REFERENCES`` powers its social
-section. Keeping the coverage here as data (rather than hard-coded markup) lets
-the page, its tests, and any future consumers share one list instead of
-duplicating the same outlets and URLs across templates.
+section. This module is the source of truth for that page. Keeping the coverage
+here as data (rather than hard-coded markup) lets the page, its tests, and any
+future consumers share one list. (The curated "As Featured In" strip on the home
+page, ``partials/featured_section.html``, is a deliberately separate, hand-laid
+teaser with its own two-row highlight layout; it is not generated from this list.)
 
-Every entry is a plain dict so it can be rendered directly in a Django template:
+Every entry is a dict so it can be rendered directly in a Django template:
 
     outlet:            Human-readable name of the outlet / creator (e.g. "Forbes").
     kind:              Short category label ("Article", "Podcast", "TV", "TikTok").
@@ -29,14 +31,21 @@ reverse-chronological timeline of coverage.
 from typing import Optional, TypedDict
 
 
-class MediaReference(TypedDict, total=False):
+class _MediaReferenceRequired(TypedDict):
+    """Fields every reference must provide (enforced by mypy)."""
+
     outlet: str
     kind: str
     cta: str
     title: str
     url: str
-    date: str
     description: str
+
+
+class MediaReference(_MediaReferenceRequired, total=False):
+    """A media reference, plus optional presentation fields."""
+
+    date: str
     logo: Optional[str]
     internal_url_name: Optional[str]
 
@@ -242,15 +251,5 @@ SOCIAL_MEDIA_REFERENCES: list[MediaReference] = [
         "date": "August 2024",
         "description": "The SF Standard's TikTok on how Holden Karau built Fight Health Insurance after facing roughly 40 denials herself.",
         "logo": "images/sflogo.png",
-    },
-    {
-        "outlet": "NewsNation Prime",
-        "kind": "YouTube",
-        "cta": "Watch on YouTube",
-        "title": "Fighting health insurance companies with AI",
-        "url": "https://www.youtube.com/watch?v=lI26LrDU2dg",
-        "date": "2024",
-        "description": "The NewsNation Prime segment on fighting health insurance companies with AI, available on YouTube.",
-        "logo": "images/newsnationlogo.png",
     },
 ]
