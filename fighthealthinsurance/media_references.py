@@ -79,6 +79,7 @@ MEDIA_REFERENCES: list[MediaReference] = [
         "url": "https://www.newsweek.com/health-insurance-claims-ai-website-2012389",
         "date": "January 9, 2025",
         "description": "Newsweek covers how Fight Health Insurance lets people upload a denial and generate a customized appeal draft.",
+        "logo": "images/newsweeklogo.png",
     },
     {
         "outlet": "The Joe Reis Show",
@@ -147,6 +148,7 @@ MEDIA_REFERENCES: list[MediaReference] = [
         "url": "https://www.kjzz.org/the-show/2024-10-03/how-one-software-developer-is-using-ai-to-help-people-fight-health-insurance-denials",
         "date": "October 3, 2024",
         "description": "Phoenix public radio station KJZZ interviews Holden Karau about building FightHealthInsurance.com to help people write appeals.",
+        "logo": "images/kjzzlogo.png",
     },
     {
         "outlet": "Slashdot",
@@ -156,6 +158,7 @@ MEDIA_REFERENCES: list[MediaReference] = [
         "url": "https://science.slashdot.org/story/24/08/31/2131240/tech-worker-builds-free-ai-powered-tool-for-fighting-us-health-insurance-denials",
         "date": "August 31, 2024",
         "description": "Slashdot highlights the free, open-source tool Holden Karau built so patients can scan denials and generate appeal letters.",
+        "logo": "images/slashdotlogo.png",
     },
     {
         "outlet": "BGR",
@@ -165,6 +168,7 @@ MEDIA_REFERENCES: list[MediaReference] = [
         "url": "https://www.bgr.com/tech/this-free-site-uses-ai-to-help-you-fight-health-insurance-claim-denials/",
         "date": "August 27, 2024",
         "description": "BGR walks through how the free Fight Health Insurance site uses AI to help people appeal denied claims.",
+        "logo": "images/bgrlogo.png",
     },
     {
         "outlet": "The San Francisco Standard",
@@ -214,11 +218,21 @@ MEDIA_REFERENCES: list[MediaReference] = [
         "url": "https://qz.com/fight-health-insurance-denials-appeals-ai-1851733712",
         "date": "2024",
         "description": "Quartz spotlights Fight Health Insurance as a free tool that uses AI to appeal denials — some of which were themselves issued by AI.",
+        "logo": "images/quartzlogo.png",
     },
 ]
 
 
 SOCIAL_MEDIA_REFERENCES: list[MediaReference] = [
+    {
+        "outlet": "Your Rich BFF (Vivian Tu)",
+        "kind": "YouTube",
+        "cta": "Watch on YouTube",
+        "title": "Using AI to fight a health insurance denial",
+        "url": "https://www.youtube.com/watch?v=rEudKDcGZ2g",
+        "date": "2024",
+        "description": "Personal-finance creator Your Rich BFF (Vivian Tu) shows her audience how to use Fight Health Insurance to appeal a denied claim.",
+    },
     {
         "outlet": "The San Francisco Standard",
         "kind": "TikTok",
@@ -227,6 +241,7 @@ SOCIAL_MEDIA_REFERENCES: list[MediaReference] = [
         "url": "https://www.tiktok.com/@sfstandard/video/7411675257297177886",
         "date": "August 2024",
         "description": "The SF Standard's TikTok on how Holden Karau built Fight Health Insurance after facing roughly 40 denials herself.",
+        "logo": "images/sflogo.png",
     },
     {
         "outlet": "NewsNation Prime",
@@ -236,5 +251,6 @@ SOCIAL_MEDIA_REFERENCES: list[MediaReference] = [
         "url": "https://www.youtube.com/watch?v=lI26LrDU2dg",
         "date": "2024",
         "description": "The NewsNation Prime segment on fighting health insurance companies with AI, available on YouTube.",
+        "logo": "images/newsnationlogo.png",
     },
 ]

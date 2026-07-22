@@ -1,0 +1,5 @@
+fighthealthinsurance/static/images/newsweeklogo.png filter=lfs diff=lfs merge=lfs -text
+fighthealthinsurance/static/images/quartzlogo.png filter=lfs diff=lfs merge=lfs -text
+fighthealthinsurance/static/images/slashdotlogo.png filter=lfs diff=lfs merge=lfs -text
+fighthealthinsurance/static/images/kjzzlogo.png filter=lfs diff=lfs merge=lfs -text
+fighthealthinsurance/static/images/bgrlogo.png filter=lfs diff=lfs merge=lfs -text
