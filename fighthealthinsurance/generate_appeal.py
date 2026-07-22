@@ -1306,12 +1306,21 @@ class AppealGenerator(object):
                 try:
                     extracted: Optional[str] = await method(denial_text)  # type: ignore
                 except Exception as e:
-                    # One concise line: a down backend would otherwise emit a
-                    # full traceback for every entity type x model x retry.
-                    logger.debug(
-                        f"Extraction {model_method_name} via {model} failed -- "
-                        f"{describe_model_error(e)}"
-                    )
+                    if isinstance(e, MODEL_TRANSPORT_ERRORS):
+                        # One concise line: a down backend would otherwise
+                        # emit a full traceback for every entity type x model
+                        # x retry.
+                        logger.debug(
+                            f"Extraction {model_method_name} via {model} "
+                            f"failed -- {describe_model_error(e)}"
+                        )
+                    else:
+                        # Unexpected exception = likely code bug; keep the
+                        # traceback so it stays diagnosable.
+                        logger.opt(exception=True).debug(
+                            f"Extraction {model_method_name} via {model} "
+                            f"failed: {e}"
+                        )
                     extracted = None
                 if extracted is None:
                     await asyncio.sleep(1)
@@ -2646,9 +2655,16 @@ class AppealGenerator(object):
                     )
                     return str(result)
             except Exception as e:
-                logger.debug(
-                    f"Synthesis via {model} failed -- {describe_model_error(e)}"
-                )
+                if isinstance(e, MODEL_TRANSPORT_ERRORS):
+                    logger.debug(
+                        f"Synthesis via {model} failed -- {describe_model_error(e)}"
+                    )
+                else:
+                    # Unexpected exception = likely code bug; keep the
+                    # traceback so it stays diagnosable.
+                    logger.opt(exception=True).debug(
+                        f"Synthesis via {model} failed: {e}"
+                    )
             return None
 
         # Build tasks and map each coroutine to its model's quality score
