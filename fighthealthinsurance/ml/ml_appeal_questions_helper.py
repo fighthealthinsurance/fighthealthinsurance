@@ -3,7 +3,7 @@ import re
 import time
 from typing import Any, Callable, Coroutine, Dict, List, Optional, Tuple, cast
 
-from asgiref.sync import sync_to_async
+from channels.db import database_sync_to_async
 from loguru import logger
 
 from fighthealthinsurance.ml.ml_router import ml_router
@@ -291,7 +291,9 @@ class MLAppealQuestionsHelper:
                 get_pa_questions_for_denial,
             )
 
-            pa_questions = await sync_to_async(get_pa_questions_for_denial)(denial)
+            pa_questions = await database_sync_to_async(get_pa_questions_for_denial)(
+                denial
+            )
         except Exception as e:
             logger.opt(exception=True).debug(
                 f"PA-aware question lookup failed for denial {denial.denial_id}: {e}"

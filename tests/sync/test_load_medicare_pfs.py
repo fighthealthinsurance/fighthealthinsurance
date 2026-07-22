@@ -21,8 +21,8 @@ _LOCALITY_HEADER = "locality,description\n"
 
 
 # TransactionTestCase (not TestCase): the loader bridges async->sync via
-# sync_to_async, which uses a thread that holds its own DB connection. The
-# resulting writes commit instead of nesting under TestCase's atomic wrapper,
+# database_sync_to_async, which uses a thread that holds its own DB connection.
+# The resulting writes commit instead of nesting under TestCase's atomic wrapper,
 # so we let TransactionTestCase truncate tables between cases.
 class LoadMedicarePFSTests(TransactionTestCase):
     def setUp(self):

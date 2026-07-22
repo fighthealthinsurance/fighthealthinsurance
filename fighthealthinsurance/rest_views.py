@@ -14,7 +14,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 
-from asgiref.sync import async_to_sync, sync_to_async
+from asgiref.sync import async_to_sync
 from dateutil.relativedelta import relativedelta
 from django_encrypted_filefield.crypt import Cryptographer
 from drf_spectacular.types import OpenApiTypes

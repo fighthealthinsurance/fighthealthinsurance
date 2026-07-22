@@ -35,7 +35,7 @@ from pathlib import Path
 from typing import Any, Iterable, NamedTuple, Optional
 
 import aiohttp
-from asgiref.sync import sync_to_async
+from channels.db import database_sync_to_async
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
@@ -235,7 +235,7 @@ async def refresh_medicare_pfs(
                 multipliers=multipliers,
             )
 
-    written, skipped = await sync_to_async(_persist, thread_sensitive=True)()
+    written, skipped = await database_sync_to_async(_persist, thread_sensitive=True)()
     return RefreshResult(
         localities=len(localities),
         rates=len(rate_rows),

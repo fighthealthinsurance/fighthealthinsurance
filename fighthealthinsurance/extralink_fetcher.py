@@ -16,6 +16,10 @@ from django.db import models
 
 import aiohttp
 import PyPDF2
+
+# Plain asgiref sync_to_async ON PURPOSE: wrapped callables (microsites
+# static-json load, pandoc subprocess) touch no ORM; the channels database
+# variant would churn DB connections for nothing.
 from asgiref.sync import sync_to_async
 from bs4 import BeautifulSoup
 from loguru import logger

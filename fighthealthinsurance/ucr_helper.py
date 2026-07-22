@@ -6,7 +6,7 @@ gets written to `Denial.ucr_context` and surfaced in the appeal letter prompt
 via AppealGenerator.make_open_prompt's UCR PRICING block.
 
 The helper is sync-only on purpose; async callers (the refresh actor) wrap calls
-in `sync_to_async`. Keeps the helper simple and directly testable from sync
+in `database_sync_to_async`. Keeps the helper simple and directly testable from sync
 TestCase classes.
 """
 

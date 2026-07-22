@@ -9,7 +9,7 @@ import json
 import re
 from typing import Any, Awaitable, Callable, Optional, Tuple
 
-from asgiref.sync import sync_to_async
+from channels.db import database_sync_to_async
 from loguru import logger
 
 from .base_tool import BaseTool
@@ -140,9 +140,9 @@ class AppealTool(BaseTool):
             appeal = await chat.appeals.afirst()
             if appeal:
                 await self.send_status_message(f"Updating existing Appeal #{appeal.id}")
-                denial = await sync_to_async(lambda x: x.for_denial)(appeal)
+                denial = await database_sync_to_async(lambda x: x.for_denial)(appeal)
         else:
-            pro_user = await sync_to_async(lambda: chat.professional_user)()
+            pro_user = await database_sync_to_async(lambda: chat.professional_user)()
             denial = await Denial.objects.acreate(creating_professional=pro_user)
             appeal = await Appeal.objects.acreate(
                 chat=chat, creating_professional=pro_user, for_denial=denial
@@ -153,7 +153,7 @@ class AppealTool(BaseTool):
                 if chat.hashed_email:
                     appeal_data["hashed_email"] = chat.hashed_email
                 elif chat.user_id is not None:
-                    user_email = await sync_to_async(lambda: chat.user.email)()
+                    user_email = await database_sync_to_async(lambda: chat.user.email)()
                     if user_email:
                         appeal_data["hashed_email"] = Denial.get_hashed_email(
                             user_email

@@ -5,7 +5,8 @@ import uuid
 from concurrent.futures import Future
 from typing import Any, AsyncIterator, Dict, List, Optional
 
-from asgiref.sync import async_to_sync, sync_to_async
+from asgiref.sync import async_to_sync
+from channels.db import database_sync_to_async
 from loguru import logger
 
 from fighthealthinsurance.exec import executor
@@ -94,7 +95,7 @@ class PriorAuthGenerator:
         treatment = prior_auth.treatment
         insurance_company = prior_auth.insurance_company
         # Convert the provider info, can result in a query through domain.
-        provider_info = await sync_to_async(str)(
+        provider_info = await database_sync_to_async(str)(
             (
                 prior_auth.created_for_professional_user
                 or prior_auth.creator_professional_user
@@ -225,7 +226,7 @@ class PriorAuthGenerator:
                 }
 
             # Substitute in patient and provider information
-            substituted_text = await sync_to_async(
+            substituted_text = await database_sync_to_async(
                 PriorAuthTextSubstituter.substitute_patient_and_provider_info
             )(prior_auth, proposal_text)
 

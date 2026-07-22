@@ -2,7 +2,7 @@ import csv
 import re
 
 import icd10
-from asgiref.sync import sync_to_async
+from channels.db import database_sync_to_async
 from loguru import logger
 
 from fighthealthinsurance.denial_base import DenialBase
@@ -100,7 +100,7 @@ class ProcessDenialCodes(DenialBase):
         # carry the ACA cost-sharing mandate, so we only reclassify the denial
         # as preventive when at least one match is grade A or B. The lookup
         # touches Django's sync ORM, so it must run off the event loop.
-        evidence = await sync_to_async(self.find_uspstf_evidence)(denial_text)
+        evidence = await database_sync_to_async(self.find_uspstf_evidence)(denial_text)
         if any((rec.get("grade") or "").upper() in {"A", "B"} for rec in evidence):
             return [self.preventive_denial]
         return []

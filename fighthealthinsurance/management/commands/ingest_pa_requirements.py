@@ -18,9 +18,9 @@ Usage::
 from __future__ import annotations
 
 import asyncio
-from typing import Any, List, Optional
+from typing import Any, List, Optional, cast
 
-from asgiref.sync import sync_to_async
+from channels.db import database_sync_to_async
 from django.core.management.base import BaseCommand
 
 from fighthealthinsurance.models import InsuranceCompany
@@ -95,7 +95,7 @@ class Command(BaseCommand):
             if company is None:
                 stats["failed"] += 1
         else:
-            companies = await sync_to_async(
+            companies = await database_sync_to_async(
                 lambda: list(
                     InsuranceCompany.objects.filter(
                         pa_requirement_list_url_is_parseable=True,
@@ -123,6 +123,9 @@ class Command(BaseCommand):
 
     @staticmethod
     async def _resolve_company(name: str) -> Optional[InsuranceCompany]:
-        return await sync_to_async(
-            lambda: InsuranceCompany.objects.filter(name__iexact=name).first()
-        )()
+        return cast(
+            Optional[InsuranceCompany],
+            await database_sync_to_async(
+                lambda: InsuranceCompany.objects.filter(name__iexact=name).first()
+            )(),
+        )

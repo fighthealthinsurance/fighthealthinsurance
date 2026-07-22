@@ -16,7 +16,7 @@ Example call shape the model is expected to emit::
 import re
 from typing import Optional, Tuple
 
-from asgiref.sync import sync_to_async
+from channels.db import database_sync_to_async
 
 from .json_followup_tool import JsonFollowupTool, extract_balanced_json
 from .patterns import LOOKUP_PA_REQUIREMENT_REGEX
@@ -46,7 +46,7 @@ class PaRequirementLookupTool(JsonFollowupTool):
     async def run(
         self, params: dict, *, current_message_for_llm: str = ""
     ) -> Tuple[str, str]:
-        pa_block, summary = await sync_to_async(_run_lookup)(params)
+        pa_block, summary = await database_sync_to_async(_run_lookup)(params)
         # Empty pa_block means the lookup found nothing usable; honor the
         # JsonFollowupTool short-circuit contract by returning an empty
         # note so the LLM follow-up pass is skipped.
@@ -66,7 +66,7 @@ def _resolve_insurance_company(payer: Optional[str]):
 
 def _run_lookup(params: dict) -> Tuple[str, str]:
     """
-    Synchronous core of the lookup, suitable for sync_to_async wrapping.
+    Synchronous core of the lookup, suitable for database_sync_to_async wrapping.
     Returns ``(formatted_context, status_summary)``.
 
     When a payer name is supplied but cannot be resolved we refuse the

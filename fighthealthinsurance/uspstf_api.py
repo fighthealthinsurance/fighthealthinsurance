@@ -20,10 +20,10 @@ recommendations so appeal generation can still cite preventive guidance.
 
 import asyncio
 import re
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple, cast
 
 import aiohttp
-from asgiref.sync import sync_to_async
+from channels.db import database_sync_to_async
 from django.db import transaction
 from django.utils import timezone
 from loguru import logger
@@ -439,10 +439,10 @@ class USPSTFClient:
         if not records:
             logger.info("Using bundled USPSTF fallback dataset (API empty/unreachable)")
             records = [_coerce_record(item) for item in FALLBACK_RECOMMENDATIONS]
-        return await _store_records(records)
+        return cast(int, await _store_records(records))
 
 
-@sync_to_async
+@database_sync_to_async
 def _store_records(records: Iterable[Dict[str, Any]]) -> int:
     """Persist normalized records into the USPSTFRecommendation table.
 
@@ -754,7 +754,7 @@ def get_uspstf_context_for_denial(denial: Any) -> str:
 
     This is the appeal-generation counterpart to :func:`get_uspstf_info`,
     which is wired into the chat surface. It runs as a cheap synchronous
-    ORM lookup wrapped via ``sync_to_async`` in the gather block.
+    ORM lookup wrapped via ``database_sync_to_async`` in the gather block.
     """
     from fighthealthinsurance.medical_code_extractor import (
         collect_denial_text,
