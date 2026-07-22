@@ -71,11 +71,16 @@ from fighthealthinsurance.utils import mask_email_for_logging
 def parse_count(field: Optional[str]) -> Optional[int]:
     """Parse a form field as a non-negative integer count.
 
-    Returns the int count when the field is all digits (rejecting
+    Returns the int count when the field is all decimal digits (rejecting
     negatives, whitespace, and non-numeric values), otherwise None so
     callers can fall back to treating the field as an email/target.
+
+    Uses ``isdecimal()`` rather than ``isdigit()``: ``isdigit()`` accepts
+    characters such as the superscript "²" that ``int()`` then rejects with
+    a ``ValueError``, whereas ``isdecimal()`` matches exactly the set
+    ``int()`` can parse.
     """
-    if field is not None and field.isdigit():
+    if field is not None and field.isdecimal():
         return int(field)
     return None
 

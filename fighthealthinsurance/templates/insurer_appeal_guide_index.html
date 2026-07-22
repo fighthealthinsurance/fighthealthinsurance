@@ -6,7 +6,8 @@
 {% block metadescription %}General, step-by-step guides on how to appeal a denied claim from major U.S. health insurers and pharmacy benefit managers, including internal appeals and external review.{% endblock metadescription %}
 
 {% block scriptmagic %}
-{% if jsonld %}<script type="application/ld+json">{{ jsonld|safe }}</script>{% endif %}
+{# jsonld is a hardened <script type="application/ld+json"> tag from render_json_ld (escapes <, >, &). #}
+{% if jsonld %}{{ jsonld }}{% endif %}
 {% endblock scriptmagic %}
 
 {% block content %}

@@ -5,6 +5,12 @@ Before this fix, ``extract_relevant_text`` read ``plan_document_enc`` via
 extraction always failed, the exception was swallowed, and the feature silently
 yielded "".  These tests save a real encrypted PDF to ``plan_document_enc`` and
 assert the decrypted text is returned instead.
+
+These live in ``tests/sync/`` rather than ``tests/async/`` on purpose: they are
+synchronous ``TransactionTestCase`` methods that drive the async helper via
+``asyncio.run()``. ``TransactionTestCase`` truncates tables and cannot run under
+the async suite's parallel (``-n auto``) xdist workers, and the sync suite is
+where the ``asyncio.run()``-from-a-sync-test pattern belongs.
 """
 
 import asyncio

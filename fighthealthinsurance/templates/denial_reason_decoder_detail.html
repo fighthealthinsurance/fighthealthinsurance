@@ -7,9 +7,10 @@
 
 {% block content %}
 <!-- JSON-LD Structured Data -->
-<script type="application/ld+json">{{ faq_jsonld|safe }}</script>
-<script type="application/ld+json">{{ breadcrumb_jsonld|safe }}</script>
-<script type="application/ld+json">{{ article_jsonld|safe }}</script>
+{# Each *_jsonld is a hardened <script type="application/ld+json"> tag from render_json_ld (escapes <, >, &). #}
+{{ faq_jsonld }}
+{{ breadcrumb_jsonld }}
+{{ article_jsonld }}
 
 <!-- Breadcrumb -->
 <nav aria-label="breadcrumb" class="py-2 bg-light">

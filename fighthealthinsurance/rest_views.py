@@ -1045,10 +1045,14 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
             Appeal.filter_to_allowed_appeals(current_user), pk=pk
         )
         denial = appeal.for_denial
-        if denial:
-            denial.professional_to_finish = serializer.validated_data.get(
-                "professional_to_finish", True
-            )
+        # Only overwrite professional_to_finish when the caller explicitly sent
+        # it. The serializer field has default=True, so validated_data always
+        # contains the key; relying on it would clobber an existing False every
+        # time the flag is omitted from a notify request.
+        if denial and "professional_to_finish" in request.data:
+            denial.professional_to_finish = serializer.validated_data[
+                "professional_to_finish"
+            ]
             denial.save(update_fields=["professional_to_finish"])
         # Notifying the patient makes it visible.
         if not appeal.patient_visible:
@@ -1494,9 +1498,18 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
         # Sort results by modification date (newest first)
         search_results.sort(key=lambda x: x["mod_date"], reverse=True)
 
-        # Paginate results
-        page_size = max(1, int(request.GET.get("page_size", 10)))
-        page = max(1, int(request.GET.get("page", 1)))
+        # Paginate results. Parse defensively: a non-numeric ?page / ?page_size
+        # would otherwise raise ValueError out of int() and surface as a 500.
+        try:
+            page_size = max(1, int(request.GET.get("page_size", 10)))
+            page = max(1, int(request.GET.get("page", 1)))
+        except (TypeError, ValueError):
+            return Response(
+                serializers.ErrorSerializer(
+                    {"error": "page and page_size must be integers"}
+                ).data,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         start_idx = (page - 1) * page_size
         end_idx = start_idx + page_size
 

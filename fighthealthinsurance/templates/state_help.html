@@ -6,9 +6,8 @@
 {% block metadescription %}How to request an external review and file a complaint with the {{ state.insurance_department.name }} after a health insurance denial in {{ state.name }}. General guidance on the state and federal external review process, plus consumer assistance and Medicaid resources.{% endblock metadescription %}
 
 {% block structured_data %}
-{% if structured_data_json %}
-<script type="application/ld+json">{{ structured_data_json|safe }}</script>
-{% endif %}
+{# structured_data_json is a hardened <script type="application/ld+json"> tag from render_json_ld (escapes <, >, &). #}
+{% if structured_data_json %}{{ structured_data_json }}{% endif %}
 {% endblock structured_data %}
 
 {% block content %}

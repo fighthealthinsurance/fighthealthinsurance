@@ -6,7 +6,8 @@
 {% block metadescription %}{{ term.term }}: {{ term.short }} A plain-language definition from the Fight Health Insurance glossary.{% endblock metadescription %}
 
 {% block content %}
-<script type="application/ld+json">{{ json_ld }}</script>
+{# json_ld is a hardened <script type="application/ld+json"> tag from render_json_ld (escapes <, >, &). #}
+{{ json_ld }}
 
 <!-- Breadcrumb -->
 <section id="glossary-breadcrumb" class="pt-4">
