@@ -876,8 +876,9 @@ class Prod(Base):
         # no reaper for checked-out connections -- a starved pool turns every
         # DB request into a PoolTimeout wait that stalls the whole worker
         # (the 60s ingress 504s / uptime monitor incidents). Without the pool
-        # those leaked connections burden only the server, where
-        # fhi-pg-main-9's idle_session_timeout reaps them (see
+        # those leaked connections burden only the server, where the pressure
+        # reaper (k8s/pg-conn-pressure-reaper.yaml) evicts the oldest idle app
+        # connections under load and idle_session_timeout reaps the rest (see
         # k8s/fhi-pg-main-9-cluster.yaml). Re-enable pooling only once thread
         # connection hygiene is proven.
         if _env_flag("PG_USE_POOL"):
