@@ -151,6 +151,13 @@ class MLAppealQuestionsHelper:
             # best_within_timelimit raises when nothing scores above zero
             # (every backend returned empty or failed). Treat that as "no
             # questions" so the stale-cache fallback below can still serve.
+            #
+            # Deliberate contract change: callers now get [] (or stale cache)
+            # instead of a propagated exception on total generation failure.
+            # For the prior-auth flow that means a request proceeds to
+            # "questions_asked" with just the boilerplate health-history
+            # question rather than sticking in "initial" — degraded but
+            # usable beats silently stuck.
             logger.debug(f"Generic question generation produced nothing: {e}")
             questions = None
         # Generic should not have answers
@@ -158,12 +165,14 @@ class MLAppealQuestionsHelper:
             questions_without_answers = list(map(lambda xy: (xy[0], ""), questions))
             questions = questions_without_answers
 
-        if not questions and stale_questions:
-            # Regeneration produced nothing; serve the stale cached questions
-            # rather than nothing. The row's timestamp is left untouched so
-            # the next request retries generation.
+        if stale_questions and not _questions_worth_caching(questions or []):
+            # Regeneration produced nothing worth keeping (empty OR junk the
+            # cache guard would reject); serve the known-good stale cached
+            # questions instead. The row's timestamp is left untouched so the
+            # next request retries generation. Same guard as the cache write,
+            # so "bad result" has one definition.
             logger.debug(
-                f"Regeneration for {procedure}/{diagnosis} came back empty; "
+                f"Regeneration for {procedure}/{diagnosis} not worth keeping; "
                 "serving stale cached questions"
             )
             return list(stale_questions)

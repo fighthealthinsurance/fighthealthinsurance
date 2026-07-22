@@ -16,6 +16,14 @@
 #      the constraint is added afterwards.
 #   3. Add the (procedure, diagnosis, version) UniqueConstraint, which now
 #      cannot fail: at most one row per pair remains at version=1.
+#
+# Rolling-deploy note: between this migration and the code rollout, still-
+# running old code inserting a brand-new (procedure, diagnosis) pair will hit
+# the NOT NULL `version` column it doesn't populate... except AddField ships a
+# default at the schema level during the migration itself; after the default
+# is dropped, such inserts fail and are swallowed by the helpers' existing
+# try/except (cache writes silently skip until the deploy completes). Standard
+# Django rolling-deploy tradeoff; reads are unaffected.
 
 from django.db import migrations, models
 
@@ -25,35 +33,43 @@ from django.db import migrations, models
 _CURRENT_VERSION = 1
 
 
-def _park_duplicates(Model) -> None:
+def _park_duplicates(Model, db_alias) -> None:
     """Keep the newest row per (procedure, diagnosis) at version=1; park the
     rest at version=-pk."""
     from django.db.models import Count
 
+    objects = Model.objects.using(db_alias)
     dupe_groups = (
-        Model.objects.filter(version=_CURRENT_VERSION)
+        objects.filter(version=_CURRENT_VERSION)
         .values("procedure", "diagnosis")
         .annotate(n=Count("id"))
         .filter(n__gt=1)
     )
     for group in dupe_groups.iterator():
+        # .only() keeps memory bounded even for a pathological duplicate
+        # group — the JSON blobs aren't needed to pick and park rows.
         rows = list(
-            Model.objects.filter(
+            objects.filter(
                 procedure=group["procedure"],
                 diagnosis=group["diagnosis"],
                 version=_CURRENT_VERSION,
-            ).order_by("-created_at", "-id")
+            )
+            .only("id", "created_at", "version")
+            .order_by("-created_at", "-id")
         )
         to_park = rows[1:]
         for row in to_park:
             row.version = -row.id
         if to_park:
-            Model.objects.bulk_update(to_park, ["version"])
+            objects.bulk_update(to_park, ["version"], batch_size=500)
 
 
 def dedupe_generic_caches(apps, schema_editor):
+    # Pin all reads/writes to the connection being migrated so a multi-DB
+    # setup can't dedupe one database while constraining another.
+    db_alias = schema_editor.connection.alias
     for model_name in ("GenericContextGeneration", "GenericQuestionGeneration"):
-        _park_duplicates(apps.get_model("fighthealthinsurance", model_name))
+        _park_duplicates(apps.get_model("fighthealthinsurance", model_name), db_alias)
 
 
 class Migration(migrations.Migration):

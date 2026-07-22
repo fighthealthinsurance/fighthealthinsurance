@@ -61,6 +61,10 @@ async def _clear_cache_rows() -> None:
 
 def _mock_citation_router(mock_router):
     backend = MagicMock()
+    # get_citations is called (not awaited) to build the awaitable list;
+    # AsyncMock records kwargs so tests can assert the patient-context-free
+    # invariant on the generic path.
+    backend.get_citations = AsyncMock(return_value=[])
     mock_router.partial_find_citation_backends.return_value = [backend]
     return backend
 
@@ -94,7 +98,7 @@ class TestCitationCacheHardening:
         parked_b.version = -parked_b.id
         await parked_b.asave(update_fields=["version"])
 
-        _mock_citation_router(mock_router)
+        backend = _mock_citation_router(mock_router)
         with patch(
             "fighthealthinsurance.ml.ml_citations_helper.best_within_timelimit",
             new_callable=AsyncMock,
@@ -103,6 +107,15 @@ class TestCitationCacheHardening:
             result = await _generate_citations()
 
         assert result == GOOD_CITATIONS
+        # The generic (cross-patient) path must never hand backends any
+        # patient-specific context — only procedure/diagnosis.
+        backend.get_citations.assert_called_once_with(
+            denial_text=None,
+            procedure=PROCEDURE,
+            diagnosis=DIAGNOSIS,
+            patient_context=None,
+            plan_context=None,
+        )
         current = await GenericContextGeneration.objects.filter(
             procedure=PROCEDURE,
             diagnosis=DIAGNOSIS,
@@ -198,6 +211,36 @@ class TestCitationCacheHardening:
         assert result == stale_content
         # Timestamp untouched so the next request retries generation.
         await row.arefresh_from_db()
+        assert row.updated_at == STALE
+
+    @pytest.mark.django_db
+    @pytest.mark.asyncio
+    @patch("fighthealthinsurance.ml.ml_citations_helper.ml_router")
+    async def test_stale_content_served_over_junk_regeneration(self, mock_router):
+        """When a stale row exists and regeneration returns junk (fails the
+        cache guard), the known-good stale content wins — otherwise junk
+        would be served over good content on every request forever."""
+        await _clear_cache_rows()
+        stale_content = ["Old but still useful cached citation text here."]
+        row = await GenericContextGeneration.objects.acreate(
+            procedure=PROCEDURE,
+            diagnosis=DIAGNOSIS,
+            generated_context=list(stale_content),
+            updated_at=STALE,
+        )
+
+        _mock_citation_router(mock_router)
+        with patch(
+            "fighthealthinsurance.ml.ml_citations_helper.best_within_timelimit",
+            new_callable=AsyncMock,
+            return_value=["N/A"],
+        ):
+            result = await _generate_citations()
+
+        assert result == stale_content
+        await row.arefresh_from_db()
+        # Junk was neither cached nor allowed to refresh the timestamp.
+        assert row.generated_context == stale_content
         assert row.updated_at == STALE
 
     @pytest.mark.django_db
@@ -360,6 +403,38 @@ class TestQuestionCacheHardening:
 
         assert result == stale_questions
         await row.arefresh_from_db()
+        assert row.updated_at == STALE
+
+    @pytest.mark.django_db
+    @pytest.mark.asyncio
+    @patch(
+        "fighthealthinsurance.ml.ml_appeal_questions_helper.ml_router.partial_qa_backends"
+    )
+    @patch(
+        "fighthealthinsurance.ml.ml_appeal_questions_helper.ml_router.full_qa_backends"
+    )
+    async def test_stale_questions_served_over_junk_regeneration(
+        self, mock_full, mock_partial
+    ):
+        """Junk regeneration (fails the cache guard) must not displace
+        known-good stale cached questions."""
+        await _clear_cache_rows()
+        stale_questions = [["Is the old cached question still shown?", ""]]
+        row = await GenericQuestionGeneration.objects.acreate(
+            procedure=PROCEDURE,
+            diagnosis=DIAGNOSIS,
+            generated_questions=stale_questions,
+            updated_at=STALE,
+        )
+
+        self._mock_question_model(mock_full, mock_partial, [("Bad", "")])
+        result = await MLAppealQuestionsHelper.generate_generic_questions(
+            procedure=PROCEDURE, diagnosis=DIAGNOSIS
+        )
+
+        assert result == stale_questions
+        await row.arefresh_from_db()
+        assert row.generated_questions == stale_questions
         assert row.updated_at == STALE
 
     @pytest.mark.django_db
