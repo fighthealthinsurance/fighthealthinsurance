@@ -375,13 +375,17 @@ class MLCitationsHelper:
                 # land in this shared cache.
                 ml_only = list(result)
 
-                if not ml_only and stale_context:
-                    # Regeneration produced nothing; serve the stale cached
-                    # citations rather than nothing. The row's timestamp is
-                    # left untouched so the next request retries generation.
+                if stale_context and not _citations_worth_caching(ml_only):
+                    # Regeneration produced nothing worth keeping (empty OR
+                    # junk that the cache guard would reject); serve the
+                    # known-good stale cached citations instead. The row's
+                    # timestamp is left untouched so the next request retries
+                    # generation. Using the same guard as the cache write
+                    # keeps one definition of "bad result" — otherwise junk
+                    # would be served over good stale content forever.
                     logger.debug(
-                        f"Regeneration for {procedure}/{diagnosis} came back "
-                        "empty; serving stale cached citations"
+                        f"Regeneration for {procedure}/{diagnosis} not worth "
+                        "keeping; serving stale cached citations"
                     )
                     result = list(stale_context)
 
