@@ -147,7 +147,6 @@ class TestMLCitationFunctionality:
                 for citation in citations:
                     assert "Here are relevant citations" not in citation
 
-
     @pytest.mark.asyncio
     async def test_get_citations_stops_on_repeated_line(self):
         """Treat repeated identical lines as an implicit stop token."""
@@ -176,8 +175,9 @@ class TestMLCitationFunctionality:
 
                 assert len(citations) == 1
                 assert "CDC PrEP Clinical Guidance" in citations[0]
-                assert all("Template line that starts repeating" not in c for c in citations)
-
+                assert all(
+                    "Template line that starts repeating" not in c for c in citations
+                )
 
     @pytest.mark.asyncio
     async def test_get_citations_keeps_long_single_line_header_with_citation(self):
@@ -203,7 +203,9 @@ class TestMLCitationFunctionality:
                 )
 
                 assert len(citations) == 1
-                assert citations[0].startswith("Citations: CDC Clinical Guidance for PrEP")
+                assert citations[0].startswith(
+                    "Citations: CDC Clinical Guidance for PrEP"
+                )
 
     def test_full_find_citation_backends(self):
         """Test the full_find_citation_backends router method."""

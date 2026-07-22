@@ -48,7 +48,19 @@ class TestInterleaveIterator:
         """
         items = ["data1", "data2", "data3"]
         # Pattern: \n, [\n, data, \n]..., \n (final before StopAsyncIteration)
-        expected_output = ["\n", "\n", "data1", "\n", "\n", "data2", "\n", "\n", "data3", "\n", "\n"]
+        expected_output = [
+            "\n",
+            "\n",
+            "data1",
+            "\n",
+            "\n",
+            "data2",
+            "\n",
+            "\n",
+            "data3",
+            "\n",
+            "\n",
+        ]
         async_iter = async_generator(items)
         interleaved_iter = interleave_iterator_for_keep_alive(async_iter)
         result = [item async for item in interleaved_iter]
@@ -73,14 +85,12 @@ class TestInterleaveIterator:
         data_items = [r for r in result if r != "\n"]
 
         # All items must be delivered (no item loss)
-        assert data_items == items, (
-            f"Expected all items {items}, got {data_items}"
-        )
+        assert data_items == items, f"Expected all items {items}, got {data_items}"
 
         # Extra newlines from timeouts prove the keep-alive path was exercised
-        assert newline_count > 11, (
-            f"Expected extra timeout-induced keep-alive newlines, got only {newline_count}"
-        )
+        assert (
+            newline_count > 11
+        ), f"Expected extra timeout-induced keep-alive newlines, got only {newline_count}"
 
     @pytest.mark.asyncio
     async def test_interleave_with_async_generator(self):
@@ -99,9 +109,7 @@ class TestInterleaveIterator:
             result.append(item)
 
         data_items = [r for r in result if r != "\n"]
-        assert data_items == items, (
-            f"Expected {items}, got {data_items}"
-        )
+        assert data_items == items, f"Expected {items}, got {data_items}"
 
 
 class BlockingSyncIterator:
@@ -162,9 +170,9 @@ class TestSyncIteratorToAsync:
 
         async def concurrent_work():
             await asyncio.sleep(0.1)
-            assert not consume_done.is_set(), (
-                "concurrent_work must finish while consume is still running"
-            )
+            assert (
+                not consume_done.is_set()
+            ), "concurrent_work must finish while consume is still running"
             concurrent_done.set()
 
         async def consume():
@@ -176,9 +184,9 @@ class TestSyncIteratorToAsync:
 
         results, _ = await asyncio.gather(consume(), concurrent_work())
         assert results == ["x", "y"]
-        assert concurrent_done.is_set(), (
-            "Concurrent async task should have run while iterator was blocking"
-        )
+        assert (
+            concurrent_done.is_set()
+        ), "Concurrent async task should have run while iterator was blocking"
 
     @pytest.mark.asyncio
     async def test_keepalive_emitted_during_blocking_iteration(self):
@@ -196,9 +204,9 @@ class TestSyncIteratorToAsync:
         # (initial + before-item + after-item + final). With a 2s blocking delay
         # and 1s timeout, at least one extra keep-alive newline must fire.
         newline_count = result.count("\n")
-        assert newline_count >= 5, (
-            f"Expected keep-alive newlines beyond baseline 4, got {newline_count}"
-        )
+        assert (
+            newline_count >= 5
+        ), f"Expected keep-alive newlines beyond baseline 4, got {newline_count}"
         # The actual data item must appear
         data_items = [r for r in result if r != "\n"]
         assert "appeal1" in data_items
@@ -243,13 +251,13 @@ class TestFullAppealStreamingPipeline:
 
         # Baseline for 1 item with no timeouts is 4 newlines; extra ones
         # prove keep-alive fired during the blocking wait.
-        assert newline_count >= 5, (
-            f"Expected keep-alive newlines beyond baseline 4, got {newline_count}"
-        )
+        assert (
+            newline_count >= 5
+        ), f"Expected keep-alive newlines beyond baseline 4, got {newline_count}"
         # Appeal must arrive
-        assert len(data_items) >= 1, (
-            f"Expected at least 1 data item, got {len(data_items)}: {data_items}"
-        )
+        assert (
+            len(data_items) >= 1
+        ), f"Expected at least 1 data item, got {len(data_items)}: {data_items}"
 
     @pytest.mark.asyncio
     async def test_pipeline_multiple_items_no_loss(self):
@@ -270,6 +278,4 @@ class TestFullAppealStreamingPipeline:
             result.append(item)
 
         data_items = [r for r in result if r != "\n"]
-        assert data_items == ["a1", "a2", "a3"], (
-            f"Expected all items, got {data_items}"
-        )
+        assert data_items == ["a1", "a2", "a3"], f"Expected all items, got {data_items}"

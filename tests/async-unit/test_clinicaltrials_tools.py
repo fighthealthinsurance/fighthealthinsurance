@@ -209,9 +209,7 @@ class TestApiBase:
         assert tools.api_base == "https://example.com/api/v2"
 
     def test_env_var_override(self, monkeypatch):
-        monkeypatch.setenv(
-            "CLINICAL_TRIALS_API_BASE", "https://blackhole.invalid/v2/"
-        )
+        monkeypatch.setenv("CLINICAL_TRIALS_API_BASE", "https://blackhole.invalid/v2/")
         tools = ClinicalTrialsTools()
         assert tools.api_base == "https://blackhole.invalid/v2"
 
