@@ -163,7 +163,7 @@ spec:
       # CronJob fighting over 3 slots -- the reaper must be able to connect
       # exactly then.
       superuser_reserved_connections: "10"
-      idle_session_timeout: "30min"
+      idle_session_timeout: "90min"
       idle_in_transaction_session_timeout: "10min"
 
     # Auth is INTENTIONALLY unchanged this round: the cluster sits on a trusted
