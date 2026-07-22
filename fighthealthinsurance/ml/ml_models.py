@@ -164,6 +164,33 @@ def _error_text_indicates_missing_model(text: Optional[str]) -> bool:
     )
 
 
+def _http_error_indicates_context_overflow(status: int, body: Optional[str]) -> bool:
+    """True when a 400 means the request outran the model's context window.
+
+    The most common 400 in this stack: our prompts carry denial text plus
+    stacked contexts, and when the estimate misses, the backend rejects with
+    phrasing like vLLM/OpenAI's "This model's maximum context length is X
+    tokens. However, you requested Y tokens... Please reduce the length" /
+    "input exceeds the context window", llama.cpp's "exceeds the available
+    context size", or Anthropic's "prompt is too long". It's an operational,
+    per-request condition -- smaller calls to the same model still work and
+    the appeal path retries with shed context -- so callers log it as a
+    classified WARNING rather than an ERROR with the raw body.
+    """
+    if status != 400 or not body:
+        return False
+    lowered = body.lower()
+    if "maximum context length" in lowered:
+        return True
+    if "context window" in lowered and (
+        "exceed" in lowered or "too long" in lowered or "reduce" in lowered
+    ):
+        return True
+    if "context size" in lowered and "exceed" in lowered:
+        return True
+    return "prompt is too long" in lowered or "input is too long" in lowered
+
+
 def _http_error_indicates_unsupported_temperature(status: int, body: str) -> bool:
     """True when a 400 means the model rejected the ``temperature`` parameter
     outright (OpenAI/Azure reasoning models accept only the default value).
@@ -2499,6 +2526,24 @@ class RemoteOpenLike(RemoteModel):
                                     if k != "temperature"
                                 }
                                 continue
+
+                            if _http_error_indicates_context_overflow(
+                                e.status, response_body
+                            ):
+                                # Per-request condition, not a broken backend:
+                                # the prompt outran the model's context
+                                # window. One WARNING quoting the server's
+                                # message (it carries the max/requested token
+                                # counts) and degrade to None so the shed-
+                                # context retry ladder can take over.
+                                logger.warning(
+                                    f"{self}: prompt exceeds {model}'s context "
+                                    f"window at {api_base} -- "
+                                    f"{response_body[:300]}"
+                                )
+                                if raise_http_errors:
+                                    raise
+                                return None
 
                             if e.status == 404 and _error_text_indicates_missing_model(
                                 response_body

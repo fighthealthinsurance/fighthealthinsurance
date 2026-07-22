@@ -16,7 +16,6 @@ from unittest.mock import AsyncMock, patch
 
 import aiohttp
 import pytest
-from loguru import logger
 
 from fighthealthinsurance.exec import executor
 from fighthealthinsurance.generate_appeal import (
@@ -29,27 +28,6 @@ from fighthealthinsurance.ml.ml_models import (
     describe_model_error,
 )
 from fighthealthinsurance.utils import as_available_nested
-
-
-class _LogCapture:
-    """Context manager capturing loguru records at DEBUG and above."""
-
-    def __enter__(self):
-        self.records = []
-        self._sink_id = logger.add(
-            lambda msg: self.records.append(msg.record), level="DEBUG"
-        )
-        return self
-
-    def __exit__(self, *exc):
-        logger.remove(self._sink_id)
-
-    @property
-    def levels(self):
-        return [r["level"].name for r in self.records]
-
-    def messages(self, level):
-        return [r["message"] for r in self.records if r["level"].name == level]
 
 
 def _connector_error(os_error: OSError) -> aiohttp.ClientConnectorError:
@@ -114,7 +92,7 @@ class TestTransportErrorLogging:
         return RemoteFullOpenLike("http://test-api.com", "test-token", "test-model")
 
     @pytest.mark.asyncio
-    async def test_connection_timeout_logs_single_concise_warning(self):
+    async def test_connection_timeout_logs_single_concise_warning(self, log_capture):
         """The pasted-log scenario: an unreachable backend must yield exactly
         one classified WARNING line with no traceback attached, not a
         multi-page aiohttp stack dump."""
@@ -123,7 +101,7 @@ class TestTransportErrorLogging:
             "Connection timeout to host http://test-api.com/v1/chat/completions"
         )
         with patch.object(aiohttp.ClientSession, "post", side_effect=err):
-            with _LogCapture() as cap:
+            with log_capture() as cap:
                 result = await model._infer(system_prompts=["sys"], prompt="hi")
 
         assert result is None
@@ -134,7 +112,9 @@ class TestTransportErrorLogging:
         assert "ERROR" not in cap.levels
 
     @pytest.mark.asyncio
-    async def test_transport_error_outside_infer_logs_concise_warning(self):
+    async def test_transport_error_outside_infer_logs_concise_warning(
+        self, log_capture
+    ):
         """Transport errors surfacing at the _infer level (outside __infer's
         own handling) get the same one-line classified treatment."""
         model = self._model()
@@ -144,7 +124,7 @@ class TestTransportErrorLogging:
             new_callable=AsyncMock,
             side_effect=aiohttp.ServerDisconnectedError(),
         ):
-            with _LogCapture() as cap:
+            with log_capture() as cap:
                 result = await model._infer(system_prompts=["sys"], prompt="hi")
 
         assert result is None
@@ -155,7 +135,7 @@ class TestTransportErrorLogging:
         assert "ERROR" not in cap.levels
 
     @pytest.mark.asyncio
-    async def test_unexpected_error_keeps_traceback(self):
+    async def test_unexpected_error_keeps_traceback(self, log_capture):
         """Genuine bugs (non-transport exceptions) must keep the full
         traceback so they remain debuggable."""
         model = self._model()
@@ -165,7 +145,7 @@ class TestTransportErrorLogging:
             new_callable=AsyncMock,
             side_effect=TypeError("bug in our code"),
         ):
-            with _LogCapture() as cap:
+            with log_capture() as cap:
                 result = await model._infer(system_prompts=["sys"], prompt="hi")
 
         assert result is None
@@ -182,12 +162,12 @@ class _StubTemplateGenerator:
 class TestAppealStreamIsolation:
     """One failed backend future must not abort the whole appeal stream."""
 
-    def test_failed_future_yields_nothing_and_logs_concisely(self):
+    def test_failed_future_yields_nothing_and_logs_concisely(self, log_capture):
         failed: Future = Future()
         failed.set_exception(
             aiohttp.ConnectionTimeoutError("Connection timeout to host X")
         )
-        with _LogCapture() as cap:
+        with log_capture() as cap:
             out = list(
                 _generated_to_appeals_text("m1", failed, _StubTemplateGenerator())
             )

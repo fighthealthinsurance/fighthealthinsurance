@@ -4,7 +4,9 @@ from fighthealthinsurance.denials.algorithmic_review_detector import (
 
 
 def test_automated_review_triggers_general_block():
-    result = detect_algorithmic_review_terms("Your request was denied after automated review.")
+    result = detect_algorithmic_review_terms(
+        "Your request was denied after automated review."
+    )
     assert result.matched is True
     assert "algorithmic_review_general" in result.suggested_template_blocks
 
@@ -16,7 +18,9 @@ def test_interqual_triggers_criteria_request():
 
 
 def test_navihealth_or_nh_predict_triggers_vendor_block():
-    result = detect_algorithmic_review_terms("Used nH Predict via naviHealth for post-acute review.")
+    result = detect_algorithmic_review_terms(
+        "Used nH Predict via naviHealth for post-acute review."
+    )
     assert "vendor_specific_navihealth" in result.suggested_template_blocks
 
 
@@ -46,4 +50,3 @@ def test_ordinary_denial_language_no_false_positive():
 def test_mcg_dosage_not_vendor_match():
     result = detect_algorithmic_review_terms("Dose adjusted to 25 mcg daily.")
     assert "MCG" not in result.vendor_matches
-
