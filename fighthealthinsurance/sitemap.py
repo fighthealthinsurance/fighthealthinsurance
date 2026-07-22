@@ -34,10 +34,12 @@ class StaticViewSitemap(Sitemap):
         """Return list of URL names for static pages."""
         return [
             "root",
+            "start_appeal",
             "about",
             "pbs-newshour",
             "preparing-2026",
             "turning-26",
+            "appeal_deadline_calculator",
             "other-resources",
             "faq",
             "medicaid-faq",
@@ -152,12 +154,86 @@ class StateHelpSitemap(Sitemap):
         return reverse("state_help", kwargs={"slug": item})
 
 
+class DenialReasonDecoderSitemap(Sitemap):
+    """Sitemap for the Denial Reason Decoder public educational tool."""
+
+    priority = 0.6
+    changefreq = "monthly"
+
+    def items(self) -> list[str]:
+        """Return list of denial reason slugs + index."""
+        try:
+            from fighthealthinsurance.denial_reason_decoder import load_reasons
+
+            reasons = load_reasons()
+            return ["index"] + [r.slug for r in reasons]
+        except Exception as e:
+            logger.warning(f"Could not load denial reasons for sitemap: {e}")
+            return []
+
+    def location(self, item: str) -> str:
+        """Return the URL for a denial reason page."""
+        if item == "index":
+            return reverse("denial_reason_decoder_index")
+        return reverse("denial_reason_decoder_detail", kwargs={"slug": item})
+
+
+class GlossarySitemap(Sitemap):
+    """Sitemap for the glossary index and per-term pages."""
+
+    priority = 0.6
+    changefreq = "monthly"
+
+    def items(self) -> list[str]:
+        """Return the glossary index slug followed by every term slug."""
+        try:
+            from fighthealthinsurance.glossary import get_glossary_slugs
+
+            return ["index"] + get_glossary_slugs()
+        except Exception as e:
+            logger.warning(f"Could not load glossary for sitemap: {e}")
+            return []
+
+    def location(self, item: str) -> str:
+        """Return the URL for the glossary index or a term page."""
+        if item == "index":
+            return reverse("glossary_index")
+        return reverse("glossary_term", kwargs={"slug": item})
+
+
+class InsurerAppealGuideSitemap(Sitemap):
+    """Sitemap for per-insurer appeal guide pages."""
+
+    priority = 0.6
+    changefreq = "monthly"
+
+    def items(self) -> list[str]:
+        """Return the index marker followed by all validated insurer slugs."""
+        try:
+            from fighthealthinsurance.insurer_appeal_guides import get_insurer_slugs
+
+            # "index" is a sentinel for the guide index page.
+            return ["index"] + get_insurer_slugs()
+        except Exception as e:
+            logger.warning(f"Could not load insurer appeal guides for sitemap: {e}")
+            return []
+
+    def location(self, item: str) -> str:
+        """Return the URL for an insurer appeal guide page."""
+        if item == "index":
+            return reverse("insurer_appeal_guide_index")
+        return reverse("insurer_appeal_guide", kwargs={"slug": item})
+
+
 # Dictionary mapping sitemap section names to sitemap classes
 sitemaps = {
     "static": StaticViewSitemap,
     "blog": BlogSitemap,
     "microsites": MicrositeSitemap,
     "state_help": StateHelpSitemap,
+    "denial_reason_decoder": DenialReasonDecoderSitemap,
+    "glossary": GlossarySitemap,
+    "insurer_appeal_guides": InsurerAppealGuideSitemap,
 }
 
 

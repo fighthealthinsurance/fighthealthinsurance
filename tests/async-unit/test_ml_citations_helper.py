@@ -65,6 +65,38 @@ class TestMLCitationsHelper:
         assert citations == []
 
     @pytest.mark.asyncio
+    @patch("fighthealthinsurance.ml.ml_citations_helper.ml_router")
+    async def test_specific_citations_opted_out_denial_gets_no_external_backends(
+        self, mock_ml_router
+    ):
+        """use_external=False must reach the router so it returns no backends.
+
+        Regression: the full citation backends are external (Perplexity) and
+        receive denial_text/health_history/plan_context, so a denial whose user
+        declined external models must be passed through as use_external=False —
+        never a hardcoded True.
+        """
+        mock_ml_router.full_find_citation_backends.return_value = []
+
+        self.mock_denial.use_external = False
+        await MLCitationsHelper.generate_specific_citations(denial=self.mock_denial)
+        mock_ml_router.full_find_citation_backends.assert_called_with(
+            use_external=False
+        )
+
+    @pytest.mark.asyncio
+    @patch("fighthealthinsurance.ml.ml_citations_helper.ml_router")
+    async def test_specific_citations_opted_in_denial_uses_external_backends(
+        self, mock_ml_router
+    ):
+        """use_external=True passes through so the path stays reachable."""
+        mock_ml_router.full_find_citation_backends.return_value = []
+
+        self.mock_denial.use_external = True
+        await MLCitationsHelper.generate_specific_citations(denial=self.mock_denial)
+        mock_ml_router.full_find_citation_backends.assert_called_with(use_external=True)
+
+    @pytest.mark.asyncio
     async def test_generate_specific_citations_no_context(self):
         """Test that generate_specific_citations returns empty when no context."""
         # Create denial with no patient-specific context
@@ -202,6 +234,68 @@ class TestMLCitationsHelper:
             diagnosis="coronary artery disease",
         )
         assert any("Cardiac Guideline" in c for c in result)
+
+    @pytest.mark.django_db
+    @pytest.mark.asyncio
+    @patch("fighthealthinsurance.ml.ml_citations_helper.ml_router")
+    async def test_generic_citations_supplemental_not_duplicated_on_cache_hit(
+        self, mock_ml_router
+    ):
+        """Supplemental citations appear exactly once when reading from cache.
+
+        Regression: a cache miss used to store the combined (ML + supplemental)
+        list, so a later cache hit read the supplemental citations from the
+        blob *and* re-appended freshly-fetched ones, duplicating them. The
+        cache must hold only the ML-only citations.
+        """
+        mock_ml_router.partial_find_citation_backends.return_value = [self.mock_backend]
+
+        # Committed rows leak between async-unit DB tests (no transaction
+        # rollback), so clear this pair first — a leaked fresh row would turn
+        # the first call into a cache hit and break the await_count check.
+        from fighthealthinsurance.models import GenericContextGeneration
+
+        await GenericContextGeneration.objects.filter(
+            procedure="widget install", diagnosis="widget deficiency"
+        ).adelete()
+
+        # Realistic-length citations: the cache write is gated by
+        # _citations_worth_caching (>= 20 chars for at least one entry), so
+        # short placeholder strings would silently skip caching and turn the
+        # second call into a cache miss.
+        ml_citations = [
+            "Smith J et al. (2025). Widget install outcomes. J Widgetry.",
+            "Doe A (2026). Widget deficiency treatment guidelines. NEJM.",
+        ]
+        with patch(
+            "fighthealthinsurance.ml.ml_citations_helper.best_within_timelimit",
+            new_callable=AsyncMock,
+            return_value=list(ml_citations),
+        ) as mock_generate, patch.object(
+            MLCitationsHelper,
+            "_get_supplemental_citations",
+            new_callable=AsyncMock,
+            return_value=["Supplemental snippet"],
+        ) as mock_supplemental:
+            # First call: cache miss -> generates, appends supplemental, caches.
+            first = await MLCitationsHelper.generate_generic_citations(
+                procedure_opt="widget install",
+                diagnosis_opt="widget deficiency",
+            )
+            # Second call: cache hit -> reads cached blob, appends supplemental.
+            second = await MLCitationsHelper.generate_generic_citations(
+                procedure_opt="widget install",
+                diagnosis_opt="widget deficiency",
+            )
+
+        assert first.count("Supplemental snippet") == 1
+        assert second.count("Supplemental snippet") == 1
+        assert second == ml_citations + ["Supplemental snippet"]
+        # Prove the second call was a genuine cache HIT: ML generation ran only
+        # for the first call. (Supplemental runs once per call on both paths,
+        # so its count alone can't distinguish hit from miss.)
+        assert mock_generate.await_count == 1
+        assert mock_supplemental.call_count == 2
 
     @pytest.mark.django_db
     @pytest.mark.asyncio

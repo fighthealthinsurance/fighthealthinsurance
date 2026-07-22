@@ -1,5 +1,6 @@
 {% load compress %}
 {% load static %}
+{% load structured_data_tags %}
 <!DOCTYPE html>
 <html lang="en">
 
@@ -18,6 +19,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
     <!-- Canonical URL -->
     {% if canonical_url %}<link rel="canonical" href="{{ canonical_url }}">{% endif %}
+    <!-- Sitewide structured data (schema.org Organization + WebSite) -->
+    {% sitewide_structured_data %}
+    <!-- Page-specific structured data (JSON-LD) -->
+    {% block structured_data %}{% endblock structured_data %}
     <!-- Form persistence meta tags -->
     {% if fhi_session_key %}<meta name="fhi-session-key" content="{{ fhi_session_key }}">{% endif %}
     {% if fhi_request_method %}<meta name="fhi-request-method" content="{{ fhi_request_method }}">{% endif %}

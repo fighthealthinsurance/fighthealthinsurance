@@ -10,6 +10,22 @@ from fighthealthinsurance.ml.ml_citations_helper import MLCitationsHelper
 import traceback
 
 
+async def _clear_cache_rows(procedure: str, diagnosis: str) -> None:
+    """Delete cache rows for the pair; called at the start of each DB test.
+
+    async-unit DB tests don't get transaction rollback (async ORM writes
+    commit), so committed rows leak between tests sharing a pair — and under
+    the (procedure, diagnosis, version) unique constraint a leaked row makes
+    a later acreate() fail with IntegrityError.
+    """
+    await GenericQuestionGeneration.objects.filter(
+        procedure=procedure, diagnosis=diagnosis
+    ).adelete()
+    await GenericContextGeneration.objects.filter(
+        procedure=procedure, diagnosis=diagnosis
+    ).adelete()
+
+
 @pytest.mark.django_db
 @pytest.mark.asyncio
 async def test_generic_question_generation_cache():
@@ -17,6 +33,7 @@ async def test_generic_question_generation_cache():
     # Mock data
     procedure = "knee replacement"
     diagnosis = "osteoarthritis"
+    await _clear_cache_rows(procedure, diagnosis)
     mock_questions = [("Question 1?", ""), ("Question 2?", "")]
     mock_questions_lst = [["Question 1?", ""], ["Question 2?", ""]]
 
@@ -73,10 +90,17 @@ async def test_generic_question_generation_cache():
 @pytest.mark.asyncio
 async def test_generic_context_generation_cache():
     """Test that generic context/citations are cached and reused properly."""
-    # Mock data
+    # Mock data. Citation strings are realistic-length: the cache write is
+    # gated by _citations_worth_caching, which requires at least one entry of
+    # >= 20 chars so junk one-liners don't get pinned in the shared cache.
     procedure = "knee replacement"
     diagnosis = "osteoarthritis"
-    mock_citations = ["Citation 1", "Citation 2", "Citation 3"]
+    await _clear_cache_rows(procedure, diagnosis)
+    mock_citations = [
+        "Smith J et al. (2025). Outcomes of knee replacement. J Orthop.",
+        "Jones A (2024). Osteoarthritis management guidelines. BMJ.",
+        "Lee K et al. (2026). TKA efficacy meta-analysis. Lancet.",
+    ]
 
     # Mock the citation backends to avoid actual ML calls
     with mock.patch(
@@ -132,6 +156,8 @@ async def test_denial_uses_generic_cache_no_patient_data():
     """Test that a denial without patient-specific data uses cached generic questions/context."""
     from fighthealthinsurance.models import Denial
 
+    await _clear_cache_rows("knee replacement", "osteoarthritis")
+
     # Create a test denial with only procedure and diagnosis (no patient data)
     test_denial = await Denial.objects.acreate(
         procedure="knee replacement",
@@ -145,17 +171,22 @@ async def test_denial_uses_generic_cache_no_patient_data():
     mock_questions = [("Question 1?", ""), ("Question 2?", "")]
     mock_citations = ["Citation 1", "Citation 2", "Citation 3"]
 
-    # Create cache entries
+    # Create cache entries. updated_at must be fresh: rows without it (or past
+    # the TTL) are treated as stale and would trigger regeneration.
+    from django.utils import timezone
+
     await GenericQuestionGeneration.objects.acreate(
         procedure="knee replacement",
         diagnosis="osteoarthritis",
         generated_questions=mock_questions,
+        updated_at=timezone.now(),
     )
 
     await GenericContextGeneration.objects.acreate(
         procedure="knee replacement",
         diagnosis="osteoarthritis",
         generated_context=mock_citations,
+        updated_at=timezone.now(),
     )
 
     # Mock to ensure we don't make actual ML calls

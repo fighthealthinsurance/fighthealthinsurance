@@ -1,0 +1,291 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}{{ title }}{% endblock title %}
+{% block metatitle %}{{ title }}{% endblock metatitle %}
+{% block metadescription %}{{ meta_description }}{% endblock metadescription %}
+
+{% block content %}
+<!-- JSON-LD Structured Data -->
+{# Each *_jsonld is a hardened <script type="application/ld+json"> tag from render_json_ld (escapes <, >, &). #}
+{{ faq_jsonld }}
+{{ breadcrumb_jsonld }}
+{{ article_jsonld }}
+
+<!-- Breadcrumb -->
+<nav aria-label="breadcrumb" class="py-2 bg-light">
+    <div class="container">
+        <ol class="breadcrumb mb-0">
+            <li class="breadcrumb-item"><a href="/">Home</a></li>
+            <li class="breadcrumb-item"><a href="{% url 'denial_reason_decoder_index' %}">Denial Reason Decoder</a></li>
+            <li class="breadcrumb-item active" aria-current="page">{{ reason.title }}</li>
+        </ol>
+    </div>
+</nav>
+
+<!-- Hero Section -->
+<section id="decoder-detail-hero" class="slider" data-stellar-background-ratio="0.5">
+    <div class="row">
+        <div class="item item-first">
+            <div class="caption d-flex flex-column align-items-center justify-content-center">
+                <div class="hero-inner">
+                    <h3 class="hero-tagline">Denial Reason Decoder</h3>
+                    <h1 class="hero-headline">{{ reason.title }}</h1>
+                    <p class="hero-subcopy">{{ reason.subtitle }}</p>
+                    <div class="hero-cta-group">
+                        <a href="{% url 'scan' %}" class="section-btn btn btn-default smoothScroll primary-cta">
+                            Appeal This Denial →
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Section 1: What It Means -->
+<section id="what-it-means" class="py-5">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto">
+                <h2 class="mb-4">
+                    <span class="section-icon">💡</span>
+                    What "{{ reason.title }}" Really Means
+                </h2>
+                <div class="content-card p-4 bg-white rounded shadow-sm">
+                    <p class="lead">{{ reason.what_it_means }}</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Section 2: Why Insurers Use It -->
+<section id="why-insurers-use-it" class="py-5 bg-light">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto">
+                <h2 class="mb-4">
+                    <span class="section-icon">⚠️</span>
+                    Why Insurance Companies Use This Denial
+                </h2>
+                <div class="content-card p-4 bg-white rounded shadow-sm">
+                    <p>{{ reason.why_insurers_use_it }}</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Section 3: Appeal Angles -->
+<section id="appeal-angles" class="py-5">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto">
+                <h2 class="mb-4">
+                    <span class="section-icon">✊</span>
+                    Strongest Appeal Strategies
+                </h2>
+                <p class="text-muted mb-4">
+                    These are general appeal angles that often work for this type of denial. 
+                    Every case is different — use these as a starting point and adapt them to your specific situation. 
+                    This information is educational and does not guarantee a specific outcome.
+                </p>
+
+                {% for angle in reason.appeal_angles %}
+                <div class="appeal-angle-card card mb-4">
+                    <div class="card-body">
+                        <h3 class="h4 card-title">{{ angle.headline }}</h3>
+                        <p class="card-text">{{ angle.description }}</p>
+
+                        {% if angle.evidence_tips %}
+                        <div class="evidence-tips mt-3 p-3 bg-light rounded">
+                            <h4 class="h6 mb-2">
+                                <span class="me-2">📋</span>Evidence That Can Help
+                            </h4>
+                            <ul class="mb-0">
+                                {% for tip in angle.evidence_tips %}
+                                <li class="mb-1">{{ tip }}</li>
+                                {% endfor %}
+                            </ul>
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Section 4: Call to Action -->
+<section id="cta-section" class="py-5 bg-light">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto text-center">
+                <h2 class="mb-3">Ready to Fight Your Denial?</h2>
+                <p class="lead mb-4">{{ reason.cta_text }}</p>
+                <div class="d-flex justify-content-center gap-3 flex-wrap">
+                    <a href="{% url 'scan' %}" class="btn btn-green btn-lg">
+                        Generate Your Appeal Letter
+                    </a>
+                    <a href="{% url 'chat' %}" class="btn btn-outline-green btn-lg">
+                        Chat with AI Assistant
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Related Reasons -->
+{% if related_reasons %}
+<section id="related-reasons" class="py-5">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto">
+                <h2 class="text-center mb-4">Explore Other Denial Reasons</h2>
+                <div class="row">
+                    {% for related in related_reasons %}
+                    <div class="col-md-4 mb-3">
+                        <a href="{% url 'denial_reason_decoder_detail' related.slug %}" class="text-decoration-none">
+                            <div class="card related-card h-100">
+                                <div class="card-body text-center">
+                                    <h3 class="h6 card-title">{{ related.title }}</h3>
+                                    <small class="text-muted">Learn more →</small>
+                                </div>
+                            </div>
+                        </a>
+                    </div>
+                    {% endfor %}
+                </div>
+                <div class="text-center mt-3">
+                    <a href="{% url 'denial_reason_decoder_index' %}" class="btn btn-outline-secondary">
+                        ← View All Denial Reasons
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+{% endif %}
+
+<!-- Disclaimer -->
+<section id="disclaimer" class="py-4">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto">
+                <div class="disclaimer-box p-3 bg-light border rounded">
+                    <p class="text-muted small mb-0">
+                        <strong>Disclaimer:</strong> The information on this page is for educational purposes only. 
+                        It is not legal advice, and we make no guarantees about appeal outcomes. Every insurance plan, 
+                        policy, and denial is different. Use this information to understand your options, but consult 
+                        with your healthcare provider and, if needed, a qualified professional for your specific situation.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+{% endblock content %}
+
+{% block extra_style %}
+<style>
+    #decoder-detail-hero .hero-inner {
+        max-width: 800px;
+        padding: 3rem 2rem;
+        text-align: center;
+    }
+
+    .hero-cta-group {
+        margin-top: 1.5rem;
+    }
+
+    .primary-cta {
+        padding: 0.75rem 2rem;
+        font-size: 1.1rem;
+    }
+
+    .section-icon {
+        font-size: 1.6rem;
+    }
+
+    .content-card {
+        border-left: 4px solid #28a745;
+    }
+
+    .appeal-angle-card {
+        border-left: 4px solid #007bff;
+        transition: box-shadow 0.2s ease;
+    }
+
+    .appeal-angle-card:hover {
+        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    }
+
+    .evidence-tips {
+        border-left: 3px solid #28a745;
+    }
+
+    .evidence-tips ul {
+        list-style: none;
+        padding-left: 0;
+    }
+
+    .evidence-tips ul li::before {
+        content: "✓ ";
+        color: #28a745;
+        font-weight: bold;
+    }
+
+    .related-card {
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+        border-top: 3px solid #28a745;
+    }
+
+    .related-card:hover {
+        transform: translateY(-3px);
+        box-shadow: 0 6px 15px rgba(0,0,0,0.1);
+    }
+
+    .btn-green {
+        background-color: #28a745;
+        border-color: #28a745;
+        color: white;
+    }
+
+    .btn-green:hover {
+        background-color: #218838;
+        border-color: #1e7e34;
+        color: white;
+    }
+
+    .btn-outline-green {
+        color: #28a745;
+        border-color: #28a745;
+    }
+
+    .btn-outline-green:hover {
+        background-color: #28a745;
+        color: white;
+    }
+
+    .disclaimer-box {
+        border-color: #dee2e6 !important;
+    }
+
+    #cta-section {
+        background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+    }
+
+    @media (max-width: 768px) {
+        #decoder-detail-hero .hero-inner {
+            padding: 2rem 1rem;
+        }
+
+        .hero-headline {
+            font-size: 1.75rem;
+        }
+    }
+</style>
+{% endblock extra_style %}

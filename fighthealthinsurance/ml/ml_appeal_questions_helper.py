@@ -1,9 +1,11 @@
 import asyncio
+import datetime
 import re
 import time
-from typing import Any, Callable, Coroutine, Dict, List, Optional, Tuple, cast
+from typing import Any, Callable, Coroutine, Dict, List, Optional, Sequence, Tuple, cast
 
 from channels.db import database_sync_to_async
+from django.utils import timezone
 from loguru import logger
 
 from fighthealthinsurance.ml.ml_router import ml_router
@@ -13,6 +15,38 @@ from fighthealthinsurance.utils import best_within_timelimit
 # Maps a get_appeal_questions coroutine to the originating model's quality score
 QuestionsCoroutine = Coroutine[Any, Any, List[Tuple[str, str]]]
 AwaitableQualityMap = Dict[QuestionsCoroutine, int]
+
+# Refresh cached generic (procedure/diagnosis-only) questions older than this.
+# Mirrors the generic-citation TTL in ml_citations_helper: the content moves
+# slowly but shouldn't be immortal. Rows with updated_at=None (from before the
+# TTL field existed) are treated as stale.
+_GENERIC_QUESTIONS_CACHE_TTL = datetime.timedelta(days=30)
+
+
+def _questions_worth_caching(questions: Sequence[Sequence[Any]]) -> bool:
+    """Gate the shared generic-question cache on a "reasonable" ML result.
+
+    A junk generation must not get pinned in the cache, where it would be
+    served to every future patient with the same procedure/diagnosis until the
+    TTL expires. Requirements: 1-10 entries, every entry a (question, answer)
+    pair whose question is a non-trivial string, and at least one question
+    that actually reads as a question (ends with "?"). Gates the cache write
+    and, when stale cached content exists, whether a regeneration is worth
+    serving over it; with no stale content the caller still receives whatever
+    was generated.
+    """
+    if not questions or len(questions) > 10:
+        return False
+    texts: List[str] = []
+    for entry in questions:
+        try:
+            question_text = entry[0]
+        except (TypeError, IndexError, KeyError):
+            return False
+        if not isinstance(question_text, str) or len(question_text.strip()) < 10:
+            return False
+        texts.append(question_text.strip())
+    return any(text.endswith("?") for text in texts)
 
 
 class MLAppealQuestionsHelper:
@@ -47,17 +81,38 @@ class MLAppealQuestionsHelper:
             logger.debug(f"Missing procedure and diagnosis for generic questions")
             return []
 
-        # Check for existing cached questions first
+        # Check for existing cached questions first. Reads target the current
+        # cache version only — parked/deprecated rows (version=-pk from the
+        # dedupe migration) are ignored — and .afirst() (not .aget()) means a
+        # pathological duplicate can never raise MultipleObjectsReturned.
+        stale_questions: Optional[List[Tuple[str, str]]] = None
         try:
             cached = await GenericQuestionGeneration.objects.filter(
-                procedure=procedure, diagnosis=diagnosis
+                procedure=procedure,
+                diagnosis=diagnosis,
+                version=GenericQuestionGeneration.CURRENT_VERSION,
             ).afirst()
 
-            if cached:
-                logger.debug(
-                    f"Found cached generic questions for {procedure}/{diagnosis}"
+            if cached is not None:
+                fresh = (
+                    cached.updated_at is not None
+                    and (timezone.now() - cached.updated_at)
+                    < _GENERIC_QUESTIONS_CACHE_TTL
                 )
-                return cast(List[Tuple[str, str]], cached.generated_questions)
+                if fresh:
+                    logger.debug(
+                        f"Found cached generic questions for {procedure}/{diagnosis}"
+                    )
+                    return cast(List[Tuple[str, str]], cached.generated_questions)
+                # Past the TTL (or predates it): regenerate, but keep the old
+                # content as a fallback in case regeneration comes back empty.
+                stale_questions = cast(
+                    List[Tuple[str, str]], cached.generated_questions
+                )
+                logger.debug(
+                    f"Cached generic questions for {procedure}/{diagnosis} are "
+                    "stale; regenerating"
+                )
         except Exception as e:
             logger.opt(exception=True).warning(
                 f"Error fetching cached generic questions: {e}"
@@ -69,6 +124,10 @@ class MLAppealQuestionsHelper:
         raw_questions_awaitables: List[QuestionsCoroutine] = []
         model_quality_map: AwaitableQualityMap = {}
 
+        # Patient-context-free by construction: the models receive ONLY
+        # procedure/diagnosis (denial_text=None, no patient_context), and
+        # answers are stripped below before anything reaches the shared
+        # cross-patient cache.
         for model in models_to_try:
             awaitable = model.get_appeal_questions(
                 denial_text=None,
@@ -81,25 +140,64 @@ class MLAppealQuestionsHelper:
         logger.debug(
             f"Using models {models_to_try} to create {raw_questions_awaitables}"
         )
-        questions = await best_within_timelimit(
-            raw_questions_awaitables,
-            score_fn=MLAppealQuestionsHelper.make_score_fn(
-                lambda x: 1, model_quality=model_quality_map
-            ),
-            timeout=model_timeout,
-        )
+        questions: Optional[List[Tuple[str, str]]]
+        try:
+            questions = await best_within_timelimit(
+                raw_questions_awaitables,
+                score_fn=MLAppealQuestionsHelper.make_score_fn(
+                    lambda x: 1, model_quality=model_quality_map
+                ),
+                timeout=model_timeout,
+            )
+        except Exception as e:
+            # best_within_timelimit raises when nothing scores above zero
+            # (every backend returned empty or failed). Treat that as "no
+            # questions" so the stale-cache fallback below can still serve.
+            #
+            # Deliberate contract change: callers now get [] (or stale cache)
+            # instead of a propagated exception on total generation failure.
+            # For the prior-auth flow that means a request proceeds to
+            # "questions_asked" with just the boilerplate health-history
+            # question rather than sticking in "initial" — degraded but
+            # usable beats silently stuck.
+            logger.debug(f"Generic question generation produced nothing: {e}")
+            questions = None
         # Generic should not have answers
         if questions:
             questions_without_answers = list(map(lambda xy: (xy[0], ""), questions))
             questions = questions_without_answers
 
-        # If we have questions, cache them for future use
-        if questions:
+        if stale_questions and not _questions_worth_caching(questions or []):
+            # Regeneration produced nothing worth keeping (empty OR junk the
+            # cache guard would reject); serve the known-good stale cached
+            # questions instead. The row's timestamp is left untouched so the
+            # next request retries generation. Same guard as the cache write,
+            # so "bad result" has one definition.
+            logger.debug(
+                f"Regeneration for {procedure}/{diagnosis} not worth keeping; "
+                "serving stale cached questions"
+            )
+            return list(stale_questions)
+
+        # Cache the questions, but only when the generation looks reasonable —
+        # junk must not get pinned for every future patient with this
+        # procedure/diagnosis.
+        if _questions_worth_caching(questions or []):
             try:
-                await GenericQuestionGeneration.objects.acreate(
+                # Upsert against the (procedure, diagnosis, version)
+                # UniqueConstraint (generic_q_proc_diag_ver_uniq), so
+                # concurrent cache misses collapse to a single row instead of
+                # the old acreate() inserting duplicates.
+                await GenericQuestionGeneration.objects.aupdate_or_create(
                     procedure=procedure,
                     diagnosis=diagnosis,
-                    generated_questions=questions,
+                    version=GenericQuestionGeneration.CURRENT_VERSION,
+                    defaults={
+                        "generated_questions": questions,
+                        # Explicit timestamp: update_or_create defaults don't
+                        # trigger auto_now, and the TTL reads key off this.
+                        "updated_at": timezone.now(),
+                    },
                 )
                 logger.debug(f"Cached generic questions for {procedure}/{diagnosis}")
             except Exception as e:

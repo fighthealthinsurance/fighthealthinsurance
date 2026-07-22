@@ -1,6 +1,7 @@
 import asyncio
 import datetime
 import json
+import math
 import typing
 from typing import Optional
 
@@ -1044,10 +1045,15 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
             Appeal.filter_to_allowed_appeals(current_user), pk=pk
         )
         denial = appeal.for_denial
-        if denial:
+        # Only overwrite professional_to_finish when the caller explicitly sent
+        # it. The serializer field has default=True, so validated_data always
+        # contains the key; relying on it would clobber an existing False every
+        # time the flag is omitted from a notify request.
+        if denial and "professional_to_finish" in request.data:
             denial.professional_to_finish = serializer.validated_data[
                 "professional_to_finish"
             ]
+            denial.save(update_fields=["professional_to_finish"])
         # Notifying the patient makes it visible.
         if not appeal.patient_visible:
             appeal.patient_visible = True
@@ -1110,9 +1116,18 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
         appeal = get_object_or_404(
             Appeal.filter_to_allowed_appeals(current_user), pk=appeal_id
         )
-        if serializer["fax_number"] is not None:
-            appeal.fax_number = serializer["fax_number"]
-            appeal.save()
+        fax_number = serializer.validated_data.get("fax_number")
+        # Persist a provided fax number on the denial's appeal_fax_number: that
+        # is the field SendFaxHelper.stage_appeal_as_fax reads for the fax
+        # destination. (Appeal has no fax_number model field, so the previous
+        # `appeal.fax_number = ...` set a transient attribute and the number was
+        # silently dropped.) Blank/empty still means "not provided" so an
+        # existing number isn't clobbered.
+        if fax_number:
+            denial = appeal.for_denial
+            if denial is not None:
+                denial.appeal_fax_number = fax_number
+                denial.save(update_fields=["appeal_fax_number"])
         patient_user = None
         try:
             patient_user = PatientUser.objects.get(user=current_user)
@@ -1287,22 +1302,27 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
         user: User = request.user  # type: ignore
         delta = request.GET.get("delta", "MoM")  # Default to Month over Month
 
-        current_period_start = now
-        current_period_end = now
+        # Anchor both windows to the start of today (midnight) so the "current"
+        # window excludes the incomplete current day, and the current/previous
+        # windows are symmetric: equal-length, adjacent, full windows.
+        boundary = now.replace(hour=0, minute=0, second=0, microsecond=0)
 
-        # Define previous period based on delta parameter
+        # Define the window length based on the delta parameter
         if delta == "YoY":  # Year over Year
-            current_period_start = current_period_start - relativedelta(years=1)
-            previous_period_start = current_period_start - relativedelta(years=1)
+            period = relativedelta(years=1)
         elif delta == "QoQ":  # Quarter over Quarter
-            current_period_start = current_period_start - relativedelta(months=3)
-            previous_period_start = current_period_start - relativedelta(months=3)
-        else:  # MoM
-            # Default to Month over Month if invalid delta
-            current_period_start = current_period_start - relativedelta(months=1)
-            previous_period_start = current_period_start - relativedelta(months=1)
-        # Regardless end the previous period one microsend before the start of the current
-        previous_period_end = current_period_start - relativedelta(microseconds=1)
+            period = relativedelta(months=3)
+        else:  # MoM (also the fallback for an invalid delta)
+            period = relativedelta(months=1)
+
+        # current = [boundary - period, boundary)
+        current_period_start = boundary - period
+        current_period_end = boundary
+        # previous is an adjacent window of exactly the same length, immediately
+        # before the current one: [current_start - length, current_start)
+        window_length = current_period_end - current_period_start
+        previous_period_end = current_period_start
+        previous_period_start = current_period_start - window_length
 
         # Get user domain to calculate patients
         domain_id = auth_utils.get_domain_id_from_request(request)
@@ -1313,12 +1333,11 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
             except UserDomain.DoesNotExist:
                 pass
 
-        # Get current period statistics
+        # Get current period statistics (half-open interval so the two windows
+        # do not overlap and the incomplete current day is excluded)
         current_appeals = Appeal.filter_to_allowed_appeals(user).filter(
-            creation_date__range=(
-                current_period_start.date(),
-                current_period_end.date(),
-            )
+            creation_date__gte=current_period_start.date(),
+            creation_date__lt=current_period_end.date(),
         )
         current_total = current_appeals.count()
         current_pending = current_appeals.filter(pending=True).count()
@@ -1333,12 +1352,11 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
             PatientUser.objects.filter(appeal__in=current_appeals).distinct().count()
         )
 
-        # Get previous period statistics
+        # Get previous period statistics (half-open interval, adjacent to and
+        # the same length as the current window)
         previous_appeals = Appeal.filter_to_allowed_appeals(user).filter(
-            creation_date__range=(
-                previous_period_start.date(),
-                previous_period_end.date(),
-            )
+            creation_date__gte=previous_period_start.date(),
+            creation_date__lt=previous_period_end.date(),
         )
         previous_total = previous_appeals.count()
         previous_pending = previous_appeals.filter(pending=True).count()
@@ -1459,6 +1477,20 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # Validate pagination params up front (before any DB work): a
+        # non-numeric ?page / ?page_size would otherwise raise ValueError out of
+        # int() and surface as a 500.
+        try:
+            page_size = max(1, int(request.GET.get("page_size", 10)))
+            page = max(1, int(request.GET.get("page", 1)))
+        except (TypeError, ValueError):
+            return Response(
+                serializers.ErrorSerializer(
+                    {"error": "page and page_size must be integers"}
+                ).data,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         # Search in Appeals with user permissions
         appeals = Appeal.filter_to_allowed_appeals(request.user).filter(
             Q(uuid__icontains=query)
@@ -1486,18 +1518,18 @@ class AppealViewSet(viewsets.ViewSet, SerializerMixin):
         # Sort results by modification date (newest first)
         search_results.sort(key=lambda x: x["mod_date"], reverse=True)
 
-        # Paginate results
-        page_size = int(request.GET.get("page_size", 10))
-        page = int(request.GET.get("page", 1))
+        # Paginate results (page/page_size already validated above).
         start_idx = (page - 1) * page_size
         end_idx = start_idx + page_size
 
         paginated_results = search_results[start_idx:end_idx]
 
+        total_pages = math.ceil(len(search_results) / page_size)
+
         return Response(
             {
                 "count": len(search_results),
-                "next": page < len(search_results) // page_size + 1,
+                "next": page < total_pages,
                 "previous": page > 1,
                 "results": paginated_results,
             }
@@ -1737,9 +1769,22 @@ class SendToUserViewSet(viewsets.ViewSet, SerializerMixin):
         current_user: User = request.user  # type: ignore
         serializer = self.deserialize(request.data)
         serializer.is_valid(raise_exception=True)
-        # TODO: Send an e-mail to the patient
-        appeal = Appeal.filter_to_allowed_appeals(current_user).get(
-            id=serializer.validated_data["appeal_id"]
+        # Ensure the appeal exists and the current user is allowed to access it.
+        get_object_or_404(
+            Appeal.filter_to_allowed_appeals(current_user),
+            id=serializer.validated_data["appeal_id"],
+        )
+        # TODO: Send an e-mail to the patient for this appeal. The
+        # AppealViewSet.notify_patient flow (PatientNotificationHelper) is the
+        # existing pattern to reuse when this is implemented.
+        return Response(
+            data=serializers.StatusResponseSerializer(
+                {
+                    "message": "Sending appeals to users is not yet implemented",
+                    "status": "not_implemented",
+                }
+            ).data,
+            status=status.HTTP_501_NOT_IMPLEMENTED,
         )
 
 

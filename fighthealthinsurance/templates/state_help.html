@@ -1,9 +1,14 @@
 {% extends 'base.html' %}
 {% load static %}
 
-{% block title %}{{ state.name }} Health Insurance Help - Fight Health Insurance{% endblock title %}
-{% block metatitle %}{{ state.name }} Health Insurance Help - Fight Health Insurance{% endblock metatitle %}
-{% block metadescription %}Find {{ state.name }} health insurance resources including consumer assistance programs, insurance department contacts, Medicaid information, and legal aid resources.{% endblock metadescription %}
+{% block title %}{{ state.name }} External Review & Insurance Complaint Guide - Fight Health Insurance{% endblock title %}
+{% block metatitle %}{{ state.name }} External Review & Insurance Complaint Guide - Fight Health Insurance{% endblock metatitle %}
+{% block metadescription %}How to request an external review and file a complaint with the {{ state.insurance_department.name }} after a health insurance denial in {{ state.name }}. General guidance on the state and federal external review process, plus consumer assistance and Medicaid resources.{% endblock metadescription %}
+
+{% block structured_data %}
+{# structured_data_json is a hardened <script type="application/ld+json"> tag from render_json_ld (escapes <, >, &). #}
+{% if structured_data_json %}{{ structured_data_json }}{% endif %}
+{% endblock structured_data %}
 
 {% block content %}
 <!-- Hero Section -->
@@ -191,28 +196,77 @@
     </div>
 </section>
 
-<!-- External Review Section -->
-{% if state.external_review and state.external_review.available %}
+<!-- External Review & Department of Insurance Complaint Section -->
 <section id="external-review" class="py-5 bg-light">
     <div class="container">
         <div class="row">
             <div class="col-lg-8 mx-auto">
                 <div class="card external-review-card">
-                    <div class="card-body text-center">
-                        <h2 class="mb-3"><i class="bi bi-clipboard-check me-2"></i>External Review Available</h2>
-                        <p class="lead">{{ state.name }} offers an independent external review process for health insurance denials. This is a free or low-cost way to have your denial reviewed by an independent third party.</p>
-                        {% if state.external_review.info_url %}
-                        <a href="{{ state.external_review.info_url }}" target="_blank" rel="noopener noreferrer" class="btn btn-primary btn-lg">
-                            Learn About External Review <i class="bi bi-box-arrow-up-right ms-1"></i>
-                        </a>
-                        {% endif %}
+                    <div class="card-body">
+                        <h2 class="mb-3 text-center"><i class="bi bi-clipboard-check me-2"></i>External Review &amp; Filing a Complaint in {{ state.name }}</h2>
+                        <p class="lead text-center mb-4">If your health insurer upholds a denial after your internal appeal, you can usually ask for an <strong>independent external review</strong> and file a complaint with your state regulator. Here is the general path in {{ state.name }}.</p>
+
+                        <!-- Step 1: internal appeal first -->
+                        <div class="er-step mb-4">
+                            <h5><span class="er-step-num">1</span>Finish your internal appeal first</h5>
+                            <p class="mb-2">External review normally happens <em>after</em> you complete your health plan's internal appeal (sometimes called a grievance). Keep copies of every denial letter and decision — you will typically need the plan's <strong>final adverse determination</strong> before an external review can begin.</p>
+                            <p class="mb-0">
+                                <a href="{% url 'scan' %}">Start your appeal</a> with our free tool, review the
+                                <a href="{% url 'other-resources' %}">appeal steps and resources</a>, or
+                                <a href="{% url 'chat' %}">chat with our AI assistant</a> for help preparing your internal appeal.
+                            </p>
+                        </div>
+
+                        <!-- Step 2: who administers external review -->
+                        <div class="er-step mb-4">
+                            <h5><span class="er-step-num">2</span>Request an independent external review</h5>
+                            <p class="mb-2">
+                                <strong>Who runs the review:</strong>
+                                {% if state.external_review %}{{ state.external_review.review_type_label }}{% else %}Varies — verify with your state Department of Insurance{% endif %}.
+                            </p>
+                            {% if state.external_review.review_type == 'federal' %}
+                            {# Deliberately does NOT promise the HHS-administered process is open for filing: per HealthCare.gov (verified 2026-07) the HHS-administered federal external review process has been temporarily unavailable since 2026-07-01, and affected plans must provide their own filing instructions. The denial notice is the durable source of truth either way. https://www.healthcare.gov/appeal-insurance-company-decision/external-review/ #}
+                            <p class="mb-2">For denials in {{ state.name }}, external review is handled through the <strong>federal external review process administered by the U.S. Department of Health &amp; Human Services (HHS)</strong> — {{ state.name }} does not run its own external review process. An independent reviewer — not your insurer — re-examines the denial. <strong>Check your denial notice for the current filing instructions</strong>: the federal process's availability and intake route can change, and your notice or plan documents are the authoritative source for how, where, and by when to file.</p>
+                            {% elif state.external_review.review_type == 'varies' %}
+                            <p class="mb-2">In {{ state.name }} the external-review path varies depending on your plan type — some plans use a state process and others use the <strong>federal external review process administered by the U.S. Department of Health &amp; Human Services (HHS)</strong>. <strong>Verify with your state Department of Insurance</strong> which process applies to you before you file, since the right path depends on your specific coverage.</p>
+                            {% else %}
+                            <p class="mb-2">For most state-regulated (fully insured) plans, {{ state.name }} runs its own external review process, where an independent organization — not your insurer — re-examines the denial. Some plans instead use the <strong>federal external review process administered by the U.S. Department of Health &amp; Human Services (HHS)</strong>. This commonly applies to self-funded employer ("self-insured") plans and certain other coverage. Which process covers you depends on your plan type, so confirm the right path before you file.</p>
+                            {% endif %}
+                            {% if state.external_review.info_url %}
+                            <a href="{{ state.external_review.info_url }}" target="_blank" rel="noopener noreferrer" class="btn btn-primary">
+                                External review details for {{ state.name }} <i class="bi bi-box-arrow-up-right ms-1"></i>
+                            </a>
+                            {% endif %}
+                        </div>
+
+                        <!-- Step 3: file a complaint with the DOI -->
+                        <div class="er-step mb-4">
+                            <h5><span class="er-step-num">3</span>File a complaint with the {{ state.insurance_department.name }}</h5>
+                            <p class="mb-2">You can also file a complaint with the <strong>{{ state.insurance_department.name }}</strong>, the agency that regulates insurers in {{ state.name }}. A complaint can prompt the regulator to review how your insurer handled the denial, and staff can often explain your external review rights.</p>
+                            <ul class="mb-2">
+                                {% if state.insurance_department.complaint_url %}
+                                <li><a href="{{ state.insurance_department.complaint_url }}" target="_blank" rel="noopener noreferrer">File a complaint online</a></li>
+                                {% elif state.insurance_department.url %}
+                                <li><a href="{{ state.insurance_department.url }}" target="_blank" rel="noopener noreferrer">{{ state.insurance_department.name }} website</a></li>
+                                {% endif %}
+                                {% if state.insurance_department.consumer_line %}
+                                <li>Consumer hotline: <a href="tel:{{ state.insurance_department.consumer_line }}">{{ state.insurance_department.consumer_line }}</a></li>
+                                {% elif state.insurance_department.phone %}
+                                <li>Phone: <a href="tel:{{ state.insurance_department.phone }}">{{ state.insurance_department.phone }}</a></li>
+                                {% endif %}
+                            </ul>
+                        </div>
+
+                        <!-- Deadlines note -->
+                        <div class="er-deadline p-3 rounded">
+                            <p class="mb-0"><i class="bi bi-clock-history me-2"></i><strong>Deadlines vary.</strong> Time limits to request external review or file a complaint differ by state, plan type, and whether your situation is urgent — and they can be short. Do not wait: verify the exact deadline that applies to you with the {{ state.insurance_department.name }} using the contact details above before you file.</p>
+                        </div>
                     </div>
                 </div>
             </div>
         </div>
     </div>
 </section>
-{% endif %}
 
 <!-- Additional Resources Section -->
 {% if state.additional_resources %}
@@ -278,9 +332,12 @@
         <div class="row">
             <div class="col-lg-8 mx-auto">
                 <div class="disclaimer-box p-3 bg-light border rounded">
-                    <p class="text-muted small mb-0">
-                        <strong>Disclaimer:</strong> The information on this page is provided for informational purposes only and may not be current. Contact information and program details change frequently. Please verify current details directly with each organization. Fight Health Insurance is not affiliated with any government agency or the organizations listed on this page. This is not legal advice.
+                    <p class="text-muted small mb-2">
+                        <strong>General information, not legal advice.</strong> This page provides general educational information about the external review and complaint process and may not be current or complete. External review rules, deadlines, agency names, phone numbers, and web addresses change and can differ by plan type. Always verify the details that apply to your situation directly with the {{ state.insurance_department.name }} and your health plan. Fight Health Insurance is not affiliated with any government agency or the organizations listed on this page and does not provide legal advice.
                     </p>
+                    {% if last_reviewed %}
+                    <p class="text-muted small mb-0"><strong>Last reviewed:</strong> {{ last_reviewed }}.</p>
+                    {% endif %}
                 </div>
             </div>
         </div>
@@ -334,6 +391,39 @@
     .external-review-card {
         border: 2px solid #28a745;
         background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+    }
+
+    .external-review-card .card-body {
+        padding: 2rem;
+    }
+
+    .er-step a {
+        color: #28a745;
+    }
+
+    .er-step h5 {
+        display: flex;
+        align-items: center;
+        font-weight: 600;
+    }
+
+    .er-step-num {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 1.9rem;
+        height: 1.9rem;
+        margin-right: 0.6rem;
+        border-radius: 50%;
+        background-color: #28a745;
+        color: #fff;
+        font-size: 1rem;
+        flex-shrink: 0;
+    }
+
+    .er-deadline {
+        background-color: #fff3cd;
+        border-left: 4px solid #ffc107;
     }
 
     .resource-item {

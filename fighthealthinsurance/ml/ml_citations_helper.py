@@ -24,6 +24,32 @@ from fighthealthinsurance.utils import best_within_timelimit
 # entries to live forever in case the public URLs or titles change.
 _CMS_CACHE_TTL = datetime.timedelta(days=30)
 
+# Refresh cached generic (procedure/diagnosis-only) ML citations older than
+# this. Same reasoning as the CMS TTL: the underlying literature moves slowly,
+# but cached blobs shouldn't be immortal — model/prompt improvements and link
+# rot both argue for periodic regeneration. Rows with updated_at=None (from
+# before the TTL field existed) are treated as stale.
+_GENERIC_CACHE_TTL = datetime.timedelta(days=30)
+
+
+def _citations_worth_caching(citations: List[str]) -> bool:
+    """Gate the shared generic-citation cache on a "reasonable" ML result.
+
+    A junk generation (empty list, blank strings, or one-liners like "N/A" /
+    "no citations found") must not get pinned in the cache, where it would be
+    served to every future patient with the same procedure/diagnosis until the
+    TTL expires. Requirements: a non-empty list, every entry a non-blank
+    string, and at least one entry long enough (>= 20 chars) to plausibly be a
+    real citation. Gates the cache write and, when stale cached content
+    exists, whether a regeneration is worth serving over it; with no stale
+    content the caller still receives whatever was generated.
+    """
+    if not citations:
+        return False
+    if not all(isinstance(c, str) and c.strip() for c in citations):
+        return False
+    return any(len(c.strip()) >= 20 for c in citations)
+
 
 async def _denial_is_medicare_plan(denial: Optional[Denial]) -> bool:
     """Return True if the denial's plan_source indicates a Medicare plan.
@@ -103,12 +129,20 @@ class MLCitationsHelper:
         logger.debug(f"Generating specific citations for {denial}")
         result: List[str] = []
         try:
-            # Get the appropriate citation backends
-            full_citation_backends = ml_router.full_find_citation_backends()
+            # Pass the denial's own external-model consent through: the full
+            # citation backends are external (Perplexity), and this call sends
+            # denial_text / health_history / plan_context to them, so a denial
+            # whose user declined external models (use_external=False) must get
+            # no backends here (the router returns [] and we bail below). For
+            # consenting denials this keeps the path reachable, which is why
+            # the router isn't left at its internal-only default.
+            full_citation_backends = ml_router.full_find_citation_backends(
+                use_external=denial.use_external
+            )
 
             # Only proceed if we have backends to use
             if not full_citation_backends:
-                logger.debug("No citation backends available for generic citations")
+                logger.debug("No citation backends available for specific citations")
                 return []
 
             # Create tasks for full backends
@@ -231,28 +265,47 @@ class MLCitationsHelper:
             logger.debug(f"Missing procedure or diagnosis for generic citations")
             return []
 
-        # Check for existing cached citations first
+        # Check for existing cached citations first. Reads target the current
+        # cache version only — parked/deprecated rows (version=-pk from the
+        # dedupe migration) and rows from older cache generations are ignored.
+        # .afirst() rather than .aget() so a pathological duplicate can never
+        # raise MultipleObjectsReturned here.
         result: List[str] = []
+        stale_context: Optional[List[str]] = None
         try:
             cached = await GenericContextGeneration.objects.filter(
-                procedure=procedure, diagnosis=diagnosis
+                procedure=procedure,
+                diagnosis=diagnosis,
+                version=GenericContextGeneration.CURRENT_VERSION,
             ).afirst()
 
-            if cached:
-                logger.debug(
-                    f"Found cached generic citations for {procedure}/{diagnosis} -- {cached.generated_context}"
+            if cached is not None:
+                fresh = (
+                    cached.updated_at is not None
+                    and (timezone.now() - cached.updated_at) < _GENERIC_CACHE_TTL
                 )
-                # Create a new list to avoid modifying cached data
-                result = list(cached.generated_context)
-                extras = await cls._get_supplemental_citations(
-                    denial=denial, procedure=procedure, diagnosis=diagnosis
-                )
-                if extras:
+                if fresh:
                     logger.debug(
-                        f"Adding {len(extras)} supplemental citations to cached result"
+                        f"Found cached generic citations for {procedure}/{diagnosis} -- {cached.generated_context}"
                     )
-                    result.extend(extras)
-                return result
+                    # Create a new list to avoid modifying cached data
+                    result = list(cached.generated_context)
+                    extras = await cls._get_supplemental_citations(
+                        denial=denial, procedure=procedure, diagnosis=diagnosis
+                    )
+                    if extras:
+                        logger.debug(
+                            f"Adding {len(extras)} supplemental citations to cached result"
+                        )
+                        result.extend(extras)
+                    return result
+                # Past the TTL (or predates it): regenerate, but keep the old
+                # content as a fallback in case regeneration comes back empty.
+                stale_context = list(cached.generated_context)
+                logger.debug(
+                    f"Cached generic citations for {procedure}/{diagnosis} are "
+                    "stale; regenerating"
+                )
             else:
                 logger.debug(
                     f"No cached generic citations found for {procedure}/{diagnosis}"
@@ -270,10 +323,12 @@ class MLCitationsHelper:
             # Only proceed if we have backends to use
             if not partial_citation_backends:
                 logger.debug("No citation backends available for generic citations")
-                # Even without backends, fall back to supplemental evidence
-                return await cls._get_supplemental_citations(
+                # Even without backends, serve the stale cache (if any) plus
+                # supplemental evidence rather than nothing.
+                extras = await cls._get_supplemental_citations(
                     denial=denial, procedure=procedure, diagnosis=diagnosis
                 )
+                return (stale_context or []) + extras
 
             # Create tasks for partial backends
             partial_awaitables = []
@@ -309,6 +364,32 @@ class MLCitationsHelper:
                     )
                     result = []
 
+                # Snapshot the ML-only citations *before* appending
+                # supplemental ones. We cache only the ML-only list so that a
+                # later cache hit (which re-fetches and appends supplemental
+                # citations itself) does not end up with the supplemental
+                # citations duplicated.
+                #
+                # The partial backends receive ONLY procedure/diagnosis (no
+                # denial_text / patient_context / plan_context — see the
+                # get_citations call above), so nothing patient-specific can
+                # land in this shared cache.
+                ml_only = list(result)
+
+                if stale_context and not _citations_worth_caching(ml_only):
+                    # Regeneration produced nothing worth keeping (empty OR
+                    # junk that the cache guard would reject); serve the
+                    # known-good stale cached citations instead. The row's
+                    # timestamp is left untouched so the next request retries
+                    # generation. Using the same guard as the cache write
+                    # keeps one definition of "bad result" — otherwise junk
+                    # would be served over good stale content forever.
+                    logger.debug(
+                        f"Regeneration for {procedure}/{diagnosis} not worth "
+                        "keeping; serving stale cached citations"
+                    )
+                    result = list(stale_context)
+
                 extras = await cls._get_supplemental_citations(
                     denial=denial, procedure=procedure, diagnosis=diagnosis
                 )
@@ -318,16 +399,30 @@ class MLCitationsHelper:
                     )
                     result.extend(extras)
 
-                # If we have citations, cache them for future use
-                if result:
+                # Cache the ML-only citations, but only when the generation
+                # looks reasonable — junk must not get pinned for every future
+                # patient with this procedure/diagnosis.
+                if _citations_worth_caching(ml_only):
                     try:
-                        await GenericContextGeneration.objects.acreate(
+                        # Upsert against the (procedure, diagnosis, version)
+                        # UniqueConstraint (generic_ctx_proc_diag_ver_uniq),
+                        # so concurrent cache misses collapse to a single row.
+                        # Parked/deprecated rows live at other versions and
+                        # never collide with this lookup.
+                        await GenericContextGeneration.objects.aupdate_or_create(
                             procedure=procedure,
                             diagnosis=diagnosis,
-                            generated_context=result,
+                            version=GenericContextGeneration.CURRENT_VERSION,
+                            defaults={
+                                "generated_context": ml_only,
+                                # Explicit timestamp: update_or_create defaults
+                                # don't trigger auto_now, and the TTL reads
+                                # key off this field.
+                                "updated_at": timezone.now(),
+                            },
                         )
                         logger.debug(
-                            f"Stored cached generic citations for {procedure}/{diagnosis} -- {result}"
+                            f"Stored cached generic citations for {procedure}/{diagnosis} -- {ml_only}"
                         )
                     except Exception as e:
                         logger.opt(exception=True).warning(
