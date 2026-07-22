@@ -1092,9 +1092,10 @@ class NotifyPatientTest(APITestCase):
         self.denial.save()
 
         url = reverse("appeals-notify-patient")
+        # Body intentionally omits professional_to_finish entirely.
         response = self.client.post(
             url,
-            json.dumps({"id": self.appeal.id, "include_professional": False}),
+            json.dumps({"id": self.appeal.id}),
             content_type="application/json",
         )
 

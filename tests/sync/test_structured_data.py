@@ -187,6 +187,25 @@ class TestRenderJsonLd(TestCase):
         # The browser JSON parser un-escapes \uXXXX, so the round trip holds.
         self.assertEqual(json.loads(inner)["name"], "</script>")
 
+    def test_accepts_list_of_nodes_and_still_escapes(self):
+        # Glossary/insurer/decoder pages pass a list of top-level JSON-LD nodes;
+        # the result must be a single script tag wrapping a JSON array, with the
+        # per-node escaping still applied.
+        html = structured_data.render_json_ld(
+            [
+                {"@type": "DefinedTerm", "name": "A & B"},
+                {"@type": "BreadcrumbList", "name": "</script>"},
+            ]
+        )
+        self.assertTrue(html.startswith('<script type="application/ld+json">'))
+        self.assertEqual(html.count("</script>"), 1)
+        self.assertIn("\\u0026", html)
+        self.assertIn("\\u003c/script\\u003e", html)
+        inner = html[len('<script type="application/ld+json">') : -len("</script>")]
+        parsed = json.loads(inner)
+        self.assertEqual([node["@type"] for node in parsed], ["DefinedTerm", "BreadcrumbList"])
+        self.assertEqual(parsed[0]["name"], "A & B")
+
 
 class TestSitewideTemplateTag(TestCase):
     def test_tag_emits_both_organization_and_website(self):
