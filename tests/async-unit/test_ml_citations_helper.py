@@ -250,10 +250,27 @@ class TestMLCitationsHelper:
         """
         mock_ml_router.partial_find_citation_backends.return_value = [self.mock_backend]
 
+        # Committed rows leak between async-unit DB tests (no transaction
+        # rollback), so clear this pair first — a leaked fresh row would turn
+        # the first call into a cache hit and break the await_count check.
+        from fighthealthinsurance.models import GenericContextGeneration
+
+        await GenericContextGeneration.objects.filter(
+            procedure="widget install", diagnosis="widget deficiency"
+        ).adelete()
+
+        # Realistic-length citations: the cache write is gated by
+        # _citations_worth_caching (>= 20 chars for at least one entry), so
+        # short placeholder strings would silently skip caching and turn the
+        # second call into a cache miss.
+        ml_citations = [
+            "Smith J et al. (2025). Widget install outcomes. J Widgetry.",
+            "Doe A (2026). Widget deficiency treatment guidelines. NEJM.",
+        ]
         with patch(
             "fighthealthinsurance.ml.ml_citations_helper.best_within_timelimit",
             new_callable=AsyncMock,
-            return_value=["ML Citation 1", "ML Citation 2"],
+            return_value=list(ml_citations),
         ) as mock_generate, patch.object(
             MLCitationsHelper,
             "_get_supplemental_citations",
@@ -273,7 +290,7 @@ class TestMLCitationsHelper:
 
         assert first.count("Supplemental snippet") == 1
         assert second.count("Supplemental snippet") == 1
-        assert second == ["ML Citation 1", "ML Citation 2", "Supplemental snippet"]
+        assert second == ml_citations + ["Supplemental snippet"]
         # Prove the second call was a genuine cache HIT: ML generation ran only
         # for the first call. (Supplemental runs once per call on both paths,
         # so its count alone can't distinguish hit from miss.)

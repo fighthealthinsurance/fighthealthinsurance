@@ -42,7 +42,16 @@ class GenericQuestionGeneration(ExportModelOperationsMixin("GenericQuestionGener
     """
     Stores cached question generations for specific procedure and diagnosis combinations
     that don't contain patient-specific information.
+
+    Uniqueness is on (procedure, diagnosis, version): rows at CURRENT_VERSION
+    are the live cache the helpers read/upsert, and the dedupe migration parks
+    superseded duplicate rows at version=-pk (unique by construction) instead
+    of deleting them. Bumping CURRENT_VERSION invalidates the whole cache
+    without a migration (e.g. after a prompt change).
     """
+
+    # The live cache generation. Reads and upserts target this version only.
+    CURRENT_VERSION = 1
 
     id = models.AutoField(primary_key=True)
     procedure = models.CharField(max_length=300)
@@ -50,8 +59,19 @@ class GenericQuestionGeneration(ExportModelOperationsMixin("GenericQuestionGener
     # Store the questions as a JSONField
     generated_questions = models.JSONField()
     created_at = models.DateTimeField(auto_now_add=True)
+    # When the cached content was last (re)generated; drives the TTL. Written
+    # explicitly by the upsert (update_or_create defaults bypass auto_now).
+    # Null on rows that predate the TTL field — treated as stale.
+    updated_at = models.DateTimeField(null=True, blank=True)
+    version = models.IntegerField(default=CURRENT_VERSION)
 
     class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["procedure", "diagnosis", "version"],
+                name="generic_q_proc_diag_ver_uniq",
+            ),
+        ]
         indexes = [
             models.Index(fields=["procedure", "diagnosis"]),
         ]
@@ -64,7 +84,16 @@ class GenericContextGeneration(ExportModelOperationsMixin("GenericContextGenerat
     """
     Stores cached citation/context generations for specific procedure and diagnosis combinations
     that don't contain patient-specific information.
+
+    Uniqueness is on (procedure, diagnosis, version): rows at CURRENT_VERSION
+    are the live cache the helpers read/upsert, and the dedupe migration parks
+    superseded duplicate rows at version=-pk (unique by construction) instead
+    of deleting them. Bumping CURRENT_VERSION invalidates the whole cache
+    without a migration (e.g. after a prompt change).
     """
+
+    # The live cache generation. Reads and upserts target this version only.
+    CURRENT_VERSION = 1
 
     id = models.AutoField(primary_key=True)
     procedure = models.CharField(max_length=300)
@@ -72,8 +101,19 @@ class GenericContextGeneration(ExportModelOperationsMixin("GenericContextGenerat
     # Store the citations as a JSONField
     generated_context = models.JSONField()
     created_at = models.DateTimeField(auto_now_add=True)
+    # When the cached content was last (re)generated; drives the TTL. Written
+    # explicitly by the upsert (update_or_create defaults bypass auto_now).
+    # Null on rows that predate the TTL field — treated as stale.
+    updated_at = models.DateTimeField(null=True, blank=True)
+    version = models.IntegerField(default=CURRENT_VERSION)
 
     class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["procedure", "diagnosis", "version"],
+                name="generic_ctx_proc_diag_ver_uniq",
+            ),
+        ]
         indexes = [
             models.Index(fields=["procedure", "diagnosis"]),
         ]
