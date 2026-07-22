@@ -17,7 +17,7 @@ from channels.testing import WebsocketCommunicator
 from django.contrib.auth import get_user_model
 from rest_framework.test import APITestCase
 
-from channels.db import database_sync_to_async
+from asgiref.sync import sync_to_async
 
 from fighthealthinsurance.chat.message_preprocessor import (
     DIRECT_CHAT_HARD_LIMIT_CHARS,
@@ -49,13 +49,13 @@ class RecordingMockModel(MockChatModel):
 
 
 async def _make_professional_chat(username, npi):
-    user = await database_sync_to_async(User.objects.create_user)(
+    user = await sync_to_async(User.objects.create_user)(
         username=username, password="testpass", email=f"{username}@example.com"
     )
-    professional = await database_sync_to_async(ProfessionalUser.objects.create)(
+    professional = await sync_to_async(ProfessionalUser.objects.create)(
         user=user, active=True, npi_number=npi
     )
-    chat = await database_sync_to_async(OngoingChat.objects.create)(
+    chat = await sync_to_async(OngoingChat.objects.create)(
         professional_user=professional,
         chat_history=[],
         summary_for_next_call=[],

@@ -12,7 +12,7 @@ from fighthealthinsurance.models import OngoingChat, ProfessionalUser
 from fighthealthinsurance.websockets import OngoingChatConsumer
 from .mock_chat_model import MockChatModel
 
-from channels.db import database_sync_to_async
+from asgiref.sync import sync_to_async
 
 if typing.TYPE_CHECKING:
     from django.contrib.auth.models import User
@@ -60,13 +60,13 @@ class ChatFallbackTest(APITestCase):
             "Response from primary model", "Primary context"
         )
 
-        user = await database_sync_to_async(User.objects.create_user)(
+        user = await sync_to_async(User.objects.create_user)(
             username="testuser", password="testpass", email="test@example.com"
         )
-        professional = await database_sync_to_async(ProfessionalUser.objects.create)(
+        professional = await sync_to_async(ProfessionalUser.objects.create)(
             user=user, active=True, npi_number="1234567890"
         )
-        chat = await database_sync_to_async(OngoingChat.objects.create)(
+        chat = await sync_to_async(OngoingChat.objects.create)(
             professional_user=professional,
             chat_history=[],
             summary_for_next_call=[],
@@ -114,13 +114,13 @@ class ChatFallbackTest(APITestCase):
             "Response from fallback model", "Fallback context"
         )
 
-        user = await database_sync_to_async(User.objects.create_user)(
+        user = await sync_to_async(User.objects.create_user)(
             username="testuser2", password="testpass", email="test2@example.com"
         )
-        professional = await database_sync_to_async(ProfessionalUser.objects.create)(
+        professional = await sync_to_async(ProfessionalUser.objects.create)(
             user=user, active=True, npi_number="2345678901"
         )
-        chat = await database_sync_to_async(OngoingChat.objects.create)(
+        chat = await sync_to_async(OngoingChat.objects.create)(
             professional_user=professional,
             chat_history=[],
             summary_for_next_call=[],
@@ -161,13 +161,13 @@ class ChatFallbackTest(APITestCase):
         # Set up to return empty fallback when external is disabled
         self.mock_get_backends.return_value = ([self.mock_primary_model], [])
 
-        user = await database_sync_to_async(User.objects.create_user)(
+        user = await sync_to_async(User.objects.create_user)(
             username="testuser3", password="testpass", email="test3@example.com"
         )
-        professional = await database_sync_to_async(ProfessionalUser.objects.create)(
+        professional = await sync_to_async(ProfessionalUser.objects.create)(
             user=user, active=True, npi_number="3456789012"
         )
-        chat = await database_sync_to_async(OngoingChat.objects.create)(
+        chat = await sync_to_async(OngoingChat.objects.create)(
             professional_user=professional,
             chat_history=[],
             summary_for_next_call=[],
@@ -201,13 +201,13 @@ class ChatFallbackTest(APITestCase):
         """Test that use_external_models can be toggled during a chat session."""
         await self.asyncSetUp()
 
-        user = await database_sync_to_async(User.objects.create_user)(
+        user = await sync_to_async(User.objects.create_user)(
             username="testuser4", password="testpass", email="test4@example.com"
         )
-        professional = await database_sync_to_async(ProfessionalUser.objects.create)(
+        professional = await sync_to_async(ProfessionalUser.objects.create)(
             user=user, active=True, npi_number="4567890123"
         )
-        chat = await database_sync_to_async(OngoingChat.objects.create)(
+        chat = await sync_to_async(OngoingChat.objects.create)(
             professional_user=professional,
             chat_history=[],
             summary_for_next_call=[],

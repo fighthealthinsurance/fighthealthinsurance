@@ -36,6 +36,7 @@ from uuid import UUID
 
 from django.conf import settings
 from django.core.mail import EmailMultiAlternatives, send_mail
+from django.db.models import ForeignKey, Model
 from django.template.loader import render_to_string
 from django.urls import reverse
 
@@ -538,6 +539,58 @@ def get_unsubscribe_url(email: str) -> Optional[str]:
         return subscriber.get_unsubscribe_url()
     except MailingListSubscriber.DoesNotExist:
         return None
+
+
+async def aget_related(instance: Model, field_name: str) -> Optional[Any]:
+    """Fetch a forward FK/OneToOne related object without leaving async code.
+
+    Django (as of 5.2) has no native async accessor for forward relations:
+    ``instance.some_fk`` raises ``SynchronousOnlyOperation`` from async code
+    on a cache miss, which is why call sites used to bridge a lambda through
+    ``database_sync_to_async``. Prefer ``select_related`` when you control
+    the queryset; reach for this when you're handed a bare instance.
+
+    Serves from the relation cache when warm (e.g. after ``select_related``),
+    otherwise runs a native ``aget`` — no thread bridge — and warms the cache
+    so later synchronous attribute access is safe. Returns ``None`` for null
+    FKs.
+    """
+    field = instance._meta.get_field(field_name)
+    if not isinstance(field, ForeignKey):
+        # (OneToOneField subclasses ForeignKey.) Reverse FK and many-to-many
+        # relations have native async methods on their managers instead;
+        # reverse OneToOne has neither and isn't supported here.
+        raise TypeError(
+            f"{field_name!r} on {type(instance).__name__} is not a forward "
+            "relation (ForeignKey/OneToOneField)"
+        )
+    if field.is_cached(instance):
+        return getattr(instance, field_name)
+    if field.attname in instance.get_deferred_fields():
+        # A deferred FK column would lazy-load synchronously on attribute
+        # access (raising SynchronousOnlyOperation here); refresh natively.
+        await instance.arefresh_from_db(fields=[field.name])
+    target_value = getattr(instance, field.attname)
+    if target_value is None:
+        if field.null:
+            return None
+        # Match the descriptor's behavior for non-null FKs on unsaved
+        # instances instead of silently returning None.
+        raise getattr(type(instance), field_name).RelatedObjectDoesNotExist(
+            f"{type(instance).__name__} has no {field.name}."
+        )
+    related_model = cast("type[Model]", field.related_model)
+    # Mirror Django's descriptor: _base_manager (not objects) is how lazy
+    # relation loading resolves objects, and db_manager(hints=...) lets DB
+    # routers (and the instance's own alias) pick the right database.
+    rel_obj = await related_model._base_manager.db_manager(
+        hints={"instance": instance}
+    ).aget(**{field.target_field.attname: target_value})
+    field.set_cached_value(instance, rel_obj)
+    if not field.remote_field.multiple:
+        # OneToOne: warm the reverse cache too, like the descriptor does.
+        field.remote_field.set_cached_value(rel_obj, instance)
+    return rel_obj
 
 
 async def cancel_tasks(tasks: List[asyncio.Task]) -> None:

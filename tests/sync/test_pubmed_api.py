@@ -10,8 +10,7 @@ from django.urls import reverse
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from django.test import TestCase, TransactionTestCase
-from asgiref.sync import async_to_sync
-from channels.db import database_sync_to_async
+from asgiref.sync import async_to_sync, sync_to_async
 
 from rest_framework import status
 from rest_framework.test import APITestCase
@@ -604,7 +603,7 @@ class PubMedE2EAppealFlowTest(TransactionTestCase):
             self.assertLessEqual(len(articles), PER_QUERY * 2)
 
             # Verify per-query cache rows were created (denial_id=NULL)
-            cache_rows = await database_sync_to_async(
+            cache_rows = await sync_to_async(
                 lambda: list(PubMedQueryData.objects.filter(denial_id__isnull=True))
             )()
             self.assertGreater(len(cache_rows), 0, "Per-query cache rows should exist")
@@ -615,7 +614,7 @@ class PubMedE2EAppealFlowTest(TransactionTestCase):
                 self.assertGreater(len(parsed), 0, "Cache rows should not be empty")
 
             # Verify denial summary row was created (denial_id=self.denial)
-            summary_rows = await database_sync_to_async(
+            summary_rows = await sync_to_async(
                 lambda: list(PubMedQueryData.objects.filter(denial_id=self.denial))
             )()
             self.assertEqual(len(summary_rows), 1, "Exactly one denial summary row")
@@ -644,7 +643,7 @@ class PubMedE2EAppealFlowTest(TransactionTestCase):
             await Denial.objects.filter(denial_id=self.denial.denial_id).aupdate(
                 pubmed_ids_json=article_pmids
             )
-            await database_sync_to_async(self.denial.refresh_from_db)()
+            await sync_to_async(self.denial.refresh_from_db)()
 
             context = await tools.find_context_for_denial(self.denial)
 
@@ -660,7 +659,7 @@ class PubMedE2EAppealFlowTest(TransactionTestCase):
             self.assertGreater(len(articles2), 0)
 
             # Verify no duplicate denial summary rows were created
-            summary_rows_after = await database_sync_to_async(
+            summary_rows_after = await sync_to_async(
                 lambda: list(PubMedQueryData.objects.filter(denial_id=self.denial))
             )()
             self.assertEqual(
@@ -670,7 +669,7 @@ class PubMedE2EAppealFlowTest(TransactionTestCase):
             )
 
             # Verify denial's base fields are unchanged
-            await database_sync_to_async(self.denial.refresh_from_db)()
+            await sync_to_async(self.denial.refresh_from_db)()
             self.assertEqual(self.denial.procedure, "physical therapy")
             self.assertEqual(self.denial.diagnosis, "rheumatoid arthritis")
 
@@ -761,7 +760,7 @@ class PubMedE2EAppealFlowTest(TransactionTestCase):
             )
 
             # Verify denial summary row has composite query string
-            summary_rows = await database_sync_to_async(
+            summary_rows = await sync_to_async(
                 lambda: list(PubMedQueryData.objects.filter(denial_id=self.denial))
             )()
             self.assertEqual(len(summary_rows), 1)
@@ -777,7 +776,7 @@ class PubMedE2EAppealFlowTest(TransactionTestCase):
                 self.assertIn(term, summary_query)
 
             # Verify per-query cache rows don't have denial_id
-            cache_rows = await database_sync_to_async(
+            cache_rows = await sync_to_async(
                 lambda: list(PubMedQueryData.objects.filter(denial_id__isnull=True))
             )()
             self.assertGreater(len(cache_rows), 0)
@@ -794,7 +793,7 @@ class PubMedE2EAppealFlowTest(TransactionTestCase):
             await Denial.objects.filter(denial_id=self.denial.denial_id).aupdate(
                 pubmed_ids_json=article_pmids
             )
-            await database_sync_to_async(self.denial.refresh_from_db)()
+            await sync_to_async(self.denial.refresh_from_db)()
 
             context = await tools.find_context_for_denial(self.denial)
             self.assertEqual(context, "Summarized context with microsite articles")
@@ -813,7 +812,7 @@ class PubMedE2EAppealFlowTest(TransactionTestCase):
             self.assertEqual(len(articles), 0)
 
             # No denial summary row should be created
-            summary_count = await database_sync_to_async(
+            summary_count = await sync_to_async(
                 PubMedQueryData.objects.filter(denial_id=self.denial).count
             )()
             self.assertEqual(
@@ -823,7 +822,7 @@ class PubMedE2EAppealFlowTest(TransactionTestCase):
             # Empty results from a successful NCBI call ARE negative-cached
             # so repeated empty-query lookups don't hammer NCBI. (Errors and
             # timeouts still aren't persisted; see negative-cache tests.)
-            cache_rows = await database_sync_to_async(
+            cache_rows = await sync_to_async(
                 lambda: list(PubMedQueryData.objects.filter(denial_id__isnull=True))
             )()
             self.assertGreater(
@@ -889,7 +888,7 @@ class PubMedE2EAppealFlowTest(TransactionTestCase):
             self.assertGreater(len(articles), 0)
 
             # Denial summary row should exist even though base query was empty
-            summary_rows = await database_sync_to_async(
+            summary_rows = await sync_to_async(
                 lambda: list(PubMedQueryData.objects.filter(denial_id=denial))
             )()
             self.assertEqual(
@@ -903,7 +902,7 @@ class PubMedE2EAppealFlowTest(TransactionTestCase):
             self.assertGreater(len(summary_pmids), 0)
 
             # Verify denial still has empty base fields
-            await database_sync_to_async(denial.refresh_from_db)()
+            await sync_to_async(denial.refresh_from_db)()
             self.assertEqual(denial.procedure, "")
             self.assertEqual(denial.diagnosis, "")
 
@@ -928,7 +927,7 @@ class PubMedNegativeCachingTest(TransactionTestCase):
             result = await tools.find_pubmed_article_ids_for_query("no hits query")
             self.assertEqual(result, [])
 
-            rows = await database_sync_to_async(
+            rows = await sync_to_async(
                 lambda: list(
                     PubMedQueryData.objects.filter(
                         query="no hits query", denial_id__isnull=True
@@ -995,7 +994,7 @@ class PubMedNegativeCachingTest(TransactionTestCase):
             with self.assertRaises(RuntimeError):
                 await tools.find_pubmed_article_ids_for_query("failing query")
 
-            rows = await database_sync_to_async(
+            rows = await sync_to_async(
                 lambda: list(PubMedQueryData.objects.filter(query="failing query"))
             )()
             self.assertEqual(rows, [], "Errors must not produce negative-cache rows")

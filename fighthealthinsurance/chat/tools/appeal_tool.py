@@ -9,8 +9,9 @@ import json
 import re
 from typing import Any, Awaitable, Callable, Optional, Tuple
 
-from channels.db import database_sync_to_async
 from loguru import logger
+
+from fighthealthinsurance.utils import aget_related
 
 from .base_tool import BaseTool
 from .patterns import CREATE_OR_UPDATE_APPEAL_REGEX
@@ -137,12 +138,14 @@ class AppealTool(BaseTool):
         denial = None
 
         if await chat.appeals.aexists():
-            appeal = await chat.appeals.afirst()
+            # select_related caches for_denial so the attribute access below
+            # stays async-safe without a bridge.
+            appeal = await chat.appeals.select_related("for_denial").afirst()
             if appeal:
                 await self.send_status_message(f"Updating existing Appeal #{appeal.id}")
-                denial = await database_sync_to_async(lambda x: x.for_denial)(appeal)
+                denial = appeal.for_denial
         else:
-            pro_user = await database_sync_to_async(lambda: chat.professional_user)()
+            pro_user = await aget_related(chat, "professional_user")
             denial = await Denial.objects.acreate(creating_professional=pro_user)
             appeal = await Appeal.objects.acreate(
                 chat=chat, creating_professional=pro_user, for_denial=denial
@@ -153,10 +156,10 @@ class AppealTool(BaseTool):
                 if chat.hashed_email:
                     appeal_data["hashed_email"] = chat.hashed_email
                 elif chat.user_id is not None:
-                    user_email = await database_sync_to_async(lambda: chat.user.email)()
-                    if user_email:
+                    user = await aget_related(chat, "user")
+                    if user and user.email:
                         appeal_data["hashed_email"] = Denial.get_hashed_email(
-                            user_email
+                            user.email
                         )
                 elif appeal_data.get("email"):
                     appeal_data["hashed_email"] = Denial.get_hashed_email(

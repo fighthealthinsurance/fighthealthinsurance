@@ -27,6 +27,7 @@ from typing import Any, Dict, List, Optional, Union
 from urllib.parse import urlparse
 
 import aiohttp
+from asgiref.sync import sync_to_async
 from channels.db import database_sync_to_async
 from django.db import transaction
 from loguru import logger
@@ -192,7 +193,9 @@ class PaRequirementsFetcher:
             apply_enrichment(reqs, enrichment_for_host(urlparse(url).hostname or ""))
             return reqs
 
-        result: List[ParsedPARequirement] = await database_sync_to_async(
+        # Plain asgiref sync_to_async ON PURPOSE: parsing + enrichment are
+        # pure HTML/PDF work with no ORM access.
+        result: List[ParsedPARequirement] = await sync_to_async(
             _parse_and_enrich, thread_sensitive=False
         )()
         return result

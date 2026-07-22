@@ -2,7 +2,7 @@
 
 import datetime
 import pytest
-from channels.db import database_sync_to_async
+from asgiref.sync import sync_to_async
 from unittest.mock import patch, MagicMock
 from django.core import mail
 from django.template.loader import render_to_string
@@ -1187,13 +1187,13 @@ class TestFollowUpEmailGroupingAsync:
         """Async: two denials for the same email → only 1 email sent."""
         email = "patient@gmail.com"
         hashed = Denial.get_hashed_email(email)
-        denial1 = await database_sync_to_async(Denial.objects.create)(
+        denial1 = await sync_to_async(Denial.objects.create)(
             denial_text="Denial 1",
             hashed_email=hashed,
             raw_email=email,
             health_history="",
         )
-        denial2 = await database_sync_to_async(Denial.objects.create)(
+        denial2 = await sync_to_async(Denial.objects.create)(
             denial_text="Denial 2",
             hashed_email=hashed,
             raw_email=email,
@@ -1201,14 +1201,14 @@ class TestFollowUpEmailGroupingAsync:
         )
         fut_7 = followup_types[0]
 
-        sched1 = await database_sync_to_async(FollowUpSched.objects.create)(
+        sched1 = await sync_to_async(FollowUpSched.objects.create)(
             email=email,
             denial_id=denial1,
             follow_up_type=fut_7,
             follow_up_date=datetime.date.today() - datetime.timedelta(days=1),
             follow_up_sent=False,
         )
-        sched2 = await database_sync_to_async(FollowUpSched.objects.create)(
+        sched2 = await sync_to_async(FollowUpSched.objects.create)(
             email=email,
             denial_id=denial2,
             follow_up_type=fut_7,
@@ -1222,8 +1222,8 @@ class TestFollowUpEmailGroupingAsync:
         assert count == 1
         assert mock_send_email.call_count == 1
 
-        await database_sync_to_async(sched1.refresh_from_db)()
-        await database_sync_to_async(sched2.refresh_from_db)()
+        await sync_to_async(sched1.refresh_from_db)()
+        await sync_to_async(sched2.refresh_from_db)()
         assert sched1.follow_up_sent is True
         assert sched2.follow_up_sent is True
 
@@ -1235,13 +1235,13 @@ class TestFollowUpEmailGroupingAsync:
         """Async: stale best candidate is skipped, next valid one is sent."""
         email = "patient@gmail.com"
         hashed = Denial.get_hashed_email(email)
-        denial1 = await database_sync_to_async(Denial.objects.create)(
+        denial1 = await sync_to_async(Denial.objects.create)(
             denial_text="Denial 1",
             hashed_email=hashed,
             raw_email=email,
             health_history="",
         )
-        denial2 = await database_sync_to_async(Denial.objects.create)(
+        denial2 = await sync_to_async(Denial.objects.create)(
             denial_text="Denial 2",
             hashed_email=hashed,
             raw_email=email,
@@ -1250,7 +1250,7 @@ class TestFollowUpEmailGroupingAsync:
         fut_7, fut_30, _ = followup_types
 
         # Denial 1: 30-day already sent → its 7-day is stale
-        await database_sync_to_async(FollowUpSched.objects.create)(
+        await sync_to_async(FollowUpSched.objects.create)(
             email=email,
             denial_id=denial1,
             follow_up_type=fut_30,
@@ -1258,7 +1258,7 @@ class TestFollowUpEmailGroupingAsync:
             follow_up_sent=True,
             follow_up_sent_date=timezone.now() - datetime.timedelta(days=10),
         )
-        sched1_7 = await database_sync_to_async(FollowUpSched.objects.create)(
+        sched1_7 = await sync_to_async(FollowUpSched.objects.create)(
             email=email,
             denial_id=denial1,
             follow_up_type=fut_7,
@@ -1267,7 +1267,7 @@ class TestFollowUpEmailGroupingAsync:
         )
 
         # Denial 2: valid 7-day
-        sched2_7 = await database_sync_to_async(FollowUpSched.objects.create)(
+        sched2_7 = await sync_to_async(FollowUpSched.objects.create)(
             email=email,
             denial_id=denial2,
             follow_up_type=fut_7,
@@ -1281,8 +1281,8 @@ class TestFollowUpEmailGroupingAsync:
         assert count == 1
         assert mock_send_email.call_count == 1
 
-        await database_sync_to_async(sched1_7.refresh_from_db)()
-        await database_sync_to_async(sched2_7.refresh_from_db)()
+        await sync_to_async(sched1_7.refresh_from_db)()
+        await sync_to_async(sched2_7.refresh_from_db)()
         assert sched1_7.follow_up_sent is True
         assert sched2_7.follow_up_sent is True
 
@@ -1334,7 +1334,7 @@ class TestFollowUpEmailSenderAsync:
         result = await sender.adosend(follow_up_sched=valid_email_followup_sched)
         assert result is True
         mock_send_email.assert_called_once()
-        await database_sync_to_async(valid_email_followup_sched.refresh_from_db)()
+        await sync_to_async(valid_email_followup_sched.refresh_from_db)()
         assert valid_email_followup_sched.follow_up_sent is True
 
     @patch("fighthealthinsurance.followup_emails.send_fallback_email")
@@ -1345,7 +1345,7 @@ class TestFollowUpEmailSenderAsync:
         # Create multiple follow-ups with valid emails
         for i in range(3):
             email = f"patient{i}@gmail.com"
-            await database_sync_to_async(FollowUpSched.objects.create)(
+            await sync_to_async(FollowUpSched.objects.create)(
                 email=email,
                 denial_id=valid_email_denial,
                 follow_up_date=datetime.date.today() - datetime.timedelta(days=1),
@@ -1364,7 +1364,7 @@ class TestFollowUpEmailSenderAsync:
     ):
         for i in range(5):
             email = f"patient{i}@gmail.com"
-            await database_sync_to_async(FollowUpSched.objects.create)(
+            await sync_to_async(FollowUpSched.objects.create)(
                 email=email,
                 denial_id=valid_email_denial,
                 follow_up_date=datetime.date.today() - datetime.timedelta(days=1),
@@ -1397,7 +1397,7 @@ class TestThankyouEmailSenderAsync:
     async def test_asend_all_sends_thankyou_emails(self, mock_sleep, mock_send_email):
         from fighthealthinsurance.models import InterestedProfessional
 
-        await database_sync_to_async(InterestedProfessional.objects.create)(
+        await sync_to_async(InterestedProfessional.objects.create)(
             name="Dr. Test",
             email="doctor@hospital.org",
             thankyou_email_sent=False,

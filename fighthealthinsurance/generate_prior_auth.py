@@ -15,7 +15,7 @@ from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance.models import PriorAuthRequest, ProposedPriorAuth
 from fighthealthinsurance.prior_auth_utils import PriorAuthTextSubstituter
 from fighthealthinsurance.rxnorm_tools import RxNormTools
-from fighthealthinsurance.utils import as_available
+from fighthealthinsurance.utils import aget_related, as_available
 
 
 def _build_rxnorm_context(treatment: str, normalized: Any) -> str:
@@ -94,13 +94,12 @@ class PriorAuthGenerator:
         diagnosis = prior_auth.diagnosis
         treatment = prior_auth.treatment
         insurance_company = prior_auth.insurance_company
-        # Convert the provider info, can result in a query through domain.
-        provider_info = await database_sync_to_async(str)(
-            (
-                prior_auth.created_for_professional_user
-                or prior_auth.creator_professional_user
-            )
-        )
+        provider = await aget_related(
+            prior_auth, "created_for_professional_user"
+        ) or await aget_related(prior_auth, "creator_professional_user")
+        # Converting the provider to a string can query through domain, so
+        # str() itself still needs the bridge.
+        provider_info = await database_sync_to_async(str)(provider)
         patient_health_history = prior_auth.patient_health_history
         answers = prior_auth.answers
         patient_info = {}

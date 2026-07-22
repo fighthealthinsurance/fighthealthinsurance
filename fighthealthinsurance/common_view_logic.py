@@ -2044,7 +2044,12 @@ class DenialCreatorHelper:
         """
         from fighthealthinsurance.models import InsurancePlan
 
-        denial = await Denial.objects.filter(denial_id=denial_id).aget()
+        # select_related caches both FKs so the insurance_*_obj reads below
+        # stay async-safe (a lazy read would raise SynchronousOnlyOperation,
+        # silently eaten by the except blocks).
+        denial = await Denial.objects.select_related(
+            "insurance_plan_obj", "insurance_company_obj"
+        ).aget(denial_id=denial_id)
 
         try:
             # Only proceed if we don't already have a plan matched

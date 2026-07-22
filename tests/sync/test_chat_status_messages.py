@@ -18,7 +18,7 @@ from fighthealthinsurance.websockets import OngoingChatConsumer
 from fighthealthinsurance.chat_interface import ChatInterface
 from .mock_chat_model import MockChatModel
 
-from channels.db import database_sync_to_async
+from asgiref.sync import sync_to_async
 
 if typing.TYPE_CHECKING:
     from django.contrib.auth.models import User
@@ -66,13 +66,13 @@ class ChatStatusMessageTest(APITestCase):
         await self.asyncSetUp()
 
         # Create a user and chat
-        user = await database_sync_to_async(User.objects.create_user)(
+        user = await sync_to_async(User.objects.create_user)(
             username="statususer", password="testpass", email="status@example.com"
         )
-        professional = await database_sync_to_async(ProfessionalUser.objects.create)(
+        professional = await sync_to_async(ProfessionalUser.objects.create)(
             user=user, active=True, npi_number="1234567890"
         )
-        chat = await database_sync_to_async(OngoingChat.objects.create)(
+        chat = await sync_to_async(OngoingChat.objects.create)(
             professional_user=professional,
             chat_type=ChatType.PROFESSIONAL,
             chat_history=[],
@@ -112,13 +112,13 @@ class ChatStatusMessageTest(APITestCase):
         """Test that status messages are sent during PubMed searches."""
         await self.asyncSetUp()
 
-        user = await database_sync_to_async(User.objects.create_user)(
+        user = await sync_to_async(User.objects.create_user)(
             username="pubmeduser", password="testpass", email="pubmed@example.com"
         )
-        professional = await database_sync_to_async(ProfessionalUser.objects.create)(
+        professional = await sync_to_async(ProfessionalUser.objects.create)(
             user=user, active=True, npi_number="9876543210"
         )
-        chat = await database_sync_to_async(OngoingChat.objects.create)(
+        chat = await sync_to_async(OngoingChat.objects.create)(
             professional_user=professional,
             chat_type=ChatType.PROFESSIONAL,
             chat_history=[],
@@ -174,13 +174,13 @@ class ChatStatusMessageTest(APITestCase):
         """Test that status messages are sent during Medicaid lookups."""
         await self.asyncSetUp()
 
-        user = await database_sync_to_async(User.objects.create_user)(
+        user = await sync_to_async(User.objects.create_user)(
             username="medicaiduser", password="testpass", email="medicaid@example.com"
         )
-        professional = await database_sync_to_async(ProfessionalUser.objects.create)(
+        professional = await sync_to_async(ProfessionalUser.objects.create)(
             user=user, active=True, npi_number="5555555555"
         )
-        chat = await database_sync_to_async(OngoingChat.objects.create)(
+        chat = await sync_to_async(OngoingChat.objects.create)(
             professional_user=professional,
             chat_type=ChatType.PROFESSIONAL,
             chat_history=[],
@@ -240,7 +240,7 @@ class ChatStatusMessageTest(APITestCase):
         session_key = "test_session_key_123"
 
         # Create a ChatLeads entry for trial professional
-        await database_sync_to_async(ChatLeads.objects.create)(
+        await sync_to_async(ChatLeads.objects.create)(
             session_id=session_key,
             email="trial@example.com",
             name="Trial User",
@@ -317,15 +317,15 @@ class ChatStatusMessageTest(APITestCase):
         """Test that multiple status updates are properly sent and tracked."""
         await self.asyncSetUp()
 
-        user = await database_sync_to_async(User.objects.create_user)(
+        user = await sync_to_async(User.objects.create_user)(
             username="multistatususer",
             password="testpass",
             email="multistatus@example.com",
         )
-        professional = await database_sync_to_async(ProfessionalUser.objects.create)(
+        professional = await sync_to_async(ProfessionalUser.objects.create)(
             user=user, active=True, npi_number="3333333333"
         )
-        chat = await database_sync_to_async(OngoingChat.objects.create)(
+        chat = await sync_to_async(OngoingChat.objects.create)(
             professional_user=professional,
             chat_type=ChatType.PROFESSIONAL,
             chat_history=[],
@@ -367,15 +367,15 @@ class ChatStatusMessageTest(APITestCase):
         """Test that status messages are sent during appeal creation."""
         await self.asyncSetUp()
 
-        user = await database_sync_to_async(User.objects.create_user)(
+        user = await sync_to_async(User.objects.create_user)(
             username="appealstatususer",
             password="testpass",
             email="appealstatus@example.com",
         )
-        professional = await database_sync_to_async(ProfessionalUser.objects.create)(
+        professional = await sync_to_async(ProfessionalUser.objects.create)(
             user=user, active=True, npi_number="4444444444"
         )
-        chat = await database_sync_to_async(OngoingChat.objects.create)(
+        chat = await sync_to_async(OngoingChat.objects.create)(
             professional_user=professional,
             chat_type=ChatType.PROFESSIONAL,
             chat_history=[],
@@ -425,13 +425,13 @@ class ChatStatusMessageTest(APITestCase):
         """Test that error messages are properly sent via status."""
         await self.asyncSetUp()
 
-        user = await database_sync_to_async(User.objects.create_user)(
+        user = await sync_to_async(User.objects.create_user)(
             username="erroruser", password="testpass", email="error@example.com"
         )
-        professional = await database_sync_to_async(ProfessionalUser.objects.create)(
+        professional = await sync_to_async(ProfessionalUser.objects.create)(
             user=user, active=True, npi_number="6666666666"
         )
-        chat = await database_sync_to_async(OngoingChat.objects.create)(
+        chat = await sync_to_async(OngoingChat.objects.create)(
             professional_user=professional,
             chat_type=ChatType.PROFESSIONAL,
             chat_history=[],
@@ -473,7 +473,7 @@ class ChatStatusMessageTest(APITestCase):
         session_key = "test_session_key_456"
 
         # Create a ChatLeads entry
-        await database_sync_to_async(ChatLeads.objects.create)(
+        await sync_to_async(ChatLeads.objects.create)(
             session_id=session_key,
             email="clear@example.com",
             name="Clear User",
@@ -535,13 +535,13 @@ class ChatStatusMessageTest(APITestCase):
         """Test that retry functionality can be triggered when needed."""
         await self.asyncSetUp()
 
-        user = await database_sync_to_async(User.objects.create_user)(
+        user = await sync_to_async(User.objects.create_user)(
             username="retryuser", password="testpass", email="retry@example.com"
         )
-        professional = await database_sync_to_async(ProfessionalUser.objects.create)(
+        professional = await sync_to_async(ProfessionalUser.objects.create)(
             user=user, active=True, npi_number="7777777777"
         )
-        chat = await database_sync_to_async(OngoingChat.objects.create)(
+        chat = await sync_to_async(OngoingChat.objects.create)(
             professional_user=professional,
             chat_type=ChatType.PROFESSIONAL,
             chat_history=[

@@ -1,7 +1,6 @@
 """Test the rest API functionality"""
 
-from asgiref.sync import async_to_sync
-from channels.db import database_sync_to_async
+from asgiref.sync import async_to_sync, sync_to_async
 from unittest.mock import patch
 
 import asyncio
@@ -158,7 +157,7 @@ class DenialEndToEnd(APITestCase):
     @pytest.mark.asyncio
     # Testing end to end for professional user
     async def test_denial_end_to_end(self):
-        login_result = await database_sync_to_async(self.client.login)(
+        login_result = await sync_to_async(self.client.login)(
             username=self.username, password=self.password
         )
         self.assertTrue(login_result)
@@ -170,7 +169,7 @@ class DenialEndToEnd(APITestCase):
         ).acount()
         assert denials_for_user_count == 0
         # Create a denial
-        response = await database_sync_to_async(self.client.post)(
+        response = await sync_to_async(self.client.post)(
             url,
             json.dumps(
                 {
@@ -234,7 +233,7 @@ class DenialEndToEnd(APITestCase):
                 pass
         # Set health history before next steps
         health_history_url = reverse("healthhistory-list")
-        health_history_response = await database_sync_to_async(self.client.post)(
+        health_history_response = await sync_to_async(self.client.post)(
             health_history_url,
             json.dumps(
                 {
@@ -249,9 +248,7 @@ class DenialEndToEnd(APITestCase):
         self.assertTrue(status.is_success(health_history_response.status_code))
         # Ok now lets get the additional info
         find_next_steps_url = reverse("nextsteps-list")
-        find_next_steps_response: JsonResponse = await database_sync_to_async(
-            self.client.post
-        )(
+        find_next_steps_response: JsonResponse = await sync_to_async(self.client.post)(
             find_next_steps_url,
             json.dumps(
                 {
@@ -323,7 +320,7 @@ class DenialEndToEnd(APITestCase):
         # Now lets go ahead and provide follow up
         denial = await Denial.objects.aget(denial_id=denial_id)
         followup_url = reverse("followups-list")
-        followup_response = await database_sync_to_async(self.client.post)(
+        followup_response = await sync_to_async(self.client.post)(
             followup_url,
             json.dumps(
                 {
@@ -345,13 +342,13 @@ class DenialEndToEnd(APITestCase):
     async def test_appeal_generation_status_messages(self):
         """Test that appeal generation WebSocket sends status messages."""
         # Setup: Create a denial through the API
-        login_result = await database_sync_to_async(self.client.login)(
+        login_result = await sync_to_async(self.client.login)(
             username=self.username, password=self.password
         )
         self.assertTrue(login_result)
         url = reverse("denials-list")
         email = "test@example.com"
-        response = await database_sync_to_async(self.client.post)(
+        response = await sync_to_async(self.client.post)(
             url,
             json.dumps(
                 {
@@ -698,7 +695,7 @@ class StreamingAppealsRestFallbackTest(APITestCase):
         path in tests without real WS failure injection."""
         from fighthealthinsurance import websockets
 
-        denial = await database_sync_to_async(self._make_real_denial)()
+        denial = await sync_to_async(self._make_real_denial)()
 
         original = websockets.SUPPRESS_APPEAL_WS_DELIVERY
         websockets.SUPPRESS_APPEAL_WS_DELIVERY = True
