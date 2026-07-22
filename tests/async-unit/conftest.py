@@ -42,15 +42,17 @@ class FakeModelResponse:
     async def json(self):
         return self._json
 
+    @property
+    def request_info(self):
+        # A real RequestInfo so any str()/repr() of an error built from this
+        # response (loguru, pytest tracebacks) can dereference real_url.
+        url = URL("http://fake-backend.example/v1/chat/completions")
+        return aiohttp.RequestInfo(url, "POST", CIMultiDictProxy(CIMultiDict()), url)
+
     def raise_for_status(self):
         if self.status >= 400:
-            # A real RequestInfo so any str()/repr() of the error (loguru,
-            # pytest tracebacks) can dereference request_info.real_url.
-            url = URL("http://fake-backend.example/v1/chat/completions")
             raise aiohttp.ClientResponseError(
-                request_info=aiohttp.RequestInfo(
-                    url, "POST", CIMultiDictProxy(CIMultiDict()), url
-                ),
+                request_info=self.request_info,
                 history=(),
                 status=self.status,
                 message="Not Found" if self.status == 404 else "Error",

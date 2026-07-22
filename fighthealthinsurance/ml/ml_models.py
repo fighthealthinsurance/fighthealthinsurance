@@ -141,6 +141,22 @@ def describe_model_error(exc: BaseException) -> str:
     return f"{type(exc).__name__}: {text}" if text else type(exc).__name__
 
 
+def _log_abandoned_task_quietly(task: "asyncio.Task[Any]") -> None:
+    """Done-callback for fan-out stragglers cancelled after a winner emerged.
+
+    Retrieves the task's outcome so asyncio never logs "Task exception was
+    never retrieved" at GC time for a straggler that managed to fail in the
+    cancellation window, and records any such failure at debug.
+    """
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        logger.debug(
+            f"Abandoned fan-out straggler failed -- {describe_model_error(exc)}"
+        )
+
+
 def _error_text_indicates_missing_model(text: Optional[str]) -> bool:
     """True when an error payload says the endpoint doesn't serve the model.
 
@@ -2210,17 +2226,27 @@ class RemoteOpenLike(RemoteModel):
                                 f"{describe_model_error(e)}"
                             )
                     # If the first result was not valid grab the pending task.
-                    for task in pending:
-                        try:
-                            result = await task
-                            if result and result[0]:
-                                raw_response = result
-                                break
-                        except Exception as e:
-                            logger.debug(
-                                f"{self}: dual-mode candidate failed -- "
-                                f"{describe_model_error(e)}"
-                            )
+                    # Otherwise the first valid answer wins: cancel the
+                    # straggler rather than awaiting it, which would stall
+                    # every dual-mode call on the slower backend (a dead one
+                    # adds its whole connect timeout) and let its late result
+                    # overwrite the fast one.
+                    if raw_response is None:
+                        for task in pending:
+                            try:
+                                result = await task
+                                if result and result[0]:
+                                    raw_response = result
+                                    break
+                            except Exception as e:
+                                logger.debug(
+                                    f"{self}: dual-mode candidate failed -- "
+                                    f"{describe_model_error(e)}"
+                                )
+                    else:
+                        for task in pending:
+                            task.cancel()
+                            task.add_done_callback(_log_abandoned_task_quietly)
                 else:
                     raw_response = await self.__timeout_infer(
                         system_prompt=system_prompt,
@@ -2591,6 +2617,18 @@ class RemoteOpenLike(RemoteModel):
                             )[:300]
                             if _error_text_indicates_missing_model(error_message):
                                 self._note_missing_model(api_base, model, error_message)
+                                if raise_http_errors:
+                                    # Semantically a missing model even though
+                                    # the transport said 200: raise a status-
+                                    # bearing error (like the HTTP 404 branch)
+                                    # so the startup probe reports the real
+                                    # cause instead of "empty or no response".
+                                    raise aiohttp.ClientResponseError(
+                                        request_info=response.request_info,
+                                        history=(),
+                                        status=404,
+                                        message=error_message,
+                                    )
                                 return None
                             logger.warning(
                                 f"Bad response from {self} with {model}: "

@@ -53,10 +53,12 @@ class TestOverflowDetection:
             400, "'messages' is a required property"
         )
 
-    def test_non_400_and_empty_bodies_do_not_match(self):
+    def test_non_400_status_does_not_match(self):
         assert not _http_error_indicates_context_overflow(500, VLLM_OVERFLOW_BODY)
-        assert not _http_error_indicates_context_overflow(400, "")
-        assert not _http_error_indicates_context_overflow(400, None)
+
+    @pytest.mark.parametrize("body", ["", None])
+    def test_empty_body_does_not_match(self, body):
+        assert not _http_error_indicates_context_overflow(400, body)
 
 
 class TestOverflowLogging:

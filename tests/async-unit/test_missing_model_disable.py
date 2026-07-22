@@ -145,3 +145,28 @@ class TestMissingModelCooldown:
         warnings = cap.messages("WARNING")
         assert len(warnings) == 1
         assert "not served" in warnings[0]
+
+    @pytest.mark.asyncio
+    async def test_error_object_in_200_body_still_raises_for_probe(
+        self, monkeypatch, make_fake_model_post
+    ):
+        """The startup probe must see the missing-model cause even when the
+        transport said 200: a status-bearing error is raised (as in the 404
+        branch) instead of degrading to "empty or no response"."""
+        model = _model("http://missing.example/v1")
+        fake_post = make_fake_model_post(
+            200,
+            VLLM_404_BODY,
+            json_data={
+                "object": "error",
+                "message": "The model `nope-model` does not exist.",
+                "type": "NotFoundError",
+            },
+        )
+        monkeypatch.setattr(aiohttp.ClientSession, "post", fake_post)
+
+        with pytest.raises(aiohttp.ClientResponseError) as excinfo:
+            await model._infer(
+                system_prompts=["sys"], prompt="hi", raise_http_errors=True
+            )
+        assert "does not exist" in excinfo.value.message
