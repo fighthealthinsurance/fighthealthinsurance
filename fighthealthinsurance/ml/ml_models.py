@@ -2216,17 +2216,16 @@ class RemoteOpenLike(RemoteModel):
                         [primary_task, backup_task], return_when=asyncio.FIRST_COMPLETED
                     )
 
-                    # Get the result from the completed task. HTTP errors from
-                    # the racing legs are remembered (first one wins) so they
-                    # can be surfaced to probes / status-handling subclasses
-                    # below -- swallowing them here would break the
-                    # raise_http_errors contract for dual-mode backends.
+                    # Get the result from the completed task(s). Every done
+                    # task is retrieved (they have already finished, so this
+                    # adds no latency): skipping one would leave its exception
+                    # unretrieved and asyncio would log "Task exception was
+                    # never retrieved" at GC. HTTP errors from the racing legs
+                    # are remembered (first one wins) so they can be surfaced
+                    # to probes / status-handling subclasses below.
                     for task in done:
                         try:
                             result = await task
-                            if result and result[0]:
-                                raw_response = result
-                                break
                         except Exception as e:
                             if (
                                 isinstance(e, aiohttp.ClientResponseError)
@@ -2237,6 +2236,9 @@ class RemoteOpenLike(RemoteModel):
                                 f"{self}: dual-mode candidate failed -- "
                                 f"{describe_model_error(e)}"
                             )
+                            continue
+                        if raw_response is None and result and result[0]:
+                            raw_response = result
                     # If the first result was not valid grab the pending task.
                     # Otherwise the first valid answer wins: cancel the
                     # straggler rather than awaiting it, which would stall
