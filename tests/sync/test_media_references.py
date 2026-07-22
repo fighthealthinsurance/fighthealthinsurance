@@ -4,8 +4,13 @@ from django.test import Client, TestCase
 from django.urls import reverse
 from django.utils.html import escape
 
-from fighthealthinsurance.media_references import MEDIA_REFERENCES
+from fighthealthinsurance.media_references import (
+    MEDIA_REFERENCES,
+    SOCIAL_MEDIA_REFERENCES,
+)
 from fighthealthinsurance.views import STATIC_ISH_PAGE_CACHE_SECONDS
+
+ALL_REFERENCES = MEDIA_REFERENCES + SOCIAL_MEDIA_REFERENCES
 
 
 class TestMediaReferencesPage(TestCase):
@@ -29,12 +34,17 @@ class TestMediaReferencesPage(TestCase):
     def test_media_references_page_lists_every_reference(self):
         response = self.client.get(reverse("media-references"))
         content = response.content.decode("utf-8")
-        for ref in MEDIA_REFERENCES:
+        # Both the press grid and the social grid should render every entry.
+        for ref in ALL_REFERENCES:
             # The template auto-escapes, so compare against escaped values
             # (e.g. "&" -> "&amp;").
             self.assertIn(escape(ref["outlet"]), content)
             self.assertIn(escape(ref["title"]), content)
             self.assertIn(ref["url"], content)
+
+    def test_media_references_page_renders_social_section(self):
+        response = self.client.get(reverse("media-references"))
+        self.assertContains(response, "On Social Media")
 
     def test_media_references_page_links_to_internal_pbs_page(self):
         # PBS is the one reference with an on-site page; make sure the link renders.
@@ -52,24 +62,24 @@ class TestHomePageLinksToMediaReferences(TestCase):
 
 
 class TestMediaReferencesData(TestCase):
-    """Guard the shape of the MEDIA_REFERENCES data used to render the page."""
+    """Guard the shape of the reference data used to render the page."""
 
     def test_each_reference_has_required_fields(self):
-        for ref in MEDIA_REFERENCES:
+        for ref in ALL_REFERENCES:
             for key in ("outlet", "kind", "cta", "title", "url", "description"):
                 self.assertTrue(
                     ref.get(key), f"Reference {ref.get('outlet')!r} missing {key!r}"
                 )
 
     def test_reference_urls_are_https(self):
-        for ref in MEDIA_REFERENCES:
+        for ref in ALL_REFERENCES:
             self.assertTrue(
                 ref["url"].startswith("https://"),
                 f"Reference {ref['outlet']!r} URL is not https: {ref['url']}",
             )
 
     def test_internal_url_names_resolve(self):
-        for ref in MEDIA_REFERENCES:
+        for ref in ALL_REFERENCES:
             internal = ref.get("internal_url_name")
             if internal:
                 # Raises NoReverseMatch if the name isn't a real route.

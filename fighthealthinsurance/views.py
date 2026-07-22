@@ -45,7 +45,10 @@ from fighthealthinsurance.denial_context import merge_qa
 from fighthealthinsurance.followup_emails import ThankyouEmailSender
 from fighthealthinsurance.helpers.data_helpers import RemoveDataHelper
 from fighthealthinsurance.helpers.stripe_helpers import StripeWebhookHelper
-from fighthealthinsurance.media_references import MEDIA_REFERENCES
+from fighthealthinsurance.media_references import (
+    MEDIA_REFERENCES,
+    SOCIAL_MEDIA_REFERENCES,
+)
 from fighthealthinsurance.models import (
     DeleteToken,
     PolicyDocument,
@@ -461,6 +464,7 @@ class MediaReferencesView(StaticIshView):
         """Add the list of media references to the context."""
         context = super().get_context_data(**kwargs)
         context["media_references"] = MEDIA_REFERENCES
+        context["social_references"] = SOCIAL_MEDIA_REFERENCES
         return context
 
 
