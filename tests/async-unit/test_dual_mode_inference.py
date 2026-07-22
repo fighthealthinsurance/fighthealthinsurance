@@ -58,6 +58,38 @@ class TestDualModeFirstWins:
         await asyncio.sleep(0)
 
     @pytest.mark.asyncio
+    async def test_cancelled_straggler_failure_is_retrieved_quietly(self, log_capture):
+        """A straggler that fails inside the cancellation window must have its
+        exception retrieved by the done-callback (logged at DEBUG) -- pins
+        that the cancel-with-callback pattern exists, so asyncio never emits
+        "Task exception was never retrieved" at GC time."""
+        model = _dual_model()
+
+        async def fake_timeout_infer(*args, **kwargs):
+            if kwargs.get("model") == "fast-model":
+                return ("fast answer", [])
+            try:
+                await asyncio.sleep(STRAGGLER_SLEEP_S)
+            except asyncio.CancelledError:
+                raise RuntimeError("straggler exploded during cancellation")
+            return None
+
+        with patch.object(
+            model, "_RemoteOpenLike__timeout_infer", new=fake_timeout_infer
+        ):
+            with log_capture() as cap:
+                result = await model._infer(system_prompts=["sys"], prompt="hi")
+                # Give the cancelled straggler loop turns to run its exception
+                # path and for the done-callback to fire.
+                for _ in range(5):
+                    await asyncio.sleep(0)
+
+        assert result is not None and result[0] == "fast answer"
+        assert any(
+            "Abandoned fan-out straggler failed" in m for m in cap.messages("DEBUG")
+        )
+
+    @pytest.mark.asyncio
     async def test_invalid_first_result_falls_back_to_other_task(self):
         model = _dual_model()
         calls = []

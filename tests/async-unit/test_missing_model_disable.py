@@ -96,19 +96,26 @@ class TestMissingModelCooldown:
 
     @pytest.mark.asyncio
     async def test_cooldown_expiry_probes_endpoint_again(
-        self, monkeypatch, make_fake_model_post
+        self, monkeypatch, make_fake_model_post, log_capture
     ):
         model = _model("http://missing.example/v1")
         fake_post = make_fake_model_post(404, VLLM_404_BODY)
         monkeypatch.setattr(aiohttp.ClientSession, "post", fake_post)
 
-        await model._infer(system_prompts=["sys"], prompt="hi")
-        assert fake_post.calls == 1
-        # Force the cooldown to lapse; the endpoint must be probed live again.
-        key = ("http://missing.example/v1", "nope-model")
-        model._missing_models[key] = time.monotonic() - 1
-        await model._infer(system_prompts=["sys"], prompt="hi")
+        with log_capture() as cap:
+            await model._infer(system_prompts=["sys"], prompt="hi")
+            assert fake_post.calls == 1
+            # Force the cooldown to lapse; the endpoint must be probed live
+            # again and, still missing, warned about again (one WARNING per
+            # cooldown window).
+            key = ("http://missing.example/v1", "nope-model")
+            model._missing_models[key] = time.monotonic() - 1
+            await model._infer(system_prompts=["sys"], prompt="hi")
+
         assert fake_post.calls == 2
+        warnings = cap.messages("WARNING")
+        assert len(warnings) == 2
+        assert all("not served" in w for w in warnings)
 
     @pytest.mark.asyncio
     async def test_probe_path_still_raises_http_status(

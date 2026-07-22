@@ -177,6 +177,20 @@ class TestAppealStreamIsolation:
         assert "connection timeout" in warnings[0]
         assert all(r["exception"] is None for r in cap.records)
 
+    def test_unexpected_failure_keeps_traceback(self, log_capture):
+        """A non-transport exception (a code bug in the pipeline) must keep
+        its traceback so an all-models-empty run stays diagnosable."""
+        failed: Future = Future()
+        failed.set_exception(TypeError("bug in the cleaning code"))
+        with log_capture() as cap:
+            out = list(
+                _generated_to_appeals_text("m1", failed, _StubTemplateGenerator())
+            )
+        assert out == []
+        warnings = [r for r in cap.records if r["level"].name == "WARNING"]
+        assert len(warnings) == 1
+        assert warnings[0]["exception"] is not None
+
     def test_full_result_yields_generated_appeal(self):
         ok: Future = Future()
         ok.set_result([("full", "A perfectly good appeal")])

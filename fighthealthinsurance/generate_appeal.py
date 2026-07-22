@@ -34,6 +34,7 @@ from fighthealthinsurance.denial_base import DenialBase
 
 from .exec import executor
 from .ml.ml_models import (
+    MODEL_TRANSPORT_ERRORS,
     RemoteFullOpenLike,
     RemoteModelLike,
     describe_model_error,
@@ -1101,9 +1102,20 @@ def _generated_to_appeals_text(
     try:
         model_results = k_text_future.result()
     except Exception as e:
-        logger.warning(
-            f"Appeal generation via {model_name} failed -- {describe_model_error(e)}"
-        )
+        # Same split as _log_fanout_task_error: expected transport failures
+        # get one concise classified line, but an unexpected exception (a code
+        # bug in the pipeline) keeps its traceback -- otherwise an
+        # all-models-empty run caused by a defect would be indistinguishable
+        # from ordinary backend downtime.
+        if isinstance(e, MODEL_TRANSPORT_ERRORS):
+            logger.warning(
+                f"Appeal generation via {model_name} failed -- "
+                f"{describe_model_error(e)}"
+            )
+        else:
+            logger.opt(exception=True).warning(
+                f"Appeal generation via {model_name} failed: {e}"
+            )
         return
     if model_results is None:
         return

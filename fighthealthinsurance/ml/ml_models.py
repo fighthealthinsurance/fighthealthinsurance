@@ -2689,10 +2689,12 @@ class RemoteOpenLike(RemoteModel):
             # Expected operational failures (backend down, unreachable, slow,
             # DNS, disconnect): one concise classified line. The stack trace
             # for these is aiohttp/asyncio plumbing that buries the cause.
+            # No sleep before returning: there is no retry in here for a delay
+            # to pace, callers (e.g. the extraction loop) do their own pacing,
+            # and a stall would only slow failover to the backup backend.
             logger.warning(
                 f"{self}: {model} via {api_base} failed -- {describe_model_error(e)}"
             )
-            await asyncio.sleep(1)
             return None
         except Exception:
             logger.opt(exception=True).warning(
