@@ -21,6 +21,18 @@ server {
 	proxy_http_version 1.1;
 	proxy_set_header Upgrade $http_upgrade;
 	proxy_set_header Connection "upgrade";
+	# Idle websocket timeout. Without these nginx falls back to its 60s
+	# default and drops sockets that go quiet mid-conversation -- a chat
+	# socket while the user reads/types, or a gap between the server's
+	# ~20-45s keep-alive frames. The application governs its own limits:
+	# the appeal client escalates to REST after 90s of frame silence and
+	# hard-caps the socket at 7min (WS_HARD_TIMEOUT_MS in appeal_fetcher.ts).
+	# Give nginx 10min of idle headroom -- above that 7min app cap -- so this
+	# in-pod proxy is never the layer that severs a still-live connection.
+	# The ingress already allows an hour; this proxy in front of uvicorn was
+	# the real 60s bottleneck.
+	proxy_read_timeout 600s;
+	proxy_send_timeout 600s;
     }
 
     location / {
