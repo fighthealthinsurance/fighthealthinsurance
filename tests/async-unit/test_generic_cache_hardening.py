@@ -61,10 +61,11 @@ async def _clear_cache_rows() -> None:
 
 def _mock_citation_router(mock_router):
     backend = MagicMock()
-    # get_citations is called (not awaited) to build the awaitable list;
-    # AsyncMock records kwargs so tests can assert the patient-context-free
-    # invariant on the generic path.
-    backend.get_citations = AsyncMock(return_value=[])
+    # get_citations is only *called* (never awaited — best_within_timelimit is
+    # mocked in these tests), so a plain MagicMock records the kwargs for the
+    # patient-context-free assertions without creating never-awaited
+    # coroutines that emit RuntimeWarnings.
+    backend.get_citations = MagicMock(return_value=[])
     mock_router.partial_find_citation_backends.return_value = [backend]
     return backend
 
@@ -264,6 +265,51 @@ class TestCitationCacheHardening:
             ).acount()
             == 0
         )
+
+    @pytest.mark.django_db
+    @pytest.mark.asyncio
+    @patch("fighthealthinsurance.ml.ml_citations_helper.ml_router")
+    async def test_denial_entry_point_does_not_leak_patient_context(self, mock_router):
+        """Even when called WITH a denial full of patient data, the generic
+        (cross-patient) path must pass none of it to the backends.
+
+        The denial=None entry point can't catch a conditional leak like
+        ``denial_text=denial.denial_text if denial else None`` — this can.
+        """
+        await _clear_cache_rows()
+        from fighthealthinsurance.models import Denial
+
+        denial = MagicMock(spec=Denial)
+        denial.procedure = PROCEDURE
+        denial.diagnosis = DIAGNOSIS
+        denial.denial_text = "SENSITIVE denial text"
+        denial.health_history = "SENSITIVE health history"
+        denial.plan_context = "SENSITIVE plan context"
+        denial.microsite_slug = None
+
+        backend = _mock_citation_router(mock_router)
+        with patch(
+            "fighthealthinsurance.ml.ml_citations_helper.best_within_timelimit",
+            new_callable=AsyncMock,
+            return_value=list(GOOD_CITATIONS),
+        ):
+            await MLCitationsHelper.generate_generic_citations(denial=denial)
+
+        backend.get_citations.assert_called_once_with(
+            denial_text=None,
+            procedure=PROCEDURE,
+            diagnosis=DIAGNOSIS,
+            patient_context=None,
+            plan_context=None,
+        )
+        # And nothing sensitive landed in the cached row either.
+        cached = await GenericContextGeneration.objects.filter(
+            procedure=PROCEDURE,
+            diagnosis=DIAGNOSIS,
+            version=GenericContextGeneration.CURRENT_VERSION,
+        ).afirst()
+        assert cached is not None
+        assert "SENSITIVE" not in str(cached.generated_context)
 
     @pytest.mark.django_db
     @pytest.mark.asyncio

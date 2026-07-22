@@ -30,8 +30,10 @@ def _questions_worth_caching(questions: Sequence[Sequence[Any]]) -> bool:
     served to every future patient with the same procedure/diagnosis until the
     TTL expires. Requirements: 1-10 entries, every entry a (question, answer)
     pair whose question is a non-trivial string, and at least one question
-    that actually reads as a question (ends with "?"). This gates only the
-    cache write — the caller still receives whatever was generated.
+    that actually reads as a question (ends with "?"). Gates the cache write
+    and, when stale cached content exists, whether a regeneration is worth
+    serving over it; with no stale content the caller still receives whatever
+    was generated.
     """
     if not questions or len(questions) > 10:
         return False

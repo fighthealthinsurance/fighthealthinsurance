@@ -40,8 +40,9 @@ def _citations_worth_caching(citations: List[str]) -> bool:
     served to every future patient with the same procedure/diagnosis until the
     TTL expires. Requirements: a non-empty list, every entry a non-blank
     string, and at least one entry long enough (>= 20 chars) to plausibly be a
-    real citation. This gates only the cache write — the caller still receives
-    whatever was generated.
+    real citation. Gates the cache write and, when stale cached content
+    exists, whether a regeneration is worth serving over it; with no stale
+    content the caller still receives whatever was generated.
     """
     if not citations:
         return False
