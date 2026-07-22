@@ -91,9 +91,16 @@ class Window:
     def deadline_from(self, start: Optional[datetime.date]) -> Optional[datetime.date]:
         """Concrete deadline date, if this window is a fixed number of days.
 
-        Returns ``None`` when there is no fixed day count or no start date.
+        Returns ``None`` when there is no fixed day count, no start date, or the
+        window is marked ``varies``. We deliberately do NOT emit a concrete date
+        for a ``varies`` window even though it may carry a fallback ``days``
+        count: those counts are federal ceilings, and a state/plan can be
+        shorter (e.g. a 90-day Medicaid fair-hearing window against the 120-day
+        federal ceiling), so showing "Estimated by <ceiling>" could lead a
+        patient to file late. The fallback ``days`` stays available for
+        non-date uses; only the calendar date is suppressed.
         """
-        if self.days is None or start is None:
+        if self.days is None or start is None or self.varies:
             return None
         return start + datetime.timedelta(days=self.days)
 
@@ -160,7 +167,10 @@ _COMMERCIAL_ACA = CoverageRule(
     },
     internal_appeal_filing=Window(
         label="You have at least 180 days from the denial to file an internal appeal",
-        citation="45 CFR 147.136(b)(2)(ii)(B) / (b)(3)(ii)(B)",
+        # The 180-day floor is the ERISA claims-procedure rule (29 CFR
+        # 2560.503-1(h)(3)(i), "at least 180 days"), which 45 CFR 147.136
+        # incorporates for non-grandfathered plans.
+        citation="45 CFR 147.136(b)(2)(ii)(B); incorporating 29 CFR 2560.503-1(h)(3)(i)",
         days=180,
     ),
     external_review_filing=Window(
@@ -280,7 +290,9 @@ _MEDICARE_ADVANTAGE_PARTD = CoverageRule(
             "60 days from the plan's redetermination decision to request "
             "Independent Review Entity reconsideration"
         ),
-        citation="42 CFR 422.592 (Part C auto-forward) / 42 CFR 423.600(b) (Part D)",
+        # Part D IRE 60-day filing deadline is in 423.600(a); (b) covers the IRE
+        # soliciting the prescriber's views, not the filing window.
+        citation="42 CFR 422.592 (Part C auto-forward) / 42 CFR 423.600(a) (Part D)",
         varies=True,
     ),
     external_review_label="Independent Review Entity (IRE) reconsideration",
@@ -337,7 +349,13 @@ _MEDICAID = CoverageRule(
             "You have up to 120 days after the plan's appeal decision to request "
             "a state fair hearing; states may allow as few as 90 days"
         ),
-        citation="42 CFR 438.408(f)(2); 42 CFR 431.221(d)",
+        # 42 CFR 438.408(f)(2): managed-care enrollees have "no less than 90
+        # calendar days and no more than 120 calendar days" after the plan's
+        # appeal notice to request a fair hearing. (An earlier draft also cited
+        # 42 CFR 431.221(d), but that governs fee-for-service fair-hearing
+        # requests and caps them at 90 days, so it does not support the 120-day
+        # figure and was removed.)
+        citation="42 CFR 438.408(f)(2)",
         days=120,
         varies=True,
     ),
@@ -501,15 +519,29 @@ def compute_deadlines(
     if expedited:
         situation_label = f"{situation_label} — expedited / urgent"
 
+    # Anchor a concrete calendar date only to the internal-appeal FILING window,
+    # which is the one clock that legally runs from the date the patient
+    # receives the denial (e.g. "at least 180 days from the denial",
+    # 29 CFR 2560.503-1(h) / 45 CFR 147.136(b)(2)(ii)(B)). The other two clocks
+    # start from later events we don't collect a date for:
+    #   * the insurer's decision window runs from when the appeal is FILED, and
+    #   * external / independent review runs from the FINAL internal denial
+    #     (45 CFR 147.136(d)(2)(i): "within four months after the date of
+    #     receipt of a notice of an adverse benefit determination or final
+    #     internal adverse benefit determination").
+    # Dating those from denial_received would show materially wrong due dates
+    # (someone denied Jan 1 who files Mar 1 would see the decision/external
+    # clocks land weeks early), so we pass ``None`` and render them as
+    # timeframes rather than fixed dates.
     return DeadlineResult(
         coverage_name=rule.name,
         coverage_summary=rule.summary,
         situation_label=situation_label,
         expedited=expedited,
         denial_received=denial_received,
-        insurer_decision=_resolve(decision_window, denial_received),
+        insurer_decision=_resolve(decision_window, None),
         internal_appeal_filing=_resolve(rule.internal_appeal_filing, denial_received),
-        external_review_filing=_resolve(rule.external_review_filing, denial_received),
+        external_review_filing=_resolve(rule.external_review_filing, None),
         external_review_label=rule.external_review_label,
         notes=rule.notes,
         last_reviewed=LAST_REVIEWED,

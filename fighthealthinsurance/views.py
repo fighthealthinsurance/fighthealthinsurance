@@ -47,6 +47,7 @@ from fighthealthinsurance import (
     forms as core_forms,
     models,
 )
+from fighthealthinsurance.structured_data import render_json_ld
 from fighthealthinsurance.chat_forms import UnderstandPolicyForm, UserConsentForm
 from fighthealthinsurance.denial_context import merge_qa
 from fighthealthinsurance.followup_emails import ThankyouEmailSender
@@ -3042,7 +3043,9 @@ class StateHelpView(StaticIshView):
                     },
                 ],
             }
-            context["structured_data_json"] = json.dumps(structured_data)
+            # render_json_ld escapes <, >, & so the state name/description
+            # can't break out of the <script type="application/ld+json"> block.
+            context["structured_data_json"] = render_json_ld(structured_data)
 
         return context
 
@@ -3089,7 +3092,6 @@ class DenialReasonDecoderView(TemplateView):
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        import json as _json
         from fighthealthinsurance.denial_reason_decoder import get_reasons_map
 
         reason = getattr(self, "_reason", None)
@@ -3103,24 +3105,11 @@ class DenialReasonDecoderView(TemplateView):
             context["canonical_url"] = (
                 f"https://www.fighthealthinsurance.com/tools/denial-reason-decoder/{reason.slug}/"
             )
-            context["faq_jsonld"] = (
-                _json.dumps(reason.faq_jsonld())
-                .replace("&", "\\u0026")
-                .replace("<", "\\u003c")
-                .replace(">", "\\u003e")
-            )
-            context["breadcrumb_jsonld"] = (
-                _json.dumps(reason.breadcrumb_jsonld())
-                .replace("&", "\\u0026")
-                .replace("<", "\\u003c")
-                .replace(">", "\\u003e")
-            )
-            context["article_jsonld"] = (
-                _json.dumps(reason.article_jsonld())
-                .replace("&", "\\u0026")
-                .replace("<", "\\u003c")
-                .replace(">", "\\u003e")
-            )
+            # render_json_ld emits the full <script> tag with <, >, & escaped,
+            # replacing the previous hand-rolled .replace() escaping.
+            context["faq_jsonld"] = render_json_ld(reason.faq_jsonld())
+            context["breadcrumb_jsonld"] = render_json_ld(reason.breadcrumb_jsonld())
+            context["article_jsonld"] = render_json_ld(reason.article_jsonld())
             context["related_reasons"] = reason.related_reasons(all_reasons)
         return context
 
@@ -3170,7 +3159,9 @@ class GlossaryIndexView(TemplateView):
             "url": canonical_url,
             "hasDefinedTerm": defined_terms,
         }
-        context["json_ld"] = mark_safe(json.dumps(json_ld))
+        # render_json_ld emits the full <script type="application/ld+json"> tag
+        # with <, >, & escaped so glossary content can't break out of it.
+        context["json_ld"] = render_json_ld(json_ld)
         return context
 
 
@@ -3246,7 +3237,9 @@ class GlossaryView(TemplateView):
                 },
             ],
         }
-        context["json_ld"] = mark_safe(json.dumps([defined_term, breadcrumbs]))
+        # render_json_ld escapes <, >, & so a term's definition/aliases can't
+        # break out of the <script type="application/ld+json"> block.
+        context["json_ld"] = render_json_ld([defined_term, breadcrumbs])
         return context
 
 
@@ -3325,7 +3318,9 @@ class InsurerAppealGuideIndexView(TemplateView):
                 for i, insurer in enumerate(insurers)
             ],
         }
-        context["jsonld"] = json.dumps([webpage, breadcrumbs, item_list])
+        # render_json_ld escapes <, >, & so insurer copy can't break out of the
+        # <script type="application/ld+json"> block.
+        context["jsonld"] = render_json_ld([webpage, breadcrumbs, item_list])
         return context
 
 
@@ -3415,6 +3410,8 @@ class InsurerAppealGuideView(TemplateView):
                     for faq in insurer.faqs
                 ],
             }
-            context["jsonld"] = json.dumps([webpage, breadcrumbs, faqpage])
+            # render_json_ld escapes <, >, & so insurer/FAQ copy can't break
+            # out of the <script type="application/ld+json"> block.
+            context["jsonld"] = render_json_ld([webpage, breadcrumbs, faqpage])
 
         return context

@@ -129,9 +129,9 @@
                         <p>{{ result.coverage_summary }}</p>
 
                         {% if result.denial_received %}
-                        <p class="small text-muted">Estimates below are measured from the denial received on <strong>{{ result.denial_received|date:"F j, Y" }}</strong>.</p>
+                        <p class="small text-muted">The <strong>internal appeal</strong> deadline below is measured from the denial you received on <strong>{{ result.denial_received|date:"F j, Y" }}</strong>. The insurer's decision window starts when you <em>file</em> your appeal, and the external-review window starts at your <em>final internal denial</em>, so those are shown as timeframes rather than fixed dates.</p>
                         {% else %}
-                        <p class="small text-muted">Add the date your denial was received above to see estimated calendar deadlines.</p>
+                        <p class="small text-muted">Add the date your denial was received above to see an estimated calendar deadline for filing your internal appeal.</p>
                         {% endif %}
 
                         <div class="row g-3 mt-1">

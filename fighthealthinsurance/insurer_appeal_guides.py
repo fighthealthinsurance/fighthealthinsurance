@@ -276,13 +276,19 @@ _INSURER_GUIDES: tuple[InsurerGuide, ...] = (
         name="Cigna",
         slug="cigna",
         aliases=("Cigna Healthcare", "The Cigna Group", "Cigna Health"),
-        plan_types=("Commercial", "Medicare Advantage"),
+        # Cigna no longer sells Medicare Advantage: The Cigna Group completed the
+        # sale of its Medicare (Advantage, PDP, Supplement) and CareAllies
+        # businesses to HCSC on 2025-03-19, so those members are now HCSC. Cigna
+        # remains a commercial insurer (and a PBM via Evernorth/Express Scripts,
+        # which has its own guide entry). Verified 2026-07. Source:
+        # https://newsroom.thecignagroup.com/the-cigna-group-completes-sale-of-medicare-and-careallies-businesses-to-hcsc
+        plan_types=("Commercial",),
         summary="Appeal a Cigna denial with a focused internal appeal and, if it fails, an independent external review.",
         why_denials=(
-            "Cigna administers commercial and Medicare Advantage plans. Its "
-            "denials commonly cite medical necessity under an internal coverage "
-            "policy, a missing prior authorization, or network and coding issues "
-            "rather than the underlying value of the care."
+            "Cigna administers commercial (employer and individual) health "
+            "plans. Its denials commonly cite medical necessity under an "
+            "internal coverage policy, a missing prior authorization, or network "
+            "and coding issues rather than the underlying value of the care."
         ),
         overview=(
             "A Cigna appeal begins with an internal appeal that responds to the "
@@ -469,21 +475,28 @@ _INSURER_GUIDES: tuple[InsurerGuide, ...] = (
         name="Humana",
         slug="humana",
         aliases=("Humana Inc", "Humana Health"),
-        plan_types=("Medicare Advantage", "Commercial", "Medicaid"),
+        # Humana is no longer a meaningful employer/commercial major-medical
+        # insurer: it announced (Feb 2023) its exit from the Employer Group
+        # Commercial Medical Products business (all fully-insured, self-funded,
+        # and FEHB medical plans), phased over 18-24 months and finalized around
+        # H1 2025. It retains Medicare Advantage, Medicaid, military/TRICARE, and
+        # specialty (dental/vision). Verified 2026-07. Source:
+        # https://humana.gcs-web.com/news-releases/news-release-details/humana-exit-employer-group-commercial-medical-products-business
+        plan_types=("Medicare Advantage", "Medicaid"),
         summary="Appeal a Humana denial, with special attention to Medicare Advantage appeal levels, and escalate as far as the process allows.",
         why_denials=(
-            "Humana is heavily focused on Medicare Advantage along with some "
-            "commercial and Medicaid coverage. Denials commonly involve "
-            "medical-necessity criteria, prior authorization, or formulary rules, "
-            "and Medicare Advantage plans follow a structured, multi-level appeal "
-            "process."
+            "Humana is heavily focused on Medicare Advantage, along with "
+            "Medicaid managed care and specialty coverage. Denials commonly "
+            "involve medical-necessity criteria, prior authorization, or "
+            "formulary rules, and Medicare Advantage plans follow a structured, "
+            "multi-level appeal process."
         ),
         overview=(
             "For a Humana Medicare Advantage denial, the appeal follows the "
             "Medicare appeal levels, beginning with a reconsideration by the plan "
-            "and, if denied, review by an independent entity. Commercial and "
-            "Medicaid plans follow their own internal appeal and external review "
-            "steps. Your denial letter states which process and deadlines apply."
+            "and, if denied, review by an independent entity. Medicaid and other "
+            "plans follow their own internal appeal and external review steps. "
+            "Your denial letter states which process and deadlines apply."
         ),
         faqs=(
             FAQItem(

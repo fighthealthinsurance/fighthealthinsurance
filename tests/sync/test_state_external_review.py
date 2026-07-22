@@ -10,6 +10,7 @@ renders, unknown states 404, and there are no dangling internal links.
 
 import json
 import os
+import re
 
 from unittest.mock import patch
 
@@ -81,10 +82,21 @@ EXPECTED_STATE_SLUGS = {
     "wyoming",
 }
 
-# States that, per the CMS/KFF "State External Appeals Review Processes" list,
-# do NOT run their own external review process and instead rely on the federal
-# HHS-administered process. These must never be classified as review_type
-# "state" (which would tell users their state runs its own review).
+# States that, per the current CMS/HealthCare.gov "State External Appeals
+# Review Processes" list, do NOT run their own external review process and
+# instead rely on the federal HHS-administered process. These must never be
+# classified as review_type "state" (which would tell users their state runs
+# its own review).
+#
+# Deliberately EXCLUDES Pennsylvania. Older CMS lists grouped Pennsylvania with
+# the federal-process states, but Pennsylvania stood up its OWN state-
+# administered Independent External Review Program (Act 146 of 2022), which
+# launched Jan 1, 2024, so it is correctly classified review_type "state" in
+# state_help.json. A prior automated review suggested adding "pennsylvania"
+# here and flipping the data to "federal"; that suggestion predates the 2024
+# program and would be factually wrong today. Sources (verified 2026-07):
+#   https://www.pa.gov/agencies/insurance/newsroom/pennsylvania-insurance-department-and-code-pa-launch-state-external-review-process-and-new-website-for-pennsylvanians-to-appeal-denied-health-plan-services
+#   https://www.insurance.pa.gov/Consumers/pages/externalreview.aspx
 KNOWN_FEDERAL_PROCESS_STATES = {
     "alabama",
     "florida",
@@ -199,6 +211,20 @@ class ExternalReviewDataIntegrityTest(TestCase):
                 "federal",
                 msg=f"{slug} should be classified 'federal'",
             )
+
+    def test_pennsylvania_is_state_administered(self):
+        """Pennsylvania runs its OWN external review program (Act 146, 2022).
+
+        Its state-administered Independent External Review Program launched
+        Jan 1, 2024, so Pennsylvania must be classified 'state' — NOT 'federal'
+        as older CMS lists (and an automated PR review) suggested. This locks in
+        the correct, current classification so it can't silently regress.
+        Source: https://www.insurance.pa.gov/Consumers/pages/externalreview.aspx
+        """
+        pa = self.states["pennsylvania"].external_review
+        self.assertEqual(pa.review_type, "state")
+        self.assertTrue(pa.is_state_administered)
+        self.assertNotIn("pennsylvania", KNOWN_FEDERAL_PROCESS_STATES)
 
     def test_no_dangling_external_review_links(self):
         """External review info_urls, where present, are absolute http(s) URLs."""
@@ -317,9 +343,17 @@ class StateExternalReviewViewTest(TestCase):
         self.assertIn("WebPage", content)
         self.assertIn('rel="canonical"', content)
 
-        # The structured data in context must be valid JSON with both nodes.
-        structured = response.context["structured_data_json"]
-        parsed = json.loads(structured)
+        # structured_data_json is now a hardened <script type="application/ld+json">
+        # tag from render_json_ld (which escapes <, >, &). Pull the JSON payload
+        # back out of the script element and confirm it parses with both nodes.
+        structured = str(response.context["structured_data_json"])
+        match = re.search(
+            r'<script type="application/ld\+json">(.*)</script>',
+            structured,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(match, "structured_data_json should be a script tag")
+        parsed = json.loads(match.group(1))
         types = {node["@type"] for node in parsed["@graph"]}
         self.assertEqual(types, {"WebPage", "BreadcrumbList"})
 

@@ -73,14 +73,16 @@ def _logo_url() -> str:
     return f"{CANONICAL_DOMAIN}{path}"
 
 
-def render_json_ld(data: Mapping[str, Any]) -> SafeString:
+def render_json_ld(data: Union[Mapping[str, Any], Sequence[Any]]) -> SafeString:
     """Render ``data`` as a hardened ``<script type="application/ld+json">`` tag.
 
-    This is the ONE sanctioned way to embed JSON-LD. It serializes with
-    Django's JSON encoder and then escapes ``<``, ``>``, ``&`` (plus the JS line
-    separators) so a string value such as ``"</script>"`` cannot terminate the
-    script element or inject markup. Callers must NOT wrap the result in
-    ``|safe`` after their own string munging.
+    This is the ONE sanctioned way to embed JSON-LD. ``data`` may be a single
+    node object (a mapping) or a list of node objects -- both are valid JSON-LD
+    documents. It serializes with Django's JSON encoder and then escapes ``<``,
+    ``>``, ``&`` (plus the JS line separators) so a string value such as
+    ``"</script>"`` cannot terminate the script element or inject markup.
+    Callers must NOT wrap the result in ``|safe`` after their own string
+    munging.
     """
     payload = json.dumps(data, cls=DjangoJSONEncoder, ensure_ascii=False)
     payload = payload.translate(_JSON_SCRIPT_ESCAPES)

@@ -61,11 +61,25 @@ def test_erisa_internal_appeal_is_180_days_from_denial():
     )
 
 
-def test_erisa_external_review_is_120_days_from_denial():
+def test_erisa_external_review_shows_no_concrete_date():
+    # The ACA/ERISA external-review clock runs from the FINAL internal denial,
+    # not from the denial-received date this tool collects, so we must not emit
+    # a concrete calendar date even though a denial date was supplied
+    # (45 CFR 147.136(d)(2)(i): "within four months after ... a final internal
+    # adverse benefit determination"). The window is still described in words.
     result = compute_deadlines("employer_erisa", "post_service", False, DENIAL)
-    assert result.external_review_filing.deadline == DENIAL + datetime.timedelta(
-        days=120
-    )
+    assert result.external_review_filing.deadline is None
+    assert result.external_review_filing.label
+    # The 4-month figure is still discoverable in the label text.
+    assert "4 months" in result.external_review_filing.label
+
+
+def test_insurer_decision_window_has_no_concrete_date():
+    # The insurer's decision clock starts when the appeal is FILED, not when the
+    # denial was received, so we never anchor a concrete date to it even though
+    # the pre/post-service windows carry fixed day counts (30/60 days).
+    result = compute_deadlines("employer_erisa", "post_service", False, DENIAL)
+    assert result.insurer_decision.deadline is None
 
 
 def test_commercial_aca_internal_appeal_is_180_days():

@@ -6,7 +6,8 @@
 {% block metadescription %}A general, step-by-step guide to appealing a denied {{ insurer.name }} claim: why claims get denied, how to file an internal appeal, and how to request an independent external review.{% endblock metadescription %}
 
 {% block scriptmagic %}
-{% if jsonld %}<script type="application/ld+json">{{ jsonld|safe }}</script>{% endif %}
+{# jsonld is a hardened <script type="application/ld+json"> tag from render_json_ld (escapes <, >, &). #}
+{% if jsonld %}{{ jsonld }}{% endif %}
 {% endblock scriptmagic %}
 
 {% block content %}

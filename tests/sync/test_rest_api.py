@@ -1081,6 +1081,79 @@ class NotifyPatientTest(APITestCase):
         self.denial.refresh_from_db()
         self.assertTrue(self.denial.professional_to_finish)
 
+    def test_notify_patient_omitted_flag_preserves_existing_value(self):
+        """Regression: omitting professional_to_finish must NOT overwrite it.
+
+        The serializer field has default=True, so a notify request that does
+        not include the flag would previously clobber an existing False. When
+        the flag is absent the stored value must be preserved.
+        """
+        self.denial.professional_to_finish = False
+        self.denial.save()
+
+        url = reverse("appeals-notify-patient")
+        response = self.client.post(
+            url,
+            json.dumps({"id": self.appeal.id, "include_professional": False}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.denial.refresh_from_db()
+        # Flag was omitted from the request, so the existing False is kept.
+        self.assertFalse(self.denial.professional_to_finish)
+
+
+class AppealSearchPaginationTest(APITestCase):
+    """Pagination-parameter handling for the appeals search endpoint."""
+
+    def setUp(self):
+        # A logged-in professional is enough to reach the pagination code; the
+        # 400 for a non-numeric page/page_size fires regardless of result count.
+        self.domain = UserDomain.objects.create(
+            name="searchdomain",
+            visible_phone_number="1234567890",
+            internal_phone_number="0987654321",
+            active=True,
+            display_name="Search Domain",
+            business_name="Search Business",
+            country="USA",
+            state="CA",
+            city="Test City",
+            address1="123 Test St",
+            zipcode="12345",
+        )
+        self.pro_user = User.objects.create_user(
+            username=f"searchpro🐼{self.domain.id}",
+            password="testpass",
+            email="searchpro@example.com",
+        )
+        self.pro_user.is_active = True
+        self.pro_user.save()
+        ProfessionalUser.objects.create(
+            user=self.pro_user, active=True, npi_number="1234567899"
+        )
+        ExtraUserProperties.objects.create(user=self.pro_user, email_verified=True)
+        self.client.login(username=f"searchpro🐼{self.domain.id}", password="testpass")
+        session = self.client.session
+        session["domain_id"] = str(self.domain.id)
+        session.save()
+        self.url = reverse("appeals-search")
+
+    def test_non_numeric_page_size_returns_400(self):
+        response = self.client.get(self.url, {"q": "anything", "page_size": "abc"})
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_non_numeric_page_returns_400(self):
+        response = self.client.get(self.url, {"q": "anything", "page": "abc"})
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_valid_pagination_params_return_200(self):
+        response = self.client.get(
+            self.url, {"q": "anything", "page": "1", "page_size": "5"}
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
 
 class SendFaxTest(APITestCase):
     """Test the send_fax API endpoint."""
