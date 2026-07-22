@@ -6,6 +6,7 @@ import re
 import socket
 import sys
 import threading
+import time
 import traceback
 from abc import abstractmethod
 from concurrent.futures import Future
@@ -138,6 +139,29 @@ def describe_model_error(exc: BaseException) -> str:
         return "connection reset by peer"
     text = str(exc).strip()
     return f"{type(exc).__name__}: {text}" if text else type(exc).__name__
+
+
+def _error_text_indicates_missing_model(text: Optional[str]) -> bool:
+    """True when an error payload says the endpoint doesn't serve the model.
+
+    Matches the OpenAI-compatible local servers we point at: vLLM ("The model
+    `X` does not exist.", type NotFoundError), llama.cpp ("model not found"),
+    Ollama ("model 'X' not found, try pulling it first"), and OpenAI/LM Studio
+    ("model_not_found"). Requiring the word "model" keeps a wrong-URL 404
+    (e.g. vLLM's {"detail": "Not Found"}) from matching -- that's a config
+    problem, not a missing model.
+    """
+    if not text:
+        return False
+    lowered = text.lower()
+    if "model" not in lowered:
+        return False
+    return (
+        "does not exist" in lowered
+        or "not found" in lowered
+        or "model_not_found" in lowered
+        or "unknown model" in lowered
+    )
 
 
 def _http_error_indicates_unsupported_temperature(status: int, body: str) -> bool:
@@ -1452,6 +1476,14 @@ class RemoteOpenLike(RemoteModel):
     # callers that don't catch exceptions keep working.
     _propagate_http_errors: ClassVar[bool] = False
 
+    # How long to skip an (api_base, model) pair after the endpoint answered
+    # "that model does not exist" (see _note_missing_model). Long enough to
+    # stop hammering/log-spamming a local endpoint that plainly doesn't serve
+    # the model, short enough to self-heal shortly after a redeploy brings it
+    # back. The hourly health sweep (model_is_ok's /models check) handles the
+    # long-term disable; this covers the gap between sweeps.
+    MODEL_MISSING_BACKOFF_SECONDS: ClassVar[float] = 300.0
+
     def __init__(
         self,
         api_base,
@@ -1490,6 +1522,11 @@ class RemoteOpenLike(RemoteModel):
         # instances are long-lived, so one rejection stops the field being
         # sent on every later call.
         self._temperature_unsupported_models: set[str] = set()
+        # (api_base, model) pairs an endpoint reported as not served, mapped
+        # to the monotonic deadline until which we skip them (see
+        # _note_missing_model). Keyed per pair because primary and backup use
+        # different endpoints/models.
+        self._missing_models: dict[tuple[str, str], float] = {}
 
     def model_is_ok(self):
         """Check that the backend supports this model, returns true if found in list.
@@ -1555,9 +1592,13 @@ class RemoteOpenLike(RemoteModel):
         if self.model not in model_ids:
             available_sorted = sorted(model_ids)
             preview = available_sorted[:15]
-            logger.debug(
-                f"Model '{self.model}' not available on backend {self.api_base}. "
-                f"Available model count={len(available_sorted)} preview={preview}"
+            # INFO, not DEBUG: this is the health sweep disabling the backend,
+            # and "why is this model not being used" should be answerable
+            # without debug logging. Sweep-frequency only, so it can't spam.
+            logger.info(
+                f"Model '{self.model}' is not served at {self.api_base}; "
+                f"marking backend unhealthy. Backend serves "
+                f"{len(available_sorted)} model(s), e.g. {preview}"
             )
             return False
 
@@ -2104,6 +2145,7 @@ class RemoteOpenLike(RemoteModel):
                             temperature=temperature,
                             history=history,
                             model=self.model,
+                            raise_http_errors=raise_http_errors,
                         )
                     )
 
@@ -2119,6 +2161,7 @@ class RemoteOpenLike(RemoteModel):
                             history=history,
                             model=self.backup_model,
                             api_base=self.backup_api_base,
+                            raise_http_errors=raise_http_errors,
                         )
                     )
 
@@ -2162,6 +2205,7 @@ class RemoteOpenLike(RemoteModel):
                         temperature=temperature,
                         history=history,
                         model=self.model,
+                        raise_http_errors=raise_http_errors,
                     )
                 if raw_response and raw_response[0]:
                     return raw_response
@@ -2177,6 +2221,7 @@ class RemoteOpenLike(RemoteModel):
                         temperature=temperature,
                         model=self.backup_model,
                         api_base=self.backup_api_base,
+                        raise_http_errors=raise_http_errors,
                     )
                     return backup_response
 
@@ -2242,6 +2287,39 @@ class RemoteOpenLike(RemoteModel):
             return False
         return True
 
+    def _model_marked_missing(self, api_base: str, model: str) -> bool:
+        """Whether ``model`` at ``api_base`` is inside its not-served cooldown.
+
+        Expired entries are dropped so the next call probes the endpoint live
+        again (a redeploy may have brought the model back).
+        """
+        deadline = self._missing_models.get((api_base, model))
+        if deadline is None:
+            return False
+        if time.monotonic() >= deadline:
+            self._missing_models.pop((api_base, model), None)
+            return False
+        return True
+
+    def _note_missing_model(self, api_base: str, model: str, detail: str) -> None:
+        """Flag ``model`` at ``api_base`` as not served there.
+
+        Logs a single WARNING per cooldown window (in-flight calls that were
+        already past the skip gate when the first one hit the error stay
+        quiet), then ``__infer`` skips the pair until the cooldown expires so
+        a local endpoint without the model isn't re-hit -- and re-logged --
+        on every inference call.
+        """
+        if not self._model_marked_missing(api_base, model):
+            logger.warning(
+                f"{self}: model {model} is not served at {api_base}; skipping "
+                f"this backend for the next "
+                f"{self.MODEL_MISSING_BACKOFF_SECONDS:.0f}s ({detail})"
+            )
+        self._missing_models[(api_base, model)] = (
+            time.monotonic() + self.MODEL_MISSING_BACKOFF_SECONDS
+        )
+
     async def __timeout_infer(
         self,
         *args,
@@ -2273,6 +2351,7 @@ class RemoteOpenLike(RemoteModel):
         ml_citations_context=None,
         history: Optional[List[dict[str, str]]] = None,
         api_base=None,
+        raise_http_errors: bool = False,
     ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
         if api_base is None:
             api_base = self.api_base
@@ -2281,6 +2360,15 @@ class RemoteOpenLike(RemoteModel):
             f"system_prompt_len={len(system_prompt) if system_prompt else 0})"
         )
         if self.api_base is None:
+            return None
+        # Recently answered "model does not exist" here: skip quietly until
+        # the cooldown expires instead of re-hitting (and re-logging) on
+        # every call. The startup probe (raise_http_errors) always probes
+        # live so it reports current reality.
+        if not raise_http_errors and self._model_marked_missing(api_base, model):
+            logger.debug(
+                f"{self}: skipping {model} at {api_base} -- flagged as not served here"
+            )
             return None
         if self.token is None:
             logger.warning(f"No token provided for {model}")
@@ -2412,6 +2500,23 @@ class RemoteOpenLike(RemoteModel):
                                 }
                                 continue
 
+                            if e.status == 404 and _error_text_indicates_missing_model(
+                                response_body
+                            ):
+                                # The endpoint is up but doesn't serve this
+                                # model (e.g. a local vLLM redeployed with a
+                                # different --model). Flag the pair so
+                                # follow-up calls skip it for the cooldown,
+                                # with one warning instead of a log line per
+                                # inference. The probe still gets the raw
+                                # status so startup reports the real cause.
+                                self._note_missing_model(
+                                    api_base, model, response_body[:200]
+                                )
+                                if raise_http_errors:
+                                    raise
+                                return None
+
                             response_body_preview = response_body[:2000]
                             # Expected operational errors (quota/auth/rate-limit)
                             # are summarized concisely by _infer; keep their body
@@ -2432,7 +2537,20 @@ class RemoteOpenLike(RemoteModel):
                             raise
                         json_result = await response.json()
                         if json_result.get("object") == "error":
-                            logger.warning(f"Bad response from {self} with {model}")
+                            # Some OpenAI-compatible servers report errors in
+                            # a 200 body. Surface the message; a missing-model
+                            # error additionally flags the pair for cooldown
+                            # like the HTTP 404 path.
+                            error_message = str(
+                                json_result.get("message") or json_result
+                            )[:300]
+                            if _error_text_indicates_missing_model(error_message):
+                                self._note_missing_model(api_base, model, error_message)
+                                return None
+                            logger.warning(
+                                f"Bad response from {self} with {model}: "
+                                f"{error_message}"
+                            )
                     break
         except aiohttp.ContentTypeError as e:
             # Raised by response.json() when the body isn't JSON (e.g. an HTML
