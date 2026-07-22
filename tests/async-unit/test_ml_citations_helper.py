@@ -65,6 +65,30 @@ class TestMLCitationsHelper:
         assert citations == []
 
     @pytest.mark.asyncio
+    @patch("fighthealthinsurance.ml.ml_citations_helper.ml_router")
+    async def test_generate_specific_citations_respects_external_opt_out(
+        self, mock_ml_router
+    ):
+        """The denial's use_external flag gates the external citation backends.
+
+        Regression: the full citation backends are external (Perplexity) and
+        receive denial_text/health_history/plan_context, so a denial whose user
+        declined external models must be passed through as use_external=False
+        (the router then returns no backends) — never a hardcoded True.
+        """
+        mock_ml_router.full_find_citation_backends.return_value = []
+
+        self.mock_denial.use_external = False
+        await MLCitationsHelper.generate_specific_citations(denial=self.mock_denial)
+        mock_ml_router.full_find_citation_backends.assert_called_with(
+            use_external=False
+        )
+
+        self.mock_denial.use_external = True
+        await MLCitationsHelper.generate_specific_citations(denial=self.mock_denial)
+        mock_ml_router.full_find_citation_backends.assert_called_with(use_external=True)
+
+    @pytest.mark.asyncio
     async def test_generate_specific_citations_no_context(self):
         """Test that generate_specific_citations returns empty when no context."""
         # Create denial with no patient-specific context
