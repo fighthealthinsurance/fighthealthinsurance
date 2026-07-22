@@ -141,6 +141,16 @@ class TestDenialReasonDataIntegrity(TestCase):
             related = r.related_reasons(reason_map)
             self.assertLessEqual(len(related), 3)
 
+    def test_related_reasons_rotate_starting_after_own_position(self):
+        """Each page cross-links starting from its successor in display order,
+        so pages don't all converge on the same first three reasons."""
+        reasons = load_reasons()
+        reason_map = get_reasons_map()
+        n = len(reasons)
+        for i, r in enumerate(reasons):
+            related = r.related_reasons(reason_map)
+            self.assertEqual(related[0].slug, reasons[(i + 1) % n].slug)
+
 
 class TestDenialReasonDecoderViews(TestCase):
     """Integration tests for the views and URL routing."""

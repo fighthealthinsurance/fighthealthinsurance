@@ -857,8 +857,12 @@ def get_insurer_guide(slug: str) -> InsurerGuide | None:
 
 
 def get_insurers_sorted_by_name() -> list[InsurerGuide]:
-    """Return insurer guides sorted alphabetically by display name."""
-    return sorted(_guides_by_slug().values(), key=lambda g: g.name)
+    """Return insurer guides sorted alphabetically by display name.
+
+    Case-insensitive (matching glossary.get_terms_sorted): raw code-point
+    order would put "CVS Caremark" before "Centene".
+    """
+    return sorted(_guides_by_slug().values(), key=lambda g: g.name.lower())
 
 
 def get_insurer_slugs() -> list[str]:

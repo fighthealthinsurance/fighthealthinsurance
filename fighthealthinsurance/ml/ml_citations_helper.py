@@ -336,11 +336,14 @@ class MLCitationsHelper:
                 # If we have ML citations, cache them (ML-only) for future use.
                 if ml_only:
                     try:
-                        # `aupdate_or_create` is atomic against the
-                        # (procedure, diagnosis) lookup, closing the race where
-                        # two concurrent cache misses would otherwise create
-                        # duplicate rows (which `acreate` would surface as an
-                        # IntegrityError). Mirrors generate_cms_coverage_citations.
+                        # Upsert keyed on (procedure, diagnosis). Unlike
+                        # CMSCoverageCache, GenericContextGeneration has no DB
+                        # unique constraint on the pair (only a plain index),
+                        # so two concurrent cache misses can still both insert;
+                        # `aupdate_or_create` narrows that window and updates a
+                        # single row in the common case, but true atomicity
+                        # needs a UniqueConstraint + dedupe migration
+                        # (follow-up work, out of scope for this change).
                         await GenericContextGeneration.objects.aupdate_or_create(
                             procedure=procedure,
                             diagnosis=diagnosis,

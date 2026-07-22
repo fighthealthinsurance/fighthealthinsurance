@@ -372,6 +372,12 @@ class StateExternalReviewViewTest(TestCase):
         self.assertIn("federal external review process", content)
         self.assertIn("Department of Health", content)
         self.assertIn("does not run its own external review", content)
+        # It must NOT promise the federal process is open for filing — per
+        # HealthCare.gov the HHS-administered process can be unavailable and
+        # plans then provide their own filing instructions — so the copy must
+        # point at the denial notice as the source of filing instructions.
+        self.assertIn("Check your denial notice for the current filing", content)
+        self.assertNotIn("You can request this review through the federal", content)
 
     def test_state_administered_state_describes_its_own_review(self):
         """A state-process state still describes running its own external review."""

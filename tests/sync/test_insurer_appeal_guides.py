@@ -127,10 +127,14 @@ class InsurerGuideDataTest(TestCase):
         self.assertIsNone(get_insurer_guide("not-a-real-insurer"))
 
     def test_sorted_by_name(self):
-        """get_insurers_sorted_by_name returns guides in name order."""
+        """get_insurers_sorted_by_name returns guides in case-insensitive name order."""
         guides = get_insurers_sorted_by_name()
         names = [g.name for g in guides]
-        self.assertEqual(names, sorted(names))
+        # Case-insensitive: plain sorted(names) would accept "CVS Caremark"
+        # before "Centene" (code-point order), which is what we're guarding
+        # against here.
+        self.assertEqual(names, sorted(names, key=str.lower))
+        self.assertLess(names.index("Centene"), names.index("CVS Caremark"))
 
     # --- Validation error cases ---
 
