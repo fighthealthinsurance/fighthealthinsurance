@@ -1,0 +1,171 @@
+{% extends 'base.html' %}
+{% load static %}
+
+{% block title %}Worst Insurance Rankings Methodology - Fight Health Insurance{% endblock title %}
+{% block metatitle %}Worst Insurance Rankings Methodology - Fight Health Insurance{% endblock metatitle %}
+{% block metadescription %}How we compute the worst-behaving health insurance company in each state: public regulator data sources, population normalization, thresholds, weights, and limitations.{% endblock metadescription %}
+
+{% block content %}
+<section id="methodology-hero" class="slider" data-stellar-background-ratio="0.5">
+    <div class="row">
+        <div class="item item-first">
+            <div class="caption d-flex flex-column align-items-center justify-content-center">
+                <div class="hero-inner">
+                    <h3 class="hero-tagline">Methodology {{ report.methodology_version }}</h3>
+                    <h1 class="hero-headline">How the Rankings Work</h1>
+                    <p class="hero-subcopy">Public data, published formulas, every number shown. Here's exactly how we decide who's worst.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<section id="methodology" class="py-5">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-9 mx-auto">
+                <h2>What a #1 ranking means</h2>
+                <p>
+                    The worst-ranked insurer in a state has the <strong>worst composite score on the public
+                    regulator metrics available for that state, among insurers with enough volume to measure
+                    fairly</strong>. It is not a legal finding, an allegation of fraud, or a statement about any
+                    individual claim or any company's intent. Every underlying numerator and denominator is
+                    displayed on the state pages.
+                </p>
+
+                <h2 class="mt-5">Our headline: estimated hours of people's time wasted</h2>
+                <p>
+                    The number we lead with is an <strong>estimate</strong> of the hours of patient and provider
+                    time an insurer's denials cost people in a state each year. It is built from public denial
+                    and appeal <em>counts</em> and explicit, conservative, cited assumptions &mdash; it is not a
+                    measurement of anyone's actual time. We show every input so you can check the math.
+                </p>
+                <div class="bg-light border rounded p-3 mb-3">
+                    <code>
+                        estimated hours = (overturned appeals &times; hours per appeal)
+                        + (estimated un-appealed improper denials &times; hours per un-appealed denial)
+                    </code>
+                </div>
+                <ul>
+                    <li><strong>Term 1 (measured floor):</strong> every overturned appeal is a denial the plan or an
+                        external reviewer reversed &mdash; someone spent time to win it back. Uses only published counts.</li>
+                    <li><strong>Term 2 (estimated):</strong> fewer than 0.2% of denials are ever appealed, so we estimate
+                        how many <em>un-appealed</em> denials were likely improper by applying the plan's own overturn
+                        rate to its denials, discounted (people appeal the clearest cases first). This term is a
+                        transparent extrapolation, labeled as such; the measured floor is always shown separately.</li>
+                </ul>
+                {% if time_burden %}
+                <p class="mb-1">The assumptions used for the current rankings ({{ report.methodology_version }}):</p>
+                <ul>
+                    <li><strong>{{ time_burden.hours_per_appeal }} hours</strong> of combined patient + provider time per appeal.</li>
+                    <li><strong>{{ time_burden.hours_per_unappealed_wrong_denial }} hours</strong> lost per likely-improper denial that was never appealed.</li>
+                    <li>Un-appealed denials assumed improper at <strong>{{ time_burden.unappealed_wrongness_discount }}&times;</strong> the plan's own appeal-overturn rate.</li>
+                </ul>
+                {% if time_burden.citations %}
+                <p class="mb-1"><strong>Sources for these assumptions:</strong></p>
+                <ul class="small text-muted">
+                    {% for key, text in time_burden.citations.items %}
+                    <li>{{ text|urlize }}</li>
+                    {% endfor %}
+                </ul>
+                {% endif %}
+                {% endif %}
+
+                <h2 class="mt-5">The underlying metrics</h2>
+                <div class="table-responsive">
+                    <table class="table table-striped">
+                        <thead><tr><th>Metric</th><th>Formula</th><th>Source</th></tr></thead>
+                        <tbody>
+                            <tr>
+                                <td>Claims denied</td>
+                                <td>in-network claims denied &divide; received</td>
+                                <td>CMS Transparency in Coverage PUF (issuer-level, individual-market marketplace plans; ~31 healthcare.gov states)</td>
+                            </tr>
+                            <tr>
+                                <td>Confirmed complaints</td>
+                                <td>complaints the regulator confirmed &divide; member-months &times; 100,000</td>
+                                <td>State insurance department complaint data (currently Texas TDI)</td>
+                            </tr>
+                            <tr>
+                                <td>Appeals overturned</td>
+                                <td>appeals overturned &divide; appeals decided</td>
+                                <td>CMS TC-PUF internal appeals; NY DFS external appeals when available</td>
+                            </tr>
+                            <tr>
+                                <td>Enforcement actions</td>
+                                <td>regulator enforcement actions &divide; member-months &times; 1,000,000</td>
+                                <td>State enforcement records (currently California DMHC), penalty dollars shown alongside</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <p>
+                    <strong>Population normalization:</strong> per-member denominators use member-months from the
+                    CMS Medical Loss Ratio public use files (comprehensive commercial coverage: individual, small
+                    group, and large group markets) &mdash; so a giant insurer isn't punished for having more
+                    customers, and a small one isn't hidden by having few.
+                </p>
+                <p>
+                    <strong>Zero-filling:</strong> complaint and enforcement rates are computed for every insurer in
+                    a covered state's insured universe &mdash; an insurer absent from the complaint file genuinely
+                    drew zero complaints and scores well on that metric. Denial and overturn rates are only measured
+                    where CMS reports them; absence means unmeasured, never assumed bad.
+                </p>
+
+                <h2 class="mt-5">Scoring</h2>
+                <ol>
+                    <li>Each metric is min&ndash;max normalized <em>within its state</em> (0 = best observed, 1 = worst observed). Values are never compared across states.</li>
+                    <li>Metrics combine into a weighted composite{% if report.weights %} (current weights:
+                        {% for metric, weight in report.weights.items %}{{ metric }} {{ weight }}{% if not forloop.last %}, {% endif %}{% endfor %}){% endif %},
+                        with weights renormalized over the metrics each insurer actually has.</li>
+                    <li>Scores are discounted by <em>metric coverage</em>, so an insurer measurable on one thin metric can't out-rank insurers with bad records across several. Each row's coverage is published in the data.</li>
+                    <li>The result is scaled 0&ndash;100 and ranked, worst first, with deterministic tie-breaking.</li>
+                </ol>
+
+                <h2 class="mt-5">Reliability thresholds</h2>
+                <p>Small numbers make noisy accusations, so insurers below volume floors are excluded (and listed as excluded in the published data{% if report.thresholds %}; current floors:
+                {% for name, value in report.thresholds.items %}{{ name }} = {{ value }}{% if not forloop.last %}, {% endif %}{% endfor %}{% endif %}).
+                States with fewer than two measurable insurers, or with too little statewide signal on a metric, are reported as having insufficient data rather than force-ranked.</p>
+
+                <h2 class="mt-5">Data sources in this report</h2>
+                <ul>
+                    {% for source in report.sources %}
+                    <li>
+                        {% if source.url %}<a href="{{ source.url }}" target="_blank" rel="noopener noreferrer">{{ source.name }}</a>{% else %}{{ source.name }}{% endif %}
+                        &mdash; {{ source.vintage }}
+                        {% if source.status != 'ok' %}<span class="badge bg-secondary">{{ source.status }}</span>{% if source.detail %} <small class="text-muted">({{ source.detail }})</small>{% endif %}{% endif %}
+                    </li>
+                    {% endfor %}
+                </ul>
+                <p><small class="text-muted">Regulator data lags reality: CMS files are annual (the transparency file reports claims from two plan-years prior), while state complaint and enforcement feeds use a trailing twelve-month window. Each source's vintage is shown above and republished every month.</small></p>
+
+                <h2 class="mt-5">Known limitations</h2>
+                <ul>
+                    <li>Coverage is uneven: marketplace denial rates exist only for healthcare.gov states, and few states publish machine-readable complaint or enforcement data. States without enough data are labeled, not guessed at.</li>
+                    <li>Metrics measure different market segments (marketplace plans vs. the whole commercial book); each insurer's row shows exactly which metrics were measured.</li>
+                    <li>Complaint propensity varies by product mix and demographics; confirmed-only counting and within-state comparison reduce but don't eliminate this.</li>
+                </ul>
+
+                <p class="mt-4">
+                    The pipeline, alias tables, thresholds, and full methodology are open source, and the complete
+                    machine-readable dataset (including excluded insurers and unmatched-name reports) is published
+                    with each monthly run in the
+                    <a href="https://github.com/fighthealthinsurance/worst-insurance-pipeline-by-state" target="_blank" rel="noopener noreferrer">worst-insurance-pipeline-by-state</a> repository.
+                </p>
+            </div>
+        </div>
+    </div>
+</section>
+
+<section id="final-cta" class="py-5 bg-light">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto text-center">
+                <h2>Denied by your insurer?</h2>
+                <p class="lead">Whoever they are, wherever they rank &mdash; you can appeal. We make it easy, for free.</p>
+                <a href="{% url 'scan' %}" class="btn btn-green btn-lg">Start Your Appeal</a>
+            </div>
+        </div>
+    </div>
+</section>
+{% endblock content %}

@@ -62,6 +62,8 @@ from fighthealthinsurance.models import (
     StripeProduct,
     PolicyDocument,
     PolicyDocumentAnalysis,
+    WorstInsuranceRanking,
+    WorstInsuranceReport,
 )
 
 
@@ -1170,3 +1172,39 @@ class SiteBannerAdmin(admin.ModelAdmin):
     def short_message(self, obj: SiteBanner) -> str:
         text = (obj.message or "").strip().replace("\n", " ")
         return (text[:80] + "…") if len(text) > 80 else text
+
+
+@admin.register(WorstInsuranceReport)
+class WorstInsuranceReportAdmin(admin.ModelAdmin):
+    """Admin for monthly worst-insurance rankings reports (ingest QA)."""
+
+    list_display = (
+        "id",
+        "period",
+        "methodology_version",
+        "generated_at",
+        "created_at",
+    )
+    search_fields = ("period",)
+    ordering = ("-period",)
+    readonly_fields = ("raw_data", "created_at", "updated_at")
+
+
+@admin.register(WorstInsuranceRanking)
+class WorstInsuranceRankingAdmin(admin.ModelAdmin):
+    """Admin for per-state ranking rows (fix InsuranceCompany matches here)."""
+
+    list_display = (
+        "id",
+        "report",
+        "state",
+        "rank",
+        "issuer_name",
+        "composite_score",
+        "insurance_company",
+    )
+    list_filter = ("state", "report__period")
+    search_fields = ("issuer_name", "issuer_slug", "group_affiliation")
+    ordering = ("-report__period", "state", "rank")
+    autocomplete_fields = ["insurance_company"]
+    readonly_fields = ("created_at", "updated_at")
