@@ -888,6 +888,35 @@ async def fire_and_forget_in_new_threadpool(task: Coroutine) -> None:
     return
 
 
+def run_in_registered_daemon_thread(
+    fn: Callable[..., Any], *args: Any, **kwargs: Any
+) -> None:
+    """Run a SYNCHRONOUS ``fn(*args, **kwargs)`` in a fire-and-forget daemon
+    thread, registered so tests can drain it via join_fire_and_forget_threads.
+
+    Sync sibling of ``fire_and_forget_in_new_threadpool``: use it when the work
+    is a blocking sync callable (e.g. a heavy generation) launched from a sync
+    request path that must not block on it. Exceptions are logged, not raised.
+    """
+
+    def run() -> None:
+        try:
+            fn(*args, **kwargs)
+        except Exception as e:
+            logger.opt(exception=True).warning(
+                f"Exception in registered daemon thread {fn}: {e}"
+            )
+        finally:
+            with _fire_and_forget_threads_lock:
+                _fire_and_forget_threads.discard(threading.current_thread())
+
+    thread = threading.Thread(target=run)
+    thread.daemon = True
+    with _fire_and_forget_threads_lock:
+        _fire_and_forget_threads.add(thread)
+    thread.start()
+
+
 def join_fire_and_forget_threads(timeout: Optional[float] = None) -> None:
     """Wait for outstanding fire-and-forget background threads to finish.
 

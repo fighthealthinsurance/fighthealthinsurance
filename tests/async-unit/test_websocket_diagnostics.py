@@ -184,7 +184,11 @@ async def test_none_denial_id_skips_db_call():
 
 @pytest.mark.asyncio
 async def test_int_denial_id_passes_through_to_filter():
-    """Integer denial_id must reach the queryset filter as an int."""
+    """Integer denial_id must reach the queryset filter as an int.
+
+    speculative=False excludes the held-back background precompute so the
+    diagnostic counts only rows this session could have produced/served.
+    """
     objects = _make_count_mock(return_value=0)
     p1, p2 = _patch_models(objects)
     log_cm, _captured = _captured_logger()
@@ -195,7 +199,7 @@ async def test_int_denial_id_passes_through_to_filter():
             last_status_phase=None,
             transport="websocket",
         )
-    objects.filter.assert_called_once_with(for_denial_id=42)
+    objects.filter.assert_called_once_with(for_denial_id=42, speculative=False)
 
 
 @pytest.mark.asyncio
@@ -212,7 +216,7 @@ async def test_str_denial_id_is_coerced_to_int():
             last_status_phase=None,
             transport="websocket",
         )
-    objects.filter.assert_called_once_with(for_denial_id=42)
+    objects.filter.assert_called_once_with(for_denial_id=42, speculative=False)
 
 
 @pytest.mark.asyncio

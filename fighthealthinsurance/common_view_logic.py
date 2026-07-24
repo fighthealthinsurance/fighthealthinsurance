@@ -542,15 +542,28 @@ def mark_proposal_chosen(
       4. model_name=None - the user edited the draft heavily and multiple
          models were in play, or the proposal predates the model_name field.
     """
+    # speculative=False throughout: a held-back precompute row was never shown
+    # to the user, so it can't be the pick. Served speculative rows are flipped
+    # to speculative=False when promoted (keeping context_level="speculative"),
+    # so they still match here and correctly carry that level onto the chosen
+    # row -- which is exactly what analytics wants (users picking a speculative
+    # fallback). The guard only excludes held-back rows the user never saw,
+    # whose coincidentally-identical text would otherwise mislabel the pick.
     original: Optional[ProposedAppeal] = None
     if proposed_appeal_id is not None:
         original = ProposedAppeal.objects.filter(
-            id=proposed_appeal_id, for_denial=denial, chosen=False
+            id=proposed_appeal_id,
+            for_denial=denial,
+            chosen=False,
+            speculative=False,
         ).first()
     if original is None:
         original = (
             ProposedAppeal.objects.filter(
-                for_denial=denial, appeal_text=appeal_text, chosen=False
+                for_denial=denial,
+                appeal_text=appeal_text,
+                chosen=False,
+                speculative=False,
             )
             .order_by("-id")
             .first()
@@ -1365,6 +1378,7 @@ class DenialCreatorHelper:
         tracking_kwargs = tracking_info.to_model_kwargs() if tracking_info else {}
 
         # If we don't have a denial we're making a new one
+        is_new_denial = denial is None
         if denial is None:
             try:
                 denial = Denial.objects.create(
@@ -1481,6 +1495,26 @@ class DenialCreatorHelper:
 
         denial_id = denial.denial_id
         semi_sekret = denial.semi_sekret
+
+        # The instant a new denial's text arrives, kick off a non-blocking,
+        # no-deadline, internal-model-only precompute of bare candidate appeals
+        # (+ denial summary) from the raw text. Held in reserve and served only
+        # if the live generation later underdelivers or gathered no extra data.
+        # Only on CREATE (not update) so it doesn't re-fire; the helper is also
+        # idempotent. Never blocks or breaks denial creation.
+        if is_new_denial:
+            try:
+                from fighthealthinsurance.ml.ml_speculative_appeals_helper import (
+                    dispatch_speculative_appeals,
+                )
+
+                dispatch_speculative_appeals(denial_id)
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Failed to dispatch speculative appeals precompute for "
+                    f"denial {denial_id}"
+                )
+
         return cls._update_denial(
             denial=denial, health_history=health_history, plan_documents=plan_documents
         )
@@ -2770,7 +2804,12 @@ class AppealsBackendHelper:
 
         # If we've had a timeout on the initial call and we're on round 2
         # we should fetch the existing appeals from the previous round if present.
-        existing_appeals = ProposedAppeal.objects.filter(for_denial=denial).all()
+        # Exclude speculative rows: those are the background precompute held in
+        # reserve and are served ONLY as a fallback below, not as normal
+        # existing appeals.
+        existing_appeals = ProposedAppeal.objects.filter(
+            for_denial=denial, speculative=False
+        ).all()
         # Yield the existing appeals first
         old = 0
         async for appeal in existing_appeals:
@@ -3685,9 +3724,14 @@ class AppealsBackendHelper:
         # cap synthesis at 120s so the client's 90s inactivity watchdog
         # (WS_INACTIVITY_TIMEOUT_MS in appeal_fetcher.ts) never fires between
         # frames.
+        # Exclude speculative rows: synthesis should combine the live drafts,
+        # not the held-back precompute (which could also spuriously push a
+        # 1-real-draft denial to the >=2 synthesis gate).
         saved_appeal_texts: list[str] = [
             str(pa.appeal_text)
-            async for pa in ProposedAppeal.objects.filter(for_denial=denial)
+            async for pa in ProposedAppeal.objects.filter(
+                for_denial=denial, speculative=False
+            )
             if is_real_appeal(pa.appeal_text)
         ]
         # Synthesis requires >=2 drafts to be meaningful: with a single
@@ -3775,6 +3819,69 @@ class AppealsBackendHelper:
                         logger.debug("Synthesis returned no result, skipping")
             except Exception:
                 logger.opt(exception=True).warning("Final appeal synthesis failed")
+
+        # --- Speculative fallback ---
+        # Serve the held-back, internal-only precompute (built at denial
+        # creation from the raw denial text) when EITHER the live run
+        # underdelivered (< ENOUGH_APPEALS) OR the workflow gathered no
+        # additional research data (so the live drafts aren't materially richer
+        # than the speculative ones). Promoted rows are flipped to
+        # non-speculative so they persist as real appeals and future calls
+        # serve them as existing. Runs before the zero/underdelivery logging
+        # and the done frame so the counts stay truthful.
+        ENOUGH_APPEALS = 3
+        underdelivered = (new + old) < ENOUGH_APPEALS
+        gathered_extra_data = bool(
+            any(
+                [
+                    pubmed_context,
+                    ml_citation_context,
+                    rag_context,
+                    nice_context,
+                    imr_context,
+                    pa_context,
+                    uspstf_context,
+                    clinical_trials_context,
+                    denial.plan_documents_summary,
+                ]
+            )
+        )
+        # gen_attempts >= 3 skips the research phase entirely: nothing new was
+        # gathered this workflow regardless of any stale cache.
+        no_extra_data = (denial.gen_attempts or 0) >= 3 or not gathered_extra_data
+        if underdelivered or no_extra_data:
+            # Dedup against everything already produced this run, mirroring the
+            # synthesis verbatim-copy guard so we never ship a known duplicate.
+            # ``saved_appeal_texts`` already holds exactly the non-speculative
+            # real appeals for this denial (existing rows + drafts persisted
+            # during streaming), so reuse it instead of re-querying the DB.
+            already_served: set[str] = {s.strip() for s in saved_appeal_texts if s}
+            served_speculative = 0
+            async for spec in ProposedAppeal.objects.filter(
+                for_denial=denial, speculative=True
+            ).all():
+                text = spec.appeal_text
+                if not is_real_appeal(text):
+                    continue
+                normalized = str(text).strip()
+                if normalized in already_served:
+                    continue
+                # Promote to a real appeal so it persists and later calls serve
+                # it as existing.
+                spec.speculative = False
+                await spec.asave(update_fields=["speculative"])
+                spec_dict = await sub_in_appeals({"id": str(spec.id), "content": text})
+                yield await format_response(spec_dict)
+                already_served.add(normalized)
+                new += 1
+                served_speculative += 1
+            if served_speculative:
+                logger.info(
+                    f"[gen_id={generation_id}] served {served_speculative} "
+                    f"speculative fallback appeal(s) for denial {denial_id} "
+                    f"(underdelivered={underdelivered}, "
+                    f"no_extra_data={no_extra_data})"
+                )
 
         # runt_count=0 means models were silent; >0 means models produced
         # only too-short outputs — different root causes for incident review.

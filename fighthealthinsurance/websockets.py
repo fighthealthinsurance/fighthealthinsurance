@@ -234,8 +234,13 @@ async def log_zero_appeal_diagnostics(
             # `denial_id` is Denial's PK so `for_denial_id=N` matches
             # the FK column directly. Using `for_denial__denial_id=`
             # would add a needless JOIN to the diagnostic path.
+            # Exclude speculative rows: they're the held-back background
+            # precompute, not something this session produced/served, so
+            # counting them would mask a genuine "produced nothing" case.
+            # (Served speculative rows are flipped to speculative=False, so
+            # they still count once promoted.)
             persisted_count = await ProposedAppeal.objects.filter(
-                for_denial_id=denial_id_int
+                for_denial_id=denial_id_int, speculative=False
             ).acount()
             denial = await Denial.objects.filter(denial_id=denial_id_int).afirst()
             if denial is not None:
