@@ -2560,6 +2560,19 @@ class ProposedAppeal(ExportModelOperationsMixin("ProposedAppeal"), models.Model)
     # than produced by a single model pass. Complements model_name so the
     # synthesis provenance survives independently of the model label.
     synthesized = models.BooleanField(default=False, db_index=True)
+    # The context/shed level this appeal was generated at -- one of
+    # context_utils.CONTEXT_LEVEL_* (full / tier1_shed / tier2_shed /
+    # speculative / synthesized / template). Null for legacy rows. Indexed
+    # because the model-usage dashboard and RL export group/filter on it to see
+    # whether users choose full-context vs. shed vs. speculative appeals.
+    context_level = models.CharField(
+        max_length=32, null=True, blank=True, db_index=True
+    )
+    # True for bare denial-text-only appeals precomputed in the background the
+    # instant denial text arrives (see SpeculativeAppealsActor) and held in
+    # reserve. Excluded from the normal serving/synthesis/attribution queries
+    # until promoted as a fallback when the live run underdelivers.
+    speculative = models.BooleanField(default=False, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True, null=True, db_index=True)
 
     def __str__(self):
@@ -2569,9 +2582,12 @@ class ProposedAppeal(ExportModelOperationsMixin("ProposedAppeal"), models.Model)
             return f"{self.appeal_text}"
 
     @staticmethod
-    def sole_draft_attribution(denial_id) -> typing.Optional[typing.Tuple[str, bool]]:
-        """Return ``(model_name, synthesized)`` when every generated draft for
-        the denial is attributed to exactly one model, else ``None``.
+    def sole_draft_attribution(
+        denial_id,
+    ) -> typing.Optional[typing.Tuple[str, bool, typing.Optional[str]]]:
+        """Return ``(model_name, synthesized, context_level)`` when every
+        generated draft for the denial is attributed to exactly one model, else
+        ``None``.
 
         The choose flow always picks (possibly after editing) one of the
         denial's presented drafts, so a pick can safely inherit the drafts'
@@ -2581,17 +2597,25 @@ class ProposedAppeal(ExportModelOperationsMixin("ProposedAppeal"), models.Model)
         (the field is ``blank=True``) is treated as missing for the same
         reason. Used by mark_proposal_chosen as a fallback and by the
         attribution backfill; must never guess.
+
+        ``context_level`` is inferred SEPARATELY and only when all drafts share
+        exactly one level -- the model inference deliberately tolerates drafts
+        at mixed shed tiers, so it stays out of the model group-by. Speculative
+        rows are excluded: they are a held-back fallback, not a presented draft
+        the user could have picked.
         """
-        pairs = list(
-            ProposedAppeal.objects.filter(for_denial_id=denial_id, chosen=False)
-            .values_list("model_name", "synthesized")
-            .distinct()[:2]
+        base_qs = ProposedAppeal.objects.filter(
+            for_denial_id=denial_id, chosen=False, speculative=False
         )
-        if len(pairs) == 1:
-            model_name, synthesized = pairs[0]
-            if model_name is not None and model_name.strip():
-                return (model_name, synthesized)
-        return None
+        pairs = list(base_qs.values_list("model_name", "synthesized").distinct()[:2])
+        if len(pairs) != 1:
+            return None
+        model_name, synthesized = pairs[0]
+        if model_name is None or not model_name.strip():
+            return None
+        levels = list(base_qs.values_list("context_level", flat=True).distinct()[:2])
+        context_level = levels[0] if len(levels) == 1 else None
+        return (model_name, synthesized, context_level)
 
 
 class RegulatorEscalation(ExportModelOperationsMixin("RegulatorEscalation"), models.Model):  # type: ignore

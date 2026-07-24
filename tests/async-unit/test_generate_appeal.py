@@ -385,6 +385,22 @@ class TestShedContext:
         for key, _cap in _TIER2_TRUNCATIONS:
             assert new_calls[0][key] == original[key]
 
+    def test_tier1_stamps_context_level(self):
+        # Each shed call records the shed level so the produced appeal's
+        # ProposedAppeal row can persist its provenance.
+        new_calls, _ = _shed_context([_make_call()], tier=1)
+        assert new_calls[0]["context_level"] == "tier1_shed"
+
+    def test_tier2_stamps_context_level(self):
+        new_calls, _ = _shed_context([_make_call()], tier=2)
+        assert new_calls[0]["context_level"] == "tier2_shed"
+
+    def test_tier0_does_not_stamp_context_level(self):
+        # Tier 0 is a no-op and must not fabricate a shed level (the call keeps
+        # its inherited "full" level, which _make_call doesn't set).
+        new_calls, _ = _shed_context([_make_call()], tier=0)
+        assert "context_level" not in new_calls[0]
+
 
 # --- _shed_context prompt-rebuild tests -------------------------------------
 

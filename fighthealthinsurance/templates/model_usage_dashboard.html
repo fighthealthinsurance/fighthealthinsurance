@@ -51,6 +51,9 @@
     <h3>ProposedAppeal <span class="source-label">(real denial flow &mdash; user-chosen)</span></h3>
     {% include "model_usage_table_partial.html" with rows=w.proposed_appeal %}
 
+    <h3>Context / shed level <span class="source-label">(user-chosen, by generation context)</span></h3>
+    {% include "model_usage_table_partial.html" with rows=w.context_level label_header="Context level" %}
+
     <h3>ChooserVote &mdash; Appeal Letter <span class="source-label">(synthetic chooser)</span></h3>
     {% include "model_usage_table_partial.html" with rows=w.chooser_appeal %}
 

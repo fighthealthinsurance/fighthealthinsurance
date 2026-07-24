@@ -57,6 +57,7 @@ from fighthealthinsurance import stripe_utils
 from fighthealthinsurance.context_barrier import warm_then_fetch
 from fighthealthinsurance.context_utils import (
     attach_supplemental_to_citations,
+    CONTEXT_LEVEL_SYNTHESIZED,
     summarize_denial_context_tokens,
 )
 from fighthealthinsurance.denial_context import merge_plan_context, merge_qa
@@ -556,13 +557,18 @@ def mark_proposal_chosen(
         )
     model_name: Optional[str] = None
     synthesized = False
+    context_level: Optional[str] = None
     if original is not None:
         model_name = original.model_name
         synthesized = original.synthesized
+        # Carry the draft's shed level onto the chosen row -- otherwise the
+        # dashboard/RL export (which read only chosen rows) would be blind to
+        # which context level users actually pick.
+        context_level = original.context_level
     elif not editted:
         inferred = ProposedAppeal.sole_draft_attribution(denial.denial_id)
         if inferred is not None:
-            model_name, synthesized = inferred
+            model_name, synthesized, context_level = inferred
     pa = ProposedAppeal(
         appeal_text=appeal_text,
         for_denial=denial,
@@ -570,6 +576,7 @@ def mark_proposal_chosen(
         editted=editted,
         model_name=model_name,
         synthesized=synthesized,
+        context_level=context_level,
     )
     pa.save()
     return pa
@@ -3421,6 +3428,7 @@ class AppealsBackendHelper:
                     for_denial=denial,
                     model_name=model_name,
                     synthesized=item.synthesized,
+                    context_level=item.context_level,
                 )
                 await pa.asave()
                 id = str(pa.id)
@@ -3753,6 +3761,7 @@ class AppealsBackendHelper:
                                     text=synthesized,
                                     model_name="synthesized",
                                     synthesized=True,
+                                    context_level=CONTEXT_LEVEL_SYNTHESIZED,
                                 )
                             )
                             subbed = await sub_in_appeals(saved)

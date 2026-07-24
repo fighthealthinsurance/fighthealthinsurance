@@ -217,3 +217,74 @@ class MarkProposalChosenTest(TestCase):
             proposed_appeal_id=other_pa.id,
         )
         self.assertIsNone(pa.model_name)
+
+    # --- context_level provenance (shed-level tracking) --------------------
+
+    def test_context_level_copied_from_exact_match(self):
+        # The chosen row must carry the draft's shed level, else the dashboard
+        # /RL export (which read only chosen rows) are blind to it.
+        ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="lvl-text",
+            chosen=False,
+            model_name="model-x",
+            context_level="tier1_shed",
+        )
+        pa = mark_proposal_chosen(self.denial, "lvl-text")
+        self.assertEqual(pa.context_level, "tier1_shed")
+
+    def test_context_level_copied_via_sole_draft_inference(self):
+        for text in ("d1", "d2"):
+            ProposedAppeal.objects.create(
+                for_denial=self.denial,
+                appeal_text=text,
+                chosen=False,
+                model_name="model-x",
+                context_level="full",
+            )
+        pa = mark_proposal_chosen(self.denial, "edited-text")
+        self.assertEqual(pa.model_name, "model-x")
+        self.assertEqual(pa.context_level, "full")
+
+    def test_context_level_none_when_draft_levels_differ(self):
+        # Same model, different shed tiers: the model is still inferable but the
+        # level is ambiguous, so it must not be guessed.
+        ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="d1",
+            chosen=False,
+            model_name="model-x",
+            context_level="full",
+        )
+        ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="d2",
+            chosen=False,
+            model_name="model-x",
+            context_level="tier2_shed",
+        )
+        pa = mark_proposal_chosen(self.denial, "edited-text")
+        self.assertEqual(pa.model_name, "model-x")
+        self.assertIsNone(pa.context_level)
+
+    def test_speculative_draft_excluded_from_sole_draft_inference(self):
+        # A held-back speculative row is not a presented draft, so it must not
+        # count toward (or block) the sole-draft model inference.
+        ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="real",
+            chosen=False,
+            model_name="model-x",
+            context_level="full",
+        )
+        ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="spec",
+            chosen=False,
+            model_name="model-spec",
+            context_level="speculative",
+            speculative=True,
+        )
+        pa = mark_proposal_chosen(self.denial, "edited-text")
+        # Only the real draft counts -> inference still resolves to model-x.
+        self.assertEqual(pa.model_name, "model-x")

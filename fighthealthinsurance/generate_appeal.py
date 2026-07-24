@@ -22,14 +22,27 @@ class GeneratedAppeal:
     ``synthesized`` marks appeals combined from multiple drafts rather than
     produced by a single model pass, so synthesis provenance is tracked
     independently of the model label.
+
+    ``context_level`` records how much context shedding produced this appeal
+    (one of context_utils.CONTEXT_LEVEL_*: full / tier1_shed / tier2_shed /
+    template), stamped from the tier of the model call that produced it, so
+    analytics can see whether shed appeals are the ones users choose.
     """
 
     text: str
     model_name: Optional[str]
     synthesized: bool = False
+    context_level: Optional[str] = None
 
 
-from fighthealthinsurance.context_utils import estimate_tokens, truncate_at_boundary
+from fighthealthinsurance.context_utils import (
+    CONTEXT_LEVEL_FULL,
+    CONTEXT_LEVEL_TEMPLATE,
+    CONTEXT_LEVEL_TIER1_SHED,
+    CONTEXT_LEVEL_TIER2_SHED,
+    estimate_tokens,
+    truncate_at_boundary,
+)
 from fighthealthinsurance.denial_base import DenialBase
 
 from .exec import executor
@@ -926,6 +939,12 @@ def _shed_context(
                     changed.add(key)
         if tier >= 2:
             _apply_tier2_truncations(new, _TIER2_TRUNCATIONS, changed, label="")
+        # Stamp the shed level so each produced appeal records the tier it came
+        # from (tier 0 leaves the inherited "full" level untouched).
+        if tier >= 2:
+            new["context_level"] = CONTEXT_LEVEL_TIER2_SHED
+        elif tier >= 1:
+            new["context_level"] = CONTEXT_LEVEL_TIER1_SHED
         new_calls.append(new)
     return new_calls, sorted(changed)
 
@@ -1055,7 +1074,19 @@ def _add_proactive_shed_variants(
         rebuild_prompt=rebuild_prompt,
         original_open_prompt=original_open_prompt,
     )
-    shed_variants = [v for v, src in zip(variants, over_budget_calls) if v != src]
+
+    # _shed_context stamps context_level on every variant, so compare on the
+    # shed-relevant content (everything but the level) to detect no-op variants
+    # -- otherwise the added level key alone would make v != src and we'd
+    # duplicate the full call.
+    def _without_level(d: dict) -> dict:
+        return {k: v for k, v in d.items() if k != "context_level"}
+
+    shed_variants = [
+        v
+        for v, src in zip(variants, over_budget_calls)
+        if _without_level(v) != _without_level(src)
+    ]
     if not shed_variants:
         return calls
     logger.info(
@@ -2452,20 +2483,36 @@ class AppealGenerator(object):
         logger.debug(f"Initial appeal {initial_appeals}")
         # Executor map wants a list for each parameter.
 
+        # Every model call built above uses full context; stamp the level so
+        # each produced appeal records it. The proactive shed variants (added by
+        # _add_proactive_shed_variants) and the reactive tier-shed ladder get
+        # their level from _shed_context instead.
+        for _c in calls:
+            _c["context_level"] = CONTEXT_LEVEL_FULL
+        for _c in backup_calls:
+            _c["context_level"] = CONTEXT_LEVEL_FULL
+
         def make_async_model_calls(
             calls,
         ) -> List[Future[Iterator[GeneratedAppeal]]]:
             logger.debug(f"Calling models: {calls}")
-            # Bind model_name to each future so we can recover it after
-            # the per-call iterator collapses results to (kind, text) pairs.
-            model_futures: List[Tuple[Optional[str], Future]] = []
+            # Bind model_name AND context_level to each future so we can recover
+            # them after the per-call iterator collapses results to (kind, text)
+            # pairs.
+            model_futures: List[Tuple[Optional[str], Optional[str], Future]] = []
             for call in calls:
                 model_name = call.get("model_name")
-                for fut in get_model_result(**call):
-                    model_futures.append((model_name, fut))
+                context_level = call.get("context_level")
+                # context_level is provenance metadata, not an inference arg;
+                # strip it before spreading the call into get_model_result.
+                call_kwargs = {k: v for k, v in call.items() if k != "context_level"}
+                for fut in get_model_result(**call_kwargs):
+                    model_futures.append((model_name, context_level, fut))
 
             def generated_to_appeals_text(
-                model_name: Optional[str], k_text_future
+                model_name: Optional[str],
+                context_level: Optional[str],
+                k_text_future,
             ) -> Iterator[GeneratedAppeal]:
                 # Record whether this model produced any deliverable text, for
                 # the models_tried diagnostic. The finally runs when the
@@ -2486,13 +2533,19 @@ class AppealGenerator(object):
                                 f"Bubbling up full response ({len(text)} chars)"
                             )
                             produced = True
-                            yield GeneratedAppeal(text=text, model_name=model_name)
+                            yield GeneratedAppeal(
+                                text=text,
+                                model_name=model_name,
+                                context_level=context_level,
+                            )
                         else:
                             templated = template_generator.generate(text)
                             if templated is not None:
                                 produced = True
                                 yield GeneratedAppeal(
-                                    text=templated, model_name=model_name
+                                    text=templated,
+                                    model_name=model_name,
+                                    context_level=context_level,
                                 )
                 finally:
                     model_outcomes.append(
@@ -2501,8 +2554,8 @@ class AppealGenerator(object):
 
             # Python lack reasonable future chaining (ugh)
             generated_text_futures = [
-                executor.submit(generated_to_appeals_text, mn, f)
-                for mn, f in model_futures
+                executor.submit(generated_to_appeals_text, mn, cl, f)
+                for mn, cl, f in model_futures
             ]
             return generated_text_futures
 
@@ -2606,7 +2659,9 @@ class AppealGenerator(object):
         # Wrap template-based / non-AI appeals (plain strings) as
         # GeneratedAppeal so the downstream pipeline has a uniform type.
         initial_appeals_wrapped: Iterator[GeneratedAppeal] = (
-            GeneratedAppeal(text=t, model_name=None)
+            GeneratedAppeal(
+                text=t, model_name=None, context_level=CONTEXT_LEVEL_TEMPLATE
+            )
             for t in initial_appeals
             if t is not None
         )

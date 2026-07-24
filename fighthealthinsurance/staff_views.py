@@ -553,6 +553,7 @@ class ModelUsageDashboardView(generic.TemplateView):
                     "slug": slug,
                     "label": label,
                     "proposed_appeal": proposed,
+                    "context_level": self._context_level_stats(since),
                     "chooser_appeal": chooser_appeal,
                     "chooser_chat": chooser_chat,
                     "chart_data_json": json.dumps(
@@ -656,6 +657,41 @@ class ModelUsageDashboardView(generic.TemplateView):
             presented_label = normalize_model_label(name)
             if presented_label is not None:
                 presented[presented_label] += count
+        return _merge_stats(dict(chosen), dict(presented))
+
+    @staticmethod
+    def _context_level_stats(
+        since: Optional[datetime.datetime],
+    ) -> List[Dict[str, Any]]:
+        """Chosen/presented/win-rate bucketed by the context/shed level the
+        appeal was generated at (full / tier1_shed / tier2_shed / speculative /
+        synthesized / template). Shows whether users end up choosing shed or
+        speculative appeals as often as full-context ones. Speculative drafts
+        that were never promoted are excluded from the presented denominator
+        (they were held back, not shown)."""
+        chosen_qs = ProposedAppeal.objects.filter(chosen=True)
+        if since is not None:
+            chosen_qs = chosen_qs.filter(created_at__gte=since)
+        chosen_denial_ids = chosen_qs.values_list("for_denial_id", flat=True).distinct()
+        presented_qs = ProposedAppeal.objects.filter(
+            chosen=False,
+            speculative=False,
+            for_denial_id__in=chosen_denial_ids,
+        )
+        chosen: Counter = Counter()
+        for level, count in chosen_qs.values_list("context_level").annotate(
+            c=Count("id")
+        ):
+            chosen[level or UNKNOWN_MODEL_LABEL] += count
+        presented: Counter = Counter()
+        for level, count in presented_qs.values_list("context_level").annotate(
+            c=Count("id")
+        ):
+            presented[level or UNKNOWN_MODEL_LABEL] += count
+        # _merge_stats labels the bucket key "model_name"; the value here is the
+        # context level. Reusing the shared table partial (which reads
+        # model_name) keeps the key -- the template passes a "Context level"
+        # column header instead.
         return _merge_stats(dict(chosen), dict(presented))
 
     @staticmethod

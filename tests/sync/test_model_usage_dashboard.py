@@ -183,6 +183,65 @@ class ModelUsageDashboardContentTest(TestCase):
         self.assertEqual(m1["chosen"], 1)
         self.assertEqual(m1["presented"], 1)
 
+    def test_context_level_stats_bucket_by_level(self):
+        # The dashboard buckets chosen/presented by the shed level the appeal
+        # was generated at (rows key the level under "model_name" for the
+        # shared table partial).
+        d = self.denial
+        ProposedAppeal.objects.create(
+            for_denial=d,
+            appeal_text="full-draft",
+            chosen=False,
+            model_name="m1",
+            context_level="full",
+        )
+        ProposedAppeal.objects.create(
+            for_denial=d,
+            appeal_text="full-chosen",
+            chosen=True,
+            model_name="m1",
+            context_level="full",
+        )
+        ProposedAppeal.objects.create(
+            for_denial=d,
+            appeal_text="shed-draft",
+            chosen=False,
+            model_name="m1",
+            context_level="tier1_shed",
+        )
+
+        response = self.client.get(reverse("model_usage_dashboard"))
+        rows = response.context["windows"][0]["context_level"]
+        by_level = {r["model_name"]: r for r in rows}
+        self.assertEqual(by_level["full"]["chosen"], 1)
+        self.assertEqual(by_level["full"]["presented"], 1)
+        self.assertEqual(by_level["tier1_shed"]["chosen"], 0)
+        self.assertEqual(by_level["tier1_shed"]["presented"], 1)
+
+    def test_context_level_stats_excludes_unpromoted_speculative(self):
+        # A held-back speculative draft (never chosen) must not appear as a
+        # presented context level -- it was reserved, not shown.
+        d = self.denial
+        ProposedAppeal.objects.create(
+            for_denial=d,
+            appeal_text="full-chosen",
+            chosen=True,
+            model_name="m1",
+            context_level="full",
+        )
+        ProposedAppeal.objects.create(
+            for_denial=d,
+            appeal_text="spec-draft",
+            chosen=False,
+            model_name="spec",
+            context_level="speculative",
+            speculative=True,
+        )
+        response = self.client.get(reverse("model_usage_dashboard"))
+        rows = response.context["windows"][0]["context_level"]
+        levels = {r["model_name"] for r in rows}
+        self.assertNotIn("speculative", levels)
+
     def test_chooser_vote_aggregation(self):
         task = ChooserTask.objects.create(
             task_type="appeal", status="EXHAUSTED", source="synthetic"
