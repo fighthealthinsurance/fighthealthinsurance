@@ -3462,10 +3462,18 @@ class AppealsBackendHelper:
         # (WS_INACTIVITY_TIMEOUT_MS in appeal_fetcher.ts) tears the socket
         # down mid-generation -> escalate to REST -> same silent stall ->
         # 0 appeals. 15s stays well under that 90s budget (and keeps iOS from
-        # dropping the REST-fallback stream); 360s stays under the client's
-        # 420s hard cap (WS_HARD_TIMEOUT_MS).
+        # dropping the REST-fallback stream).
+        #
+        # GENERATING_PHASE_BUDGET is the ceiling for the WHOLE generating phase
+        # -- the (rare, cached) denial-text summarization PLUS make_appeals --
+        # SHARED between them so their sum can't exceed the client's 420s hard
+        # cap (WS_HARD_TIMEOUT_MS): summarization is capped at
+        # SUMMARIZE_OVERALL_TIMEOUT, then make_appeals gets whatever remains of
+        # the 360s budget. (Reasoning about make_appeals in isolation would
+        # miss the summarize phase running before it.)
         MAKE_APPEALS_KEEPALIVE_INTERVAL = 15
-        MAKE_APPEALS_OVERALL_TIMEOUT = 360
+        GENERATING_PHASE_BUDGET = 360
+        SUMMARIZE_OVERALL_TIMEOUT = 90
 
         def _generating_heartbeat(elapsed: float) -> str:
             return (
@@ -3487,14 +3495,16 @@ class AppealsBackendHelper:
         # silent failure that yields 0 appeals. Returns None instantly for
         # normal-sized denials (the common case), so full context is preferred.
         # Heartbeat-wrapped so the rare, slow summarization call can't open a
-        # silent window either; capped at 90s so it can't eat the whole budget.
+        # silent window either; capped at SUMMARIZE_OVERALL_TIMEOUT so it can't
+        # eat the whole shared budget.
+        generating_phase_started = time.monotonic()
         summarize_task: "asyncio.Future[Optional[str]]" = asyncio.ensure_future(
             MLAppealContextHelper.maybe_summarize_denial_text(denial)
         )
         async for _hb in keepalive_frames(
             summarize_task,
             interval=MAKE_APPEALS_KEEPALIVE_INTERVAL,
-            overall_timeout=90,
+            overall_timeout=SUMMARIZE_OVERALL_TIMEOUT,
             make_heartbeat=lambda elapsed: json.dumps(
                 {
                     "type": "status",
@@ -3524,10 +3534,19 @@ class AppealsBackendHelper:
             summarize_task.cancel()
             logger.warning(
                 f"[gen_id={generation_id}] denial_text summarization exceeded "
-                f"90s for denial {denial_id}; proceeding with full text"
+                f"{SUMMARIZE_OVERALL_TIMEOUT}s for denial {denial_id}; "
+                f"proceeding with full text"
             )
 
+        # make_appeals gets whatever remains of the shared generating-phase
+        # budget after summarization, with a floor so a slow summarize can't
+        # starve generation entirely. This keeps summarize + generate under the
+        # client's 420s hard cap.
         gen_started = time.monotonic()
+        make_appeals_overall_timeout = max(
+            60.0,
+            GENERATING_PHASE_BUDGET - (gen_started - generating_phase_started),
+        )
         gen_task: "asyncio.Future[Iterator[GeneratedAppeal]]" = asyncio.ensure_future(
             database_sync_to_async(appealGenerator.make_appeals)(
                 denial,
@@ -3554,7 +3573,7 @@ class AppealsBackendHelper:
         async for _hb in keepalive_frames(
             gen_task,
             interval=MAKE_APPEALS_KEEPALIVE_INTERVAL,
-            overall_timeout=MAKE_APPEALS_OVERALL_TIMEOUT,
+            overall_timeout=make_appeals_overall_timeout,
             make_heartbeat=_generating_heartbeat,
         ):
             yield _hb
@@ -3585,7 +3604,7 @@ class AppealsBackendHelper:
             gen_task.add_done_callback(_swallow_abandoned)
             logger.error(
                 f"[gen_id={generation_id}] make_appeals exceeded "
-                f"{MAKE_APPEALS_OVERALL_TIMEOUT}s for denial {denial_id}; "
+                f"{make_appeals_overall_timeout:.0f}s for denial {denial_id}; "
                 f"abandoning (background thread continues). "
                 f"{summarize_denial_context_tokens(denial)}"
             )
@@ -3752,6 +3771,7 @@ class AppealsBackendHelper:
         # only too-short outputs — different root causes for incident review.
         shed_tier = make_appeals_diag.get("shed_tier")
         winning_stage = make_appeals_diag.get("winning_stage")
+        models_tried = make_appeals_diag.get("models_tried") or "none"
         if new + old == 0:
             logger.error(
                 f"APPEAL_GEN_DIAG [gen_id={generation_id}] Zero appeals "
@@ -3759,7 +3779,7 @@ class AppealsBackendHelper:
                 f"gen_attempts={denial.gen_attempts}, runt_count={runts}, "
                 f"make_appeals_s={make_appeals_seconds:.1f}, "
                 f"first_model={first_model}, winning_stage={winning_stage}, "
-                f"shed_tier={shed_tier}, "
+                f"shed_tier={shed_tier}, models_tried=[{models_tried}], "
                 f"{summarize_denial_context_tokens(denial)}"
             )
         elif new == 0 and old > 0:
@@ -3769,7 +3789,8 @@ class AppealsBackendHelper:
                 f"(but {old} existing appeals found), "
                 f"gen_attempts={denial.gen_attempts}, runt_count={runts}, "
                 f"make_appeals_s={make_appeals_seconds:.1f}, "
-                f"first_model={first_model}, winning_stage={winning_stage}"
+                f"first_model={first_model}, winning_stage={winning_stage}, "
+                f"models_tried=[{models_tried}]"
             )
 
         # Explicit end-of-stream so the client knows exactly what was sent.
@@ -3787,6 +3808,7 @@ class AppealsBackendHelper:
                 "make_appeals_seconds": round(make_appeals_seconds, 1),
                 "first_model": first_model or "none",
                 "shed_tier": shed_tier,
+                "models_tried": models_tried,
             }
         ) + "\n"
 

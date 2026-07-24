@@ -2147,18 +2147,11 @@ class RemoteOpenLike(RemoteModel):
                     f"HTTP {e.status} ({e.message}); "
                     f"check quota/billing/API key."
                 )
-            elif _http_error_indicates_context_length(e.status, e.message or ""):
-                # The prompt + context exceeded the model's window. Not a bug:
-                # a concise, greppable WARNING (no stack trace) so the
-                # reactive shed ladder in make_appeals fires on a clear signal
-                # rather than this looking like a crash. Returning None below
-                # keeps the existing drop/summarize retry path.
-                logger.warning(
-                    f"{self}: context-length exceeded on {self.api_base} "
-                    f"(HTTP {e.status}: {e.message}); caller should shed or "
-                    f"summarize context and retry."
-                )
             else:
+                # NOTE: context-length overflows (400/413) are detected and
+                # handled in __infer (where the response body is available) and
+                # never reach here as an exception -- see
+                # _http_error_indicates_context_length there.
                 logger.opt(exception=True).error(f"HTTP error calling {self.api_base}")
         except Exception as e:
             logger.opt(exception=True).error(f"Error {e} calling {self.api_base}")
@@ -2356,6 +2349,26 @@ class RemoteOpenLike(RemoteModel):
                                     if k != "temperature"
                                 }
                                 continue
+
+                            if _http_error_indicates_context_length(
+                                e.status, response_body
+                            ):
+                                # Input exceeded the model's context window. No
+                                # retry or backoff helps, so log a concise,
+                                # model-tagged, greppable WARNING and return
+                                # None instead of raising a scary ERROR up
+                                # through _infer. Detected from the response
+                                # BODY -- the HTTP reason phrase (e.message,
+                                # "Bad Request") never carries the provider's
+                                # context-length explanation, which is why the
+                                # earlier _infer-side check was inert.
+                                logger.warning(
+                                    f"{self}: context-length exceeded on "
+                                    f"{api_base} for model {model} "
+                                    f"(HTTP {e.status}); shed or summarize "
+                                    f"context. Body: {response_body[:500]}"
+                                )
+                                return None
 
                             response_body_preview = response_body[:2000]
                             # Expected operational errors (quota/auth/rate-limit)

@@ -774,6 +774,21 @@ def streaming_appeals_rest_fallback(request: Request):
                     transport="rest",
                     **gen_fields.as_kwargs(),
                 )
+        except (GeneratorExit, asyncio.CancelledError):
+            # The REST client hung up mid-stream (the async generator is being
+            # closed / the request task cancelled). This is a client
+            # disconnect, NOT a model failure. Log a concise line WITHOUT the
+            # DB lookup -- awaiting an ORM query while the generator is being
+            # torn down is unsafe -- and re-raise so close/cancel semantics are
+            # preserved.
+            if appeal_count == 0:
+                logger.warning(
+                    f"APPEAL_GEN_DIAG [rest] client disconnected mid-stream for "
+                    f"denial {denial_id}: generation "
+                    f"{'not reached' if last_status_phase in (None, 'init', 'research') else 'in progress'} "
+                    f"(last_phase={last_status_phase}, status_frames={status_count})"
+                )
+            raise
         except Exception as e:
             logger.opt(exception=True).error(
                 f"Error streaming REST fallback appeals for denial "

@@ -8,7 +8,7 @@ failures (e.g. HTTP 500) keep the ERROR + traceback.
 """
 
 from typing import Optional
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiohttp
 import pytest
@@ -141,44 +141,93 @@ class TestContextLengthErrorDetection:
         assert not _http_error_indicates_context_length(429, "too many tokens")
 
 
+class _CtxLenFakeResponse:
+    """Minimal aiohttp response stand-in with a canned status + body text.
+    ``raise_for_status`` mirrors aiohttp: the ClientResponseError carries the
+    HTTP *reason phrase* as ``message`` (NOT the body) -- which is exactly why
+    context-length must be detected from ``text()``, not from ``e.message``."""
+
+    def __init__(self, status=200, text="", json_data=None):
+        self.status = status
+        self._text = text
+        self._json = json_data or {}
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    async def json(self):
+        return self._json
+
+    async def text(self):
+        return self._text
+
+    def raise_for_status(self):
+        if self.status >= 400:
+            raise aiohttp.ClientResponseError(
+                request_info=MagicMock(),
+                history=(),
+                status=self.status,
+                message="Bad Request",  # reason phrase, not the body
+            )
+
+
+class _CtxLenFakeSession:
+    def __init__(self, response):
+        self._response = response
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    def post(self, url, headers=None, json=None):
+        return self._response
+
+
 class TestInferContextLengthLogging:
+    """__infer detects context-length overflow from the response BODY (the
+    reason phrase never carries the provider explanation), logs a concise
+    model-tagged WARNING, and returns None -- not a scary ERROR + traceback."""
+
     def _model(self) -> RemoteFullOpenLike:
         return RemoteFullOpenLike("http://test-api.com", "test-token", "test-model")
 
     @pytest.mark.asyncio
-    async def test_context_length_error_logs_warning_not_error_and_returns_none(self):
-        """A 400 whose message says the context window was exceeded must be a
-        concise WARNING (so the shed ladder fires) rather than a scary ERROR."""
+    async def test_context_length_body_warns_and_returns_none(self):
         model = self._model()
-        with patch.object(
-            model,
-            "_RemoteOpenLike__timeout_infer",
-            new_callable=AsyncMock,
-            side_effect=_client_response_error(
-                400, "This model's maximum context length is 8192 tokens"
+        response = _CtxLenFakeResponse(
+            status=400,
+            text=(
+                '{"error": {"message": "This model\'s maximum context length '
+                'is 8192 tokens, however you requested 90000 tokens.", '
+                '"code": "context_length_exceeded"}}'
             ),
-        ):
+        )
+        session = _CtxLenFakeSession(response)
+        with patch.object(aiohttp, "ClientSession", return_value=session):
             with _LogCapture() as cap:
                 result = await model._infer(system_prompts=["sys"], prompt="hi")
 
         assert result is None
         assert "ERROR" not in cap.levels
-        assert "WARNING" in cap.levels
         warning_text = " ".join(
             r["message"] for r in cap.records if r["level"].name == "WARNING"
         )
-        assert "context-length" in warning_text.lower()
+        assert "context-length exceeded" in warning_text.lower()
 
     @pytest.mark.asyncio
-    async def test_generic_400_still_logs_error(self):
-        """A 400 that is NOT a context-length error keeps the ERROR log."""
+    async def test_generic_400_body_still_logs_error(self):
+        """A 400 that is NOT a context-length error still surfaces as ERROR."""
         model = self._model()
-        with patch.object(
-            model,
-            "_RemoteOpenLike__timeout_infer",
-            new_callable=AsyncMock,
-            side_effect=_client_response_error(400, "malformed request body"),
-        ):
+        response = _CtxLenFakeResponse(
+            status=400, text='{"error": "malformed request body"}'
+        )
+        session = _CtxLenFakeSession(response)
+        with patch.object(aiohttp, "ClientSession", return_value=session):
             with _LogCapture() as cap:
                 result = await model._infer(system_prompts=["sys"], prompt="hi")
 

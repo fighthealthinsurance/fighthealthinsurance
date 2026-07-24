@@ -15,6 +15,7 @@ from fighthealthinsurance.generate_appeal import (
     _model_context_limit,
     _peek_real_or_none,
     _shed_context,
+    _summarize_model_outcomes,
     _PROMPT_TIER1_NULLS,
     _PROMPT_TIER1_STRIP_GATED,
     _PROMPT_TIER2_TRUNCATIONS,
@@ -975,10 +976,46 @@ class TestGetModelResultLogging:
 # --- diagnostics_sink + denial_text_override tests -------------------------
 
 
+class TestSummarizeModelOutcomes:
+    """_summarize_model_outcomes builds the compact models_tried string."""
+
+    def test_empty_is_empty_string(self):
+        assert _summarize_model_outcomes([]) == ""
+
+    def test_dedupes_and_sorts(self):
+        out = _summarize_model_outcomes(
+            [("fhi-legacy", "no_output"), ("sonar", "http_429")]
+        )
+        assert out == "fhi-legacy:no_output,sonar:http_429"
+
+    def test_ok_wins_over_failure_for_same_model(self):
+        # A model attempted across stages: one stage empty, another produced.
+        out = _summarize_model_outcomes(
+            [("fhi-legacy", "no_output"), ("fhi-legacy", "ok")]
+        )
+        assert out == "fhi-legacy:ok"
+        # Order-independent: ok still wins if seen first.
+        out2 = _summarize_model_outcomes(
+            [("fhi-legacy", "ok"), ("fhi-legacy", "no_output")]
+        )
+        assert out2 == "fhi-legacy:ok"
+
+    def test_none_model_name_becomes_unknown(self):
+        assert _summarize_model_outcomes([(None, "no_output")]) == "unknown:no_output"
+
+    def test_caps_long_lists(self):
+        outcomes = [(f"m{i}", "no_output") for i in range(20)]
+        summary = _summarize_model_outcomes(outcomes)
+        assert "+8_more" in summary
+        # 12 shown + the "+N_more" marker.
+        assert len(summary.split(",")) == 13
+
+
 class TestMakeAppealsDiagnosticsSink:
     """make_appeals reports which stage produced the first appeal (or 'none')
     via diagnostics_sink so the generating-phase logging/done-frame can show
-    whether the primary won or a shed-tier retry rescued it."""
+    whether the primary won or a shed-tier retry rescued it, plus which models
+    were tried."""
 
     def test_sink_records_none_when_all_stages_empty(self):
         sink: dict = {}
@@ -1004,6 +1041,33 @@ class TestMakeAppealsDiagnosticsSink:
             )
         assert sink.get("winning_stage") == "none"
         assert sink.get("shed_tier") is None
+        assert "models_tried" in sink
+
+    def test_sink_records_not_registered_models(self):
+        """A requested model absent from the router is recorded as
+        not_registered in models_tried."""
+        sink: dict = {}
+        gen = AppealGenerator()
+        tmpl = AppealTemplateGenerator(prefaces=["P"], main=["M"], footer=["F"])
+        with patch(
+            "fighthealthinsurance.generate_appeal.ml_router.generate_text_backend_names",
+            side_effect=lambda use_external=False: ["ghost-model"],
+        ), patch(
+            "fighthealthinsurance.generate_appeal.ml_router.models_by_name",
+            new={},
+        ), patch(
+            "fighthealthinsurance.generate_appeal.time.sleep"
+        ):
+            list(
+                gen.make_appeals(
+                    _mock_denial(),
+                    tmpl,
+                    medical_reasons=[],
+                    non_ai_appeals=[],
+                    diagnostics_sink=sink,
+                )
+            )
+        assert "ghost-model:not_registered" in sink.get("models_tried", "")
 
 
 class TestDenialTextOverride:

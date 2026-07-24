@@ -19,8 +19,21 @@ import pytest
 
 from fighthealthinsurance.websockets import (
     _AppealGenTraceFields,
+    _stream_error_is_client_disconnect,
     log_zero_appeal_diagnostics,
 )
+
+
+def _captured_warning():
+    """Capture logger.warning messages (the client-disconnect branch logs at
+    WARNING, not ERROR)."""
+    captured: list = []
+
+    def _record(msg, *args, **kwargs):
+        captured.append(msg)
+
+    cm = patch("fighthealthinsurance.websockets.logger.warning", side_effect=_record)
+    return cm, captured
 
 
 def _make_count_mock(return_value=None, side_effect=None):
@@ -260,6 +273,7 @@ async def test_generation_trace_fields_appear_in_log():
             make_appeals_seconds=142.4,
             first_model="fhi-legacy",
             shed_tier=2,
+            models_tried="fhi-legacy:timeout,fhi-2025:no_output",
         )
 
     msg = captured[-1]
@@ -269,6 +283,7 @@ async def test_generation_trace_fields_appear_in_log():
     assert "make_appeals_s=142.4" in msg
     assert "first_model=fhi-legacy" in msg
     assert "shed_tier=2" in msg
+    assert "models_tried=[fhi-legacy:timeout,fhi-2025:no_output]" in msg
 
 
 @pytest.mark.asyncio
@@ -318,6 +333,7 @@ class TestAppealGenTraceFields:
             "make_appeals_seconds": 12.3,
             "first_model": "fhi-2025",
             "shed_tier": 1,
+            "models_tried": None,
         }
 
     def test_first_model_none_sentinel_is_normalized_to_none(self):
@@ -335,3 +351,109 @@ class TestAppealGenTraceFields:
         kw = f.as_kwargs()
         assert kw["make_appeals_seconds"] is None
         assert kw["first_model"] is None
+
+    def test_captures_models_tried_from_done_frame(self):
+        f = _AppealGenTraceFields()
+        f.update_from_frame(
+            {
+                "type": "status",
+                "phase": "done",
+                "models_tried": "fhi-legacy:no_output,sonar:http_429",
+            }
+        )
+        assert f.as_kwargs()["models_tried"] == "fhi-legacy:no_output,sonar:http_429"
+
+    def test_models_tried_none_sentinel_normalized(self):
+        f = _AppealGenTraceFields()
+        f.update_from_frame(
+            {"type": "status", "phase": "done", "models_tried": "none"}
+        )
+        assert f.as_kwargs()["models_tried"] is None
+
+
+class TestStreamErrorClassification:
+    """A zero-appeal stream_error that names a closed transport is a client
+    disconnect, not a server/model failure."""
+
+    @pytest.mark.parametrize(
+        "err",
+        [
+            "unable to perform operation on <TCPTransport closed=True reading=False>; the handler is closed",
+            "TCPTransport closed=True",
+            "Connection reset by peer",
+            "[Errno 32] Broken pipe",
+            "Connection lost",
+        ],
+    )
+    def test_disconnect_markers_match(self, err):
+        assert _stream_error_is_client_disconnect(err)
+
+    @pytest.mark.parametrize("err", [None, "", "Server error while generating appeals."])
+    def test_non_disconnect_does_not_match(self, err):
+        assert not _stream_error_is_client_disconnect(err)
+
+
+@pytest.mark.asyncio
+async def test_client_disconnect_during_research_is_not_generation_failure():
+    """The reported production line: last_phase=research + closed transport
+    must read as a client disconnect (WARNING), not 'Generation produced
+    nothing' (ERROR) which points triage at the model backends."""
+    objects = _make_count_mock(return_value=0)
+    p1, p2 = _patch_models(objects)
+    warn_cm, warnings = _captured_warning()
+    err_cm, errors = _captured_logger()
+    with p1, p2, warn_cm, err_cm:
+        await log_zero_appeal_diagnostics(
+            denial_id=22880,
+            status_count=5,
+            last_status_phase="research",
+            transport="websocket",
+            stream_error=(
+                "unable to perform operation on <TCPTransport closed=True "
+                "reading=False 0x5629d9289e10>; the handler is closed"
+            ),
+        )
+    # No ERROR-level "Generation produced nothing".
+    assert errors == []
+    assert len(warnings) == 1
+    msg = warnings[0]
+    assert "client disconnected during research" in msg
+    assert "generation not reached" in msg
+    assert "Generation produced nothing" not in msg
+    assert "APPEAL_GEN_DIAG" in msg
+
+
+@pytest.mark.asyncio
+async def test_client_disconnect_during_generating_notes_generation_started():
+    objects = _make_count_mock(return_value=0)
+    p1, p2 = _patch_models(objects)
+    warn_cm, warnings = _captured_warning()
+    err_cm, errors = _captured_logger()
+    with p1, p2, warn_cm, err_cm:
+        await log_zero_appeal_diagnostics(
+            denial_id=42,
+            status_count=8,
+            last_status_phase="generating",
+            transport="websocket",
+            stream_error="the handler is closed",
+        )
+    assert errors == []
+    assert "client disconnected during generating after generation started" in warnings[0]
+
+
+@pytest.mark.asyncio
+async def test_zero_persisted_without_disconnect_still_generation_failure():
+    """A zero-appeal session whose stream_error is NOT a disconnect keeps the
+    'Generation produced nothing' ERROR."""
+    objects = _make_count_mock(return_value=0)
+    p1, p2 = _patch_models(objects)
+    err_cm, errors = _captured_logger()
+    with p1, p2, err_cm:
+        await log_zero_appeal_diagnostics(
+            denial_id=42,
+            status_count=3,
+            last_status_phase="generating",
+            transport="websocket",
+            stream_error="Server error while generating appeals.",
+        )
+    assert "Generation produced nothing" in errors[-1]

@@ -113,16 +113,23 @@ class _AppealGenTraceFields:
 
     The init frame carries ``generation_id`` (captured before any timeout);
     the done frame carries ``make_appeals_seconds``/``first_model``/
-    ``shed_tier``.
+    ``shed_tier``/``models_tried``.
     """
 
-    __slots__ = ("generation_id", "make_appeals_seconds", "first_model", "shed_tier")
+    __slots__ = (
+        "generation_id",
+        "make_appeals_seconds",
+        "first_model",
+        "shed_tier",
+        "models_tried",
+    )
 
     def __init__(self) -> None:
         self.generation_id: Optional[str] = None
         self.make_appeals_seconds: Optional[float] = None
         self.first_model: Optional[str] = None
         self.shed_tier: Optional[int] = None
+        self.models_tried: Optional[str] = None
 
     def update_from_frame(self, parsed: dict) -> None:
         gen_id = parsed.get("generation_id")
@@ -135,6 +142,8 @@ class _AppealGenTraceFields:
             fm = parsed.get("first_model")
             self.first_model = fm if fm and fm != "none" else None
             self.shed_tier = parsed.get("shed_tier")
+            mt = parsed.get("models_tried")
+            self.models_tried = mt if mt and mt != "none" else None
 
     def as_kwargs(self) -> dict:
         return {
@@ -142,7 +151,35 @@ class _AppealGenTraceFields:
             "make_appeals_seconds": self.make_appeals_seconds,
             "first_model": self.first_model,
             "shed_tier": self.shed_tier,
+            "models_tried": self.models_tried,
         }
+
+
+# Substrings that mark a `stream_error` as the CLIENT going away mid-stream
+# rather than a server/model failure. uvloop raises a bare RuntimeError
+# ("unable to perform operation on <TCPTransport closed=True ...>; the handler
+# is closed") when we write to an already-closed socket; the asyncio selector
+# loop surfaces the same condition as ConnectionResetError/BrokenPipeError
+# (str: "connection reset", "broken pipe", "connection lost"). When the client
+# leaves, 0 appeals is expected and is NOT a generation failure.
+_CLIENT_DISCONNECT_MARKERS = (
+    "the handler is closed",
+    "unable to perform operation on",
+    "tcptransport closed",
+    "connection reset",
+    "connection lost",
+    "broken pipe",
+    "connectionreseterror",
+)
+
+
+def _stream_error_is_client_disconnect(stream_error: Optional[str]) -> bool:
+    """True when a zero-appeal `stream_error` was caused by the client
+    disconnecting mid-stream (closed transport), not by the server."""
+    if not stream_error:
+        return False
+    lowered = stream_error.lower()
+    return any(marker in lowered for marker in _CLIENT_DISCONNECT_MARKERS)
 
 
 async def log_zero_appeal_diagnostics(
@@ -156,6 +193,7 @@ async def log_zero_appeal_diagnostics(
     make_appeals_seconds: Optional[float] = None,
     first_model: Optional[str] = None,
     shed_tier: Optional[int] = None,
+    models_tried: Optional[str] = None,
 ) -> None:
     """Emit a structured ERROR when an appeal session ends with 0 appeals delivered.
 
@@ -209,10 +247,12 @@ async def log_zero_appeal_diagnostics(
         )
     error_suffix = f" stream_error={stream_error}" if stream_error else ""
     # Shared trace fields: gen_id ties this to the client report; the timing/
-    # model fields say whether generation ran long or which backend won.
+    # model fields say whether generation ran long or which backend won;
+    # models_tried lists each model attempted and why it failed.
     gen_suffix = (
         f" gen_id={generation_id} make_appeals_s={make_appeals_seconds} "
-        f"first_model={first_model} shed_tier={shed_tier}"
+        f"first_model={first_model} shed_tier={shed_tier} "
+        f"models_tried=[{models_tried or 'none'}]"
     )
     if persisted_count > 0:
         logger.error(
@@ -222,6 +262,27 @@ async def log_zero_appeal_diagnostics(
             f"a generation failure. status_frames={status_count} "
             f"last_phase={last_status_phase} gen_attempts={denial_attempts}"
             f"{gen_suffix}{error_suffix}"
+        )
+    elif persisted_count == 0 and _stream_error_is_client_disconnect(stream_error):
+        # The client dropped the connection; 0 persisted rows is expected if
+        # they left before or during generation. This is NOT a model failure,
+        # so it logs at WARNING and does not point triage at the backends.
+        phase = last_status_phase or "startup"
+        reached_generation = last_status_phase in (
+            "generating",
+            "synthesizing",
+            "done",
+        )
+        detail = (
+            f"client disconnected during {phase} after generation started"
+            if reached_generation
+            else f"client disconnected during {phase}; generation not reached"
+        )
+        logger.warning(
+            f"APPEAL_GEN_DIAG [{transport}] Appeal session ended with 0 "
+            f"appeals for denial {denial_id}: {detail}. "
+            f"status_frames={status_count} last_phase={last_status_phase} "
+            f"gen_attempts={denial_attempts}{gen_suffix}{error_suffix}"
         )
     elif persisted_count == 0:
         logger.error(

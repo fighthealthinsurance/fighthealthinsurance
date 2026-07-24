@@ -1081,6 +1081,33 @@ def _peek_or_none(
         return None, iter([])
 
 
+def _summarize_model_outcomes(outcomes: List[Tuple[Optional[str], str]]) -> str:
+    """Compact ``model:outcome[,model:outcome...]`` summary from a list of
+    ``(model_name, outcome)`` records, for the models_tried diagnostic.
+
+    Deduped per model (the same model is attempted across the primary/backup/
+    shed stages). ``ok`` -- the model produced at least one deliverable appeal
+    -- wins over any failure outcome for that model. Capped so a large fan-out
+    can't bloat the log line.
+    """
+    if not outcomes:
+        return ""
+    best: dict[str, str] = {}
+    for name, outcome in outcomes:
+        key = str(name) if name is not None else "unknown"
+        # "ok" is the only success; keep it over any failure reason.
+        if best.get(key) == "ok":
+            continue
+        if key not in best or outcome == "ok":
+            best[key] = outcome
+    items = [f"{k}:{v}" for k, v in sorted(best.items())]
+    max_items = 12
+    if len(items) > max_items:
+        hidden = len(items) - max_items
+        items = items[:max_items] + [f"+{hidden}_more"]
+    return ",".join(items)
+
+
 def _peek_real_or_none(
     it: Iterator["GeneratedAppeal"], denial_id: Any, stage: str
 ) -> Tuple[Optional["GeneratedAppeal"], Iterator["GeneratedAppeal"]]:
@@ -2187,6 +2214,15 @@ class AppealGenerator(object):
 
         # TODO: use the streaming and cancellable APIs (maybe some fancy JS on the client side?)
 
+        # Per-model attempt outcomes, for the "which models did we try and why
+        # did each fail" diagnostic. Appended by the nested get_model_result
+        # (synchronous reasons) and generated_to_appeals_text (ok/no_output) --
+        # both run on this (make_appeals) thread as futures are consumed, so no
+        # lock is needed. Folded into diagnostics_sink["models_tried"] at the
+        # end. The finer failure reason (timeout / http_<status> /
+        # context_length) is logged per-model by the inference layer.
+        model_outcomes: List[Tuple[Optional[str], str]] = []
+
         # For any model that we have a prompt for try to call it and return futures
         def get_model_result(
             model_name: str,
@@ -2205,10 +2241,12 @@ class AppealGenerator(object):
                     f"not in ml_router.models_by_name "
                     f"(available sample: {sample})"
                 )
+                model_outcomes.append((model_name, "not_registered"))
                 return []
             model_backends = ml_router.models_by_name[model_name]
             if prompt is None:
                 logger.debug(f"get_model_result: no prompt for {model_name}, skipping")
+                model_outcomes.append((model_name, "no_prompt"))
                 return []
             for model in model_backends:
                 try:
@@ -2234,6 +2272,7 @@ class AppealGenerator(object):
                 f"get_model_result: all {len(model_backends)} backend(s) "
                 f"for model_name={model_name} failed"
             )
+            model_outcomes.append((model_name, "all_backends_failed"))
             return []
 
         def _get_model_result(
@@ -2428,20 +2467,37 @@ class AppealGenerator(object):
             def generated_to_appeals_text(
                 model_name: Optional[str], k_text_future
             ) -> Iterator[GeneratedAppeal]:
-                model_results = k_text_future.result()
-                if model_results is None:
-                    return
-                for k, text in model_results:
-                    if text is None:
-                        continue
-                    # It's either full or a reason to plug into a template
-                    if k == "full":
-                        logger.debug(f"Bubbling up full response ({len(text)} chars)")
-                        yield GeneratedAppeal(text=text, model_name=model_name)
-                    else:
-                        templated = template_generator.generate(text)
-                        if templated is not None:
-                            yield GeneratedAppeal(text=templated, model_name=model_name)
+                # Record whether this model produced any deliverable text, for
+                # the models_tried diagnostic. The finally runs when the
+                # generator is exhausted (the zero-appeal ladder consumes every
+                # generator fully, so all outcomes are captured before the
+                # summary is built).
+                produced = False
+                try:
+                    model_results = k_text_future.result()
+                    if model_results is None:
+                        return
+                    for k, text in model_results:
+                        if text is None:
+                            continue
+                        # It's either full or a reason to plug into a template
+                        if k == "full":
+                            logger.debug(
+                                f"Bubbling up full response ({len(text)} chars)"
+                            )
+                            produced = True
+                            yield GeneratedAppeal(text=text, model_name=model_name)
+                        else:
+                            templated = template_generator.generate(text)
+                            if templated is not None:
+                                produced = True
+                                yield GeneratedAppeal(
+                                    text=templated, model_name=model_name
+                                )
+                finally:
+                    model_outcomes.append(
+                        (model_name, "ok" if produced else "no_output")
+                    )
 
             # Python lack reasonable future chaining (ugh)
             generated_text_futures = [
@@ -2546,6 +2602,7 @@ class AppealGenerator(object):
         if diagnostics_sink is not None:
             diagnostics_sink["winning_stage"] = winning_stage
             diagnostics_sink["shed_tier"] = shed_tier_used
+            diagnostics_sink["models_tried"] = _summarize_model_outcomes(model_outcomes)
         # Wrap template-based / non-AI appeals (plain strings) as
         # GeneratedAppeal so the downstream pipeline has a uniform type.
         initial_appeals_wrapped: Iterator[GeneratedAppeal] = (

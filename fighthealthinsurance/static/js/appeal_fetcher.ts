@@ -1292,6 +1292,13 @@ export function doQuery(backend_url: string, data: Map<string, string>, rest_fal
   usingRestFallback = false;
   handingOffToRest = false;
   wsGaveUp = false;
+  // Reset per-attempt diagnostic state so the final error report reflects the
+  // TERMINAL attempt, not a stale reason/id latched by an earlier one. doQuery
+  // runs at the start of every attempt (initial, retry via done(), and the
+  // external-models rerun); each attempt is a fresh server generation with its
+  // own generation_id, so a stale id would mis-join the server trace.
+  wsEndReason = 'none';
+  serverGenerationId = '';
   // Start the aggregate wait clock only on the first call. doQuery
   // recurses on retry via done(), and we want the total to span the
   // entire user-visible wait, not just the latest retry.
