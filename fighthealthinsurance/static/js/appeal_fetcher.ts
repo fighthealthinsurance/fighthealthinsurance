@@ -461,6 +461,16 @@ let lastWsCloseCode = -1;
 let lastWsCloseReason = '';
 let lastWsErrorMessage = '';
 let lastRestErrorMessage = '';
+// Why the WebSocket transport ended, for the error report. `retries` only
+// counts WS reconnects, so a timeout-driven escalation to REST reports
+// retries=0 — which reads as "gave up immediately" unless we also say the
+// socket was torn down by a timeout. One of: 'inactivity-timeout' |
+// 'hard-timeout' | 'ws-error' | 'retries-exhausted' | 'none'.
+let wsEndReason = 'none';
+// Correlation id minted server-side and sent in the init/status frames.
+// Captured so a client "0 appeals" report can be joined to the server-side
+// generation trace (APPEAL_GEN_DIAG log lines share this gen_id).
+let serverGenerationId = '';
 // Count of appeals the client deduped against ones already shown. The
 // server counts these in total_appeals, so we offset the partial-delivery
 // check by this value — otherwise a legitimately-duplicated synthesis
@@ -568,6 +578,7 @@ function armHardTimeout(): void {
   hardTimeoutHandle = setTimeout(() => {
     hardTimeoutHandle = null;
     if (connectionStatus === 'done') return;
+    wsEndReason = 'hard-timeout';
     console.error(
       `WebSocket exceeded ${WS_HARD_TIMEOUT_MS / 1000}s; firing backup REST request.`,
     );
@@ -629,11 +640,19 @@ function reportClientError(error: string): void {
     `server_existing=${serverReportedExistingAppeals}`,
     `ws_close=${lastWsCloseCode}/${lastWsCloseReason || 'none'}`,
     `ws_err=${lastWsErrorMessage || 'none'}`,
+    // Why the WS ended. Distinguishes a timeout-driven REST escalation (which
+    // leaves retries=0) from a genuine retry exhaustion — the whole point of
+    // the "exhausted 0 retries" confusion in the original incident.
+    `ws_end_reason=${wsEndReason}`,
+    `max_retries=${maxRetries}`,
     `rest_fallback=${usingRestFallback}`,
     `rest_err=${lastRestErrorMessage || 'none'}`,
     `wait_total_ms=${aggregateWaitMs}`,
     `wait_attempts_ms=${attemptDurationsMs.join(',') || 'none'}`,
     `wait_inflight_ms=${inflightWaitMs}`,
+    // Server correlation id (from the init/status frames) so this report
+    // joins to the server-side APPEAL_GEN_DIAG generation trace.
+    `gen_id=${serverGenerationId || 'none'}`,
   ].join(' ');
   const browserInfo = `${navigator.userAgent} | ${window.location.pathname} | ref=${document.referrer || 'none'}`;
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -675,8 +694,16 @@ function done(): void {
   } else {
     if (appealsSoFar.length === 0) {
       const transport = usingRestFallback ? 'rest-fallback' : 'websocket';
+      // Be explicit about *why* we ended with nothing. The common iOS case is
+      // "WS went silent mid-generation -> inactivity timeout -> REST fallback
+      // also failed", which the old "exhausted N retries" wording hid because
+      // a timeout escalation never increments `retries`.
+      const detail = usingRestFallback
+        ? `WS ended (${wsEndReason}) then REST fallback delivered 0 appeals`
+        : `WS ended (${wsEndReason}) with 0 appeals and no REST fallback`;
       reportClientError(
-        `Client exhausted ${retries} retries with 0 appeals received via ${transport}`
+        `Client received 0 appeals via ${transport}: ${detail} ` +
+          `(ws_retries=${retries}/${maxRetries})`
       );
     }
     clearTimeout(timeoutHandle!);
@@ -899,6 +926,11 @@ function processResponseChunk(chunk: string): void {
           statusMessagesReceived++;
           if (phase) {
             lastPhaseReceived = phase;
+          }
+          // Capture the server correlation id (sent in the init frame, so we
+          // have it even if generation later stalls and times out).
+          if (parsedLine.generation_id) {
+            serverGenerationId = parsedLine.generation_id;
           }
 
           if (phase === 'done') {
@@ -1147,6 +1179,7 @@ function connectWebSocket(
         console.error(
           `No messages received in ${WS_INACTIVITY_TIMEOUT_MS / 1000} seconds. Stream stalled.`,
         );
+        wsEndReason = 'inactivity-timeout';
         // Mark this socket stale, end its attempt timer, and explicitly
         // close it. ws.onclose will short-circuit on retryScheduled,
         // so it can't double-call done() or stomp on the next attempt.
@@ -1232,15 +1265,19 @@ function connectWebSocket(
       endCurrentAttempt();
       if (retries < maxRetries) {
         scheduleReconnect();
-      } else if (escalateToRest('websocket errored, retries exhausted')) {
-        // REST fallback now owns the stream.
       } else {
-        console.error("Max retries reached. Closing connection.");
-        fadeStatusMessage(
-          'Our AI took too many coffee breaks. Try refreshing the page.',
-          '#dc3545',
-        );
-        done();
+        // Retries exhausted. Prefer the REST fallback; if there's none, give
+        // up. Record which terminal state we hit for the error report.
+        wsEndReason = 'ws-error';
+        if (!escalateToRest('websocket errored, retries exhausted')) {
+          wsEndReason = 'retries-exhausted';
+          console.error("Max retries reached. Closing connection.");
+          fadeStatusMessage(
+            'Our AI took too many coffee breaks. Try refreshing the page.',
+            '#dc3545',
+          );
+          done();
+        }
       }
     };
   };

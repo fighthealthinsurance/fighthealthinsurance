@@ -55,7 +55,10 @@ from fhi_users.audit import TrackingInfo
 from fhi_users.models import ProfessionalUser, UserDomain
 from fighthealthinsurance import stripe_utils
 from fighthealthinsurance.context_barrier import warm_then_fetch
-from fighthealthinsurance.context_utils import attach_supplemental_to_citations
+from fighthealthinsurance.context_utils import (
+    attach_supplemental_to_citations,
+    summarize_denial_context_tokens,
+)
 from fighthealthinsurance.denial_context import merge_plan_context, merge_qa
 from fighthealthinsurance.denials.algorithmic_review_detector import (
     detect_algorithmic_review_terms,
@@ -69,6 +72,7 @@ from fighthealthinsurance.medical_code_extractor import (
 from fighthealthinsurance.ml.bad_output_utils import strip_boilerplate_service
 from fighthealthinsurance.form_utils import *
 from fighthealthinsurance.generate_appeal import *
+from fighthealthinsurance.ml.ml_appeal_context_helper import MLAppealContextHelper
 from fighthealthinsurance.ml.ml_appeal_questions_helper import MLAppealQuestionsHelper
 from fighthealthinsurance.ml.ml_citations_helper import MLCitationsHelper
 from fighthealthinsurance.ml.imr_decision_retriever import IMRDecisionRetriever
@@ -80,6 +84,7 @@ from fighthealthinsurance.utils import (
     extract_file_text,
     interleave_iterator_for_keep_alive,
     is_real_appeal,
+    keepalive_frames,
     MIN_APPEAL_CHARS,
     sync_iterator_to_async,
     warn_too_short_appeal,
@@ -2547,12 +2552,25 @@ class AppealsBackendHelper:
         if semi_sekret is None:
             raise Exception("Missing sekret")
 
+        # Short correlation id emitted in the init frame (so the client
+        # captures it before any inactivity timeout can fire) and again in the
+        # done frame. Lets a client-side ReportClientError be tied back to the
+        # server-side generation trace. See APPEAL_GEN_DIAG logging below.
+        generation_id = uuid.uuid4().hex[:12]
+
+        # Instrumentation captured during the generating phase and surfaced in
+        # the done frame + zero-appeal diagnostics.
+        make_appeals_seconds: float = -1.0
+        first_model: Optional[str] = None
+        make_appeals_diag: dict[str, Any] = {}
+
         # Yield status: starting
         yield json.dumps(
             {
                 "type": "status",
                 "phase": "init",
                 "message": "Starting appeal generation...",
+                "generation_id": generation_id,
             }
         ) + "\n"
 
@@ -3385,8 +3403,13 @@ class AppealsBackendHelper:
 
         async def save_appeal(item: GeneratedAppeal) -> dict[str, str]:
             # Save all of the proposed appeals, so we can use RL later.
+            nonlocal first_model
             appeal_text = item.text
             model_name = item.model_name
+            if first_model is None and model_name:
+                # First deliverable draft's model — recorded for the done frame
+                # and zero-appeal diagnostics so we can see which backend won.
+                first_model = str(model_name)
             t = time.time()
             logger.debug(f"Saving appeal ({len(appeal_text)} chars)")
             await asyncio.sleep(0)
@@ -3431,23 +3454,142 @@ class AppealsBackendHelper:
             plan_parts.append(denial.plan_documents_summary)
         model_plan_context: Optional[str] = "\n\n".join(plan_parts) or None
 
-        appeals: Iterator[GeneratedAppeal] = await database_sync_to_async(
-            appealGenerator.make_appeals
-        )(
-            denial,
-            AppealTemplateGenerator(prefaces, main, footer),
-            medical_reasons=medical_reasons,
-            non_ai_appeals=non_ai_appeals,
-            pubmed_context=pubmed_context,
-            ml_citations_context=ml_citation_context,
-            plan_context=model_plan_context,
-            rag_context=rag_context,
-            nice_context=nice_context,
-            specialized_templates=specialized_templates,
-            pa_context=pa_context,
-            uspstf_context=uspstf_context,
-            clinical_trials_context=clinical_trials_context,
+        # Cadence + ceiling for the generating-phase heartbeat. make_appeals
+        # blocks (commonly 10s-2min, worst case several minutes across the
+        # primary -> backup -> shed-tier cascade, each ML call bounded by the
+        # 300s per-inference timeout) with nothing else reaching the wire.
+        # Without heartbeats the browser's 90s inactivity watchdog
+        # (WS_INACTIVITY_TIMEOUT_MS in appeal_fetcher.ts) tears the socket
+        # down mid-generation -> escalate to REST -> same silent stall ->
+        # 0 appeals. 15s stays well under that 90s budget (and keeps iOS from
+        # dropping the REST-fallback stream); 360s stays under the client's
+        # 420s hard cap (WS_HARD_TIMEOUT_MS).
+        MAKE_APPEALS_KEEPALIVE_INTERVAL = 15
+        MAKE_APPEALS_OVERALL_TIMEOUT = 360
+
+        def _generating_heartbeat(elapsed: float) -> str:
+            return (
+                json.dumps(
+                    {
+                        "type": "status",
+                        "phase": "generating",
+                        "message": (
+                            "Generating personalized appeals with AI... "
+                            f"({int(elapsed)}s elapsed)"
+                        ),
+                    }
+                )
+                + "\n"
+            )
+
+        # For a very large denial letter, condense denial_text once (cached)
+        # so it doesn't overflow the model's context window -- an otherwise
+        # silent failure that yields 0 appeals. Returns None instantly for
+        # normal-sized denials (the common case), so full context is preferred.
+        # Heartbeat-wrapped so the rare, slow summarization call can't open a
+        # silent window either; capped at 90s so it can't eat the whole budget.
+        summarize_task: "asyncio.Future[Optional[str]]" = asyncio.ensure_future(
+            MLAppealContextHelper.maybe_summarize_denial_text(denial)
         )
+        async for _hb in keepalive_frames(
+            summarize_task,
+            interval=MAKE_APPEALS_KEEPALIVE_INTERVAL,
+            overall_timeout=90,
+            make_heartbeat=lambda elapsed: json.dumps(
+                {
+                    "type": "status",
+                    "phase": "generating",
+                    "message": (
+                        "Condensing a long denial letter... "
+                        f"({int(elapsed)}s elapsed)"
+                    ),
+                }
+            )
+            + "\n",
+        ):
+            yield _hb
+        denial_text_override: Optional[str] = None
+        if summarize_task.done():
+            try:
+                denial_text_override = summarize_task.result()
+            except Exception:
+                logger.opt(exception=True).warning(
+                    f"[gen_id={generation_id}] denial_text summarization "
+                    f"failed for denial {denial_id}; using full text"
+                )
+        else:
+            # Summary took too long. It's a native coroutine, so cancel it
+            # cleanly and proceed with the full denial text (make_appeals'
+            # shed ladder remains the backstop for context overflow).
+            summarize_task.cancel()
+            logger.warning(
+                f"[gen_id={generation_id}] denial_text summarization exceeded "
+                f"90s for denial {denial_id}; proceeding with full text"
+            )
+
+        gen_started = time.monotonic()
+        gen_task: "asyncio.Future[Iterator[GeneratedAppeal]]" = asyncio.ensure_future(
+            database_sync_to_async(appealGenerator.make_appeals)(
+                denial,
+                AppealTemplateGenerator(prefaces, main, footer),
+                medical_reasons=medical_reasons,
+                non_ai_appeals=non_ai_appeals,
+                pubmed_context=pubmed_context,
+                ml_citations_context=ml_citation_context,
+                plan_context=model_plan_context,
+                rag_context=rag_context,
+                nice_context=nice_context,
+                specialized_templates=specialized_templates,
+                pa_context=pa_context,
+                uspstf_context=uspstf_context,
+                clinical_trials_context=clinical_trials_context,
+                generation_id=generation_id,
+                diagnostics_sink=make_appeals_diag,
+                denial_text_override=denial_text_override,
+            )
+        )
+        # Heartbeat while make_appeals blocks so no >90s silent window exists
+        # on either transport (the WS consumer and the REST fallback both
+        # forward every yielded frame verbatim).
+        async for _hb in keepalive_frames(
+            gen_task,
+            interval=MAKE_APPEALS_KEEPALIVE_INTERVAL,
+            overall_timeout=MAKE_APPEALS_OVERALL_TIMEOUT,
+            make_heartbeat=_generating_heartbeat,
+        ):
+            yield _hb
+
+        make_appeals_seconds = time.monotonic() - gen_started
+        appeals: Iterator[GeneratedAppeal]
+        if gen_task.done():
+            # Re-raises here if make_appeals raised — same behavior as the old
+            # bare await.
+            appeals = await gen_task
+            logger.info(
+                f"[gen_id={generation_id}] make_appeals returned in "
+                f"{make_appeals_seconds:.1f}s for denial {denial_id} "
+                f"(winning_stage={make_appeals_diag.get('winning_stage')}, "
+                f"shed_tier={make_appeals_diag.get('shed_tier')})"
+            )
+        else:
+            # Exceeded the overall budget while still running. The threadpool
+            # thread cannot be cancelled and keeps running in the background
+            # (database_sync_to_async still closes its DB connections on the
+            # awaiting side); abandon its result and fall through with zero
+            # appeals. Retrieve any eventual exception so asyncio does not log
+            # "Task exception was never retrieved".
+            def _swallow_abandoned(t: "asyncio.Future[Any]") -> None:
+                if not t.cancelled():
+                    t.exception()
+
+            gen_task.add_done_callback(_swallow_abandoned)
+            logger.error(
+                f"[gen_id={generation_id}] make_appeals exceeded "
+                f"{MAKE_APPEALS_OVERALL_TIMEOUT}s for denial {denial_id}; "
+                f"abandoning (background thread continues). "
+                f"{summarize_denial_context_tokens(denial)}"
+            )
+            appeals = iter([])
         # Drop None / empty / whitespace / runt outputs. Track runts so the
         # zero-appeal diagnostic can distinguish "models silent" from
         # "models producing only short strings".
@@ -3512,8 +3654,10 @@ class AppealsBackendHelper:
         # --- Final synthesis step ---
         # Query saved appeals from DB rather than collecting in-flight,
         # so we don't interfere with the streaming pipeline.
-        # We emit keepalives every 20s and enforce a 200s hard timeout so
-        # the client (which reconnects after 240s of silence) stays alive.
+        # We emit keepalives every 20s (SYNTHESIS keepalive loop below) and
+        # cap synthesis at 120s so the client's 90s inactivity watchdog
+        # (WS_INACTIVITY_TIMEOUT_MS in appeal_fetcher.ts) never fires between
+        # frames.
         saved_appeal_texts: list[str] = [
             str(pa.appeal_text)
             async for pa in ProposedAppeal.objects.filter(for_denial=denial)
@@ -3606,21 +3750,31 @@ class AppealsBackendHelper:
 
         # runt_count=0 means models were silent; >0 means models produced
         # only too-short outputs — different root causes for incident review.
+        shed_tier = make_appeals_diag.get("shed_tier")
+        winning_stage = make_appeals_diag.get("winning_stage")
         if new + old == 0:
             logger.error(
-                f"Zero appeals generated for denial {denial_id}, "
-                f"gen_attempts={denial.gen_attempts}, "
-                f"runt_count={runts}"
+                f"APPEAL_GEN_DIAG [gen_id={generation_id}] Zero appeals "
+                f"generated for denial {denial_id}, "
+                f"gen_attempts={denial.gen_attempts}, runt_count={runts}, "
+                f"make_appeals_s={make_appeals_seconds:.1f}, "
+                f"first_model={first_model}, winning_stage={winning_stage}, "
+                f"shed_tier={shed_tier}, "
+                f"{summarize_denial_context_tokens(denial)}"
             )
         elif new == 0 and old > 0:
             logger.warning(
-                f"No new appeals generated for denial {denial_id} "
+                f"APPEAL_GEN_DIAG [gen_id={generation_id}] No new appeals "
+                f"generated for denial {denial_id} "
                 f"(but {old} existing appeals found), "
-                f"gen_attempts={denial.gen_attempts}, "
-                f"runt_count={runts}"
+                f"gen_attempts={denial.gen_attempts}, runt_count={runts}, "
+                f"make_appeals_s={make_appeals_seconds:.1f}, "
+                f"first_model={first_model}, winning_stage={winning_stage}"
             )
 
-        # Explicit end-of-stream so the client knows exactly what was sent
+        # Explicit end-of-stream so the client knows exactly what was sent.
+        # Carries the correlation id + generating-phase instrumentation so a
+        # client "0 appeals" report can be joined to this server trace.
         yield json.dumps(
             {
                 "type": "status",
@@ -3629,6 +3783,10 @@ class AppealsBackendHelper:
                 "new_appeals": new,
                 "existing_appeals": old,
                 "total_appeals": new + old,
+                "generation_id": generation_id,
+                "make_appeals_seconds": round(make_appeals_seconds, 1),
+                "first_model": first_model or "none",
+                "shed_tier": shed_tier,
             }
         ) + "\n"
 

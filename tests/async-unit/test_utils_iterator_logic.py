@@ -4,6 +4,7 @@ import time
 from typing import AsyncIterator
 from fighthealthinsurance.utils import (
     interleave_iterator_for_keep_alive,
+    keepalive_frames,
     sync_iterator_to_async,
 )
 
@@ -202,6 +203,112 @@ class TestSyncIteratorToAsync:
         # The actual data item must appear
         data_items = [r for r in result if r != "\n"]
         assert "appeal1" in data_items
+
+
+class TestKeepaliveFrames:
+    """keepalive_frames wraps a blocking awaitable and emits heartbeats while
+    it is pending, WITHOUT ever cancelling it. This is the primary fix for the
+    silent-generation window during make_appeals."""
+
+    @pytest.mark.asyncio
+    async def test_no_heartbeats_when_task_completes_fast(self):
+        """A task that finishes within the first interval emits no heartbeats
+        and is left completed (not cancelled)."""
+
+        async def quick():
+            return "done"
+
+        task = asyncio.ensure_future(quick())
+        frames = [f async for f in keepalive_frames(task, interval=0.2)]
+        assert frames == []
+        assert not task.cancelled()
+        assert await task == "done"
+
+    @pytest.mark.asyncio
+    async def test_heartbeats_emitted_while_pending(self):
+        """A task slower than the interval yields periodic heartbeats and is
+        still readable afterwards (the helper must not cancel it)."""
+
+        async def slow():
+            await asyncio.sleep(0.5)
+            return "slow-done"
+
+        task = asyncio.ensure_future(slow())
+        frames = [
+            f
+            async for f in keepalive_frames(
+                task, interval=0.1, make_heartbeat=lambda elapsed: "hb"
+            )
+        ]
+        # ~0.5s / 0.1s -> several heartbeats (loose bound to avoid flakiness).
+        assert len(frames) >= 3
+        assert all(f == "hb" for f in frames)
+        assert not task.cancelled()
+        # Critically, the task ran to completion in the background.
+        assert await task == "slow-done"
+
+    @pytest.mark.asyncio
+    async def test_overall_timeout_returns_with_task_still_pending(self):
+        """When overall_timeout elapses first, the generator returns while the
+        task is still running and, crucially, NOT cancelled by the helper."""
+
+        async def very_slow():
+            await asyncio.sleep(5)
+            return "never"
+
+        task = asyncio.ensure_future(very_slow())
+        frames = [
+            f
+            async for f in keepalive_frames(
+                task, interval=0.1, overall_timeout=0.3, make_heartbeat=lambda e: "hb"
+            )
+        ]
+        assert len(frames) >= 2
+        assert not task.done()
+        assert not task.cancelled()
+        # Caller owns cleanup.
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    @pytest.mark.asyncio
+    async def test_task_exception_is_not_swallowed(self):
+        """If the wrapped task raises, the generator returns without
+        propagating and the caller still observes the exception via await."""
+
+        async def boom():
+            await asyncio.sleep(0.05)
+            raise ValueError("boom")
+
+        task = asyncio.ensure_future(boom())
+        frames = [f async for f in keepalive_frames(task, interval=1.0)]
+        assert frames == []
+        assert not task.cancelled()
+        with pytest.raises(ValueError, match="boom"):
+            await task
+
+    @pytest.mark.asyncio
+    async def test_make_heartbeat_receives_increasing_elapsed(self):
+        """The heartbeat callback receives a monotonically increasing elapsed
+        time so callers can render progress."""
+
+        async def slow():
+            await asyncio.sleep(0.35)
+            return "x"
+
+        task = asyncio.ensure_future(slow())
+        elapseds: list[float] = []
+
+        def hb(elapsed: float) -> str:
+            elapseds.append(elapsed)
+            return "\n"
+
+        async for _ in keepalive_frames(task, interval=0.1, make_heartbeat=hb):
+            pass
+
+        assert len(elapseds) >= 2
+        assert elapseds == sorted(elapseds)
+        assert elapseds[-1] >= 0.1
 
 
 class TestFullAppealStreamingPipeline:

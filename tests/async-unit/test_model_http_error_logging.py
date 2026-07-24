@@ -7,6 +7,7 @@ A backend that returns an expected operational error -- an exhausted quota
 failures (e.g. HTTP 500) keep the ERROR + traceback.
 """
 
+from typing import Optional
 from unittest.mock import AsyncMock, patch
 
 import aiohttp
@@ -18,12 +19,15 @@ from yarl import URL
 from fighthealthinsurance.ml.ml_models import (
     EXPECTED_HTTP_STATUS_CODES,
     RemoteFullOpenLike,
+    _http_error_indicates_context_length,
     _http_status_is_expected,
 )
 
 
-def _client_response_error(status: int) -> aiohttp.ClientResponseError:
-    """Build a ClientResponseError carrying ``status``.
+def _client_response_error(
+    status: int, message: Optional[str] = None
+) -> aiohttp.ClientResponseError:
+    """Build a ClientResponseError carrying ``status`` (and optional message).
 
     A real ``RequestInfo`` is required because the exception's ``__str__``
     (used when loguru renders the traceback) dereferences
@@ -33,11 +37,13 @@ def _client_response_error(status: int) -> aiohttp.ClientResponseError:
     request_info = aiohttp.RequestInfo(
         url, "POST", CIMultiDictProxy(CIMultiDict()), url
     )
+    if message is None:
+        message = "Unauthorized" if status == 401 else "Error"
     return aiohttp.ClientResponseError(
         request_info=request_info,
         history=(),
         status=status,
-        message="Unauthorized" if status == 401 else "Error",
+        message=message,
     )
 
 
@@ -106,6 +112,72 @@ class TestInferHttpErrorLogging:
             "_RemoteOpenLike__timeout_infer",
             new_callable=AsyncMock,
             side_effect=_client_response_error(500),
+        ):
+            with _LogCapture() as cap:
+                result = await model._infer(system_prompts=["sys"], prompt="hi")
+
+        assert result is None
+        assert "ERROR" in cap.levels
+
+
+class TestContextLengthErrorDetection:
+    def test_context_length_phrasings_match(self):
+        for msg in (
+            "This model's maximum context length is 8192 tokens",
+            "Please reduce the length of the messages",
+            "input is too long for the requested model",
+            "Requested 40000 tokens, too many tokens for this model",
+            "context window exceeded",
+        ):
+            assert _http_error_indicates_context_length(400, msg)
+        # 413 Payload Too Large is also a valid context-length signal.
+        assert _http_error_indicates_context_length(413, "prompt is too long")
+
+    def test_non_context_400s_do_not_match(self):
+        assert not _http_error_indicates_context_length(400, "invalid api key")
+        assert not _http_error_indicates_context_length(400, "")
+        # A context-length phrasing on a non-400/413 status is not treated as one.
+        assert not _http_error_indicates_context_length(500, "context length")
+        assert not _http_error_indicates_context_length(429, "too many tokens")
+
+
+class TestInferContextLengthLogging:
+    def _model(self) -> RemoteFullOpenLike:
+        return RemoteFullOpenLike("http://test-api.com", "test-token", "test-model")
+
+    @pytest.mark.asyncio
+    async def test_context_length_error_logs_warning_not_error_and_returns_none(self):
+        """A 400 whose message says the context window was exceeded must be a
+        concise WARNING (so the shed ladder fires) rather than a scary ERROR."""
+        model = self._model()
+        with patch.object(
+            model,
+            "_RemoteOpenLike__timeout_infer",
+            new_callable=AsyncMock,
+            side_effect=_client_response_error(
+                400, "This model's maximum context length is 8192 tokens"
+            ),
+        ):
+            with _LogCapture() as cap:
+                result = await model._infer(system_prompts=["sys"], prompt="hi")
+
+        assert result is None
+        assert "ERROR" not in cap.levels
+        assert "WARNING" in cap.levels
+        warning_text = " ".join(
+            r["message"] for r in cap.records if r["level"].name == "WARNING"
+        )
+        assert "context-length" in warning_text.lower()
+
+    @pytest.mark.asyncio
+    async def test_generic_400_still_logs_error(self):
+        """A 400 that is NOT a context-length error keeps the ERROR log."""
+        model = self._model()
+        with patch.object(
+            model,
+            "_RemoteOpenLike__timeout_infer",
+            new_callable=AsyncMock,
+            side_effect=_client_response_error(400, "malformed request body"),
         ):
             with _LogCapture() as cap:
                 result = await model._infer(system_prompts=["sys"], prompt="hi")

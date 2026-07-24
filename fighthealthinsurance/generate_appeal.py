@@ -2071,6 +2071,9 @@ class AppealGenerator(object):
         pa_context=None,
         uspstf_context=None,
         clinical_trials_context=None,
+        generation_id: Optional[str] = None,
+        diagnostics_sink: Optional[dict] = None,
+        denial_text_override: Optional[str] = None,
     ) -> Iterator[GeneratedAppeal]:
         """
         Generates an iterator of appeal texts for a given insurance denial using templates, non-AI sources, and AI models.
@@ -2145,7 +2148,10 @@ class AppealGenerator(object):
         # prompt-baked copies of pubmed/citations/rag/etc. would still pin
         # the token count even after the call-dict copies are dropped.
         open_prompt_kwargs = dict(
-            denial_text=denial.denial_text,
+            # denial_text_override is a summary substituted only when the raw
+            # denial text is very large (see maybe_summarize_denial_text);
+            # None for normal denials, so full context is preferred.
+            denial_text=denial_text_override or denial.denial_text,
             procedure=denial.procedure,
             diagnosis=denial.diagnosis,
             patient=denial.patient_user,
@@ -2471,16 +2477,26 @@ class AppealGenerator(object):
         # retry path reuses `calls` (internal-only), so it's opt-out-safe.
         denial_id = denial.denial_id
         use_ext = denial.use_external
+        # Correlation prefix so this ML cascade lines up with the generating
+        # phase trace (init/done frames + ReportClientError) sharing this id.
+        gen_prefix = f"[gen_id={generation_id}] " if generation_id else ""
         appeals = as_available_nested(generated_text_futures)
         first, appeals = _peek_real_or_none(appeals, denial_id, "primary")
+        # Which stage produced the first deliverable appeal, surfaced via
+        # diagnostics_sink so the generating-phase logging/done-frame can
+        # report whether the primary won or a shed-tier retry rescued it.
+        winning_stage: Optional[str] = "primary" if first is not None else None
+        shed_tier_used: Optional[int] = None
 
         if first is None and backup_calls:
             logger.warning(
-                f"Primary empty for denial {denial_id}; trying backup_calls "
-                f"(n={len(backup_calls)}, use_external={use_ext})"
+                f"{gen_prefix}Primary empty for denial {denial_id}; trying "
+                f"backup_calls (n={len(backup_calls)}, use_external={use_ext})"
             )
             appeals = as_available_nested(make_async_model_calls(backup_calls))
             first, appeals = _peek_real_or_none(appeals, denial_id, "backup")
+            if first is not None:
+                winning_stage = "backup"
 
         if first is None:
             ext_note = (
@@ -2490,8 +2506,8 @@ class AppealGenerator(object):
                 "(user opt-out respected)"
             )
             logger.error(
-                f"make_appeals: primary+backup both produced 0 for denial "
-                f"{denial_id} ({ext_note}); retrying primary internal-only"
+                f"{gen_prefix}make_appeals: primary+backup both produced 0 for "
+                f"denial {denial_id} ({ext_note}); retrying primary internal-only"
             )
             time.sleep(1.0)
             for tier in (1, 2):
@@ -2503,8 +2519,8 @@ class AppealGenerator(object):
                     original_open_prompt=open_prompt,
                 )
                 logger.warning(
-                    f"make_appeals: retrying primary for denial {denial_id} "
-                    f"with context shed (tier={tier}, changed={changed})"
+                    f"{gen_prefix}make_appeals: retrying primary for denial "
+                    f"{denial_id} with context shed (tier={tier}, changed={changed})"
                 )
                 appeals = as_available_nested(make_async_model_calls(shed_calls))
                 first, appeals = _peek_real_or_none(
@@ -2512,17 +2528,24 @@ class AppealGenerator(object):
                 )
                 if first is not None:
                     logger.warning(
-                        f"make_appeals: tier {tier} retry succeeded for "
-                        f"denial {denial_id}"
+                        f"{gen_prefix}make_appeals: tier {tier} retry succeeded "
+                        f"for denial {denial_id}"
                     )
+                    winning_stage = f"retry_tier_{tier}"
+                    shed_tier_used = tier
                     break
             if first is None:
                 logger.error(
-                    f"make_appeals: all context-shed retries (tiers 1-2) "
-                    f"produced 0 for denial {denial_id}; giving up. "
+                    f"{gen_prefix}make_appeals: all context-shed retries "
+                    f"(tiers 1-2) produced 0 for denial {denial_id}; giving up. "
                     f"({ext_note})"
                 )
+                winning_stage = "none"
                 appeals = iter([])
+
+        if diagnostics_sink is not None:
+            diagnostics_sink["winning_stage"] = winning_stage
+            diagnostics_sink["shed_tier"] = shed_tier_used
         # Wrap template-based / non-AI appeals (plain strings) as
         # GeneratedAppeal so the downstream pipeline has a uniform type.
         initial_appeals_wrapped: Iterator[GeneratedAppeal] = (

@@ -972,6 +972,87 @@ class TestGetModelResultLogging:
         )
 
 
+# --- diagnostics_sink + denial_text_override tests -------------------------
+
+
+class TestMakeAppealsDiagnosticsSink:
+    """make_appeals reports which stage produced the first appeal (or 'none')
+    via diagnostics_sink so the generating-phase logging/done-frame can show
+    whether the primary won or a shed-tier retry rescued it."""
+
+    def test_sink_records_none_when_all_stages_empty(self):
+        sink: dict = {}
+        gen = AppealGenerator()
+        tmpl = AppealTemplateGenerator(prefaces=["P"], main=["M"], footer=["F"])
+        with patch(
+            "fighthealthinsurance.generate_appeal.ml_router.generate_text_backend_names",
+            side_effect=lambda use_external=False: [],
+        ), patch(
+            "fighthealthinsurance.generate_appeal.ml_router.models_by_name",
+            new={},
+        ), patch(
+            "fighthealthinsurance.generate_appeal.time.sleep"
+        ):
+            list(
+                gen.make_appeals(
+                    _mock_denial(),
+                    tmpl,
+                    medical_reasons=[],
+                    non_ai_appeals=[],
+                    diagnostics_sink=sink,
+                )
+            )
+        assert sink.get("winning_stage") == "none"
+        assert sink.get("shed_tier") is None
+
+
+class TestDenialTextOverride:
+    """denial_text_override substitutes a summary for the raw denial text in
+    the prompt (used only for oversized denials); None keeps full context."""
+
+    def _spy_prompt_denial_text(self, denial_text_override):
+        gen = AppealGenerator()
+        tmpl = AppealTemplateGenerator(prefaces=["P"], main=["M"], footer=["F"])
+        seen: dict = {}
+
+        def spy_prompt(**kwargs):
+            seen.update(kwargs)
+            return "PROMPT"
+
+        with patch.object(
+            gen, "make_open_prompt", side_effect=spy_prompt
+        ), patch(
+            "fighthealthinsurance.generate_appeal.ml_router.generate_text_backend_names",
+            side_effect=lambda use_external=False: [],
+        ), patch(
+            "fighthealthinsurance.generate_appeal.ml_router.models_by_name",
+            new={},
+        ), patch(
+            "fighthealthinsurance.generate_appeal.time.sleep"
+        ):
+            try:
+                list(
+                    gen.make_appeals(
+                        _mock_denial(),  # denial_text="denial"
+                        tmpl,
+                        medical_reasons=[],
+                        non_ai_appeals=[],
+                        denial_text_override=denial_text_override,
+                    )
+                )
+            except Exception:
+                pass
+        return seen
+
+    def test_override_used_in_prompt_when_provided(self):
+        seen = self._spy_prompt_denial_text("CONDENSED SUMMARY")
+        assert seen.get("denial_text") == "CONDENSED SUMMARY"
+
+    def test_full_denial_text_used_when_override_is_none(self):
+        seen = self._spy_prompt_denial_text(None)
+        assert seen.get("denial_text") == "denial"
+
+
 # --- _peek_real_or_none: runt-first fallback regression -------------------
 
 

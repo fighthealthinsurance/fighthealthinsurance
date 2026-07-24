@@ -94,6 +94,29 @@ def _http_error_indicates_unsupported_temperature(status: int, body: str) -> boo
     )
 
 
+# Provider phrasings for "the request exceeds the model's context window".
+# Unlike the operational 4xx codes above, a context-length 400/413 is neither
+# a bug nor a transient condition: the assembled prompt + context is simply too
+# large, and the fix is to shed or summarize context and retry. Detecting it
+# turns an otherwise-silent generic error into a greppable WARNING so
+# make_appeals' reactive shed ladder fires on a clear, correctly-categorized
+# signal.
+_CONTEXT_LENGTH_ERROR_RE = re.compile(
+    r"context length|context window|maximum context|too many tokens|"
+    r"reduce the length|input (?:is )?too long|maximum.*tokens|"
+    r"string too long|prompt is too long",
+    re.IGNORECASE,
+)
+
+
+def _http_error_indicates_context_length(status: Optional[int], body: str) -> bool:
+    """True when a 400/413 means the request exceeded the model's context
+    window (as opposed to some other bad-request cause)."""
+    if status not in (400, 413) or not body:
+        return False
+    return bool(_CONTEXT_LENGTH_ERROR_RE.search(body))
+
+
 def _count_items(items: list[str]) -> dict[str, int]:
     """Count occurrences of each normalized (stripped+lowered) item."""
     counts: dict[str, int] = {}
@@ -2123,6 +2146,17 @@ class RemoteOpenLike(RemoteModel):
                     f"{self}: skipping backend -- {self.api_base} returned "
                     f"HTTP {e.status} ({e.message}); "
                     f"check quota/billing/API key."
+                )
+            elif _http_error_indicates_context_length(e.status, e.message or ""):
+                # The prompt + context exceeded the model's window. Not a bug:
+                # a concise, greppable WARNING (no stack trace) so the
+                # reactive shed ladder in make_appeals fires on a clear signal
+                # rather than this looking like a crash. Returning None below
+                # keeps the existing drop/summarize retry path.
+                logger.warning(
+                    f"{self}: context-length exceeded on {self.api_base} "
+                    f"(HTTP {e.status}: {e.message}); caller should shed or "
+                    f"summarize context and retry."
                 )
             else:
                 logger.opt(exception=True).error(f"HTTP error calling {self.api_base}")

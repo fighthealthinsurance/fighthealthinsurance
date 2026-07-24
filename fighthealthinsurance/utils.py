@@ -786,6 +786,63 @@ async def _interleave_iterator_for_keep_alive(
             task = None
 
 
+async def keepalive_frames(
+    task: "asyncio.Future[Any]",
+    *,
+    interval: float = 15.0,
+    overall_timeout: Optional[float] = None,
+    make_heartbeat: Callable[[float], str] = lambda elapsed: "\n",
+) -> AsyncIterator[str]:
+    """Yield a heartbeat string every ``interval`` seconds while ``task`` is
+    still pending, so a long blocking ``await`` leaves no silent gap on the
+    wire.
+
+    This generalizes the synthesis keep-alive loop in
+    ``common_view_logic.generate_appeals``: a fresh ``asyncio.shield(task)``
+    per wait means an interval timeout cancels only that iteration's shield,
+    never the underlying ``task``. The generator returns when ``task``
+    completes (successfully or with an exception) or when ``overall_timeout``
+    seconds have elapsed while it was pending.
+
+    IMPORTANT: this NEVER cancels ``task``. Appeal generation runs in a
+    ``database_sync_to_async`` threadpool call that keeps running even after
+    the awaiting future is abandoned, so cancelling here would leak the
+    thread without stopping the work. The caller owns ``task``'s lifecycle:
+    read the result via ``await task`` (instant once done), and detect the
+    ``overall_timeout`` case by checking ``task.done()`` after this
+    generator returns.
+
+    ``make_heartbeat`` receives the elapsed pending-seconds and returns the
+    string to emit (default: a bare ``"\\n"`` keep-alive). A callback that
+    returns a full status-frame JSON line lets callers both keep the socket
+    alive and advance a client-side progress UI.
+    """
+    elapsed = 0.0
+    while not task.done():
+        remaining = None if overall_timeout is None else overall_timeout - elapsed
+        if remaining is not None and remaining <= 0:
+            # Budget exhausted while the task is still pending; hand back to
+            # the caller, which decides what to do with the abandoned task.
+            return
+        wait_for = interval if remaining is None else min(interval, remaining)
+        started = time.monotonic()
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=wait_for)
+        except asyncio.TimeoutError:
+            # Only this iteration's shield was cancelled; ``task`` runs on.
+            elapsed += time.monotonic() - started
+            yield make_heartbeat(elapsed)
+            continue
+        except Exception:
+            # ``task`` finished by raising. Stop emitting keep-alives; the
+            # caller observes the exception when it does ``await task``.
+            # (CancelledError is a BaseException and intentionally propagates
+            # out so client-disconnect teardown is not swallowed.)
+            return
+        # ``task`` completed successfully within the interval.
+        return
+
+
 # In-flight fire-and-forget background threads. Tracked so tests can wait for
 # outstanding background DB work to drain between tests: a leaked thread doing
 # sqlite writes can hold a table lock that breaks the next test's fixture load

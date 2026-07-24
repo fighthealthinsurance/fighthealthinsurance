@@ -674,17 +674,34 @@ class MLRouter(object):
             return []
 
     async def summarize(
-        self, title: Optional[str], text: Optional[str], abstract: Optional[str] = None
+        self,
+        title: Optional[str],
+        text: Optional[str],
+        abstract: Optional[str] = None,
+        *,
+        use_external: bool = True,
+        max_input_chars: int = 1000,
     ) -> Optional[str]:
+        """Summarize ``text``/``abstract`` for use in an appeal.
+
+        ``use_external`` gates whether the cheap external generalist may be
+        used. It defaults to True because the original callers summarize
+        PUBLIC article text (PubMed/citation bodies). Callers summarizing
+        patient data (e.g. a long denial letter) MUST pass
+        ``use_external=denial.use_external`` so an opt-out denial never routes
+        PHI to an external provider. ``max_input_chars`` caps how much source
+        text is fed to the model (default 1000 for short article snippets;
+        denial-text summarization passes a larger cap so the summary actually
+        reflects the whole letter).
+        """
         models: list[RemoteModelLike] = []
         # Prefer the cheap DeepInfra generalist (successor to the dropped
-        # gemma-3-27b entry) for article summaries. The inputs are public
-        # article text (title/abstract/body), not patient data, so an
-        # external model is fine here — and without it a DeepInfra-only
-        # deployment has an empty internal pool and summarize() would
-        # silently return None. Gated on availability so a sweep-marked-down
-        # DeepInfra doesn't add a doomed call before the internal fallbacks.
-        if "google/gemma-4-26B-A4B-it" in self.models_by_name:
+        # gemma-3-27b entry) for summaries when permitted. Without it a
+        # DeepInfra-only deployment has an empty internal pool and summarize()
+        # would silently return None. Gated on availability AND on
+        # use_external so a PHI caller (or a sweep-marked-down DeepInfra)
+        # doesn't add a doomed/disallowed call before the internal fallbacks.
+        if use_external and "google/gemma-4-26B-A4B-it" in self.models_by_name:
             models = [
                 m
                 for m in self.models_by_name["google/gemma-4-26B-A4B-it"]
@@ -695,9 +712,11 @@ class MLRouter(object):
         abstract_optional = ""
         text_optional = ""
         if abstract is not None:
-            abstract_optional = f"--- Current abstract: {abstract[0:1000]} ---"
+            abstract_optional = (
+                f"--- Current abstract: {abstract[0:max_input_chars]} ---"
+            )
         if text is not None:
-            text_optional = f"--- Full-ish article text: {text[0:1000]} ---"
+            text_optional = f"--- Full-ish article text: {text[0:max_input_chars]} ---"
         for m in models:
             r = await m._infer_no_context(
                 system_prompts=[

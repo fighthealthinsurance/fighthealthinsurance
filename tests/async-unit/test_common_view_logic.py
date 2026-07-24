@@ -506,6 +506,102 @@ class TestCommonViewLogic(TestCase):
         async_to_sync(test)()
 
     @pytest.mark.django_db
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_generating_phase_emits_heartbeats_during_slow_make_appeals(
+        self, mock_appeal_generator
+    ):
+        """Regression for the silent-generation bug: while the blocking
+        make_appeals runs, the generating phase must keep emitting status
+        frames so the client's 90s inactivity watchdog never fires."""
+        import time as _time
+
+        from fighthealthinsurance import utils as _fhi_utils
+
+        email, denial = self._create_test_denial(14, gen_attempts=3)
+
+        def slow_make_appeals(*args, **kwargs):
+            # Runs in a database_sync_to_async threadpool, so this sleep does
+            # NOT block the event loop -- the keepalive loop runs meanwhile.
+            _time.sleep(1.0)
+            return iter(
+                ["Dear Insurance Company, this is a sufficiently long appeal letter."]
+            )
+
+        mock_appeal_generator.make_appeals.side_effect = slow_make_appeals
+
+        real_keepalive = _fhi_utils.keepalive_frames
+
+        def fast_keepalive(task, *, interval=15.0, overall_timeout=None, **kwargs):
+            # Shrink the 15s cadence so the test doesn't have to sleep that long
+            # while still exercising the real keepalive_frames behavior.
+            return real_keepalive(
+                task, interval=0.05, overall_timeout=overall_timeout, **kwargs
+            )
+
+        async def test():
+            try:
+                with patch(
+                    "fighthealthinsurance.common_view_logic.keepalive_frames",
+                    fast_keepalive,
+                ):
+                    status_messages, _, _ = await self.collect_appeal_responses(
+                        {
+                            "denial_id": 14,
+                            "email": email,
+                            "semi_sekret": denial.semi_sekret,
+                        }
+                    )
+
+                # Heartbeats are generating-phase frames whose message reports
+                # elapsed seconds. At least a couple must have fired during the
+                # ~1s make_appeals sleep.
+                heartbeats = [
+                    m
+                    for m in status_messages
+                    if m.get("phase") == "generating"
+                    and "elapsed" in m.get("message", "")
+                ]
+                assert len(heartbeats) >= 2, (
+                    f"Expected heartbeat frames during slow make_appeals, got: "
+                    f"{status_messages}"
+                )
+            finally:
+                await Denial.objects.filter(denial_id=14).adelete()
+
+        async_to_sync(test)()
+
+    @pytest.mark.django_db
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_init_and_done_frames_carry_generation_id(self, mock_appeal_generator):
+        """The correlation id is emitted in the init frame (captured before any
+        timeout) and echoed in the done frame alongside generating-phase
+        timing, so a client report can be joined to the server trace."""
+        email, denial = self._create_test_denial(15, gen_attempts=3)
+        mock_appeal_generator.make_appeals.return_value = iter(
+            ["Dear Insurance Company, this is a sufficiently long appeal letter."]
+        )
+
+        async def test():
+            try:
+                status_messages, _, _ = await self.collect_appeal_responses(
+                    {
+                        "denial_id": 15,
+                        "email": email,
+                        "semi_sekret": denial.semi_sekret,
+                    }
+                )
+                init = [m for m in status_messages if m.get("phase") == "init"]
+                done = [m for m in status_messages if m.get("phase") == "done"]
+                assert init and init[0].get("generation_id"), status_messages
+                assert done, status_messages
+                assert done[0].get("generation_id") == init[0].get("generation_id")
+                assert "make_appeals_seconds" in done[0]
+            finally:
+                await Denial.objects.filter(denial_id=15).adelete()
+
+        async_to_sync(test)()
+
+    @pytest.mark.django_db
     @patch(
         "fighthealthinsurance.common_view_logic.get_rag_context_for_denial",
         new_callable=AsyncMock,

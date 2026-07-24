@@ -468,6 +468,69 @@ class TestContextOnlyModelFlag(unittest.TestCase):
         self.assertNotIn(context_model, backends)
 
 
+class TestMLRouterSummarize(unittest.TestCase):
+    """MLRouter.summarize gates the external model on use_external so PHI
+    (e.g. a long denial letter) is never sent externally for an opt-out
+    denial, and caps input size via max_input_chars."""
+
+    def setUp(self):
+        self.router = MLRouter()
+
+    async def async_test_use_external_false_never_selects_gemma(self):
+        gemma = AsyncMock(spec=RemoteModelLike)
+        gemma._infer_no_context.return_value = "external summary"
+        internal = AsyncMock(spec=RemoteModelLike)
+        internal._infer_no_context.return_value = "internal summary"
+        self.router.models_by_name = {"google/gemma-4-26B-A4B-it": [gemma]}
+        self.router.internal_models_by_cost = [internal]
+
+        result = await self.router.summarize(
+            "denial letter", "some text", use_external=False
+        )
+
+        gemma._infer_no_context.assert_not_called()
+        internal._infer_no_context.assert_called_once()
+        self.assertEqual(result, "internal summary")
+
+    def test_use_external_false_never_selects_gemma(self):
+        asyncio.run(self.async_test_use_external_false_never_selects_gemma())
+
+    async def async_test_use_external_true_prefers_gemma(self):
+        gemma = AsyncMock(spec=RemoteModelLike)
+        gemma._infer_no_context.return_value = "external summary"
+        internal = AsyncMock(spec=RemoteModelLike)
+        self.router.models_by_name = {"google/gemma-4-26B-A4B-it": [gemma]}
+        self.router.internal_models_by_cost = [internal]
+
+        with patch.object(self.router, "_external_selectable", return_value=True):
+            result = await self.router.summarize(
+                "article", "text", use_external=True
+            )
+
+        gemma._infer_no_context.assert_called_once()
+        self.assertEqual(result, "external summary")
+
+    def test_use_external_true_prefers_gemma(self):
+        asyncio.run(self.async_test_use_external_true_prefers_gemma())
+
+    async def async_test_max_input_chars_caps_source_text(self):
+        internal = AsyncMock(spec=RemoteModelLike)
+        internal._infer_no_context.return_value = "summary"
+        self.router.internal_models_by_cost = [internal]
+
+        long_text = "B" * 5000
+        await self.router.summarize(
+            "denial", long_text, use_external=False, max_input_chars=100
+        )
+
+        prompt = internal._infer_no_context.call_args.kwargs.get("prompt", "")
+        self.assertIn("B" * 100, prompt)
+        self.assertNotIn("B" * 101, prompt)
+
+    def test_max_input_chars_caps_source_text(self):
+        asyncio.run(self.async_test_max_input_chars_caps_source_text())
+
+
 class TestMLRouterSummarizeChatHistory(unittest.TestCase):
     """Tests for MLRouter.summarize_chat_history method."""
 

@@ -17,7 +17,10 @@ from unittest.mock import patch, AsyncMock, MagicMock
 
 import pytest
 
-from fighthealthinsurance.websockets import log_zero_appeal_diagnostics
+from fighthealthinsurance.websockets import (
+    _AppealGenTraceFields,
+    log_zero_appeal_diagnostics,
+)
 
 
 def _make_count_mock(return_value=None, side_effect=None):
@@ -238,3 +241,97 @@ async def test_stream_error_appended_to_log():
         )
 
     assert "stream_error=connection reset" in captured[-1]
+
+
+@pytest.mark.asyncio
+async def test_generation_trace_fields_appear_in_log():
+    """The generation-trace fields (gen_id / timing / model / shed tier) must
+    be threaded into the log so a client report joins to the server trace."""
+    objects = _make_count_mock(return_value=0)
+    p1, p2 = _patch_models(objects)
+    log_cm, captured = _captured_logger()
+    with p1, p2, log_cm:
+        await log_zero_appeal_diagnostics(
+            denial_id=42,
+            status_count=3,
+            last_status_phase="generating",
+            transport="websocket",
+            generation_id="abc123def456",
+            make_appeals_seconds=142.4,
+            first_model="fhi-legacy",
+            shed_tier=2,
+        )
+
+    msg = captured[-1]
+    # Shared searchable tag so client + server appeal failures group together.
+    assert "APPEAL_GEN_DIAG" in msg
+    assert "gen_id=abc123def456" in msg
+    assert "make_appeals_s=142.4" in msg
+    assert "first_model=fhi-legacy" in msg
+    assert "shed_tier=2" in msg
+
+
+@pytest.mark.asyncio
+async def test_appeal_gen_diag_tag_present_on_all_branches():
+    """Every zero-appeal branch carries the APPEAL_GEN_DIAG tag."""
+    for persisted in (5, 0):
+        objects = _make_count_mock(return_value=persisted)
+        p1, p2 = _patch_models(objects)
+        log_cm, captured = _captured_logger()
+        with p1, p2, log_cm:
+            await log_zero_appeal_diagnostics(
+                denial_id=42,
+                status_count=1,
+                last_status_phase="generating",
+                transport="websocket",
+            )
+        assert "APPEAL_GEN_DIAG" in captured[-1]
+
+
+class TestAppealGenTraceFields:
+    """_AppealGenTraceFields parses the generation-trace fields off the status
+    frames both transports stream, keeping that frame-shape knowledge in one
+    place."""
+
+    def test_captures_generation_id_from_init_frame(self):
+        f = _AppealGenTraceFields()
+        f.update_from_frame(
+            {"type": "status", "phase": "init", "generation_id": "gen-xyz"}
+        )
+        assert f.as_kwargs()["generation_id"] == "gen-xyz"
+
+    def test_captures_timing_and_model_from_done_frame(self):
+        f = _AppealGenTraceFields()
+        f.update_from_frame(
+            {
+                "type": "status",
+                "phase": "done",
+                "generation_id": "gen-xyz",
+                "make_appeals_seconds": 12.3,
+                "first_model": "fhi-2025",
+                "shed_tier": 1,
+            }
+        )
+        kw = f.as_kwargs()
+        assert kw == {
+            "generation_id": "gen-xyz",
+            "make_appeals_seconds": 12.3,
+            "first_model": "fhi-2025",
+            "shed_tier": 1,
+        }
+
+    def test_first_model_none_sentinel_is_normalized_to_none(self):
+        """The done frame sends first_model='none' when no model won; that
+        sentinel must not leak into the log as a literal model name."""
+        f = _AppealGenTraceFields()
+        f.update_from_frame(
+            {"type": "status", "phase": "done", "first_model": "none", "shed_tier": None}
+        )
+        assert f.as_kwargs()["first_model"] is None
+
+    def test_non_done_frames_leave_timing_unset(self):
+        f = _AppealGenTraceFields()
+        f.update_from_frame({"type": "status", "phase": "generating"})
+        kw = f.as_kwargs()
+        assert kw["make_appeals_seconds"] is None
+        assert kw["first_model"] is None

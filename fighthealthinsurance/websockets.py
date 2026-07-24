@@ -105,12 +105,57 @@ def _get_client_ip_from_scope(scope: Optional[dict] = None) -> Optional[str]:
     return None
 
 
+class _AppealGenTraceFields:
+    """Accumulates generation-trace fields off the status frames as they
+    stream past, so both the WebSocket consumer and the REST fallback thread
+    the same ``gen_id``/timing/model into ``log_zero_appeal_diagnostics``
+    without duplicating the frame-shape knowledge.
+
+    The init frame carries ``generation_id`` (captured before any timeout);
+    the done frame carries ``make_appeals_seconds``/``first_model``/
+    ``shed_tier``.
+    """
+
+    __slots__ = ("generation_id", "make_appeals_seconds", "first_model", "shed_tier")
+
+    def __init__(self) -> None:
+        self.generation_id: Optional[str] = None
+        self.make_appeals_seconds: Optional[float] = None
+        self.first_model: Optional[str] = None
+        self.shed_tier: Optional[int] = None
+
+    def update_from_frame(self, parsed: dict) -> None:
+        gen_id = parsed.get("generation_id")
+        if gen_id is not None:
+            self.generation_id = gen_id
+        if parsed.get("phase") == "done":
+            self.make_appeals_seconds = parsed.get("make_appeals_seconds")
+            # done always sends first_model as a string ("none" when absent);
+            # keep None out of the log unless the server sent a real value.
+            fm = parsed.get("first_model")
+            self.first_model = fm if fm and fm != "none" else None
+            self.shed_tier = parsed.get("shed_tier")
+
+    def as_kwargs(self) -> dict:
+        return {
+            "generation_id": self.generation_id,
+            "make_appeals_seconds": self.make_appeals_seconds,
+            "first_model": self.first_model,
+            "shed_tier": self.shed_tier,
+        }
+
+
 async def log_zero_appeal_diagnostics(
     denial_id: Optional[object],
     status_count: int,
     last_status_phase: Optional[str],
     transport: str,
     stream_error: Optional[str] = None,
+    *,
+    generation_id: Optional[str] = None,
+    make_appeals_seconds: Optional[float] = None,
+    first_model: Optional[str] = None,
+    shed_tier: Optional[int] = None,
 ) -> None:
     """Emit a structured ERROR when an appeal session ends with 0 appeals delivered.
 
@@ -121,6 +166,11 @@ async def log_zero_appeal_diagnostics(
 
     `transport` is "websocket" or "rest" so the same log surfaces both
     delivery paths in alerting.
+
+    The generation-phase fields (`generation_id`, `make_appeals_seconds`,
+    `first_model`, `shed_tier`) come from the done frame the caller parsed;
+    they let this server-side log join to the client's ReportClientError via
+    the shared APPEAL_GEN_DIAG tag + gen_id.
     """
     # Coerce arbitrary JSON values to int for the FK/AutoField lookup.
     # Anything we can't coerce skips the DB cross-reference and just
@@ -158,32 +208,38 @@ async def log_zero_appeal_diagnostics(
             f"{denial_id}: {lookup_error}"
         )
     error_suffix = f" stream_error={stream_error}" if stream_error else ""
+    # Shared trace fields: gen_id ties this to the client report; the timing/
+    # model fields say whether generation ran long or which backend won.
+    gen_suffix = (
+        f" gen_id={generation_id} make_appeals_s={make_appeals_seconds} "
+        f"first_model={first_model} shed_tier={shed_tier}"
+    )
     if persisted_count > 0:
         logger.error(
-            f"[{transport}] Appeal session sent 0 appeals to client BUT "
-            f"server has {persisted_count} ProposedAppeal row(s) for "
-            f"denial {denial_id}. This is a delivery/wire failure, not "
+            f"APPEAL_GEN_DIAG [{transport}] Appeal session sent 0 appeals to "
+            f"client BUT server has {persisted_count} ProposedAppeal row(s) "
+            f"for denial {denial_id}. This is a delivery/wire failure, not "
             f"a generation failure. status_frames={status_count} "
             f"last_phase={last_status_phase} gen_attempts={denial_attempts}"
-            f"{error_suffix}"
+            f"{gen_suffix}{error_suffix}"
         )
     elif persisted_count == 0:
         logger.error(
-            f"[{transport}] Appeal session completed with 0 appeals sent "
-            f"AND 0 ProposedAppeal rows persisted for denial {denial_id}. "
-            f"Generation produced nothing. status_frames={status_count} "
-            f"last_phase={last_status_phase} "
-            f"gen_attempts={denial_attempts}{error_suffix}"
+            f"APPEAL_GEN_DIAG [{transport}] Appeal session completed with 0 "
+            f"appeals sent AND 0 ProposedAppeal rows persisted for denial "
+            f"{denial_id}. Generation produced nothing. "
+            f"status_frames={status_count} last_phase={last_status_phase} "
+            f"gen_attempts={denial_attempts}{gen_suffix}{error_suffix}"
         )
     else:
         # persisted_count == -1: lookup never ran (no/invalid denial_id)
         # or DB call raised. Don't pretend we know the persisted total.
         logger.error(
-            f"[{transport}] Appeal session sent 0 appeals to client; "
-            f"persisted-count lookup unavailable for denial {denial_id} "
-            f"(coerced={denial_id_int!r}). status_frames={status_count} "
-            f"last_phase={last_status_phase} "
-            f"gen_attempts={denial_attempts}{error_suffix}"
+            f"APPEAL_GEN_DIAG [{transport}] Appeal session sent 0 appeals to "
+            f"client; persisted-count lookup unavailable for denial "
+            f"{denial_id} (coerced={denial_id_int!r}). "
+            f"status_frames={status_count} last_phase={last_status_phase} "
+            f"gen_attempts={denial_attempts}{gen_suffix}{error_suffix}"
         )
 
 
@@ -303,6 +359,10 @@ class StreamingAppealsBackend(AsyncWebsocketConsumer):
         appeal_count = 0
         status_count = 0
         last_status_phase: Optional[str] = None
+        # Generation-trace fields parsed off the status frames (init carries
+        # generation_id; done carries timing/model). Forwarded into the
+        # zero-appeal diagnostics so a wire failure joins to the server trace.
+        gen_fields = _AppealGenTraceFields()
         try:
             await asyncio.sleep(1)
             await self.send("\n")
@@ -324,6 +384,7 @@ class StreamingAppealsBackend(AsyncWebsocketConsumer):
                             elif parsed.get("type") == "status":
                                 status_count += 1
                                 last_status_phase = parsed.get("phase")
+                                gen_fields.update_from_frame(parsed)
                     except (json.JSONDecodeError, TypeError):
                         pass
             if appeal_count == 0:
@@ -336,6 +397,7 @@ class StreamingAppealsBackend(AsyncWebsocketConsumer):
                     status_count=status_count,
                     last_status_phase=last_status_phase,
                     transport="websocket",
+                    **gen_fields.as_kwargs(),
                 )
             else:
                 logger.debug(
@@ -354,6 +416,7 @@ class StreamingAppealsBackend(AsyncWebsocketConsumer):
                     last_status_phase=last_status_phase,
                     transport="websocket",
                     stream_error=str(e),
+                    **gen_fields.as_kwargs(),
                 )
             raise
         finally:

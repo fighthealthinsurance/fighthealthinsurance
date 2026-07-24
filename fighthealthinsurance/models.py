@@ -2371,6 +2371,11 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     ml_citation_context = models.JSONField(null=True, blank=True)
     # ML-generated summary of relevant plan document sections
     plan_documents_summary = models.TextField(null=True, blank=True)
+    # ML-generated condensed version of denial_text, cached and used as a
+    # prompt substitute ONLY when the raw denial letter is very large (see
+    # MLAppealContextHelper.maybe_summarize_denial_text). Null for normal
+    # denials, where the full denial_text is preferred.
+    denial_text_summary = models.TextField(null=True, blank=True)
     manual_deidentified_denial = models.TextField(
         primary_key=False, null=True, default=""
     )
