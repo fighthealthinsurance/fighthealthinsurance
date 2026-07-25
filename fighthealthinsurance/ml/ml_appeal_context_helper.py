@@ -6,6 +6,16 @@ including it verbatim risks overflowing the model's context window (which
 otherwise fails silently -> 0 appeals), summarize it once, cache the summary
 on the denial, and use the summary as a prompt substitute. Normal-sized
 denials are never summarized -- the full ``denial_text`` is always preferred.
+
+Two entry points share the summarization core:
+  - ``maybe_summarize_denial_text`` (live flow) returns the summary to
+    substitute into the prompt, preferring the cached real summary, then a
+    pre-warmed candidate, else computing one and caching it as the real
+    summary.
+  - ``prewarm_candidate_denial_text_summary`` (background speculative
+    precompute) computes the summary into the SEPARATE
+    ``candidate_denial_text_summary`` field so it never clobbers a summary the
+    live flow may compute for itself.
 """
 
 from typing import Optional
@@ -31,26 +41,78 @@ class MLAppealContextHelper:
     DENIAL_TEXT_SUMMARY_INPUT_MAX_CHARS = 60000
 
     @classmethod
+    def _needs_summary(cls, denial: Denial) -> bool:
+        """True only for a denial long enough to risk context overflow. Normal
+        denials return False so the full ``denial_text`` is preferred."""
+        denial_text = denial.denial_text
+        if not denial_text:
+            return False
+        return estimate_tokens(denial_text) >= cls.DENIAL_TEXT_SUMMARY_THRESHOLD_TOKENS
+
+    @classmethod
+    async def _call_summarizer(cls, denial: Denial) -> Optional[str]:
+        """Run the ML summarizer over ``denial_text``; return the summary or
+        ``None`` on empty/failure. Assumes the caller already applied the
+        length threshold.
+
+        Privacy: routes through ``ml_router.summarize`` with
+        ``use_external=denial.use_external`` so an opt-out denial never sends
+        its (PHI-bearing) letter to an external provider.
+        """
+        denial_id = denial.denial_id
+        try:
+            summary: Optional[str] = await ml_router.summarize(
+                title=(
+                    "health insurance denial letter (preserve the denied "
+                    "service/procedure, the payer's stated denial reason(s), "
+                    "and any codes, dates, and claim/plan identifiers)"
+                ),
+                text=denial.denial_text,
+                use_external=denial.use_external,
+                max_input_chars=cls.DENIAL_TEXT_SUMMARY_INPUT_MAX_CHARS,
+            )
+        except Exception as e:
+            logger.opt(exception=True).warning(
+                f"Failed to summarize long denial_text for denial " f"{denial_id}: {e}"
+            )
+            return None
+        if not summary:
+            logger.warning(
+                f"denial_text summarization returned nothing for denial "
+                f"{denial_id}; falling back to full text"
+            )
+            return None
+        return summary
+
+    @classmethod
+    async def _cache_summary(cls, denial_id, **fields) -> None:
+        """Best-effort cache of computed summary field(s) onto the denial row.
+        A failure here is non-fatal: the caller still uses the summary it just
+        computed."""
+        try:
+            await Denial.objects.filter(denial_id=denial_id).aupdate(**fields)
+        except Exception as e:
+            logger.opt(exception=True).warning(
+                f"Failed to cache {list(fields)} for denial " f"{denial_id}: {e}"
+            )
+
+    @classmethod
     async def maybe_summarize_denial_text(cls, denial: Denial) -> Optional[str]:
         """Return a condensed denial_text to substitute into the prompt, or
         ``None`` to use the full text.
 
         Returns ``None`` (keep full context) when the denial text is missing
         or below ``DENIAL_TEXT_SUMMARY_THRESHOLD_TOKENS``. Above the threshold
-        it returns the cached ``denial.denial_text_summary`` if present,
-        otherwise generates one, persists it, and returns it. On any failure
-        it returns ``None`` so generation proceeds with the full text (the
-        reactive shed ladder in make_appeals remains the backstop).
-
-        Privacy: summarization routes through ``ml_router.summarize`` with
-        ``use_external=denial.use_external`` so an opt-out denial never sends
-        its (PHI-bearing) letter to an external provider.
+        it returns, in order of preference: the cached
+        ``denial.denial_text_summary``; a pre-warmed
+        ``denial.candidate_denial_text_summary`` (promoted into the real field
+        so later reads short-circuit); otherwise a freshly computed summary,
+        persisted. On any failure it returns ``None`` so generation proceeds
+        with the full text (the reactive shed ladder in make_appeals remains
+        the backstop).
         """
-        denial_text = denial.denial_text
-        if not denial_text:
-            return None
-        if estimate_tokens(denial_text) < cls.DENIAL_TEXT_SUMMARY_THRESHOLD_TOKENS:
-            # Prefer full context for normal-sized denials.
+        if not cls._needs_summary(denial):
+            # Prefer full context for missing/normal-sized denials.
             return None
 
         denial_id = denial.denial_id
@@ -61,41 +123,55 @@ class MLAppealContextHelper:
             )
             return denial.denial_text_summary
 
-        try:
-            summary: Optional[str] = await ml_router.summarize(
-                title=(
-                    "health insurance denial letter (preserve the denied "
-                    "service/procedure, the payer's stated denial reason(s), "
-                    "and any codes, dates, and claim/plan identifiers)"
-                ),
-                text=denial_text,
-                use_external=denial.use_external,
-                max_input_chars=cls.DENIAL_TEXT_SUMMARY_INPUT_MAX_CHARS,
+        # Promote a pre-warmed candidate summary (from the speculative
+        # precompute) into the real field so the live flow reuses it instead of
+        # recomputing -- the whole point of pre-warming.
+        candidate = denial.candidate_denial_text_summary
+        if candidate:
+            logger.info(
+                f"Denial {denial_id} promoting pre-warmed candidate "
+                f"denial_text_summary ({len(candidate)} chars)"
             )
-        except Exception as e:
-            logger.opt(exception=True).warning(
-                f"Failed to summarize long denial_text for denial " f"{denial_id}: {e}"
-            )
-            return None
+            await cls._cache_summary(denial_id, denial_text_summary=candidate)
+            return candidate
 
+        summary = await cls._call_summarizer(denial)
         if not summary:
-            logger.warning(
-                f"denial_text summarization returned nothing for denial "
-                f"{denial_id}; falling back to full text"
-            )
             return None
-
-        try:
-            await Denial.objects.filter(denial_id=denial_id).aupdate(
-                denial_text_summary=summary
-            )
-        except Exception as e:
-            # Caching is best-effort; still use the summary we just computed.
-            logger.opt(exception=True).warning(
-                f"Failed to cache denial_text_summary for denial " f"{denial_id}: {e}"
-            )
+        await cls._cache_summary(denial_id, denial_text_summary=summary)
         logger.info(
             f"Summarized long denial_text for denial {denial_id} "
-            f"({len(denial_text)} -> {len(summary)} chars) to fit context window"
+            f"({len(denial.denial_text)} -> {len(summary)} chars) to fit "
+            f"context window"
+        )
+        return summary
+
+    @classmethod
+    async def prewarm_candidate_denial_text_summary(
+        cls, denial: Denial
+    ) -> Optional[str]:
+        """Speculative precompute path: compute a condensed denial_text into the
+        SEPARATE ``candidate_denial_text_summary`` field (never the real one) so
+        a later long-denial live request finds it pre-warmed.
+
+        No-op (returns the existing value or ``None``) for normal-sized denials
+        or when any summary already exists, so it's safe to call idempotently
+        from the background job. Never raises.
+        """
+        if not cls._needs_summary(denial):
+            return None
+        denial_id = denial.denial_id
+        # Don't recompute if the real flow already produced one, or we already
+        # pre-warmed a candidate.
+        if denial.denial_text_summary or denial.candidate_denial_text_summary:
+            return denial.denial_text_summary or denial.candidate_denial_text_summary
+
+        summary = await cls._call_summarizer(denial)
+        if not summary:
+            return None
+        await cls._cache_summary(denial_id, candidate_denial_text_summary=summary)
+        logger.info(
+            f"Pre-warmed candidate denial_text_summary for denial {denial_id} "
+            f"({len(denial.denial_text)} -> {len(summary)} chars)"
         )
         return summary

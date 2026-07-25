@@ -57,7 +57,10 @@ from fighthealthinsurance import stripe_utils
 from fighthealthinsurance.context_barrier import warm_then_fetch
 from fighthealthinsurance.context_utils import (
     attach_supplemental_to_citations,
+    CONTEXT_LEVEL_SPECULATIVE,
     CONTEXT_LEVEL_SYNTHESIZED,
+    CONTEXT_LEVEL_TIER1_SHED,
+    CONTEXT_LEVEL_TIER2_SHED,
     summarize_denial_context_tokens,
 )
 from fighthealthinsurance.denial_context import merge_plan_context, merge_qa
@@ -3734,6 +3737,12 @@ class AppealsBackendHelper:
             )
             if is_real_appeal(pa.appeal_text)
         ]
+        # Everything streamed so far this run is persisted speculative=False
+        # (existing rows + drafts saved during streaming), so saved_appeal_texts
+        # is exactly the set already sent. Track it (by normalized raw text) and
+        # grow it as synthesis / the end-of-flow reconciliation serve more, so
+        # nothing is shipped twice.
+        served_texts: set[str] = {s.strip() for s in saved_appeal_texts if s}
         # Synthesis requires >=2 drafts to be meaningful: with a single
         # input, models often regurgitate it verbatim. The client dedupes
         # by content, so a verbatim copy gets silently dropped, which then
@@ -3794,8 +3803,7 @@ class AppealsBackendHelper:
                         # can still pick one verbatim. Skip the yield in
                         # that case rather than ship a known duplicate.
                         normalized = synthesized.strip()
-                        existing_normalized = {s.strip() for s in saved_appeal_texts}
-                        if normalized in existing_normalized:
+                        if normalized in served_texts:
                             logger.info(
                                 "Synthesis returned a verbatim copy of an input draft; skipping yield"
                             )
@@ -3811,6 +3819,7 @@ class AppealsBackendHelper:
                             subbed = await sub_in_appeals(saved)
                             subbed["synthesized"] = "true"
                             yield await format_response(subbed)
+                            served_texts.add(normalized)
                             new += 1
                             logger.info(
                                 f"Synthesized appeal generated from {len(saved_appeal_texts)} drafts"
@@ -3820,68 +3829,57 @@ class AppealsBackendHelper:
             except Exception:
                 logger.opt(exception=True).warning("Final appeal synthesis failed")
 
-        # --- Speculative fallback ---
-        # Serve the held-back, internal-only precompute (built at denial
-        # creation from the raw denial text) when EITHER the live run
-        # underdelivered (< ENOUGH_APPEALS) OR the workflow gathered no
-        # additional research data (so the live drafts aren't materially richer
-        # than the speculative ones). Promoted rows are flipped to
-        # non-speculative so they persist as real appeals and future calls
-        # serve them as existing. Runs before the zero/underdelivery logging
-        # and the done frame so the counts stay truthful.
+        # --- End-of-flow reconciliation ---
+        # One final DB read (both WS and REST run through this generator, so
+        # both get it) to catch any real appeals that landed but weren't
+        # streamed. The background speculative precompute writes asynchronously
+        # and can land rows mid-flight; a slow/late model draft can too. We
+        # serve anything we haven't already sent, with one gate:
+        #   - "mini"/restricted rows -- the reduced-context precompute
+        #     (speculative) and the shed tiers (tier1/tier2) -- are served ONLY
+        #     while under threshold (< ENOUGH_APPEALS delivered). Once the user
+        #     has enough real drafts, padding with weaker reduced-context ones
+        #     adds no value, so we stop.
+        #   - full drafts that landed late are always served (they're real
+        #     appeals we generated, just not streamed in time).
+        # Served speculative rows are flipped to non-speculative so they persist
+        # as real appeals and later calls serve them as existing. Runs before
+        # the zero/underdelivery logging and the done frame so the counts stay
+        # truthful. Dedup is by normalized raw text via served_texts.
         ENOUGH_APPEALS = 3
-        underdelivered = (new + old) < ENOUGH_APPEALS
-        gathered_extra_data = bool(
-            any(
-                [
-                    pubmed_context,
-                    ml_citation_context,
-                    rag_context,
-                    nice_context,
-                    imr_context,
-                    pa_context,
-                    uspstf_context,
-                    clinical_trials_context,
-                    denial.plan_documents_summary,
-                ]
-            )
-        )
-        # gen_attempts >= 3 skips the research phase entirely: nothing new was
-        # gathered this workflow regardless of any stale cache.
-        no_extra_data = (denial.gen_attempts or 0) >= 3 or not gathered_extra_data
-        if underdelivered or no_extra_data:
-            # Dedup against everything already produced this run, mirroring the
-            # synthesis verbatim-copy guard so we never ship a known duplicate.
-            # ``saved_appeal_texts`` already holds exactly the non-speculative
-            # real appeals for this denial (existing rows + drafts persisted
-            # during streaming), so reuse it instead of re-querying the DB.
-            already_served: set[str] = {s.strip() for s in saved_appeal_texts if s}
-            served_speculative = 0
-            async for spec in ProposedAppeal.objects.filter(
-                for_denial=denial, speculative=True
-            ).all():
-                text = spec.appeal_text
-                if not is_real_appeal(text):
-                    continue
-                normalized = str(text).strip()
-                if normalized in already_served:
-                    continue
+        MINI_LEVELS = {
+            CONTEXT_LEVEL_SPECULATIVE,
+            CONTEXT_LEVEL_TIER1_SHED,
+            CONTEXT_LEVEL_TIER2_SHED,
+        }
+        reconciled = 0
+        async for row in ProposedAppeal.objects.filter(for_denial=denial).all():
+            text = row.appeal_text
+            if not is_real_appeal(text):
+                continue
+            normalized = str(text).strip()
+            if normalized in served_texts:
+                continue
+            is_mini = bool(row.speculative) or row.context_level in MINI_LEVELS
+            # Re-evaluate the threshold each iteration: serving increments new.
+            if is_mini and (new + old) >= ENOUGH_APPEALS:
+                continue
+            if row.speculative:
                 # Promote to a real appeal so it persists and later calls serve
                 # it as existing.
-                spec.speculative = False
-                await spec.asave(update_fields=["speculative"])
-                spec_dict = await sub_in_appeals({"id": str(spec.id), "content": text})
-                yield await format_response(spec_dict)
-                already_served.add(normalized)
-                new += 1
-                served_speculative += 1
-            if served_speculative:
-                logger.info(
-                    f"[gen_id={generation_id}] served {served_speculative} "
-                    f"speculative fallback appeal(s) for denial {denial_id} "
-                    f"(underdelivered={underdelivered}, "
-                    f"no_extra_data={no_extra_data})"
-                )
+                row.speculative = False
+                await row.asave(update_fields=["speculative"])
+            row_dict = await sub_in_appeals({"id": str(row.id), "content": text})
+            yield await format_response(row_dict)
+            served_texts.add(normalized)
+            new += 1
+            reconciled += 1
+        if reconciled:
+            logger.info(
+                f"[gen_id={generation_id}] end-of-flow reconciliation served "
+                f"{reconciled} late/held-back appeal(s) for denial {denial_id} "
+                f"(new={new}, old={old})"
+            )
 
         # runt_count=0 means models were silent; >0 means models produced
         # only too-short outputs — different root causes for incident review.

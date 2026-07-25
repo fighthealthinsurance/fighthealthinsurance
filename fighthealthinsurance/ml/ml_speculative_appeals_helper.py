@@ -10,8 +10,9 @@ excluded from the normal serving/synthesis/attribution queries -- until the
 live generation run underdelivers or gathered no extra data, at which point
 they're promoted as a fallback (see AppealsBackendHelper.generate_appeals).
 
-We also warm the denial summary (``denial_text_summary``) so the over-long
-context path has it ready.
+We also pre-warm the denial summary into the separate
+``candidate_denial_text_summary`` field so the over-long context path has it
+ready (the live flow promotes it into ``denial_text_summary`` on first use).
 
 The heavy lifting is synchronous (``AppealGenerator.make_appeals`` is a plain
 sync iterator), so this helper is sync and is called either from the
@@ -135,9 +136,15 @@ class SpeculativeAppealsHelper:
                         f"denial {denial_id}: {e}"
                     )
 
-            # Warm the denial summary (a no-op unless the letter is very long).
+            # Pre-warm the denial summary into the SEPARATE candidate field (a
+            # no-op unless the letter is very long). Kept out of the real
+            # denial_text_summary so it never clobbers a summary the live flow
+            # may compute for itself; the live flow promotes the candidate on
+            # first use.
             try:
-                async_to_sync(MLAppealContextHelper.maybe_summarize_denial_text)(denial)
+                async_to_sync(
+                    MLAppealContextHelper.prewarm_candidate_denial_text_summary
+                )(denial)
             except Exception as e:
                 logger.opt(exception=True).warning(
                     f"speculative appeals: denial-summary warm failed for "

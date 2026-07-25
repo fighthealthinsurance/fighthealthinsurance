@@ -659,8 +659,10 @@ class TestCommonViewLogic(TestCase):
     def test_speculative_not_served_when_live_run_delivers_enough(
         self, mock_appeal_generator
     ):
-        """When the live run delivers enough appeals AND enrichment was
-        gathered, the speculative reserve stays held back."""
+        """When the live run delivers enough appeals (>= threshold), the
+        held-back speculative reserve is a "mini" row and stays held back --
+        padding an already-sufficient result with weaker reduced-context drafts
+        adds no value."""
         email, denial = self._create_test_denial(17, gen_attempts=3)
         ProposedAppeal.objects.create(
             for_denial=denial,
@@ -668,10 +670,11 @@ class TestCommonViewLogic(TestCase):
             speculative=True,
             context_level="speculative",
         )
-        # No fallback trigger: gen_attempts < 3 (so the skip-research trigger is
-        # off) and a plan-documents summary present (so gathered_extra_data is
-        # True). The live run below delivers 3 appeals, so underdelivered is
-        # False too.
+        # The live run below delivers 3 appeals, so we're at/over threshold and
+        # the mini/speculative reserve is not served. gen_attempts=0 keeps the
+        # research phase on; the enrichment sources are patched to None below
+        # purely for test isolation (no real ML calls), not because the gate
+        # depends on them anymore.
         Denial.objects.filter(denial_id=17).update(
             plan_documents_summary="Some gathered plan context.", gen_attempts=0
         )
@@ -720,6 +723,49 @@ class TestCommonViewLogic(TestCase):
                 self.assertTrue(spec.speculative)
             finally:
                 await Denial.objects.filter(denial_id=17).adelete()
+
+        async_to_sync(test)()
+
+    @pytest.mark.django_db
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_reconciliation_caps_mini_rows_at_threshold(self, mock_appeal_generator):
+        """When the live run underdelivers, held-back speculative ("mini") rows
+        are promoted only up to the threshold; the surplus stays held back."""
+        email, denial = self._create_test_denial(18, gen_attempts=3)
+        for i in range(5):
+            ProposedAppeal.objects.create(
+                for_denial=denial,
+                appeal_text=(
+                    f"Speculative reserve appeal number {i} with sufficient length."
+                ),
+                speculative=True,
+                context_level="speculative",
+            )
+        # Live run produces nothing -> heavily underdelivered.
+        mock_appeal_generator.make_appeals.return_value = iter([])
+
+        async def test():
+            try:
+                status_messages, _, _ = await self.collect_appeal_responses(
+                    {
+                        "denial_id": 18,
+                        "email": email,
+                        "semi_sekret": denial.semi_sekret,
+                    }
+                )
+                done = [m for m in status_messages if m.get("phase") == "done"][0]
+                # Exactly ENOUGH_APPEALS (3) promoted, not all 5.
+                self.assertEqual(done["new_appeals"], 3)
+                promoted = await ProposedAppeal.objects.filter(
+                    for_denial=denial, speculative=False
+                ).acount()
+                held = await ProposedAppeal.objects.filter(
+                    for_denial=denial, speculative=True
+                ).acount()
+                self.assertEqual(promoted, 3)
+                self.assertEqual(held, 2)
+            finally:
+                await Denial.objects.filter(denial_id=18).adelete()
 
         async_to_sync(test)()
 

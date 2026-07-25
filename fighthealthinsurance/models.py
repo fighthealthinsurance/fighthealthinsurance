@@ -2403,6 +2403,12 @@ class Denial(ExportModelOperationsMixin("Denial"), models.Model):  # type: ignor
     candidate_diagnosis = models.CharField(max_length=300, null=True, blank=True)
     candidate_generated_questions = models.JSONField(null=True, blank=True)
     candidate_ml_citation_context = models.JSONField(null=True, blank=True)
+    # Speculative/pre-warmed condensed denial_text produced by the background
+    # precompute at denial-creation time (internal-model-only). Kept separate
+    # from denial_text_summary so it never clobbers a summary the live flow may
+    # compute for itself; maybe_summarize_denial_text promotes it into
+    # denial_text_summary on first use. Null for normal-sized denials.
+    candidate_denial_text_summary = models.TextField(null=True, blank=True)
     gen_attempts = models.IntegerField(null=True, default=0)
     # Track which microsite the user came from (if any)
     microsite_slug = models.CharField(
