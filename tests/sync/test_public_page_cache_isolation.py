@@ -25,8 +25,11 @@ from django.contrib.messages import get_messages
 from django.core.cache import cache
 from django.middleware.cache import CacheMiddleware
 from django.test import Client, SimpleTestCase, TestCase, override_settings
-from django.urls import get_resolver, reverse
+from django.urls import get_resolver, resolve, reverse
+from django.utils.decorators import method_decorator
 from django.utils.html import escape
+from django.views import generic
+from django.views.decorators.cache import cache_page
 
 from fighthealthinsurance.views import GlossaryIndexView, PublicCachedPageMixin
 
@@ -201,9 +204,11 @@ def _wraps_cache_page(callback) -> bool:
     accepts the class itself for older Django, regardless of how many other
     decorators (``cache_control``, ``csrf_exempt``, …) are layered on top.
 
-    ``dispatch`` is followed too, so a view cached with
-    ``method_decorator(cache_page(...), name="dispatch")`` — where the wrapping
-    lives on the class rather than on the URLconf callback — is still detected.
+    ``method_decorator(cache_page(...), name="dispatch")`` — the form the Django
+    docs recommend for CBVs — needs the sequence expansion below: it applies its
+    decorators per *call*, so no middleware instance exists at import time and
+    the only static reference is the decorator *list* held in a closure cell.
+    ``test_detector_sees_cache_page_behind_method_decorator`` enforces this.
     """
     seen: set[int] = set()
     retained: list[object] = []  # keep ids unique: a freed object's id can recur
@@ -216,10 +221,14 @@ def _wraps_cache_page(callback) -> bool:
         retained.append(obj)
         if obj is CacheMiddleware or isinstance(obj, CacheMiddleware):
             return True
+        if isinstance(obj, (list, tuple, set, frozenset)):
+            stack.extend(obj)
+            continue
         if not callable(obj):
             continue
         stack.append(getattr(obj, "__wrapped__", None))
-        # Only meaningful when obj is a view class; plain functions have none.
+        # Catches the class-body form `dispatch = cache_page(60)(fn)`. The
+        # method_decorator form is reached via the sequence expansion above.
         stack.append(getattr(obj, "dispatch", None))
         for cell in getattr(obj, "__closure__", None) or ():
             try:
@@ -238,6 +247,40 @@ class CachedRouteStructureTest(SimpleTestCase):
     context without chaining ``super()``. This test needs no list — it walks the
     real URLconf, so a cached route added tomorrow is covered the day it lands.
     """
+
+    def test_detector_sees_cache_page_behind_method_decorator(self):
+        """The detector must catch the CBV form the Django docs recommend.
+
+        Without this, a page cached via ``method_decorator`` would be reported
+        as uncached and skipped entirely — the test would pass while the leak
+        shipped.
+        """
+
+        @method_decorator(cache_page(60), name="dispatch")
+        class MethodDecoratedView(generic.TemplateView):
+            template_name = "about_us.html"
+
+        self.assertTrue(_wraps_cache_page(MethodDecoratedView.as_view()))
+
+    def test_detector_does_not_flag_an_uncached_view(self):
+        """A plain view must not be flagged, or the mixin check means nothing."""
+
+        class PlainView(generic.TemplateView):
+            template_name = "about_us.html"
+
+        self.assertFalse(_wraps_cache_page(PlainView.as_view()))
+
+    def test_detector_finds_every_hand_listed_cached_route(self):
+        """Detection must cover the known routes by identity, not just by count.
+
+        The count floor alone is satisfiable by the StaticIshView routes, so it
+        would stay green even if detection broke for every route decorated in
+        urls.py.
+        """
+        for route_name, kwargs in CACHED_PUBLIC_ROUTES:
+            with self.subTest(route=route_name):
+                view = resolve(reverse(route_name, kwargs=kwargs)).func
+                self.assertTrue(_wraps_cache_page(view))
 
     def test_every_cached_view_extends_public_cached_page_mixin(self):
         cached_routes = []

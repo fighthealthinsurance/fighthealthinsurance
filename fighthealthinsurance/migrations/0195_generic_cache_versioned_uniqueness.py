@@ -1,9 +1,20 @@
 # Versioned uniqueness for the generic ML caches.
 #
-# GenericContextGeneration / GenericQuestionGeneration previously had no
-# uniqueness on (procedure, diagnosis), so concurrent cache misses could
+# GenericContextGeneration / GenericQuestionGeneration have had no uniqueness
+# on (procedure, diagnosis) since 0113, so concurrent cache misses could
 # insert duplicate rows — and once duplicates exist, update_or_create raises
 # MultipleObjectsReturned, permanently breaking the cache write for that pair.
+#
+# History worth knowing before re-adding this: 0112 created both models WITH
+# `unique_together = {("procedure", "diagnosis")}` (2025-04-09), and 0113
+# dropped it the next morning (2025-04-10) with no recorded rationale. This
+# migration is not a straight revert of that decision. The constraint here
+# includes `version`, so regenerating under a new CURRENT_VERSION no longer
+# collides with the old row, and — unlike 0112 — the calling code is written
+# for a constrained table: the helpers use update_or_create (which retries on
+# IntegrityError internally) and read with .afirst(), so neither a lost race
+# nor a surviving duplicate can raise. If 0113 was reverting insert failures
+# under the bare 2-column constraint, that failure mode is now handled.
 #
 # This migration is deliberately safe to run on databases that already contain
 # duplicates:

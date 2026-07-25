@@ -34,6 +34,13 @@ def _questions_worth_caching(questions: Sequence[Sequence[Any]]) -> bool:
     and, when stale cached content exists, whether a regeneration is worth
     serving over it; with no stale content the caller still receives whatever
     was generated.
+
+    The 10-entry ceiling is a junk signal, not a display cap: the generation
+    prompt asks for "the best one to three" questions (see ml_models.py), so a
+    response with more than ten has ignored its instructions and is not
+    something to pin in a cache shared by every future patient with this
+    procedure/diagnosis. Deliberately generous (3x+ the requested maximum) so
+    an ordinarily verbose generation still caches.
     """
     if not questions or len(questions) > 10:
         return False

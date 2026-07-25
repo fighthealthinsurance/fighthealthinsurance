@@ -419,9 +419,12 @@ class PublicCachedPageMixin:
     a ``get_context_data``-based hook and left those pages leaking. Every
     TemplateView render funnels through ``render_to_response``, so a subclass
     that forgets to call ``super().get_context_data()`` is still covered. A
-    subclass whose ``get()`` builds an ``HttpResponse`` directly would bypass
-    this — none do, and the structural test named below fails on any cached
-    route whose view class does not inherit this mixin.
+    subclass whose ``get()`` returns a response without rendering does bypass it
+    — ``MicrositeView`` returns a ``redirect()`` on its canonical-slug branch —
+    but that is safe here: ``UpdateCacheMiddleware`` only writes an entry when
+    ``response.status_code == 200``, so a redirect never enters the shared
+    cache, and it carries no session context to leak anyway. Anything that *renders* is covered, and the structural test
+    named below fails on any cached route whose view class omits this mixin.
 
     Regression coverage: ``tests/sync/test_public_page_cache_isolation.py``
     (which runs against a real LocMemCache, since the test settings use
