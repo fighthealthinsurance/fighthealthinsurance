@@ -728,6 +728,50 @@ class TestCommonViewLogic(TestCase):
 
     @pytest.mark.django_db
     @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_reserve_is_served_when_make_appeals_raises(self, mock_appeal_generator):
+        """A raising make_appeals is the likeliest failure the reserve exists
+        for. It used to propagate straight out of the generator, skipping
+        synthesis AND the reconciliation -- so the user got an error even though
+        we had drafts ready. The stream must instead end with a proper done frame
+        carrying the reserve."""
+        email, denial = self._create_test_denial(19, gen_attempts=3)
+        ProposedAppeal.objects.create(
+            for_denial=denial,
+            appeal_text="A reserve appeal held for exactly this failure.",
+            speculative=True,
+            context_level="speculative",
+        )
+        mock_appeal_generator.make_appeals.side_effect = RuntimeError(
+            "every backend is down"
+        )
+
+        async def test():
+            try:
+                status_messages, appeal_contents, _ = (
+                    await self.collect_appeal_responses(
+                        {
+                            "denial_id": 19,
+                            "email": email,
+                            "semi_sekret": denial.semi_sekret,
+                        }
+                    )
+                )
+                done = [m for m in status_messages if m.get("phase") == "done"]
+                self.assertTrue(done, "must still emit a done frame, not blow up")
+                self.assertEqual(done[0]["new_appeals"], 1)
+                self.assertIn(
+                    "A reserve appeal held for exactly this failure.",
+                    " ".join(appeal_contents),
+                )
+                spec = await ProposedAppeal.objects.aget(for_denial=denial)
+                self.assertFalse(spec.speculative, "served rows are promoted")
+            finally:
+                await Denial.objects.filter(denial_id=19).adelete()
+
+        async_to_sync(test)()
+
+    @pytest.mark.django_db
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
     def test_reconciliation_caps_mini_rows_at_threshold(self, mock_appeal_generator):
         """When the live run underdelivers, held-back speculative ("mini") rows
         are promoted only up to the threshold; the surplus stays held back."""

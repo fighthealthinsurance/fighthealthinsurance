@@ -3,7 +3,9 @@
 import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from django.test import TestCase, override_settings
+from django.test import TestCase, TransactionTestCase, override_settings
+
+from fighthealthinsurance.utils import join_fire_and_forget_threads
 
 from fighthealthinsurance.common_view_logic import DenialCreatorHelper
 from fighthealthinsurance.generate_appeal import GeneratedAppeal
@@ -376,3 +378,85 @@ class DispatchOnDenialCreateTest(TestCase):
         existing.refresh_from_db()
         self.assertIsNone(existing.denial_text_summary)
         self.assertIsNone(existing.candidate_denial_text_summary)
+
+
+class SpeculativePrecomputeEndToEndTest(TransactionTestCase):
+    """The whole chain, with the precompute ENABLED and no Ray cluster:
+
+        create_or_update_denial -> dispatch -> real daemon thread
+        -> generate_for_denial_sync -> persisted reserve rows
+
+    Every other test either bypasses the settings gate (calling the helper
+    directly) or mocks the dispatch, so nothing joined those pieces up. That
+    matters because the gate is off in all three Test* configs, which means a
+    break anywhere in this chain would otherwise ship silently.
+
+    TransactionTestCase (not TestCase) because the work runs on a background
+    thread with its own DB connection: inside TestCase's wrapping transaction
+    that thread cannot see the denial the test just created. Only the ML backend
+    is mocked, per the repo's testing guidance.
+    """
+
+    @override_settings(SPECULATIVE_APPEALS_PRECOMPUTE=True)
+    def test_creating_a_denial_precomputes_a_reserve(self):
+        email = "precompute-e2e@example.com"
+        with patch("ray.is_initialized", return_value=False), patch.dict(
+            os.environ, {}, clear=False
+        ):
+            # No cluster configured -> the thread fallback, which is the path
+            # this test exists to exercise.
+            os.environ.pop("RAY_ADDRESS", None)
+            with patch(_UPDATE_DENIAL, return_value=MagicMock()), patch(
+                _MAKE_APPEALS
+            ) as mock_make, patch(
+                _SUMMARIZE, new_callable=AsyncMock, return_value=None
+            ):
+                mock_make.return_value = iter(
+                    [
+                        GeneratedAppeal(
+                            text="A precomputed reserve appeal letter for the denial.",
+                            model_name="fhi-internal",
+                        )
+                    ]
+                )
+                DenialCreatorHelper.create_or_update_denial(
+                    email=email,
+                    denial_text="I was denied a knee MRI for a suspected tear.",
+                    zip="94103",
+                )
+                # Drain inside the patches: the thread must not outlive them and
+                # reach a real ML backend.
+                join_fire_and_forget_threads(timeout=30.0)
+
+        denial = Denial.objects.get(hashed_email=Denial.get_hashed_email(email))
+        reserve = ProposedAppeal.objects.filter(for_denial=denial, speculative=True)
+        self.assertEqual(reserve.count(), 1)
+        self.assertEqual(reserve.first().context_level, "speculative")
+        # The precompute must stay internal-only even end-to-end.
+        self.assertFalse(mock_make.call_args.args[0].use_external)
+
+    @override_settings(SPECULATIVE_APPEALS_PRECOMPUTE=True)
+    def test_precompute_failure_does_not_break_denial_creation(self):
+        """The precompute is best-effort: a backend blowing up must never take
+        the user's denial submission down with it."""
+        email = "precompute-boom@example.com"
+        with patch("ray.is_initialized", return_value=False), patch.dict(
+            os.environ, {}, clear=False
+        ):
+            os.environ.pop("RAY_ADDRESS", None)
+            with patch(_UPDATE_DENIAL, return_value=MagicMock()), patch(
+                _MAKE_APPEALS, side_effect=RuntimeError("backend down")
+            ), patch(_SUMMARIZE, new_callable=AsyncMock, return_value=None):
+                DenialCreatorHelper.create_or_update_denial(
+                    email=email,
+                    denial_text="I was denied physical therapy after surgery.",
+                    zip="94103",
+                )
+                join_fire_and_forget_threads(timeout=30.0)
+
+        # The denial still exists; there is simply no reserve.
+        denial = Denial.objects.get(hashed_email=Denial.get_hashed_email(email))
+        self.assertEqual(
+            ProposedAppeal.objects.filter(for_denial=denial, speculative=True).count(),
+            0,
+        )

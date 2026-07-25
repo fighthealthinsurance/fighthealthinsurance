@@ -3691,16 +3691,34 @@ class AppealsBackendHelper:
 
         make_appeals_seconds = time.monotonic() - gen_started
         appeals: Iterator[GeneratedAppeal]
+        gen_error: Optional[str] = None
         if gen_task.done():
-            # Re-raises here if make_appeals raised — same behavior as the old
-            # bare await.
-            appeals = await gen_task
-            logger.info(
-                f"[gen_id={generation_id}] make_appeals returned in "
-                f"{make_appeals_seconds:.1f}s for denial {denial_id} "
-                f"(winning_stage={make_appeals_diag.get('winning_stage')}, "
-                f"shed_tier={make_appeals_diag.get('shed_tier')})"
-            )
+            try:
+                appeals = await gen_task
+            except Exception as e:
+                # Do NOT let this propagate. make_appeals blowing up is exactly
+                # the case the held-back reserve exists for, and re-raising here
+                # skips the synthesis and end-of-flow reconciliation below --
+                # so the user got nothing even though we had drafts ready for
+                # them. Falling through with an empty iterator reaches the
+                # reconciliation, which serves the reserve, and still ends the
+                # stream with a proper done frame instead of a dirty one. The
+                # failure is not hidden: it is logged here and the zero-appeal
+                # diagnostic (keyed on the pre-reserve count) still fires.
+                gen_error = f"{type(e).__name__}: {e}"
+                logger.opt(exception=True).error(
+                    f"[gen_id={generation_id}] make_appeals raised for denial "
+                    f"{denial_id} after {make_appeals_seconds:.1f}s; falling "
+                    f"through to the reserve. {gen_error}"
+                )
+                appeals = iter([])
+            else:
+                logger.info(
+                    f"[gen_id={generation_id}] make_appeals returned in "
+                    f"{make_appeals_seconds:.1f}s for denial {denial_id} "
+                    f"(winning_stage={make_appeals_diag.get('winning_stage')}, "
+                    f"shed_tier={make_appeals_diag.get('shed_tier')})"
+                )
         else:
             # Exceeded the overall budget while still running. The threadpool
             # thread cannot be cancelled and keeps running in the background
@@ -3987,6 +4005,8 @@ class AppealsBackendHelper:
             if reconciled
             else ""
         )
+        if gen_error:
+            reserve_note += f" gen_error={gen_error}"
         if live_new + old == 0:
             logger.error(
                 f"APPEAL_GEN_DIAG [gen_id={generation_id}] Zero appeals "

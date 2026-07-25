@@ -290,13 +290,15 @@ class FollowUpEmailSender(AsyncEmailSenderMixin):
         email = follow_up_sched.email
         denial = follow_up_sched.denial_id
         selected_appeal = denial.chose_appeal()
-        # Exclude held-back speculative rows: they were precomputed at denial
-        # creation but never shown, so a denial that only received the
-        # speculative precompute (user abandoned before running generation) must
-        # not report that proposals were generated.
+        # Speculative rows COUNT here, unlike in the analytics/attribution
+        # queries. Those ask "what was shown to the user", where a held-back row
+        # would skew win rates. This asks "did we generate anything for this
+        # denial", and the reserve is real generated output that the end-of-flow
+        # reconciliation serves when the live run underdelivers. Excluding it
+        # would send the "we didn't manage to generate a proposal this time"
+        # branch to someone we do in fact have drafts for.
         generated_proposals = (
-            denial.proposedappeal_set.filter(speculative=False)
-            .exclude(appeal_text__isnull=True)
+            denial.proposedappeal_set.exclude(appeal_text__isnull=True)
             .exclude(appeal_text="")
             .exists()
         )
