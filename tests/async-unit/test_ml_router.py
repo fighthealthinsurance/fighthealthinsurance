@@ -556,6 +556,11 @@ class TestMLRouterSummarize(unittest.TestCase):
 
         result = await self.router.summarize("denial", "text", use_external=False)
 
+        # Both must have been tried: without these the test also passes if the
+        # router never called `blank` at all, which proves nothing about the
+        # fall-through.
+        blank._infer_no_context.assert_awaited_once()
+        good._infer_no_context.assert_awaited_once()
         self.assertEqual(result, "A real summary of the denial.")
 
     def test_degenerate_result_falls_through_to_next_model(self):
@@ -572,6 +577,10 @@ class TestMLRouterSummarize(unittest.TestCase):
 
         result = await self.router.summarize("denial", "text", use_external=False)
 
+        # The raising model must actually have been reached, or this asserts
+        # nothing about surviving a 500 mid-chain.
+        boom._infer_no_context.assert_awaited_once()
+        good._infer_no_context.assert_awaited_once()
         self.assertEqual(result, "A real summary of the denial.")
 
     def test_one_raising_backend_does_not_skip_the_rest(self):

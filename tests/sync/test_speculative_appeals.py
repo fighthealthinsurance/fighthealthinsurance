@@ -1,10 +1,12 @@
 """Tests for the speculative internal-only candidate-appeal precompute."""
 
+import io
 import os
 import threading
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from django.test import TestCase, TransactionTestCase, override_settings
+from loguru import logger as loguru_logger
 
 from fighthealthinsurance.utils import join_fire_and_forget_threads
 
@@ -164,38 +166,6 @@ class SpeculativeAppealsHelperTest(TestCase):
             )
         mock_make.assert_not_called()
 
-    def test_discards_reserve_when_denial_text_changed_mid_generation(self):
-        """Generation takes minutes and the user can replace the letter meanwhile.
-        Rows written about the OLD letter must not be persisted -- the
-        reconciliation promotes oldest-first, so it would actively PREFER them
-        and hand the user an appeal about a denial they replaced."""
-        denial_id = self.denial.denial_id
-
-        def _replace_text_then_yield(*args, **kwargs):
-            # Simulate the user replacing the letter while make_appeals runs.
-            Denial.objects.filter(denial_id=denial_id).update(
-                denial_text="A completely different denial letter."
-            )
-            return iter(
-                [
-                    GeneratedAppeal(
-                        text="An appeal about the ORIGINAL, now-replaced letter.",
-                        model_name="m",
-                    )
-                ]
-            )
-
-        with patch(_MAKE_APPEALS, side_effect=_replace_text_then_yield), patch(
-            _SUMMARIZE, new_callable=AsyncMock, return_value=None
-        ):
-            count = SpeculativeAppealsHelper.generate_for_denial_sync(denial_id)
-
-        self.assertEqual(count, 0)
-        self.assertFalse(
-            ProposedAppeal.objects.filter(for_denial=self.denial).exists(),
-            "a reserve about the replaced letter must not be persisted",
-        )
-
     def test_generation_failure_returns_zero_not_raises(self):
         # The prewarm is patched too: it runs before make_appeals, so mocking it
         # keeps the test off any real ML backend regardless of the setUp denial
@@ -229,17 +199,27 @@ class SpeculativeAppealsHelperTest(TestCase):
             mock_make.call_args.kwargs["denial_text_override"], "A condensed summary."
         )
 
-    def test_generation_runs_off_the_calling_thread(self):
+    def test_generation_runs_off_the_thread_running_the_coroutine(self):
         """The whole point of bridging make_appeals is that it does not run on
         the event loop. It blocks for minutes (model calls, then a lazy iterator
-        whose next() waits on the next model future), so a future refactor that
-        drops the database_sync_to_async and awaits it inline would stall the
-        actor's loop for every other precompute. Assert the thread hop directly.
+        whose next() waits on the next model future), so a refactor that dropped
+        the database_sync_to_async and awaited it inline would stall the actor's
+        loop for every other precompute.
+
+        The comparison is against the thread the COROUTINE BODY runs on, not the
+        test's own thread: async_to_sync already runs the body on a fresh thread
+        of its own, so "differs from the caller" would hold even with no bridge
+        at all. The prewarm is awaited directly in the body, which makes it a
+        faithful sample of that thread.
         """
-        caller_thread = threading.get_ident()
+        body_threads: list[int] = []
         generation_threads: list[int] = []
 
-        def _record_thread(*args, **kwargs):
+        async def _record_body_thread(*args, **kwargs):
+            body_threads.append(threading.get_ident())
+            return None
+
+        def _record_generation_thread(*args, **kwargs):
             generation_threads.append(threading.get_ident())
             return iter(
                 [
@@ -250,16 +230,17 @@ class SpeculativeAppealsHelperTest(TestCase):
                 ]
             )
 
-        with patch(_MAKE_APPEALS, side_effect=_record_thread), patch(
-            _SUMMARIZE, new_callable=AsyncMock, return_value=None
+        with patch(_MAKE_APPEALS, side_effect=_record_generation_thread), patch(
+            _SUMMARIZE, side_effect=_record_body_thread
         ):
             count = SpeculativeAppealsHelper.generate_for_denial_sync(
                 self.denial.denial_id
             )
 
         self.assertEqual(count, 1)
+        self.assertEqual(len(body_threads), 1)
         self.assertEqual(len(generation_threads), 1)
-        self.assertNotEqual(generation_threads[0], caller_thread)
+        self.assertNotEqual(generation_threads[0], body_threads[0])
 
     def test_normal_denial_passes_no_override(self):
         # A normal-sized denial: prewarm returns None, so denial_text_override is
@@ -277,6 +258,65 @@ class SpeculativeAppealsHelperTest(TestCase):
             )
             SpeculativeAppealsHelper.generate_for_denial_sync(self.denial.denial_id)
         self.assertIsNone(mock_make.call_args.kwargs["denial_text_override"])
+
+
+class DenialTextReplacedMidGenerationTest(TransactionTestCase):
+    """The mid-generation text-replacement guard, which is the highest-stakes
+    behavior in the helper: the reconciliation promotes reserve rows oldest
+    first, so a row written about a letter the user has since replaced would be
+    actively PREFERRED and handed back as their appeal.
+
+    TransactionTestCase, not TestCase. The replacement is performed from inside
+    the mocked make_appeals, which now runs on the _generate_drafts worker
+    thread with its own connection. Under TestCase's wrapping write transaction
+    that UPDATE raises "database table is locked", the blanket except swallows
+    it, and the test passes with 0 rows for entirely the wrong reason -- green
+    even if the guard were deleted.
+    """
+
+    def setUp(self):
+        self.denial = Denial.objects.create(
+            hashed_email="hash-replaced",
+            denial_text="Original letter: denied an MRI of the lumbar spine.",
+        )
+
+    def test_discards_reserve_when_denial_text_changed_mid_generation(self):
+        denial_id = self.denial.denial_id
+
+        def _replace_text_then_yield(*args, **kwargs):
+            # Simulate the user replacing the letter while make_appeals runs.
+            Denial.objects.filter(denial_id=denial_id).update(
+                denial_text="A completely different denial letter."
+            )
+            return iter(
+                [
+                    GeneratedAppeal(
+                        text="An appeal about the ORIGINAL, now-replaced letter.",
+                        model_name="m",
+                    )
+                ]
+            )
+
+        sink = io.StringIO()
+        handler_id = loguru_logger.add(sink, level="INFO")
+        try:
+            with patch(_MAKE_APPEALS, side_effect=_replace_text_then_yield), patch(
+                _SUMMARIZE, new_callable=AsyncMock, return_value=None
+            ):
+                count = SpeculativeAppealsHelper.generate_for_denial_sync(denial_id)
+        finally:
+            loguru_logger.remove(handler_id)
+        logged = sink.getvalue()
+
+        self.assertEqual(count, 0)
+        self.assertFalse(
+            ProposedAppeal.objects.filter(for_denial=self.denial).exists(),
+            "a reserve about the replaced letter must not be persisted",
+        )
+        # The 0 has to come from the guard, not from the run blowing up on its
+        # way there -- otherwise this asserts nothing about the guard at all.
+        self.assertIn("text was replaced while precomputing", logged)
+        self.assertNotIn("generation failed for denial", logged)
 
 
 class DispatchGuardTest(TestCase):

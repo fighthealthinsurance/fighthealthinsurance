@@ -26,7 +26,7 @@ fallback, which is dispatched from the sync denial-creation path.
 from typing import Any, List, Optional
 
 from asgiref.sync import async_to_sync
-from channels.db import database_sync_to_async
+from channels.db import aclose_old_connections, database_sync_to_async
 from django.conf import settings
 from loguru import logger
 
@@ -47,10 +47,15 @@ class SpeculativeAppealsHelper:
 
         ``generate_for_denial`` is the real implementation; this exists only
         because ``dispatch_speculative_appeals`` is reached from the SYNC denial
-        creation path, where there is no running loop to await on. Inherits the
-        never-raises contract from the async version -- ``async_to_sync`` only
-        supplies the loop, it adds no failure of its own that the body doesn't
-        already swallow.
+        creation path, where there is no running loop to await on.
+
+        Inherits the never-raises contract for everything the async body does,
+        but is NOT itself unconditionally safe: ``async_to_sync`` raises
+        RuntimeError when the calling thread already has a running event loop.
+        Call it only from a genuinely sync context -- today that is the bare
+        daemon thread from ``run_in_registered_daemon_thread``, whose own
+        ``try/except`` would catch it anyway. From async code, await
+        ``generate_for_denial`` instead.
         """
         return async_to_sync(cls.generate_for_denial)(denial_id, force=force)
 
@@ -87,6 +92,21 @@ class SpeculativeAppealsHelper:
                 MLAppealContextHelper,
             )
             from fighthealthinsurance.models import Denial, ProposedAppeal
+
+            # Sweep connections killed while this actor sat idle, BEFORE any ORM
+            # call. The actor is detached and long-lived with no request cycle,
+            # so nothing else ever calls close_old_connections for it -- and the
+            # native async ORM below runs thread_sensitive, i.e. on asgiref's
+            # process-wide executor thread, which the _generate_drafts bridge
+            # cannot clean because django.db.connections is thread-local.
+            # Without this, the first connection stays cached with
+            # health_check_done=True forever: once the server's
+            # idle_session_timeout drops the session, CONN_HEALTH_CHECKS never
+            # re-checks it, and every later precompute in this actor fails with
+            # OperationalError, swallowed and logged as a 0-appeal reserve until
+            # the process restarts. Same hazard, same fix, as the long-lived
+            # WebSocket consumers (see websockets._aclose_if_socket_was_idle).
+            await aclose_old_connections()
 
             denial = await (
                 Denial.objects.filter(denial_id=denial_id)
@@ -275,6 +295,18 @@ class SpeculativeAppealsHelper:
                 f"{denial_id}: {e}"
             )
             return 0
+        finally:
+            # Don't leave a connection checked out on the shared executor thread
+            # for however long it is until the next denial arrives. Mirrors what
+            # run_in_registered_daemon_thread does in its own finally for the
+            # in-process fallback, so both dispatch paths behave the same.
+            try:
+                await aclose_old_connections()
+            except Exception:
+                logger.opt(exception=True).debug(
+                    f"speculative appeals: connection sweep failed after denial "
+                    f"{denial_id}"
+                )
 
 
 def dispatch_speculative_appeals(denial_id: Any, force: bool = False) -> None:
