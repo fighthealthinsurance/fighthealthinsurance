@@ -242,6 +242,35 @@ class ModelUsageDashboardContentTest(TestCase):
         levels = {r["model_name"] for r in rows}
         self.assertNotIn("speculative", levels)
 
+    def test_proposed_appeal_stats_excludes_unpromoted_speculative(self):
+        # A held-back speculative draft carries a real internal model_name (the
+        # same models the live path uses), so if it isn't excluded it silently
+        # pads that model's presented denominator on the main model-usage table.
+        d = self.denial
+        # A live draft by m1 that was presented and chosen.
+        ProposedAppeal.objects.create(
+            for_denial=d, appeal_text="live-draft", chosen=False, model_name="m1"
+        )
+        ProposedAppeal.objects.create(
+            for_denial=d, appeal_text="live-draft", chosen=True, model_name="m1"
+        )
+        # A held-back speculative draft ALSO attributed to m1: reserved, never
+        # shown -> must NOT count toward m1's presented total.
+        ProposedAppeal.objects.create(
+            for_denial=d,
+            appeal_text="held-spec",
+            chosen=False,
+            model_name="m1",
+            context_level="speculative",
+            speculative=True,
+        )
+        response = self.client.get(reverse("model_usage_dashboard"))
+        rows = response.context["windows"][0]["proposed_appeal"]
+        row = next(r for r in rows if r["model_name"] == "m1")
+        # Presented counts only the one live draft, not the held-back reserve.
+        self.assertEqual(row["presented"], 1)
+        self.assertEqual(row["chosen"], 1)
+
     def test_chooser_vote_aggregation(self):
         task = ChooserTask.objects.create(
             task_type="appeal", status="EXHAUSTED", source="synthetic"

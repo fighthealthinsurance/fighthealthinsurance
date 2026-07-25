@@ -3853,27 +3853,40 @@ class AppealsBackendHelper:
             CONTEXT_LEVEL_TIER2_SHED,
         }
         reconciled = 0
-        async for row in ProposedAppeal.objects.filter(for_denial=denial).all():
-            text = row.appeal_text
-            if not is_real_appeal(text):
-                continue
-            normalized = str(text).strip()
-            if normalized in served_texts:
-                continue
-            is_mini = bool(row.speculative) or row.context_level in MINI_LEVELS
-            # Re-evaluate the threshold each iteration: serving increments new.
-            if is_mini and (new + old) >= ENOUGH_APPEALS:
-                continue
-            if row.speculative:
-                # Promote to a real appeal so it persists and later calls serve
-                # it as existing.
-                row.speculative = False
-                await row.asave(update_fields=["speculative"])
-            row_dict = await sub_in_appeals({"id": str(row.id), "content": text})
-            yield await format_response(row_dict)
-            served_texts.add(normalized)
-            new += 1
-            reconciled += 1
+        # Best-effort, like the synthesis block above: a failure here (e.g. a
+        # promotion asave hitting DB lock contention -- save_appeal wraps its own
+        # asave for exactly this reason) must NOT propagate, or the done frame
+        # never emits and an already-delivered stream ends dirty. order_by("id")
+        # promotes the oldest reserve rows first (deterministic FIFO).
+        try:
+            async for row in ProposedAppeal.objects.filter(for_denial=denial).order_by(
+                "id"
+            ):
+                text = row.appeal_text
+                if not is_real_appeal(text):
+                    continue
+                normalized = str(text).strip()
+                if normalized in served_texts:
+                    continue
+                is_mini = bool(row.speculative) or row.context_level in MINI_LEVELS
+                # Re-evaluate the threshold each iteration: serving increments new.
+                if is_mini and (new + old) >= ENOUGH_APPEALS:
+                    continue
+                if row.speculative:
+                    # Promote to a real appeal so it persists and later calls
+                    # serve it as existing.
+                    row.speculative = False
+                    await row.asave(update_fields=["speculative"])
+                row_dict = await sub_in_appeals({"id": str(row.id), "content": text})
+                yield await format_response(row_dict)
+                served_texts.add(normalized)
+                new += 1
+                reconciled += 1
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"[gen_id={generation_id}] end-of-flow reconciliation failed for "
+                f"denial {denial_id}; already-delivered appeals are unaffected"
+            )
         if reconciled:
             logger.info(
                 f"[gen_id={generation_id}] end-of-flow reconciliation served "

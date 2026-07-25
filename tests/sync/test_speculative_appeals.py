@@ -124,6 +124,44 @@ class SpeculativeAppealsHelperTest(TestCase):
             )
         self.assertEqual(count, 0)
 
+    def test_long_denial_summary_fed_to_make_appeals_as_override(self):
+        # For an oversized denial the pre-warmed summary must be passed to
+        # make_appeals as denial_text_override -- otherwise the full text
+        # overflows the window and the speculative reserve is empty for exactly
+        # the long denials this safety net matters most for.
+        with patch(_MAKE_APPEALS) as mock_make, patch(
+            _SUMMARIZE, new_callable=AsyncMock, return_value="A condensed summary."
+        ):
+            mock_make.return_value = iter(
+                [
+                    GeneratedAppeal(
+                        text="A real speculative appeal letter goes here.",
+                        model_name="m",
+                    )
+                ]
+            )
+            SpeculativeAppealsHelper.generate_for_denial_sync(self.denial.denial_id)
+        self.assertEqual(
+            mock_make.call_args.kwargs["denial_text_override"], "A condensed summary."
+        )
+
+    def test_normal_denial_passes_no_override(self):
+        # A normal-sized denial: prewarm returns None, so denial_text_override is
+        # None and make_appeals uses the full raw denial text.
+        with patch(_MAKE_APPEALS) as mock_make, patch(
+            _SUMMARIZE, new_callable=AsyncMock, return_value=None
+        ):
+            mock_make.return_value = iter(
+                [
+                    GeneratedAppeal(
+                        text="A real speculative appeal letter goes here.",
+                        model_name="m",
+                    )
+                ]
+            )
+            SpeculativeAppealsHelper.generate_for_denial_sync(self.denial.denial_id)
+        self.assertIsNone(mock_make.call_args.kwargs["denial_text_override"])
+
 
 class DispatchOnDenialCreateTest(TestCase):
     """The speculative precompute must be dispatched (fire-and-forget) the

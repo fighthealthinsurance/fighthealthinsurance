@@ -629,9 +629,14 @@ class ModelUsageDashboardView(generic.TemplateView):
         # bucket would fabricate a win-rate denominator — so legacy chosen
         # rows report presented=0 and an em-dash win rate.
         chosen_denial_ids = chosen_qs.values_list("for_denial_id", flat=True).distinct()
+        # Exclude held-back speculative rows: they were never shown (they carry a
+        # real internal model_name, so counting them would silently pad that
+        # model's presented denominator and deflate its win rate). Matches the
+        # speculative=False guard in _context_level_stats and the serving path.
         presented_qs = ProposedAppeal.objects.filter(
             chosen=False,
             model_name__isnull=False,
+            speculative=False,
             for_denial_id__in=chosen_denial_ids,
         )
 

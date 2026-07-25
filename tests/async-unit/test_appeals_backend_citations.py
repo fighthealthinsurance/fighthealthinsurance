@@ -123,19 +123,23 @@ def _make_proposed_appeal_query_with_texts(texts):
         def __init__(self, items):
             self._items = items
 
-        def all(self):
+        def _gen(self):
             async def gen():
                 for item in self._items:
                     yield item
 
             return gen()
+
+        def all(self):
+            return self._gen()
+
+        def order_by(self, *args, **kwargs):
+            # Mock ignores the sort key; the reconciliation query uses
+            # order_by("id") for deterministic FIFO promotion in production.
+            return self._gen()
 
         def __aiter__(self):
-            async def gen():
-                for item in self._items:
-                    yield item
-
-            return gen()
+            return self._gen()
 
     return _Queryset(pa_mocks)
 

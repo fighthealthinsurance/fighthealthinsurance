@@ -290,8 +290,13 @@ class FollowUpEmailSender(AsyncEmailSenderMixin):
         email = follow_up_sched.email
         denial = follow_up_sched.denial_id
         selected_appeal = denial.chose_appeal()
+        # Exclude held-back speculative rows: they were precomputed at denial
+        # creation but never shown, so a denial that only received the
+        # speculative precompute (user abandoned before running generation) must
+        # not report that proposals were generated.
         generated_proposals = (
-            denial.proposedappeal_set.exclude(appeal_text__isnull=True)
+            denial.proposedappeal_set.filter(speculative=False)
+            .exclude(appeal_text__isnull=True)
             .exclude(appeal_text="")
             .exists()
         )

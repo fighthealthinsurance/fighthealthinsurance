@@ -95,12 +95,16 @@ class Command(BaseCommand):
             return None
         # model_name is blank=True, so exclude empty strings too — a blank
         # label is not usable evidence and must not be copied onto the pick.
+        # speculative=False mirrors mark_proposal_chosen's guard: a held-back
+        # precompute row the user never saw must not mis-attribute the pick on a
+        # coincidental text collision (a promoted row is speculative=False).
         original = (
             ProposedAppeal.objects.filter(
                 for_denial_id=pa.for_denial_id,
                 chosen=False,
                 appeal_text=pa.appeal_text,
                 model_name__isnull=False,
+                speculative=False,
             )
             .exclude(model_name="")
             .order_by("-id")

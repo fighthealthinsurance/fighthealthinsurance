@@ -51,6 +51,8 @@ class SpeculativeAppealsHelper:
         from fighthealthinsurance.ml.ml_appeal_context_helper import (
             MLAppealContextHelper,
         )
+        from django.db.models import Q
+
         from fighthealthinsurance.models import Denial, ProposedAppeal
 
         try:
@@ -76,8 +78,12 @@ class SpeculativeAppealsHelper:
                 )
                 return 0
             # Idempotency: don't regenerate if we already have speculative rows.
+            # Match promoted rows too (served rows are flipped to
+            # speculative=False but keep context_level="speculative"), so a
+            # re-invocation after some were served can't duplicate the reserve.
             if ProposedAppeal.objects.filter(
-                for_denial=denial, speculative=True
+                Q(speculative=True) | Q(context_level=CONTEXT_LEVEL_SPECULATIVE),
+                for_denial=denial,
             ).exists():
                 logger.debug(
                     f"speculative appeals: denial {denial_id} already has "
@@ -92,9 +98,32 @@ class SpeculativeAppealsHelper:
             # speculative precompute.
             denial.use_external = False
 
+            # Pre-warm the denial summary FIRST, into the SEPARATE candidate
+            # field (kept out of denial_text_summary so it never clobbers a
+            # summary the live flow may compute for itself; the live flow
+            # promotes the candidate on first use). Returns the summary for an
+            # oversized denial, else None. We feed it to make_appeals below as
+            # denial_text_override so that a very long denial -- whose full text
+            # alone overflows the model window, and which the shed ladder never
+            # truncates -- still produces real speculative appeals instead of an
+            # empty reserve. That long-denial case is exactly where this safety
+            # net matters most (it's the most likely to fail the live run too).
+            denial_text_override: Optional[str] = None
+            try:
+                denial_text_override = async_to_sync(
+                    MLAppealContextHelper.prewarm_candidate_denial_text_summary
+                )(denial)
+            except Exception as e:
+                logger.opt(exception=True).warning(
+                    f"speculative appeals: denial-summary warm failed for "
+                    f"denial {denial_id}: {e}"
+                )
+
             diagnostics: dict = {}
             # Bare run: empty template generator, and NO research/enrichment
-            # context (none has been gathered at create time).
+            # context (none has been gathered at create time). make_appeals does
+            # still auto-build a DB-only payer_policy_context, which contacts no
+            # external model, so the internal-only guarantee holds.
             appeals = appealGenerator.make_appeals(
                 denial,
                 AppealTemplateGenerator([], [], []),
@@ -109,6 +138,7 @@ class SpeculativeAppealsHelper:
                 pa_context=None,
                 uspstf_context=None,
                 clinical_trials_context=None,
+                denial_text_override=denial_text_override,
                 diagnostics_sink=diagnostics,
             )
 
@@ -135,21 +165,6 @@ class SpeculativeAppealsHelper:
                         f"speculative appeals: failed to persist a draft for "
                         f"denial {denial_id}: {e}"
                     )
-
-            # Pre-warm the denial summary into the SEPARATE candidate field (a
-            # no-op unless the letter is very long). Kept out of the real
-            # denial_text_summary so it never clobbers a summary the live flow
-            # may compute for itself; the live flow promotes the candidate on
-            # first use.
-            try:
-                async_to_sync(
-                    MLAppealContextHelper.prewarm_candidate_denial_text_summary
-                )(denial)
-            except Exception as e:
-                logger.opt(exception=True).warning(
-                    f"speculative appeals: denial-summary warm failed for "
-                    f"denial {denial_id}: {e}"
-                )
 
             logger.info(
                 f"speculative appeals: persisted {saved} internal-only draft(s) "
