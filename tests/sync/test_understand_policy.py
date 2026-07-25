@@ -159,9 +159,7 @@ class TextExtractionTest(TestCase):
 
     def test_extract_text_from_plaintext(self):
         content = b"This is a plain text policy document with coverage details."
-        full_text, page_dict = extract_text_from_plaintext_bytes(
-            content
-        )
+        full_text, page_dict = extract_text_from_plaintext_bytes(content)
         self.assertIn("plain text policy", full_text)
         self.assertEqual(len(page_dict), 1)
 
@@ -172,28 +170,20 @@ class TextExtractionTest(TestCase):
         pdf_bytes = doc.tobytes()
         doc.close()
 
-        full_text, _ = extract_text_from_bytes(
-            pdf_bytes, "policy.pdf"
-        )
+        full_text, _ = extract_text_from_bytes(pdf_bytes, "policy.pdf")
         self.assertIn("Dispatcher PDF test", full_text)
 
     def test_extract_text_dispatcher_txt(self):
-        full_text, _ = extract_text_from_bytes(
-            b"Hello world", "notes.txt"
-        )
+        full_text, _ = extract_text_from_bytes(b"Hello world", "notes.txt")
         self.assertIn("Hello world", full_text)
 
     def test_extract_text_dispatcher_unsupported(self):
-        full_text, page_dict = extract_text_from_bytes(
-            b"data", "file.xyz"
-        )
+        full_text, page_dict = extract_text_from_bytes(b"data", "file.xyz")
         self.assertEqual(full_text, "")
         self.assertEqual(page_dict, {})
 
     def test_corrupt_pdf_returns_empty(self):
-        full_text, page_dict = extract_text_from_pdf_bytes(
-            b"not a pdf at all"
-        )
+        full_text, page_dict = extract_text_from_pdf_bytes(b"not a pdf at all")
         self.assertEqual(full_text, "")
         self.assertEqual(page_dict, {})
 

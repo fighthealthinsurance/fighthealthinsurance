@@ -15,6 +15,12 @@ from fighthealthinsurance.ml.ml_appeal_context_helper import MLAppealContextHelp
 _HELPER = "fighthealthinsurance.ml.ml_appeal_context_helper"
 # Comfortably above DENIAL_TEXT_SUMMARY_THRESHOLD_TOKENS (6000 tok ~= 24k chars).
 _LONG_TEXT = "x" * 30000
+# Long enough to clear MIN_USABLE_SUMMARY_CHARS: the helper rejects anything
+# too short to plausibly be a summary of a >24k-char letter.
+_CONDENSED = (
+    "Aetna denied a lumbar MRI (CPT 72148) for chronic low back pain, "
+    "citing lack of documented conservative therapy under policy CPB-0009."
+)
 
 
 def _denial(
@@ -69,17 +75,17 @@ async def test_cached_summary_short_circuits():
 async def test_above_threshold_summarizes_and_persists():
     d = _denial(_LONG_TEXT, use_external=False, denial_id=7)
     with patch(f"{_HELPER}.ml_router") as router, patch(f"{_HELPER}.Denial") as Denial:
-        router.summarize = AsyncMock(return_value="CONDENSED")
+        router.summarize = AsyncMock(return_value=_CONDENSED)
         Denial.objects.filter.return_value.aupdate = AsyncMock()
         result = await MLAppealContextHelper.maybe_summarize_denial_text(d)
 
-    assert result == "CONDENSED"
+    assert result == _CONDENSED
     # Privacy gate threaded through.
     assert router.summarize.call_args.kwargs["use_external"] is False
     # Cached back onto the denial row.
     Denial.objects.filter.assert_called_once_with(denial_id=7)
     Denial.objects.filter.return_value.aupdate.assert_awaited_once_with(
-        denial_text_summary="CONDENSED"
+        denial_text_summary=_CONDENSED
     )
 
 
@@ -87,7 +93,7 @@ async def test_above_threshold_summarizes_and_persists():
 async def test_use_external_true_is_passed_through():
     d = _denial(_LONG_TEXT, use_external=True)
     with patch(f"{_HELPER}.ml_router") as router, patch(f"{_HELPER}.Denial") as Denial:
-        router.summarize = AsyncMock(return_value="CONDENSED")
+        router.summarize = AsyncMock(return_value=_CONDENSED)
         Denial.objects.filter.return_value.aupdate = AsyncMock()
         await MLAppealContextHelper.maybe_summarize_denial_text(d)
     assert router.summarize.call_args.kwargs["use_external"] is True
@@ -111,6 +117,25 @@ async def test_summarizer_exception_falls_back_to_full_text():
         router.summarize = AsyncMock(side_effect=RuntimeError("model down"))
         result = await MLAppealContextHelper.maybe_summarize_denial_text(d)
     assert result is None
+    Denial.objects.filter.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "degenerate",
+    ["", "   ", "\n\n", "bad!", "I can't help with that."],
+)
+@pytest.mark.asyncio
+async def test_degenerate_summary_is_rejected_and_not_cached(degenerate):
+    """A blank/trivial/refusal response must never be accepted: it REPLACES the
+    user's denial letter in the prompt and gets cached, so every later
+    generation would reuse it. Falling back to the full text is safe -- the shed
+    ladder still handles overflow."""
+    d = _denial(_LONG_TEXT)
+    with patch(f"{_HELPER}.ml_router") as router, patch(f"{_HELPER}.Denial") as Denial:
+        router.summarize = AsyncMock(return_value=degenerate)
+        result = await MLAppealContextHelper.maybe_summarize_denial_text(d)
+    assert result is None
+    # Nothing degenerate may reach the cache.
     Denial.objects.filter.assert_not_called()
 
 
@@ -150,13 +175,13 @@ async def test_prewarm_writes_candidate_field_not_real():
     never the real denial_text_summary."""
     d = _denial(_LONG_TEXT, use_external=False, denial_id=9)
     with patch(f"{_HELPER}.ml_router") as router, patch(f"{_HELPER}.Denial") as Denial:
-        router.summarize = AsyncMock(return_value="CANDIDATE")
+        router.summarize = AsyncMock(return_value=_CONDENSED)
         Denial.objects.filter.return_value.aupdate = AsyncMock()
         result = await MLAppealContextHelper.prewarm_candidate_denial_text_summary(d)
-    assert result == "CANDIDATE"
+    assert result == _CONDENSED
     Denial.objects.filter.assert_called_once_with(denial_id=9)
     Denial.objects.filter.return_value.aupdate.assert_awaited_once_with(
-        candidate_denial_text_summary="CANDIDATE"
+        candidate_denial_text_summary=_CONDENSED
     )
 
 

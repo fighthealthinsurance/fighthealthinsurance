@@ -503,9 +503,7 @@ class TestMLRouterSummarize(unittest.TestCase):
         self.router.internal_models_by_cost = [internal]
 
         with patch.object(self.router, "_external_selectable", return_value=True):
-            result = await self.router.summarize(
-                "article", "text", use_external=True
-            )
+            result = await self.router.summarize("article", "text", use_external=True)
 
         gemma._infer_no_context.assert_called_once()
         self.assertEqual(result, "external summary")
@@ -526,6 +524,58 @@ class TestMLRouterSummarize(unittest.TestCase):
         prompt = internal._infer_no_context.call_args.kwargs.get("prompt", "")
         self.assertIn("B" * 100, prompt)
         self.assertNotIn("B" * 101, prompt)
+
+    async def async_test_no_abstract_never_sends_a_contentless_retry(self):
+        """With abstract=None the old abstract-only retry had NO source text at
+        all -- just the instruction. A model answers that with a refusal or an
+        invention rather than failing, and for denial summarization that gets
+        cached and substituted for the user's actual letter."""
+        internal = AsyncMock(spec=RemoteModelLike)
+        internal._infer_no_context.return_value = None  # force the retry path
+        self.router.internal_models_by_cost = [internal]
+
+        await self.router.summarize("denial letter", "the denial text", abstract=None)
+
+        # Exactly one attempt, and it carried the source text.
+        self.assertEqual(internal._infer_no_context.call_count, 1)
+        for call in internal._infer_no_context.call_args_list:
+            self.assertIn("the denial text", call.kwargs.get("prompt", ""))
+
+    def test_no_abstract_never_sends_a_contentless_retry(self):
+        asyncio.run(self.async_test_no_abstract_never_sends_a_contentless_retry())
+
+    async def async_test_degenerate_result_falls_through_to_next_model(self):
+        """A blank/trivial answer is a failure, not a summary: callers subsitute
+        it for the source text, so returning "   " would make it the thing we
+        summarized FROM."""
+        blank = AsyncMock(spec=RemoteModelLike)
+        blank._infer_no_context.return_value = "   "
+        good = AsyncMock(spec=RemoteModelLike)
+        good._infer_no_context.return_value = "A real summary of the denial."
+        self.router.internal_models_by_cost = [blank, good]
+
+        result = await self.router.summarize("denial", "text", use_external=False)
+
+        self.assertEqual(result, "A real summary of the denial.")
+
+    def test_degenerate_result_falls_through_to_next_model(self):
+        asyncio.run(self.async_test_degenerate_result_falls_through_to_next_model())
+
+    async def async_test_one_raising_backend_does_not_skip_the_rest(self):
+        """Subclasses with _propagate_http_errors re-raise unexpected statuses;
+        without a per-model guard one 500 skipped the whole fallback chain."""
+        boom = AsyncMock(spec=RemoteModelLike)
+        boom._infer_no_context.side_effect = RuntimeError("500 from provider")
+        good = AsyncMock(spec=RemoteModelLike)
+        good._infer_no_context.return_value = "A real summary of the denial."
+        self.router.internal_models_by_cost = [boom, good]
+
+        result = await self.router.summarize("denial", "text", use_external=False)
+
+        self.assertEqual(result, "A real summary of the denial.")
+
+    def test_one_raising_backend_does_not_skip_the_rest(self):
+        asyncio.run(self.async_test_one_raising_backend_does_not_skip_the_rest())
 
     def test_max_input_chars_caps_source_text(self):
         asyncio.run(self.async_test_max_input_chars_caps_source_text())

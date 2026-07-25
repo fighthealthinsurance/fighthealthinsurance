@@ -761,8 +761,17 @@ class MLRouter(object):
                         f"summarize: {m} failed, trying the next model: {e}"
                     )
                     break
-                if r is not None:
+                # Treat a blank/trivial response as a failure and keep going
+                # rather than handing it back: callers substitute this for the
+                # source text, so "   " would silently become the thing we
+                # summarize FROM. Same threshold as summarize_chat_history.
+                if r is not None and len(r.strip()) > 10:
                     return r
+                if r is not None:
+                    logger.debug(
+                        f"summarize: {m} returned a trivial result "
+                        f"({len(r.strip())} chars); trying the next option"
+                    )
         return None
 
     def working(self) -> bool:

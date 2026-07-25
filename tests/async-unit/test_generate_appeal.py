@@ -1106,9 +1106,7 @@ class TestDenialTextOverride:
             seen.update(kwargs)
             return "PROMPT"
 
-        with patch.object(
-            gen, "make_open_prompt", side_effect=spy_prompt
-        ), patch(
+        with patch.object(gen, "make_open_prompt", side_effect=spy_prompt), patch(
             "fighthealthinsurance.generate_appeal.ml_router.generate_text_backend_names",
             side_effect=lambda use_external=False: [],
         ), patch(

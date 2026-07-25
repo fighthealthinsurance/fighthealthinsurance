@@ -373,7 +373,12 @@ class TestAppealGenTraceFields:
         sentinel must not leak into the log as a literal model name."""
         f = _AppealGenTraceFields()
         f.update_from_frame(
-            {"type": "status", "phase": "done", "first_model": "none", "shed_tier": None}
+            {
+                "type": "status",
+                "phase": "done",
+                "first_model": "none",
+                "shed_tier": None,
+            }
         )
         assert f.as_kwargs()["first_model"] is None
 
@@ -397,9 +402,7 @@ class TestAppealGenTraceFields:
 
     def test_models_tried_none_sentinel_normalized(self):
         f = _AppealGenTraceFields()
-        f.update_from_frame(
-            {"type": "status", "phase": "done", "models_tried": "none"}
-        )
+        f.update_from_frame({"type": "status", "phase": "done", "models_tried": "none"})
         assert f.as_kwargs()["models_tried"] is None
 
 
@@ -420,7 +423,9 @@ class TestStreamErrorClassification:
     def test_disconnect_markers_match(self, err):
         assert _stream_error_is_client_disconnect(err)
 
-    @pytest.mark.parametrize("err", [None, "", "Server error while generating appeals."])
+    @pytest.mark.parametrize(
+        "err", [None, "", "Server error while generating appeals."]
+    )
     def test_non_disconnect_does_not_match(self, err):
         assert not _stream_error_is_client_disconnect(err)
 
@@ -470,7 +475,9 @@ async def test_client_disconnect_during_generating_notes_generation_started():
             stream_error="the handler is closed",
         )
     assert errors == []
-    assert "client disconnected during generating after generation started" in warnings[0]
+    assert (
+        "client disconnected during generating after generation started" in warnings[0]
+    )
 
 
 @pytest.mark.asyncio

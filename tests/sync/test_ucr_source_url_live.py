@@ -17,7 +17,6 @@ from django.test import SimpleTestCase
 
 from fighthealthinsurance.ucr_constants import UCR_SOURCE_URLS
 
-
 _HEAD_TIMEOUT_SECONDS = 8
 
 

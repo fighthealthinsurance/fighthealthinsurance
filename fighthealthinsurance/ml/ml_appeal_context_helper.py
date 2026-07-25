@@ -39,6 +39,12 @@ class MLAppealContextHelper:
     # itself can't overflow the summarizer's window. ~60k chars (~15k tokens)
     # fits comfortably inside a 32k-token model with room for the summary.
     DENIAL_TEXT_SUMMARY_INPUT_MAX_CHARS = 60000
+    # Floor for accepting a summary. We only summarize letters above ~24k chars,
+    # so anything shorter than this is not a summary of one -- it's a blank, a
+    # truncated response, or a short refusal ("I can't help with that."). Set
+    # well below any plausible real summary so a terse-but-valid one still
+    # passes; the point is to exclude degenerate output, not to judge quality.
+    MIN_USABLE_SUMMARY_CHARS = 80
 
     @classmethod
     def _needs_summary(cls, denial: Denial) -> bool:
@@ -76,10 +82,15 @@ class MLAppealContextHelper:
                 f"Failed to summarize long denial_text for denial " f"{denial_id}: {e}"
             )
             return None
-        if not summary:
+        if not summary or len(summary.strip()) < cls.MIN_USABLE_SUMMARY_CHARS:
+            # Rejecting is safe: the caller falls back to the full denial text
+            # and make_appeals' shed ladder still handles overflow. Accepting is
+            # not -- this value REPLACES the user's letter in the prompt and is
+            # cached, so every later generation reuses it.
             logger.warning(
-                f"denial_text summarization returned nothing for denial "
-                f"{denial_id}; falling back to full text"
+                f"denial_text summarization returned nothing usable for denial "
+                f"{denial_id} ({len(summary.strip()) if summary else 0} chars); "
+                f"falling back to full text"
             )
             return None
         return summary
