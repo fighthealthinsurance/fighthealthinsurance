@@ -19,6 +19,8 @@ from django.conf import settings
 import ray
 from loguru import logger
 
+from fighthealthinsurance.base_actor_ref import ray_cluster_available
+
 
 @dataclass
 class ActorHealthDetail:
@@ -48,6 +50,21 @@ def check_actor_health() -> Dict[str, Any]:
     # shouldn't be health-checked -- it would always report "actor not found".
     if not getattr(settings, "TEMPORAL_ENABLED", False):
         actors_to_check.insert(1, ("fax_polling_actor", "fhi"))
+
+    # ray.get_actor auto-inits just like .remote() does, so without this an
+    # unauthenticated GET of the ActorHealthStatus endpoint would start a local
+    # Ray cluster inside the web process in order to report on it -- and then
+    # report every actor "not found", because the cluster it just made is empty.
+    # Answering "no cluster" is both truthful and cheap.
+    if not ray_cluster_available():
+        return {
+            "alive_actors": 0,
+            "total_actors": len(actors_to_check),
+            "details": [
+                {"name": n, "alive": False, "error": "no ray cluster available"}
+                for n, _ in actors_to_check
+            ],
+        }
 
     details: List[ActorHealthDetail] = []
     alive_count = 0

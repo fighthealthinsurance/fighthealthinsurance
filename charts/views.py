@@ -609,12 +609,23 @@ def generate_denial_appeal_lines():
         diagnosis = _get_verified_or_raw(denial, "diagnosis")
 
         appeal_text = None
+        # The context/shed level the chosen appeal was generated at (full /
+        # tier1_shed / tier2_shed / speculative / synthesized / template), so
+        # the training data records whether shed/speculative appeals are the
+        # ones users pick. Resolved BEFORE the manual-de-identification branch:
+        # de-identified text is still a chosen ProposedAppeal, just scrubbed, and
+        # those curated rows are the highest-quality training subset -- exactly
+        # where this signal matters most. Stays None only when the appeal genuinely
+        # didn't come from a ProposedAppeal.
+        chosen_proposed = next(
+            (p for p in denial.proposedappeal_set.all() if p.chosen), None
+        )
+        appeal_context_level = (
+            chosen_proposed.context_level if chosen_proposed else None
+        )
         if denial.manual_deidentified_appeal:
             appeal_text = denial.manual_deidentified_appeal
         else:
-            chosen_proposed = next(
-                (p for p in denial.proposedappeal_set.all() if p.chosen), None
-            )
             if chosen_proposed:
                 appeal_text = chosen_proposed.appeal_text
             else:
@@ -639,6 +650,7 @@ def generate_denial_appeal_lines():
             "diagnosis": diagnosis,
             "insurance_company": denial.insurance_company,
             "appeal_text": appeal_text,
+            "appeal_context_level": appeal_context_level,
             "references": denial.references,
             "generated_questions": denial.generated_questions,
             "qa_pairs": qa_pairs,

@@ -823,6 +823,63 @@ async def _interleave_iterator_for_keep_alive(
             task = None
 
 
+async def keepalive_frames(
+    task: "asyncio.Future[Any]",
+    *,
+    interval: float = 15.0,
+    overall_timeout: Optional[float] = None,
+    make_heartbeat: Callable[[float], str] = lambda elapsed: "\n",
+) -> AsyncIterator[str]:
+    """Yield a heartbeat string every ``interval`` seconds while ``task`` is
+    still pending, so a long blocking ``await`` leaves no silent gap on the
+    wire.
+
+    This generalizes the synthesis keep-alive loop in
+    ``common_view_logic.generate_appeals``: a fresh ``asyncio.shield(task)``
+    per wait means an interval timeout cancels only that iteration's shield,
+    never the underlying ``task``. The generator returns when ``task``
+    completes (successfully or with an exception) or when ``overall_timeout``
+    seconds have elapsed while it was pending.
+
+    IMPORTANT: this NEVER cancels ``task``. Appeal generation runs in a
+    ``database_sync_to_async`` threadpool call that keeps running even after
+    the awaiting future is abandoned, so cancelling here would leak the
+    thread without stopping the work. The caller owns ``task``'s lifecycle:
+    read the result via ``await task`` (instant once done), and detect the
+    ``overall_timeout`` case by checking ``task.done()`` after this
+    generator returns.
+
+    ``make_heartbeat`` receives the elapsed pending-seconds and returns the
+    string to emit (default: a bare ``"\\n"`` keep-alive). A callback that
+    returns a full status-frame JSON line lets callers both keep the socket
+    alive and advance a client-side progress UI.
+    """
+    elapsed = 0.0
+    while not task.done():
+        remaining = None if overall_timeout is None else overall_timeout - elapsed
+        if remaining is not None and remaining <= 0:
+            # Budget exhausted while the task is still pending; hand back to
+            # the caller, which decides what to do with the abandoned task.
+            return
+        wait_for = interval if remaining is None else min(interval, remaining)
+        started = time.monotonic()
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=wait_for)
+        except asyncio.TimeoutError:
+            # Only this iteration's shield was cancelled; ``task`` runs on.
+            elapsed += time.monotonic() - started
+            yield make_heartbeat(elapsed)
+            continue
+        except Exception:
+            # ``task`` finished by raising. Stop emitting keep-alives; the
+            # caller observes the exception when it does ``await task``.
+            # (CancelledError is a BaseException and intentionally propagates
+            # out so client-disconnect teardown is not swallowed.)
+            return
+        # ``task`` completed successfully within the interval.
+        return
+
+
 # In-flight fire-and-forget background threads. Tracked so tests can wait for
 # outstanding background DB work to drain between tests: a leaked thread doing
 # sqlite writes can hold a table lock that breaks the next test's fixture load
@@ -866,6 +923,50 @@ async def fire_and_forget_in_new_threadpool(task: Coroutine) -> None:
     thread.start()
     logger.debug(f"fire_and_forget task {task} started")
     return
+
+
+def run_in_registered_daemon_thread(
+    fn: Callable[..., Any], *args: Any, **kwargs: Any
+) -> None:
+    """Run a SYNCHRONOUS ``fn(*args, **kwargs)`` in a fire-and-forget daemon
+    thread, registered so tests can drain it via join_fire_and_forget_threads.
+
+    Sync sibling of ``fire_and_forget_in_new_threadpool``: use it when the work
+    is a blocking sync callable (e.g. a heavy generation) launched from a sync
+    request path that must not block on it. Exceptions are logged, not raised.
+
+    Closes this thread's DB connections on the way out. A thread that touches
+    the ORM outside the request cycle never returns its checkout otherwise --
+    the connection-starvation failure mode Prod's DATABASES comment describes,
+    and the reason site_banner_refresh does the same in a finally. The Ray actor
+    path gets this for free from channels' database_sync_to_async; this is the
+    equivalent for the in-process fallback.
+    """
+
+    def run() -> None:
+        from django.db import close_old_connections
+
+        try:
+            fn(*args, **kwargs)
+        except Exception as e:
+            logger.opt(exception=True).warning(
+                f"Exception in registered daemon thread {fn}: {e}"
+            )
+        finally:
+            try:
+                close_old_connections()
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Failed to close DB connections in registered daemon thread"
+                )
+            with _fire_and_forget_threads_lock:
+                _fire_and_forget_threads.discard(threading.current_thread())
+
+    thread = threading.Thread(target=run)
+    thread.daemon = True
+    with _fire_and_forget_threads_lock:
+        _fire_and_forget_threads.add(thread)
+    thread.start()
 
 
 def join_fire_and_forget_threads(timeout: Optional[float] = None) -> None:

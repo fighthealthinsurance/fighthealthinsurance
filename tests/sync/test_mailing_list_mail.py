@@ -164,9 +164,15 @@ class TestSendMailingListMailView(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "2")  # subscriber count
 
+    # ray_cluster_available is forced True to model production. Without a
+    # cluster the view returns 503 rather than auto-initing a local Ray cluster
+    # in the web process just to send staff mail.
+    @patch("fighthealthinsurance.staff_views.ray_cluster_available", return_value=True)
     @patch("fighthealthinsurance.staff_views.mailing_list_actor_ref")
     @patch("fighthealthinsurance.staff_views.ray")
-    def test_form_submission_test_email(self, mock_ray, mock_actor_ref):
+    def test_form_submission_test_email(
+        self, mock_ray, mock_actor_ref, mock_cluster_available
+    ):
         """Test form submission with test email."""
         # Mock the ray actor
         mock_actor = MagicMock()

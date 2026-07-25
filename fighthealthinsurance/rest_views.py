@@ -75,7 +75,10 @@ from fighthealthinsurance.rest_mixins import (
     SerializerMixin,
 )
 from fighthealthinsurance.type_utils import User
-from fighthealthinsurance.websockets import log_zero_appeal_diagnostics
+from fighthealthinsurance.websockets import (
+    _AppealGenTraceFields,
+    log_zero_appeal_diagnostics,
+)
 
 from .common_view_logic import AppealAssemblyHelper
 from .utils import is_convertible_to_int, is_valid_denial_id
@@ -589,8 +592,13 @@ class ReportClientError(APIView):
             logger.opt(exception=True).debug(
                 f"Failed to compute context token sizes for denial " f"{denial_id}: {e}"
             )
+        # APPEAL_GEN_DIAG prefix so this client-side report and the server-side
+        # log_zero_appeal_diagnostics lines share one greppable identity (this
+        # module's loguru logger is named "views", which otherwise hides appeal
+        # failures under REST views). The client's diagnostics string carries
+        # gen_id=... so the two sides join on the same generation trace.
         logger.error(
-            f"Client-reported appeal error for denial {denial_id}: "
+            f"APPEAL_GEN_DIAG Client-reported appeal error for denial {denial_id}: "
             f"{error_message} | browser: {browser_info} | "
             f"diagnostics: {diagnostics} | "
             f"context_tokens: {context_tokens} | "
@@ -729,6 +737,7 @@ def streaming_appeals_rest_fallback(request: Request):
         appeal_count = 0
         status_count = 0
         last_status_phase: Optional[str] = None
+        gen_fields = _AppealGenTraceFields()
         try:
             # Flush a leading newline before awaiting generate_appeals
             # so anti-buffering headers and intermediary heuristics
@@ -754,6 +763,7 @@ def streaming_appeals_rest_fallback(request: Request):
                             elif parsed.get("type") == "status":
                                 status_count += 1
                                 last_status_phase = parsed.get("phase")
+                                gen_fields.update_from_frame(parsed)
                     except (json.JSONDecodeError, TypeError):
                         pass
             if appeal_count == 0:
@@ -762,7 +772,23 @@ def streaming_appeals_rest_fallback(request: Request):
                     status_count=status_count,
                     last_status_phase=last_status_phase,
                     transport="rest",
+                    **gen_fields.as_kwargs(),
                 )
+        except (GeneratorExit, asyncio.CancelledError):
+            # The REST client hung up mid-stream (the async generator is being
+            # closed / the request task cancelled). This is a client
+            # disconnect, NOT a model failure. Log a concise line WITHOUT the
+            # DB lookup -- awaiting an ORM query while the generator is being
+            # torn down is unsafe -- and re-raise so close/cancel semantics are
+            # preserved.
+            if appeal_count == 0:
+                logger.warning(
+                    f"APPEAL_GEN_DIAG [rest] client disconnected mid-stream for "
+                    f"denial {denial_id}: generation "
+                    f"{'not reached' if last_status_phase in (None, 'init', 'research') else 'in progress'} "
+                    f"(last_phase={last_status_phase}, status_frames={status_count})"
+                )
+            raise
         except Exception as e:
             logger.opt(exception=True).error(
                 f"Error streaming REST fallback appeals for denial "
@@ -777,6 +803,7 @@ def streaming_appeals_rest_fallback(request: Request):
                     last_status_phase=last_status_phase,
                     transport="rest",
                     stream_error=str(e),
+                    **gen_fields.as_kwargs(),
                 )
             # Inform the client rather than terminating silently
             yield (

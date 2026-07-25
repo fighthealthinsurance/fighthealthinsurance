@@ -16,12 +16,14 @@ from fighthealthinsurance.utils import (
     meaningful_appeal_length,
     warn_too_short_appeal,
 )
+from fighthealthinsurance.generate_appeal import GeneratedAppeal
 from fighthealthinsurance.helpers import SendFaxHelper, RemoveDataHelper
 from fighthealthinsurance.models import (
     Denial,
     DenialTypes,
     Appeal,
     FaxesToSend,
+    ProposedAppeal,
     Regulator,
 )
 import pytest
@@ -502,6 +504,312 @@ class TestCommonViewLogic(TestCase):
                 ), f"Should see 'generating' phase, got: {phases_seen}"
             finally:
                 await Denial.objects.filter(denial_id=13).adelete()
+
+        async_to_sync(test)()
+
+    @pytest.mark.django_db
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_generating_phase_emits_heartbeats_during_slow_make_appeals(
+        self, mock_appeal_generator
+    ):
+        """Regression for the silent-generation bug: while the blocking
+        make_appeals runs, the generating phase must keep emitting status
+        frames so the client's 90s inactivity watchdog never fires."""
+        import time as _time
+
+        from fighthealthinsurance import utils as _fhi_utils
+
+        email, denial = self._create_test_denial(14, gen_attempts=3)
+
+        def slow_make_appeals(*args, **kwargs):
+            # Runs in a database_sync_to_async threadpool, so this sleep does
+            # NOT block the event loop -- the keepalive loop runs meanwhile.
+            _time.sleep(1.0)
+            return iter(
+                ["Dear Insurance Company, this is a sufficiently long appeal letter."]
+            )
+
+        mock_appeal_generator.make_appeals.side_effect = slow_make_appeals
+
+        real_keepalive = _fhi_utils.keepalive_frames
+
+        def fast_keepalive(task, *, interval=15.0, overall_timeout=None, **kwargs):
+            # Shrink the 15s cadence so the test doesn't have to sleep that long
+            # while still exercising the real keepalive_frames behavior.
+            return real_keepalive(
+                task, interval=0.05, overall_timeout=overall_timeout, **kwargs
+            )
+
+        async def test():
+            try:
+                with patch(
+                    "fighthealthinsurance.common_view_logic.keepalive_frames",
+                    fast_keepalive,
+                ):
+                    status_messages, _, _ = await self.collect_appeal_responses(
+                        {
+                            "denial_id": 14,
+                            "email": email,
+                            "semi_sekret": denial.semi_sekret,
+                        }
+                    )
+
+                # Heartbeats are generating-phase frames whose message reports
+                # elapsed seconds. At least a couple must have fired during the
+                # ~1s make_appeals sleep.
+                heartbeats = [
+                    m
+                    for m in status_messages
+                    if m.get("phase") == "generating"
+                    and "elapsed" in m.get("message", "")
+                ]
+                assert len(heartbeats) >= 2, (
+                    f"Expected heartbeat frames during slow make_appeals, got: "
+                    f"{status_messages}"
+                )
+            finally:
+                await Denial.objects.filter(denial_id=14).adelete()
+
+        async_to_sync(test)()
+
+    @pytest.mark.django_db
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_init_and_done_frames_carry_generation_id(self, mock_appeal_generator):
+        """The correlation id is emitted in the init frame (captured before any
+        timeout) and echoed in the done frame alongside generating-phase
+        timing, so a client report can be joined to the server trace."""
+        email, denial = self._create_test_denial(15, gen_attempts=3)
+        mock_appeal_generator.make_appeals.return_value = iter(
+            ["Dear Insurance Company, this is a sufficiently long appeal letter."]
+        )
+
+        async def test():
+            try:
+                status_messages, _, _ = await self.collect_appeal_responses(
+                    {
+                        "denial_id": 15,
+                        "email": email,
+                        "semi_sekret": denial.semi_sekret,
+                    }
+                )
+                init = [m for m in status_messages if m.get("phase") == "init"]
+                done = [m for m in status_messages if m.get("phase") == "done"]
+                assert init and init[0].get("generation_id"), status_messages
+                assert done, status_messages
+                assert done[0].get("generation_id") == init[0].get("generation_id")
+                assert "make_appeals_seconds" in done[0]
+            finally:
+                await Denial.objects.filter(denial_id=15).adelete()
+
+        async_to_sync(test)()
+
+    @pytest.mark.django_db
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_speculative_excluded_from_existing_and_served_as_fallback(
+        self, mock_appeal_generator
+    ):
+        """A speculative row is held back from the normal existing-appeals loop
+        but promoted (and flipped to permanent) when the live run
+        underdelivers."""
+        email, denial = self._create_test_denial(16, gen_attempts=3)
+        # A normal existing appeal -> served as `old`.
+        ProposedAppeal.objects.create(
+            for_denial=denial,
+            appeal_text="An existing non-speculative appeal letter here.",
+            speculative=False,
+        )
+        # A held-back speculative appeal -> served only via the fallback.
+        spec = ProposedAppeal.objects.create(
+            for_denial=denial,
+            appeal_text="A speculative fallback appeal letter goes here.",
+            speculative=True,
+            context_level="speculative",
+        )
+        # Live generation produces nothing -> underdelivered.
+        mock_appeal_generator.make_appeals.return_value = iter([])
+
+        async def test():
+            try:
+                status_messages, appeal_contents, _ = (
+                    await self.collect_appeal_responses(
+                        {
+                            "denial_id": 16,
+                            "email": email,
+                            "semi_sekret": denial.semi_sekret,
+                        }
+                    )
+                )
+                done = [m for m in status_messages if m.get("phase") == "done"][0]
+                # The non-speculative existing appeal is served as `old`; the
+                # speculative one is NOT (it's promoted as `new` via fallback).
+                self.assertEqual(done["existing_appeals"], 1)
+                self.assertEqual(done["new_appeals"], 1)
+                joined = " ".join(appeal_contents)
+                self.assertIn("A speculative fallback appeal letter goes here.", joined)
+                # The speculative row was promoted to permanent.
+                await spec.arefresh_from_db()
+                self.assertFalse(spec.speculative)
+            finally:
+                await Denial.objects.filter(denial_id=16).adelete()
+
+        async_to_sync(test)()
+
+    @pytest.mark.django_db
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_speculative_not_served_when_live_run_delivers_enough(
+        self, mock_appeal_generator
+    ):
+        """When the live run delivers enough appeals (>= threshold), the
+        held-back speculative reserve is a "mini" row and stays held back --
+        padding an already-sufficient result with weaker reduced-context drafts
+        adds no value."""
+        email, denial = self._create_test_denial(17, gen_attempts=3)
+        ProposedAppeal.objects.create(
+            for_denial=denial,
+            appeal_text="Held-back speculative draft that must not be served.",
+            speculative=True,
+            context_level="speculative",
+        )
+        # The live run below delivers 3 appeals, so we're at/over threshold and
+        # the mini/speculative reserve is not served. gen_attempts=0 keeps the
+        # research phase on; the enrichment sources are patched to None below
+        # purely for test isolation (no real ML calls), not because the gate
+        # depends on them anymore.
+        Denial.objects.filter(denial_id=17).update(
+            plan_documents_summary="Some gathered plan context.", gen_attempts=0
+        )
+        mock_appeal_generator.make_appeals.return_value = iter(
+            [
+                GeneratedAppeal(
+                    text=f"A live internal appeal letter number {i} here.",
+                    model_name="fhi-internal",
+                    context_level="full",
+                )
+                for i in range(3)
+            ]
+        )
+
+        async def test():
+            try:
+                # Skip the research gather cleanly (gen_attempts=0 would run it),
+                # so patch the enrichment sources to None but keep the plan
+                # summary as the gathered-data signal.
+                with patch(
+                    "fighthealthinsurance.common_view_logic.get_rag_context_for_denial",
+                    new_callable=AsyncMock,
+                    return_value=None,
+                ), patch(
+                    "fighthealthinsurance.common_view_logic."
+                    "MLCitationsHelper.generate_citations_for_denial",
+                    new_callable=AsyncMock,
+                    return_value=None,
+                ), patch(
+                    "fighthealthinsurance.common_view_logic.AppealsBackendHelper.pmt"
+                ) as mock_pmt:
+                    mock_pmt.find_context_for_denial = AsyncMock(return_value=None)
+                    status_messages, _, _ = await self.collect_appeal_responses(
+                        {
+                            "denial_id": 17,
+                            "email": email,
+                            "semi_sekret": denial.semi_sekret,
+                        }
+                    )
+                done = [m for m in status_messages if m.get("phase") == "done"][0]
+                # 3 live appeals, no fallback -> speculative stays held back.
+                self.assertGreaterEqual(done["new_appeals"], 3)
+                spec = await ProposedAppeal.objects.aget(
+                    for_denial=denial, speculative=True
+                )
+                self.assertTrue(spec.speculative)
+            finally:
+                await Denial.objects.filter(denial_id=17).adelete()
+
+        async_to_sync(test)()
+
+    @pytest.mark.django_db
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_reserve_is_served_when_make_appeals_raises(self, mock_appeal_generator):
+        """A raising make_appeals is the likeliest failure the reserve exists
+        for. It used to propagate straight out of the generator, skipping
+        synthesis AND the reconciliation -- so the user got an error even though
+        we had drafts ready. The stream must instead end with a proper done frame
+        carrying the reserve."""
+        email, denial = self._create_test_denial(19, gen_attempts=3)
+        ProposedAppeal.objects.create(
+            for_denial=denial,
+            appeal_text="A reserve appeal held for exactly this failure.",
+            speculative=True,
+            context_level="speculative",
+        )
+        mock_appeal_generator.make_appeals.side_effect = RuntimeError(
+            "every backend is down"
+        )
+
+        async def test():
+            try:
+                status_messages, appeal_contents, _ = (
+                    await self.collect_appeal_responses(
+                        {
+                            "denial_id": 19,
+                            "email": email,
+                            "semi_sekret": denial.semi_sekret,
+                        }
+                    )
+                )
+                done = [m for m in status_messages if m.get("phase") == "done"]
+                self.assertTrue(done, "must still emit a done frame, not blow up")
+                self.assertEqual(done[0]["new_appeals"], 1)
+                self.assertIn(
+                    "A reserve appeal held for exactly this failure.",
+                    " ".join(appeal_contents),
+                )
+                spec = await ProposedAppeal.objects.aget(for_denial=denial)
+                self.assertFalse(spec.speculative, "served rows are promoted")
+            finally:
+                await Denial.objects.filter(denial_id=19).adelete()
+
+        async_to_sync(test)()
+
+    @pytest.mark.django_db
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_reconciliation_caps_mini_rows_at_threshold(self, mock_appeal_generator):
+        """When the live run underdelivers, held-back speculative ("mini") rows
+        are promoted only up to the threshold; the surplus stays held back."""
+        email, denial = self._create_test_denial(18, gen_attempts=3)
+        for i in range(5):
+            ProposedAppeal.objects.create(
+                for_denial=denial,
+                appeal_text=(
+                    f"Speculative reserve appeal number {i} with sufficient length."
+                ),
+                speculative=True,
+                context_level="speculative",
+            )
+        # Live run produces nothing -> heavily underdelivered.
+        mock_appeal_generator.make_appeals.return_value = iter([])
+
+        async def test():
+            try:
+                status_messages, _, _ = await self.collect_appeal_responses(
+                    {
+                        "denial_id": 18,
+                        "email": email,
+                        "semi_sekret": denial.semi_sekret,
+                    }
+                )
+                done = [m for m in status_messages if m.get("phase") == "done"][0]
+                # Exactly ENOUGH_APPEALS (3) promoted, not all 5.
+                self.assertEqual(done["new_appeals"], 3)
+                promoted = await ProposedAppeal.objects.filter(
+                    for_denial=denial, speculative=False
+                ).acount()
+                held = await ProposedAppeal.objects.filter(
+                    for_denial=denial, speculative=True
+                ).acount()
+                self.assertEqual(promoted, 3)
+                self.assertEqual(held, 2)
+            finally:
+                await Denial.objects.filter(denial_id=18).adelete()
 
         async_to_sync(test)()
 

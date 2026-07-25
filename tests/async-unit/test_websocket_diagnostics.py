@@ -17,7 +17,23 @@ from unittest.mock import patch, AsyncMock, MagicMock
 
 import pytest
 
-from fighthealthinsurance.websockets import log_zero_appeal_diagnostics
+from fighthealthinsurance.websockets import (
+    _AppealGenTraceFields,
+    _stream_error_is_client_disconnect,
+    log_zero_appeal_diagnostics,
+)
+
+
+def _captured_warning():
+    """Capture logger.warning messages (the client-disconnect branch logs at
+    WARNING, not ERROR)."""
+    captured: list = []
+
+    def _record(msg, *args, **kwargs):
+        captured.append(msg)
+
+    cm = patch("fighthealthinsurance.websockets.logger.warning", side_effect=_record)
+    return cm, captured
 
 
 def _make_count_mock(return_value=None, side_effect=None):
@@ -168,7 +184,11 @@ async def test_none_denial_id_skips_db_call():
 
 @pytest.mark.asyncio
 async def test_int_denial_id_passes_through_to_filter():
-    """Integer denial_id must reach the queryset filter as an int."""
+    """Integer denial_id must reach the queryset filter as an int.
+
+    speculative=False excludes the held-back background precompute so the
+    diagnostic counts only rows this session could have produced/served.
+    """
     objects = _make_count_mock(return_value=0)
     p1, p2 = _patch_models(objects)
     log_cm, _captured = _captured_logger()
@@ -179,7 +199,7 @@ async def test_int_denial_id_passes_through_to_filter():
             last_status_phase=None,
             transport="websocket",
         )
-    objects.filter.assert_called_once_with(for_denial_id=42)
+    objects.filter.assert_called_once_with(for_denial_id=42, speculative=False)
 
 
 @pytest.mark.asyncio
@@ -196,7 +216,7 @@ async def test_str_denial_id_is_coerced_to_int():
             last_status_phase=None,
             transport="websocket",
         )
-    objects.filter.assert_called_once_with(for_denial_id=42)
+    objects.filter.assert_called_once_with(for_denial_id=42, speculative=False)
 
 
 @pytest.mark.asyncio
@@ -224,7 +244,11 @@ async def test_bool_denial_id_does_not_coerce_to_int(denial_id):
 @pytest.mark.asyncio
 async def test_stream_error_appended_to_log():
     """When stream_error is set, it must appear in the log so the
-    triggering exception is visible alongside the diagnostic."""
+    triggering exception is visible alongside the diagnostic.
+
+    Uses a SERVER-side error: a client-disconnect marker would (correctly) be
+    routed to the WARNING branch instead of this delivery-failure ERROR.
+    """
     objects = _make_count_mock(return_value=2)
     p1, p2 = _patch_models(objects)
     log_cm, captured = _captured_logger()
@@ -234,7 +258,276 @@ async def test_stream_error_appended_to_log():
             status_count=1,
             last_status_phase="generating",
             transport="rest",
+            stream_error="Server error while generating appeals.",
+        )
+
+    assert "stream_error=Server error while generating appeals." in captured[-1]
+
+
+@pytest.mark.asyncio
+async def test_client_disconnect_with_persisted_rows_is_a_warning_not_an_error():
+    """A client that hangs up AFTER drafts were persisted (the common iOS case)
+    must not be reported as a delivery/wire failure ERROR -- that is the alert
+    noise the disconnect classification exists to remove. The persisted count
+    still has to appear so triage can see the rows aren't lost."""
+    objects = _make_count_mock(return_value=3)
+    p1, p2 = _patch_models(objects)
+    err_cm, errors = _captured_logger()
+    warn_cm, warnings = _captured_warning()
+    with p1, p2, err_cm, warn_cm:
+        await log_zero_appeal_diagnostics(
+            denial_id=42,
+            status_count=4,
+            last_status_phase="generating",
+            transport="websocket",
             stream_error="connection reset",
         )
 
-    assert "stream_error=connection reset" in captured[-1]
+    assert errors == []
+    assert "client disconnected during generating" in warnings[-1]
+    assert "3 ProposedAppeal row(s)" in warnings[-1]
+
+
+@pytest.mark.asyncio
+async def test_generation_trace_fields_appear_in_log():
+    """The generation-trace fields (gen_id / timing / model / shed tier) must
+    be threaded into the log so a client report joins to the server trace."""
+    objects = _make_count_mock(return_value=0)
+    p1, p2 = _patch_models(objects)
+    log_cm, captured = _captured_logger()
+    with p1, p2, log_cm:
+        await log_zero_appeal_diagnostics(
+            denial_id=42,
+            status_count=3,
+            last_status_phase="generating",
+            transport="websocket",
+            generation_id="abc123def456",
+            make_appeals_seconds=142.4,
+            first_model="fhi-legacy",
+            shed_tier=2,
+            models_tried="fhi-legacy:timeout,fhi-2025:no_output",
+        )
+
+    msg = captured[-1]
+    # Shared searchable tag so client + server appeal failures group together.
+    assert "APPEAL_GEN_DIAG" in msg
+    assert "gen_id=abc123def456" in msg
+    assert "make_appeals_s=142.4" in msg
+    assert "first_model=fhi-legacy" in msg
+    assert "shed_tier=2" in msg
+    assert "models_tried=[fhi-legacy:timeout,fhi-2025:no_output]" in msg
+
+
+@pytest.mark.asyncio
+async def test_appeal_gen_diag_tag_present_on_all_branches():
+    """Every zero-appeal branch carries the APPEAL_GEN_DIAG tag."""
+    for persisted in (5, 0):
+        objects = _make_count_mock(return_value=persisted)
+        p1, p2 = _patch_models(objects)
+        log_cm, captured = _captured_logger()
+        with p1, p2, log_cm:
+            await log_zero_appeal_diagnostics(
+                denial_id=42,
+                status_count=1,
+                last_status_phase="generating",
+                transport="websocket",
+            )
+        assert "APPEAL_GEN_DIAG" in captured[-1]
+
+
+class TestAppealGenTraceFields:
+    """_AppealGenTraceFields parses the generation-trace fields off the status
+    frames both transports stream, keeping that frame-shape knowledge in one
+    place."""
+
+    def test_captures_generation_id_from_init_frame(self):
+        f = _AppealGenTraceFields()
+        f.update_from_frame(
+            {"type": "status", "phase": "init", "generation_id": "gen-xyz"}
+        )
+        assert f.as_kwargs()["generation_id"] == "gen-xyz"
+
+    def test_captures_timing_and_model_from_done_frame(self):
+        f = _AppealGenTraceFields()
+        f.update_from_frame(
+            {
+                "type": "status",
+                "phase": "done",
+                "generation_id": "gen-xyz",
+                "make_appeals_seconds": 12.3,
+                "first_model": "fhi-2025",
+                "shed_tier": 1,
+            }
+        )
+        kw = f.as_kwargs()
+        assert kw == {
+            "generation_id": "gen-xyz",
+            "make_appeals_seconds": 12.3,
+            "first_model": "fhi-2025",
+            "shed_tier": 1,
+            "models_tried": None,
+        }
+
+    def test_first_model_none_sentinel_is_normalized_to_none(self):
+        """The done frame sends first_model='none' when no model won; that
+        sentinel must not leak into the log as a literal model name."""
+        f = _AppealGenTraceFields()
+        f.update_from_frame(
+            {
+                "type": "status",
+                "phase": "done",
+                "first_model": "none",
+                "shed_tier": None,
+            }
+        )
+        assert f.as_kwargs()["first_model"] is None
+
+    def test_non_done_frames_leave_timing_unset(self):
+        f = _AppealGenTraceFields()
+        f.update_from_frame({"type": "status", "phase": "generating"})
+        kw = f.as_kwargs()
+        assert kw["make_appeals_seconds"] is None
+        assert kw["first_model"] is None
+
+    def test_captures_models_tried_from_done_frame(self):
+        f = _AppealGenTraceFields()
+        f.update_from_frame(
+            {
+                "type": "status",
+                "phase": "done",
+                "models_tried": "fhi-legacy:no_output,sonar:http_429",
+            }
+        )
+        assert f.as_kwargs()["models_tried"] == "fhi-legacy:no_output,sonar:http_429"
+
+    def test_models_tried_none_sentinel_normalized(self):
+        f = _AppealGenTraceFields()
+        f.update_from_frame({"type": "status", "phase": "done", "models_tried": "none"})
+        assert f.as_kwargs()["models_tried"] is None
+
+
+class TestStreamErrorClassification:
+    """A zero-appeal stream_error that names a closed transport is a client
+    disconnect, not a server/model failure."""
+
+    @pytest.mark.parametrize(
+        "err",
+        [
+            "unable to perform operation on <TCPTransport closed=True reading=False>; the handler is closed",
+            "TCPTransport closed=True",
+            "Connection reset by peer",
+            "[Errno 32] Broken pipe",
+            "Connection lost",
+        ],
+    )
+    def test_disconnect_markers_match(self, err):
+        assert _stream_error_is_client_disconnect(err)
+
+    @pytest.mark.parametrize(
+        "err", [None, "", "Server error while generating appeals."]
+    )
+    def test_non_disconnect_does_not_match(self, err):
+        assert not _stream_error_is_client_disconnect(err)
+
+
+@pytest.mark.asyncio
+async def test_client_disconnect_during_research_is_not_generation_failure():
+    """The reported production line: last_phase=research + closed transport
+    must read as a client disconnect (WARNING), not 'Generation produced
+    nothing' (ERROR) which points triage at the model backends."""
+    objects = _make_count_mock(return_value=0)
+    p1, p2 = _patch_models(objects)
+    warn_cm, warnings = _captured_warning()
+    err_cm, errors = _captured_logger()
+    with p1, p2, warn_cm, err_cm:
+        await log_zero_appeal_diagnostics(
+            denial_id=22880,
+            status_count=5,
+            last_status_phase="research",
+            transport="websocket",
+            stream_error=(
+                "unable to perform operation on <TCPTransport closed=True "
+                "reading=False 0x5629d9289e10>; the handler is closed"
+            ),
+        )
+    # No ERROR-level "Generation produced nothing".
+    assert errors == []
+    assert len(warnings) == 1
+    msg = warnings[0]
+    assert "client disconnected during research" in msg
+    assert "generation not reached" in msg
+    assert "Generation produced nothing" not in msg
+    assert "APPEAL_GEN_DIAG" in msg
+
+
+@pytest.mark.asyncio
+async def test_client_disconnect_during_generating_notes_generation_started():
+    objects = _make_count_mock(return_value=0)
+    p1, p2 = _patch_models(objects)
+    warn_cm, warnings = _captured_warning()
+    err_cm, errors = _captured_logger()
+    with p1, p2, warn_cm, err_cm:
+        await log_zero_appeal_diagnostics(
+            denial_id=42,
+            status_count=8,
+            last_status_phase="generating",
+            transport="websocket",
+            stream_error="the handler is closed",
+        )
+    assert errors == []
+    assert (
+        "client disconnected during generating after generation started" in warnings[0]
+    )
+
+
+@pytest.mark.asyncio
+async def test_zero_persisted_without_disconnect_still_generation_failure():
+    """A zero-appeal session whose stream_error is NOT a disconnect keeps the
+    'Generation produced nothing' ERROR."""
+    objects = _make_count_mock(return_value=0)
+    p1, p2 = _patch_models(objects)
+    err_cm, errors = _captured_logger()
+    with p1, p2, err_cm:
+        await log_zero_appeal_diagnostics(
+            denial_id=42,
+            status_count=3,
+            last_status_phase="generating",
+            transport="websocket",
+            stream_error="Server error while generating appeals.",
+        )
+    assert "Generation produced nothing" in errors[-1]
+
+
+class TestDeniedItemsAnalysisDispatchGuard:
+    """enqueue_denied_items_analysis runs on every chat disconnect. Touching the
+    actor ref with no cluster configured makes Ray auto-init a whole LOCAL
+    cluster inside the ASGI process, so it must be gated."""
+
+    @pytest.mark.asyncio
+    async def test_skips_dispatch_when_no_ray_cluster(self):
+        from fighthealthinsurance.websockets import enqueue_denied_items_analysis
+
+        with patch(
+            "fighthealthinsurance.base_actor_ref.ray_cluster_available",
+            return_value=False,
+        ), patch(
+            "fighthealthinsurance.denied_items_analysis_actor_ref."
+            "denied_items_analysis_actor_ref"
+        ) as mock_ref:
+            await enqueue_denied_items_analysis(chat_id="chat-1")
+        # The ref must not even be touched -- `.get` is what auto-inits Ray.
+        mock_ref.get.run_analysis.remote.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_dispatches_when_a_cluster_is_available(self):
+        from fighthealthinsurance.websockets import enqueue_denied_items_analysis
+
+        with patch(
+            "fighthealthinsurance.base_actor_ref.ray_cluster_available",
+            return_value=True,
+        ), patch(
+            "fighthealthinsurance.denied_items_analysis_actor_ref."
+            "denied_items_analysis_actor_ref"
+        ) as mock_ref:
+            await enqueue_denied_items_analysis(chat_id="chat-1")
+        mock_ref.get.run_analysis.remote.assert_called_once_with(chat_id="chat-1")

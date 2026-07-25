@@ -468,6 +468,128 @@ class TestContextOnlyModelFlag(unittest.TestCase):
         self.assertNotIn(context_model, backends)
 
 
+class TestMLRouterSummarize(unittest.TestCase):
+    """MLRouter.summarize gates the external model on use_external so PHI
+    (e.g. a long denial letter) is never sent externally for an opt-out
+    denial, and caps input size via max_input_chars."""
+
+    def setUp(self):
+        self.router = MLRouter()
+
+    async def async_test_use_external_false_never_selects_gemma(self):
+        gemma = AsyncMock(spec=RemoteModelLike)
+        gemma._infer_no_context.return_value = "external summary"
+        internal = AsyncMock(spec=RemoteModelLike)
+        internal._infer_no_context.return_value = "internal summary"
+        self.router.models_by_name = {"google/gemma-4-26B-A4B-it": [gemma]}
+        self.router.internal_models_by_cost = [internal]
+
+        result = await self.router.summarize(
+            "denial letter", "some text", use_external=False
+        )
+
+        gemma._infer_no_context.assert_not_called()
+        internal._infer_no_context.assert_called_once()
+        self.assertEqual(result, "internal summary")
+
+    def test_use_external_false_never_selects_gemma(self):
+        asyncio.run(self.async_test_use_external_false_never_selects_gemma())
+
+    async def async_test_use_external_true_prefers_gemma(self):
+        gemma = AsyncMock(spec=RemoteModelLike)
+        gemma._infer_no_context.return_value = "external summary"
+        internal = AsyncMock(spec=RemoteModelLike)
+        self.router.models_by_name = {"google/gemma-4-26B-A4B-it": [gemma]}
+        self.router.internal_models_by_cost = [internal]
+
+        with patch.object(self.router, "_external_selectable", return_value=True):
+            result = await self.router.summarize("article", "text", use_external=True)
+
+        gemma._infer_no_context.assert_called_once()
+        self.assertEqual(result, "external summary")
+
+    def test_use_external_true_prefers_gemma(self):
+        asyncio.run(self.async_test_use_external_true_prefers_gemma())
+
+    async def async_test_max_input_chars_caps_source_text(self):
+        internal = AsyncMock(spec=RemoteModelLike)
+        internal._infer_no_context.return_value = "summary"
+        self.router.internal_models_by_cost = [internal]
+
+        long_text = "B" * 5000
+        await self.router.summarize(
+            "denial", long_text, use_external=False, max_input_chars=100
+        )
+
+        prompt = internal._infer_no_context.call_args.kwargs.get("prompt", "")
+        self.assertIn("B" * 100, prompt)
+        self.assertNotIn("B" * 101, prompt)
+
+    async def async_test_no_abstract_never_sends_a_contentless_retry(self):
+        """With abstract=None the old abstract-only retry had NO source text at
+        all -- just the instruction. A model answers that with a refusal or an
+        invention rather than failing, and for denial summarization that gets
+        cached and substituted for the user's actual letter."""
+        internal = AsyncMock(spec=RemoteModelLike)
+        internal._infer_no_context.return_value = None  # force the retry path
+        self.router.internal_models_by_cost = [internal]
+
+        await self.router.summarize("denial letter", "the denial text", abstract=None)
+
+        # Exactly one attempt, and it carried the source text.
+        self.assertEqual(internal._infer_no_context.call_count, 1)
+        for call in internal._infer_no_context.call_args_list:
+            self.assertIn("the denial text", call.kwargs.get("prompt", ""))
+
+    def test_no_abstract_never_sends_a_contentless_retry(self):
+        asyncio.run(self.async_test_no_abstract_never_sends_a_contentless_retry())
+
+    async def async_test_degenerate_result_falls_through_to_next_model(self):
+        """A blank/trivial answer is a failure, not a summary: callers subsitute
+        it for the source text, so returning "   " would make it the thing we
+        summarized FROM."""
+        blank = AsyncMock(spec=RemoteModelLike)
+        blank._infer_no_context.return_value = "   "
+        good = AsyncMock(spec=RemoteModelLike)
+        good._infer_no_context.return_value = "A real summary of the denial."
+        self.router.internal_models_by_cost = [blank, good]
+
+        result = await self.router.summarize("denial", "text", use_external=False)
+
+        # Both must have been tried: without these the test also passes if the
+        # router never called `blank` at all, which proves nothing about the
+        # fall-through.
+        blank._infer_no_context.assert_awaited_once()
+        good._infer_no_context.assert_awaited_once()
+        self.assertEqual(result, "A real summary of the denial.")
+
+    def test_degenerate_result_falls_through_to_next_model(self):
+        asyncio.run(self.async_test_degenerate_result_falls_through_to_next_model())
+
+    async def async_test_one_raising_backend_does_not_skip_the_rest(self):
+        """Subclasses with _propagate_http_errors re-raise unexpected statuses;
+        without a per-model guard one 500 skipped the whole fallback chain."""
+        boom = AsyncMock(spec=RemoteModelLike)
+        boom._infer_no_context.side_effect = RuntimeError("500 from provider")
+        good = AsyncMock(spec=RemoteModelLike)
+        good._infer_no_context.return_value = "A real summary of the denial."
+        self.router.internal_models_by_cost = [boom, good]
+
+        result = await self.router.summarize("denial", "text", use_external=False)
+
+        # The raising model must actually have been reached, or this asserts
+        # nothing about surviving a 500 mid-chain.
+        boom._infer_no_context.assert_awaited_once()
+        good._infer_no_context.assert_awaited_once()
+        self.assertEqual(result, "A real summary of the denial.")
+
+    def test_one_raising_backend_does_not_skip_the_rest(self):
+        asyncio.run(self.async_test_one_raising_backend_does_not_skip_the_rest())
+
+    def test_max_input_chars_caps_source_text(self):
+        asyncio.run(self.async_test_max_input_chars_caps_source_text())
+
+
 class TestMLRouterSummarizeChatHistory(unittest.TestCase):
     """Tests for MLRouter.summarize_chat_history method."""
 

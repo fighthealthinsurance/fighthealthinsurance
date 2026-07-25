@@ -23,6 +23,7 @@ from fighthealthinsurance.followup_emails import (
 )
 from fighthealthinsurance.forms import FollowUpTestForm
 from fighthealthinsurance.helpers.fax_helpers import SendFaxHelper
+from fighthealthinsurance.base_actor_ref import ray_cluster_available
 from fighthealthinsurance.mailing_list_actor_ref import mailing_list_actor_ref
 from fighthealthinsurance.models import (
     ChooserCandidate,
@@ -440,6 +441,19 @@ class SendMailingListMailView(generic.FormView):
         text_content = form.cleaned_data.get("text_content")
         test_email = form.cleaned_data.get("test_email")
 
+        # Without a cluster to attach to, touching the actor ref would auto-init
+        # a local Ray cluster in this web process just to send staff mail. Tell
+        # the operator plainly instead -- this is a synchronous admin action, so
+        # a clear message beats a silent cluster (and a confusing timeout).
+        if not ray_cluster_available():
+            logger.warning(
+                "Mailing list send requested but no Ray cluster is available"
+            )
+            return HttpResponse(
+                "No Ray cluster available; mailing list email not sent.",
+                status=503,
+            )
+
         try:
             # Use ray actor for sending emails
             actor = mailing_list_actor_ref.get
@@ -553,6 +567,7 @@ class ModelUsageDashboardView(generic.TemplateView):
                     "slug": slug,
                     "label": label,
                     "proposed_appeal": proposed,
+                    "context_level": self._context_level_stats(since),
                     "chooser_appeal": chooser_appeal,
                     "chooser_chat": chooser_chat,
                     "chart_data_json": json.dumps(
@@ -628,9 +643,14 @@ class ModelUsageDashboardView(generic.TemplateView):
         # bucket would fabricate a win-rate denominator — so legacy chosen
         # rows report presented=0 and an em-dash win rate.
         chosen_denial_ids = chosen_qs.values_list("for_denial_id", flat=True).distinct()
+        # Exclude held-back speculative rows: they were never shown (they carry a
+        # real internal model_name, so counting them would silently pad that
+        # model's presented denominator and deflate its win rate). Matches the
+        # speculative=False guard in _context_level_stats and the serving path.
         presented_qs = ProposedAppeal.objects.filter(
             chosen=False,
             model_name__isnull=False,
+            speculative=False,
             for_denial_id__in=chosen_denial_ids,
         )
 
@@ -656,6 +676,41 @@ class ModelUsageDashboardView(generic.TemplateView):
             presented_label = normalize_model_label(name)
             if presented_label is not None:
                 presented[presented_label] += count
+        return _merge_stats(dict(chosen), dict(presented))
+
+    @staticmethod
+    def _context_level_stats(
+        since: Optional[datetime.datetime],
+    ) -> List[Dict[str, Any]]:
+        """Chosen/presented/win-rate bucketed by the context/shed level the
+        appeal was generated at (full / tier1_shed / tier2_shed / speculative /
+        synthesized / template). Shows whether users end up choosing shed or
+        speculative appeals as often as full-context ones. Speculative drafts
+        that were never promoted are excluded from the presented denominator
+        (they were held back, not shown)."""
+        chosen_qs = ProposedAppeal.objects.filter(chosen=True)
+        if since is not None:
+            chosen_qs = chosen_qs.filter(created_at__gte=since)
+        chosen_denial_ids = chosen_qs.values_list("for_denial_id", flat=True).distinct()
+        presented_qs = ProposedAppeal.objects.filter(
+            chosen=False,
+            speculative=False,
+            for_denial_id__in=chosen_denial_ids,
+        )
+        chosen: Counter = Counter()
+        for level, count in chosen_qs.values_list("context_level").annotate(
+            c=Count("id")
+        ):
+            chosen[level or UNKNOWN_MODEL_LABEL] += count
+        presented: Counter = Counter()
+        for level, count in presented_qs.values_list("context_level").annotate(
+            c=Count("id")
+        ):
+            presented[level or UNKNOWN_MODEL_LABEL] += count
+        # _merge_stats labels the bucket key "model_name"; the value here is the
+        # context level. Reusing the shared table partial (which reads
+        # model_name) keeps the key -- the template passes a "Context level"
+        # column header instead.
         return _merge_stats(dict(chosen), dict(presented))
 
     @staticmethod

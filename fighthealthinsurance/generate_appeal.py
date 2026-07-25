@@ -22,14 +22,27 @@ class GeneratedAppeal:
     ``synthesized`` marks appeals combined from multiple drafts rather than
     produced by a single model pass, so synthesis provenance is tracked
     independently of the model label.
+
+    ``context_level`` records how much context shedding produced this appeal
+    (one of context_utils.CONTEXT_LEVEL_*: full / tier1_shed / tier2_shed /
+    template), stamped from the tier of the model call that produced it, so
+    analytics can see whether shed appeals are the ones users choose.
     """
 
     text: str
     model_name: Optional[str]
     synthesized: bool = False
+    context_level: Optional[str] = None
 
 
-from fighthealthinsurance.context_utils import estimate_tokens, truncate_at_boundary
+from fighthealthinsurance.context_utils import (
+    CONTEXT_LEVEL_FULL,
+    CONTEXT_LEVEL_TEMPLATE,
+    CONTEXT_LEVEL_TIER1_SHED,
+    CONTEXT_LEVEL_TIER2_SHED,
+    estimate_tokens,
+    truncate_at_boundary,
+)
 from fighthealthinsurance.denial_base import DenialBase
 
 from .exec import executor
@@ -932,6 +945,12 @@ def _shed_context(
                     changed.add(key)
         if tier >= 2:
             _apply_tier2_truncations(new, _TIER2_TRUNCATIONS, changed, label="")
+        # Stamp the shed level so each produced appeal records the tier it came
+        # from (tier 0 leaves the inherited "full" level untouched).
+        if tier >= 2:
+            new["context_level"] = CONTEXT_LEVEL_TIER2_SHED
+        elif tier >= 1:
+            new["context_level"] = CONTEXT_LEVEL_TIER1_SHED
         new_calls.append(new)
     return new_calls, sorted(changed)
 
@@ -1061,7 +1080,19 @@ def _add_proactive_shed_variants(
         rebuild_prompt=rebuild_prompt,
         original_open_prompt=original_open_prompt,
     )
-    shed_variants = [v for v, src in zip(variants, over_budget_calls) if v != src]
+
+    # _shed_context stamps context_level on every variant, so compare on the
+    # shed-relevant content (everything but the level) to detect no-op variants
+    # -- otherwise the added level key alone would make v != src and we'd
+    # duplicate the full call.
+    def _without_level(d: dict) -> dict:
+        return {k: v for k, v in d.items() if k != "context_level"}
+
+    shed_variants = [
+        v
+        for v, src in zip(variants, over_budget_calls)
+        if _without_level(v) != _without_level(src)
+    ]
     if not shed_variants:
         return calls
     logger.info(
@@ -1087,10 +1118,39 @@ def _peek_or_none(
         return None, iter([])
 
 
+def _summarize_model_outcomes(outcomes: List[Tuple[Optional[str], str]]) -> str:
+    """Compact ``model:outcome[,model:outcome...]`` summary from a list of
+    ``(model_name, outcome)`` records, for the models_tried diagnostic.
+
+    Deduped per model (the same model is attempted across the primary/backup/
+    shed stages). ``ok`` -- the model produced at least one deliverable appeal
+    -- wins over any failure outcome for that model. Capped so a large fan-out
+    can't bloat the log line.
+    """
+    if not outcomes:
+        return ""
+    best: dict[str, str] = {}
+    for name, outcome in outcomes:
+        key = str(name) if name is not None else "unknown"
+        # "ok" is the only success; keep it over any failure reason.
+        if best.get(key) == "ok":
+            continue
+        if key not in best or outcome == "ok":
+            best[key] = outcome
+    items = [f"{k}:{v}" for k, v in sorted(best.items())]
+    max_items = 12
+    if len(items) > max_items:
+        hidden = len(items) - max_items
+        items = items[:max_items] + [f"+{hidden}_more"]
+    return ",".join(items)
+
+
 def _generated_to_appeals_text(
     model_name: Optional[str],
     k_text_future: Future,
     template_generator: AppealTemplateGenerator,
+    context_level: Optional[str] = None,
+    outcomes: Optional[List[Tuple[Optional[str], str]]] = None,
 ) -> Iterator[GeneratedAppeal]:
     """Map one model future's (infer_type, text) results to GeneratedAppeals.
 
@@ -1098,38 +1158,82 @@ def _generated_to_appeals_text(
     exceptions mid-iteration, so an uncaught error from one backend (e.g. an
     external provider 500) would abort the whole appeal stream and drop every
     other model's results. Instead we log one concise line and yield nothing.
+
+    ``context_level`` (full/tier1_shed/... provenance) is stamped onto each
+    emitted appeal. When ``outcomes`` is provided, this model's outcome
+    (``ok``/``no_output``) is appended to it for the models_tried diagnostic.
     """
+    produced = False
+    runt_only = False
     try:
-        model_results = k_text_future.result()
-    except Exception as e:
-        # Same split as _log_fanout_task_error: expected transport failures
-        # get one concise classified line, but an unexpected exception (a code
-        # bug in the pipeline) keeps its traceback -- otherwise an
-        # all-models-empty run caused by a defect would be indistinguishable
-        # from ordinary backend downtime.
-        if isinstance(e, MODEL_TRANSPORT_ERRORS):
-            logger.warning(
-                f"Appeal generation via {model_name} failed -- "
-                f"{describe_model_error(e)}"
-            )
-        else:
-            logger.opt(exception=True).warning(
-                f"Appeal generation via {model_name} failed: {e}"
-            )
-        return
-    if model_results is None:
-        return
-    for k, text in model_results:
-        if text is None:
-            continue
-        # It's either full or a reason to plug into a template
-        if k == "full":
-            logger.debug(f"Bubbling up full response ({len(text)} chars)")
-            yield GeneratedAppeal(text=text, model_name=model_name)
-        else:
-            templated = template_generator.generate(text)
-            if templated is not None:
-                yield GeneratedAppeal(text=templated, model_name=model_name)
+        try:
+            model_results = k_text_future.result()
+        except Exception as e:
+            # Same split as _log_fanout_task_error: expected transport failures
+            # get one concise classified line, but an unexpected exception (a
+            # code bug in the pipeline) keeps its traceback -- otherwise an
+            # all-models-empty run caused by a defect would be indistinguishable
+            # from ordinary backend downtime.
+            if isinstance(e, MODEL_TRANSPORT_ERRORS):
+                logger.warning(
+                    f"Appeal generation via {model_name} failed -- "
+                    f"{describe_model_error(e)}"
+                )
+            else:
+                logger.opt(exception=True).warning(
+                    f"Appeal generation via {model_name} failed: {e}"
+                )
+            return
+        if model_results is None:
+            return
+        for k, text in model_results:
+            if text is None:
+                continue
+            # It's either full or a reason to plug into a template
+            if k == "full":
+                logger.debug(f"Bubbling up full response ({len(text)} chars)")
+                # Gate on is_real_appeal, NOT merely on having text: the ladder
+                # rejects runts downstream (_peek_real_or_none), so counting one
+                # as "ok" would report a model as working in the very zero-appeal
+                # log that exists to say which models failed -- and "ok" then
+                # masks that model's real failures at every other tier.
+                if is_real_appeal(text):
+                    produced = True
+                else:
+                    runt_only = True
+                yield GeneratedAppeal(
+                    text=text, model_name=model_name, context_level=context_level
+                )
+            else:
+                templated = template_generator.generate(text)
+                if templated is not None:
+                    if is_real_appeal(templated):
+                        produced = True
+                    else:
+                        runt_only = True
+                    yield GeneratedAppeal(
+                        text=templated,
+                        model_name=model_name,
+                        context_level=context_level,
+                    )
+    finally:
+        # Record whether this model produced any deliverable text, for the
+        # models_tried diagnostic.
+        #
+        # Caveat, deliberate: this runs when the generator is exhausted or
+        # collected. The zero-appeal ladder drains every stage, so the failure
+        # case this diagnostic exists for is covered -- but a generator that is
+        # never started records nothing, so on a run where an early model wins
+        # the list is partial by design (see the note at the diagnostics_sink
+        # assignment).
+        if outcomes is not None:
+            if produced:
+                outcome = "ok"
+            elif runt_only:
+                outcome = "runt_only"
+            else:
+                outcome = "no_output"
+            outcomes.append((model_name, outcome))
 
 
 def _peek_real_or_none(
@@ -2134,6 +2238,9 @@ class AppealGenerator(object):
         pa_context=None,
         uspstf_context=None,
         clinical_trials_context=None,
+        generation_id: Optional[str] = None,
+        diagnostics_sink: Optional[dict] = None,
+        denial_text_override: Optional[str] = None,
     ) -> Iterator[GeneratedAppeal]:
         """
         Generates an iterator of appeal texts for a given insurance denial using templates, non-AI sources, and AI models.
@@ -2208,7 +2315,10 @@ class AppealGenerator(object):
         # prompt-baked copies of pubmed/citations/rag/etc. would still pin
         # the token count even after the call-dict copies are dropped.
         open_prompt_kwargs = dict(
-            denial_text=denial.denial_text,
+            # denial_text_override is a summary substituted only when the raw
+            # denial text is very large (see maybe_summarize_denial_text);
+            # None for normal denials, so full context is preferred.
+            denial_text=denial_text_override or denial.denial_text,
             procedure=denial.procedure,
             diagnosis=denial.diagnosis,
             patient=denial.patient_user,
@@ -2244,6 +2354,15 @@ class AppealGenerator(object):
 
         # TODO: use the streaming and cancellable APIs (maybe some fancy JS on the client side?)
 
+        # Per-model attempt outcomes, for the "which models did we try and why
+        # did each fail" diagnostic. Appended by the nested get_model_result
+        # (synchronous reasons) and generated_to_appeals_text (ok/no_output) --
+        # both run on this (make_appeals) thread as futures are consumed, so no
+        # lock is needed. Folded into diagnostics_sink["models_tried"] at the
+        # end. The finer failure reason (timeout / http_<status> /
+        # context_length) is logged per-model by the inference layer.
+        model_outcomes: List[Tuple[Optional[str], str]] = []
+
         # For any model that we have a prompt for try to call it and return futures
         def get_model_result(
             model_name: str,
@@ -2262,10 +2381,12 @@ class AppealGenerator(object):
                     f"not in ml_router.models_by_name "
                     f"(available sample: {sample})"
                 )
+                model_outcomes.append((model_name, "not_registered"))
                 return []
             model_backends = ml_router.models_by_name[model_name]
             if prompt is None:
                 logger.debug(f"get_model_result: no prompt for {model_name}, skipping")
+                model_outcomes.append((model_name, "no_prompt"))
                 return []
             for model in model_backends:
                 try:
@@ -2291,6 +2412,7 @@ class AppealGenerator(object):
                 f"get_model_result: all {len(model_backends)} backend(s) "
                 f"for model_name={model_name} failed"
             )
+            model_outcomes.append((model_name, "all_backends_failed"))
             return []
 
         def _get_model_result(
@@ -2470,22 +2592,46 @@ class AppealGenerator(object):
         logger.debug(f"Initial appeal {initial_appeals}")
         # Executor map wants a list for each parameter.
 
+        # Every model call built above uses full context; stamp the level so
+        # each produced appeal records it. The proactive shed variants (added by
+        # _add_proactive_shed_variants) and the reactive tier-shed ladder get
+        # their level from _shed_context instead.
+        for _c in calls:
+            _c["context_level"] = CONTEXT_LEVEL_FULL
+        for _c in backup_calls:
+            _c["context_level"] = CONTEXT_LEVEL_FULL
+
         def make_async_model_calls(
             calls,
         ) -> List[Future[Iterator[GeneratedAppeal]]]:
             logger.debug(f"Calling models: {calls}")
-            # Bind model_name to each future so we can recover it after
-            # the per-call iterator collapses results to (kind, text) pairs.
-            model_futures: List[Tuple[Optional[str], Future]] = []
+            # Bind model_name AND context_level to each future so we can recover
+            # them after the per-call iterator collapses results to (kind, text)
+            # pairs.
+            model_futures: List[Tuple[Optional[str], Optional[str], Future]] = []
             for call in calls:
                 model_name = call.get("model_name")
-                for fut in get_model_result(**call):
-                    model_futures.append((model_name, fut))
+                context_level = call.get("context_level")
+                # context_level is provenance metadata, not an inference arg;
+                # strip it before spreading the call into get_model_result.
+                call_kwargs = {k: v for k, v in call.items() if k != "context_level"}
+                for fut in get_model_result(**call_kwargs):
+                    model_futures.append((model_name, context_level, fut))
 
-            # Python lack reasonable future chaining (ugh)
+            # Python lack reasonable future chaining (ugh). Thread context_level
+            # (cl) and the shared model_outcomes collector into the module-level
+            # mapper so each emitted appeal carries its shed level and each
+            # model's outcome is recorded for the models_tried diagnostic.
             generated_text_futures = [
-                executor.submit(_generated_to_appeals_text, mn, f, template_generator)
-                for mn, f in model_futures
+                executor.submit(
+                    _generated_to_appeals_text,
+                    mn,
+                    f,
+                    template_generator,
+                    cl,
+                    model_outcomes,
+                )
+                for mn, cl, f in model_futures
             ]
             return generated_text_futures
 
@@ -2516,16 +2662,26 @@ class AppealGenerator(object):
         # retry path reuses `calls` (internal-only), so it's opt-out-safe.
         denial_id = denial.denial_id
         use_ext = denial.use_external
+        # Correlation prefix so this ML cascade lines up with the generating
+        # phase trace (init/done frames + ReportClientError) sharing this id.
+        gen_prefix = f"[gen_id={generation_id}] " if generation_id else ""
         appeals = as_available_nested(generated_text_futures)
         first, appeals = _peek_real_or_none(appeals, denial_id, "primary")
+        # Which stage produced the first deliverable appeal, surfaced via
+        # diagnostics_sink so the generating-phase logging/done-frame can
+        # report whether the primary won or a shed-tier retry rescued it.
+        winning_stage: Optional[str] = "primary" if first is not None else None
+        shed_tier_used: Optional[int] = None
 
         if first is None and backup_calls:
             logger.warning(
-                f"Primary empty for denial {denial_id}; trying backup_calls "
-                f"(n={len(backup_calls)}, use_external={use_ext})"
+                f"{gen_prefix}Primary empty for denial {denial_id}; trying "
+                f"backup_calls (n={len(backup_calls)}, use_external={use_ext})"
             )
             appeals = as_available_nested(make_async_model_calls(backup_calls))
             first, appeals = _peek_real_or_none(appeals, denial_id, "backup")
+            if first is not None:
+                winning_stage = "backup"
 
         if first is None:
             ext_note = (
@@ -2535,8 +2691,8 @@ class AppealGenerator(object):
                 "(user opt-out respected)"
             )
             logger.error(
-                f"make_appeals: primary+backup both produced 0 for denial "
-                f"{denial_id} ({ext_note}); retrying primary internal-only"
+                f"{gen_prefix}make_appeals: primary+backup both produced 0 for "
+                f"denial {denial_id} ({ext_note}); retrying primary internal-only"
             )
             time.sleep(1.0)
             for tier in (1, 2):
@@ -2548,8 +2704,8 @@ class AppealGenerator(object):
                     original_open_prompt=open_prompt,
                 )
                 logger.warning(
-                    f"make_appeals: retrying primary for denial {denial_id} "
-                    f"with context shed (tier={tier}, changed={changed})"
+                    f"{gen_prefix}make_appeals: retrying primary for denial "
+                    f"{denial_id} with context shed (tier={tier}, changed={changed})"
                 )
                 appeals = as_available_nested(make_async_model_calls(shed_calls))
                 first, appeals = _peek_real_or_none(
@@ -2557,21 +2713,39 @@ class AppealGenerator(object):
                 )
                 if first is not None:
                     logger.warning(
-                        f"make_appeals: tier {tier} retry succeeded for "
-                        f"denial {denial_id}"
+                        f"{gen_prefix}make_appeals: tier {tier} retry succeeded "
+                        f"for denial {denial_id}"
                     )
+                    winning_stage = f"retry_tier_{tier}"
+                    shed_tier_used = tier
                     break
             if first is None:
                 logger.error(
-                    f"make_appeals: all context-shed retries (tiers 1-2) "
-                    f"produced 0 for denial {denial_id}; giving up. "
+                    f"{gen_prefix}make_appeals: all context-shed retries "
+                    f"(tiers 1-2) produced 0 for denial {denial_id}; giving up. "
                     f"({ext_note})"
                 )
+                winning_stage = "none"
                 appeals = iter([])
+
+        if diagnostics_sink is not None:
+            diagnostics_sink["winning_stage"] = winning_stage
+            diagnostics_sink["shed_tier"] = shed_tier_used
+            # NOTE: this is a ZERO-APPEAL diagnostic, not a complete attempt
+            # list. It's built here, right after the peek phase, while the
+            # per-model generators are still lazily chained and mostly
+            # unconsumed -- their outcomes are only recorded once exhausted. The
+            # zero-appeal ladder does drain every stage, so the case this exists
+            # for ("we produced nothing; which models did we try and why did
+            # each fail") is complete. On a successful run it will under-report,
+            # by design: the winning stage short-circuits the rest.
+            diagnostics_sink["models_tried"] = _summarize_model_outcomes(model_outcomes)
         # Wrap template-based / non-AI appeals (plain strings) as
         # GeneratedAppeal so the downstream pipeline has a uniform type.
         initial_appeals_wrapped: Iterator[GeneratedAppeal] = (
-            GeneratedAppeal(text=t, model_name=None)
+            GeneratedAppeal(
+                text=t, model_name=None, context_level=CONTEXT_LEVEL_TEMPLATE
+            )
             for t in initial_appeals
             if t is not None
         )

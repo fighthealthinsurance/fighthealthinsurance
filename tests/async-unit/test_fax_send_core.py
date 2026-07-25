@@ -227,6 +227,37 @@ class TestPaidFaxDispatchFallback:
             fax.hashed_email, str(fax.uuid)
         )
 
+    @override_settings(TEMPORAL_ENABLED=True)
+    @patch("fighthealthinsurance.base_actor_ref.ray_cluster_available")
+    @patch("fighthealthinsurance.fax_actor_ref.fax_actor_ref")
+    @patch("fighthealthinsurance.temporal_client.dispatch_fax_send")
+    def test_paid_fax_still_dispatches_with_no_ray_cluster(
+        self, mock_dispatch, mock_actor_ref, mock_cluster, test_denial
+    ):
+        """The fax dispatches are deliberately NOT gated on a reachable cluster,
+        unlike every other per-task Ray dispatch on a request path.
+
+        This branch is only reachable under TEMPORAL_ENABLED, which is exactly
+        the configuration where the delayed-fax sweep does not run at all --
+        FaxPollingActor is never launched and send_delayed_faxes early-returns.
+        Skipping here would strand a fax the user paid for with nothing to retry
+        it, so booting a local cluster is accepted as the lesser harm.
+
+        ray_cluster_available is forced False (and asserted unconsulted) so
+        re-adding the gate fails here rather than silently in production.
+        """
+        mock_cluster.return_value = False
+        mock_dispatch.return_value = False
+        mock_actor_ref.get = MagicMock()
+        fax = _make_fax(test_denial)
+
+        StripeWebhookHelper._handle_fax_payment(str(fax.uuid))
+
+        mock_actor_ref.get.do_send_fax.remote.assert_called_once_with(
+            fax.hashed_email, str(fax.uuid)
+        )
+        mock_cluster.assert_not_called()
+
     @override_settings(TEMPORAL_ENABLED=False)
     @patch("fighthealthinsurance.fax_actor_ref.fax_actor_ref")
     @patch("fighthealthinsurance.temporal_client.dispatch_fax_send")

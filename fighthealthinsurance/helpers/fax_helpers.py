@@ -18,6 +18,24 @@ from fighthealthinsurance.temporal_client import (
     dispatch_fax_send_blocking,
 )
 
+# NOTE: unlike every other per-task Ray dispatch on a request path, the fax
+# dispatches below deliberately do NOT gate on base_actor_ref.ray_cluster_available().
+# Elsewhere the gate is safe because skipping costs a background refresh; here it
+# would cost a fax the user paid for. Skipping is only recoverable if something
+# else retries the row, and nothing reliably does:
+#
+#   * Under TEMPORAL_ENABLED the delayed-fax sweep does not exist at all --
+#     polling_actor_setup skips launching FaxPollingActor and send_delayed_faxes
+#     early-returns (0, 0). These fallbacks are reached exactly when the Temporal
+#     dispatch already failed, so a skip strands a paid fax permanently.
+#   * With Temporal off the sweep exists but selects should_send=True rows at
+#     least an HOUR old, and stage_appeal_as_fax / blocking_dosend_* never set
+#     should_send -- so those rows are invisible to it.
+#
+# Auto-initializing a local Ray cluster to send one fax is bad. Silently never
+# sending it is worse. If this becomes a real problem in the web tier, the fix is
+# a durable retry for FaxesToSend, not a gate here.
+
 
 def _dispatch_or_ray_fax(
     hashed_email: str, fax_uuid: str, force_restart: bool = False

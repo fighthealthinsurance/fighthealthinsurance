@@ -55,7 +55,14 @@ from fhi_users.audit import TrackingInfo
 from fhi_users.models import ProfessionalUser, UserDomain
 from fighthealthinsurance import stripe_utils
 from fighthealthinsurance.context_barrier import warm_then_fetch
-from fighthealthinsurance.context_utils import attach_supplemental_to_citations
+from fighthealthinsurance.context_utils import (
+    attach_supplemental_to_citations,
+    CONTEXT_LEVEL_SPECULATIVE,
+    CONTEXT_LEVEL_SYNTHESIZED,
+    CONTEXT_LEVEL_TIER1_SHED,
+    CONTEXT_LEVEL_TIER2_SHED,
+    summarize_denial_context_tokens,
+)
 from fighthealthinsurance.denial_context import merge_plan_context, merge_qa
 from fighthealthinsurance.denials.algorithmic_review_detector import (
     detect_algorithmic_review_terms,
@@ -69,6 +76,7 @@ from fighthealthinsurance.medical_code_extractor import (
 from fighthealthinsurance.ml.bad_output_utils import strip_boilerplate_service
 from fighthealthinsurance.form_utils import *
 from fighthealthinsurance.generate_appeal import *
+from fighthealthinsurance.ml.ml_appeal_context_helper import MLAppealContextHelper
 from fighthealthinsurance.ml.ml_appeal_questions_helper import MLAppealQuestionsHelper
 from fighthealthinsurance.ml.ml_citations_helper import MLCitationsHelper
 from fighthealthinsurance.ml.imr_decision_retriever import IMRDecisionRetriever
@@ -80,6 +88,7 @@ from fighthealthinsurance.utils import (
     extract_file_text,
     interleave_iterator_for_keep_alive,
     is_real_appeal,
+    keepalive_frames,
     MIN_APPEAL_CHARS,
     sync_iterator_to_async,
     warn_too_short_appeal,
@@ -536,28 +545,46 @@ def mark_proposal_chosen(
       4. model_name=None - the user edited the draft heavily and multiple
          models were in play, or the proposal predates the model_name field.
     """
+    # speculative=False throughout: a held-back precompute row was never shown
+    # to the user, so it can't be the pick. Served speculative rows are flipped
+    # to speculative=False when promoted (keeping context_level="speculative"),
+    # so they still match here and correctly carry that level onto the chosen
+    # row -- which is exactly what analytics wants (users picking a speculative
+    # fallback). The guard only excludes held-back rows the user never saw,
+    # whose coincidentally-identical text would otherwise mislabel the pick.
     original: Optional[ProposedAppeal] = None
     if proposed_appeal_id is not None:
         original = ProposedAppeal.objects.filter(
-            id=proposed_appeal_id, for_denial=denial, chosen=False
+            id=proposed_appeal_id,
+            for_denial=denial,
+            chosen=False,
+            speculative=False,
         ).first()
     if original is None:
         original = (
             ProposedAppeal.objects.filter(
-                for_denial=denial, appeal_text=appeal_text, chosen=False
+                for_denial=denial,
+                appeal_text=appeal_text,
+                chosen=False,
+                speculative=False,
             )
             .order_by("-id")
             .first()
         )
     model_name: Optional[str] = None
     synthesized = False
+    context_level: Optional[str] = None
     if original is not None:
         model_name = original.model_name
         synthesized = original.synthesized
+        # Carry the draft's shed level onto the chosen row -- otherwise the
+        # dashboard/RL export (which read only chosen rows) would be blind to
+        # which context level users actually pick.
+        context_level = original.context_level
     elif not editted:
         inferred = ProposedAppeal.sole_draft_attribution(denial.denial_id)
         if inferred is not None:
-            model_name, synthesized = inferred
+            model_name, synthesized, context_level = inferred
     pa = ProposedAppeal(
         appeal_text=appeal_text,
         for_denial=denial,
@@ -565,6 +592,7 @@ def mark_proposal_chosen(
         editted=editted,
         model_name=model_name,
         synthesized=synthesized,
+        context_level=context_level,
     )
     pa.save()
     return pa
@@ -1276,6 +1304,42 @@ class DenialCreatorHelper:
             )
             return []
 
+    @staticmethod
+    def _invalidate_denial_text_artifacts(denial: Denial) -> None:
+        """Drop everything derived from a denial letter that has been replaced.
+
+        Called when an update changes ``denial_text``. Two classes of artifact
+        are purely derived from the letter and become wrong -- not merely stale
+        -- once it changes:
+
+        * the HELD-BACK speculative reserve (``speculative=True``), which would
+          otherwise be served later as a fallback appeal written about the old
+          denial. Promoted rows (``speculative=False``) are deliberately kept:
+          those were already delivered to the user and may have been chosen, so
+          deleting them would destroy user-visible history. (Ordinary drafts
+          going stale on a text change is pre-existing behavior, unchanged.)
+        * both cached summaries, which are substituted into the prompt in place
+          of the raw text for oversized denials -- a summary of the old letter
+          would silently misdescribe the claim.
+
+        Best-effort: a failure here must not break denial creation/update, so
+        the caller wraps this. The in-memory instance is cleared too, since it
+        flows on through the rest of the request.
+        """
+        deleted, _ = ProposedAppeal.objects.filter(
+            for_denial=denial, speculative=True
+        ).delete()
+        Denial.objects.filter(denial_id=denial.denial_id).update(
+            denial_text_summary=None, candidate_denial_text_summary=None
+        )
+        denial.denial_text_summary = None
+        denial.candidate_denial_text_summary = None
+        logger.info(
+            f"Denial {denial.denial_id} text replaced; invalidated "
+            f"{deleted} held-back speculative appeal(s) and both cached "
+            f"denial-text summaries"
+        )
+
     @classmethod
     def create_or_update_denial(
         cls,
@@ -1353,6 +1417,8 @@ class DenialCreatorHelper:
         tracking_kwargs = tracking_info.to_model_kwargs() if tracking_info else {}
 
         # If we don't have a denial we're making a new one
+        is_new_denial = denial is None
+        denial_text_changed = False
         if denial is None:
             try:
                 denial = Denial.objects.create(
@@ -1401,6 +1467,10 @@ class DenialCreatorHelper:
                     **tracking_kwargs,
                 )
         else:
+            # Captured before the overwrite: everything derived from the denial
+            # letter (the speculative reserve + the cached summaries) is stale
+            # if the letter itself changed, and must be invalidated below.
+            denial_text_changed = denial.denial_text != denial_text
             # Directly update denial object fields instead of using denial.update()
             denial.denial_text = denial_text
             denial.hashed_email = hashed_email
@@ -1469,6 +1539,46 @@ class DenialCreatorHelper:
 
         denial_id = denial.denial_id
         semi_sekret = denial.semi_sekret
+
+        # The instant a new denial's text arrives, kick off a non-blocking,
+        # no-deadline, internal-model-only precompute of bare candidate appeals
+        # (+ denial summary) from the raw text. Held in reserve and served only
+        # if the live generation later underdelivers or gathered no extra data.
+        # Fires on CREATE, and again if an update REPLACES the denial letter --
+        # in which case the artifacts derived from the old letter are dropped
+        # first, or we would later substitute a summary of the old letter into
+        # the prompt, or serve a reserve appeal written about a different
+        # denial. A plain update (no text change) doesn't re-fire; the helper is
+        # idempotent regardless. Never blocks or breaks denial creation.
+        if is_new_denial or denial_text_changed:
+            # Guarded separately from the dispatch below: if invalidation fails
+            # partway (say the delete lands but the summary update doesn't), we
+            # still want a fresh precompute kicked off rather than leaving the
+            # denial with no reserve at all.
+            if denial_text_changed:
+                try:
+                    cls._invalidate_denial_text_artifacts(denial)
+                except Exception:
+                    logger.opt(exception=True).warning(
+                        "Failed to invalidate denial-text-derived artifacts for "
+                        f"denial {denial_id}"
+                    )
+            try:
+                from fighthealthinsurance.ml.ml_speculative_appeals_helper import (
+                    dispatch_speculative_appeals,
+                )
+
+                # force on a replaced letter: the idempotency guard also matches
+                # PROMOTED reserve rows, which invalidation deliberately keeps,
+                # so without this a denial that ever served one reserve appeal
+                # could never rebuild a reserve for its new text.
+                dispatch_speculative_appeals(denial_id, force=denial_text_changed)
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Failed to dispatch speculative appeals precompute for "
+                    f"denial {denial_id}"
+                )
+
         return cls._update_denial(
             denial=denial, health_history=health_history, plan_documents=plan_documents
         )
@@ -2547,12 +2657,25 @@ class AppealsBackendHelper:
         if semi_sekret is None:
             raise Exception("Missing sekret")
 
+        # Short correlation id emitted in the init frame (so the client
+        # captures it before any inactivity timeout can fire) and again in the
+        # done frame. Lets a client-side ReportClientError be tied back to the
+        # server-side generation trace. See APPEAL_GEN_DIAG logging below.
+        generation_id = uuid.uuid4().hex[:12]
+
+        # Instrumentation captured during the generating phase and surfaced in
+        # the done frame + zero-appeal diagnostics.
+        make_appeals_seconds: float = -1.0
+        first_model: Optional[str] = None
+        make_appeals_diag: dict[str, Any] = {}
+
         # Yield status: starting
         yield json.dumps(
             {
                 "type": "status",
                 "phase": "init",
                 "message": "Starting appeal generation...",
+                "generation_id": generation_id,
             }
         ) + "\n"
 
@@ -2745,7 +2868,12 @@ class AppealsBackendHelper:
 
         # If we've had a timeout on the initial call and we're on round 2
         # we should fetch the existing appeals from the previous round if present.
-        existing_appeals = ProposedAppeal.objects.filter(for_denial=denial).all()
+        # Exclude speculative rows: those are the background precompute held in
+        # reserve and are served ONLY as a fallback below, not as normal
+        # existing appeals.
+        existing_appeals = ProposedAppeal.objects.filter(
+            for_denial=denial, speculative=False
+        ).all()
         # Yield the existing appeals first
         old = 0
         async for appeal in existing_appeals:
@@ -3385,8 +3513,13 @@ class AppealsBackendHelper:
 
         async def save_appeal(item: GeneratedAppeal) -> dict[str, str]:
             # Save all of the proposed appeals, so we can use RL later.
+            nonlocal first_model
             appeal_text = item.text
             model_name = item.model_name
+            if first_model is None and model_name:
+                # First deliverable draft's model — recorded for the done frame
+                # and zero-appeal diagnostics so we can see which backend won.
+                first_model = str(model_name)
             t = time.time()
             logger.debug(f"Saving appeal ({len(appeal_text)} chars)")
             await asyncio.sleep(0)
@@ -3398,6 +3531,7 @@ class AppealsBackendHelper:
                     for_denial=denial,
                     model_name=model_name,
                     synthesized=item.synthesized,
+                    context_level=item.context_level,
                 )
                 await pa.asave()
                 id = str(pa.id)
@@ -3431,23 +3565,179 @@ class AppealsBackendHelper:
             plan_parts.append(denial.plan_documents_summary)
         model_plan_context: Optional[str] = "\n\n".join(plan_parts) or None
 
-        appeals: Iterator[GeneratedAppeal] = await database_sync_to_async(
-            appealGenerator.make_appeals
-        )(
-            denial,
-            AppealTemplateGenerator(prefaces, main, footer),
-            medical_reasons=medical_reasons,
-            non_ai_appeals=non_ai_appeals,
-            pubmed_context=pubmed_context,
-            ml_citations_context=ml_citation_context,
-            plan_context=model_plan_context,
-            rag_context=rag_context,
-            nice_context=nice_context,
-            specialized_templates=specialized_templates,
-            pa_context=pa_context,
-            uspstf_context=uspstf_context,
-            clinical_trials_context=clinical_trials_context,
+        # Cadence + ceiling for the generating-phase heartbeat. make_appeals
+        # blocks (commonly 10s-2min, worst case several minutes across the
+        # primary -> backup -> shed-tier cascade, each ML call bounded by the
+        # 300s per-inference timeout) with nothing else reaching the wire.
+        # Without heartbeats the browser's 90s inactivity watchdog
+        # (WS_INACTIVITY_TIMEOUT_MS in appeal_fetcher.ts) tears the socket
+        # down mid-generation -> escalate to REST -> same silent stall ->
+        # 0 appeals. 15s stays well under that 90s budget (and keeps iOS from
+        # dropping the REST-fallback stream).
+        #
+        # GENERATING_PHASE_BUDGET is the ceiling for the WHOLE generating phase
+        # -- the (rare, cached) denial-text summarization PLUS make_appeals --
+        # SHARED between them so their sum can't exceed the client's 420s hard
+        # cap (WS_HARD_TIMEOUT_MS): summarization is capped at
+        # SUMMARIZE_OVERALL_TIMEOUT, then make_appeals gets whatever remains of
+        # the 360s budget. (Reasoning about make_appeals in isolation would
+        # miss the summarize phase running before it.)
+        MAKE_APPEALS_KEEPALIVE_INTERVAL = 15
+        GENERATING_PHASE_BUDGET = 360
+        SUMMARIZE_OVERALL_TIMEOUT = 90
+
+        def _generating_heartbeat(elapsed: float) -> str:
+            return (
+                json.dumps(
+                    {
+                        "type": "status",
+                        "phase": "generating",
+                        "message": (
+                            "Generating personalized appeals with AI... "
+                            f"({int(elapsed)}s elapsed)"
+                        ),
+                    }
+                )
+                + "\n"
+            )
+
+        # For a very large denial letter, condense denial_text once (cached)
+        # so it doesn't overflow the model's context window -- an otherwise
+        # silent failure that yields 0 appeals. Returns None instantly for
+        # normal-sized denials (the common case), so full context is preferred.
+        # Heartbeat-wrapped so the rare, slow summarization call can't open a
+        # silent window either; capped at SUMMARIZE_OVERALL_TIMEOUT so it can't
+        # eat the whole shared budget.
+        generating_phase_started = time.monotonic()
+        summarize_task: "asyncio.Future[Optional[str]]" = asyncio.ensure_future(
+            MLAppealContextHelper.maybe_summarize_denial_text(denial)
         )
+        async for _hb in keepalive_frames(
+            summarize_task,
+            interval=MAKE_APPEALS_KEEPALIVE_INTERVAL,
+            overall_timeout=SUMMARIZE_OVERALL_TIMEOUT,
+            make_heartbeat=lambda elapsed: json.dumps(
+                {
+                    "type": "status",
+                    "phase": "generating",
+                    "message": (
+                        "Condensing a long denial letter... "
+                        f"({int(elapsed)}s elapsed)"
+                    ),
+                }
+            )
+            + "\n",
+        ):
+            yield _hb
+        denial_text_override: Optional[str] = None
+        if summarize_task.done():
+            try:
+                denial_text_override = summarize_task.result()
+            except Exception:
+                logger.opt(exception=True).warning(
+                    f"[gen_id={generation_id}] denial_text summarization "
+                    f"failed for denial {denial_id}; using full text"
+                )
+        else:
+            # Summary took too long. It's a native coroutine, so cancel it
+            # cleanly and proceed with the full denial text (make_appeals'
+            # shed ladder remains the backstop for context overflow).
+            summarize_task.cancel()
+            logger.warning(
+                f"[gen_id={generation_id}] denial_text summarization exceeded "
+                f"{SUMMARIZE_OVERALL_TIMEOUT}s for denial {denial_id}; "
+                f"proceeding with full text"
+            )
+
+        # make_appeals gets whatever remains of the shared generating-phase
+        # budget after summarization, with a floor so a slow summarize can't
+        # starve generation entirely. This keeps summarize + generate under the
+        # client's 420s hard cap.
+        gen_started = time.monotonic()
+        make_appeals_overall_timeout = max(
+            60.0,
+            GENERATING_PHASE_BUDGET - (gen_started - generating_phase_started),
+        )
+        gen_task: "asyncio.Future[Iterator[GeneratedAppeal]]" = asyncio.ensure_future(
+            database_sync_to_async(appealGenerator.make_appeals)(
+                denial,
+                AppealTemplateGenerator(prefaces, main, footer),
+                medical_reasons=medical_reasons,
+                non_ai_appeals=non_ai_appeals,
+                pubmed_context=pubmed_context,
+                ml_citations_context=ml_citation_context,
+                plan_context=model_plan_context,
+                rag_context=rag_context,
+                nice_context=nice_context,
+                specialized_templates=specialized_templates,
+                pa_context=pa_context,
+                uspstf_context=uspstf_context,
+                clinical_trials_context=clinical_trials_context,
+                generation_id=generation_id,
+                diagnostics_sink=make_appeals_diag,
+                denial_text_override=denial_text_override,
+            )
+        )
+        # Heartbeat while make_appeals blocks so no >90s silent window exists
+        # on either transport (the WS consumer and the REST fallback both
+        # forward every yielded frame verbatim).
+        async for _hb in keepalive_frames(
+            gen_task,
+            interval=MAKE_APPEALS_KEEPALIVE_INTERVAL,
+            overall_timeout=make_appeals_overall_timeout,
+            make_heartbeat=_generating_heartbeat,
+        ):
+            yield _hb
+
+        make_appeals_seconds = time.monotonic() - gen_started
+        appeals: Iterator[GeneratedAppeal]
+        gen_error: Optional[str] = None
+        if gen_task.done():
+            try:
+                appeals = await gen_task
+            except Exception as e:
+                # Do NOT let this propagate. make_appeals blowing up is exactly
+                # the case the held-back reserve exists for, and re-raising here
+                # skips the synthesis and end-of-flow reconciliation below --
+                # so the user got nothing even though we had drafts ready for
+                # them. Falling through with an empty iterator reaches the
+                # reconciliation, which serves the reserve, and still ends the
+                # stream with a proper done frame instead of a dirty one. The
+                # failure is not hidden: it is logged here and the zero-appeal
+                # diagnostic (keyed on the pre-reserve count) still fires.
+                gen_error = f"{type(e).__name__}: {e}"
+                logger.opt(exception=True).error(
+                    f"[gen_id={generation_id}] make_appeals raised for denial "
+                    f"{denial_id} after {make_appeals_seconds:.1f}s; falling "
+                    f"through to the reserve. {gen_error}"
+                )
+                appeals = iter([])
+            else:
+                logger.info(
+                    f"[gen_id={generation_id}] make_appeals returned in "
+                    f"{make_appeals_seconds:.1f}s for denial {denial_id} "
+                    f"(winning_stage={make_appeals_diag.get('winning_stage')}, "
+                    f"shed_tier={make_appeals_diag.get('shed_tier')})"
+                )
+        else:
+            # Exceeded the overall budget while still running. The threadpool
+            # thread cannot be cancelled and keeps running in the background
+            # (database_sync_to_async still closes its DB connections on the
+            # awaiting side); abandon its result and fall through with zero
+            # appeals. Retrieve any eventual exception so asyncio does not log
+            # "Task exception was never retrieved".
+            def _swallow_abandoned(t: "asyncio.Future[Any]") -> None:
+                if not t.cancelled():
+                    t.exception()
+
+            gen_task.add_done_callback(_swallow_abandoned)
+            logger.error(
+                f"[gen_id={generation_id}] make_appeals exceeded "
+                f"{make_appeals_overall_timeout:.0f}s for denial {denial_id}; "
+                f"abandoning (background thread continues). "
+                f"{summarize_denial_context_tokens(denial)}"
+            )
+            appeals = iter([])
         # Drop None / empty / whitespace / runt outputs. Track runts so the
         # zero-appeal diagnostic can distinguish "models silent" from
         # "models producing only short strings".
@@ -3512,13 +3802,30 @@ class AppealsBackendHelper:
         # --- Final synthesis step ---
         # Query saved appeals from DB rather than collecting in-flight,
         # so we don't interfere with the streaming pipeline.
-        # We emit keepalives every 20s and enforce a 200s hard timeout so
-        # the client (which reconnects after 240s of silence) stays alive.
+        # We emit keepalives every 20s (SYNTHESIS keepalive loop below) and
+        # cap synthesis at 120s so the client's 90s inactivity watchdog
+        # (WS_INACTIVITY_TIMEOUT_MS in appeal_fetcher.ts) never fires between
+        # frames.
+        # Exclude speculative rows: synthesis should combine the live drafts,
+        # not the held-back precompute (which could also spuriously push a
+        # 1-real-draft denial to the >=2 synthesis gate).
         saved_appeal_texts: list[str] = [
             str(pa.appeal_text)
-            async for pa in ProposedAppeal.objects.filter(for_denial=denial)
+            async for pa in ProposedAppeal.objects.filter(
+                for_denial=denial, speculative=False
+            )
             if is_real_appeal(pa.appeal_text)
         ]
+        # Everything streamed so far this run persists as speculative=False
+        # (existing rows + drafts saved during streaming), so this doubles as the
+        # set already sent. Track it by normalized raw text and grow it as
+        # synthesis / the end-of-flow reconciliation serve more, so nothing is
+        # shipped twice. Caveat: save_appeal deliberately swallows a failed
+        # asave and still streams the draft, so a draft whose write failed is
+        # absent here -- the reconciliation may then re-serve an identical row.
+        # Harmless (the client dedupes by content) and preferable to dropping a
+        # generated appeal because its row could not be written.
+        served_texts: set[str] = {s.strip() for s in saved_appeal_texts if s}
         # Synthesis requires >=2 drafts to be meaningful: with a single
         # input, models often regurgitate it verbatim. The client dedupes
         # by content, so a verbatim copy gets silently dropped, which then
@@ -3579,8 +3886,7 @@ class AppealsBackendHelper:
                         # can still pick one verbatim. Skip the yield in
                         # that case rather than ship a known duplicate.
                         normalized = synthesized.strip()
-                        existing_normalized = {s.strip() for s in saved_appeal_texts}
-                        if normalized in existing_normalized:
+                        if normalized in served_texts:
                             logger.info(
                                 "Synthesis returned a verbatim copy of an input draft; skipping yield"
                             )
@@ -3590,11 +3896,13 @@ class AppealsBackendHelper:
                                     text=synthesized,
                                     model_name="synthesized",
                                     synthesized=True,
+                                    context_level=CONTEXT_LEVEL_SYNTHESIZED,
                                 )
                             )
                             subbed = await sub_in_appeals(saved)
                             subbed["synthesized"] = "true"
                             yield await format_response(subbed)
+                            served_texts.add(normalized)
                             new += 1
                             logger.info(
                                 f"Synthesized appeal generated from {len(saved_appeal_texts)} drafts"
@@ -3604,23 +3912,125 @@ class AppealsBackendHelper:
             except Exception:
                 logger.opt(exception=True).warning("Final appeal synthesis failed")
 
-        # runt_count=0 means models were silent; >0 means models produced
-        # only too-short outputs — different root causes for incident review.
-        if new + old == 0:
-            logger.error(
-                f"Zero appeals generated for denial {denial_id}, "
-                f"gen_attempts={denial.gen_attempts}, "
-                f"runt_count={runts}"
+        # --- End-of-flow reconciliation ---
+        # One final DB read (both WS and REST run through this generator, so
+        # both get it) to catch any real appeals that landed but weren't
+        # streamed. The background speculative precompute writes asynchronously
+        # and can land rows mid-flight; a slow/late model draft can too. We
+        # serve anything we haven't already sent, with one gate:
+        #   - "mini"/restricted rows -- the reduced-context precompute
+        #     (speculative) and the shed tiers (tier1/tier2) -- are served ONLY
+        #     while under threshold (< ENOUGH_APPEALS delivered). Once the user
+        #     has enough real drafts, padding with weaker reduced-context ones
+        #     adds no value, so we stop.
+        #   - full drafts that landed late are always served (they're real
+        #     appeals we generated, just not streamed in time).
+        # Served speculative rows are flipped to non-speculative so they persist
+        # as real appeals and later calls serve them as existing. Runs before
+        # the zero/underdelivery logging and the done frame so the counts stay
+        # truthful. Dedup is by normalized raw text via served_texts.
+        ENOUGH_APPEALS = 3
+        MINI_LEVELS = {
+            CONTEXT_LEVEL_SPECULATIVE,
+            CONTEXT_LEVEL_TIER1_SHED,
+            CONTEXT_LEVEL_TIER2_SHED,
+        }
+        reconciled = 0
+        # Snapshot the LIVE delivery count before the reserve tops it up. The
+        # zero-appeal diagnostics below key off this, not the final total:
+        # otherwise a run where generation produced nothing but the reserve
+        # covered it reports new=3 and neither branch fires, so a total backend
+        # failure becomes invisible to alerting -- exactly the incident this
+        # instrumentation exists to catch.
+        live_new = new
+        # Best-effort, like the synthesis block above: a failure here (e.g. a
+        # promotion asave hitting DB lock contention -- save_appeal wraps its own
+        # asave for exactly this reason) must NOT propagate, or the done frame
+        # never emits and an already-delivered stream ends dirty. order_by("id")
+        # promotes the oldest reserve rows first (deterministic FIFO).
+        try:
+            # chosen=False: never hand the user their own pick back as a "new
+            # appeal". In the ordinary case served_texts already covers this --
+            # saved_appeal_texts above is not chosen-filtered, so a chosen row's
+            # text is in the set and the dedup below skips it. This closes the
+            # gap where that is NOT true: mark_proposal_chosen running in
+            # another request mid-stream lands a chosen row (for an editted one,
+            # text the user wrote, which was never a draft) in between that
+            # query and this one, leaving it absent from served_texts.
+            async for row in ProposedAppeal.objects.filter(
+                for_denial=denial, chosen=False
+            ).order_by("id"):
+                text = row.appeal_text
+                if not is_real_appeal(text):
+                    continue
+                normalized = str(text).strip()
+                if normalized in served_texts:
+                    continue
+                is_mini = bool(row.speculative) or row.context_level in MINI_LEVELS
+                # Re-evaluate the threshold each iteration: serving increments new.
+                if is_mini and (new + old) >= ENOUGH_APPEALS:
+                    continue
+                if row.speculative:
+                    # Promote to a real appeal so it persists and later calls
+                    # serve it as existing.
+                    row.speculative = False
+                    await row.asave(update_fields=["speculative"])
+                row_dict = await sub_in_appeals({"id": str(row.id), "content": text})
+                yield await format_response(row_dict)
+                served_texts.add(normalized)
+                new += 1
+                reconciled += 1
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"[gen_id={generation_id}] end-of-flow reconciliation failed for "
+                f"denial {denial_id}; already-delivered appeals are unaffected"
             )
-        elif new == 0 and old > 0:
-            logger.warning(
-                f"No new appeals generated for denial {denial_id} "
-                f"(but {old} existing appeals found), "
-                f"gen_attempts={denial.gen_attempts}, "
-                f"runt_count={runts}"
+        if reconciled:
+            logger.info(
+                f"[gen_id={generation_id}] end-of-flow reconciliation served "
+                f"{reconciled} late/held-back appeal(s) for denial {denial_id} "
+                f"(new={new}, old={old})"
             )
 
-        # Explicit end-of-stream so the client knows exactly what was sent
+        # runt_count=0 means models were silent; >0 means models produced
+        # only too-short outputs — different root causes for incident review.
+        shed_tier = make_appeals_diag.get("shed_tier")
+        winning_stage = make_appeals_diag.get("winning_stage")
+        models_tried = make_appeals_diag.get("models_tried") or "none"
+        # Keyed on live_new (pre-reserve), so a reserve that rescued the user
+        # still reports the backend failure. reserve_note says whether the user
+        # was actually left empty-handed or the fallback covered it.
+        reserve_note = (
+            f" served_from_reserve={reconciled} (user was NOT left empty-handed)"
+            if reconciled
+            else ""
+        )
+        if gen_error:
+            reserve_note += f" gen_error={gen_error}"
+        if live_new + old == 0:
+            logger.error(
+                f"APPEAL_GEN_DIAG [gen_id={generation_id}] Zero appeals "
+                f"generated for denial {denial_id}, "
+                f"gen_attempts={denial.gen_attempts}, runt_count={runts}, "
+                f"make_appeals_s={make_appeals_seconds:.1f}, "
+                f"first_model={first_model}, winning_stage={winning_stage}, "
+                f"shed_tier={shed_tier}, models_tried=[{models_tried}], "
+                f"{summarize_denial_context_tokens(denial)}{reserve_note}"
+            )
+        elif live_new == 0 and old > 0:
+            logger.warning(
+                f"APPEAL_GEN_DIAG [gen_id={generation_id}] No new appeals "
+                f"generated for denial {denial_id} "
+                f"(but {old} existing appeals found), "
+                f"gen_attempts={denial.gen_attempts}, runt_count={runts}, "
+                f"make_appeals_s={make_appeals_seconds:.1f}, "
+                f"first_model={first_model}, winning_stage={winning_stage}, "
+                f"models_tried=[{models_tried}]{reserve_note}"
+            )
+
+        # Explicit end-of-stream so the client knows exactly what was sent.
+        # Carries the correlation id + generating-phase instrumentation so a
+        # client "0 appeals" report can be joined to this server trace.
         yield json.dumps(
             {
                 "type": "status",
@@ -3629,6 +4039,11 @@ class AppealsBackendHelper:
                 "new_appeals": new,
                 "existing_appeals": old,
                 "total_appeals": new + old,
+                "generation_id": generation_id,
+                "make_appeals_seconds": round(make_appeals_seconds, 1),
+                "first_model": first_model or "none",
+                "shed_tier": shed_tier,
+                "models_tried": models_tried,
             }
         ) + "\n"
 

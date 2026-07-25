@@ -775,9 +775,16 @@ class DenialQAAdmin(admin.ModelAdmin):
 class ProposedAppealAdmin(admin.ModelAdmin):
     """Admin configuration for ProposedAppeal model."""
 
-    list_display = ("id", "for_denial", "chosen", "editted")
+    list_display = (
+        "id",
+        "for_denial",
+        "chosen",
+        "editted",
+        "context_level",
+        "speculative",
+    )
     search_fields = ("appeal_text",)
-    list_filter = ("chosen", "editted")
+    list_filter = ("chosen", "editted", "context_level", "speculative")
     ordering = ("id",)
     # Use raw_id_fields to avoid loading all Denials in FK dropdown
     raw_id_fields = ("for_denial",)

@@ -126,6 +126,10 @@ class StripeWebhookHelper:
                 f"Temporal dispatch failed for paid fax {fax.uuid}; "
                 "falling back to immediate Ray send"
             )
+            # Intentionally NOT gated on ray_cluster_available(): this branch is
+            # only reachable under TEMPORAL_ENABLED, which is precisely the
+            # configuration where the delayed-fax sweep does not run, so skipping
+            # would strand a fax the user paid for. See the note in fax_helpers.
             from fighthealthinsurance.fax_actor_ref import fax_actor_ref
 
             fax_actor_ref.get.do_send_fax.remote(fax.hashed_email, str(fax.uuid))

@@ -15,6 +15,7 @@ from fighthealthinsurance.generate_appeal import (
     _model_context_limit,
     _peek_real_or_none,
     _shed_context,
+    _summarize_model_outcomes,
     _PROMPT_TIER1_NULLS,
     _PROMPT_TIER1_STRIP_GATED,
     _PROMPT_TIER2_TRUNCATIONS,
@@ -383,6 +384,22 @@ class TestShedContext:
         # Tier-2 call-dict keys also survive unchanged (no truncation).
         for key, _cap in _TIER2_TRUNCATIONS:
             assert new_calls[0][key] == original[key]
+
+    def test_tier1_stamps_context_level(self):
+        # Each shed call records the shed level so the produced appeal's
+        # ProposedAppeal row can persist its provenance.
+        new_calls, _ = _shed_context([_make_call()], tier=1)
+        assert new_calls[0]["context_level"] == "tier1_shed"
+
+    def test_tier2_stamps_context_level(self):
+        new_calls, _ = _shed_context([_make_call()], tier=2)
+        assert new_calls[0]["context_level"] == "tier2_shed"
+
+    def test_tier0_does_not_stamp_context_level(self):
+        # Tier 0 is a no-op and must not fabricate a shed level (the call keeps
+        # its inherited "full" level, which _make_call doesn't set).
+        new_calls, _ = _shed_context([_make_call()], tier=0)
+        assert "context_level" not in new_calls[0]
 
 
 # --- _shed_context prompt-rebuild tests -------------------------------------
@@ -970,6 +987,155 @@ class TestGetModelResultLogging:
             "get_model_result: all 3 backend(s) for model_name=broken-model failed"
             in sink.getvalue()
         )
+
+
+# --- diagnostics_sink + denial_text_override tests -------------------------
+
+
+class TestSummarizeModelOutcomes:
+    """_summarize_model_outcomes builds the compact models_tried string."""
+
+    def test_empty_is_empty_string(self):
+        assert _summarize_model_outcomes([]) == ""
+
+    def test_dedupes_and_sorts(self):
+        # fhi-legacy appears twice with different failures: the first is kept
+        # (only "ok" may displace a recorded failure), and models come out
+        # sorted by name.
+        out = _summarize_model_outcomes(
+            [
+                ("sonar", "http_429"),
+                ("fhi-legacy", "no_output"),
+                ("fhi-legacy", "all_backends_failed"),
+            ]
+        )
+        assert out == "fhi-legacy:no_output,sonar:http_429"
+
+    def test_ok_wins_over_failure_for_same_model(self):
+        # A model attempted across stages: one stage empty, another produced.
+        out = _summarize_model_outcomes(
+            [("fhi-legacy", "no_output"), ("fhi-legacy", "ok")]
+        )
+        assert out == "fhi-legacy:ok"
+        # Order-independent: ok still wins if seen first.
+        out2 = _summarize_model_outcomes(
+            [("fhi-legacy", "ok"), ("fhi-legacy", "no_output")]
+        )
+        assert out2 == "fhi-legacy:ok"
+
+    def test_none_model_name_becomes_unknown(self):
+        assert _summarize_model_outcomes([(None, "no_output")]) == "unknown:no_output"
+
+    def test_caps_long_lists(self):
+        outcomes = [(f"m{i}", "no_output") for i in range(20)]
+        summary = _summarize_model_outcomes(outcomes)
+        assert "+8_more" in summary
+        # 12 shown + the "+N_more" marker.
+        assert len(summary.split(",")) == 13
+
+
+class TestMakeAppealsDiagnosticsSink:
+    """make_appeals reports which stage produced the first appeal (or 'none')
+    via diagnostics_sink so the generating-phase logging/done-frame can show
+    whether the primary won or a shed-tier retry rescued it, plus which models
+    were tried."""
+
+    def test_sink_records_none_when_all_stages_empty(self):
+        sink: dict = {}
+        gen = AppealGenerator()
+        tmpl = AppealTemplateGenerator(prefaces=["P"], main=["M"], footer=["F"])
+        with patch(
+            "fighthealthinsurance.generate_appeal.ml_router.generate_text_backend_names",
+            side_effect=lambda use_external=False: [],
+        ), patch(
+            "fighthealthinsurance.generate_appeal.ml_router.models_by_name",
+            new={},
+        ), patch(
+            "fighthealthinsurance.generate_appeal.time.sleep"
+        ):
+            list(
+                gen.make_appeals(
+                    _mock_denial(),
+                    tmpl,
+                    medical_reasons=[],
+                    non_ai_appeals=[],
+                    diagnostics_sink=sink,
+                )
+            )
+        assert sink.get("winning_stage") == "none"
+        assert sink.get("shed_tier") is None
+        assert "models_tried" in sink
+
+    def test_sink_records_not_registered_models(self):
+        """A requested model absent from the router is recorded as
+        not_registered in models_tried."""
+        sink: dict = {}
+        gen = AppealGenerator()
+        tmpl = AppealTemplateGenerator(prefaces=["P"], main=["M"], footer=["F"])
+        with patch(
+            "fighthealthinsurance.generate_appeal.ml_router.generate_text_backend_names",
+            side_effect=lambda use_external=False: ["ghost-model"],
+        ), patch(
+            "fighthealthinsurance.generate_appeal.ml_router.models_by_name",
+            new={},
+        ), patch(
+            "fighthealthinsurance.generate_appeal.time.sleep"
+        ):
+            list(
+                gen.make_appeals(
+                    _mock_denial(),
+                    tmpl,
+                    medical_reasons=[],
+                    non_ai_appeals=[],
+                    diagnostics_sink=sink,
+                )
+            )
+        assert "ghost-model:not_registered" in sink.get("models_tried", "")
+
+
+class TestDenialTextOverride:
+    """denial_text_override substitutes a summary for the raw denial text in
+    the prompt (used only for oversized denials); None keeps full context."""
+
+    def _spy_prompt_denial_text(self, denial_text_override):
+        gen = AppealGenerator()
+        tmpl = AppealTemplateGenerator(prefaces=["P"], main=["M"], footer=["F"])
+        seen: dict = {}
+
+        def spy_prompt(**kwargs):
+            seen.update(kwargs)
+            return "PROMPT"
+
+        with patch.object(gen, "make_open_prompt", side_effect=spy_prompt), patch(
+            "fighthealthinsurance.generate_appeal.ml_router.generate_text_backend_names",
+            side_effect=lambda use_external=False: [],
+        ), patch(
+            "fighthealthinsurance.generate_appeal.ml_router.models_by_name",
+            new={},
+        ), patch(
+            "fighthealthinsurance.generate_appeal.time.sleep"
+        ):
+            try:
+                list(
+                    gen.make_appeals(
+                        _mock_denial(),  # denial_text="denial"
+                        tmpl,
+                        medical_reasons=[],
+                        non_ai_appeals=[],
+                        denial_text_override=denial_text_override,
+                    )
+                )
+            except Exception:
+                pass
+        return seen
+
+    def test_override_used_in_prompt_when_provided(self):
+        seen = self._spy_prompt_denial_text("CONDENSED SUMMARY")
+        assert seen.get("denial_text") == "CONDENSED SUMMARY"
+
+    def test_full_denial_text_used_when_override_is_none(self):
+        seen = self._spy_prompt_denial_text(None)
+        assert seen.get("denial_text") == "denial"
 
 
 # --- _peek_real_or_none: runt-first fallback regression -------------------

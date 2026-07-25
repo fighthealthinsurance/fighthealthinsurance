@@ -30,6 +30,26 @@ DEFAULT_ELLIPSIS = "..."
 
 CitationContext = Optional[Union[str, List[Any]]]
 
+# The context/shed level a proposed appeal was generated at. Recorded per
+# ProposedAppeal so analytics/RL can see whether users end up choosing appeals
+# produced with full context vs. progressively shed context vs. the bare-bones
+# speculative fallback. Defined here (Django-free, no import cycle) so the
+# model, the generation path, and the streaming save all share one vocabulary.
+CONTEXT_LEVEL_FULL = "full"  # primary/backup call, no context shed
+CONTEXT_LEVEL_TIER1_SHED = "tier1_shed"  # enrichment contexts dropped
+CONTEXT_LEVEL_TIER2_SHED = "tier2_shed"  # + plan/patient context truncated
+CONTEXT_LEVEL_SPECULATIVE = "speculative"  # bare denial-text-only precompute
+CONTEXT_LEVEL_SYNTHESIZED = "synthesized"  # merged from multiple drafts
+CONTEXT_LEVEL_TEMPLATE = "template"  # static/non-AI template appeal
+CONTEXT_LEVEL_CHOICES = [
+    (CONTEXT_LEVEL_FULL, "Full context"),
+    (CONTEXT_LEVEL_TIER1_SHED, "Tier-1 shed (enrichment dropped)"),
+    (CONTEXT_LEVEL_TIER2_SHED, "Tier-2 shed (core context truncated)"),
+    (CONTEXT_LEVEL_SPECULATIVE, "Speculative (denial-text only)"),
+    (CONTEXT_LEVEL_SYNTHESIZED, "Synthesized (merged drafts)"),
+    (CONTEXT_LEVEL_TEMPLATE, "Template (non-AI)"),
+]
+
 # Rough average characters-per-token for English prose. The real tokenizer
 # is model-specific, but ~4 chars/token is the standard back-of-envelope
 # estimate (matches ``chat.llm_client.estimate_history_tokens``) and is good

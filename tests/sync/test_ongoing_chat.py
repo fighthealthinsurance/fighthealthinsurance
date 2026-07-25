@@ -262,7 +262,14 @@ class OngoingChatWebSocketTest(APITestCase):
         # Disconnect hands the chat id to the detached Ray actor. There is no
         # cache dedup layer (the analysis is idempotent on its own), so a
         # single disconnect dispatches exactly one analysis for the chat id.
+        # ray_cluster_available is forced True to model production (the k8s
+        # RayCluster). Without a cluster the dispatch is deliberately skipped --
+        # touching the actor ref would otherwise auto-init a whole local Ray
+        # cluster inside the ASGI process on every disconnect.
         with patch(
+            "fighthealthinsurance.base_actor_ref.ray_cluster_available",
+            return_value=True,
+        ), patch(
             "fighthealthinsurance.denied_items_analysis_actor_ref.denied_items_analysis_actor_ref",
         ) as mock_dispatch:
             await consumer.disconnect(1000)

@@ -5,6 +5,13 @@ from unittest import mock
 from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 
+# Pinned explicitly rather than left to chance: with no cluster the health check
+# deliberately short-circuits, and whether Ray happens to be initialized in a
+# given test session is ambient state. These assert the health logic, not that.
+# Patched where actor_health_status binds it, not at base_actor_ref -- it is a
+# module-level `from ... import`, so rebinding the source has no effect.
+_CLUSTER_AVAILABLE = "fighthealthinsurance.actor_health_status.ray_cluster_available"
+
 
 def _patched_actor_refs():
     """Patch every polling actor-ref singleton so relaunch_actors() can run
@@ -49,8 +56,9 @@ class TestActorHealthStatus(TestCase):
         # Total actors: email, fax, chooser, IMR refresh, UCR refresh, PA refresh
         assert data["total_actors"] == 6
 
+    @mock.patch(_CLUSTER_AVAILABLE, return_value=True)
     @mock.patch("fighthealthinsurance.actor_health_status.ray")
-    def test_actor_health_all_down(self, mock_ray):
+    def test_actor_health_all_down(self, mock_ray, mock_cluster):
         """Test actor health when all actors are down."""
         # Simulate all actors not found
         mock_ray.get_actor.side_effect = ValueError("Actor not found")
@@ -66,8 +74,9 @@ class TestActorHealthStatus(TestCase):
             assert detail["alive"] is False
             assert detail["error"] is not None
 
+    @mock.patch(_CLUSTER_AVAILABLE, return_value=True)
     @mock.patch("fighthealthinsurance.actor_health_status.ray")
-    def test_actor_health_all_up(self, mock_ray):
+    def test_actor_health_all_up(self, mock_ray, mock_cluster):
         """Test actor health when all actors are up and healthy."""
         # Mock actor that returns True for health_check
         mock_actor = mock.MagicMock()
@@ -88,8 +97,9 @@ class TestActorHealthStatus(TestCase):
             assert detail["alive"] is True
             assert detail["error"] is None
 
+    @mock.patch(_CLUSTER_AVAILABLE, return_value=True)
     @mock.patch("fighthealthinsurance.actor_health_status.ray")
-    def test_actor_health_partial(self, mock_ray):
+    def test_actor_health_partial(self, mock_ray, mock_cluster):
         """Test actor health when some actors are up and some are down."""
         call_count = [0]
 
@@ -113,6 +123,27 @@ class TestActorHealthStatus(TestCase):
         assert result["total_actors"] == 6
         assert len(result["details"]) == 6
 
+    @mock.patch(_CLUSTER_AVAILABLE, return_value=False)
+    @mock.patch("fighthealthinsurance.actor_health_status.ray")
+    def test_no_cluster_reports_down_without_starting_one(self, mock_ray, mock_cluster):
+        """ray.get_actor auto-inits exactly like .remote() does, so an
+        unauthenticated GET of this endpoint would otherwise start a local Ray
+        cluster inside the web process in order to report on it -- and then find
+        it empty. Report "no cluster" instead, and touch ray not at all."""
+        from fighthealthinsurance.actor_health_status import check_actor_health
+
+        result = check_actor_health()
+
+        mock_ray.get_actor.assert_not_called()
+        assert result["alive_actors"] == 0
+        # Still enumerated, so the dashboard shows which actors are unaccounted
+        # for rather than an empty list that reads like "nothing to check".
+        assert result["total_actors"] == 6
+        assert len(result["details"]) == 6
+        for detail in result["details"]:
+            assert detail["alive"] is False
+            assert detail["error"] == "no ray cluster available"
+
     def test_actor_health_endpoint_caching(self):
         """Test that the actor health endpoint has appropriate cache headers."""
         response = self.client.get("/ziggy/rest/actor_health_status")
@@ -124,8 +155,11 @@ class TestActorHealthStatus(TestCase):
         assert "max-age=60" in cache_control or "max-age" in cache_control
 
     @override_settings(TEMPORAL_ENABLED=True)
+    @mock.patch(_CLUSTER_AVAILABLE, return_value=True)
     @mock.patch("fighthealthinsurance.actor_health_status.ray")
-    def test_check_actor_health_excludes_fax_when_temporal_enabled(self, mock_ray):
+    def test_check_actor_health_excludes_fax_when_temporal_enabled(
+        self, mock_ray, mock_cluster
+    ):
         """When Temporal owns fax sending, the fax polling actor is not checked."""
         mock_ray.get_actor.return_value = mock.MagicMock()
         mock_ray.get.return_value = True

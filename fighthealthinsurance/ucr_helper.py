@@ -88,17 +88,27 @@ def dispatch_ucr_refresh(denial_id: int) -> None:
     Failures (Ray not available, e.g. in tests) fall back to a synchronous
     enrichment so the user-facing flow still works. The actor is the primary
     path in production.
-    """
-    try:
-        from fighthealthinsurance.ucr_refresh_actor_ref import ucr_refresh_actor_ref
 
-        actor, _task = ucr_refresh_actor_ref.get  # type: ignore[misc]
-        actor.refresh_denial.remote(denial_id)
-        return
-    except Exception:
-        logger.opt(exception=True).warning(
-            "UCR actor dispatch unavailable; falling back to inline enrich"
-        )
+    The ray_cluster_available() gate is what makes that fallback reachable: with
+    no cluster configured, ``.get`` does not raise, it auto-inits a whole LOCAL
+    Ray cluster in this process and "succeeds" -- so the except below never ran
+    and the inline path was dead code outside production.
+    """
+    from fighthealthinsurance.base_actor_ref import ray_cluster_available
+
+    if ray_cluster_available():
+        try:
+            from fighthealthinsurance.ucr_refresh_actor_ref import (
+                ucr_refresh_actor_ref,
+            )
+
+            actor, _task = ucr_refresh_actor_ref.get  # type: ignore[misc]
+            actor.refresh_denial.remote(denial_id)
+            return
+        except Exception:
+            logger.opt(exception=True).warning(
+                "UCR actor dispatch unavailable; falling back to inline enrich"
+            )
 
     try:
         denial = Denial.objects.get(pk=denial_id)

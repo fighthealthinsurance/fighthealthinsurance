@@ -1,10 +1,43 @@
 """Base class for Ray actor references to reduce code duplication."""
 
+import os
 from functools import cached_property
 from typing import Any, Optional, Tuple
 
 import ray
 from loguru import logger
+
+
+def ray_cluster_available() -> bool:
+    """True only when dispatching to Ray ATTACHES to an existing cluster.
+
+    Ray auto-initializes on the first ``.remote()`` call, and that is not a
+    no-op when no cluster is configured: it silently STARTS A BRAND-NEW LOCAL
+    one -- a GCS, an object store, and then any detached actor booting its own
+    Django app -- inside whatever process touched it. In production
+    ``RAY_ADDRESS`` points at the k8s RayCluster so auto-init connects to it,
+    but in a dev server or a test process the same call stands up a cluster
+    per dispatch (this is what killed the Selenium suite: the create-time
+    speculative dispatch booted one per denial submitted through the form).
+
+    Per-task dispatch sites that run on a REQUEST path should gate on this and
+    take their fallback instead. Polling actors don't need it: they're launched
+    once by the dedicated ``launch_polling_actors`` command, which runs on the
+    cluster and waits for Ray to come up.
+    """
+    try:
+        if ray.is_initialized():
+            return True
+    except Exception:
+        return False
+    address = (os.environ.get("RAY_ADDRESS") or "").strip()
+    # "local" is Ray's own spelling of "start a brand-new local cluster"
+    # (ray._private.services treats it exactly like an unset address), and it is
+    # the value a developer is most likely to set by hand -- so honoring it here
+    # would reintroduce the boot this guard exists to prevent.
+    if address.lower() == "local":
+        return False
+    return bool(address)
 
 
 class BaseActorRef:

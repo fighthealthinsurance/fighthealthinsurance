@@ -9,6 +9,7 @@ one: the traceback for an HTTP status error is aiohttp internals and buries
 the status.
 """
 
+from typing import Optional
 from unittest.mock import AsyncMock, patch
 
 import aiohttp
@@ -23,8 +24,10 @@ from fighthealthinsurance.ml.ml_models import (
 )
 
 
-def _client_response_error(status: int) -> aiohttp.ClientResponseError:
-    """Build a ClientResponseError carrying ``status``.
+def _client_response_error(
+    status: int, message: Optional[str] = None
+) -> aiohttp.ClientResponseError:
+    """Build a ClientResponseError carrying ``status`` (and optional message).
 
     A real ``RequestInfo`` is required because the exception's ``__str__``
     (used when loguru renders the traceback) dereferences
@@ -34,11 +37,13 @@ def _client_response_error(status: int) -> aiohttp.ClientResponseError:
     request_info = aiohttp.RequestInfo(
         url, "POST", CIMultiDictProxy(CIMultiDict()), url
     )
+    if message is None:
+        message = "Unauthorized" if status == 401 else "Error"
     return aiohttp.ClientResponseError(
         request_info=request_info,
         history=(),
         status=status,
-        message="Unauthorized" if status == 401 else "Error",
+        message=message,
     )
 
 
