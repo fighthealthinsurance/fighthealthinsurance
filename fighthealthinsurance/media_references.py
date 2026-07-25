@@ -67,7 +67,10 @@ MEDIA_REFERENCES: list[MediaReference] = [
         "title": "How patients are using AI to fight back against denied insurance claims",
         "url": "https://www.pbs.org/newshour/show/how-patients-are-using-ai-to-fight-back-against-denied-insurance-claims",
         "date": "2025",
-        "description": "PBS NewsHour looks at how patients are turning to AI tools like Fight Health Insurance to appeal denied claims and level the playing field with insurers.",
+        # Fight Health Insurance appears on air in this segment; the published
+        # transcript covers AI appeal tools generally without naming us, so keep
+        # the wording to what the broadcast actually shows.
+        "description": "Fight Health Insurance appears in PBS NewsHour's report on how patients are using AI to fight back against denied insurance claims.",
         "internal_url_name": "pbs-newshour",
     },
     {
