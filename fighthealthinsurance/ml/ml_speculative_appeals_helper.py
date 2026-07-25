@@ -14,15 +14,19 @@ We also pre-warm the denial summary into the separate
 ``candidate_denial_text_summary`` field so the over-long context path has it
 ready (the live flow promotes it into ``denial_text_summary`` on first use).
 
-The heavy lifting is synchronous (``AppealGenerator.make_appeals`` is a plain
-sync iterator), so this helper is sync and is called either from the
-SpeculativeAppealsActor (wrapped in a thread) or, when Ray is unavailable, from
-a daemon thread spun up by ``dispatch_speculative_appeals``.
+``generate_for_denial`` is async and is the real implementation: the actor
+awaits it directly, and every lookup/insert uses the native async ORM. Only the
+genuinely blocking part is bridged -- ``AppealGenerator.make_appeals`` runs the
+models synchronously AND hands back a lazy iterator whose ``next()`` blocks on
+model futures, so the call and the draining go into one worker thread together.
+``generate_for_denial_sync`` is a thin shim over it for the daemon-thread
+fallback, which is dispatched from the sync denial-creation path.
 """
 
-from typing import Any, Optional
+from typing import Any, List, Optional
 
 from asgiref.sync import async_to_sync
+from channels.db import database_sync_to_async
 from django.conf import settings
 from loguru import logger
 
@@ -39,6 +43,19 @@ class SpeculativeAppealsHelper:
 
     @classmethod
     def generate_for_denial_sync(cls, denial_id: Any, force: bool = False) -> int:
+        """Blocking entry point for the in-process daemon-thread fallback.
+
+        ``generate_for_denial`` is the real implementation; this exists only
+        because ``dispatch_speculative_appeals`` is reached from the SYNC denial
+        creation path, where there is no running loop to await on. Inherits the
+        never-raises contract from the async version -- ``async_to_sync`` only
+        supplies the loop, it adds no failure of its own that the body doesn't
+        already swallow.
+        """
+        return async_to_sync(cls.generate_for_denial)(denial_id, force=force)
+
+    @classmethod
+    async def generate_for_denial(cls, denial_id: Any, force: bool = False) -> int:
         """Generate + persist speculative candidate appeals for ``denial_id``.
 
         Idempotent: a no-op if speculative rows already exist for the denial.
@@ -62,13 +79,16 @@ class SpeculativeAppealsHelper:
             from django.db.models import Q
 
             from fighthealthinsurance.common_view_logic import appealGenerator
-            from fighthealthinsurance.generate_appeal import AppealTemplateGenerator
+            from fighthealthinsurance.generate_appeal import (
+                AppealTemplateGenerator,
+                GeneratedAppeal,
+            )
             from fighthealthinsurance.ml.ml_appeal_context_helper import (
                 MLAppealContextHelper,
             )
             from fighthealthinsurance.models import Denial, ProposedAppeal
 
-            denial = (
+            denial = await (
                 Denial.objects.filter(denial_id=denial_id)
                 .select_related(
                     "patient_user",
@@ -77,7 +97,7 @@ class SpeculativeAppealsHelper:
                     "primary_professional",
                     "primary_professional__user",
                 )
-                .first()
+                .afirst()
             )
             if denial is None:
                 logger.warning(
@@ -97,10 +117,10 @@ class SpeculativeAppealsHelper:
             # whole point is to rebuild the reserve from the new text.
             if (
                 not force
-                and ProposedAppeal.objects.filter(
+                and await ProposedAppeal.objects.filter(
                     Q(speculative=True) | Q(context_level=CONTEXT_LEVEL_SPECULATIVE),
                     for_denial=denial,
-                ).exists()
+                ).aexists()
             ):
                 logger.debug(
                     f"speculative appeals: denial {denial_id} already has "
@@ -137,9 +157,11 @@ class SpeculativeAppealsHelper:
             # net matters most (it's the most likely to fail the live run too).
             denial_text_override: Optional[str] = None
             try:
-                denial_text_override = async_to_sync(
-                    MLAppealContextHelper.prewarm_candidate_denial_text_summary
-                )(denial)
+                denial_text_override = (
+                    await MLAppealContextHelper.prewarm_candidate_denial_text_summary(
+                        denial
+                    )
+                )
             except Exception as e:
                 logger.opt(exception=True).warning(
                     f"speculative appeals: denial-summary warm failed for "
@@ -147,36 +169,69 @@ class SpeculativeAppealsHelper:
                 )
 
             diagnostics: dict = {}
-            # Bare run: empty template generator, and NO research/enrichment
-            # context (none has been gathered at create time). make_appeals does
-            # still auto-build a DB-only payer_policy_context, which contacts no
-            # external model, so the internal-only guarantee holds.
-            appeals = appealGenerator.make_appeals(
-                denial,
-                AppealTemplateGenerator([], [], []),
-                medical_reasons=None,
-                non_ai_appeals=None,
-                pubmed_context=None,
-                ml_citations_context=None,
-                plan_context=None,
-                rag_context=None,
-                nice_context=None,
-                specialized_templates=None,
-                pa_context=None,
-                uspstf_context=None,
-                clinical_trials_context=None,
-                denial_text_override=denial_text_override,
-                diagnostics_sink=diagnostics,
-            )
+
+            def _generate_drafts() -> List[GeneratedAppeal]:
+                """Blocking: run the models, then pull real drafts off the wire.
+
+                Both halves have to be off the event loop. make_appeals runs the
+                model calls synchronously, and what it hands back is a LAZY
+                iterator (as_available_nested over concurrent futures) whose
+                next() blocks on the next model to finish -- so draining it here
+                rather than in the async caller is what actually keeps the loop
+                free. Doing it here also preserves the early break: we stop
+                pulling the moment we have enough, instead of waiting out every
+                remaining model future for drafts we would discard.
+
+                Bare run: empty template generator, and NO research/enrichment
+                context (none has been gathered at create time). make_appeals
+                does still auto-build a DB-only payer_policy_context, which
+                contacts no external model, so the internal-only guarantee holds.
+                """
+                drafts: List[GeneratedAppeal] = []
+                for item in appealGenerator.make_appeals(
+                    denial,
+                    AppealTemplateGenerator([], [], []),
+                    medical_reasons=None,
+                    non_ai_appeals=None,
+                    pubmed_context=None,
+                    ml_citations_context=None,
+                    plan_context=None,
+                    rag_context=None,
+                    nice_context=None,
+                    specialized_templates=None,
+                    pa_context=None,
+                    uspstf_context=None,
+                    clinical_trials_context=None,
+                    denial_text_override=denial_text_override,
+                    diagnostics_sink=diagnostics,
+                ):
+                    if not is_real_appeal(item.text):
+                        continue
+                    drafts.append(item)
+                    if len(drafts) >= cls.MAX_SPECULATIVE_APPEALS:
+                        break
+                return drafts
+
+            # thread_sensitive=False: a burst of denial creations dispatches
+            # overlapping precomputes, and the default (True) funnels every one
+            # of them onto a single shared executor thread. Since one generation
+            # can hold that thread for minutes, later precomputes would not be
+            # ready by the time their live flows need them -- defeating the point
+            # of precomputing. A pool thread per call restores the concurrency;
+            # DatabaseSyncToAsync still wraps each call in close_old_connections()
+            # either way, so per-call connection isolation is unchanged.
+            drafts = await database_sync_to_async(
+                _generate_drafts, thread_sensitive=False
+            )()
 
             # Generation is done; make sure it is still about the CURRENT letter
             # before persisting anything (see generated_from_text above). Read
             # straight from the DB -- `denial` is a snapshot from before the
             # generation and cannot see a replacement.
-            current_text = (
+            current_text = await (
                 Denial.objects.filter(denial_id=denial_id)
                 .values_list("denial_text", flat=True)
-                .first()
+                .afirst()
             )
             if current_text != generated_from_text:
                 logger.info(
@@ -188,13 +243,10 @@ class SpeculativeAppealsHelper:
                 return 0
 
             saved = 0
-            for item in appeals:
-                if saved >= cls.MAX_SPECULATIVE_APPEALS:
-                    break
-                if not is_real_appeal(item.text):
-                    continue
+            # Already filtered to real appeals and capped in _generate_drafts.
+            for item in drafts:
                 try:
-                    ProposedAppeal.objects.create(
+                    await ProposedAppeal.objects.acreate(
                         appeal_text=item.text,
                         for_denial=denial,
                         model_name=item.model_name,
@@ -239,7 +291,7 @@ def dispatch_speculative_appeals(denial_id: Any, force: bool = False) -> None:
     thread.
 
     ``force`` is passed through to the helper's idempotency check; the
-    denial-text-replacement path needs it (see generate_for_denial_sync).
+    denial-text-replacement path needs it (see generate_for_denial).
     """
     if not getattr(settings, "SPECULATIVE_APPEALS_PRECOMPUTE", True):
         logger.debug(

@@ -1,6 +1,7 @@
 """Tests for the speculative internal-only candidate-appeal precompute."""
 
 import os
+import threading
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from django.test import TestCase, TransactionTestCase, override_settings
@@ -227,6 +228,38 @@ class SpeculativeAppealsHelperTest(TestCase):
         self.assertEqual(
             mock_make.call_args.kwargs["denial_text_override"], "A condensed summary."
         )
+
+    def test_generation_runs_off_the_calling_thread(self):
+        """The whole point of bridging make_appeals is that it does not run on
+        the event loop. It blocks for minutes (model calls, then a lazy iterator
+        whose next() waits on the next model future), so a future refactor that
+        drops the database_sync_to_async and awaits it inline would stall the
+        actor's loop for every other precompute. Assert the thread hop directly.
+        """
+        caller_thread = threading.get_ident()
+        generation_threads: list[int] = []
+
+        def _record_thread(*args, **kwargs):
+            generation_threads.append(threading.get_ident())
+            return iter(
+                [
+                    GeneratedAppeal(
+                        text="A real speculative appeal letter goes here.",
+                        model_name="m",
+                    )
+                ]
+            )
+
+        with patch(_MAKE_APPEALS, side_effect=_record_thread), patch(
+            _SUMMARIZE, new_callable=AsyncMock, return_value=None
+        ):
+            count = SpeculativeAppealsHelper.generate_for_denial_sync(
+                self.denial.denial_id
+            )
+
+        self.assertEqual(count, 1)
+        self.assertEqual(len(generation_threads), 1)
+        self.assertNotEqual(generation_threads[0], caller_thread)
 
     def test_normal_denial_passes_no_override(self):
         # A normal-sized denial: prewarm returns None, so denial_text_override is

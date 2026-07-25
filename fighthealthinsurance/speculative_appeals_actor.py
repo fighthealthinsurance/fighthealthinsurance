@@ -13,7 +13,6 @@ import time
 from typing import Any
 
 import ray
-from channels.db import database_sync_to_async
 
 from fighthealthinsurance.utils import get_env_variable
 
@@ -44,26 +43,15 @@ class SpeculativeAppealsActor:
     async def prefetch_for_denial(self, denial_id: Any, force: bool = False) -> int:
         """Generate + persist speculative candidate appeals for a denial.
 
-        The helper is synchronous (make_appeals is a blocking iterator), so run
-        it in a thread via database_sync_to_async, which also closes the
-        thread's DB connections around the call.
-
-        thread_sensitive=False: this is an async Ray actor, so a burst of denial
-        creations dispatches overlapping prefetches. The default
-        (thread_sensitive=True) funnels every one of them onto a single shared
-        executor thread, and since a generation can occupy it for minutes, later
-        precomputes would not be ready by the time their live flows need them --
-        defeating the point of precomputing. A pool thread per call restores the
-        concurrency. DatabaseSyncToAsync.thread_handler still wraps each call in
-        close_old_connections() either way, so per-call connection isolation and
-        cleanup are unchanged.
+        The helper is natively async, so it is awaited directly: it bridges only
+        the blocking generation itself to a thread (non-thread-sensitive, so a
+        burst of denial creations doesn't serialize onto one executor thread --
+        see generate_for_denial) and keeps every query on the async ORM.
         """
         from fighthealthinsurance.ml.ml_speculative_appeals_helper import (
             SpeculativeAppealsHelper,
         )
 
-        count: int = await database_sync_to_async(
-            SpeculativeAppealsHelper.generate_for_denial_sync,
-            thread_sensitive=False,
-        )(denial_id, force=force)
-        return count
+        return await SpeculativeAppealsHelper.generate_for_denial(
+            denial_id, force=force
+        )
