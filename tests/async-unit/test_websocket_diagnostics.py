@@ -481,6 +481,35 @@ async def test_client_disconnect_during_generating_notes_generation_started():
 
 
 @pytest.mark.asyncio
+async def test_server_side_connection_reset_is_not_filed_as_a_disconnect():
+    """A server-side failure whose message merely mentions a reset connection
+    (Postgres dropping the app's session mid-generation) must stay an ERROR.
+
+    The disconnect classification is pure string matching, so callers that can
+    prove the failure came out of the generator rather than a socket write pass
+    error_from_send=False -- without it a real outage is downgraded to WARNING
+    and stops paging."""
+    objects = _make_count_mock(return_value=0)
+    p1, p2 = _patch_models(objects)
+    warn_cm, warnings = _captured_warning()
+    err_cm, errors = _captured_logger()
+    with p1, p2, warn_cm, err_cm:
+        await log_zero_appeal_diagnostics(
+            denial_id=42,
+            status_count=4,
+            last_status_phase="generating",
+            transport="rest",
+            stream_error=(
+                "OperationalError: could not receive data from server: "
+                "Connection reset by peer"
+            ),
+            error_from_send=False,
+        )
+    assert warnings == []
+    assert "Generation produced nothing" in errors[-1]
+
+
+@pytest.mark.asyncio
 async def test_zero_persisted_without_disconnect_still_generation_failure():
     """A zero-appeal session whose stream_error is NOT a disconnect keeps the
     'Generation produced nothing' ERROR."""

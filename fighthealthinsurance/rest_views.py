@@ -803,6 +803,15 @@ def streaming_appeals_rest_fallback(request: Request):
                     last_status_phase=last_status_phase,
                     transport="rest",
                     stream_error=str(e),
+                    # Provably NOT a socket write: a REST client hanging up
+                    # closes this async generator, which surfaces as the
+                    # GeneratorExit/CancelledError handled above, so anything
+                    # landing here came out of generate_appeals. Saying so keeps
+                    # the client-disconnect string match from downgrading a real
+                    # server failure that merely mentions a reset connection
+                    # (e.g. Postgres "could not receive data from server:
+                    # Connection reset by peer") from ERROR to WARNING.
+                    error_from_send=False,
                     **gen_fields.as_kwargs(),
                 )
             # Inform the client rather than terminating silently
