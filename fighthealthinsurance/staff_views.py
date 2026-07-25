@@ -23,6 +23,7 @@ from fighthealthinsurance.followup_emails import (
 )
 from fighthealthinsurance.forms import FollowUpTestForm
 from fighthealthinsurance.helpers.fax_helpers import SendFaxHelper
+from fighthealthinsurance.base_actor_ref import ray_cluster_available
 from fighthealthinsurance.mailing_list_actor_ref import mailing_list_actor_ref
 from fighthealthinsurance.models import (
     ChooserCandidate,
@@ -439,6 +440,19 @@ class SendMailingListMailView(generic.FormView):
         html_content = form.cleaned_data.get("html_content")
         text_content = form.cleaned_data.get("text_content")
         test_email = form.cleaned_data.get("test_email")
+
+        # Without a cluster to attach to, touching the actor ref would auto-init
+        # a local Ray cluster in this web process just to send staff mail. Tell
+        # the operator plainly instead -- this is a synchronous admin action, so
+        # a clear message beats a silent cluster (and a confusing timeout).
+        if not ray_cluster_available():
+            logger.warning(
+                "Mailing list send requested but no Ray cluster is available"
+            )
+            return HttpResponse(
+                "No Ray cluster available; mailing list email not sent.",
+                status=503,
+            )
 
         try:
             # Use ray actor for sending emails

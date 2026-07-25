@@ -288,3 +288,6 @@ class MarkProposalChosenTest(TestCase):
         pa = mark_proposal_chosen(self.denial, "edited-text")
         # Only the real draft counts -> inference still resolves to model-x.
         self.assertEqual(pa.model_name, "model-x")
+        # ...and to its context level. Without the speculative exclusion the
+        # two rows would look like mixed levels and this would infer None.
+        self.assertEqual(pa.context_level, "full")

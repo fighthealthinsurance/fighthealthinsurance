@@ -999,8 +999,15 @@ class TestSummarizeModelOutcomes:
         assert _summarize_model_outcomes([]) == ""
 
     def test_dedupes_and_sorts(self):
+        # fhi-legacy appears twice with different failures: the first is kept
+        # (only "ok" may displace a recorded failure), and models come out
+        # sorted by name.
         out = _summarize_model_outcomes(
-            [("fhi-legacy", "no_output"), ("sonar", "http_429")]
+            [
+                ("sonar", "http_429"),
+                ("fhi-legacy", "no_output"),
+                ("fhi-legacy", "all_backends_failed"),
+            ]
         )
         assert out == "fhi-legacy:no_output,sonar:http_429"
 

@@ -73,7 +73,22 @@ async def enqueue_denied_items_analysis(*, chat_id: str) -> None:
     Prod's per-process LocMemCache made any cross-process job-state tracking
     write-only anyway. The disconnect handler just hands the chat id to the
     detached Ray actor.
+
+    Skipped when there is no cluster to attach to: touching the actor ref would
+    otherwise make Ray auto-init a whole LOCAL cluster inside this ASGI process
+    on every chat disconnect (see base_actor_ref.ray_cluster_available). The
+    analysis is explicitly eventually-consistent and idempotent, so dropping it
+    in a dev/test process is the right trade.
     """
+    from fighthealthinsurance.base_actor_ref import ray_cluster_available
+
+    if not ray_cluster_available():
+        logger.debug(
+            f"No Ray cluster available; skipping denied-items analysis for "
+            f"chat {chat_id}"
+        )
+        return
+
     from fighthealthinsurance.denied_items_analysis_actor_ref import (
         denied_items_analysis_actor_ref,
     )
@@ -259,19 +274,13 @@ async def log_zero_appeal_diagnostics(
         f"first_model={first_model} shed_tier={shed_tier} "
         f"models_tried=[{models_tried or 'none'}]"
     )
-    if persisted_count > 0:
-        logger.error(
-            f"APPEAL_GEN_DIAG [{transport}] Appeal session sent 0 appeals to "
-            f"client BUT server has {persisted_count} ProposedAppeal row(s) "
-            f"for denial {denial_id}. This is a delivery/wire failure, not "
-            f"a generation failure. status_frames={status_count} "
-            f"last_phase={last_status_phase} gen_attempts={denial_attempts}"
-            f"{gen_suffix}{error_suffix}"
-        )
-    elif persisted_count == 0 and _stream_error_is_client_disconnect(stream_error):
-        # The client dropped the connection; 0 persisted rows is expected if
-        # they left before or during generation. This is NOT a model failure,
-        # so it logs at WARNING and does not point triage at the backends.
+    if _stream_error_is_client_disconnect(stream_error):
+        # Checked BEFORE the persisted-count branches: the user simply left, so
+        # none of this is a server fault at any persisted count. The common iOS
+        # case is a client hanging up AFTER drafts were persisted, and routing
+        # that to the "delivery/wire failure" ERROR below is exactly the alert
+        # noise this classification exists to remove. The count stays in the
+        # message so triage can still see what the server had.
         phase = last_status_phase or "startup"
         reached_generation = last_status_phase in (
             "generating",
@@ -283,11 +292,29 @@ async def log_zero_appeal_diagnostics(
             if reached_generation
             else f"client disconnected during {phase}; generation not reached"
         )
+        if persisted_count > 0:
+            persisted_note = (
+                f" Server had {persisted_count} ProposedAppeal row(s), so they "
+                f"are not lost -- a later request serves them as existing."
+            )
+        elif persisted_count == 0:
+            persisted_note = " No rows were persisted."
+        else:
+            persisted_note = " Persisted-count lookup unavailable."
         logger.warning(
             f"APPEAL_GEN_DIAG [{transport}] Appeal session ended with 0 "
-            f"appeals for denial {denial_id}: {detail}. "
+            f"appeals for denial {denial_id}: {detail}.{persisted_note} "
             f"status_frames={status_count} last_phase={last_status_phase} "
             f"gen_attempts={denial_attempts}{gen_suffix}{error_suffix}"
+        )
+    elif persisted_count > 0:
+        logger.error(
+            f"APPEAL_GEN_DIAG [{transport}] Appeal session sent 0 appeals to "
+            f"client BUT server has {persisted_count} ProposedAppeal row(s) "
+            f"for denial {denial_id}. This is a delivery/wire failure, not "
+            f"a generation failure. status_frames={status_count} "
+            f"last_phase={last_status_phase} gen_attempts={denial_attempts}"
+            f"{gen_suffix}{error_suffix}"
         )
     elif persisted_count == 0:
         logger.error(

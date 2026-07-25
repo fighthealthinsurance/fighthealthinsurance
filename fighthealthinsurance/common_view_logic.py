@@ -1551,13 +1551,23 @@ class DenialCreatorHelper:
         # denial. A plain update (no text change) doesn't re-fire; the helper is
         # idempotent regardless. Never blocks or breaks denial creation.
         if is_new_denial or denial_text_changed:
+            # Guarded separately from the dispatch below: if invalidation fails
+            # partway (say the delete lands but the summary update doesn't), we
+            # still want a fresh precompute kicked off rather than leaving the
+            # denial with no reserve at all.
+            if denial_text_changed:
+                try:
+                    cls._invalidate_denial_text_artifacts(denial)
+                except Exception:
+                    logger.opt(exception=True).warning(
+                        "Failed to invalidate denial-text-derived artifacts for "
+                        f"denial {denial_id}"
+                    )
             try:
                 from fighthealthinsurance.ml.ml_speculative_appeals_helper import (
                     dispatch_speculative_appeals,
                 )
 
-                if denial_text_changed:
-                    cls._invalidate_denial_text_artifacts(denial)
                 dispatch_speculative_appeals(denial_id)
             except Exception:
                 logger.opt(exception=True).warning(
@@ -3906,9 +3916,13 @@ class AppealsBackendHelper:
         # never emits and an already-delivered stream ends dirty. order_by("id")
         # promotes the oldest reserve rows first (deterministic FIFO).
         try:
-            async for row in ProposedAppeal.objects.filter(for_denial=denial).order_by(
-                "id"
-            ):
+            # chosen=False: a chosen row is the user's own pick, and for an
+            # editted one the text is user-authored -- never a draft, so it is
+            # not in served_texts and would be shipped straight back to them as
+            # a "new appeal" on a later run.
+            async for row in ProposedAppeal.objects.filter(
+                for_denial=denial, chosen=False
+            ).order_by("id"):
                 text = row.appeal_text
                 if not is_real_appeal(text):
                     continue

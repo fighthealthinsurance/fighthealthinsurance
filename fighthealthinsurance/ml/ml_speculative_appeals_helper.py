@@ -20,13 +20,13 @@ SpeculativeAppealsActor (wrapped in a thread) or, when Ray is unavailable, from
 a daemon thread spun up by ``dispatch_speculative_appeals``.
 """
 
-import os
 from typing import Any, Optional
 
 from asgiref.sync import async_to_sync
 from django.conf import settings
 from loguru import logger
 
+from fighthealthinsurance.base_actor_ref import ray_cluster_available
 from fighthealthinsurance.context_utils import CONTEXT_LEVEL_SPECULATIVE
 from fighthealthinsurance.utils import is_real_appeal
 
@@ -182,27 +182,6 @@ class SpeculativeAppealsHelper:
             return 0
 
 
-def _ray_cluster_available() -> bool:
-    """True only when dispatching to Ray ATTACHES to an existing cluster.
-
-    Ray auto-initializes on the first ``.remote()`` call. With a cluster
-    configured (production runs against the k8s RayCluster, which sets
-    ``RAY_ADDRESS``) that connects to it -- but with nothing configured it
-    silently STARTS A BRAND-NEW LOCAL CLUSTER: a GCS, an object store, and then
-    a detached actor that boots its own Django app, per denial. In a dev server
-    or a test process that is pure overhead measured in seconds and hundreds of
-    MB, so fall back to the in-process thread instead.
-    """
-    try:
-        import ray
-
-        if ray.is_initialized():
-            return True
-    except Exception:
-        return False
-    return bool(os.environ.get("RAY_ADDRESS"))
-
-
 def dispatch_speculative_appeals(denial_id: Any) -> None:
     """Fire-and-forget the speculative precompute for a freshly-created denial.
 
@@ -223,7 +202,7 @@ def dispatch_speculative_appeals(denial_id: Any) -> None:
         )
         return
 
-    if _ray_cluster_available():
+    if ray_cluster_available():
         try:
             from fighthealthinsurance.speculative_appeals_actor_ref import (
                 speculative_appeals_actor_ref,

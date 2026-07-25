@@ -7,9 +7,9 @@ from django.test import TestCase, override_settings
 
 from fighthealthinsurance.common_view_logic import DenialCreatorHelper
 from fighthealthinsurance.generate_appeal import GeneratedAppeal
+from fighthealthinsurance.base_actor_ref import ray_cluster_available
 from fighthealthinsurance.ml.ml_speculative_appeals_helper import (
     SpeculativeAppealsHelper,
-    _ray_cluster_available,
     dispatch_speculative_appeals,
 )
 from fighthealthinsurance.models import Denial, ProposedAppeal
@@ -128,7 +128,12 @@ class SpeculativeAppealsHelperTest(TestCase):
         self.assertEqual(count, 1)
 
     def test_generation_failure_returns_zero_not_raises(self):
-        with patch(_MAKE_APPEALS, side_effect=RuntimeError("boom")):
+        # The prewarm is patched too: it runs before make_appeals, so mocking it
+        # keeps the test off any real ML backend regardless of the setUp denial
+        # text (today it is short enough to no-op below the summary threshold).
+        with patch(_MAKE_APPEALS, side_effect=RuntimeError("boom")), patch(
+            _SUMMARIZE, new_callable=AsyncMock, return_value=None
+        ):
             count = SpeculativeAppealsHelper.generate_for_denial_sync(
                 self.denial.denial_id
             )
@@ -185,15 +190,15 @@ class DispatchGuardTest(TestCase):
             with patch.dict(os.environ, {}, clear=False):
                 os.environ.pop("RAY_ADDRESS", None)
                 # Nothing to attach to -> dispatching would boot a local cluster.
-                self.assertFalse(_ray_cluster_available())
+                self.assertFalse(ray_cluster_available())
                 os.environ["RAY_ADDRESS"] = "ray://cluster:10001"
                 # A configured cluster -> auto-init CONNECTS instead.
-                self.assertTrue(_ray_cluster_available())
+                self.assertTrue(ray_cluster_available())
         # Already attached: available regardless of RAY_ADDRESS.
         with patch("ray.is_initialized", return_value=True):
             with patch.dict(os.environ, {}, clear=False):
                 os.environ.pop("RAY_ADDRESS", None)
-                self.assertTrue(_ray_cluster_available())
+                self.assertTrue(ray_cluster_available())
 
     @override_settings(SPECULATIVE_APPEALS_PRECOMPUTE=False)
     def test_disabled_by_setting_dispatches_nothing(self):

@@ -244,7 +244,11 @@ async def test_bool_denial_id_does_not_coerce_to_int(denial_id):
 @pytest.mark.asyncio
 async def test_stream_error_appended_to_log():
     """When stream_error is set, it must appear in the log so the
-    triggering exception is visible alongside the diagnostic."""
+    triggering exception is visible alongside the diagnostic.
+
+    Uses a SERVER-side error: a client-disconnect marker would (correctly) be
+    routed to the WARNING branch instead of this delivery-failure ERROR.
+    """
     objects = _make_count_mock(return_value=2)
     p1, p2 = _patch_models(objects)
     log_cm, captured = _captured_logger()
@@ -254,10 +258,34 @@ async def test_stream_error_appended_to_log():
             status_count=1,
             last_status_phase="generating",
             transport="rest",
+            stream_error="Server error while generating appeals.",
+        )
+
+    assert "stream_error=Server error while generating appeals." in captured[-1]
+
+
+@pytest.mark.asyncio
+async def test_client_disconnect_with_persisted_rows_is_a_warning_not_an_error():
+    """A client that hangs up AFTER drafts were persisted (the common iOS case)
+    must not be reported as a delivery/wire failure ERROR -- that is the alert
+    noise the disconnect classification exists to remove. The persisted count
+    still has to appear so triage can see the rows aren't lost."""
+    objects = _make_count_mock(return_value=3)
+    p1, p2 = _patch_models(objects)
+    err_cm, errors = _captured_logger()
+    warn_cm, warnings = _captured_warning()
+    with p1, p2, err_cm, warn_cm:
+        await log_zero_appeal_diagnostics(
+            denial_id=42,
+            status_count=4,
+            last_status_phase="generating",
+            transport="websocket",
             stream_error="connection reset",
         )
 
-    assert "stream_error=connection reset" in captured[-1]
+    assert errors == []
+    assert "client disconnected during generating" in warnings[-1]
+    assert "3 ProposedAppeal row(s)" in warnings[-1]
 
 
 @pytest.mark.asyncio
@@ -461,3 +489,38 @@ async def test_zero_persisted_without_disconnect_still_generation_failure():
             stream_error="Server error while generating appeals.",
         )
     assert "Generation produced nothing" in errors[-1]
+
+
+class TestDeniedItemsAnalysisDispatchGuard:
+    """enqueue_denied_items_analysis runs on every chat disconnect. Touching the
+    actor ref with no cluster configured makes Ray auto-init a whole LOCAL
+    cluster inside the ASGI process, so it must be gated."""
+
+    @pytest.mark.asyncio
+    async def test_skips_dispatch_when_no_ray_cluster(self):
+        from fighthealthinsurance.websockets import enqueue_denied_items_analysis
+
+        with patch(
+            "fighthealthinsurance.base_actor_ref.ray_cluster_available",
+            return_value=False,
+        ), patch(
+            "fighthealthinsurance.denied_items_analysis_actor_ref."
+            "denied_items_analysis_actor_ref"
+        ) as mock_ref:
+            await enqueue_denied_items_analysis(chat_id="chat-1")
+        # The ref must not even be touched -- `.get` is what auto-inits Ray.
+        mock_ref.get.run_analysis.remote.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_dispatches_when_a_cluster_is_available(self):
+        from fighthealthinsurance.websockets import enqueue_denied_items_analysis
+
+        with patch(
+            "fighthealthinsurance.base_actor_ref.ray_cluster_available",
+            return_value=True,
+        ), patch(
+            "fighthealthinsurance.denied_items_analysis_actor_ref."
+            "denied_items_analysis_actor_ref"
+        ) as mock_ref:
+            await enqueue_denied_items_analysis(chat_id="chat-1")
+        mock_ref.get.run_analysis.remote.assert_called_once_with(chat_id="chat-1")

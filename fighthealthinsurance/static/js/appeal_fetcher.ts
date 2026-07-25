@@ -1132,6 +1132,15 @@ function connectWebSocket(
     if (handingOffToRest || usingRestFallback || wsGaveUp) {
       return;
     }
+    // Reset the end-reason per ATTEMPT, not just per query. scheduleReconnect
+    // re-enters connectWebSocket directly rather than going through doQuery,
+    // so without this a retry after e.g. an inactivity timeout would carry
+    // 'inactivity-timeout' into a fresh socket — and if that one closed
+    // normally with 0 appeals we'd report the previous attempt's reason,
+    // the opposite of the "terminal attempt" semantics this is meant to have.
+    // Placed after the handoff/give-up guard so a queued reconnect that
+    // returns early can't clear a terminal reason about to be reported.
+    wsEndReason = 'none';
     // Start the per-attempt wait timer. connectWebSocket is called
     // recursively for retries, so each invocation gets its own start.
     beginAttempt();

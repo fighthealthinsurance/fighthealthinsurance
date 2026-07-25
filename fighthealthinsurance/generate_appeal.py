@@ -2708,6 +2708,14 @@ class AppealGenerator(object):
         if diagnostics_sink is not None:
             diagnostics_sink["winning_stage"] = winning_stage
             diagnostics_sink["shed_tier"] = shed_tier_used
+            # NOTE: this is a ZERO-APPEAL diagnostic, not a complete attempt
+            # list. It's built here, right after the peek phase, while the
+            # per-model generators are still lazily chained and mostly
+            # unconsumed -- their outcomes are only recorded once exhausted. The
+            # zero-appeal ladder does drain every stage, so the case this exists
+            # for ("we produced nothing; which models did we try and why did
+            # each fail") is complete. On a successful run it will under-report,
+            # by design: the winning stage short-circuits the rest.
             diagnostics_sink["models_tried"] = _summarize_model_outcomes(model_outcomes)
         # Wrap template-based / non-AI appeals (plain strings) as
         # GeneratedAppeal so the downstream pipeline has a uniform type.
