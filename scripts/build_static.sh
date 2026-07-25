@@ -25,16 +25,10 @@ if [ "$FAST" = "FAST" ]; then
 fi
 
 # Materialize Git LFS assets (a few outlet logos, see .gitattributes) before the
-# collectstatic below copies raw bytes -- otherwise unsmudged LFS pointer stubs
-# would be served as .png. Warn rather than fail here since this path is used for
-# local/dev builds.
-if [ -f .gitattributes ] && grep -q "filter=lfs" .gitattributes; then
-  if command -v git-lfs >/dev/null 2>&1 && git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    git lfs pull || echo "WARNING: 'git lfs pull' failed; logo images may render broken."
-  else
-    echo "WARNING: repo uses Git LFS but git-lfs is unavailable; logo images may render broken."
-  fi
-fi
+# collectstatic below copies raw bytes -- otherwise unsmudged pointer stubs would
+# be served as .png. Warn rather than fail: this path is used for local/dev builds.
+# Runs before the static checksum below so a repair correctly invalidates the cache.
+"$(dirname "${BASH_SOURCE[0]}")/ensure_lfs_assets.sh" --warn-only
 
 if [ -d "${JS_PATH}" ]; then
   # Calculate checksum of JS/TS source files

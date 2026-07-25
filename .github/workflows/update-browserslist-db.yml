@@ -29,6 +29,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          # Fetch real bytes for LFS-tracked assets (see .gitattributes) so this
+          # job can never commit pointer stubs over them. The `add-paths` below
+          # already scopes the commit to package-lock.json, but this keeps the
+          # checkout honest if that scope is ever widened.
+          lfs: true
           # Don't leave the job's write token in the local git config: the
           # updater step below runs third-party npm code, and create-pull-request
           # authenticates its own push via its `token` input, so nothing here
