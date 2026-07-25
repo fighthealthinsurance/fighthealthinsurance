@@ -10,6 +10,12 @@ elif [ -f ./.venv/bin/activate ]; then
   source ./.venv/bin/activate
 fi
 
+# Materialize Git LFS assets before collectstatic. A few outlet logos on the
+# media-references page are stored via Git LFS (see .gitattributes), and
+# collectstatic copies raw bytes, so an unsmudged pointer stub would ship as a
+# broken .png. This is the deploy build, so fail rather than publish broken images.
+"$(dirname "${BASH_SOURCE[0]}")/ensure_lfs_assets.sh"
+
 if command -v tox >/dev/null 2>&1; then
   # Check if fhi_users directory exists for mypy
   if [ -d "./fhi_users" ]; then

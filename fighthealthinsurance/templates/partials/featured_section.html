@@ -2,7 +2,7 @@
 <!-- AS FEATURED IN -->
 <section id="featured" class="featured-section">
     <div class="container">
-        <h5 class="featured-title">As Featured In</h5>
+        <h5 class="featured-title"><a href="{% url 'media-references' %}" class="featured-title-link">As Featured In</a></h5>
         <div class="row no-gutters">
             <div class="col-md-12">
                 <div class="row no-gutters featured-row">
@@ -59,6 +59,9 @@
                     </div>
                 </div>
             </div>
+        </div>
+        <div class="featured-see-all">
+            <a href="{% url 'media-references' %}" class="featured-see-all-link">See all media references &rarr;</a>
         </div>
     </div>
 </section>

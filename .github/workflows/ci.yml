@@ -18,6 +18,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          lfs: true
+          persist-credentials: false
 
       - uses: actions/setup-python@v5
 
@@ -38,6 +41,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          lfs: true
+          persist-credentials: false
       - name: Install shell check
         run: sudo apt-get install -y shellcheck
       - name: Run shellcheck
@@ -47,6 +53,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          lfs: true
+          persist-credentials: false
 
       - uses: actions/setup-python@v5
 
@@ -71,6 +80,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
+        with:
+          lfs: true
+          persist-credentials: false
       - name: Setup node
         uses: actions/setup-node@v6
 
@@ -101,6 +113,9 @@ jobs:
           df -h
 
       - uses: actions/checkout@v4
+        with:
+          lfs: true
+          persist-credentials: false
 
       - name: Setup node
         uses: actions/setup-node@v3
@@ -177,6 +192,9 @@ jobs:
           df -h
 
       - uses: actions/checkout@v4
+        with:
+          lfs: true
+          persist-credentials: false
 
       - name: Setup node
         uses: actions/setup-node@v3
@@ -248,6 +266,9 @@ jobs:
           df -h
 
       - uses: actions/checkout@v4
+        with:
+          lfs: true
+          persist-credentials: false
 
       - name: Setup node
         uses: actions/setup-node@v3
@@ -398,6 +419,9 @@ jobs:
           df -h
 
       - uses: actions/checkout@v4
+        with:
+          lfs: true
+          persist-credentials: false
 
       - name: Setup node
         uses: actions/setup-node@v3
@@ -479,6 +503,9 @@ jobs:
           df -h
 
       - uses: actions/checkout@v4
+        with:
+          lfs: true
+          persist-credentials: false
 
       - name: Setup node
         uses: actions/setup-node@v3

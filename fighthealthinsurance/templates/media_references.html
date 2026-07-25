@@ -1,0 +1,45 @@
+{% extends 'base.html' %}
+{% load static %}
+{% block title %}Media References &amp; Press - Fight Health Insurance{% endblock title %}
+{% block metatitle %}Media References &amp; Press - Fight Health Insurance{% endblock metatitle %}
+{% block metadescription %}Press coverage and media references for Fight Health Insurance - featured on PBS NewsHour, Forbes, Newsweek, CBS News, STAT News, Business Insider, Quartz, Fast Company, WBUR, NewsNation and more.{% endblock metadescription %}
+
+{% block content %}
+<section class="media-references-section">
+    <div class="container">
+        <div class="media-references-header">
+            <h1 class="media-references-title">Media References</h1>
+            <p class="media-references-subtitle">
+                Fight Health Insurance has been featured in national news, radio, and podcasts.
+                Here's a look at where our work to help patients appeal denied claims has been covered.
+            </p>
+        </div>
+
+        <h2 class="media-references-subhead">Press Coverage</h2>
+        <div class="media-references-grid">
+            {% for ref in media_references %}
+            {% include 'partials/media_reference_card.html' %}
+            {% endfor %}
+        </div>
+
+        {% if social_references %}
+        <h2 class="media-references-subhead">On Social Media</h2>
+        <div class="media-references-grid">
+            {% for ref in social_references %}
+            {% include 'partials/media_reference_card.html' %}
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        <div class="media-references-cta">
+            <p>Denied by your health insurance? You don't have to fight alone.</p>
+            <a href="{% url 'scan' %}" class="section-btn btn btn-default">Generate Your Appeal for Free</a>
+        </div>
+
+        <p class="media-references-contact">
+            Members of the press: reach us at
+            <a class="link" href="mailto:media@fighthealthinsurance.com">media@fighthealthinsurance.com</a>.
+        </p>
+    </div>
+</section>
+{% endblock content %}

@@ -251,6 +251,11 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         name="pbs-newshour",
     ),
     path(
+        "media-references",
+        views.MediaReferencesView.as_view(),
+        name="media-references",
+    ),
+    path(
         "bingo",
         views.BingoView.as_view(),
         name="bingo",

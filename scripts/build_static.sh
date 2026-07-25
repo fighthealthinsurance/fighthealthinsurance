@@ -24,6 +24,12 @@ if [ "$FAST" = "FAST" ]; then
   exit 0
 fi
 
+# Materialize Git LFS assets (a few outlet logos, see .gitattributes) before the
+# collectstatic below copies raw bytes -- otherwise unsmudged pointer stubs would
+# be served as .png. Warn rather than fail: this path is used for local/dev builds.
+# Runs before the static checksum below so a repair correctly invalidates the cache.
+"$(dirname "${BASH_SOURCE[0]}")/ensure_lfs_assets.sh" --warn-only
+
 if [ -d "${JS_PATH}" ]; then
   # Calculate checksum of JS/TS source files
   # Using -maxdepth 1 because source files are in the js directory, not subdirectories

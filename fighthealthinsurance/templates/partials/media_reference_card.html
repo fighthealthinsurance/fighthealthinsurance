@@ -1,0 +1,25 @@
+{% load static %}
+{# Renders a single media/social reference card. Expects `ref` in context. #}
+<article class="media-reference-card">
+    <div class="media-reference-card-top">
+        {% if ref.logo %}
+        <img src="{% static ref.logo %}" alt="{{ ref.outlet }} logo" class="media-reference-logo" loading="lazy">
+        {% else %}
+        <span class="media-reference-outlet-text">{{ ref.outlet }}</span>
+        {% endif %}
+        {% if ref.kind %}<span class="media-reference-kind">{{ ref.kind }}</span>{% endif %}
+    </div>
+    <div class="media-reference-body">
+        <div class="media-reference-outlet">{{ ref.outlet }}{% if ref.date %} &middot; <span class="media-reference-date">{{ ref.date }}</span>{% endif %}</div>
+        <h3 class="media-reference-headline">
+            <a href="{{ ref.url }}" target="_blank" rel="noopener noreferrer">{{ ref.title }}</a>
+        </h3>
+        {% if ref.description %}<p class="media-reference-desc">{{ ref.description }}</p>{% endif %}
+    </div>
+    <div class="media-reference-links">
+        <a href="{{ ref.url }}" class="media-reference-link" target="_blank" rel="noopener noreferrer">{{ ref.cta|default:"Read more" }} &rarr;</a>
+        {% if ref.internal_url_name %}
+        <a href="{% url ref.internal_url_name %}" class="media-reference-link media-reference-link-internal">See our page</a>
+        {% endif %}
+    </div>
+</article>
