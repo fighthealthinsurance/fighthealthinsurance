@@ -126,9 +126,7 @@ def test_expedited_urgent_window_has_no_calendar_deadline():
 
 
 def test_medicare_internal_appeal_is_60_days():
-    result = compute_deadlines(
-        "medicare_advantage_partd", "pre_service", False, DENIAL
-    )
+    result = compute_deadlines("medicare_advantage_partd", "pre_service", False, DENIAL)
     assert result.internal_appeal_filing.deadline == DENIAL + datetime.timedelta(
         days=60
     )
@@ -138,9 +136,7 @@ def test_medicare_external_review_shows_no_concrete_date():
     # The Part D 60-day IRE clock runs from the plan's redetermination decision,
     # not from the denial-received date, so we must not emit a concrete date
     # even though a denial date was supplied.
-    result = compute_deadlines(
-        "medicare_advantage_partd", "pre_service", False, DENIAL
-    )
+    result = compute_deadlines("medicare_advantage_partd", "pre_service", False, DENIAL)
     assert result.external_review_filing.deadline is None
     assert result.external_review_filing.varies is True
     # The plain-language label is still shown so the row is informative.
@@ -207,6 +203,32 @@ class AppealDeadlineCalculatorViewTest(TestCase):
         self.assertContains(response, "June 30, 2026")
         # CTA into the appeal-generation flow.
         self.assertContains(response, reverse("scan"))
+
+    def test_get_with_malformed_date_renders_no_results(self) -> None:
+        """A bound-but-invalid form must not 500 or render a bogus deadline."""
+        response = self.client.get(
+            self.url,
+            {
+                "coverage_type": "employer_erisa",
+                "service_timing": "post_service",
+                "denial_received": "not-a-date",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, 'id="results"')
+
+    def test_get_with_unknown_coverage_type_renders_no_results(self) -> None:
+        """An out-of-range choice must be rejected, not looked up blindly."""
+        response = self.client.get(
+            self.url,
+            {
+                "coverage_type": "not_a_real_coverage_type",
+                "service_timing": "post_service",
+                "denial_received": "2026-01-01",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, 'id="results"')
 
     def test_json_ld_and_disclaimer_present(self) -> None:
         response = self.client.get(self.url)

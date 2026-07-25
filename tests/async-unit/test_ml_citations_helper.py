@@ -72,9 +72,10 @@ class TestMLCitationsHelper:
         """use_external=False must reach the router so it returns no backends.
 
         Regression: the full citation backends are external (Perplexity) and
-        receive denial_text/health_history/plan_context, so a denial whose user
-        declined external models must be passed through as use_external=False —
-        never a hardcoded True.
+        receive denial_text/health_history (plan_context is deliberately
+        excluded — see test_specific_citations_never_send_plan_context), so a
+        denial whose user declined external models must be passed through as
+        use_external=False — never a hardcoded True.
         """
         mock_ml_router.full_find_citation_backends.return_value = []
 

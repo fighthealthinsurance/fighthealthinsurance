@@ -2787,7 +2787,6 @@ class MicrositeView(StaticIshView):
     template_name = "microsite.html"
 
     def get(self, request, slug, *args, **kwargs):
-        from django.http import Http404
         from django.shortcuts import redirect
 
         from fighthealthinsurance.microsites import get_microsite
@@ -3043,8 +3042,6 @@ class StateHelpView(StaticIshView):
         # Cache state lookup to avoid duplicate call in get_context_data
         self._state = get_state_help(slug)
         if self._state is None:
-            from django.http import Http404
-
             raise Http404(f"State help page '{slug}' not found")
 
         return super().get(request, *args, **kwargs)
@@ -3164,8 +3161,6 @@ class DenialReasonDecoderView(PublicCachedPageMixin, TemplateView):
 
         self._reason = get_reason(slug)
         if self._reason is None:
-            from django.http import Http404
-
             raise Http404(f"Denial reason '{slug}' not found")
 
         return super().get(request, *args, **kwargs)
@@ -3256,8 +3251,6 @@ class GlossaryView(PublicCachedPageMixin, TemplateView):
         # Cache the lookup so get_context_data does not repeat it.
         self._term = get_term(slug)
         if self._term is None:
-            from django.http import Http404
-
             raise Http404(f"Glossary term '{slug}' not found")
 
         return super().get(request, *args, **kwargs)
@@ -3413,8 +3406,6 @@ class InsurerAppealGuideView(PublicCachedPageMixin, TemplateView):
         # Cache the lookup to avoid a duplicate call in get_context_data.
         self._insurer = get_insurer_guide(slug)
         if self._insurer is None:
-            from django.http import Http404
-
             raise Http404(f"Insurer appeal guide '{slug}' not found")
 
         return super().get(request, *args, **kwargs)
