@@ -13,9 +13,11 @@ don't accidentally collapse the lookup-failed case back into the
 "generation produced nothing" bucket.
 """
 
+import json
 from unittest.mock import patch, AsyncMock, MagicMock
 
 import pytest
+from django.db.utils import OperationalError
 
 from fighthealthinsurance.websockets import (
     _AppealGenTraceFields,
@@ -507,6 +509,66 @@ async def test_server_side_connection_reset_is_not_filed_as_a_disconnect():
         )
     assert warnings == []
     assert "Generation produced nothing" in errors[-1]
+
+
+@pytest.mark.asyncio
+async def test_rest_fallback_wires_error_from_send_false():
+    """End-to-end over the REST fallback view, not the helper in isolation.
+
+    The test above pins the CLASSIFICATION; this one pins the WIRING, and only
+    this one fails if streaming_appeals_rest_fallback stops passing
+    error_from_send=False (or passes the wrong value). Drive the real view with
+    a generator that dies on a Postgres reset mid-stream and assert it is still
+    filed as a generation failure.
+    """
+    from rest_framework.test import APIRequestFactory
+
+    from fighthealthinsurance import rest_views
+
+    reset_error = "could not receive data from server: Connection reset by peer"
+
+    async def _boom(_data):
+        # One status frame first, so the run looks like a real generation that
+        # got under way rather than an immediate blow-up.
+        yield json.dumps({"type": "status", "phase": "init"}) + "\n"
+        raise OperationalError(reset_error)
+
+    request = APIRequestFactory().post(
+        "/ziggy/rest/appeals/streaming_fallback",
+        {"denial_id": 42, "email": "a@b.com", "semi_sekret": "s"},
+        format="json",
+    )
+
+    objects = _make_count_mock(return_value=0)
+    p1, p2 = _patch_models(objects)
+    warn_cm, warnings = _captured_warning()
+    err_cm, errors = _captured_logger()
+    with p1, p2, warn_cm, err_cm, patch.object(
+        rest_views.common_view_logic,
+        "get_denial_for_action",
+        return_value=MagicMock(),
+    ), patch.object(
+        rest_views.common_view_logic.AppealsBackendHelper,
+        "generate_appeals",
+        _boom,
+    ), patch.object(
+        # The view logs its own traceback for the failure; silence it so the
+        # test output isn't a wall of stack trace.
+        rest_views,
+        "logger",
+        MagicMock(),
+    ):
+        response = rest_views.streaming_appeals_rest_fallback(request)
+        async for _chunk in response.streaming_content:
+            pass
+
+    # Reached log_zero_appeal_diagnostics as a GENERATION failure. Without
+    # error_from_send=False the "connection reset" substring would match the
+    # client-disconnect markers and downgrade this to a WARNING.
+    assert warnings == []
+    assert errors, "expected a zero-appeal ERROR from the REST fallback"
+    assert "Generation produced nothing" in errors[-1]
+    assert reset_error in errors[-1]
 
 
 @pytest.mark.asyncio
