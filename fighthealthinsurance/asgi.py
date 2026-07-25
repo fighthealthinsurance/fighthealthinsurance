@@ -123,4 +123,8 @@ if _log_analytics.is_log_analytics_enabled():
     # InterceptHandler on the root stdlib logger that forwards stdlib records
     # into loguru, so registering the handler on both sinks would double-ship.
     _la_handler = _log_analytics.LogAnalyticsHandler(level=_logging.INFO)
-    _loguru_logger.add(_la_handler, level="INFO")
+    # backtrace/diagnose off, same as the Prod stderr sink (settings.py):
+    # loguru's defaults annotate every traceback frame with local variable
+    # values, which would ship prompts/PHI/API tokens off-box to Log
+    # Analytics on any logger.opt(exception=True) call.
+    _loguru_logger.add(_la_handler, level="INFO", backtrace=False, diagnose=False)

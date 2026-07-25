@@ -1047,3 +1047,23 @@ if _os.getenv("DJANGO_CONFIGURATION") in {"Test", "TestSync", "TestActor"}:
         catch=False,  # do not swallow unexpected sink errors
         level="DEBUG",
     )
+elif _os.getenv("DJANGO_CONFIGURATION") == "Prod":
+    import sys as _sys
+
+    from loguru import logger as _logger
+
+    # Replace loguru's default stderr sink (backtrace=True, diagnose=True)
+    # with a production-safe one. ``diagnose`` annotates every traceback frame
+    # with local variable values -- hundreds of lines per error that bury the
+    # actual cause and can leak prompts/PHI/API tokens into the logs;
+    # ``backtrace`` extends traces beyond the catch point with more framework
+    # plumbing. Plain compact tracebacks only in Prod. (Runs at settings
+    # import, before any extra sinks like Azure Log Analytics are attached in
+    # asgi.py, so only the default sink is replaced.)
+    _logger.remove()
+    _logger.add(
+        _sys.stderr,
+        backtrace=False,
+        diagnose=False,
+        level=_os.getenv("LOGURU_LEVEL", "DEBUG"),
+    )

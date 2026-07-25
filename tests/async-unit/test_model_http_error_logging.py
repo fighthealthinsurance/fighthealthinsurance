@@ -4,14 +4,15 @@ A backend that returns an expected operational error -- an exhausted quota
 (401), a billing problem (402), a forbidden resource (403), or rate limiting
 (429) -- should be logged concisely as a WARNING and degrade to ``None``,
 *not* emit an ERROR with a stack trace (which reads like a crash). Real
-failures (e.g. HTTP 500) keep the ERROR + traceback.
+failures (e.g. HTTP 500) keep an ERROR-level line, but a concise classified
+one: the traceback for an HTTP status error is aiohttp internals and buries
+the status.
 """
 
 from unittest.mock import AsyncMock, patch
 
 import aiohttp
 import pytest
-from loguru import logger
 from multidict import CIMultiDict, CIMultiDictProxy
 from yarl import URL
 
@@ -41,24 +42,6 @@ def _client_response_error(status: int) -> aiohttp.ClientResponseError:
     )
 
 
-class _LogCapture:
-    """Context manager capturing loguru records at DEBUG and above."""
-
-    def __enter__(self):
-        self.records = []
-        self._sink_id = logger.add(
-            lambda msg: self.records.append(msg.record), level="DEBUG"
-        )
-        return self
-
-    def __exit__(self, *exc):
-        logger.remove(self._sink_id)
-
-    @property
-    def levels(self):
-        return [r["level"].name for r in self.records]
-
-
 class TestExpectedStatusClassification:
     def test_quota_auth_ratelimit_codes_are_expected(self):
         for status in (401, 402, 403, 429):
@@ -75,7 +58,9 @@ class TestInferHttpErrorLogging:
         return RemoteFullOpenLike("http://test-api.com", "test-token", "test-model")
 
     @pytest.mark.asyncio
-    async def test_expected_error_logs_warning_not_error_and_returns_none(self):
+    async def test_expected_error_logs_warning_not_error_and_returns_none(
+        self, log_capture
+    ):
         """A 401 (insufficient_quota) must not produce an ERROR-level log."""
         model = self._model()
         with patch.object(
@@ -84,7 +69,7 @@ class TestInferHttpErrorLogging:
             new_callable=AsyncMock,
             side_effect=_client_response_error(401),
         ):
-            with _LogCapture() as cap:
+            with log_capture() as cap:
                 result = await model._infer(system_prompts=["sys"], prompt="hi")
 
         assert result is None
@@ -98,8 +83,10 @@ class TestInferHttpErrorLogging:
         assert "quota" in warning_text.lower()
 
     @pytest.mark.asyncio
-    async def test_unexpected_error_still_logs_error_with_traceback(self):
-        """A 500 is a real failure and keeps the ERROR + traceback."""
+    async def test_unexpected_http_error_still_logs_error_concisely(self, log_capture):
+        """A 500 is a real failure: it keeps an ERROR-level line, but as a
+        concise classified message (with the status) rather than a traceback
+        of aiohttp internals."""
         model = self._model()
         with patch.object(
             model,
@@ -107,11 +94,14 @@ class TestInferHttpErrorLogging:
             new_callable=AsyncMock,
             side_effect=_client_response_error(500),
         ):
-            with _LogCapture() as cap:
+            with log_capture() as cap:
                 result = await model._infer(system_prompts=["sys"], prompt="hi")
 
         assert result is None
-        assert "ERROR" in cap.levels
+        errors = [r for r in cap.records if r["level"].name == "ERROR"]
+        assert len(errors) == 1
+        assert "500" in errors[0]["message"]
+        assert errors[0]["exception"] is None
 
 
 class TestModelStr:
