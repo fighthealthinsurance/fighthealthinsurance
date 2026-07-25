@@ -76,14 +76,14 @@ async def test_above_threshold_summarizes_and_persists():
     d = _denial(_LONG_TEXT, use_external=False, denial_id=7)
     with patch(f"{_HELPER}.ml_router") as router, patch(f"{_HELPER}.Denial") as Denial:
         router.summarize = AsyncMock(return_value=_CONDENSED)
-        Denial.objects.filter.return_value.aupdate = AsyncMock()
+        Denial.objects.filter.return_value.aupdate = AsyncMock(return_value=1)
         result = await MLAppealContextHelper.maybe_summarize_denial_text(d)
 
     assert result == _CONDENSED
     # Privacy gate threaded through.
     assert router.summarize.call_args.kwargs["use_external"] is False
-    # Cached back onto the denial row.
-    Denial.objects.filter.assert_called_once_with(denial_id=7)
+    # Cached back onto the denial row, gated on the letter it summarizes.
+    Denial.objects.filter.assert_called_once_with(denial_id=7, denial_text=_LONG_TEXT)
     Denial.objects.filter.return_value.aupdate.assert_awaited_once_with(
         denial_text_summary=_CONDENSED
     )
@@ -94,7 +94,7 @@ async def test_use_external_true_is_passed_through():
     d = _denial(_LONG_TEXT, use_external=True)
     with patch(f"{_HELPER}.ml_router") as router, patch(f"{_HELPER}.Denial") as Denial:
         router.summarize = AsyncMock(return_value=_CONDENSED)
-        Denial.objects.filter.return_value.aupdate = AsyncMock()
+        Denial.objects.filter.return_value.aupdate = AsyncMock(return_value=1)
         await MLAppealContextHelper.maybe_summarize_denial_text(d)
     assert router.summarize.call_args.kwargs["use_external"] is True
 
@@ -146,11 +146,13 @@ async def test_prewarmed_candidate_is_promoted_without_recomputing():
     d = _denial(_LONG_TEXT, candidate_summary="PREWARMED")
     with patch(f"{_HELPER}.ml_router") as router, patch(f"{_HELPER}.Denial") as Denial:
         router.summarize = AsyncMock(return_value="fresh summary")
-        Denial.objects.filter.return_value.aupdate = AsyncMock()
+        Denial.objects.filter.return_value.aupdate = AsyncMock(return_value=1)
         result = await MLAppealContextHelper.maybe_summarize_denial_text(d)
     assert result == "PREWARMED"
     router.summarize.assert_not_called()
-    # Promoted into the real field so later reads short-circuit.
+    # Promoted into the real field so later reads short-circuit, gated on the
+    # letter the candidate was pre-warmed from.
+    Denial.objects.filter.assert_called_once_with(denial_id=7, denial_text=_LONG_TEXT)
     Denial.objects.filter.return_value.aupdate.assert_awaited_once_with(
         denial_text_summary="PREWARMED"
     )
@@ -176,10 +178,10 @@ async def test_prewarm_writes_candidate_field_not_real():
     d = _denial(_LONG_TEXT, use_external=False, denial_id=9)
     with patch(f"{_HELPER}.ml_router") as router, patch(f"{_HELPER}.Denial") as Denial:
         router.summarize = AsyncMock(return_value=_CONDENSED)
-        Denial.objects.filter.return_value.aupdate = AsyncMock()
+        Denial.objects.filter.return_value.aupdate = AsyncMock(return_value=1)
         result = await MLAppealContextHelper.prewarm_candidate_denial_text_summary(d)
     assert result == _CONDENSED
-    Denial.objects.filter.assert_called_once_with(denial_id=9)
+    Denial.objects.filter.assert_called_once_with(denial_id=9, denial_text=_LONG_TEXT)
     Denial.objects.filter.return_value.aupdate.assert_awaited_once_with(
         candidate_denial_text_summary=_CONDENSED
     )
@@ -208,3 +210,56 @@ async def test_prewarm_skips_when_summary_already_exists():
     assert result == "ALREADY"
     router.summarize.assert_not_called()
     Denial.objects.filter.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_prewarm_cache_write_is_gated_on_the_letter_it_summarized():
+    """The candidate write must not land if the letter was replaced mid-flight.
+
+    The pre-warm runs in the background with no deadline, so a user correcting a
+    bad OCR pass can replace the letter while it is still summarizing. The
+    replacement's invalidation sweep has already run by then, so an
+    unconditional write would leave a summary of the OLD letter behind it
+    forever -- and the live flow substitutes that for the user's actual letter.
+    Conditioning the UPDATE on denial_text means zero rows match and it drops.
+    """
+    d = _denial(_LONG_TEXT, use_external=False, denial_id=11)
+    with patch(f"{_HELPER}.ml_router") as router, patch(f"{_HELPER}.Denial") as Denial:
+        router.summarize = AsyncMock(return_value=_CONDENSED)
+        # 0 rows updated == the row no longer has this denial_text.
+        Denial.objects.filter.return_value.aupdate = AsyncMock(return_value=0)
+        result = await MLAppealContextHelper.prewarm_candidate_denial_text_summary(d)
+
+    # The in-flight caller still gets the summary (its own run is about the
+    # same letter); only the persisted copy is dropped.
+    assert result == _CONDENSED
+    Denial.objects.filter.assert_called_once_with(denial_id=11, denial_text=_LONG_TEXT)
+
+
+@pytest.mark.asyncio
+async def test_live_summary_cache_write_is_gated_on_the_letter_it_summarized():
+    """Same guard on the live path: a summary computed from a letter that has
+    since been replaced must not be cached as that denial's summary."""
+    d = _denial(_LONG_TEXT, use_external=False, denial_id=12)
+    with patch(f"{_HELPER}.ml_router") as router, patch(f"{_HELPER}.Denial") as Denial:
+        router.summarize = AsyncMock(return_value=_CONDENSED)
+        Denial.objects.filter.return_value.aupdate = AsyncMock(return_value=0)
+        result = await MLAppealContextHelper.maybe_summarize_denial_text(d)
+
+    assert result == _CONDENSED
+    Denial.objects.filter.assert_called_once_with(denial_id=12, denial_text=_LONG_TEXT)
+
+
+@pytest.mark.asyncio
+async def test_cache_write_failure_still_returns_the_summary():
+    """A DB failure caching the summary is non-fatal: the generation already
+    under way still gets its condensed text."""
+    d = _denial(_LONG_TEXT, use_external=False, denial_id=13)
+    with patch(f"{_HELPER}.ml_router") as router, patch(f"{_HELPER}.Denial") as Denial:
+        router.summarize = AsyncMock(return_value=_CONDENSED)
+        Denial.objects.filter.return_value.aupdate = AsyncMock(
+            side_effect=RuntimeError("db down")
+        )
+        result = await MLAppealContextHelper.maybe_summarize_denial_text(d)
+
+    assert result == _CONDENSED

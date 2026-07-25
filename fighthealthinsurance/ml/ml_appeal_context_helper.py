@@ -96,15 +96,41 @@ class MLAppealContextHelper:
         return summary
 
     @classmethod
-    async def _cache_summary(cls, denial_id, **fields) -> None:
+    async def _cache_summary(cls, denial_id, source_text, **fields) -> None:
         """Best-effort cache of computed summary field(s) onto the denial row.
+
+        The write is CONDITIONAL on ``denial_text`` still being ``source_text``
+        -- the letter the summary actually describes. Summarization is a model
+        call taking seconds to minutes (and, on the speculative precompute
+        path, runs entirely in the background), so the user can replace the
+        letter while it is in flight; replacing a letter is a normal flow (a
+        bad OCR pass gets corrected). ``_invalidate_denial_text_artifacts``
+        clears both summary fields on that replacement, but a summary landing
+        AFTER that sweep would be written behind it and nothing sweeps again.
+        It would then be substituted into the prompt in place of the user's
+        actual letter on every later generation -- appeals arguing about a
+        denial that is no longer theirs. Making it one conditional UPDATE
+        closes the window at the DB level: if the letter changed, zero rows
+        match and the stale summary is simply dropped.
+
         A failure here is non-fatal: the caller still uses the summary it just
-        computed."""
+        computed for the generation it is already running (which is about
+        ``source_text`` too, so that run stays self-consistent).
+        """
         try:
-            await Denial.objects.filter(denial_id=denial_id).aupdate(**fields)
+            updated = await Denial.objects.filter(
+                denial_id=denial_id, denial_text=source_text
+            ).aupdate(**fields)
         except Exception as e:
             logger.opt(exception=True).warning(
                 f"Failed to cache {list(fields)} for denial " f"{denial_id}: {e}"
+            )
+            return
+        if not updated:
+            logger.info(
+                f"Discarding {list(fields)} for denial {denial_id}: the denial "
+                f"letter was replaced while it was being summarized, so this "
+                f"summary describes the old letter"
             )
 
     @classmethod
@@ -127,6 +153,9 @@ class MLAppealContextHelper:
             return None
 
         denial_id = denial.denial_id
+        # The letter every summary below is about, so the cache write can be
+        # gated on it still being the current one (see _cache_summary).
+        source_text = denial.denial_text
         if denial.denial_text_summary:
             logger.debug(
                 f"Denial {denial_id} reusing cached denial_text_summary "
@@ -143,13 +172,15 @@ class MLAppealContextHelper:
                 f"Denial {denial_id} promoting pre-warmed candidate "
                 f"denial_text_summary ({len(candidate)} chars)"
             )
-            await cls._cache_summary(denial_id, denial_text_summary=candidate)
+            await cls._cache_summary(
+                denial_id, source_text, denial_text_summary=candidate
+            )
             return candidate
 
         summary = await cls._call_summarizer(denial)
         if not summary:
             return None
-        await cls._cache_summary(denial_id, denial_text_summary=summary)
+        await cls._cache_summary(denial_id, source_text, denial_text_summary=summary)
         logger.info(
             f"Summarized long denial_text for denial {denial_id} "
             f"({len(denial.denial_text)} -> {len(summary)} chars) to fit "
@@ -172,6 +203,11 @@ class MLAppealContextHelper:
         if not cls._needs_summary(denial):
             return None
         denial_id = denial.denial_id
+        # The letter this summary is about; the cache write is gated on it (see
+        # _cache_summary). This path needs the gate most: it runs entirely in
+        # the background with no deadline, so it is the one most likely to still
+        # be summarizing when the user replaces the letter.
+        source_text = denial.denial_text
         # Don't recompute if the real flow already produced one, or we already
         # pre-warmed a candidate.
         if denial.denial_text_summary or denial.candidate_denial_text_summary:
@@ -180,7 +216,9 @@ class MLAppealContextHelper:
         summary = await cls._call_summarizer(denial)
         if not summary:
             return None
-        await cls._cache_summary(denial_id, candidate_denial_text_summary=summary)
+        await cls._cache_summary(
+            denial_id, source_text, candidate_denial_text_summary=summary
+        )
         logger.info(
             f"Pre-warmed candidate denial_text_summary for denial {denial_id} "
             f"({len(denial.denial_text)} -> {len(summary)} chars)"
