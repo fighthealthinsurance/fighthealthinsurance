@@ -46,7 +46,13 @@ from fighthealthinsurance.context_utils import (
 from fighthealthinsurance.denial_base import DenialBase
 
 from .exec import executor
-from .ml.ml_models import RemoteFullOpenLike, RemoteModelLike, repetition_penalty
+from .ml.ml_models import (
+    MODEL_TRANSPORT_ERRORS,
+    RemoteFullOpenLike,
+    RemoteModelLike,
+    describe_model_error,
+    repetition_penalty,
+)
 from .ml.ml_router import ml_router
 from .payer_policy_helper import (
     get_combined_payer_policy_context,
@@ -1139,6 +1145,74 @@ def _summarize_model_outcomes(outcomes: List[Tuple[Optional[str], str]]) -> str:
     return ",".join(items)
 
 
+def _generated_to_appeals_text(
+    model_name: Optional[str],
+    k_text_future: Future,
+    template_generator: AppealTemplateGenerator,
+    context_level: Optional[str] = None,
+    outcomes: Optional[List[Tuple[Optional[str], str]]] = None,
+) -> Iterator[GeneratedAppeal]:
+    """Map one model future's (infer_type, text) results to GeneratedAppeals.
+
+    Contains that model's failure: as_available_nested re-raises future
+    exceptions mid-iteration, so an uncaught error from one backend (e.g. an
+    external provider 500) would abort the whole appeal stream and drop every
+    other model's results. Instead we log one concise line and yield nothing.
+
+    ``context_level`` (full/tier1_shed/... provenance) is stamped onto each
+    emitted appeal. When ``outcomes`` is provided, this model's outcome
+    (``ok``/``no_output``) is appended to it for the models_tried diagnostic.
+    """
+    produced = False
+    try:
+        try:
+            model_results = k_text_future.result()
+        except Exception as e:
+            # Same split as _log_fanout_task_error: expected transport failures
+            # get one concise classified line, but an unexpected exception (a
+            # code bug in the pipeline) keeps its traceback -- otherwise an
+            # all-models-empty run caused by a defect would be indistinguishable
+            # from ordinary backend downtime.
+            if isinstance(e, MODEL_TRANSPORT_ERRORS):
+                logger.warning(
+                    f"Appeal generation via {model_name} failed -- "
+                    f"{describe_model_error(e)}"
+                )
+            else:
+                logger.opt(exception=True).warning(
+                    f"Appeal generation via {model_name} failed: {e}"
+                )
+            return
+        if model_results is None:
+            return
+        for k, text in model_results:
+            if text is None:
+                continue
+            # It's either full or a reason to plug into a template
+            if k == "full":
+                logger.debug(f"Bubbling up full response ({len(text)} chars)")
+                produced = True
+                yield GeneratedAppeal(
+                    text=text, model_name=model_name, context_level=context_level
+                )
+            else:
+                templated = template_generator.generate(text)
+                if templated is not None:
+                    produced = True
+                    yield GeneratedAppeal(
+                        text=templated,
+                        model_name=model_name,
+                        context_level=context_level,
+                    )
+    finally:
+        # Record whether this model produced any deliverable text, for the
+        # models_tried diagnostic. The finally runs when the generator is
+        # exhausted (the zero-appeal ladder consumes every generator fully, so
+        # all outcomes are captured before the summary is built).
+        if outcomes is not None:
+            outcomes.append((model_name, "ok" if produced else "no_output"))
+
+
 def _peek_real_or_none(
     it: Iterator["GeneratedAppeal"], denial_id: Any, stage: str
 ) -> Tuple[Optional["GeneratedAppeal"], Iterator["GeneratedAppeal"]]:
@@ -1312,10 +1386,22 @@ class AppealGenerator(object):
             for _ in range(3):
                 try:
                     extracted: Optional[str] = await method(denial_text)  # type: ignore
-                except Exception:
-                    logger.opt(exception=True).debug(
-                        f"Extraction call failed for {model} {model_method_name}"
-                    )
+                except Exception as e:
+                    if isinstance(e, MODEL_TRANSPORT_ERRORS):
+                        # One concise line: a down backend would otherwise
+                        # emit a full traceback for every entity type x model
+                        # x retry.
+                        logger.debug(
+                            f"Extraction {model_method_name} via {model} "
+                            f"failed -- {describe_model_error(e)}"
+                        )
+                    else:
+                        # Unexpected exception = likely code bug; keep the
+                        # traceback so it stays diagnosable.
+                        logger.opt(exception=True).debug(
+                            f"Extraction {model_method_name} via {model} "
+                            f"failed: {e}"
+                        )
                     extracted = None
                 if extracted is None:
                     await asyncio.sleep(1)
@@ -1362,10 +1448,10 @@ class AppealGenerator(object):
             best = await best_within_timelimit(
                 awaitables, score_fn=use_score, timeout=30
             )
-        except Exception:
-            logger.opt(exception=True).debug(
-                "best_within_timelimit failed for entity extraction"
-            )
+        except Exception as e:
+            # Raised (with a self-explanatory message) when every backend
+            # struck out; per-model causes were already logged concisely.
+            logger.debug(f"Entity extraction fan-out produced no result: {e}")
             best = None
 
         # best_within_timelimit returns any truthy result regardless of score.
@@ -1754,10 +1840,10 @@ class AppealGenerator(object):
             best = await best_within_timelimit(
                 awaitables, score_fn=score_fn, timeout=30
             )
-        except Exception:
-            logger.opt(exception=True).debug(
-                "best_within_timelimit failed for get_procedure_and_diagnosis"
-            )
+        except Exception as e:
+            # Raised (with a self-explanatory message) when every backend
+            # struck out; per-model causes were already logged concisely.
+            logger.debug(f"Procedure/diagnosis fan-out produced no result: {e}")
             best = None
 
         if best is None:
@@ -2509,52 +2595,19 @@ class AppealGenerator(object):
                 for fut in get_model_result(**call_kwargs):
                     model_futures.append((model_name, context_level, fut))
 
-            def generated_to_appeals_text(
-                model_name: Optional[str],
-                context_level: Optional[str],
-                k_text_future,
-            ) -> Iterator[GeneratedAppeal]:
-                # Record whether this model produced any deliverable text, for
-                # the models_tried diagnostic. The finally runs when the
-                # generator is exhausted (the zero-appeal ladder consumes every
-                # generator fully, so all outcomes are captured before the
-                # summary is built).
-                produced = False
-                try:
-                    model_results = k_text_future.result()
-                    if model_results is None:
-                        return
-                    for k, text in model_results:
-                        if text is None:
-                            continue
-                        # It's either full or a reason to plug into a template
-                        if k == "full":
-                            logger.debug(
-                                f"Bubbling up full response ({len(text)} chars)"
-                            )
-                            produced = True
-                            yield GeneratedAppeal(
-                                text=text,
-                                model_name=model_name,
-                                context_level=context_level,
-                            )
-                        else:
-                            templated = template_generator.generate(text)
-                            if templated is not None:
-                                produced = True
-                                yield GeneratedAppeal(
-                                    text=templated,
-                                    model_name=model_name,
-                                    context_level=context_level,
-                                )
-                finally:
-                    model_outcomes.append(
-                        (model_name, "ok" if produced else "no_output")
-                    )
-
-            # Python lack reasonable future chaining (ugh)
+            # Python lack reasonable future chaining (ugh). Thread context_level
+            # (cl) and the shared model_outcomes collector into the module-level
+            # mapper so each emitted appeal carries its shed level and each
+            # model's outcome is recorded for the models_tried diagnostic.
             generated_text_futures = [
-                executor.submit(generated_to_appeals_text, mn, cl, f)
+                executor.submit(
+                    _generated_to_appeals_text,
+                    mn,
+                    f,
+                    template_generator,
+                    cl,
+                    model_outcomes,
+                )
                 for mn, cl, f in model_futures
             ]
             return generated_text_futures
@@ -2744,8 +2797,17 @@ class AppealGenerator(object):
                         f"Synthesis candidate from {model}: {len(result)} chars"
                     )
                     return str(result)
-            except Exception:
-                logger.opt(exception=True).debug(f"Synthesis failed on {model}")
+            except Exception as e:
+                if isinstance(e, MODEL_TRANSPORT_ERRORS):
+                    logger.debug(
+                        f"Synthesis via {model} failed -- {describe_model_error(e)}"
+                    )
+                else:
+                    # Unexpected exception = likely code bug; keep the
+                    # traceback so it stays diagnosable.
+                    logger.opt(exception=True).debug(
+                        f"Synthesis via {model} failed: {e}"
+                    )
             return None
 
         # Build tasks and map each coroutine to its model's quality score
@@ -2771,8 +2833,6 @@ class AppealGenerator(object):
                     f"({len(best)} chars) using best of {len(all_internal)} models"
                 )
                 return str(best)
-        except Exception:
-            logger.opt(exception=True).warning(
-                "All synthesis models failed within time limit"
-            )
+        except Exception as e:
+            logger.warning(f"All synthesis models failed within time limit: {e}")
         return None

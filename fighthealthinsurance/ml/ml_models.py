@@ -3,8 +3,10 @@ import itertools
 import os
 import random
 import re
+import socket
 import sys
 import threading
+import time
 import traceback
 from abc import abstractmethod
 from concurrent.futures import Future
@@ -71,6 +73,140 @@ def _http_status_is_expected(status: Optional[int]) -> bool:
     return status in EXPECTED_HTTP_STATUS_CODES
 
 
+# Transport-level exception classes that represent an expected operational
+# failure of a remote backend -- the service being down, unreachable, slow, or
+# restarting -- rather than a bug in our code. aiohttp.ClientError covers the
+# HTTP-client zoo (connect/DNS/SSL/proxy/payload/disconnect), TimeoutError
+# covers our own async timeouts (asyncio.TimeoutError is TimeoutError on
+# 3.11+), and OSError covers raw socket failures (refused/reset/unreachable).
+# When one of these fires we log a single line via describe_model_error
+# instead of a multi-page stack trace of aiohttp/asyncio plumbing that buries
+# the actual cause.
+MODEL_TRANSPORT_ERRORS: tuple[type[BaseException], ...] = (
+    aiohttp.ClientError,
+    asyncio.TimeoutError,
+    TimeoutError,
+    OSError,
+)
+
+
+def describe_model_error(exc: BaseException) -> str:
+    """Map an exception from a model-backend call to a concise one-line reason.
+
+    Model calls fail in a handful of operational ways -- couldn't connect,
+    timed out, DNS lookup failed, server closed the connection, HTTP error
+    status -- and for those the stack trace is aiohttp/asyncio internals that
+    bury the cause (and, with loguru's ``diagnose``, can leak prompt/PHI
+    contents into logs). This yields log lines like "connection timeout
+    (could not reach backend)" or "HTTP 503 Service Unavailable" instead.
+    Unrecognized exceptions fall back to ``ExcType: message``.
+    """
+    if isinstance(exc, aiohttp.ContentTypeError):
+        return "unexpected (non-JSON) content type in response -- often a missing model"
+    if isinstance(exc, aiohttp.ClientResponseError):
+        message = f" {exc.message}" if exc.message else ""
+        return f"HTTP {exc.status}{message}"
+    # aiohttp >= 3.10 splits connect vs. read timeouts into dedicated
+    # ServerTimeoutError subclasses; getattr keeps older versions working.
+    if isinstance(exc, getattr(aiohttp, "ConnectionTimeoutError", ())):
+        return "connection timeout (could not reach backend)"
+    if isinstance(exc, getattr(aiohttp, "SocketTimeoutError", ())):
+        return "socket timeout (backend stopped responding mid-read)"
+    if isinstance(exc, aiohttp.ServerTimeoutError):
+        return "server timeout"
+    if isinstance(exc, aiohttp.ServerDisconnectedError):
+        return "server disconnected before sending a response"
+    if isinstance(exc, aiohttp.ClientConnectorError):
+        # Includes the DNS/SSL/proxy connector subclasses; the wrapped OS
+        # error says why the connection could not be established.
+        os_error = getattr(exc, "os_error", None)
+        if isinstance(os_error, socket.gaierror):
+            return f"DNS lookup failed ({os_error})"
+        if isinstance(os_error, ConnectionRefusedError):
+            return "connection refused"
+        return f"could not connect ({os_error or exc})"
+    if isinstance(exc, aiohttp.ClientOSError):
+        return f"connection error ({exc})"
+    if isinstance(exc, aiohttp.ClientPayloadError):
+        return f"malformed or truncated response payload ({exc})"
+    if isinstance(exc, (asyncio.TimeoutError, TimeoutError)):
+        return "timed out"
+    if isinstance(exc, socket.gaierror):
+        return f"DNS lookup failed ({exc})"
+    if isinstance(exc, ConnectionRefusedError):
+        return "connection refused"
+    if isinstance(exc, ConnectionResetError):
+        return "connection reset by peer"
+    text = str(exc).strip()
+    return f"{type(exc).__name__}: {text}" if text else type(exc).__name__
+
+
+def _log_abandoned_task_quietly(task: "asyncio.Task[Any]") -> None:
+    """Done-callback for fan-out stragglers cancelled after a winner emerged.
+
+    Retrieves the task's outcome so asyncio never logs "Task exception was
+    never retrieved" at GC time for a straggler that managed to fail in the
+    cancellation window, and records any such failure at debug.
+    """
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        logger.debug(
+            f"Abandoned fan-out straggler failed -- {describe_model_error(exc)}"
+        )
+
+
+def _error_text_indicates_missing_model(text: Optional[str]) -> bool:
+    """True when an error payload says the endpoint doesn't serve the model.
+
+    Matches the OpenAI-compatible local servers we point at: vLLM ("The model
+    `X` does not exist.", type NotFoundError), llama.cpp ("model not found"),
+    Ollama ("model 'X' not found, try pulling it first"), and OpenAI/LM Studio
+    ("model_not_found"). Requiring the word "model" keeps a wrong-URL 404
+    (e.g. vLLM's {"detail": "Not Found"}) from matching -- that's a config
+    problem, not a missing model.
+    """
+    if not text:
+        return False
+    lowered = text.lower()
+    if "model" not in lowered:
+        return False
+    return (
+        "does not exist" in lowered
+        or "not found" in lowered
+        or "model_not_found" in lowered
+        or "unknown model" in lowered
+    )
+
+
+def _http_error_indicates_context_overflow(status: int, body: Optional[str]) -> bool:
+    """True when a 400 means the request outran the model's context window.
+
+    The most common 400 in this stack: our prompts carry denial text plus
+    stacked contexts, and when the estimate misses, the backend rejects with
+    phrasing like vLLM/OpenAI's "This model's maximum context length is X
+    tokens. However, you requested Y tokens... Please reduce the length" /
+    "input exceeds the context window", llama.cpp's "exceeds the available
+    context size", or Anthropic's "prompt is too long". It's an operational,
+    per-request condition -- smaller calls to the same model still work and
+    the appeal path retries with shed context -- so callers log it as a
+    classified WARNING rather than an ERROR with the raw body.
+    """
+    if status != 400 or not body:
+        return False
+    lowered = body.lower()
+    if "maximum context length" in lowered:
+        return True
+    if "context window" in lowered and (
+        "exceed" in lowered or "too long" in lowered or "reduce" in lowered
+    ):
+        return True
+    if "context size" in lowered and "exceed" in lowered:
+        return True
+    return "prompt is too long" in lowered or "input is too long" in lowered
+
+
 def _http_error_indicates_unsupported_temperature(status: int, body: str) -> bool:
     """True when a 400 means the model rejected the ``temperature`` parameter
     outright (OpenAI/Azure reasoning models accept only the default value).
@@ -92,29 +228,6 @@ def _http_error_indicates_unsupported_temperature(status: int, body: str) -> boo
         or "only the default" in lowered
         or "not supported" in lowered
     )
-
-
-# Provider phrasings for "the request exceeds the model's context window".
-# Unlike the operational 4xx codes above, a context-length 400/413 is neither
-# a bug nor a transient condition: the assembled prompt + context is simply too
-# large, and the fix is to shed or summarize context and retry. Detecting it
-# turns an otherwise-silent generic error into a greppable WARNING so
-# make_appeals' reactive shed ladder fires on a clear, correctly-categorized
-# signal.
-_CONTEXT_LENGTH_ERROR_RE = re.compile(
-    r"context length|context window|maximum context|too many tokens|"
-    r"reduce the length|input (?:is )?too long|maximum.*tokens|"
-    r"string too long|prompt is too long",
-    re.IGNORECASE,
-)
-
-
-def _http_error_indicates_context_length(status: Optional[int], body: str) -> bool:
-    """True when a 400/413 means the request exceeded the model's context
-    window (as opposed to some other bad-request cause)."""
-    if status not in (400, 413) or not body:
-        return False
-    return bool(_CONTEXT_LENGTH_ERROR_RE.search(body))
 
 
 def _count_items(items: list[str]) -> dict[str, int]:
@@ -1406,6 +1519,14 @@ class RemoteOpenLike(RemoteModel):
     # callers that don't catch exceptions keep working.
     _propagate_http_errors: ClassVar[bool] = False
 
+    # How long to skip an (api_base, model) pair after the endpoint answered
+    # "that model does not exist" (see _note_missing_model). A model a backend
+    # doesn't serve is a deploy-level fact, not a transient blip, so re-probing
+    # sooner just re-spams the logs; an hour matches the health sweep's own
+    # cadence (model_is_ok's /models check) while still self-healing on its own
+    # after a redeploy brings the model back.
+    MODEL_MISSING_BACKOFF_SECONDS: ClassVar[float] = 3600.0
+
     def __init__(
         self,
         api_base,
@@ -1444,6 +1565,11 @@ class RemoteOpenLike(RemoteModel):
         # instances are long-lived, so one rejection stops the field being
         # sent on every later call.
         self._temperature_unsupported_models: set[str] = set()
+        # (api_base, model) pairs an endpoint reported as not served, mapped
+        # to the monotonic deadline until which we skip them (see
+        # _note_missing_model). Keyed per pair because primary and backup use
+        # different endpoints/models.
+        self._missing_models: dict[tuple[str, str], float] = {}
 
     def model_is_ok(self):
         """Check that the backend supports this model, returns true if found in list.
@@ -1509,9 +1635,13 @@ class RemoteOpenLike(RemoteModel):
         if self.model not in model_ids:
             available_sorted = sorted(model_ids)
             preview = available_sorted[:15]
-            logger.debug(
-                f"Model '{self.model}' not available on backend {self.api_base}. "
-                f"Available model count={len(available_sorted)} preview={preview}"
+            # INFO, not DEBUG: this is the health sweep disabling the backend,
+            # and "why is this model not being used" should be answerable
+            # without debug logging. Sweep-frequency only, so it can't spam.
+            logger.info(
+                f"Model '{self.model}' is not served at {self.api_base}; "
+                f"marking backend unhealthy. Backend serves "
+                f"{len(available_sorted)} model(s), e.g. {preview}"
             )
             return False
 
@@ -2045,6 +2175,9 @@ class RemoteOpenLike(RemoteModel):
             for system_prompt in system_prompts:
                 # Call the actual inference method
                 raw_response = None
+                # First HTTP error swallowed by the dual-mode race for this
+                # prompt; surfaced after all fallbacks fail (see below).
+                first_http_error: Optional[aiohttp.ClientResponseError] = None
                 if self.dual_mode and self.backup_api_base:
                     # In dual mode, run primary and backup concurrently and return the first result
                     primary_task = asyncio.create_task(
@@ -2058,6 +2191,7 @@ class RemoteOpenLike(RemoteModel):
                             temperature=temperature,
                             history=history,
                             model=self.model,
+                            raise_http_errors=raise_http_errors,
                         )
                     )
 
@@ -2073,6 +2207,7 @@ class RemoteOpenLike(RemoteModel):
                             history=history,
                             model=self.backup_model,
                             api_base=self.backup_api_base,
+                            raise_http_errors=raise_http_errors,
                         )
                     )
 
@@ -2081,24 +2216,56 @@ class RemoteOpenLike(RemoteModel):
                         [primary_task, backup_task], return_when=asyncio.FIRST_COMPLETED
                     )
 
-                    # Get the result from the completed task
+                    # Get the result from the completed task(s). Every done
+                    # task is retrieved (they have already finished, so this
+                    # adds no latency): skipping one would leave its exception
+                    # unretrieved and asyncio would log "Task exception was
+                    # never retrieved" at GC. HTTP errors from the racing legs
+                    # are remembered (first one wins) so they can be surfaced
+                    # to probes / status-handling subclasses below.
                     for task in done:
                         try:
                             result = await task
-                            if result and result[0]:
-                                raw_response = result
-                                break
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            if (
+                                isinstance(e, aiohttp.ClientResponseError)
+                                and first_http_error is None
+                            ):
+                                first_http_error = e
+                            logger.debug(
+                                f"{self}: dual-mode candidate failed -- "
+                                f"{describe_model_error(e)}"
+                            )
+                            continue
+                        if raw_response is None and result and result[0]:
+                            raw_response = result
                     # If the first result was not valid grab the pending task.
-                    for task in pending:
-                        try:
-                            result = await task
-                            if result and result[0]:
-                                raw_response = result
-                                break
-                        except Exception:
-                            pass
+                    # Otherwise the first valid answer wins: cancel the
+                    # straggler rather than awaiting it, which would stall
+                    # every dual-mode call on the slower backend (a dead one
+                    # adds its whole connect timeout) and let its late result
+                    # overwrite the fast one.
+                    if raw_response is None:
+                        for task in pending:
+                            try:
+                                result = await task
+                                if result and result[0]:
+                                    raw_response = result
+                                    break
+                            except Exception as e:
+                                if (
+                                    isinstance(e, aiohttp.ClientResponseError)
+                                    and first_http_error is None
+                                ):
+                                    first_http_error = e
+                                logger.debug(
+                                    f"{self}: dual-mode candidate failed -- "
+                                    f"{describe_model_error(e)}"
+                                )
+                    else:
+                        for task in pending:
+                            task.cancel()
+                            task.add_done_callback(_log_abandoned_task_quietly)
                 else:
                     raw_response = await self.__timeout_infer(
                         system_prompt=system_prompt,
@@ -2110,6 +2277,7 @@ class RemoteOpenLike(RemoteModel):
                         temperature=temperature,
                         history=history,
                         model=self.model,
+                        raise_http_errors=raise_http_errors,
                     )
                 if raw_response and raw_response[0]:
                     return raw_response
@@ -2125,8 +2293,21 @@ class RemoteOpenLike(RemoteModel):
                         temperature=temperature,
                         model=self.backup_model,
                         api_base=self.backup_api_base,
+                        raise_http_errors=raise_http_errors,
                     )
-                    return backup_response
+                    if backup_response and backup_response[0]:
+                        return backup_response
+                # Every fallback for this prompt struck out. If the dual-mode
+                # race swallowed an HTTP error above, surface it now to
+                # callers that opted in -- the startup probe reports the real
+                # status ("HTTP 404 model does not exist") instead of "empty
+                # or no response", and status-handling subclasses (429
+                # back-off) still see it. Otherwise fall through and try the
+                # next system prompt.
+                if first_http_error is not None and (
+                    raise_http_errors or self._propagate_http_errors
+                ):
+                    raise first_http_error
 
         except aiohttp.ClientResponseError as e:
             # Subclasses that opt in (via _propagate_http_errors) handle
@@ -2148,13 +2329,27 @@ class RemoteOpenLike(RemoteModel):
                     f"check quota/billing/API key."
                 )
             else:
-                # NOTE: context-length overflows (400/413) are detected and
-                # handled in __infer (where the response body is available) and
-                # never reach here as an exception -- see
-                # _http_error_indicates_context_length there.
-                logger.opt(exception=True).error(f"HTTP error calling {self.api_base}")
-        except Exception as e:
-            logger.opt(exception=True).error(f"Error {e} calling {self.api_base}")
+                # NOTE: context-length overflows are detected and handled in
+                # __infer (where the response body is available) and never
+                # reach here as an exception -- see
+                # _http_error_indicates_context_overflow there.
+                # __infer already logged the status with a body preview; the
+                # traceback for an HTTP status is aiohttp internals, so keep
+                # this to one actionable line.
+                logger.error(
+                    f"{self}: giving up on {self.api_base} -- "
+                    f"{describe_model_error(e)}"
+                )
+        except MODEL_TRANSPORT_ERRORS as e:
+            # Transport failures are logged (classified) per-attempt in
+            # __infer; anything landing here was raised outside that wrapper.
+            logger.warning(
+                f"{self}: giving up on {self.api_base} -- {describe_model_error(e)}"
+            )
+        except Exception:
+            logger.opt(exception=True).error(
+                f"Unexpected error calling {self.api_base} for {self}"
+            )
 
         return None
 
@@ -2179,6 +2374,39 @@ class RemoteOpenLike(RemoteModel):
         if re.match(r"^o[134](-|$)", name):
             return False
         return True
+
+    def _model_marked_missing(self, api_base: str, model: str) -> bool:
+        """Whether ``model`` at ``api_base`` is inside its not-served cooldown.
+
+        Expired entries are dropped so the next call probes the endpoint live
+        again (a redeploy may have brought the model back).
+        """
+        deadline = self._missing_models.get((api_base, model))
+        if deadline is None:
+            return False
+        if time.monotonic() >= deadline:
+            self._missing_models.pop((api_base, model), None)
+            return False
+        return True
+
+    def _note_missing_model(self, api_base: str, model: str, detail: str) -> None:
+        """Flag ``model`` at ``api_base`` as not served there.
+
+        Logs a single WARNING per cooldown window (in-flight calls that were
+        already past the skip gate when the first one hit the error stay
+        quiet), then ``__infer`` skips the pair until the cooldown expires so
+        a local endpoint without the model isn't re-hit -- and re-logged --
+        on every inference call.
+        """
+        if not self._model_marked_missing(api_base, model):
+            logger.warning(
+                f"{self}: model {model} is not served at {api_base}; skipping "
+                f"this backend for the next "
+                f"{self.MODEL_MISSING_BACKOFF_SECONDS:.0f}s ({detail})"
+            )
+        self._missing_models[(api_base, model)] = (
+            time.monotonic() + self.MODEL_MISSING_BACKOFF_SECONDS
+        )
 
     async def __timeout_infer(
         self,
@@ -2211,6 +2439,7 @@ class RemoteOpenLike(RemoteModel):
         ml_citations_context=None,
         history: Optional[List[dict[str, str]]] = None,
         api_base=None,
+        raise_http_errors: bool = False,
     ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
         if api_base is None:
             api_base = self.api_base
@@ -2219,6 +2448,15 @@ class RemoteOpenLike(RemoteModel):
             f"system_prompt_len={len(system_prompt) if system_prompt else 0})"
         )
         if self.api_base is None:
+            return None
+        # Recently answered "model does not exist" here: skip quietly until
+        # the cooldown expires instead of re-hitting (and re-logging) on
+        # every call. The startup probe (raise_http_errors) always probes
+        # live so it reports current reality.
+        if not raise_http_errors and self._model_marked_missing(api_base, model):
+            logger.debug(
+                f"{self}: skipping {model} at {api_base} -- flagged as not served here"
+            )
             return None
         if self.token is None:
             logger.warning(f"No token provided for {model}")
@@ -2350,24 +2588,42 @@ class RemoteOpenLike(RemoteModel):
                                 }
                                 continue
 
-                            if _http_error_indicates_context_length(
+                            if _http_error_indicates_context_overflow(
                                 e.status, response_body
                             ):
-                                # Input exceeded the model's context window. No
-                                # retry or backoff helps, so log a concise,
-                                # model-tagged, greppable WARNING and return
-                                # None instead of raising a scary ERROR up
-                                # through _infer. Detected from the response
-                                # BODY -- the HTTP reason phrase (e.message,
-                                # "Bad Request") never carries the provider's
-                                # context-length explanation, which is why the
-                                # earlier _infer-side check was inert.
+                                # Per-request condition, not a broken backend:
+                                # the prompt outran the model's context
+                                # window. One WARNING quoting the server's
+                                # message (it carries the max/requested token
+                                # counts) and degrade to None so the shed-
+                                # context retry ladder can take over. Detected
+                                # from the response BODY -- the HTTP reason
+                                # phrase ("Bad Request") never carries the
+                                # provider's context-length explanation.
                                 logger.warning(
-                                    f"{self}: context-length exceeded on "
-                                    f"{api_base} for model {model} "
-                                    f"(HTTP {e.status}); shed or summarize "
-                                    f"context. Body: {response_body[:500]}"
+                                    f"{self}: prompt exceeds {model}'s context "
+                                    f"window at {api_base} -- "
+                                    f"{response_body[:300]}"
                                 )
+                                if raise_http_errors:
+                                    raise
+                                return None
+
+                            if e.status == 404 and _error_text_indicates_missing_model(
+                                response_body
+                            ):
+                                # The endpoint is up but doesn't serve this
+                                # model (e.g. a local vLLM redeployed with a
+                                # different --model). Flag the pair so
+                                # follow-up calls skip it for the cooldown,
+                                # with one warning instead of a log line per
+                                # inference. The probe still gets the raw
+                                # status so startup reports the real cause.
+                                self._note_missing_model(
+                                    api_base, model, response_body[:200]
+                                )
+                                if raise_http_errors:
+                                    raise
                                 return None
 
                             response_body_preview = response_body[:2000]
@@ -2390,8 +2646,44 @@ class RemoteOpenLike(RemoteModel):
                             raise
                         json_result = await response.json()
                         if json_result.get("object") == "error":
-                            logger.warning(f"Bad response from {self} with {model}")
+                            # Some OpenAI-compatible servers report errors in
+                            # a 200 body. Surface the message; a missing-model
+                            # error additionally flags the pair for cooldown
+                            # like the HTTP 404 path.
+                            error_message = str(
+                                json_result.get("message") or json_result
+                            )[:300]
+                            if _error_text_indicates_missing_model(error_message):
+                                self._note_missing_model(api_base, model, error_message)
+                                if raise_http_errors:
+                                    # Semantically a missing model even though
+                                    # the transport said 200: raise a status-
+                                    # bearing error (like the HTTP 404 branch)
+                                    # so the startup probe reports the real
+                                    # cause instead of "empty or no response".
+                                    raise aiohttp.ClientResponseError(
+                                        request_info=response.request_info,
+                                        history=(),
+                                        status=404,
+                                        message=error_message,
+                                    )
+                                return None
+                            logger.warning(
+                                f"Bad response from {self} with {model}: "
+                                f"{error_message}"
+                            )
                     break
+        except aiohttp.ContentTypeError as e:
+            # Raised by response.json() when the body isn't JSON (e.g. an HTML
+            # error page). Must be caught before ClientResponseError (it's a
+            # subclass) or it would be re-raised as a status error below.
+            logger.warning(f"{self}: {model} via {api_base}: {describe_model_error(e)}")
+            if raise_http_errors or self._propagate_http_errors:
+                # ContentTypeError is a ClientResponseError: probes and
+                # status-handling subclasses get it (with its status) exactly
+                # as they did before the concise-logging rework.
+                raise
+            return None
         except aiohttp.ClientResponseError as e:
             # Already logged with a body preview above; keep this at debug to
             # avoid double-logging. Re-raise so _infer (and opted-in subclasses
@@ -2400,14 +2692,21 @@ class RemoteOpenLike(RemoteModel):
                 f"HTTP error {e.status} from {api_base} for model {model}: {e.message}"
             )
             raise
-        except aiohttp.client_exceptions.ContentTypeError:
+        except MODEL_TRANSPORT_ERRORS as e:
+            # Expected operational failures (backend down, unreachable, slow,
+            # DNS, disconnect): one concise classified line. The stack trace
+            # for these is aiohttp/asyncio plumbing that buries the cause.
+            # No sleep before returning: there is no retry in here for a delay
+            # to pace, callers (e.g. the extraction loop) do their own pacing,
+            # and a stall would only slow failover to the backup backend.
             logger.warning(
-                f"Unexpected content type response (often missing model) on {api_base}"
+                f"{self}: {model} via {api_base} failed -- {describe_model_error(e)}"
             )
-        except aiohttp.client_exceptions.ClientConnectorError:
-            logger.warning(f"Network error calling {api_base}")
+            return None
         except Exception:
-            logger.opt(exception=True).warning(f"Error calling {api_base}")
+            logger.opt(exception=True).warning(
+                f"Unexpected error calling {api_base} for model {model}"
+            )
             await asyncio.sleep(1)
             return None
         try:
@@ -3353,6 +3652,7 @@ class RateLimitedRemoteOpenLike(RemoteFullOpenLike):
                 ml_citations_context=ml_citations_context,
                 history=history,
                 temperature=temperature,
+                raise_http_errors=raise_http_errors,
             )
         except aiohttp.ClientResponseError as e:
             if raise_http_errors:
@@ -3376,7 +3676,10 @@ class RateLimitedRemoteOpenLike(RemoteFullOpenLike):
                 return None
             raise
         except Exception as e:
-            logger.warning(f"{type(self).__name__}._infer error for {self.model}: {e}")
+            logger.warning(
+                f"{type(self).__name__}._infer: {self.model} failed -- "
+                f"{describe_model_error(e)}"
+            )
             return None
 
     async def _do_infer(
@@ -3389,6 +3692,7 @@ class RateLimitedRemoteOpenLike(RemoteFullOpenLike):
         ml_citations_context: Optional[List[str]] = None,
         history: Optional[List[dict[str, str]]] = None,
         temperature: float = 0.7,
+        raise_http_errors: bool = False,
     ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
         """The actual transport call wrapped by ``_infer``'s rate-limit gating
         and 429 back-off.
@@ -3398,6 +3702,11 @@ class RateLimitedRemoteOpenLike(RemoteFullOpenLike):
         ``RemoteAzureClaude`` with the Anthropic Messages API) override this and
         raise ``aiohttp.ClientResponseError`` on HTTP errors so the shared 429
         handling in ``_infer`` still applies.
+
+        ``raise_http_errors`` must be forwarded down to ``RemoteOpenLike``:
+        the missing-model/overflow branches in ``__infer`` consult it to decide
+        between degrading to ``None`` and surfacing the real status to the
+        startup probe (and its cooldown gate bypasses the skip for probes).
         """
         return await super()._infer(
             system_prompts=system_prompts,
@@ -3408,6 +3717,7 @@ class RateLimitedRemoteOpenLike(RemoteFullOpenLike):
             ml_citations_context=ml_citations_context,
             history=history,
             temperature=temperature,
+            raise_http_errors=raise_http_errors,
         )
 
 
@@ -3978,12 +4288,18 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
         ml_citations_context: Optional[List[str]] = None,
         history: Optional[List[dict[str, str]]] = None,
         temperature: float = 0.7,
+        raise_http_errors: bool = False,
     ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
         """Inference via the Anthropic Messages API exposed by Azure AI Foundry.
 
         Returns the first non-empty completion across ``system_prompts``. HTTP
         error statuses raise ``aiohttp.ClientResponseError`` (so the caller's
         429 back-off applies); transport/parse failures return ``None``.
+
+        ``raise_http_errors`` is accepted for signature compatibility with the
+        base ``_do_infer`` but needs no handling here: this transport already
+        raises ``ClientResponseError`` on every HTTP error status, which is
+        exactly what the probe wants surfaced.
         """
         if prompt is None:
             logger.debug("No prompt supplied; skipping inference")
