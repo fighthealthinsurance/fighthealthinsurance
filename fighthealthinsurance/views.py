@@ -417,12 +417,16 @@ class PublicCachedPageMixin:
     MHMDAView, TermsOfServiceView, ContactView, FAQView) build their context by
     returning a fresh dict without chaining ``super()``, which silently skipped
     a ``get_context_data``-based hook and left those pages leaking. Every
-    TemplateView render funnels through ``render_to_response``, so overriding
-    here cannot be bypassed by a subclass that forgets to call ``super()``.
+    TemplateView render funnels through ``render_to_response``, so a subclass
+    that forgets to call ``super().get_context_data()`` is still covered. A
+    subclass whose ``get()`` builds an ``HttpResponse`` directly would bypass
+    this — none do, and the structural test named below fails on any cached
+    route whose view class does not inherit this mixin.
 
     Regression coverage: ``tests/sync/test_public_page_cache_isolation.py``
     (which runs against a real LocMemCache, since the test settings use
-    DummyCache and would otherwise hide the bug).
+    DummyCache and would otherwise hide the bug, and walks the URLconf so new
+    cached routes are covered automatically).
     """
 
     def render_to_response(

@@ -23,10 +23,12 @@ from unittest import mock
 
 from django.contrib.messages import get_messages
 from django.core.cache import cache
-from django.test import Client, TestCase, override_settings
-from django.urls import reverse
+from django.middleware.cache import CacheMiddleware
+from django.test import Client, SimpleTestCase, TestCase, override_settings
+from django.urls import get_resolver, reverse
+from django.utils.html import escape
 
-from fighthealthinsurance.views import GlossaryIndexView
+from fighthealthinsurance.views import GlossaryIndexView, PublicCachedPageMixin
 
 # Every cached route that renders base.html. This must include StaticIshView
 # pages, not just the new content routes: several StaticIshView subclasses
@@ -130,7 +132,11 @@ class PublicPageCacheIsolationTest(TestCase):
         self.assertEqual(anonymous.status_code, 200)
         body = anonymous.content.decode("utf-8")
         for message_text in stored:
-            self.assertNotIn(message_text, body)
+            # Compare against the escaped form: the template autoescapes, so a
+            # message containing an apostrophe ("We couldn't ...") is rendered
+            # as "We couldn&#x27;t ..." and a raw-string assertion could never
+            # fail no matter how badly the cache leaked.
+            self.assertNotIn(escape(message_text), body)
         # The messages block's distinctive class must be absent. (Asserting on
         # role="alert" would pass coincidentally — the site banner partial and
         # the decoder's deadline callout both use it.)
@@ -160,4 +166,108 @@ class PublicPageCacheIsolationTest(TestCase):
             spy.call_count,
             1,
             "second anonymous request should have been served from the cache",
+        )
+
+
+# Cached routes whose callback is not a class-based view. These render no
+# template and so cannot carry session context; each needs a reason to be here.
+NON_TEMPLATE_CACHED_CALLBACKS = {
+    # Renders Django's built-in sitemap.xml (the project ships no override), a
+    # pure XML listing built from the URLconf. It reads only request.scheme,
+    # the Host header and ?p= — never the session — and does not extend
+    # base.html, so there is no per-visitor context to strip.
+    "fighthealthinsurance.sitemap.sitemap_view",
+}
+
+
+def _iter_url_patterns(resolver):
+    """Yield every URLPattern reachable from ``resolver``, including includes."""
+    for entry in resolver.url_patterns:
+        if hasattr(entry, "url_patterns"):
+            yield from _iter_url_patterns(entry)
+        else:
+            yield entry
+
+
+def _wraps_cache_page(callback) -> bool:
+    """True if ``cache_page`` appears anywhere in ``callback``'s decorator stack.
+
+    ``cache_page`` is built with ``decorator_from_middleware_with_args``. In
+    Django 5.2 the middleware is instantiated once per decorated view and
+    captured by three nested helpers (``_pre_process_request`` and friends),
+    which the returned ``_view_wrapper`` closes over — so the instance is two
+    closure levels deep, not one. Searching the whole callable graph reachable
+    through ``__wrapped__`` and closure cells finds it wherever it sits, and
+    accepts the class itself for older Django, regardless of how many other
+    decorators (``cache_control``, ``csrf_exempt``, …) are layered on top.
+    """
+    seen: set[int] = set()
+    retained: list[object] = []  # keep ids unique: a freed object's id can recur
+    stack: list[object] = [callback]
+    while stack:
+        obj = stack.pop()
+        if obj is None or id(obj) in seen:
+            continue
+        seen.add(id(obj))
+        retained.append(obj)
+        if obj is CacheMiddleware or isinstance(obj, CacheMiddleware):
+            return True
+        if not callable(obj):
+            continue
+        stack.append(getattr(obj, "__wrapped__", None))
+        for cell in getattr(obj, "__closure__", None) or ():
+            try:
+                stack.append(cell.cell_contents)
+            except ValueError:  # empty cell (recursive closure not yet bound)
+                continue
+    return False
+
+
+class CachedRouteStructureTest(SimpleTestCase):
+    """Every ``cache_page``-wrapped view must sanitize per-visitor context.
+
+    ``PublicPageCacheIsolationTest`` enumerates routes by hand, and that list
+    has silently missed a leak twice: once when the fix only covered the new
+    content routes, and again when five StaticIshView subclasses built their
+    context without chaining ``super()``. This test needs no list — it walks the
+    real URLconf, so a cached route added tomorrow is covered the day it lands.
+    """
+
+    def test_every_cached_view_extends_public_cached_page_mixin(self):
+        cached_routes = []
+        offenders = []
+
+        for pattern in _iter_url_patterns(get_resolver()):
+            callback = pattern.callback
+            if not _wraps_cache_page(callback):
+                continue
+            cached_routes.append(pattern)
+
+            # as_view() stores the class on the returned function, and
+            # functools.wraps copies __dict__ up through each decorator layer,
+            # so view_class survives the cache_page/cache_control wrapping.
+            view_class = getattr(callback, "view_class", None)
+            if view_class is None:
+                dotted = f"{callback.__module__}.{callback.__qualname__}"
+                if dotted not in NON_TEMPLATE_CACHED_CALLBACKS:
+                    offenders.append(f"{pattern.pattern} -> {dotted} (not a CBV)")
+            elif not issubclass(view_class, PublicCachedPageMixin):
+                offenders.append(f"{pattern.pattern} -> {view_class.__name__}")
+
+        # Guard against the detector silently matching nothing (e.g. if Django
+        # changes how cache_page is built), which would make this test vacuous.
+        self.assertGreaterEqual(
+            len(cached_routes),
+            len(CACHED_PUBLIC_ROUTES),
+            "cache_page detection found fewer routes than the hand-written "
+            "list — _wraps_cache_page is no longer recognizing cached views",
+        )
+        self.assertEqual(
+            offenders,
+            [],
+            msg=(
+                "these cached routes are served from a shared, Cache-Control: "
+                "public entry but do not strip per-visitor session context; "
+                "they must inherit PublicCachedPageMixin: " + ", ".join(offenders)
+            ),
         )
