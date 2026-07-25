@@ -47,12 +47,23 @@ class SpeculativeAppealsActor:
         The helper is synchronous (make_appeals is a blocking iterator), so run
         it in a thread via database_sync_to_async, which also closes the
         thread's DB connections around the call.
+
+        thread_sensitive=False: this is an async Ray actor, so a burst of denial
+        creations dispatches overlapping prefetches. The default
+        (thread_sensitive=True) funnels every one of them onto a single shared
+        executor thread, and since a generation can occupy it for minutes, later
+        precomputes would not be ready by the time their live flows need them --
+        defeating the point of precomputing. A pool thread per call restores the
+        concurrency. DatabaseSyncToAsync.thread_handler still wraps each call in
+        close_old_connections() either way, so per-call connection isolation and
+        cleanup are unchanged.
         """
         from fighthealthinsurance.ml.ml_speculative_appeals_helper import (
             SpeculativeAppealsHelper,
         )
 
         count: int = await database_sync_to_async(
-            SpeculativeAppealsHelper.generate_for_denial_sync
+            SpeculativeAppealsHelper.generate_for_denial_sync,
+            thread_sensitive=False,
         )(denial_id)
         return count

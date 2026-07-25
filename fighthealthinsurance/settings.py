@@ -447,6 +447,14 @@ class Base(Configuration):
     # TestCase transaction isolation.
     SITE_BANNER_BACKGROUND_REFRESH = True
 
+    # Kick off the speculative candidate-appeal precompute when a denial is
+    # created (see ml.ml_speculative_appeals_helper). Same reasoning as the
+    # banner refresh above: it runs a full generation off the request path, so
+    # in the Test* configs its background DB writes would race TestCase
+    # transaction teardown. Selenium especially -- it drives the real submit
+    # form, so every test that files a denial would start one.
+    SPECULATIVE_APPEALS_PRECOMPUTE = True
+
     # Static files (CSS, JavaScript, Images)
     # https://docs.djangoproject.com/en/4.0/howto/static-files/
 
@@ -703,6 +711,8 @@ class Test(Dev):
     }
     # No background banner refresh thread in tests (see Base).
     SITE_BANNER_BACKGROUND_REFRESH = False
+    # No speculative precompute in tests (see Base).
+    SPECULATIVE_APPEALS_PRECOMPUTE = False
 
 
 class TestSync(Dev):
@@ -729,6 +739,8 @@ class TestSync(Dev):
     }
     # No background banner refresh thread in tests (see Base).
     SITE_BANNER_BACKGROUND_REFRESH = False
+    # No speculative precompute in tests (see Base).
+    SPECULATIVE_APPEALS_PRECOMPUTE = False
 
 
 class TestActor(Dev):
@@ -762,6 +774,8 @@ class TestActor(Dev):
     }
     # No background banner refresh thread in tests (see Base).
     SITE_BANNER_BACKGROUND_REFRESH = False
+    # No speculative precompute in tests (see Base).
+    SPECULATIVE_APPEALS_PRECOMPUTE = False
 
 
 class Prod(Base):

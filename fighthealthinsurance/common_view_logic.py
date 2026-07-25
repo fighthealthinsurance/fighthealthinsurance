@@ -1304,6 +1304,42 @@ class DenialCreatorHelper:
             )
             return []
 
+    @staticmethod
+    def _invalidate_denial_text_artifacts(denial: Denial) -> None:
+        """Drop everything derived from a denial letter that has been replaced.
+
+        Called when an update changes ``denial_text``. Two classes of artifact
+        are purely derived from the letter and become wrong -- not merely stale
+        -- once it changes:
+
+        * the HELD-BACK speculative reserve (``speculative=True``), which would
+          otherwise be served later as a fallback appeal written about the old
+          denial. Promoted rows (``speculative=False``) are deliberately kept:
+          those were already delivered to the user and may have been chosen, so
+          deleting them would destroy user-visible history. (Ordinary drafts
+          going stale on a text change is pre-existing behavior, unchanged.)
+        * both cached summaries, which are substituted into the prompt in place
+          of the raw text for oversized denials -- a summary of the old letter
+          would silently misdescribe the claim.
+
+        Best-effort: a failure here must not break denial creation/update, so
+        the caller wraps this. The in-memory instance is cleared too, since it
+        flows on through the rest of the request.
+        """
+        deleted, _ = ProposedAppeal.objects.filter(
+            for_denial=denial, speculative=True
+        ).delete()
+        Denial.objects.filter(denial_id=denial.denial_id).update(
+            denial_text_summary=None, candidate_denial_text_summary=None
+        )
+        denial.denial_text_summary = None
+        denial.candidate_denial_text_summary = None
+        logger.info(
+            f"Denial {denial.denial_id} text replaced; invalidated "
+            f"{deleted} held-back speculative appeal(s) and both cached "
+            f"denial-text summaries"
+        )
+
     @classmethod
     def create_or_update_denial(
         cls,
@@ -1382,6 +1418,7 @@ class DenialCreatorHelper:
 
         # If we don't have a denial we're making a new one
         is_new_denial = denial is None
+        denial_text_changed = False
         if denial is None:
             try:
                 denial = Denial.objects.create(
@@ -1430,6 +1467,10 @@ class DenialCreatorHelper:
                     **tracking_kwargs,
                 )
         else:
+            # Captured before the overwrite: everything derived from the denial
+            # letter (the speculative reserve + the cached summaries) is stale
+            # if the letter itself changed, and must be invalidated below.
+            denial_text_changed = denial.denial_text != denial_text
             # Directly update denial object fields instead of using denial.update()
             denial.denial_text = denial_text
             denial.hashed_email = hashed_email
@@ -1503,14 +1544,20 @@ class DenialCreatorHelper:
         # no-deadline, internal-model-only precompute of bare candidate appeals
         # (+ denial summary) from the raw text. Held in reserve and served only
         # if the live generation later underdelivers or gathered no extra data.
-        # Only on CREATE (not update) so it doesn't re-fire; the helper is also
-        # idempotent. Never blocks or breaks denial creation.
-        if is_new_denial:
+        # Fires on CREATE, and again if an update REPLACES the denial letter --
+        # in which case the artifacts derived from the old letter are dropped
+        # first, or we would later substitute a summary of the old letter into
+        # the prompt, or serve a reserve appeal written about a different
+        # denial. A plain update (no text change) doesn't re-fire; the helper is
+        # idempotent regardless. Never blocks or breaks denial creation.
+        if is_new_denial or denial_text_changed:
             try:
                 from fighthealthinsurance.ml.ml_speculative_appeals_helper import (
                     dispatch_speculative_appeals,
                 )
 
+                if denial_text_changed:
+                    cls._invalidate_denial_text_artifacts(denial)
                 dispatch_speculative_appeals(denial_id)
             except Exception:
                 logger.opt(exception=True).warning(

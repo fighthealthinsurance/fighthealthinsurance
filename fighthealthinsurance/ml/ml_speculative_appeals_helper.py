@@ -20,9 +20,11 @@ SpeculativeAppealsActor (wrapped in a thread) or, when Ray is unavailable, from
 a daemon thread spun up by ``dispatch_speculative_appeals``.
 """
 
+import os
 from typing import Any, Optional
 
 from asgiref.sync import async_to_sync
+from django.conf import settings
 from loguru import logger
 
 from fighthealthinsurance.context_utils import CONTEXT_LEVEL_SPECULATIVE
@@ -180,26 +182,61 @@ class SpeculativeAppealsHelper:
             return 0
 
 
+def _ray_cluster_available() -> bool:
+    """True only when dispatching to Ray ATTACHES to an existing cluster.
+
+    Ray auto-initializes on the first ``.remote()`` call. With a cluster
+    configured (production runs against the k8s RayCluster, which sets
+    ``RAY_ADDRESS``) that connects to it -- but with nothing configured it
+    silently STARTS A BRAND-NEW LOCAL CLUSTER: a GCS, an object store, and then
+    a detached actor that boots its own Django app, per denial. In a dev server
+    or a test process that is pure overhead measured in seconds and hundreds of
+    MB, so fall back to the in-process thread instead.
+    """
+    try:
+        import ray
+
+        if ray.is_initialized():
+            return True
+    except Exception:
+        return False
+    return bool(os.environ.get("RAY_ADDRESS"))
+
+
 def dispatch_speculative_appeals(denial_id: Any) -> None:
     """Fire-and-forget the speculative precompute for a freshly-created denial.
 
     Primary path (production): a detached Ray actor so the work survives the
-    request and worker restarts with no deadline. Fallback (Ray absent, e.g.
-    dev/tests): a registered daemon thread so denial creation still isn't
-    blocked by a full generation. Never raises.
-    """
-    try:
-        from fighthealthinsurance.speculative_appeals_actor_ref import (
-            speculative_appeals_actor_ref,
-        )
+    request and worker restarts with no deadline. Fallback (no Ray cluster to
+    attach to, e.g. dev): a registered daemon thread so denial creation still
+    isn't blocked by a full generation. Never raises.
 
-        actor = speculative_appeals_actor_ref.get
-        actor.prefetch_for_denial.remote(denial_id)
-        return
-    except Exception:
-        logger.opt(exception=True).warning(
-            "speculative appeals: actor dispatch unavailable; using thread " "fallback"
+    Disabled entirely by ``settings.SPECULATIVE_APPEALS_PRECOMPUTE=False`` (the
+    Test* configs), where a background generation's DB writes would race
+    TestCase transaction teardown -- same reasoning as the site-banner refresh
+    thread.
+    """
+    if not getattr(settings, "SPECULATIVE_APPEALS_PRECOMPUTE", True):
+        logger.debug(
+            f"speculative appeals: precompute disabled by settings; "
+            f"skipping denial {denial_id}"
         )
+        return
+
+    if _ray_cluster_available():
+        try:
+            from fighthealthinsurance.speculative_appeals_actor_ref import (
+                speculative_appeals_actor_ref,
+            )
+
+            actor = speculative_appeals_actor_ref.get
+            actor.prefetch_for_denial.remote(denial_id)
+            return
+        except Exception:
+            logger.opt(exception=True).warning(
+                "speculative appeals: actor dispatch unavailable; using thread "
+                "fallback"
+            )
 
     try:
         from fighthealthinsurance.utils import run_in_registered_daemon_thread
