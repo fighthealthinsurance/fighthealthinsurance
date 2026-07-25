@@ -318,6 +318,50 @@ class DenialTextReplacedMidGenerationTest(TransactionTestCase):
         self.assertIn("text was replaced while precomputing", logged)
         self.assertNotIn("generation failed for denial", logged)
 
+    def test_removes_reserve_when_text_is_replaced_after_the_pre_write_check(self):
+        """The pre-write check alone leaves a window: a replacement landing
+        between it and the inserts runs its invalidation sweep while there are
+        no rows yet to sweep, and the stale drafts then appear behind it and
+        stay forever. The post-write re-check is what closes that.
+
+        The replacement is fired from the first acreate -- i.e. after the
+        pre-write check has already passed -- which is precisely the interleaving
+        that window describes.
+        """
+        denial_id = self.denial.denial_id
+        real_acreate = ProposedAppeal.objects.acreate
+        state = {"replaced": False}
+
+        async def _replace_then_create(*args, **kwargs):
+            if not state["replaced"]:
+                state["replaced"] = True
+                await Denial.objects.filter(denial_id=denial_id).aupdate(
+                    denial_text="A completely different denial letter."
+                )
+            return await real_acreate(*args, **kwargs)
+
+        with patch(
+            _MAKE_APPEALS,
+            return_value=iter(
+                [
+                    GeneratedAppeal(
+                        text="An appeal about the ORIGINAL, now-replaced letter.",
+                        model_name="m",
+                    )
+                ]
+            ),
+        ), patch(_SUMMARIZE, new_callable=AsyncMock, return_value=None), patch.object(
+            ProposedAppeal.objects, "acreate", _replace_then_create
+        ):
+            count = SpeculativeAppealsHelper.generate_for_denial_sync(denial_id)
+
+        self.assertTrue(state["replaced"], "the interleaving never happened")
+        self.assertEqual(count, 0)
+        self.assertFalse(
+            ProposedAppeal.objects.filter(for_denial=self.denial).exists(),
+            "rows written about the replaced letter must be removed again",
+        )
+
 
 class DispatchGuardTest(TestCase):
     """dispatch_speculative_appeals must never start a local Ray cluster, and

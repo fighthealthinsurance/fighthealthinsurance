@@ -263,10 +263,11 @@ class SpeculativeAppealsHelper:
                 return 0
 
             saved = 0
+            created_pks: List[int] = []
             # Already filtered to real appeals and capped in _generate_drafts.
             for item in drafts:
                 try:
-                    await ProposedAppeal.objects.acreate(
+                    row = await ProposedAppeal.objects.acreate(
                         appeal_text=item.text,
                         for_denial=denial,
                         model_name=item.model_name,
@@ -277,11 +278,37 @@ class SpeculativeAppealsHelper:
                         context_level=CONTEXT_LEVEL_SPECULATIVE,
                     )
                     saved += 1
+                    created_pks.append(row.pk)
                 except Exception as e:
                     logger.opt(exception=True).warning(
                         f"speculative appeals: failed to persist a draft for "
                         f"denial {denial_id}: {e}"
                     )
+
+            # Re-check AFTER writing, which is what actually closes the race.
+            # The pre-write check above leaves a window: a replacement landing
+            # between it and these inserts runs its invalidation sweep while we
+            # have no rows to sweep, and our stale drafts then appear behind it
+            # -- permanently, since nothing sweeps again. Checking once more here
+            # closes it completely, because the only replacement this can now
+            # miss is one that lands after this read, and that one's own
+            # invalidation WILL find our speculative=True rows and delete them.
+            if saved:
+                current_text = await (
+                    Denial.objects.filter(denial_id=denial_id)
+                    .values_list("denial_text", flat=True)
+                    .afirst()
+                )
+                if current_text != generated_from_text:
+                    deleted, _ = await ProposedAppeal.objects.filter(
+                        pk__in=created_pks
+                    ).adelete()
+                    logger.info(
+                        f"speculative appeals: denial {denial_id} text was "
+                        f"replaced while precomputing; removed {deleted} reserve "
+                        f"row(s) written about the old letter"
+                    )
+                    return 0
 
             logger.info(
                 f"speculative appeals: persisted {saved} internal-only draft(s) "
