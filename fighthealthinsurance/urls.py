@@ -246,6 +246,13 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         name="turning-26",
     ),
     path(
+        "start-appeal/",
+        cache_control(public=True)(
+            cache_page(60 * 60 * 2)(views.StartAppealView.as_view())
+        ),
+        name="start_appeal",
+    ),
+    path(
         "as-seen-on-pbs",
         views.PBSNewsHourView.as_view(),
         name="pbs-newshour",
@@ -254,6 +261,13 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         "media-references",
         views.MediaReferencesView.as_view(),
         name="media-references",
+    ),
+    path(
+        "tools/appeal-deadline-calculator",
+        cache_control(public=True)(
+            cache_page(60 * 60 * 2)(views.AppealDeadlineCalculatorView.as_view())
+        ),
+        name="appeal_deadline_calculator",
     ),
     path(
         "bingo",
@@ -291,6 +305,20 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         name="smtp-domain-faq",
     ),
     path(
+        "tools/denial-reason-decoder/",
+        cache_control(public=True)(
+            cache_page(60 * 60 * 2)(views.DenialReasonDecoderIndexView.as_view())
+        ),
+        name="denial_reason_decoder_index",
+    ),
+    path(
+        "tools/denial-reason-decoder/<slug:slug>/",
+        cache_control(public=True)(
+            cache_page(60 * 60 * 2)(views.DenialReasonDecoderView.as_view())
+        ),
+        name="denial_reason_decoder_detail",
+    ),
+    path(
         "denial-language/",
         views.DenialLanguageLibraryView.as_view(),
         name="denial-language-library",
@@ -304,6 +332,34 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         "state-help/<slug:slug>/",
         views.StateHelpView.as_view(),
         name="state_help",
+    ),
+    path(
+        "glossary/",
+        cache_control(public=True)(
+            cache_page(60 * 60 * 2)(views.GlossaryIndexView.as_view())
+        ),
+        name="glossary_index",
+    ),
+    path(
+        "glossary/<slug:slug>/",
+        cache_control(public=True)(
+            cache_page(60 * 60 * 2)(views.GlossaryView.as_view())
+        ),
+        name="glossary_term",
+    ),
+    path(
+        "insurance-appeals/",
+        cache_control(public=True)(
+            cache_page(60 * 60 * 2)(views.InsurerAppealGuideIndexView.as_view())
+        ),
+        name="insurer_appeal_guide_index",
+    ),
+    path(
+        "insurance-appeals/<slug:slug>/",
+        cache_control(public=True)(
+            cache_page(60 * 60 * 2)(views.InsurerAppealGuideView.as_view())
+        ),
+        name="insurer_appeal_guide",
     ),
     path("pro_version", views.ProVersionView.as_view(), name="pro_version"),
     # Cross-origin classic-form intake for the interested-professional lead form

@@ -293,6 +293,36 @@ class TestCommonViewLogic(TestCase):
 
     @pytest.mark.django_db
     @patch("fighthealthinsurance.helpers.fax_helpers.fax_actor_ref")
+    def test_oversized_stored_fax_number_is_rejected(self, mock_fax_actor_ref):
+        """A stored appeal_fax_number too long for the column must fail loudly.
+
+        Denial.appeal_fax_number is 40 chars but FaxesToSend.destination is 20,
+        so without a guard the insert raises a bare DataError. Truncating
+        instead would fax the appeal to whoever owns the shortened number.
+        """
+        email = "oversized@example.com"
+        denial = Denial.objects.create(
+            denial_id=2,
+            semi_sekret="sekret",
+            hashed_email=Denial.get_hashed_email(email),
+            # 30 chars: fits appeal_fax_number(40), overflows destination(20).
+            appeal_fax_number="1234567890123456789012345678901"[:30],
+        )
+        appeal = Appeal.objects.create(
+            for_denial=denial,
+            appeal_text="Test appeal text",
+            hashed_email=Denial.get_hashed_email(email),
+        )
+        mock_fax_actor_ref.get.do_send_fax.remote.return_value = None
+
+        with self.assertRaises(ValueError) as ctx:
+            SendFaxHelper.stage_appeal_as_fax(appeal=appeal, email=email)
+
+        self.assertIn("FaxesToSend.destination", str(ctx.exception))
+        self.assertFalse(FaxesToSend.objects.filter(denial_id=denial).exists())
+
+    @pytest.mark.django_db
+    @patch("fighthealthinsurance.helpers.fax_helpers.fax_actor_ref")
     def test_resend_sets_should_send_and_sent_flags(self, mock_fax_actor_ref):
         """Test that resend properly sets should_send=True and sent=False."""
         # Create test data

@@ -65,6 +65,34 @@ class FaxHelperResults:
     hashed_email: str
 
 
+def _checked_fax_destination(destination: Optional[str]) -> Optional[str]:
+    """Reject a destination too long for ``FaxesToSend.destination``.
+
+    ``Denial.appeal_fax_number`` is 40 characters wide but ``destination`` is
+    only 20, so a stored override longer than 20 (these are ML-extracted from
+    denial letters, so they can be malformed) reaches the insert. On MySQL in
+    strict mode that surfaces as a bare ``DataError`` from the driver; the
+    check is explicit rather than left to the database because sqlite — what
+    the test suite runs on — does not enforce ``max_length`` at all, so
+    relying on the column would leave this undetectable in CI and reachable
+    only in production.
+
+    Deliberately not truncating: a silently shortened fax number would send a
+    patient's appeal to whoever owns the truncated number. Widening the column
+    or normalizing junk into a real number are both defensible follow-ups; the
+    length is read from the model so it tracks a future widening automatically.
+    """
+    if not destination:
+        return destination
+    max_length = FaxesToSend._meta.get_field("destination").max_length
+    if max_length is not None and len(destination) > max_length:
+        raise ValueError(
+            f"Fax destination {destination!r} is {len(destination)} characters, "
+            f"over the {max_length}-character limit for FaxesToSend.destination"
+        )
+    return destination
+
+
 class SendFaxHelper:
     """Helper class for sending appeal faxes."""
 
@@ -107,7 +135,7 @@ class SendFaxHelper:
             email=email,
             denial_id=denial,
             combined_document_enc=appeal.document_enc,
-            destination=appeal_fax_number or fax_number,
+            destination=_checked_fax_destination(appeal_fax_number or fax_number),
             professional=professional,
         )
         appeal.fax = fts

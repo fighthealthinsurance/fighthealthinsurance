@@ -17,6 +17,7 @@ from django.urls import reverse
 from django.contrib.auth import get_user_model
 from django.core import mail
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 from dateutil.relativedelta import relativedelta
 
 
@@ -1060,6 +1061,100 @@ class NotifyPatientTest(APITestCase):
         self.assertIn("message", response.json())
         self.assertEqual(response.json()["message"], "Notification sent")
 
+    def test_notify_patient_persists_professional_to_finish(self):
+        """Regression: professional_to_finish must be saved to the denial.
+
+        Previously the value was assigned to the in-memory denial but never
+        persisted (no denial.save()), so it was silently discarded.
+        """
+        self.denial.professional_to_finish = False
+        self.denial.save()
+
+        url = reverse("appeals-notify-patient")
+        response = self.client.post(
+            url,
+            json.dumps({"id": self.appeal.id, "professional_to_finish": True}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.denial.refresh_from_db()
+        self.assertTrue(self.denial.professional_to_finish)
+
+    def test_notify_patient_omitted_flag_preserves_existing_value(self):
+        """Regression: omitting professional_to_finish must NOT overwrite it.
+
+        The serializer field has default=True, so a notify request that does
+        not include the flag would previously clobber an existing False. When
+        the flag is absent the stored value must be preserved.
+        """
+        self.denial.professional_to_finish = False
+        self.denial.save()
+
+        url = reverse("appeals-notify-patient")
+        # Body intentionally omits professional_to_finish entirely.
+        response = self.client.post(
+            url,
+            json.dumps({"id": self.appeal.id}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.denial.refresh_from_db()
+        # Flag was omitted from the request, so the existing False is kept.
+        self.assertFalse(self.denial.professional_to_finish)
+
+
+class AppealSearchPaginationTest(APITestCase):
+    """Pagination-parameter handling for the appeals search endpoint."""
+
+    def setUp(self):
+        # A logged-in professional is enough to reach the pagination code; the
+        # 400 for a non-numeric page/page_size fires regardless of result count.
+        self.domain = UserDomain.objects.create(
+            name="searchdomain",
+            visible_phone_number="1234567890",
+            internal_phone_number="0987654321",
+            active=True,
+            display_name="Search Domain",
+            business_name="Search Business",
+            country="USA",
+            state="CA",
+            city="Test City",
+            address1="123 Test St",
+            zipcode="12345",
+        )
+        self.pro_user = User.objects.create_user(
+            username=f"searchpro🐼{self.domain.id}",
+            password="testpass",
+            email="searchpro@example.com",
+        )
+        self.pro_user.is_active = True
+        self.pro_user.save()
+        ProfessionalUser.objects.create(
+            user=self.pro_user, active=True, npi_number="1234567899"
+        )
+        ExtraUserProperties.objects.create(user=self.pro_user, email_verified=True)
+        self.client.login(username=f"searchpro🐼{self.domain.id}", password="testpass")
+        session = self.client.session
+        session["domain_id"] = str(self.domain.id)
+        session.save()
+        self.url = reverse("appeals-search")
+
+    def test_non_numeric_page_size_returns_400(self):
+        response = self.client.get(self.url, {"q": "anything", "page_size": "abc"})
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_non_numeric_page_returns_400(self):
+        response = self.client.get(self.url, {"q": "anything", "page": "abc"})
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_valid_pagination_params_return_200(self):
+        response = self.client.get(
+            self.url, {"q": "anything", "page": "1", "page_size": "5"}
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
 
 class SendFaxTest(APITestCase):
     """Test the send_fax API endpoint."""
@@ -1151,7 +1246,13 @@ class SendFaxTest(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
 
-        # Verify the fax number was updated
+        # Verify the fax number was persisted on the denial's
+        # appeal_fax_number — the field the fax staging path actually reads.
+        # (Regression: it used to be assigned to a nonexistent
+        # appeal.fax_number attribute and silently dropped.)
+        self.denial.refresh_from_db()
+        self.assertEqual(self.denial.appeal_fax_number, "5559876543")
+
         updated_appeal = Appeal.objects.get(id=self.appeal.id)
         self.assertEqual(updated_appeal.pending, False)
         self.assertEqual(updated_appeal.pending_patient, False)
@@ -1485,6 +1586,11 @@ class StatisticsTest(APITestCase):
             creation_date=self.now.date(),
             response_date=self.now,
         )
+        # Needs to be set after creation to avoid auto_now_add. Use yesterday so
+        # it falls inside the current window, which excludes the incomplete
+        # current day.
+        self.current_appeal1.creation_date = self.now.date() - relativedelta(days=1)
+        self.current_appeal1.save()
 
         self.current_denial2 = Denial.objects.create(
             denial_text="Current test denial 2",
@@ -1593,6 +1699,99 @@ class StatisticsTest(APITestCase):
         # Verify patient counts - should now be total patients in domain
         self.assertEqual(data["current_total_patients"], 2)
         self.assertEqual(data["previous_total_patients"], 1)
+
+        # The current window ends at the start of today (midnight), so the
+        # incomplete current day is excluded.
+        boundary = timezone.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        self.assertEqual(parse_datetime(data["period_end"]).date(), boundary.date())
+
+    def _create_appeal_on(self, creation_date):
+        """Create an appeal with an exact creation_date (bypassing auto_now_add)."""
+        denial = Denial.objects.create(
+            denial_text="window boundary denial",
+            primary_professional=self.professional,
+            creating_professional=self.professional,
+            patient_user=self.patient1,
+            domain=self.domain,
+            hashed_email=Denial.get_hashed_email(self.patient_user1.email),
+        )
+        appeal = Appeal.objects.create(
+            for_denial=denial,
+            pending=False,
+            sent=False,
+            patient_user=self.patient1,
+            primary_professional=self.professional,
+            creating_professional=self.professional,
+            domain=self.domain,
+            mod_date=creation_date,
+        )
+        # auto_now_add forces creation_date on insert; override it afterwards.
+        appeal.creation_date = creation_date
+        appeal.save()
+        return appeal
+
+    def test_statistics_windows_equal_length_and_adjacent(self):
+        """Current and previous stat windows are equal-length, adjacent, and the
+        current window excludes the incomplete current day."""
+        url = reverse("appeals-stats")
+
+        boundary = timezone.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        current_start = (boundary - relativedelta(months=1)).date()
+        current_end = boundary.date()
+        window_len = current_end - current_start
+        prev_start = current_start - window_len
+
+        base = self.client.get(url).json()
+
+        # An appeal dated *today* must NOT be counted in the current window
+        # (the current day is incomplete and is excluded).
+        self._create_appeal_on(current_end)
+        after_today = self.client.get(url).json()
+        self.assertEqual(
+            after_today["current_total_appeals"], base["current_total_appeals"]
+        )
+
+        # An appeal on the shared boundary belongs to the current window only,
+        # proving the windows are adjacent with no overlap and no gap.
+        self._create_appeal_on(current_start)
+        after_boundary = self.client.get(url).json()
+        self.assertEqual(
+            after_boundary["current_total_appeals"],
+            after_today["current_total_appeals"] + 1,
+        )
+        self.assertEqual(
+            after_boundary["previous_total_appeals"],
+            after_today["previous_total_appeals"],
+        )
+
+        # An appeal at the very start of the previous window is counted there,
+        # proving the previous window is the same length as the current one.
+        self._create_appeal_on(prev_start)
+        after_prev = self.client.get(url).json()
+        self.assertEqual(
+            after_prev["previous_total_appeals"],
+            after_boundary["previous_total_appeals"] + 1,
+        )
+
+        # One day before the previous window falls outside both windows.
+        self._create_appeal_on(prev_start - relativedelta(days=1))
+        after_outside = self.client.get(url).json()
+        self.assertEqual(
+            after_outside["previous_total_appeals"],
+            after_prev["previous_total_appeals"],
+        )
+        self.assertEqual(
+            after_outside["current_total_appeals"],
+            after_prev["current_total_appeals"],
+        )
+
+        # The reported window is exactly the expected current window, and the
+        # two windows are equal-length by construction.
+        period_start = parse_datetime(after_outside["period_start"]).date()
+        period_end = parse_datetime(after_outside["period_end"]).date()
+        self.assertEqual(period_start, current_start)
+        self.assertEqual(period_end, current_end)
+        self.assertEqual(period_end - period_start, current_start - prev_start)
 
     def test_absolute_statistics_endpoint(self):
         """Test the absolute statistics endpoint."""

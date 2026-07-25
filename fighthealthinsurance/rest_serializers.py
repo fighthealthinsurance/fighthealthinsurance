@@ -503,7 +503,13 @@ class SendFax(serializers.Serializer):
     """Serializer for fax transmission requests."""
 
     appeal_id = serializers.IntegerField(required=True)
-    fax_number = serializers.CharField(required=False)
+    # Bound to 20, the *narrowest* column this value reaches: send_fax persists
+    # it to Denial.appeal_fax_number (max_length=40) and then
+    # SendFaxHelper.stage_appeal_as_fax writes it to FaxesToSend.destination
+    # (max_length=20). Without the bound an over-long value raises DataError (a
+    # 500) on Postgres; bounding at 40 would still 500 for 21-40 chars. SQLite
+    # doesn't enforce max_length, so the test suite alone cannot surface this.
+    fax_number = serializers.CharField(required=False, max_length=20)
     include_cover = serializers.BooleanField(required=False, default=True)
 
 

@@ -1,5 +1,6 @@
 {% load compress %}
 {% load static %}
+{% load structured_data_tags %}
 <!DOCTYPE html>
 <html lang="en">
 
@@ -18,6 +19,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
     <!-- Canonical URL -->
     {% if canonical_url %}<link rel="canonical" href="{{ canonical_url }}">{% endif %}
+    <!-- Sitewide structured data (schema.org Organization + WebSite) -->
+    {% sitewide_structured_data %}
+    <!-- Page-specific structured data (JSON-LD) -->
+    {% block structured_data %}{% endblock structured_data %}
     <!-- Form persistence meta tags -->
     {% if fhi_session_key %}<meta name="fhi-session-key" content="{{ fhi_session_key }}">{% endif %}
     {% if fhi_request_method %}<meta name="fhi-request-method" content="{{ fhi_request_method }}">{% endif %}
@@ -171,6 +176,20 @@
 
     <!-- Actual content -->
     <main id="main-content" role="main">
+    {# Flash messages. Views that redirect on invalid input (e.g. a bad
+       denial_id/email combo) attach a messages.error() explaining why; without
+       this block the user is bounced with no visible reason, and unread
+       messages keep re-serializing into the cookie. #}
+    {% if messages %}
+    <div class="container mt-3">
+        {% for message in messages %}
+        <div class="alert {% if message.tags %}alert-{{ message.tags }}{% else %}alert-info{% endif %} alert-dismissible fade show" role="alert">
+            {{ message }}
+            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
     {% block content %}
 
     {% endblock content %}

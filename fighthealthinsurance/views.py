@@ -9,9 +9,11 @@ from urllib.parse import quote, urlencode
 
 from django import forms
 from django.conf import settings
+from django.contrib import messages
 from django.contrib.staticfiles.storage import staticfiles_storage
 from django.core.exceptions import SuspiciousOperation
 from django.http import (
+    Http404,
     HttpRequest,
     HttpResponse,
     HttpResponseBase,
@@ -39,7 +41,13 @@ from django_encrypted_filefield.crypt import Cryptographer
 from loguru import logger
 from PIL import Image
 
-from fighthealthinsurance import common_view_logic, forms as core_forms, models
+from fighthealthinsurance import (
+    appeal_deadlines,
+    common_view_logic,
+    forms as core_forms,
+    models,
+)
+from fighthealthinsurance.structured_data import render_json_ld
 from fighthealthinsurance.chat_forms import UnderstandPolicyForm, UserConsentForm
 from fighthealthinsurance.denial_context import merge_qa
 from fighthealthinsurance.followup_emails import ThankyouEmailSender
@@ -180,9 +188,13 @@ class FollowUpView(generic.FormView):
         # Also make sure we can resolve the denial
         #
         # NOTE: Potential security issue here
-        denial = common_view_logic.FollowUpHelper.fetch_denial(**self.kwargs)
+        try:
+            denial = common_view_logic.FollowUpHelper.fetch_denial(**self.kwargs)
+        except models.Denial.DoesNotExist:
+            denial = None
         if denial is None:
-            raise Exception(f"Could not find denial for {self.kwargs}")
+            # Expired or tampered follow-up link: 404 instead of a 500.
+            raise Http404(f"Could not find denial for {self.kwargs}")
         return self.kwargs
 
     def form_valid(self, form):
@@ -453,7 +465,60 @@ class ExternalProSignupView(View):
 STATIC_ISH_PAGE_CACHE_SECONDS = 60 * 30
 
 
-class StaticIshView(generic.TemplateView):
+class PublicCachedPageMixin:
+    """Strips per-visitor session context from pages cached as public responses.
+
+    ``base.html`` renders the session's denial UUID into
+    ``<meta name="fhi-session-key">`` for the JS form-persistence helper. A page
+    served from a shared cache must not carry it: ``cache_page`` is a
+    *view-level* decorator, so it stores the response before
+    ``SessionMiddleware.process_response`` can add ``Vary: Cookie``. The entry
+    is therefore keyed on the URL alone, and the first visitor's UUID would be
+    replayed to every later visitor for the life of the entry — and by any CDN,
+    since these responses are ``Cache-Control: public``.
+
+    Blanking the values keeps the cached HTML genuinely visitor-independent,
+    which is what ``public`` asserts, instead of fragmenting the cache with
+    ``Vary: Cookie`` (which would store one copy per distinct cookie and evict
+    the shared entry these SEO pages exist to serve). Safe because the pages
+    that actually use form persistence — the scan/chat intake flow — are not
+    cached and do not use this mixin.
+
+    Sanitizing happens in ``render_to_response`` rather than
+    ``get_context_data`` on purpose: several subclasses (PrivacyPolicyView,
+    MHMDAView, TermsOfServiceView, ContactView, FAQView) build their context by
+    returning a fresh dict without chaining ``super()``, which silently skipped
+    a ``get_context_data``-based hook and left those pages leaking. Every
+    TemplateView render funnels through ``render_to_response``, so a subclass
+    that forgets to call ``super().get_context_data()`` is still covered. A
+    subclass whose ``get()`` returns a response without rendering does bypass it
+    — ``MicrositeView`` returns a ``redirect()`` on its canonical-slug branch —
+    but that is safe here: ``UpdateCacheMiddleware`` only writes an entry when
+    ``response.status_code == 200``, so a redirect never enters the shared
+    cache, and it carries no session context to leak anyway. Anything that *renders* is covered, and the structural test
+    named below fails on any cached route whose view class omits this mixin.
+
+    Regression coverage: ``tests/sync/test_public_page_cache_isolation.py``
+    (which runs against a real LocMemCache, since the test settings use
+    DummyCache and would otherwise hide the bug, and walks the URLconf so new
+    cached routes are covered automatically).
+    """
+
+    def render_to_response(
+        self, context: dict[str, typing.Any], **response_kwargs: typing.Any
+    ) -> HttpResponse:
+        context["fhi_session_key"] = ""
+        context["fhi_request_method"] = ""
+        # Same reasoning for flash messages, which base.html renders: one
+        # visitor's error banner must not be baked into a shared cache entry.
+        # Overriding the context processor's value also means the storage is
+        # never marked read here, so the message survives to be shown on the
+        # next uncached page (the redirect targets are all uncached).
+        context["messages"] = []
+        return super().render_to_response(context, **response_kwargs)  # type: ignore[misc,no-any-return]
+
+
+class StaticIshView(PublicCachedPageMixin, generic.TemplateView):
     """Base class for marketing/content pages cached as whole responses.
 
     "Static-ish": the page content itself is fixed, but pages still render
@@ -519,6 +584,96 @@ class Turning26View(StaticIshView):
     """SEO page for young adults aging off a parent's health insurance at 26."""
 
     template_name = "turning_26.html"
+
+
+class AppealDeadlineCalculatorView(PublicCachedPageMixin, generic.TemplateView):
+    """Public, no-login tool that estimates health-insurance appeal deadlines.
+
+    The form is bound to ``request.GET`` so a filled-in result is bookmarkable,
+    shareable, and printable via its URL. All computation lives in
+    ``appeal_deadlines`` and the inputs in ``AppealDeadlineCalculatorForm``; this
+    view only wires them to the template.
+    """
+
+    template_name = "appeal_deadline_calculator.html"
+
+    def get_context_data(self, **kwargs: typing.Any) -> dict[str, typing.Any]:
+        context = super().get_context_data(**kwargs)
+        context["title"] = "Health Insurance Appeal Deadline Calculator"
+
+        # Only treat the form as submitted when the user actually chose a
+        # coverage type; a bare visit (no query string) should render blank
+        # rather than showing "this field is required" errors.
+        submitted = bool(self.request.GET.get("coverage_type"))
+        form = core_forms.AppealDeadlineCalculatorForm(
+            self.request.GET if submitted else None
+        )
+
+        result = None
+        if submitted and form.is_valid():
+            result = form.compute()
+
+        context["form"] = form
+        context["result"] = result
+        context["submitted"] = submitted
+        context["last_reviewed"] = appeal_deadlines.LAST_REVIEWED
+        context["canonical_url"] = self.request.build_absolute_uri(
+            reverse("appeal_deadline_calculator")
+        )
+        return context
+
+
+class StartAppealView(PublicCachedPageMixin, generic.TemplateView):
+    """Conversion-focused, no-login landing page that funnels visitors into the
+    existing scan/chat appeal flow.
+
+    Reuses the scan view's already-supported deep-link GET params
+    (``default_procedure``, ``default_condition``, ``microsite_slug``,
+    ``microsite_title``) so that, when a campaign or internal link lands here
+    with those params, the primary CTA carries them straight through to the
+    scan (and chat) flow to pre-fill the appeal. This page does not change any
+    appeal-generation behavior; it only builds entry links.
+    """
+
+    template_name = "start_appeal.html"
+
+    # The deep-link params the scan view (InitialProcessView) already accepts.
+    # Keep this list in sync with the GET params read in InitialProcessView.
+    SCAN_DEEP_LINK_PARAMS = (
+        "default_procedure",
+        "default_condition",
+        "microsite_slug",
+        "microsite_title",
+    )
+
+    def _passthrough_params(self) -> dict[str, str]:
+        """Collect the supported scan deep-link params present on this request."""
+        params: dict[str, str] = {}
+        for key in self.SCAN_DEEP_LINK_PARAMS:
+            value = self.request.GET.get(key, "").strip()
+            if value:
+                params[key] = value
+        return params
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context["title"] = "Start Your Health Insurance Appeal Free"
+
+        params = self._passthrough_params()
+        query = urlencode(params) if params else ""
+
+        scan_url = reverse("scan")
+        chat_url = reverse("chat")
+        if query:
+            scan_url = f"{scan_url}?{query}"
+            chat_url = f"{chat_url}?{query}"
+
+        context["scan_url"] = scan_url
+        context["chat_url"] = chat_url
+        context["has_prefill"] = bool(params)
+        context["prefill_procedure"] = params.get("default_procedure", "")
+        context["prefill_condition"] = params.get("default_condition", "")
+        return context
 
 
 class PBSNewsHourView(StaticIshView):
@@ -912,23 +1067,44 @@ class ShareAppealView(View):
 
     def post(self, request):
         form = core_forms.ShareAppealForm(request.POST)
-        if form.is_valid():
-            denial_id = form.cleaned_data["denial_id"]
-            hashed_email = models.Denial.get_hashed_email(form.cleaned_data["email"])
+        if not form.is_valid():
+            # Log only the validation errors: str(form) renders a *bound* form,
+            # i.e. every submitted value — here the patient's email and full
+            # appeal letter (PHI). Prod does not call load_loguru(), so
+            # loguru's default DEBUG stderr sink ships these to the aggregator.
+            logger.debug(form.errors)
+            messages.error(
+                request,
+                "We couldn't process that submission. Please start again.",
+            )
+            return redirect("scan")
 
-            # Update the denial
+        denial_id = form.cleaned_data["denial_id"]
+        hashed_email = models.Denial.get_hashed_email(form.cleaned_data["email"])
+
+        # Update the denial
+        try:
             denial = models.Denial.objects.filter(
                 denial_id=denial_id,
                 # Include the hashed e-mail so folks can't brute force denial_id
                 hashed_email=hashed_email,
             ).get()
-            logger.debug(form.cleaned_data)
-            denial.appeal_text = form.cleaned_data["appeal_text"]
-            denial.save()
-            common_view_logic.mark_proposal_chosen(
-                denial, form.cleaned_data["appeal_text"], editted=True
+        except models.Denial.DoesNotExist:
+            # Wrong denial_id/email combo: redirect instead of raising a 500.
+            messages.error(
+                request,
+                "We couldn't find that denial. Please start again.",
             )
-            return render(request, "thankyou.html")
+            return redirect("scan")
+        # (Deliberately no logging of cleaned_data here: it holds the patient's
+        # email and the entire appeal letter, and this is the success path, so
+        # it would emit PHI on every successful share.)
+        denial.appeal_text = form.cleaned_data["appeal_text"]
+        denial.save()
+        common_view_logic.mark_proposal_chosen(
+            denial, form.cleaned_data["appeal_text"], editted=True
+        )
+        return render(request, "thankyou.html")
 
 
 DELETE_CONFIRMATION_SUBJECT = (
@@ -1103,7 +1279,9 @@ class RecommendAppeal(View):
     """View for recommending appeal templates (placeholder)."""
 
     def post(self, request):
-        return render(request, "")
+        # Placeholder view: no template exists yet, so signal "not implemented"
+        # instead of rendering an empty template name (which raises a 500).
+        return HttpResponse(status=501)
 
 
 class CategorizeReview(View):
@@ -1303,8 +1481,14 @@ class ChooseAppeal(View):
         form = core_forms.ChooseAppealForm(request.POST)
 
         if not form.is_valid():
-            logger.debug(form)
-            return
+            # Errors only — a bound ChooseAppealForm renders the email,
+            # appeal_text, and semi_sekret (a bearer credential).
+            logger.debug(form.errors)
+            messages.error(
+                request,
+                "We couldn't process that submission. Please start again.",
+            )
+            return redirect("scan")
 
         (
             appeal_fax_number,
@@ -1425,17 +1609,34 @@ class GenerateAppeal(View):
     def post(self, request):
         form = core_forms.DenialRefForm(request.POST)
         if not form.is_valid():
-            # TODO: Send user back to fix the form.
-            return
+            # Invalid input: redirect back to the start instead of returning
+            # None (which raises "didn't return an HttpResponse" -> 500).
+            # Errors only — a bound DenialRefForm renders the email and
+            # semi_sekret (a bearer credential).
+            logger.debug(form.errors)
+            messages.error(
+                request,
+                "We couldn't process that submission. Please start again.",
+            )
+            return redirect("scan")
 
         logger.debug("Finishing up prior to appeal gen.")
         denial_id = form.cleaned_data["denial_id"]
         email = form.cleaned_data["email"]
-        denial = models.Denial.objects.filter(
-            denial_id=denial_id,
-            hashed_email=models.Denial.get_hashed_email(email),
-            semi_sekret=form.cleaned_data["semi_sekret"],
-        ).get()
+        try:
+            denial = models.Denial.objects.filter(
+                denial_id=denial_id,
+                hashed_email=models.Denial.get_hashed_email(email),
+                semi_sekret=form.cleaned_data["semi_sekret"],
+            ).get()
+        except models.Denial.DoesNotExist:
+            # Wrong/expired denial_id, email, or semi_sekret: redirect instead
+            # of raising a 500.
+            messages.error(
+                request,
+                "We couldn't find that denial. Please start again.",
+            )
+            return redirect("scan")
 
         # We copy _most_ of the input over for the form context
         elems = dict(request.POST)
@@ -2658,7 +2859,6 @@ class MicrositeView(StaticIshView):
     template_name = "microsite.html"
 
     def get(self, request, slug, *args, **kwargs):
-        from django.http import Http404
         from django.shortcuts import redirect
 
         from fighthealthinsurance.microsites import get_microsite
@@ -2914,8 +3114,6 @@ class StateHelpView(StaticIshView):
         # Cache state lookup to avoid duplicate call in get_context_data
         self._state = get_state_help(slug)
         if self._state is None:
-            from django.http import Http404
-
             raise Http404(f"State help page '{slug}' not found")
 
         return super().get(request, *args, **kwargs)
@@ -2926,7 +3124,433 @@ class StateHelpView(StaticIshView):
         # Use cached state from get() to avoid duplicate lookup
         state = getattr(self, "_state", None)
         if state:
+            from fighthealthinsurance.state_help import LAST_REVIEWED
+
             context["state"] = state
-            context["title"] = f"{state.name} Health Insurance Help"
+            context["title"] = (
+                f"{state.name} External Review & Insurance Complaint Guide"
+            )
+            context["last_reviewed"] = LAST_REVIEWED
+
+            # Absolute URLs for canonical + JSON-LD.
+            index_url = self.request.build_absolute_uri(reverse("state_help_index"))
+            page_url = self.request.build_absolute_uri(
+                reverse("state_help", kwargs={"slug": state.slug})
+            )
+            home_url = self.request.build_absolute_uri("/")
+            context["canonical_url"] = page_url
+
+            # Structured data: a WebPage describing this state's external-review
+            # guidance plus a BreadcrumbList for the navigation path. Serialized
+            # here so the template just prints it.
+            page_title = f"{state.name} External Review & Insurance Complaint Guide"
+            page_description = (
+                f"How to request an external review and file a complaint with the "
+                f"{state.insurance_department.name} after a health insurance denial "
+                f"in {state.name}."
+            )
+            structured_data = {
+                "@context": "https://schema.org",
+                "@graph": [
+                    {
+                        "@type": "WebPage",
+                        "@id": page_url,
+                        "url": page_url,
+                        "name": page_title,
+                        "description": page_description,
+                        "inLanguage": "en-US",
+                        "isPartOf": {"@type": "WebSite", "@id": home_url},
+                        "about": {
+                            "@type": "Thing",
+                            "name": (
+                                f"Health insurance external review in {state.name}"
+                            ),
+                        },
+                    },
+                    {
+                        "@type": "BreadcrumbList",
+                        "itemListElement": [
+                            {
+                                "@type": "ListItem",
+                                "position": 1,
+                                "name": "Home",
+                                "item": home_url,
+                            },
+                            {
+                                "@type": "ListItem",
+                                "position": 2,
+                                "name": "State Health Insurance Help",
+                                "item": index_url,
+                            },
+                            {
+                                "@type": "ListItem",
+                                "position": 3,
+                                "name": state.name,
+                                "item": page_url,
+                            },
+                        ],
+                    },
+                ],
+            }
+            # render_json_ld escapes <, >, & so the state name/description
+            # can't break out of the <script type="application/ld+json"> block.
+            context["structured_data_json"] = render_json_ld(structured_data)
+
+        return context
+
+
+class DenialReasonDecoderIndexView(PublicCachedPageMixin, TemplateView):
+    """Public index page for the Denial Reason Decoder tool – lists all reasons."""
+
+    template_name = "denial_reason_decoder_index.html"
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        from fighthealthinsurance.denial_reason_decoder import load_reasons
+
+        reasons = load_reasons()
+        context["reasons"] = reasons
+        context["title"] = (
+            "Denial Reason Decoder – Understand Why Your Health Insurance Claim Was Denied"
+        )
+        context["meta_description"] = (
+            "Learn what common health insurance denial reasons really mean, why insurers use them, "
+            "and the strongest appeal strategies and evidence for each. Free educational tool."
+        )
+        context["canonical_url"] = (
+            "https://www.fighthealthinsurance.com/tools/denial-reason-decoder/"
+        )
+        return context
+
+
+class DenialReasonDecoderView(PublicCachedPageMixin, TemplateView):
+    """Public detail page for a single denial reason (slug-based)."""
+
+    template_name = "denial_reason_decoder_detail.html"
+
+    def get(self, request, slug, *args, **kwargs):
+        from fighthealthinsurance.denial_reason_decoder import get_reason
+
+        self._reason = get_reason(slug)
+        if self._reason is None:
+            raise Http404(f"Denial reason '{slug}' not found")
+
+        return super().get(request, *args, **kwargs)
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        from fighthealthinsurance.denial_reason_decoder import get_reasons_map
+
+        reason = getattr(self, "_reason", None)
+        if reason:
+            all_reasons = get_reasons_map()
+            context["reason"] = reason
+            context["title"] = (
+                f"{reason.title} Denial – Appeal Guide | Fight Health Insurance"
+            )
+            context["meta_description"] = reason.meta_description
+            context["canonical_url"] = (
+                f"https://www.fighthealthinsurance.com/tools/denial-reason-decoder/{reason.slug}/"
+            )
+            # render_json_ld emits the full <script> tag with <, >, & escaped,
+            # replacing the previous hand-rolled .replace() escaping.
+            context["faq_jsonld"] = render_json_ld(reason.faq_jsonld())
+            context["breadcrumb_jsonld"] = render_json_ld(reason.breadcrumb_jsonld())
+            context["article_jsonld"] = render_json_ld(reason.article_jsonld())
+            context["related_reasons"] = reason.related_reasons(all_reasons)
+        return context
+
+
+class GlossaryIndexView(PublicCachedPageMixin, TemplateView):
+    """View for the health-insurance & appeals glossary index page."""
+
+    template_name = "glossary_index.html"
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        from fighthealthinsurance.glossary import (
+            get_terms_grouped_by_letter,
+            get_terms_sorted,
+        )
+
+        terms = get_terms_sorted()
+        groups = get_terms_grouped_by_letter()
+        context["letter_groups"] = groups
+        context["active_letters"] = {letter for letter, _ in groups}
+        context["term_count"] = len(terms)
+        context["title"] = "Health Insurance & Appeals Glossary"
+
+        canonical_url = self.request.build_absolute_uri(reverse("glossary_index"))
+        context["canonical_url"] = canonical_url
+
+        # JSON-LD DefinedTermSet describing the whole glossary for search engines.
+        defined_terms = [
+            {
+                "@type": "DefinedTerm",
+                "name": term.term,
+                "description": term.short,
+                "url": self.request.build_absolute_uri(
+                    reverse("glossary_term", kwargs={"slug": term.slug})
+                ),
+            }
+            for term in terms
+        ]
+        json_ld = {
+            "@context": "https://schema.org",
+            "@type": "DefinedTermSet",
+            "name": "Health Insurance & Appeals Glossary",
+            "description": (
+                "Plain-language definitions of health insurance and appeals terms "
+                "to help patients understand and fight coverage denials."
+            ),
+            "url": canonical_url,
+            "hasDefinedTerm": defined_terms,
+        }
+        # render_json_ld emits the full <script type="application/ld+json"> tag
+        # with <, >, & escaped so glossary content can't break out of it.
+        context["json_ld"] = render_json_ld(json_ld)
+        return context
+
+
+class GlossaryView(PublicCachedPageMixin, TemplateView):
+    """View for an individual glossary term page."""
+
+    template_name = "glossary.html"
+
+    def get(self, request, slug, *args, **kwargs):
+        from fighthealthinsurance.glossary import get_term
+
+        # Cache the lookup so get_context_data does not repeat it.
+        self._term = get_term(slug)
+        if self._term is None:
+            raise Http404(f"Glossary term '{slug}' not found")
+
+        return super().get(request, *args, **kwargs)
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        from fighthealthinsurance.glossary import get_related_terms
+
+        term = getattr(self, "_term", None)
+        if term is None:
+            return context
+
+        context["term"] = term
+        context["related_terms"] = get_related_terms(term)
+        context["title"] = f"{term.term}: Definition & Meaning"
+
+        term_url = self.request.build_absolute_uri(
+            reverse("glossary_term", kwargs={"slug": term.slug})
+        )
+        index_url = self.request.build_absolute_uri(reverse("glossary_index"))
+        context["canonical_url"] = term_url
+
+        # JSON-LD: a DefinedTerm for the entry plus a BreadcrumbList for the
+        # Home > Glossary > Term trail.
+        defined_term = {
+            "@context": "https://schema.org",
+            "@type": "DefinedTerm",
+            "name": term.term,
+            "description": term.definition,
+            "url": term_url,
+            "inDefinedTermSet": index_url,
+        }
+        if term.aliases:
+            defined_term["alternateName"] = list(term.aliases)
+
+        breadcrumbs = {
+            "@context": "https://schema.org",
+            "@type": "BreadcrumbList",
+            "itemListElement": [
+                {
+                    "@type": "ListItem",
+                    "position": 1,
+                    "name": "Home",
+                    "item": self.request.build_absolute_uri(reverse("root")),
+                },
+                {
+                    "@type": "ListItem",
+                    "position": 2,
+                    "name": "Glossary",
+                    "item": index_url,
+                },
+                {
+                    "@type": "ListItem",
+                    "position": 3,
+                    "name": term.term,
+                    "item": term_url,
+                },
+            ],
+        }
+        # render_json_ld escapes <, >, & so a term's definition/aliases can't
+        # break out of the <script type="application/ld+json"> block.
+        context["json_ld"] = render_json_ld([defined_term, breadcrumbs])
+        return context
+
+
+# Canonical domain used to build absolute URLs inside JSON-LD structured data.
+# Kept in sync with fighthealthinsurance.context_processors.canonical_url_context.
+_INSURER_GUIDE_CANONICAL_DOMAIN = "https://www.fighthealthinsurance.com"
+
+
+def _insurer_guide_abs_url(url_name: str, **kwargs) -> str:
+    """Build a canonical absolute URL for an insurer guide route."""
+    from django.urls import reverse
+
+    return f"{_INSURER_GUIDE_CANONICAL_DOMAIN}{reverse(url_name, kwargs=kwargs)}"
+
+
+class InsurerAppealGuideIndexView(PublicCachedPageMixin, TemplateView):
+    """Index page listing per-insurer 'how to appeal a denial' guides."""
+
+    template_name = "insurer_appeal_guide_index.html"
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        from fighthealthinsurance.insurer_appeal_guides import (
+            LAST_REVIEWED,
+            get_insurers_sorted_by_name,
+        )
+
+        insurers = get_insurers_sorted_by_name()
+        context["insurers"] = insurers
+        context["last_reviewed"] = LAST_REVIEWED
+        context["title"] = "How to Appeal a Health Insurance Denial by Insurer"
+
+        index_url = _insurer_guide_abs_url("insurer_appeal_guide_index")
+        webpage = {
+            "@context": "https://schema.org",
+            "@type": "WebPage",
+            "name": "How to Appeal a Health Insurance Denial by Insurer",
+            "url": index_url,
+            "description": (
+                "Original, general guides on how to appeal a health insurance "
+                "denial from major U.S. insurers and pharmacy benefit managers."
+            ),
+        }
+        breadcrumbs = {
+            "@context": "https://schema.org",
+            "@type": "BreadcrumbList",
+            "itemListElement": [
+                {
+                    "@type": "ListItem",
+                    "position": 1,
+                    "name": "Home",
+                    "item": _INSURER_GUIDE_CANONICAL_DOMAIN + "/",
+                },
+                {
+                    "@type": "ListItem",
+                    "position": 2,
+                    "name": "Insurance Appeal Guides",
+                    "item": index_url,
+                },
+            ],
+        }
+        item_list = {
+            "@context": "https://schema.org",
+            "@type": "ItemList",
+            "itemListElement": [
+                {
+                    "@type": "ListItem",
+                    "position": i + 1,
+                    "name": f"How to Appeal a {insurer.name} Insurance Denial",
+                    "url": _insurer_guide_abs_url(
+                        "insurer_appeal_guide", slug=insurer.slug
+                    ),
+                }
+                for i, insurer in enumerate(insurers)
+            ],
+        }
+        # render_json_ld escapes <, >, & so insurer copy can't break out of the
+        # <script type="application/ld+json"> block.
+        context["jsonld"] = render_json_ld([webpage, breadcrumbs, item_list])
+        return context
+
+
+class InsurerAppealGuideView(PublicCachedPageMixin, TemplateView):
+    """Individual per-insurer appeal guide page."""
+
+    template_name = "insurer_appeal_guide.html"
+
+    def get(self, request, slug, *args, **kwargs):
+        from fighthealthinsurance.insurer_appeal_guides import get_insurer_guide
+
+        # Cache the lookup to avoid a duplicate call in get_context_data.
+        self._insurer = get_insurer_guide(slug)
+        if self._insurer is None:
+            raise Http404(f"Insurer appeal guide '{slug}' not found")
+
+        return super().get(request, *args, **kwargs)
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        from fighthealthinsurance.insurer_appeal_guides import (
+            GENERAL_APPEAL_STEPS,
+            GENERAL_DENIAL_REASONS,
+            LAST_REVIEWED,
+            get_related_guides,
+        )
+
+        insurer = getattr(self, "_insurer", None)
+        if insurer:
+            context["insurer"] = insurer
+            context["related_guides"] = get_related_guides(insurer.slug)
+            context["appeal_steps"] = GENERAL_APPEAL_STEPS
+            context["denial_reasons"] = GENERAL_DENIAL_REASONS
+            context["last_reviewed"] = LAST_REVIEWED
+            title = f"How to Appeal a {insurer.name} Insurance Denial"
+            context["title"] = title
+
+            page_url = _insurer_guide_abs_url("insurer_appeal_guide", slug=insurer.slug)
+            index_url = _insurer_guide_abs_url("insurer_appeal_guide_index")
+            webpage = {
+                "@context": "https://schema.org",
+                "@type": "WebPage",
+                "name": title,
+                "url": page_url,
+                "description": insurer.summary,
+            }
+            breadcrumbs = {
+                "@context": "https://schema.org",
+                "@type": "BreadcrumbList",
+                "itemListElement": [
+                    {
+                        "@type": "ListItem",
+                        "position": 1,
+                        "name": "Home",
+                        "item": _INSURER_GUIDE_CANONICAL_DOMAIN + "/",
+                    },
+                    {
+                        "@type": "ListItem",
+                        "position": 2,
+                        "name": "Insurance Appeal Guides",
+                        "item": index_url,
+                    },
+                    {
+                        "@type": "ListItem",
+                        "position": 3,
+                        "name": insurer.name,
+                        "item": page_url,
+                    },
+                ],
+            }
+            faqpage = {
+                "@context": "https://schema.org",
+                "@type": "FAQPage",
+                "mainEntity": [
+                    {
+                        "@type": "Question",
+                        "name": faq.question,
+                        "acceptedAnswer": {
+                            "@type": "Answer",
+                            "text": faq.answer,
+                        },
+                    }
+                    for faq in insurer.faqs
+                ],
+            }
+            # render_json_ld escapes <, >, & so insurer/FAQ copy can't break
+            # out of the <script type="application/ld+json"> block.
+            context["jsonld"] = render_json_ld([webpage, breadcrumbs, faqpage])
 
         return context

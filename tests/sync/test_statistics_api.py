@@ -62,6 +62,17 @@ class StatisticsAPITest(APITestCase):
                 )
                 self.sent_appeals.append(appeal)
 
+            # The stats endpoint counts appeals over a half-open window
+            # [start_of_period, start_of_today) that intentionally excludes the
+            # incomplete current day. ``creation_date`` is ``auto_now_add`` and
+            # therefore defaults to today, which would fall outside that window,
+            # so anchor the fixture appeals to yesterday (safely inside the
+            # current period) via update() to bypass auto_now_add.
+            yesterday = self.current_date.date() - timedelta(days=1)
+            Appeal.objects.filter(
+                pk__in=[a.pk for a in self.pending_appeals + self.sent_appeals]
+            ).update(creation_date=yesterday)
+
     def tearDown(self):
         """Clean up after each test"""
         Appeal.objects.all().delete()

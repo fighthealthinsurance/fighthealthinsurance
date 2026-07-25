@@ -1,0 +1,395 @@
+"""Tests for the per-state external review & Department of Insurance complaint
+guidance feature.
+
+These tests exercise the shipped ``state_help.json`` data directly (rather than
+through ``staticfiles_storage``, which depends on ``collectstatic``) so they
+validate the real data for all 50 states + DC, and they drive the
+``StateHelpView`` with that real data to confirm external-review content
+renders, unknown states 404, and there are no dangling internal links.
+"""
+
+import json
+import os
+import re
+
+from unittest.mock import patch
+
+from django.conf import settings
+from django.test import TestCase, Client
+from django.urls import reverse, NoReverseMatch
+
+from fighthealthinsurance.state_help import (
+    StateHelp,
+    ExternalReviewInfo,
+    LAST_REVIEWED,
+    VALID_EXTERNAL_REVIEW_TYPES,
+    EXTERNAL_REVIEW_TYPE_LABELS,
+)
+
+# The canonical set of slugs we require: all 50 states plus the District of
+# Columbia (51 total). Kept explicit so a dropped/renamed state fails loudly.
+EXPECTED_STATE_SLUGS = {
+    "alabama",
+    "alaska",
+    "arizona",
+    "arkansas",
+    "california",
+    "colorado",
+    "connecticut",
+    "delaware",
+    "district-of-columbia",
+    "florida",
+    "georgia",
+    "hawaii",
+    "idaho",
+    "illinois",
+    "indiana",
+    "iowa",
+    "kansas",
+    "kentucky",
+    "louisiana",
+    "maine",
+    "maryland",
+    "massachusetts",
+    "michigan",
+    "minnesota",
+    "mississippi",
+    "missouri",
+    "montana",
+    "nebraska",
+    "nevada",
+    "new-hampshire",
+    "new-jersey",
+    "new-mexico",
+    "new-york",
+    "north-carolina",
+    "north-dakota",
+    "ohio",
+    "oklahoma",
+    "oregon",
+    "pennsylvania",
+    "rhode-island",
+    "south-carolina",
+    "south-dakota",
+    "tennessee",
+    "texas",
+    "utah",
+    "vermont",
+    "virginia",
+    "washington",
+    "west-virginia",
+    "wisconsin",
+    "wyoming",
+}
+
+# States that, per the current CMS/HealthCare.gov "State External Appeals
+# Review Processes" list, do NOT run their own external review process and
+# instead rely on the federal HHS-administered process. These must never be
+# classified as review_type "state" (which would tell users their state runs
+# its own review).
+#
+# Deliberately EXCLUDES Pennsylvania. Older CMS lists grouped Pennsylvania with
+# the federal-process states, but Pennsylvania stood up its OWN state-
+# administered Independent External Review Program (Act 146 of 2022), which
+# launched Jan 1, 2024, so it is correctly classified review_type "state" in
+# state_help.json. A prior automated review suggested adding "pennsylvania"
+# here and flipping the data to "federal"; that suggestion predates the 2024
+# program and would be factually wrong today. Sources (verified 2026-07):
+#   https://www.pa.gov/agencies/insurance/newsroom/pennsylvania-insurance-department-and-code-pa-launch-state-external-review-process-and-new-website-for-pennsylvanians-to-appeal-denied-health-plan-services
+#   https://www.insurance.pa.gov/Consumers/pages/externalreview.aspx
+KNOWN_FEDERAL_PROCESS_STATES = {
+    "alabama",
+    "florida",
+    "georgia",
+    "texas",
+    "wisconsin",
+}
+
+# Internal routes the state page links to. If any of these stop resolving the
+# per-state pages would contain dangling links, so we assert they all reverse.
+INTERNAL_LINK_ROUTE_NAMES = [
+    "scan",
+    "chat",
+    "other-resources",
+    "state_help_index",
+]
+
+
+def _state_help_json_path() -> str:
+    """Absolute path to the shipped state_help.json in the app static dir."""
+    app_static = getattr(
+        settings,
+        "APP_STATIC_DIR",
+        os.path.join(settings.BASE_DIR, "fighthealthinsurance", "static"),
+    )
+    return os.path.join(app_static, "state_help.json")
+
+
+def _load_raw_state_data() -> dict:
+    """Load the raw shipped state help JSON (excluding the 'national' entry)."""
+    with open(_state_help_json_path(), "r", encoding="utf-8") as f:
+        data = json.load(f)
+    return {slug: v for slug, v in data.items() if slug != "national"}
+
+
+def _build_state_help_map() -> dict:
+    """Build a {slug: StateHelp} map from the real shipped data."""
+    return {slug: StateHelp(v) for slug, v in _load_raw_state_data().items()}
+
+
+class ExternalReviewDataIntegrityTest(TestCase):
+    """Validate the shipped per-state external-review data."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.raw = _load_raw_state_data()
+        cls.states = _build_state_help_map()
+
+    def test_all_fifty_one_states_present(self):
+        """All 50 states + DC are present, and nothing extra."""
+        self.assertEqual(set(self.states.keys()), EXPECTED_STATE_SLUGS)
+        self.assertEqual(len(self.states), 51)
+
+    def test_every_state_parses_into_state_help(self):
+        """Every shipped entry validates as a StateHelp without error."""
+        for slug, state in self.states.items():
+            self.assertEqual(state.slug, slug)
+            self.assertTrue(state.name)
+            self.assertTrue(state.abbreviation)
+            self.assertTrue(
+                state.insurance_department.name,
+                msg=f"{slug} missing insurance department name",
+            )
+
+    def test_every_state_has_external_review_with_valid_type(self):
+        """Each state exposes external review info with a recognized review_type."""
+        for slug, state in self.states.items():
+            self.assertIsNotNone(
+                state.external_review, msg=f"{slug} missing external_review"
+            )
+            self.assertIn(
+                state.external_review.review_type,
+                VALID_EXTERNAL_REVIEW_TYPES,
+                msg=f"{slug} has invalid review_type",
+            )
+            # A human-readable label must exist for whatever type is set.
+            self.assertIn(
+                state.external_review.review_type_label,
+                EXTERNAL_REVIEW_TYPE_LABELS.values(),
+            )
+
+    def test_known_federal_process_states_are_not_state_administered(self):
+        """States on the federal HHS-administered list are not classified 'state'.
+
+        Marking these 'state' would wrongly tell users their state runs its own
+        external review, so they must be 'federal' (or, conservatively, 'varies')
+        — never 'state'.
+        """
+        for slug in KNOWN_FEDERAL_PROCESS_STATES:
+            self.assertIn(slug, self.states, msg=f"{slug} missing from shipped data")
+            review_type = self.states[slug].external_review.review_type
+            self.assertNotEqual(
+                review_type,
+                "state",
+                msg=(
+                    f"{slug} uses the federal HHS-administered external review "
+                    f"process and must not be classified 'state'"
+                ),
+            )
+            # Not state-administered means the state does not run its own review.
+            self.assertFalse(
+                self.states[slug].external_review.is_state_administered,
+                msg=f"{slug} should not be flagged as state-administered",
+            )
+
+    def test_known_federal_process_states_are_classified_federal(self):
+        """The five federal-process states are affirmatively marked 'federal'."""
+        for slug in KNOWN_FEDERAL_PROCESS_STATES:
+            self.assertEqual(
+                self.states[slug].external_review.review_type,
+                "federal",
+                msg=f"{slug} should be classified 'federal'",
+            )
+
+    def test_pennsylvania_is_state_administered(self):
+        """Pennsylvania runs its OWN external review program (Act 146, 2022).
+
+        Its state-administered Independent External Review Program launched
+        Jan 1, 2024, so Pennsylvania must be classified 'state' — NOT 'federal'
+        as older CMS lists (and an automated PR review) suggested. This locks in
+        the correct, current classification so it can't silently regress.
+        Source: https://www.insurance.pa.gov/Consumers/pages/externalreview.aspx
+        """
+        pa = self.states["pennsylvania"].external_review
+        self.assertEqual(pa.review_type, "state")
+        self.assertTrue(pa.is_state_administered)
+        self.assertNotIn("pennsylvania", KNOWN_FEDERAL_PROCESS_STATES)
+
+    def test_no_dangling_external_review_links(self):
+        """External review info_urls, where present, are absolute http(s) URLs."""
+        for slug, state in self.states.items():
+            info_url = state.external_review.info_url
+            self.assertTrue(info_url, msg=f"{slug} external_review missing info_url")
+            self.assertTrue(
+                info_url.startswith("http://") or info_url.startswith("https://"),
+                msg=f"{slug} external_review info_url is not absolute: {info_url}",
+            )
+
+    def test_internal_link_routes_resolve(self):
+        """The internal routes the page links to all reverse (no dangling links)."""
+        for name in INTERNAL_LINK_ROUTE_NAMES:
+            try:
+                reverse(name)
+            except NoReverseMatch:  # pragma: no cover - failure path
+                self.fail(f"Internal link route {name!r} does not resolve")
+
+    def test_last_reviewed_is_iso_date(self):
+        """LAST_REVIEWED is a plausible ISO (YYYY-MM-DD) date, not fabricated text."""
+        import datetime
+
+        # Raises ValueError (failing the test) if not a valid ISO date.
+        datetime.date.fromisoformat(LAST_REVIEWED)
+
+
+class ExternalReviewInfoTypeTest(TestCase):
+    """Unit tests for the extended ExternalReviewInfo type handling."""
+
+    def test_valid_review_type_preserved(self):
+        info = ExternalReviewInfo(
+            {"available": True, "info_url": "https://x", "review_type": "federal"}
+        )
+        self.assertEqual(info.review_type, "federal")
+        self.assertFalse(info.is_state_administered)
+
+    def test_state_type_is_state_administered(self):
+        info = ExternalReviewInfo({"available": True, "review_type": "state"})
+        self.assertTrue(info.is_state_administered)
+
+    def test_unknown_review_type_falls_back_to_varies(self):
+        """An unrecognized review_type is normalized to 'varies', never invented."""
+        info = ExternalReviewInfo({"available": True, "review_type": "bogus"})
+        self.assertEqual(info.review_type, "varies")
+
+    def test_missing_review_type_defaults_to_varies(self):
+        info = ExternalReviewInfo({"available": True})
+        self.assertEqual(info.review_type, "varies")
+
+
+class StateExternalReviewViewTest(TestCase):
+    """Drive StateHelpView with the real shipped data."""
+
+    def setUp(self):
+        self.client = Client()
+        self.state_map = _build_state_help_map()
+
+    def _patched_get_state_help(self):
+        """Patch get_state_help to resolve against the real shipped data map."""
+        return patch(
+            "fighthealthinsurance.state_help.get_state_help",
+            side_effect=lambda slug: self.state_map.get(slug),
+        )
+
+    def test_all_states_resolve_with_200(self):
+        """Every one of the 51 state slugs resolves to a 200 page."""
+        with self._patched_get_state_help():
+            for slug in sorted(EXPECTED_STATE_SLUGS):
+                url = reverse("state_help", kwargs={"slug": slug})
+                response = self.client.get(url)
+                self.assertEqual(
+                    response.status_code,
+                    200,
+                    msg=f"State {slug} did not return 200",
+                )
+
+    def test_sample_state_renders_external_review_content(self):
+        """A sample state page renders the external-review & complaint guidance."""
+        with self._patched_get_state_help():
+            url = reverse("state_help", kwargs={"slug": "california"})
+            response = self.client.get(url)
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode("utf-8")
+        # Core external-review guidance is present.
+        self.assertIn("External Review", content)
+        self.assertIn("independent external review", content)
+        # Reflects the federal HHS process (some plans use it).
+        self.assertIn("Department of Health", content)
+        # Names the state Department of Insurance for complaints.
+        self.assertIn("California Department of Insurance", content)
+        # General deadlines note (no fabricated specific deadline).
+        self.assertIn("Deadlines vary", content)
+        # Safety disclaimer + last reviewed date.
+        self.assertIn("not legal advice", content)
+        self.assertIn(LAST_REVIEWED, content)
+
+    def test_sample_state_links_to_internal_appeal_flow(self):
+        """The page links to the appeal flow and internal appeal resources."""
+        with self._patched_get_state_help():
+            url = reverse("state_help", kwargs={"slug": "texas"})
+            response = self.client.get(url)
+        content = response.content.decode("utf-8")
+        self.assertIn(reverse("scan"), content)
+        self.assertIn(reverse("other-resources"), content)
+        self.assertIn(reverse("state_help_index"), content)
+
+    def test_sample_state_has_seo_structured_data_and_canonical(self):
+        """The page emits WebPage + BreadcrumbList JSON-LD and a canonical link."""
+        with self._patched_get_state_help():
+            url = reverse("state_help", kwargs={"slug": "new-york"})
+            response = self.client.get(url)
+        content = response.content.decode("utf-8")
+        self.assertIn("application/ld+json", content)
+        self.assertIn("BreadcrumbList", content)
+        self.assertIn("WebPage", content)
+        self.assertIn('rel="canonical"', content)
+
+        # structured_data_json is now a hardened <script type="application/ld+json">
+        # tag from render_json_ld (which escapes <, >, &). Pull the JSON payload
+        # back out of the script element and confirm it parses with both nodes.
+        structured = str(response.context["structured_data_json"])
+        match = re.search(
+            r'<script type="application/ld\+json">(.*)</script>',
+            structured,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(match, "structured_data_json should be a script tag")
+        parsed = json.loads(match.group(1))
+        types = {node["@type"] for node in parsed["@graph"]}
+        self.assertEqual(types, {"WebPage", "BreadcrumbList"})
+
+    def test_federal_process_state_does_not_claim_its_own_external_review(self):
+        """A federal-process state's page must not say it offers/runs its own review."""
+        with self._patched_get_state_help():
+            url = reverse("state_help", kwargs={"slug": "texas"})
+            response = self.client.get(url)
+        self.assertEqual(response.status_code, 200)
+        content = response.content.decode("utf-8")
+        # It must not tell users Texas offers/runs its own external review.
+        self.assertNotIn("offers its own external review", content)
+        self.assertNotIn("runs its own external review", content)
+        # It must affirmatively describe the federal HHS-administered process,
+        # and state that Texas does not run its own process.
+        self.assertIn("federal external review process", content)
+        self.assertIn("Department of Health", content)
+        self.assertIn("does not run its own external review", content)
+        # It must NOT promise the federal process is open for filing — per
+        # HealthCare.gov the HHS-administered process can be unavailable and
+        # plans then provide their own filing instructions — so the copy must
+        # point at the denial notice as the source of filing instructions.
+        self.assertIn("Check your denial notice for the current filing", content)
+        self.assertNotIn("You can request this review through the federal", content)
+
+    def test_state_administered_state_describes_its_own_review(self):
+        """A state-process state still describes running its own external review."""
+        with self._patched_get_state_help():
+            url = reverse("state_help", kwargs={"slug": "california"})
+            response = self.client.get(url)
+        content = response.content.decode("utf-8")
+        self.assertIn("runs its own external review process", content)
+
+    def test_unknown_state_returns_404(self):
+        """An unknown state slug returns a 404."""
+        with self._patched_get_state_help():
+            url = reverse("state_help", kwargs={"slug": "not-a-real-state"})
+            response = self.client.get(url)
+        self.assertEqual(response.status_code, 404)
