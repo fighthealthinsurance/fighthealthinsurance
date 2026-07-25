@@ -200,6 +200,10 @@ def _wraps_cache_page(callback) -> bool:
     through ``__wrapped__`` and closure cells finds it wherever it sits, and
     accepts the class itself for older Django, regardless of how many other
     decorators (``cache_control``, ``csrf_exempt``, …) are layered on top.
+
+    ``dispatch`` is followed too, so a view cached with
+    ``method_decorator(cache_page(...), name="dispatch")`` — where the wrapping
+    lives on the class rather than on the URLconf callback — is still detected.
     """
     seen: set[int] = set()
     retained: list[object] = []  # keep ids unique: a freed object's id can recur
@@ -215,6 +219,8 @@ def _wraps_cache_page(callback) -> bool:
         if not callable(obj):
             continue
         stack.append(getattr(obj, "__wrapped__", None))
+        # Only meaningful when obj is a view class; plain functions have none.
+        stack.append(getattr(obj, "dispatch", None))
         for cell in getattr(obj, "__closure__", None) or ():
             try:
                 stack.append(cell.cell_contents)
