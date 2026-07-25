@@ -211,12 +211,22 @@ class TestPrecheckAlreadySentGuard:
 @pytest.mark.django_db
 class TestPaidFaxDispatchFallback:
     @override_settings(TEMPORAL_ENABLED=True)
+    @patch(
+        "fighthealthinsurance.helpers.fax_helpers.ray_cluster_available",
+        return_value=True,
+    )
     @patch("fighthealthinsurance.fax_actor_ref.fax_actor_ref")
     @patch("fighthealthinsurance.temporal_client.dispatch_fax_send")
     def test_failed_temporal_dispatch_falls_back_to_ray(
-        self, mock_dispatch, mock_actor_ref, test_denial
+        self, mock_dispatch, mock_actor_ref, mock_cluster, test_denial
     ):
-        """Temporal on + dispatch failure must not orphan a paid fax."""
+        """Temporal on + dispatch failure must not orphan a paid fax.
+
+        ray_cluster_available is forced True to model production. It is patched
+        explicitly rather than left to chance: without a cluster the fax is
+        deliberately left queued for the delayed-send sweep, and whether Ray
+        happens to be initialized in a given test session is ambient state.
+        """
         mock_dispatch.return_value = False
         mock_actor_ref.get = MagicMock()
         fax = _make_fax(test_denial)
@@ -226,6 +236,29 @@ class TestPaidFaxDispatchFallback:
         mock_actor_ref.get.do_send_fax.remote.assert_called_once_with(
             fax.hashed_email, str(fax.uuid)
         )
+
+    @override_settings(TEMPORAL_ENABLED=True)
+    @patch(
+        "fighthealthinsurance.helpers.fax_helpers.ray_cluster_available",
+        return_value=False,
+    )
+    @patch("fighthealthinsurance.fax_actor_ref.fax_actor_ref")
+    @patch("fighthealthinsurance.temporal_client.dispatch_fax_send")
+    def test_no_cluster_leaves_fax_queued_instead_of_booting_one(
+        self, mock_dispatch, mock_actor_ref, mock_cluster, test_denial
+    ):
+        """With no cluster, touching the actor ref would auto-init a local Ray
+        cluster inside the web process just to send one fax. The fax is left for
+        FaxPollingActor's delayed-send sweep instead."""
+        mock_dispatch.return_value = False
+        mock_actor_ref.get = MagicMock()
+        fax = _make_fax(test_denial)
+
+        StripeWebhookHelper._handle_fax_payment(str(fax.uuid))
+
+        mock_actor_ref.get.do_send_fax.remote.assert_not_called()
+        # Still queued, so the sweep can pick it up.
+        assert FaxesToSend.objects.filter(uuid=fax.uuid).exists()
 
     @override_settings(TEMPORAL_ENABLED=False)
     @patch("fighthealthinsurance.fax_actor_ref.fax_actor_ref")
