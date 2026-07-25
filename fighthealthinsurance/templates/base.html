@@ -176,6 +176,20 @@
 
     <!-- Actual content -->
     <main id="main-content" role="main">
+    {# Flash messages. Views that redirect on invalid input (e.g. a bad
+       denial_id/email combo) attach a messages.error() explaining why; without
+       this block the user is bounced with no visible reason, and unread
+       messages keep re-serializing into the cookie. #}
+    {% if messages %}
+    <div class="container mt-3">
+        {% for message in messages %}
+        <div class="alert {% if message.tags %}alert-{{ message.tags }}{% else %}alert-info{% endif %} alert-dismissible fade show" role="alert">
+            {{ message }}
+            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
     {% block content %}
 
     {% endblock content %}

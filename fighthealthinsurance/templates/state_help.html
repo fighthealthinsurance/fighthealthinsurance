@@ -233,8 +233,12 @@
                             <p class="mb-2">For most state-regulated (fully insured) plans, {{ state.name }} runs its own external review process, where an independent organization — not your insurer — re-examines the denial. Some plans instead use the <strong>federal external review process administered by the U.S. Department of Health &amp; Human Services (HHS)</strong>. This commonly applies to self-funded employer ("self-insured") plans and certain other coverage. Which process covers you depends on your plan type, so confirm the right path before you file.</p>
                             {% endif %}
                             {% if state.external_review.info_url %}
+                            {# Label the CTA to match the classification: on a federal-process
+                               state the prose has just said the state runs no external review
+                               of its own, so "External review details for <state>" would send
+                               the reader looking for a state process that doesn't exist. #}
                             <a href="{{ state.external_review.info_url }}" target="_blank" rel="noopener noreferrer" class="btn btn-primary">
-                                External review details for {{ state.name }} <i class="bi bi-box-arrow-up-right ms-1"></i>
+                                {% if state.external_review.review_type == 'federal' %}{{ state.name }} insurance department — appeal &amp; consumer help{% else %}External review details for {{ state.name }}{% endif %} <i class="bi bi-box-arrow-up-right ms-1"></i>
                             </a>
                             {% endif %}
                         </div>

@@ -393,7 +393,44 @@ class ExternalProSignupView(View):
 STATIC_ISH_PAGE_CACHE_SECONDS = 60 * 30
 
 
-class StaticIshView(generic.TemplateView):
+class PublicCachedPageMixin:
+    """Strips per-visitor session context from pages cached as public responses.
+
+    ``base.html`` renders the session's denial UUID into
+    ``<meta name="fhi-session-key">`` for the JS form-persistence helper. A page
+    served from a shared cache must not carry it: ``cache_page`` is a
+    *view-level* decorator, so it stores the response before
+    ``SessionMiddleware.process_response`` can add ``Vary: Cookie``. The entry
+    is therefore keyed on the URL alone, and the first visitor's UUID would be
+    replayed to every later visitor for the life of the entry — and by any CDN,
+    since these responses are ``Cache-Control: public``.
+
+    Blanking the values keeps the cached HTML genuinely visitor-independent,
+    which is what ``public`` asserts, instead of fragmenting the cache with
+    ``Vary: Cookie`` (which would store one copy per distinct cookie and evict
+    the shared entry these SEO pages exist to serve). Safe because the pages
+    that actually use form persistence — the scan/chat intake flow — are not
+    cached and do not use this mixin.
+
+    Regression coverage: ``tests/sync/test_public_page_cache_isolation.py``
+    (which runs against a real LocMemCache, since the test settings use
+    DummyCache and would otherwise hide the bug).
+    """
+
+    def get_context_data(self, **kwargs: typing.Any) -> dict[str, typing.Any]:
+        context: dict[str, typing.Any] = super().get_context_data(**kwargs)  # type: ignore[misc]
+        context["fhi_session_key"] = ""
+        context["fhi_request_method"] = ""
+        # Same reasoning for flash messages, which base.html renders: one
+        # visitor's error banner must not be baked into a shared cache entry.
+        # Overriding the context processor's value also means the storage is
+        # never marked read here, so the message survives to be shown on the
+        # next uncached page (the redirect targets are all uncached).
+        context["messages"] = []
+        return context
+
+
+class StaticIshView(PublicCachedPageMixin, generic.TemplateView):
     """Base class for marketing/content pages cached as whole responses.
 
     "Static-ish": the page content itself is fixed, but pages still render
@@ -461,7 +498,7 @@ class Turning26View(StaticIshView):
     template_name = "turning_26.html"
 
 
-class AppealDeadlineCalculatorView(generic.TemplateView):
+class AppealDeadlineCalculatorView(PublicCachedPageMixin, generic.TemplateView):
     """Public, no-login tool that estimates health-insurance appeal deadlines.
 
     The form is bound to ``request.GET`` so a filled-in result is bookmarkable,
@@ -498,7 +535,7 @@ class AppealDeadlineCalculatorView(generic.TemplateView):
         return context
 
 
-class StartAppealView(generic.TemplateView):
+class StartAppealView(PublicCachedPageMixin, generic.TemplateView):
     """Conversion-focused, no-login landing page that funnels visitors into the
     existing scan/chat appeal flow.
 
@@ -943,7 +980,11 @@ class ShareAppealView(View):
     def post(self, request):
         form = core_forms.ShareAppealForm(request.POST)
         if not form.is_valid():
-            logger.debug(form)
+            # Log only the validation errors: str(form) renders a *bound* form,
+            # i.e. every submitted value — here the patient's email and full
+            # appeal letter (PHI). Prod does not call load_loguru(), so
+            # loguru's default DEBUG stderr sink ships these to the aggregator.
+            logger.debug(form.errors)
             messages.error(
                 request,
                 "We couldn't process that submission. Please start again.",
@@ -967,7 +1008,9 @@ class ShareAppealView(View):
                 "We couldn't find that denial. Please start again.",
             )
             return redirect("scan")
-        logger.debug(form.cleaned_data)
+        # (Deliberately no logging of cleaned_data here: it holds the patient's
+        # email and the entire appeal letter, and this is the success path, so
+        # it would emit PHI on every successful share.)
         denial.appeal_text = form.cleaned_data["appeal_text"]
         denial.save()
         common_view_logic.mark_proposal_chosen(
@@ -1350,7 +1393,9 @@ class ChooseAppeal(View):
         form = core_forms.ChooseAppealForm(request.POST)
 
         if not form.is_valid():
-            logger.debug(form)
+            # Errors only — a bound ChooseAppealForm renders the email,
+            # appeal_text, and semi_sekret (a bearer credential).
+            logger.debug(form.errors)
             messages.error(
                 request,
                 "We couldn't process that submission. Please start again.",
@@ -1478,7 +1523,9 @@ class GenerateAppeal(View):
         if not form.is_valid():
             # Invalid input: redirect back to the start instead of returning
             # None (which raises "didn't return an HttpResponse" -> 500).
-            logger.debug(form)
+            # Errors only — a bound DenialRefForm renders the email and
+            # semi_sekret (a bearer credential).
+            logger.debug(form.errors)
             messages.error(
                 request,
                 "We couldn't process that submission. Please start again.",
@@ -3067,7 +3114,7 @@ class StateHelpView(StaticIshView):
         return context
 
 
-class DenialReasonDecoderIndexView(TemplateView):
+class DenialReasonDecoderIndexView(PublicCachedPageMixin, TemplateView):
     """Public index page for the Denial Reason Decoder tool – lists all reasons."""
 
     template_name = "denial_reason_decoder_index.html"
@@ -3091,7 +3138,7 @@ class DenialReasonDecoderIndexView(TemplateView):
         return context
 
 
-class DenialReasonDecoderView(TemplateView):
+class DenialReasonDecoderView(PublicCachedPageMixin, TemplateView):
     """Public detail page for a single denial reason (slug-based)."""
 
     template_name = "denial_reason_decoder_detail.html"
@@ -3131,7 +3178,7 @@ class DenialReasonDecoderView(TemplateView):
         return context
 
 
-class GlossaryIndexView(TemplateView):
+class GlossaryIndexView(PublicCachedPageMixin, TemplateView):
     """View for the health-insurance & appeals glossary index page."""
 
     template_name = "glossary_index.html"
@@ -3182,7 +3229,7 @@ class GlossaryIndexView(TemplateView):
         return context
 
 
-class GlossaryView(TemplateView):
+class GlossaryView(PublicCachedPageMixin, TemplateView):
     """View for an individual glossary term page."""
 
     template_name = "glossary.html"
@@ -3272,14 +3319,12 @@ def _insurer_guide_abs_url(url_name: str, **kwargs) -> str:
     return f"{_INSURER_GUIDE_CANONICAL_DOMAIN}{reverse(url_name, kwargs=kwargs)}"
 
 
-class InsurerAppealGuideIndexView(TemplateView):
+class InsurerAppealGuideIndexView(PublicCachedPageMixin, TemplateView):
     """Index page listing per-insurer 'how to appeal a denial' guides."""
 
     template_name = "insurer_appeal_guide_index.html"
 
     def get_context_data(self, **kwargs):
-        import json
-
         context = super().get_context_data(**kwargs)
         from fighthealthinsurance.insurer_appeal_guides import (
             LAST_REVIEWED,
@@ -3341,7 +3386,7 @@ class InsurerAppealGuideIndexView(TemplateView):
         return context
 
 
-class InsurerAppealGuideView(TemplateView):
+class InsurerAppealGuideView(PublicCachedPageMixin, TemplateView):
     """Individual per-insurer appeal guide page."""
 
     template_name = "insurer_appeal_guide.html"
@@ -3359,8 +3404,6 @@ class InsurerAppealGuideView(TemplateView):
         return super().get(request, *args, **kwargs)
 
     def get_context_data(self, **kwargs):
-        import json
-
         context = super().get_context_data(**kwargs)
         from fighthealthinsurance.insurer_appeal_guides import (
             GENERAL_APPEAL_STEPS,
