@@ -59,11 +59,13 @@ spec:
               cpu: "1"
               memory: 1Gi
           volumeMounts:
-            # Fax documents live on COMBINED_STORAGE -> /external_data. Mount the
-            # same PVC the web pods write to (deploy-back.yaml) so activities can
+            # Fax documents live on COMBINED_STORAGE -> /external_data. Mount
+            # the shared uploads PVC (k8s/uploads-pvc.yaml) so activities can
             # read the stored PDF instead of falling back to regeneration.
-            # NOTE: the Ray back cluster mounts a *different* claim (backup3) at
-            # this path -- see the pre-flight checklist in README.md.
+            # NOTE: the live web Deployment (k8s/deploy.yaml) does not mount
+            # this claim, and the Ray back cluster mounts a *different* claim
+            # (backup3) at this path -- see the pre-flight checklist in
+            # README.md.
             - name: new-uploads-longhorn-backup4
               mountPath: /external_data
             # SSH key for the FaxyMcFaxFace backend. The worker runs as root

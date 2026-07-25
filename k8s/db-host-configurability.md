@@ -63,9 +63,16 @@ workers.
   a staging-scoped ConfigMap — do it as a separate, explicitly-decided change.
 - **`k8s/deploy_dev.yaml`** (`web-dev`) — dev uses SQLite (`DEV_DB_LOC=/tmp/db.sqlite3`),
   not Postgres. No `PDBHOST` involved.
-- **`k8s/deploy-back.yaml`, `k8s/deploy_staging-back.yaml`, `k8s/ray/cluster-back.yaml`** —
-  stale `-back` backup copies, not applied by the deploy pipeline. Left as-is to
-  avoid drift; update them only if they are ever reactivated.
+- **`k8s/ray/cluster-back.yaml`** — stale `-back` backup copy, not applied by
+  the deploy pipeline. Left as-is to avoid drift; update it only if it is ever
+  reactivated. (The equivalent `k8s/deploy-back.yaml` and
+  `k8s/deploy_staging-back.yaml` copies have been deleted — they defined the
+  same `web`/`web-staging` Deployment names as the live manifests but with
+  pre-incident config, so an accidental `kubectl apply` would have clobbered
+  the live Deployments; for prod `web` it would also have repointed `PDBHOST`
+  at the old secrets-sourced database host (staging is secrets-sourced either
+  way, see above). The uploads PVC they carried now lives in
+  `k8s/uploads-pvc.yaml`.)
 - **`pg-*.yaml`, `k8s/deploy.yaml` service names** — the remaining legacy
   `fhi-pg*` references are CNPG **Cluster manifests** (`pg-copy.yaml`,
   `pg-recover.yaml`) naming clusters/buckets, and app **Service** names
