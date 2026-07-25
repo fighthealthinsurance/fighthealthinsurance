@@ -1520,12 +1520,12 @@ class RemoteOpenLike(RemoteModel):
     _propagate_http_errors: ClassVar[bool] = False
 
     # How long to skip an (api_base, model) pair after the endpoint answered
-    # "that model does not exist" (see _note_missing_model). Long enough to
-    # stop hammering/log-spamming a local endpoint that plainly doesn't serve
-    # the model, short enough to self-heal shortly after a redeploy brings it
-    # back. The hourly health sweep (model_is_ok's /models check) handles the
-    # long-term disable; this covers the gap between sweeps.
-    MODEL_MISSING_BACKOFF_SECONDS: ClassVar[float] = 300.0
+    # "that model does not exist" (see _note_missing_model). A model a backend
+    # doesn't serve is a deploy-level fact, not a transient blip, so re-probing
+    # sooner just re-spams the logs; an hour matches the health sweep's own
+    # cadence (model_is_ok's /models check) while still self-healing on its own
+    # after a redeploy brings the model back.
+    MODEL_MISSING_BACKOFF_SECONDS: ClassVar[float] = 3600.0
 
     def __init__(
         self,
