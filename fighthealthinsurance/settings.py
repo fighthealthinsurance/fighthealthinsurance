@@ -19,6 +19,7 @@ from functools import cached_property
 from pathlib import Path
 from typing import Optional
 
+from django.contrib.messages import constants as messages_constants
 from django.core.files.storage import Storage
 
 import minio as m
@@ -333,6 +334,15 @@ class Base(Configuration):
         "fighthealthinsurance.middleware.AuditMiddleware",
         "django_prometheus.middleware.PrometheusAfterMiddleware",
     ]
+
+    # Django's default tag for messages.ERROR is "error", but Bootstrap 5 (the
+    # version base.html loads) has no `.alert-error` class — only
+    # `.alert-danger`. Without this remap the flash-message block in base.html
+    # renders every error as unstyled body text, which defeats the point of
+    # showing it. Every messages.* call in this codebase is messages.error().
+    MESSAGE_TAGS = {
+        messages_constants.ERROR: "danger",
+    }
 
     GOOGLE_ANALYTICS = {
         "google_analytics_id": "G-2EDT623L0V",

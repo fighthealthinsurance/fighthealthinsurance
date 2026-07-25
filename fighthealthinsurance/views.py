@@ -412,13 +412,22 @@ class PublicCachedPageMixin:
     that actually use form persistence — the scan/chat intake flow — are not
     cached and do not use this mixin.
 
+    Sanitizing happens in ``render_to_response`` rather than
+    ``get_context_data`` on purpose: several subclasses (PrivacyPolicyView,
+    MHMDAView, TermsOfServiceView, ContactView, FAQView) build their context by
+    returning a fresh dict without chaining ``super()``, which silently skipped
+    a ``get_context_data``-based hook and left those pages leaking. Every
+    TemplateView render funnels through ``render_to_response``, so overriding
+    here cannot be bypassed by a subclass that forgets to call ``super()``.
+
     Regression coverage: ``tests/sync/test_public_page_cache_isolation.py``
     (which runs against a real LocMemCache, since the test settings use
     DummyCache and would otherwise hide the bug).
     """
 
-    def get_context_data(self, **kwargs: typing.Any) -> dict[str, typing.Any]:
-        context: dict[str, typing.Any] = super().get_context_data(**kwargs)  # type: ignore[misc]
+    def render_to_response(
+        self, context: dict[str, typing.Any], **response_kwargs: typing.Any
+    ) -> HttpResponse:
         context["fhi_session_key"] = ""
         context["fhi_request_method"] = ""
         # Same reasoning for flash messages, which base.html renders: one
@@ -427,7 +436,7 @@ class PublicCachedPageMixin:
         # never marked read here, so the message survives to be shown on the
         # next uncached page (the redirect targets are all uncached).
         context["messages"] = []
-        return context
+        return super().render_to_response(context, **response_kwargs)  # type: ignore[misc,no-any-return]
 
 
 class StaticIshView(PublicCachedPageMixin, generic.TemplateView):

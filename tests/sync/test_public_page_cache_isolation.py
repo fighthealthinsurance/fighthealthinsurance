@@ -19,11 +19,20 @@ These tests run against a real LocMemCache because the test configurations use
 DummyCache, which silently makes any cache-correctness bug invisible.
 """
 
+from unittest import mock
+
+from django.contrib.messages import get_messages
 from django.core.cache import cache
 from django.test import Client, TestCase, override_settings
 from django.urls import reverse
 
-# The cached public routes that render base.html.
+from fighthealthinsurance.views import GlossaryIndexView
+
+# Every cached route that renders base.html. This must include StaticIshView
+# pages, not just the new content routes: several StaticIshView subclasses
+# build context without chaining super(), which is exactly how five of them
+# (faq/tos/privacy_policy/mhmda/contact) kept leaking after the first fix
+# attempt while a new-routes-only list stayed green.
 CACHED_PUBLIC_ROUTES = [
     ("glossary_index", {}),
     ("glossary_term", {"slug": "external-review"}),
@@ -33,6 +42,14 @@ CACHED_PUBLIC_ROUTES = [
     ("insurer_appeal_guide", {"slug": "aetna"}),
     ("appeal_deadline_calculator", {}),
     ("start_appeal", {}),
+    # StaticIshView pages — the ones that override get_context_data without
+    # super() are the highest-risk, and all are linked from the site footer.
+    ("faq", {}),
+    ("tos", {}),
+    ("privacy_policy", {}),
+    ("mhmda", {}),
+    ("contact", {}),
+    ("about", {}),
 ]
 
 LOCMEM_CACHE = {
@@ -91,34 +108,56 @@ class PublicPageCacheIsolationTest(TestCase):
         base.html renders `{% if messages %}`; without suppression on cached
         pages, A's error banner would be replayed to every later visitor.
         """
-        from django.contrib.messages import get_messages
-
         url = reverse("glossary_index")
-        secret_message = "We couldn't find that denial. Please start again."
 
         primed = Client()
-        # Drive a real view that sets a message, then land on the cached page.
-        session = primed.session
-        session["denial_uuid"] = SECRET_UUID
-        session.save()
+        # Drive a real view that actually stores a message. ChooseAppeal posts
+        # an invalid form, which calls messages.error() and redirects — so the
+        # message is genuinely in storage and unread when the next request
+        # renders. (Asserting on a page GET alone would be vacuous: no message
+        # would ever exist.)
+        post = primed.post(reverse("choose_appeal"), {})
+        self.assertEqual(post.status_code, 302)
+        stored = [str(m) for m in get_messages(post.wsgi_request)]
+        self.assertTrue(
+            stored, "precondition failed: no flash message was actually stored"
+        )
+
         primed_response = primed.get(url)
         self.assertEqual(primed_response.status_code, 200)
 
         anonymous = Client().get(url)
         self.assertEqual(anonymous.status_code, 200)
-        self.assertNotIn(secret_message, anonymous.content.decode("utf-8"))
-        # And the cached page carries no message markup at all.
-        self.assertNotIn('role="alert"', anonymous.content.decode("utf-8"))
+        body = anonymous.content.decode("utf-8")
+        for message_text in stored:
+            self.assertNotIn(message_text, body)
+        # The messages block's distinctive class must be absent. (Asserting on
+        # role="alert" would pass coincidentally — the site banner partial and
+        # the decoder's deadline callout both use it.)
+        self.assertNotIn("alert-dismissible", body)
 
     def test_anonymous_page_is_still_cached(self):
-        """The caching still works for the anonymous audience it targets.
+        """Two cookie-less visitors share one cache entry (no fragmentation).
 
-        vary_on_cookie must not accidentally disable caching outright: two
-        cookie-less visitors should share one cache entry.
+        Proven by showing the *view* runs only once across two requests —
+        comparing response bodies would pass even with caching disabled, since
+        the page is deterministic.
         """
         url = reverse("glossary_index")
-        first = Client().get(url)
-        self.assertEqual(first.status_code, 200)
-        second = Client().get(url)
-        self.assertEqual(second.status_code, 200)
+        with mock.patch.object(
+            GlossaryIndexView,
+            "get_context_data",
+            side_effect=GlossaryIndexView.get_context_data,
+            autospec=True,
+        ) as spy:
+            first = Client().get(url)
+            self.assertEqual(first.status_code, 200)
+            second = Client().get(url)
+            self.assertEqual(second.status_code, 200)
+
         self.assertEqual(first.content, second.content)
+        self.assertEqual(
+            spy.call_count,
+            1,
+            "second anonymous request should have been served from the cache",
+        )
