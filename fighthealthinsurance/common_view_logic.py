@@ -3794,11 +3794,15 @@ class AppealsBackendHelper:
             )
             if is_real_appeal(pa.appeal_text)
         ]
-        # Everything streamed so far this run is persisted speculative=False
-        # (existing rows + drafts saved during streaming), so saved_appeal_texts
-        # is exactly the set already sent. Track it (by normalized raw text) and
-        # grow it as synthesis / the end-of-flow reconciliation serve more, so
-        # nothing is shipped twice.
+        # Everything streamed so far this run persists as speculative=False
+        # (existing rows + drafts saved during streaming), so this doubles as the
+        # set already sent. Track it by normalized raw text and grow it as
+        # synthesis / the end-of-flow reconciliation serve more, so nothing is
+        # shipped twice. Caveat: save_appeal deliberately swallows a failed
+        # asave and still streams the draft, so a draft whose write failed is
+        # absent here -- the reconciliation may then re-serve an identical row.
+        # Harmless (the client dedupes by content) and preferable to dropping a
+        # generated appeal because its row could not be written.
         served_texts: set[str] = {s.strip() for s in saved_appeal_texts if s}
         # Synthesis requires >=2 drafts to be meaningful: with a single
         # input, models often regurgitate it verbatim. The client dedupes
@@ -3916,10 +3920,14 @@ class AppealsBackendHelper:
         # never emits and an already-delivered stream ends dirty. order_by("id")
         # promotes the oldest reserve rows first (deterministic FIFO).
         try:
-            # chosen=False: a chosen row is the user's own pick, and for an
-            # editted one the text is user-authored -- never a draft, so it is
-            # not in served_texts and would be shipped straight back to them as
-            # a "new appeal" on a later run.
+            # chosen=False: never hand the user their own pick back as a "new
+            # appeal". In the ordinary case served_texts already covers this --
+            # saved_appeal_texts above is not chosen-filtered, so a chosen row's
+            # text is in the set and the dedup below skips it. This closes the
+            # gap where that is NOT true: mark_proposal_chosen running in
+            # another request mid-stream lands a chosen row (for an editted one,
+            # text the user wrote, which was never a draft) in between that
+            # query and this one, leaving it absent from served_texts.
             async for row in ProposedAppeal.objects.filter(
                 for_denial=denial, chosen=False
             ).order_by("id"):
