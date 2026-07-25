@@ -11,7 +11,6 @@ import ray
 
 from loguru import logger
 
-from fighthealthinsurance.base_actor_ref import ray_cluster_available
 from fighthealthinsurance.fax_actor_ref import fax_actor_ref
 from fighthealthinsurance.models import Appeal, Denial, FaxesToSend
 from fighthealthinsurance.temporal_client import (
@@ -19,25 +18,23 @@ from fighthealthinsurance.temporal_client import (
     dispatch_fax_send_blocking,
 )
 
-
-def _ray_fax_unavailable(hashed_email: str, fax_uuid: str) -> bool:
-    """True (having logged) when there is no Ray cluster to send the fax on.
-
-    Touching the actor ref without a cluster does not fail -- Ray auto-inits a
-    whole LOCAL one inside this process (see base_actor_ref.ray_cluster_available),
-    which for a web pod means standing up a cluster to send one fax. Skipping is
-    recoverable instead of merely wrong: the row stays in FaxesToSend and
-    FaxPollingActor's 60s send_delayed_faxes sweep picks it up. Logged at ERROR
-    rather than passed over quietly, because this is user-visible delivery and a
-    cluster being unreachable in production is an incident, not a normal state.
-    """
-    if ray_cluster_available():
-        return False
-    logger.error(
-        f"No Ray cluster available to send fax {fax_uuid}; leaving it queued for "
-        f"the delayed-fax sweep instead of starting a local cluster."
-    )
-    return True
+# NOTE: unlike every other per-task Ray dispatch on a request path, the fax
+# dispatches below deliberately do NOT gate on base_actor_ref.ray_cluster_available().
+# Elsewhere the gate is safe because skipping costs a background refresh; here it
+# would cost a fax the user paid for. Skipping is only recoverable if something
+# else retries the row, and nothing reliably does:
+#
+#   * Under TEMPORAL_ENABLED the delayed-fax sweep does not exist at all --
+#     polling_actor_setup skips launching FaxPollingActor and send_delayed_faxes
+#     early-returns (0, 0). These fallbacks are reached exactly when the Temporal
+#     dispatch already failed, so a skip strands a paid fax permanently.
+#   * With Temporal off the sweep exists but selects should_send=True rows at
+#     least an HOUR old, and stage_appeal_as_fax / blocking_dosend_* never set
+#     should_send -- so those rows are invisible to it.
+#
+# Auto-initializing a local Ray cluster to send one fax is bad. Silently never
+# sending it is worse. If this becomes a real problem in the web tier, the fix is
+# a durable retry for FaxesToSend, not a gate here.
 
 
 def _dispatch_or_ray_fax(
@@ -51,16 +48,12 @@ def _dispatch_or_ray_fax(
     (an explicit resend) supersedes any in-flight workflow for this fax.
     """
     if not dispatch_fax_send(hashed_email, str(fax_uuid), force_restart=force_restart):
-        if _ray_fax_unavailable(hashed_email, str(fax_uuid)):
-            return
         fax_actor_ref.get.do_send_fax.remote(hashed_email, str(fax_uuid))
 
 
 def _blocking_dispatch_or_ray_fax(hashed_email: str, fax_uuid: str) -> None:
     """Send a fax and block until it finishes, via Temporal when enabled else Ray."""
     if dispatch_fax_send_blocking(hashed_email, str(fax_uuid)) is None:
-        if _ray_fax_unavailable(hashed_email, str(fax_uuid)):
-            return
         ray.get(fax_actor_ref.get.do_send_fax.remote(hashed_email, str(fax_uuid)))
 
 

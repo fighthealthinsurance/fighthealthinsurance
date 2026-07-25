@@ -252,18 +252,9 @@ class TestCommonViewLogic(TestCase):
         async_to_sync(test)()
 
     @pytest.mark.django_db
-    @patch(
-        "fighthealthinsurance.helpers.fax_helpers.ray_cluster_available",
-        return_value=True,
-    )
     @patch("fighthealthinsurance.helpers.fax_helpers.fax_actor_ref")
-    def test_store_fax_number_as_destination(self, mock_fax_actor_ref, mock_cluster):
-        """Test that the fax number from a denial is stored as the destination in FaxesToSend.
-
-        A cluster is forced available so the dispatch is actually exercised; the
-        no-cluster branch (fax left queued for the delayed-send sweep) has its
-        own coverage in tests/async-unit/test_fax_send_core.py.
-        """
+    def test_store_fax_number_as_destination(self, mock_fax_actor_ref):
+        """Test that the fax number from a denial is stored as the destination in FaxesToSend."""
         # Create test data
         email = "test@example.com"
         fax_number = "1234567890"
@@ -301,14 +292,8 @@ class TestCommonViewLogic(TestCase):
         )
 
     @pytest.mark.django_db
-    @patch(
-        "fighthealthinsurance.helpers.fax_helpers.ray_cluster_available",
-        return_value=True,
-    )
     @patch("fighthealthinsurance.helpers.fax_helpers.fax_actor_ref")
-    def test_resend_sets_should_send_and_sent_flags(
-        self, mock_fax_actor_ref, mock_cluster
-    ):
+    def test_resend_sets_should_send_and_sent_flags(self, mock_fax_actor_ref):
         """Test that resend properly sets should_send=True and sent=False."""
         # Create test data
         email = "test@example.com"
