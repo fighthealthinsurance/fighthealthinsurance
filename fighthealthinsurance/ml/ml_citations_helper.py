@@ -101,7 +101,12 @@ class MLCitationsHelper:
         """
         Generates patient-specific citations for an insurance denial using ML models.
 
-        Uses detailed patient context—including denial text, plan context, and health history—along with procedure and diagnosis to retrieve citations from ML backends. Returns an empty list if all patient-specific context fields are missing or if no suitable backends are available.
+        Uses the denial text and health history—along with procedure and
+        diagnosis—to retrieve citations from ML backends. Returns an empty list
+        if both patient-specific context fields are missing (nothing to add
+        over the generic path) or if no suitable backends are available.
+        ``denial.plan_context`` is intentionally excluded; see the comment at
+        the context gate below.
 
         Args:
             denial: The insurance denial object containing relevant context.
@@ -114,13 +119,23 @@ class MLCitationsHelper:
         procedure = denial.procedure.strip().lower() if denial.procedure else ""
         diagnosis = denial.diagnosis.strip().lower() if denial.diagnosis else ""
         denial_text = denial.denial_text
-        plan_context = denial.plan_context
         patient_context = denial.health_history
 
-        if (
-            (not denial_text or denial_text == "")
-            and (not plan_context or plan_context == "")
-            and (not patient_context or patient_context == "")
+        # plan_context is deliberately not read here. Despite the name it is
+        # not the patient's plan document: the denial-type forms synthesize
+        # advocacy/regulatory boilerplate into it (the CalMatters article, a
+        # link to the CA CDI nondiscrimination regs, WPATH SOC text, an HRC
+        # lookup on the employer) to give the *appeal letter* persuasive
+        # framing. That is the wrong input for a citation search, and actively
+        # risky: this backend is asked for "citations with DOIs, PMIDs, or
+        # URLs", and the boilerplate is full of URLs it could echo back as if
+        # they were clinical evidence. get_citations' own prompt already omits
+        # it — plan_context only ever reached the model through the generic
+        # _build_context_extra injector in _infer — and the generic path below
+        # already passes plan_context=None. Not sending it also keeps the
+        # employer name out of a third-party request.
+        if (not denial_text or denial_text == "") and (
+            not patient_context or patient_context == ""
         ):
             logger.debug(
                 f"Specific citations for {denial}: skipping, no patient context"
@@ -131,9 +146,9 @@ class MLCitationsHelper:
         try:
             # Pass the denial's own external-model consent through: the full
             # citation backends are external (Perplexity), and this call sends
-            # denial_text / health_history / plan_context to them, so a denial
-            # whose user declined external models (use_external=False) must get
-            # no backends here (the router returns [] and we bail below). For
+            # denial_text / health_history to them, so a denial whose user
+            # declined external models (use_external=False) must get no
+            # backends here (the router returns [] and we bail below). For
             # consenting denials this keeps the path reachable, which is why
             # the router isn't left at its internal-only default.
             full_citation_backends = ml_router.full_find_citation_backends(
@@ -154,7 +169,7 @@ class MLCitationsHelper:
                         procedure=procedure,
                         diagnosis=diagnosis,
                         patient_context=patient_context,
-                        plan_context=plan_context,
+                        plan_context=None,
                     )
                 )
 

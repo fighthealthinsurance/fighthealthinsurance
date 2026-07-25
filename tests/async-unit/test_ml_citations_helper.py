@@ -97,6 +97,50 @@ class TestMLCitationsHelper:
         mock_ml_router.full_find_citation_backends.assert_called_with(use_external=True)
 
     @pytest.mark.asyncio
+    @patch("fighthealthinsurance.ml.ml_citations_helper.ml_router")
+    async def test_specific_citations_never_send_plan_context(self, mock_ml_router):
+        """plan_context must not reach the external citation backend.
+
+        It holds appeal-letter advocacy boilerplate (regulator links, WPATH
+        text, an employer HRC lookup), not clinical evidence — and feeding a
+        model URLs while asking it for "citations with DOIs, PMIDs, or URLs"
+        invites it to echo them back as if they were research.
+        """
+        mock_ml_router.full_find_citation_backends.return_value = [self.mock_backend]
+        self.mock_denial.plan_context = "Plan boilerplate with https://example.com"
+
+        with patch(
+            "fighthealthinsurance.ml.ml_citations_helper.best_within_timelimit",
+            new_callable=AsyncMock,
+            return_value=["Citation 1"],
+        ):
+            await MLCitationsHelper.generate_specific_citations(denial=self.mock_denial)
+
+        assert self.mock_backend.get_citations.call_args.kwargs["plan_context"] is None
+
+    @pytest.mark.asyncio
+    @patch("fighthealthinsurance.ml.ml_citations_helper.ml_router")
+    async def test_plan_context_alone_does_not_reach_a_backend(self, mock_ml_router):
+        """A denial with only plan_context has nothing patient-specific to add.
+
+        Its procedure/diagnosis are already covered by the generic path, so it
+        must not spend an external call.
+        """
+        mock_ml_router.full_find_citation_backends.return_value = [self.mock_backend]
+        denial = MagicMock(spec=Denial)
+        denial.denial_text = None
+        denial.health_history = None
+        denial.plan_context = "Plan boilerplate"
+        denial.procedure = "test"
+        denial.diagnosis = "test"
+        denial.use_external = True
+
+        citations = await MLCitationsHelper.generate_specific_citations(denial=denial)
+
+        assert citations == []
+        self.mock_backend.get_citations.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_generate_specific_citations_no_context(self):
         """Test that generate_specific_citations returns empty when no context."""
         # Create denial with no patient-specific context
