@@ -1926,7 +1926,9 @@ section:not(.slider) .share-subcopy {
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    color: #7b920a;
+    /* Darker than the site's usual green: this is small (0.7rem) text on a pale
+       green chip, so it needs the 4.5:1 body-text ratio (this pair is ~5.4:1). */
+    color: #566b07;
     background: rgba(165, 196, 34, 0.15);
     border-radius: 999px;
     padding: 0.2rem 0.6rem;

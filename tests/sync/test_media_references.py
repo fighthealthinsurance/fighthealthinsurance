@@ -1,5 +1,7 @@
 """Tests for the Media References (press) page and its underlying data."""
 
+import re
+
 from django.test import Client, TestCase
 from django.urls import reverse
 from django.utils.html import escape
@@ -61,7 +63,20 @@ class TestHomePageLinksToMediaReferences(TestCase):
     def test_home_page_links_to_media_references(self):
         response = self.client.get(reverse("root"))
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, reverse("media-references"))
+        url = reverse("media-references")
+        content = response.content.decode("utf-8")
+        # Assert each affordance individually: checking only that *some* link
+        # targets the route would still pass if two of the three were dropped.
+        for css_class in (
+            "trust-chip-link",  # hero "Featured in Forbes, CBS & more" chip
+            "featured-title-link",  # the "As Featured In" section heading
+            "featured-see-all-link",  # "See all media references" under the logos
+        ):
+            self.assertRegex(
+                content,
+                rf'<a href="{re.escape(url)}"[^>]*class="[^"]*{css_class}\b',
+                msg=f"home page is missing the {css_class} link to {url}",
+            )
 
 
 class TestMediaReferencesData(TestCase):

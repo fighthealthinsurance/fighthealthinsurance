@@ -20,7 +20,12 @@ if [ "${1:-}" = "--warn-only" ]; then
   WARN_ONLY=true
 fi
 
-REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+# Resolve the repo root from THIS script's location, not the caller's cwd: the
+# callers below invoke it from wherever the build happens to be, and in a tree
+# with no .git (a source tarball) a cwd-based fallback would look for
+# .gitattributes in the wrong place and silently skip validation.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(git -C "${SCRIPT_DIR}" rev-parse --show-toplevel 2>/dev/null || dirname "${SCRIPT_DIR}")"
 GITATTRIBUTES="${REPO_ROOT}/.gitattributes"
 LFS_MAGIC="version https://git-lfs.github.com/spec/v1"
 
