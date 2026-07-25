@@ -70,9 +70,7 @@ class SpeculativeAppealsHelperTest(TestCase):
             )
 
         self.assertEqual(count, 2)
-        specs = ProposedAppeal.objects.filter(
-            for_denial=self.denial, speculative=True
-        )
+        specs = ProposedAppeal.objects.filter(for_denial=self.denial, speculative=True)
         self.assertEqual(specs.count(), 2)
         for s in specs:
             self.assertTrue(s.speculative)
@@ -103,9 +101,7 @@ class SpeculativeAppealsHelperTest(TestCase):
     def test_skips_when_no_denial_text(self):
         blank = Denial.objects.create(hashed_email="h2", denial_text="")
         with patch(_MAKE_APPEALS) as mock_make:
-            count = SpeculativeAppealsHelper.generate_for_denial_sync(
-                blank.denial_id
-            )
+            count = SpeculativeAppealsHelper.generate_for_denial_sync(blank.denial_id)
         self.assertEqual(count, 0)
         mock_make.assert_not_called()
 
@@ -126,6 +122,76 @@ class SpeculativeAppealsHelperTest(TestCase):
                 self.denial.denial_id
             )
         self.assertEqual(count, 1)
+
+    def test_force_regenerates_past_a_promoted_reserve_row(self):
+        """A promoted reserve row (speculative=False, still tagged speculative)
+        survives invalidation on purpose, and the idempotency guard matches it --
+        so without force a denial that ever served one reserve appeal could never
+        build a reserve again. This is the real behavior the text-replacement
+        test can only assert through a mock."""
+        ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="A reserve appeal that was already served to the user.",
+            speculative=False,
+            context_level="speculative",
+        )
+        with patch(_MAKE_APPEALS) as mock_make, patch(
+            _SUMMARIZE, new_callable=AsyncMock, return_value=None
+        ):
+            mock_make.return_value = iter(
+                [
+                    GeneratedAppeal(
+                        text="A freshly generated reserve appeal letter.",
+                        model_name="m",
+                    )
+                ]
+            )
+            count = SpeculativeAppealsHelper.generate_for_denial_sync(
+                self.denial.denial_id, force=True
+            )
+        self.assertEqual(count, 1)
+
+        # ...and without force the same call is correctly a no-op.
+        with patch(_MAKE_APPEALS) as mock_make:
+            self.assertEqual(
+                SpeculativeAppealsHelper.generate_for_denial_sync(
+                    self.denial.denial_id
+                ),
+                0,
+            )
+        mock_make.assert_not_called()
+
+    def test_discards_reserve_when_denial_text_changed_mid_generation(self):
+        """Generation takes minutes and the user can replace the letter meanwhile.
+        Rows written about the OLD letter must not be persisted -- the
+        reconciliation promotes oldest-first, so it would actively PREFER them
+        and hand the user an appeal about a denial they replaced."""
+        denial_id = self.denial.denial_id
+
+        def _replace_text_then_yield(*args, **kwargs):
+            # Simulate the user replacing the letter while make_appeals runs.
+            Denial.objects.filter(denial_id=denial_id).update(
+                denial_text="A completely different denial letter."
+            )
+            return iter(
+                [
+                    GeneratedAppeal(
+                        text="An appeal about the ORIGINAL, now-replaced letter.",
+                        model_name="m",
+                    )
+                ]
+            )
+
+        with patch(_MAKE_APPEALS, side_effect=_replace_text_then_yield), patch(
+            _SUMMARIZE, new_callable=AsyncMock, return_value=None
+        ):
+            count = SpeculativeAppealsHelper.generate_for_denial_sync(denial_id)
+
+        self.assertEqual(count, 0)
+        self.assertFalse(
+            ProposedAppeal.objects.filter(for_denial=self.denial).exists(),
+            "a reserve about the replaced letter must not be persisted",
+        )
 
     def test_generation_failure_returns_zero_not_raises(self):
         # The prewarm is patched too: it runs before make_appeals, so mocking it
@@ -295,7 +361,10 @@ class DispatchOnDenialCreateTest(TestCase):
                 denial=existing,
             )
 
-        mock_dispatch.assert_called_once_with(existing.denial_id)
+        # force=True is essential here: the idempotency guard also matches the
+        # PROMOTED row below, which invalidation deliberately keeps, so without
+        # it this denial could never rebuild a reserve for its new letter.
+        mock_dispatch.assert_called_once_with(existing.denial_id, force=True)
         # The stale reserve is gone; the already-served row is untouched.
         self.assertFalse(
             ProposedAppeal.objects.filter(pk=held_back.pk).exists(),

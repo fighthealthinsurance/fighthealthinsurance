@@ -1164,6 +1164,7 @@ def _generated_to_appeals_text(
     (``ok``/``no_output``) is appended to it for the models_tried diagnostic.
     """
     produced = False
+    runt_only = False
     try:
         try:
             model_results = k_text_future.result()
@@ -1191,14 +1192,25 @@ def _generated_to_appeals_text(
             # It's either full or a reason to plug into a template
             if k == "full":
                 logger.debug(f"Bubbling up full response ({len(text)} chars)")
-                produced = True
+                # Gate on is_real_appeal, NOT merely on having text: the ladder
+                # rejects runts downstream (_peek_real_or_none), so counting one
+                # as "ok" would report a model as working in the very zero-appeal
+                # log that exists to say which models failed -- and "ok" then
+                # masks that model's real failures at every other tier.
+                if is_real_appeal(text):
+                    produced = True
+                else:
+                    runt_only = True
                 yield GeneratedAppeal(
                     text=text, model_name=model_name, context_level=context_level
                 )
             else:
                 templated = template_generator.generate(text)
                 if templated is not None:
-                    produced = True
+                    if is_real_appeal(templated):
+                        produced = True
+                    else:
+                        runt_only = True
                     yield GeneratedAppeal(
                         text=templated,
                         model_name=model_name,
@@ -1206,11 +1218,22 @@ def _generated_to_appeals_text(
                     )
     finally:
         # Record whether this model produced any deliverable text, for the
-        # models_tried diagnostic. The finally runs when the generator is
-        # exhausted (the zero-appeal ladder consumes every generator fully, so
-        # all outcomes are captured before the summary is built).
+        # models_tried diagnostic.
+        #
+        # Caveat, deliberate: this runs when the generator is exhausted or
+        # collected. The zero-appeal ladder drains every stage, so the failure
+        # case this diagnostic exists for is covered -- but a generator that is
+        # never started records nothing, so on a run where an early model wins
+        # the list is partial by design (see the note at the diagnostics_sink
+        # assignment).
         if outcomes is not None:
-            outcomes.append((model_name, "ok" if produced else "no_output"))
+            if produced:
+                outcome = "ok"
+            elif runt_only:
+                outcome = "runt_only"
+            else:
+                outcome = "no_output"
+            outcomes.append((model_name, outcome))
 
 
 def _peek_real_or_none(

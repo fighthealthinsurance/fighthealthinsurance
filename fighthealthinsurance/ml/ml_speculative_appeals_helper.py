@@ -38,26 +38,36 @@ class SpeculativeAppealsHelper:
     MAX_SPECULATIVE_APPEALS = 3
 
     @classmethod
-    def generate_for_denial_sync(cls, denial_id: Any) -> int:
+    def generate_for_denial_sync(cls, denial_id: Any, force: bool = False) -> int:
         """Generate + persist speculative candidate appeals for ``denial_id``.
 
         Idempotent: a no-op if speculative rows already exist for the denial.
         Returns the number of speculative appeals persisted (0 on skip/failure).
         Exception-safe: never raises, so a background caller can't crash on it.
+
+        ``force=True`` skips the idempotency check. Required by the
+        denial-text-replacement path: that guard also matches PROMOTED rows
+        (``speculative=False`` but still ``context_level="speculative"``, kept
+        so analytics can see a served reserve), and those survive invalidation
+        on purpose -- so without ``force`` a denial that ever served one reserve
+        appeal could never build a reserve again.
         """
-        # Lazy imports: this module is imported from the denial-creation path,
-        # and common_view_logic (appealGenerator) / the ORM models pull in a
-        # large graph -- keep it out of import time and any cycle.
-        from fighthealthinsurance.common_view_logic import appealGenerator
-        from fighthealthinsurance.generate_appeal import AppealTemplateGenerator
-        from fighthealthinsurance.ml.ml_appeal_context_helper import (
-            MLAppealContextHelper,
-        )
-        from django.db.models import Q
-
-        from fighthealthinsurance.models import Denial, ProposedAppeal
-
         try:
+            # Lazy imports: this module is imported from the denial-creation
+            # path, and common_view_logic (appealGenerator) / the ORM models pull
+            # in a large graph -- keep it out of import time and any cycle.
+            # INSIDE the try so the "never raises" contract above actually holds:
+            # an ImportError/ImproperlyConfigured from that graph would otherwise
+            # escape into whichever thread or actor dispatched this.
+            from django.db.models import Q
+
+            from fighthealthinsurance.common_view_logic import appealGenerator
+            from fighthealthinsurance.generate_appeal import AppealTemplateGenerator
+            from fighthealthinsurance.ml.ml_appeal_context_helper import (
+                MLAppealContextHelper,
+            )
+            from fighthealthinsurance.models import Denial, ProposedAppeal
+
             denial = (
                 Denial.objects.filter(denial_id=denial_id)
                 .select_related(
@@ -83,15 +93,30 @@ class SpeculativeAppealsHelper:
             # Match promoted rows too (served rows are flipped to
             # speculative=False but keep context_level="speculative"), so a
             # re-invocation after some were served can't duplicate the reserve.
-            if ProposedAppeal.objects.filter(
-                Q(speculative=True) | Q(context_level=CONTEXT_LEVEL_SPECULATIVE),
-                for_denial=denial,
-            ).exists():
+            # force=True bypasses this for a replaced denial letter, where the
+            # whole point is to rebuild the reserve from the new text.
+            if (
+                not force
+                and ProposedAppeal.objects.filter(
+                    Q(speculative=True) | Q(context_level=CONTEXT_LEVEL_SPECULATIVE),
+                    for_denial=denial,
+                ).exists()
+            ):
                 logger.debug(
                     f"speculative appeals: denial {denial_id} already has "
                     f"speculative rows; skipping"
                 )
                 return 0
+
+            # The letter this run is about. Generation takes tens of seconds to
+            # minutes, and the user can replace the text meanwhile (correcting a
+            # bad OCR pass is a normal flow) -- so this is re-checked against the
+            # DB before anything is persisted. Without that, a run started on the
+            # old letter finishes AFTER the replacement's invalidation swept the
+            # reserve, inserts rows arguing about a denial that no longer exists,
+            # and the reconciliation's oldest-first promotion actively PREFERS
+            # them -- handing the user an appeal letter about the wrong denial.
+            generated_from_text = denial.denial_text
 
             # Force internal-only end-to-end: the primary calls are already
             # internal, but make_appeals' backup_calls honor denial.use_external.
@@ -144,6 +169,24 @@ class SpeculativeAppealsHelper:
                 diagnostics_sink=diagnostics,
             )
 
+            # Generation is done; make sure it is still about the CURRENT letter
+            # before persisting anything (see generated_from_text above). Read
+            # straight from the DB -- `denial` is a snapshot from before the
+            # generation and cannot see a replacement.
+            current_text = (
+                Denial.objects.filter(denial_id=denial_id)
+                .values_list("denial_text", flat=True)
+                .first()
+            )
+            if current_text != generated_from_text:
+                logger.info(
+                    f"speculative appeals: denial {denial_id} text was replaced "
+                    f"while precomputing; discarding this reserve so a stale "
+                    f"letter can't be served (a fresh precompute is dispatched "
+                    f"by the text-change path)"
+                )
+                return 0
+
             saved = 0
             for item in appeals:
                 if saved >= cls.MAX_SPECULATIVE_APPEALS:
@@ -182,7 +225,7 @@ class SpeculativeAppealsHelper:
             return 0
 
 
-def dispatch_speculative_appeals(denial_id: Any) -> None:
+def dispatch_speculative_appeals(denial_id: Any, force: bool = False) -> None:
     """Fire-and-forget the speculative precompute for a freshly-created denial.
 
     Primary path (production): a detached Ray actor so the work survives the
@@ -194,6 +237,9 @@ def dispatch_speculative_appeals(denial_id: Any) -> None:
     Test* configs), where a background generation's DB writes would race
     TestCase transaction teardown -- same reasoning as the site-banner refresh
     thread.
+
+    ``force`` is passed through to the helper's idempotency check; the
+    denial-text-replacement path needs it (see generate_for_denial_sync).
     """
     if not getattr(settings, "SPECULATIVE_APPEALS_PRECOMPUTE", True):
         logger.debug(
@@ -209,7 +255,7 @@ def dispatch_speculative_appeals(denial_id: Any) -> None:
             )
 
             actor = speculative_appeals_actor_ref.get
-            actor.prefetch_for_denial.remote(denial_id)
+            actor.prefetch_for_denial.remote(denial_id, force=force)
             return
         except Exception:
             logger.opt(exception=True).warning(
@@ -221,7 +267,7 @@ def dispatch_speculative_appeals(denial_id: Any) -> None:
         from fighthealthinsurance.utils import run_in_registered_daemon_thread
 
         run_in_registered_daemon_thread(
-            SpeculativeAppealsHelper.generate_for_denial_sync, denial_id
+            SpeculativeAppealsHelper.generate_for_denial_sync, denial_id, force=force
         )
     except Exception:
         logger.opt(exception=True).error(

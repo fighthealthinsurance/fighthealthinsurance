@@ -88,9 +88,16 @@ class Command(BaseCommand):
     # ProposedAppeal (denial flow picks)
     # ---------------------------------------------------------------- #
 
-    def _recover_proposed(self, pa: ProposedAppeal) -> Optional[Tuple[str, bool, str]]:
-        """Return (model_name, synthesized, method) recovered from related
-        records, or None when the database lacks sufficient evidence."""
+    def _recover_proposed(
+        self, pa: ProposedAppeal
+    ) -> Optional[Tuple[str, bool, Optional[str], str]]:
+        """Return (model_name, synthesized, context_level, method) recovered from
+        related records, or None when the database lacks sufficient evidence.
+
+        context_level rides along so the two dashboard tables agree: without it a
+        backfilled pick shows up under its real model in the model-usage table
+        but under "(unattributed)" in the context-level table.
+        """
         if pa.for_denial_id is None:
             return None
         # model_name is blank=True, so exclude empty strings too — a blank
@@ -117,11 +124,16 @@ class Command(BaseCommand):
                 and original_name.strip()
                 and not is_object_repr(original_name)
             ):
-                return (original_name, original.synthesized, "text_match")
+                return (
+                    original_name,
+                    original.synthesized,
+                    original.context_level,
+                    "text_match",
+                )
         if not pa.editted:
             inferred = ProposedAppeal.sole_draft_attribution(pa.for_denial_id)
             if inferred is not None and not is_object_repr(inferred[0]):
-                return (inferred[0], inferred[1], "sole_draft")
+                return (inferred[0], inferred[1], inferred[2], "sole_draft")
         return None
 
     def _backfill_proposed_appeals(self, apply_changes: bool) -> None:
@@ -153,8 +165,9 @@ class Command(BaseCommand):
             recovered = self._recover_proposed(pa)
             new_name: Optional[str] = None
             new_synthesized: Optional[bool] = None
+            new_context_level: Optional[str] = None
             if recovered is not None:
-                new_name, new_synthesized, method = recovered
+                new_name, new_synthesized, new_context_level, method = recovered
                 counts[f"recovered_{method}"] += 1
             elif not raw_blank and is_object_repr(raw):
                 new_name = normalize_model_label(raw)
@@ -187,8 +200,10 @@ class Command(BaseCommand):
                 # as "(unattributed)" consistently with NULL rows.
                 new_name = None
                 counts["normalized_blank_to_null"] += 1
-            if new_name == raw and (
-                new_synthesized is None or new_synthesized == pa.synthesized
+            if (
+                new_name == raw
+                and (new_synthesized is None or new_synthesized == pa.synthesized)
+                and (new_context_level is None or new_context_level == pa.context_level)
             ):
                 counts["already_consistent"] += 1
                 continue
@@ -199,6 +214,12 @@ class Command(BaseCommand):
                 if new_synthesized is not None and new_synthesized != pa.synthesized:
                     pa.synthesized = new_synthesized
                     update_fields.append("synthesized")
+                if (
+                    new_context_level is not None
+                    and new_context_level != pa.context_level
+                ):
+                    pa.context_level = new_context_level
+                    update_fields.append("context_level")
                 pa.save(update_fields=update_fields)
 
         already_valid = total_chosen - target_total

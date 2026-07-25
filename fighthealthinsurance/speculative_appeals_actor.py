@@ -41,7 +41,7 @@ class SpeculativeAppealsActor:
     async def hello(self) -> str:
         return "Hi"
 
-    async def prefetch_for_denial(self, denial_id: Any) -> int:
+    async def prefetch_for_denial(self, denial_id: Any, force: bool = False) -> int:
         """Generate + persist speculative candidate appeals for a denial.
 
         The helper is synchronous (make_appeals is a blocking iterator), so run
@@ -65,5 +65,5 @@ class SpeculativeAppealsActor:
         count: int = await database_sync_to_async(
             SpeculativeAppealsHelper.generate_for_denial_sync,
             thread_sensitive=False,
-        )(denial_id)
+        )(denial_id, force=force)
         return count

@@ -2443,12 +2443,20 @@ class RemoteOpenLike(RemoteModel):
     ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
         if api_base is None:
             api_base = self.api_base
+        # Guard the EFFECTIVE host, not self.api_base. RemoteHealthInsurance is
+        # explicitly constructable with only a backup host (it raises just when
+        # both are unset), and the dual-mode / fallback legs of _infer pass
+        # api_base=self.backup_api_base. Testing self.api_base there discarded a
+        # perfectly good backup host and returned None, so a backup-only
+        # deployment registered the backend and then contributed zero appeals
+        # with no error anywhere -- a silent zero-appeal cause. Checked before
+        # the log line below, which otherwise prints "at None".
+        if api_base is None:
+            return None
         logger.debug(
             f"Calling {model} at {api_base} (prompt_len={len(prompt) if prompt else 0}, "
             f"system_prompt_len={len(system_prompt) if system_prompt else 0})"
         )
-        if self.api_base is None:
-            return None
         # Recently answered "model does not exist" here: skip quietly until
         # the cooldown expires instead of re-hitting (and re-logging) on
         # every call. The startup probe (raise_http_errors) always probes

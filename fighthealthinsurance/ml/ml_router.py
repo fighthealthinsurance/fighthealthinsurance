@@ -717,24 +717,52 @@ class MLRouter(object):
             )
         if text is not None:
             text_optional = f"--- Full-ish article text: {text[0:max_input_chars]} ---"
+        system_prompts = [
+            "You are a helpful assistant summarizing article(s) for a person or other LLM wriitng an appeal. Be very concise."
+        ]
+        instructions = (
+            "If present in the input include a list of the most relevant "
+            "articles referenced (with PMID / DOIs or links if present in the "
+            "input). If multile studies prefer US studies then generic "
+            "non-country specific and then other countries. We're focused on "
+            "helping american patients and providers."
+        )
+        # Each attempt must carry SOURCE TEXT. The abstract-only retry below is
+        # skipped when there is no abstract: with abstract=None its prompt would
+        # be the bare instruction with nothing to summarize, and a model answers
+        # that with a refusal or an invention rather than failing. Callers can't
+        # tell the difference (they only check for a falsy result), so for
+        # denial-text summarization that fabricated text would be cached in
+        # denial_text_summary and substituted for the user's actual letter on
+        # every later generation -- appeals written about a denial that isn't
+        # theirs. Both denial callers pass abstract=None.
+        attempts: list[str] = [
+            f"Summarize the following {title} for use in a health insurance "
+            f"appeal: {abstract_optional}{text_optional}. {instructions}"
+        ]
+        if abstract_optional and text_optional:
+            # Only meaningful when the first attempt had MORE than the abstract;
+            # otherwise it is a byte-for-byte repeat of it.
+            attempts.append(
+                f"Summarize the following {title} for use in a health insurance "
+                f"appeal: {abstract_optional}. {instructions}"
+            )
         for m in models:
-            r = await m._infer_no_context(
-                system_prompts=[
-                    "You are a helpful assistant summarizing article(s) for a person or other LLM wriitng an appeal. Be very concise."
-                ],
-                prompt=f"Summarize the following {title} for use in a health insurance appeal: {abstract_optional}{text_optional}. If present in the input include a list of the most relevant articles referenced (with PMID / DOIs or links if present in the input). If multile studies prefer US studies then generic non-country specific and then other countries. We're focused on helping american patients and providers.",
-            )
-            if r is not None:
-                return r
-            # Try again with only the abstract
-            r = await m._infer_no_context(
-                system_prompts=[
-                    "You are a helpful assistant summarizing article(s) for a person or other LLM wriitng an appeal. Be very concise."
-                ],
-                prompt=f"Summarize the following {title} for use in a health insurance appeal: {abstract_optional}. If present in the input include a list of the most relevant articles referenced (with PMID / DOIs or links if present in the input). If multile studies prefer US studies then generic non-country specific and then other countries. We're focused on helping american patients and providers.",
-            )
-            if r is not None:
-                return r
+            for prompt in attempts:
+                try:
+                    r = await m._infer_no_context(
+                        system_prompts=system_prompts, prompt=prompt
+                    )
+                except Exception as e:
+                    # Per-model guard: subclasses with _propagate_http_errors
+                    # re-raise unexpected statuses, and without this one 500 from
+                    # the first backend would skip every remaining fallback.
+                    logger.opt(exception=True).warning(
+                        f"summarize: {m} failed, trying the next model: {e}"
+                    )
+                    break
+                if r is not None:
+                    return r
         return None
 
     def working(self) -> bool:

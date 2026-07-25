@@ -589,11 +589,13 @@ function armHardTimeout(): void {
     // riding the REST leg, force the retry loop to terminate rather than
     // letting slow WS attempts keep the user waiting indefinitely.
     if (!usingRestFallback && !handingOffToRest) {
-      retries = maxRetries;
       // Latch before closing: the socket's onclose/onerror fire async after
       // done() below, and without this they'd run the normal-completion path
       // (green checklist + "appeals are ready" over the give-up message) and
-      // call done() a second time.
+      // call done() a second time. done() also consults wsGaveUp to stop
+      // retrying -- deliberately NOT by faking `retries = maxRetries`, which
+      // used to make the report claim retries that never happened (e.g.
+      // "ws_retries=4/4" alongside a single wait_attempts_ms entry).
       wsGaveUp = true;
       closeActiveWebSocket();
       endCurrentAttempt();
@@ -687,7 +689,12 @@ function done(): void {
   // If we've reached stream end but also less than maxRetries appeals retry.
   // Once we've fallen back to REST we stop retrying: REST is the last-resort
   // transport, so bouncing back to the flaky WebSocket would just spin.
-  if (appealsSoFar.length < 3 && retries < maxRetries && !usingRestFallback) {
+  if (
+    appealsSoFar.length < 3 &&
+    retries < maxRetries &&
+    !usingRestFallback &&
+    !wsGaveUp
+  ) {
     console.error("Did not have expected number of appeals, retrying.");
     retries = retries + 1;
     doQuery(my_backend_url, my_data, my_rest_fallback_url);
@@ -1141,6 +1148,12 @@ function connectWebSocket(
     // Placed after the handoff/give-up guard so a queued reconnect that
     // returns early can't clear a terminal reason about to be reported.
     wsEndReason = 'none';
+    // Same reasoning for the server's correlation id: it is captured from this
+    // attempt's init frame, so a retry must not keep the previous attempt's.
+    // Carrying a stale one is worse than reporting none, because the earlier
+    // generation may have SUCCEEDED server-side -- joining a client failure to
+    // that healthy trace sends triage to the wrong place.
+    serverGenerationId = 'none';
     // Start the per-attempt wait timer. connectWebSocket is called
     // recursively for retries, so each invocation gets its own start.
     beginAttempt();

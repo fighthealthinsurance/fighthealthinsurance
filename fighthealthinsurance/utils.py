@@ -897,9 +897,18 @@ def run_in_registered_daemon_thread(
     Sync sibling of ``fire_and_forget_in_new_threadpool``: use it when the work
     is a blocking sync callable (e.g. a heavy generation) launched from a sync
     request path that must not block on it. Exceptions are logged, not raised.
+
+    Closes this thread's DB connections on the way out. A thread that touches
+    the ORM outside the request cycle never returns its checkout otherwise --
+    the connection-starvation failure mode Prod's DATABASES comment describes,
+    and the reason site_banner_refresh does the same in a finally. The Ray actor
+    path gets this for free from channels' database_sync_to_async; this is the
+    equivalent for the in-process fallback.
     """
 
     def run() -> None:
+        from django.db import close_old_connections
+
         try:
             fn(*args, **kwargs)
         except Exception as e:
@@ -907,6 +916,12 @@ def run_in_registered_daemon_thread(
                 f"Exception in registered daemon thread {fn}: {e}"
             )
         finally:
+            try:
+                close_old_connections()
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Failed to close DB connections in registered daemon thread"
+                )
             with _fire_and_forget_threads_lock:
                 _fire_and_forget_threads.discard(threading.current_thread())
 

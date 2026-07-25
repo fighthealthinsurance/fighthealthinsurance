@@ -204,6 +204,7 @@ async def log_zero_appeal_diagnostics(
     transport: str,
     stream_error: Optional[str] = None,
     *,
+    error_from_send: Optional[bool] = None,
     generation_id: Optional[str] = None,
     make_appeals_seconds: Optional[float] = None,
     first_model: Optional[str] = None,
@@ -220,10 +221,21 @@ async def log_zero_appeal_diagnostics(
     `transport` is "websocket" or "rest" so the same log surfaces both
     delivery paths in alerting.
 
-    The generation-phase fields (`generation_id`, `make_appeals_seconds`,
-    `first_model`, `shed_tier`) come from the done frame the caller parsed;
-    they let this server-side log join to the client's ReportClientError via
-    the shared APPEAL_GEN_DIAG tag + gen_id.
+    `generation_id` comes from the init frame; the other generation-phase
+    fields (`make_appeals_seconds`, `first_model`, `shed_tier`, `models_tried`)
+    come from the done frame the caller parsed. Together they let this
+    server-side log join to the client's ReportClientError via the shared
+    APPEAL_GEN_DIAG tag + gen_id.
+
+    `error_from_send` tells us whether `stream_error` came from writing to the
+    client socket. This gates the client-disconnect classification, which is
+    pure string matching and would otherwise fire on a SERVER-side failure that
+    happens to mention a reset connection -- e.g. a Postgres
+    "could not receive data from server: Connection reset by peer" raised inside
+    make_appeals. Misfiling that as "the user left" downgrades a real outage to
+    WARNING. Pass False when the error provably came from the generator, True
+    when it came from a socket write, and leave it None when the caller cannot
+    tell (the string match is then trusted, preserving prior behavior).
     """
     # Coerce arbitrary JSON values to int for the FK/AutoField lookup.
     # Anything we can't coerce skips the DB cross-reference and just
@@ -274,7 +286,13 @@ async def log_zero_appeal_diagnostics(
         f"first_model={first_model} shed_tier={shed_tier} "
         f"models_tried=[{models_tried or 'none'}]"
     )
-    if _stream_error_is_client_disconnect(stream_error):
+    # error_from_send is False => the failure came out of the generator, not a
+    # socket write, so it cannot be the client hanging up no matter what the
+    # message says.
+    is_client_disconnect = error_from_send is not False and (
+        _stream_error_is_client_disconnect(stream_error)
+    )
+    if is_client_disconnect:
         # Checked BEFORE the persisted-count branches: the user simply left, so
         # none of this is a server fault at any persisted count. The common iOS
         # case is a client hanging up AFTER drafts were persisted, and routing
@@ -456,16 +474,31 @@ class StreamingAppealsBackend(AsyncWebsocketConsumer):
         # generation_id; done carries timing/model). Forwarded into the
         # zero-appeal diagnostics so a wire failure joins to the server trace.
         gen_fields = _AppealGenTraceFields()
+        # Distinguishes a wire failure from a generation failure for the
+        # diagnostics below: the try block wraps BOTH the sends and the
+        # `async for` that pulls from the appeal generator, so an exception
+        # here may have come from either side. Only a send can be the client
+        # going away.
+        error_from_send = False
+
+        async def _send(payload: str) -> None:
+            nonlocal error_from_send
+            try:
+                await self.send(payload)
+            except Exception:
+                error_from_send = True
+                raise
+
         try:
             await asyncio.sleep(1)
-            await self.send("\n")
+            await _send("\n")
             async for record in aitr:
                 await asyncio.sleep(0)
-                await self.send("\n")
+                await _send("\n")
                 await asyncio.sleep(0)
-                await self.send(record)
+                await _send(record)
                 await asyncio.sleep(0)
-                await self.send("\n")
+                await _send("\n")
                 # Count only actual appeal payloads (not status/keepalive frames)
                 stripped = record.strip()
                 if stripped:
@@ -509,6 +542,7 @@ class StreamingAppealsBackend(AsyncWebsocketConsumer):
                     last_status_phase=last_status_phase,
                     transport="websocket",
                     stream_error=str(e),
+                    error_from_send=error_from_send,
                     **gen_fields.as_kwargs(),
                 )
             raise

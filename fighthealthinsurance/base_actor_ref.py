@@ -30,7 +30,14 @@ def ray_cluster_available() -> bool:
             return True
     except Exception:
         return False
-    return bool(os.environ.get("RAY_ADDRESS"))
+    address = (os.environ.get("RAY_ADDRESS") or "").strip()
+    # "local" is Ray's own spelling of "start a brand-new local cluster"
+    # (ray._private.services treats it exactly like an unset address), and it is
+    # the value a developer is most likely to set by hand -- so honoring it here
+    # would reintroduce the boot this guard exists to prevent.
+    if address.lower() == "local":
+        return False
+    return bool(address)
 
 
 class BaseActorRef:

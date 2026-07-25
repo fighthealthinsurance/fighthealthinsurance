@@ -1568,7 +1568,11 @@ class DenialCreatorHelper:
                     dispatch_speculative_appeals,
                 )
 
-                dispatch_speculative_appeals(denial_id)
+                # force on a replaced letter: the idempotency guard also matches
+                # PROMOTED reserve rows, which invalidation deliberately keeps,
+                # so without this a denial that ever served one reserve appeal
+                # could never rebuild a reserve for its new text.
+                dispatch_speculative_appeals(denial_id, force=denial_text_changed)
             except Exception:
                 logger.opt(exception=True).warning(
                     "Failed to dispatch speculative appeals precompute for "
@@ -3914,6 +3918,13 @@ class AppealsBackendHelper:
             CONTEXT_LEVEL_TIER2_SHED,
         }
         reconciled = 0
+        # Snapshot the LIVE delivery count before the reserve tops it up. The
+        # zero-appeal diagnostics below key off this, not the final total:
+        # otherwise a run where generation produced nothing but the reserve
+        # covered it reports new=3 and neither branch fires, so a total backend
+        # failure becomes invisible to alerting -- exactly the incident this
+        # instrumentation exists to catch.
+        live_new = new
         # Best-effort, like the synthesis block above: a failure here (e.g. a
         # promotion asave hitting DB lock contention -- save_appeal wraps its own
         # asave for exactly this reason) must NOT propagate, or the done frame
@@ -3968,7 +3979,15 @@ class AppealsBackendHelper:
         shed_tier = make_appeals_diag.get("shed_tier")
         winning_stage = make_appeals_diag.get("winning_stage")
         models_tried = make_appeals_diag.get("models_tried") or "none"
-        if new + old == 0:
+        # Keyed on live_new (pre-reserve), so a reserve that rescued the user
+        # still reports the backend failure. reserve_note says whether the user
+        # was actually left empty-handed or the fallback covered it.
+        reserve_note = (
+            f" served_from_reserve={reconciled} (user was NOT left empty-handed)"
+            if reconciled
+            else ""
+        )
+        if live_new + old == 0:
             logger.error(
                 f"APPEAL_GEN_DIAG [gen_id={generation_id}] Zero appeals "
                 f"generated for denial {denial_id}, "
@@ -3976,9 +3995,9 @@ class AppealsBackendHelper:
                 f"make_appeals_s={make_appeals_seconds:.1f}, "
                 f"first_model={first_model}, winning_stage={winning_stage}, "
                 f"shed_tier={shed_tier}, models_tried=[{models_tried}], "
-                f"{summarize_denial_context_tokens(denial)}"
+                f"{summarize_denial_context_tokens(denial)}{reserve_note}"
             )
-        elif new == 0 and old > 0:
+        elif live_new == 0 and old > 0:
             logger.warning(
                 f"APPEAL_GEN_DIAG [gen_id={generation_id}] No new appeals "
                 f"generated for denial {denial_id} "
@@ -3986,7 +4005,7 @@ class AppealsBackendHelper:
                 f"gen_attempts={denial.gen_attempts}, runt_count={runts}, "
                 f"make_appeals_s={make_appeals_seconds:.1f}, "
                 f"first_model={first_model}, winning_stage={winning_stage}, "
-                f"models_tried=[{models_tried}]"
+                f"models_tried=[{models_tried}]{reserve_note}"
             )
 
         # Explicit end-of-stream so the client knows exactly what was sent.
