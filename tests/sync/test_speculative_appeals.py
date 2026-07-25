@@ -103,6 +103,53 @@ class SpeculativeAppealsHelperTest(TestCase):
         self.assertEqual(count, 0)
         mock_make.assert_not_called()
 
+    def test_skips_when_the_denial_already_has_a_live_appeal(self):
+        """The backlog shed: a precompute that reaches the front of the actor's
+        queue after the user's real generation already delivered has nothing to
+        contribute -- the end-of-flow reconciliation only reaches for a reserve
+        while under ENOUGH_APPEALS -- so it must drop rather than burn a slot.
+        """
+        ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="A real appeal the live flow already generated.",
+            model_name="m",
+            speculative=False,
+        )
+        with patch(_MAKE_APPEALS) as mock_make:
+            count = SpeculativeAppealsHelper.generate_for_denial_sync(
+                self.denial.denial_id
+            )
+        self.assertEqual(count, 0)
+        mock_make.assert_not_called()
+
+    def test_force_regenerates_past_live_drafts_about_the_old_letter(self):
+        """force must beat the widened guard too. After a letter replacement the
+        denial still carries live drafts about the OLD letter (invalidation
+        deletes only the held-back reserve), so without the bypass a replaced
+        denial could never get a reserve for its new text."""
+        ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="A live draft about the letter that was replaced.",
+            model_name="m",
+            speculative=False,
+        )
+        with patch(_MAKE_APPEALS) as mock_make, patch(
+            _SUMMARIZE, new_callable=AsyncMock, return_value=None
+        ):
+            mock_make.return_value = iter(
+                [
+                    GeneratedAppeal(
+                        text="A real, deliverable speculative appeal letter.",
+                        model_name="m",
+                    )
+                ]
+            )
+            count = SpeculativeAppealsHelper.generate_for_denial_sync(
+                self.denial.denial_id, force=True
+            )
+        self.assertEqual(count, 1)
+        mock_make.assert_called_once()
+
     def test_skips_when_no_denial_text(self):
         blank = Denial.objects.create(hashed_email="h2", denial_text="")
         with patch(_MAKE_APPEALS) as mock_make:
@@ -577,3 +624,30 @@ class SpeculativePrecomputeEndToEndTest(TransactionTestCase):
             ProposedAppeal.objects.filter(for_denial=denial, speculative=True).count(),
             0,
         )
+
+
+class SpeculativeAppealsActorOptionsTest(TestCase):
+    """The actor's Ray options, asserted without needing a live cluster.
+
+    Kept here rather than in tests/sync-actor because it is a static property of
+    the decorated class; the sync-actor suite pays for a real Ray cluster and
+    should stay focused on the execution model.
+    """
+
+    def test_concurrency_is_bounded(self):
+        """prefetch_for_denial is a coroutine, which makes this an ASYNC Ray
+        actor -- and Ray's default concurrency for those is 1000. That default is
+        fine for the other async actors (cheap per-task work) but not here: each
+        task is a full make_appeals ML fan-out plus its own pool thread, all in
+        one process on a Ray worker capped at 1 CPU / 6-7G. Pin the bound so a
+        refactor can't silently restore the 1000 default.
+        """
+        from fighthealthinsurance.speculative_appeals_actor import (
+            SpeculativeAppealsActor,
+        )
+
+        options = SpeculativeAppealsActor._default_options
+        self.assertEqual(options["max_concurrency"], 10)
+        # The restart/retry policy the other actors use, kept alongside it.
+        self.assertEqual(options["max_restarts"], -1)
+        self.assertEqual(options["max_task_retries"], -1)

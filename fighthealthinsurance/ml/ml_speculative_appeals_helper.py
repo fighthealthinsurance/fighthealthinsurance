@@ -63,16 +63,23 @@ class SpeculativeAppealsHelper:
     async def generate_for_denial(cls, denial_id: Any, force: bool = False) -> int:
         """Generate + persist speculative candidate appeals for ``denial_id``.
 
-        Idempotent: a no-op if speculative rows already exist for the denial.
+        A no-op if the denial ALREADY HAS ANY proposed appeal -- reserve or
+        live. This is both the idempotency guard (don't build a second reserve)
+        and the backlog shed: the actor bounds itself to MAX_CONCURRENCY
+        in-flight generations, so under a burst this check runs when the task is
+        finally dequeued, by which point the live flow may already have produced
+        appeals -- and a reserve that arrives after them is work nobody will
+        ever serve. Dropping those keeps the queue moving toward the denials
+        speculation can still help.
+
         Returns the number of speculative appeals persisted (0 on skip/failure).
         Exception-safe: never raises, so a background caller can't crash on it.
 
-        ``force=True`` skips the idempotency check. Required by the
-        denial-text-replacement path: that guard also matches PROMOTED rows
-        (``speculative=False`` but still ``context_level="speculative"``, kept
-        so analytics can see a served reserve), and those survive invalidation
-        on purpose -- so without ``force`` a denial that ever served one reserve
-        appeal could never build a reserve again.
+        ``force=True`` skips that guard. Required by the denial-text-replacement
+        path: after a replacement the denial still carries drafts about the OLD
+        letter (invalidation deletes only the held-back reserve, keeping served
+        and ordinary rows), so the guard would match and a replaced letter could
+        never get a reserve of its own.
         """
         try:
             # Lazy imports: this module is imported from the denial-creation
@@ -81,8 +88,6 @@ class SpeculativeAppealsHelper:
             # INSIDE the try so the "never raises" contract above actually holds:
             # an ImportError/ImproperlyConfigured from that graph would otherwise
             # escape into whichever thread or actor dispatched this.
-            from django.db.models import Q
-
             from fighthealthinsurance.common_view_logic import appealGenerator
             from fighthealthinsurance.generate_appeal import (
                 AppealTemplateGenerator,
@@ -129,22 +134,33 @@ class SpeculativeAppealsHelper:
                     f"speculative appeals: denial {denial_id} has no text; skipping"
                 )
                 return 0
-            # Idempotency: don't regenerate if we already have speculative rows.
-            # Match promoted rows too (served rows are flipped to
-            # speculative=False but keep context_level="speculative"), so a
-            # re-invocation after some were served can't duplicate the reserve.
-            # force=True bypasses this for a replaced denial letter, where the
-            # whole point is to rebuild the reserve from the new text.
+            # ANY existing proposed appeal means this run has nothing to add.
+            #
+            # Deliberately broader than "do we already have a reserve": it also
+            # matches LIVE drafts, which is what makes a backlog self-shedding.
+            # Evaluated here, when the actor dequeues the task rather than when
+            # it was submitted, so a precompute that waited behind the actor's
+            # concurrency limit sees the world as it is now -- and if the user's
+            # real generation already delivered, a reserve built afterwards is
+            # work nobody will ever serve (the end-of-flow reconciliation only
+            # reaches for it while under ENOUGH_APPEALS). Skipping frees the slot
+            # for a denial speculation can still get ahead of.
+            #
+            # Subsumes the old speculative-only idempotency check: reserve rows
+            # (held-back or promoted) are ProposedAppeals too, so a second
+            # dispatch still can't duplicate a reserve.
+            #
+            # force=True bypasses it for a replaced denial letter -- see the
+            # docstring: those old drafts are about a letter that no longer
+            # exists, so they must not veto a reserve for the new one.
             if (
                 not force
-                and await ProposedAppeal.objects.filter(
-                    Q(speculative=True) | Q(context_level=CONTEXT_LEVEL_SPECULATIVE),
-                    for_denial=denial,
-                ).aexists()
+                and await ProposedAppeal.objects.filter(for_denial=denial).aexists()
             ):
                 logger.debug(
                     f"speculative appeals: denial {denial_id} already has "
-                    f"speculative rows; skipping"
+                    f"proposed appeal(s); skipping (speculation would land too "
+                    f"late to be served)"
                 )
                 return 0
 

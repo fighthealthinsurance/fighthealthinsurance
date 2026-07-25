@@ -19,7 +19,25 @@ from fighthealthinsurance.utils import get_env_variable
 name = "SpeculativeAppealsActor"
 
 
-@ray.remote(max_restarts=-1, max_task_retries=-1)
+# max_concurrency: this is an ASYNC actor (prefetch_for_denial is a coroutine),
+# and Ray's default concurrency for those is 1000 -- fine for the other async
+# actors, whose per-task work is cheap, but each task here is a FULL
+# make_appeals ML fan-out plus its own non-thread-sensitive pool thread, and
+# they all land in this one process on a Ray worker capped at 1 CPU / 6-7G. A
+# burst of denial submissions would otherwise pile hundreds of concurrent
+# generations into it. 10 keeps precomputes from serializing behind each other
+# (the reason generate_for_denial bridges with thread_sensitive=False) while
+# bounding the process. Excess dispatches queue rather than being dropped, and
+# the helper re-checks on dequeue whether the denial already has appeals, so a
+# backlog sheds the ones speculation is too late to help.
+#
+# The ignore below is needed because ray's bundled stub omits max_concurrency
+# from the ray.remote(...) overload. The runtime does accept it -- it lands in
+# the ActorClass's _default_options, which the test pins -- so the stub is
+# simply incomplete, same reason base_actor_ref ignores .options().
+@ray.remote(  # type: ignore[call-overload]
+    max_restarts=-1, max_task_retries=-1, max_concurrency=10
+)
 class SpeculativeAppealsActor:
     def __init__(self):
         time.sleep(1)
