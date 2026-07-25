@@ -233,7 +233,9 @@ class TestComputeRepetitionPenalty(TestCase):
     def test_exact_match_user_message(self):
         """Exact match (ignoring case/spacing) with last user message => -500."""
         history = [{"role": "user", "content": "I need help with my denial"}]
-        penalty = compute_repetition_penalty("  i need help with  my denial  ", history)
+        penalty = compute_repetition_penalty(
+            "  i need help with  my denial  ", history
+        )
         self.assertEqual(penalty, EXACT_REPEAT_PENALTY)
 
     def test_bag_of_words_match_user_message(self):
@@ -368,8 +370,12 @@ class TestScoreLlmResponseRepetitionPenalty(TestCase):
         echo_result = ("I need help with my denial", "Context")
         good_result = ("I can help you appeal that. Let me look into it.", "Context")
 
-        echo_score = score_llm_response(echo_result, 100, current_message=current_msg)
-        good_score = score_llm_response(good_result, 100, current_message=current_msg)
+        echo_score = score_llm_response(
+            echo_result, 100, current_message=current_msg
+        )
+        good_score = score_llm_response(
+            good_result, 100, current_message=current_msg
+        )
         self.assertGreater(good_score, echo_score)
         self.assertLess(echo_score, 0)
 
@@ -392,7 +398,11 @@ class TestScoreLlmResponseRepetitionPenalty(TestCase):
         bow_result = ("my denial please help with", "Context")
         exact_result = ("help with my denial please", "Context")
 
-        bow_score = score_llm_response(bow_result, 100, current_message=current_msg)
-        exact_score = score_llm_response(exact_result, 100, current_message=current_msg)
+        bow_score = score_llm_response(
+            bow_result, 100, current_message=current_msg
+        )
+        exact_score = score_llm_response(
+            exact_result, 100, current_message=current_msg
+        )
         # Both penalized, but exact match more heavily
         self.assertGreater(bow_score, exact_score)

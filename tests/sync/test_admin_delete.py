@@ -50,7 +50,9 @@ class TestAdminDeleteDataView(TestCase):
         assert response.status_code == 200
         assert b"Delete User Data" in response.content
 
-    @patch("fighthealthinsurance.staff_views.RemoveDataHelper.remove_data_for_email")
+    @patch(
+        "fighthealthinsurance.staff_views.RemoveDataHelper.remove_data_for_email"
+    )
     def test_staff_can_delete_data(self, mock_remove):
         """Staff POST with valid email should call RemoveDataHelper."""
         self.client.login(username="staffuser", password="testpass123")

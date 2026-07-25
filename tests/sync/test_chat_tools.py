@@ -218,9 +218,9 @@ class TestPubMedTool(TestCase):
             article_ids = asyncio.run(tool._search_articles("test query"))
 
         self.assertTrue(set(article_ids).issuperset({"1", "2", "3"}))
-        recent_call = (
-            mock_pubmed_tools.find_pubmed_article_ids_for_query.call_args_list[0]
-        )
+        recent_call = mock_pubmed_tools.find_pubmed_article_ids_for_query.call_args_list[
+            0
+        ]
         self.assertEqual(recent_call.kwargs["since"], "2024")
 
     def test_recent_since_year_uses_configurable_window(self):

@@ -6,6 +6,7 @@ Parallel to ``test_uspstf_api.MakeOpenPromptIncludesUSPSTFContextTests`` and
 
 from django.test import TestCase
 
+
 # A realistic rendered block (what ``get_context_for_denial`` would return):
 # self-contained header + one trial row carrying an NCT id.
 SAMPLE_TRIALS_CONTEXT = (
