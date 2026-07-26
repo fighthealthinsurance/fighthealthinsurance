@@ -1068,6 +1068,66 @@ class TestCommonViewLogic(TestCase):
 
     @pytest.mark.django_db
     @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_undeliverable_reserve_rows_are_not_counted_or_served(
+        self, mock_appeal_generator
+    ):
+        """A reserve of junk is no safety net. Rows that fail the deliverability
+        rule must be filtered out before the availability count and the serving
+        gate see them, and must never reach the user -- covering both halves:
+        the runt is dropped DB-side, the long identifier-echo row survives that
+        and is caught by is_real_appeal at serve time."""
+        email, denial = self._create_test_denial(31, gen_attempts=3)
+        runt = "$1,250"
+        wordless = "AB123456789 CD987654321 99213 11/02/2026 $1,250.00"
+        real = "A reserve draft with real words the user should receive."
+        for text in (runt, wordless, real):
+            ProposedAppeal.objects.create(
+                for_denial=denial,
+                appeal_text=text,
+                speculative=True,
+                context_level="speculative",
+            )
+        mock_appeal_generator.make_appeals.side_effect = self._slow_make_appeals(
+            1.5, []
+        )
+
+        async def test():
+            try:
+                with self._capture_logs() as sink, self._fast_keepalive(), patch.object(
+                    AppealsBackendHelper,
+                    "SPECULATIVE_FALLBACK_NO_APPEAL_SECONDS",
+                    0.5,
+                ):
+                    _, appeal_contents, _ = await self.collect_appeal_responses(
+                        {
+                            "denial_id": 31,
+                            "email": email,
+                            "semi_sekret": denial.semi_sekret,
+                        }
+                    )
+
+                self.assertIn(real, appeal_contents)
+                self.assertNotIn(runt, appeal_contents)
+                self.assertNotIn(wordless, appeal_contents)
+                # Undeliverable rows are never promoted: promotion is what makes
+                # a row persist as a real appeal for every later call.
+                for text in (runt, wordless):
+                    row = await ProposedAppeal.objects.aget(
+                        for_denial=denial, appeal_text=text
+                    )
+                    self.assertTrue(row.speculative, f"{text!r} must stay held back")
+                # The availability figure counts the one row that could be
+                # served, not all three.
+                self.assertIn(
+                    "speculative reserve available at start=1", sink.getvalue()
+                )
+            finally:
+                await Denial.objects.filter(denial_id=31).adelete()
+
+        async_to_sync(test)()
+
+    @pytest.mark.django_db
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
     def test_early_served_reserve_is_not_fed_to_synthesis(self, mock_appeal_generator):
         """Promotion flips an early-served reserve row to speculative=False, but
         it must still not count toward the >=2 synthesis gate -- synthesizing

@@ -36,6 +36,7 @@ from django.core.files import File
 from django.core.mail import send_mail
 from django.core.validators import validate_email
 from django.db.models import F, Q, QuerySet
+from django.db.models.functions import Length
 from django.forms import Form
 from django.template.loader import render_to_string
 from django.urls import reverse
@@ -2621,6 +2622,31 @@ def _uspstf_context_getter_factory() -> typing.Callable[[Any], Optional[str]]:
     return get_uspstf_context_for_denial
 
 
+def deliverable_candidates(qs: QuerySet) -> QuerySet:
+    """Narrow a ProposedAppeal queryset to rows that could be deliverable.
+
+    The DB-side half of the deliverability rule, applied BEFORE anything
+    counts, gates on, or decides what to do with these rows -- so a reserve
+    holding nothing but junk reads as the empty reserve it effectively is,
+    rather than as rows we are about to serve.
+
+    Only the cheap half pushes into SQL: a raw character count is an upper
+    bound on ``meaningful_appeal_length`` (whitespace and control characters
+    only ever subtract), so anything shorter than ``MIN_APPEAL_CHARS`` raw can
+    never pass and is not worth fetching. The word rule can't be expressed in
+    SQL, so ``is_real_appeal`` stays the authority and still runs on every row
+    AFTER this, immediately before it is served.
+    """
+    # Annotated rather than returned directly: django-stubs types the alias()
+    # chain as Any, which trips --warn-return-any.
+    narrowed: QuerySet = (
+        qs.exclude(appeal_text__isnull=True)
+        .alias(_appeal_len=Length("appeal_text"))
+        .filter(_appeal_len__gte=MIN_APPEAL_CHARS)
+    )
+    return narrowed
+
+
 class AppealsBackendHelper:
     regex_denial_processor = ProcessDenialRegex()
     pmt = PubMedTools()
@@ -2941,13 +2967,24 @@ class AppealsBackendHelper:
         # net -- and so the "we served the reserve" logs below can say whether
         # those rows were waiting all along or landed while we generated (the
         # precompute is a detached actor and finishes on its own schedule).
+        #
+        # Counts only rows that could actually be served: a reserve of runts or
+        # identifier-echo junk is no safety net at all, and reporting it as one
+        # would send an incident review looking for a fallback that could never
+        # have fired. The reserve caps at MAX_SPECULATIVE_APPEALS rows, so
+        # applying the full is_real_appeal rule here costs a handful of short
+        # reads rather than a COUNT(*).
         # Best-effort: a failed count must not take the generation down with it.
         reserve_at_start = -1
         try:
-            reserve_at_start = await ProposedAppeal.objects.filter(
-                for_denial=denial, speculative=True
-            ).acount()
+            reserve_at_start = 0
+            async for _row in deliverable_candidates(
+                ProposedAppeal.objects.filter(for_denial=denial, speculative=True)
+            ).only("appeal_text"):
+                if is_real_appeal(_row.appeal_text):
+                    reserve_at_start += 1
         except Exception:
+            reserve_at_start = -1
             logger.opt(exception=True).warning(
                 f"[gen_id={generation_id}] could not count the speculative "
                 f"reserve for denial {denial_id}"
@@ -3009,8 +3046,14 @@ class AppealsBackendHelper:
             try:
                 # chosen=False: never hand the user their own pick back as a
                 # new appeal (see the same filter in the reconciliation).
-                async for row in ProposedAppeal.objects.filter(
-                    for_denial=denial, speculative=True, chosen=False
+                # deliverable_candidates keeps junk out of the loop entirely, so
+                # it can't reach the ENOUGH_APPEALS check below and can't be the
+                # row we stop on; is_real_appeal then re-checks each survivor,
+                # since the word rule doesn't fit in SQL.
+                async for row in deliverable_candidates(
+                    ProposedAppeal.objects.filter(
+                        for_denial=denial, speculative=True, chosen=False
+                    )
                 ).order_by("id"):
                     if (new + old) >= cls.ENOUGH_APPEALS:
                         break
@@ -4184,8 +4227,8 @@ class AppealsBackendHelper:
             # another request mid-stream lands a chosen row (for an editted one,
             # text the user wrote, which was never a draft) in between that
             # query and this one, leaving it absent from served_texts.
-            async for row in ProposedAppeal.objects.filter(
-                for_denial=denial, chosen=False
+            async for row in deliverable_candidates(
+                ProposedAppeal.objects.filter(for_denial=denial, chosen=False)
             ).order_by("id"):
                 text = row.appeal_text
                 if not is_real_appeal(text):

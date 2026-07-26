@@ -46,9 +46,7 @@ class TestDevExternalStorageLocations:
                 "EXTERNAL_STORAGE_LOCATION_B",
             ),
         ):
-            expected = os.environ.get(
-                env_var, getattr(fhi_settings.Dev, default_attr)
-            )
+            expected = os.environ.get(env_var, getattr(fhi_settings.Dev, default_attr))
             assert getattr(fhi_settings.Dev, location_attr) == expected
 
     def test_external_storage_is_created_and_listable(self, tmp_path):

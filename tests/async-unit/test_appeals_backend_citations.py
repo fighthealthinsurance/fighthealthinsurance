@@ -147,12 +147,18 @@ def _make_proposed_appeal_query_with_texts(texts, existing_texts=None):
         def all(self):
             return self._gen(self._existing)
 
-        async def acount(self):
-            # The reserve-availability count at the start of generation. This
-            # fake ignores filter kwargs, so it cannot tell the speculative
-            # query from any other; none of these tests set up speculative
-            # rows, so report an empty reserve.
-            return 0
+        def exclude(self, *args, **kwargs):
+            # deliverable_candidates() narrows the reserve/reconciliation
+            # querysets DB-side (exclude -> alias -> filter) before anything
+            # counts or serves them. This fake holds rows in memory with no
+            # SQL to push down to, so the chain is a passthrough and
+            # is_real_appeal -- which production runs on every row anyway --
+            # does the filtering these tests exercise.
+            return self
+
+        alias = exclude
+        filter = exclude
+        only = exclude
 
         def order_by(self, *args, **kwargs):
             # Mock ignores the sort key; the reconciliation query uses
