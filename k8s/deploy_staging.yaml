@@ -15,6 +15,14 @@ spec:
         - image: ${FHI_BASE}:${FHI_VERSION}
           name: totallylegitco
           env:
+          # DB host is sourced from the fhi-db-config ConfigMap (see k8s/db-config.yaml).
+          # An explicit env entry overrides any PDBHOST carried by the envFrom Secrets,
+          # so this ConfigMap is the single, reversible switch point for the pg8->pg9 cutover.
+          - name: PDBHOST
+            valueFrom:
+              configMapKeyRef:
+                name: fhi-db-config
+                key: PDBHOST
           - name: MIGRATIONS
             value: "1"
           envFrom:
@@ -54,6 +62,14 @@ spec:
         - image: ${FHI_BASE}:${FHI_VERSION}
           name: totallylegitco
           env:
+          # DB host is sourced from the fhi-db-config ConfigMap (see k8s/db-config.yaml).
+          # An explicit env entry overrides any PDBHOST carried by the envFrom Secrets,
+          # so this ConfigMap is the single, reversible switch point for the pg8->pg9 cutover.
+          - name: PDBHOST
+            valueFrom:
+              configMapKeyRef:
+                name: fhi-db-config
+                key: PDBHOST
           - name: BRB
             value: "LIVE"
           envFrom:
