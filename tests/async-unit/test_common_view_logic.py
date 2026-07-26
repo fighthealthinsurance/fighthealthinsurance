@@ -1830,6 +1830,11 @@ def test_is_real_appeal(value, expected):
         # still tokenize into words.
         ("ที่นี่ดี ที่นี่ดี ที่นี่ดี", True),
         ("नमस्ते दुनिया यह एक अपील है", True),
+        # Unspaced AND mark-heavy: one token, whose length has to be measured
+        # as written (24 characters) rather than on its 9 base letters.
+        ("ที่นี่ดีที่นี่ดีที่นี่ดี", True),
+        # ...but the length bar still applies: 8 characters is not prose.
+        ("ที่นี่ดี", False),
     ],
 )
 def test_appeal_has_words(value, expected):

@@ -93,21 +93,42 @@ def meaningful_appeal_length(text: Optional[str]) -> int:
     )
 
 
-def _appeal_word_tokens(text: Optional[str]) -> List[str]:
-    """Split ``text`` into word-like tokens (see ``_APPEAL_WORD_RE``).
+def _appeal_word_tokens(text: Optional[str]) -> List[Tuple[str, int]]:
+    """Split ``text`` into word-like tokens (see ``_APPEAL_WORD_RE``), as
+    ``(token, width)`` pairs where ``width`` is the token's length in the
+    original text.
 
-    Combining marks are dropped first. A mark (Unicode category M) attaches to
-    the letter before it rather than being a letter itself -- Thai and Indic
-    vowel and tone signs, for instance -- so leaving them in would break
-    "ที่นี่ดี" into single-letter runs and score a perfectly ordinary appeal as
-    wordless. Removing them leaves the base letters, which is all a token count
-    needs. Text without marks (including English) tokenizes identically either
-    way.
+    Combining marks are dropped before matching. A mark (Unicode category M)
+    attaches to the letter before it rather than being a letter itself -- Thai
+    and Indic vowel and tone signs, for instance -- so leaving them in would
+    break "ที่นี่ดี" into single-letter runs and score a perfectly ordinary
+    appeal as wordless.
+
+    ``width`` counts each dropped mark back onto the letter it belonged to, so
+    the caller can measure a token as it was actually written. Without it the
+    unspaced-script check below would shortchange exactly the scripts the mark
+    handling is here for: a 24-character Thai clause strips to 9 base letters.
+    Text without marks (including all English) is unaffected either way --
+    every width is then the token's own length.
     """
     if not isinstance(text, str):
         return []
-    unmarked = "".join(ch for ch in text if unicodedata.category(ch)[0] != "M")
-    return _APPEAL_WORD_RE.findall(unmarked)
+    chars: List[str] = []
+    widths: List[int] = []
+    for ch in text:
+        if unicodedata.category(ch)[0] == "M":
+            # A mark with no letter before it (malformed text) has nothing to
+            # attach to, so it is simply dropped.
+            if widths:
+                widths[-1] += 1
+        else:
+            chars.append(ch)
+            widths.append(1)
+    unmarked = "".join(chars)
+    return [
+        (m.group(), sum(widths[m.start() : m.end()]))
+        for m in _APPEAL_WORD_RE.finditer(unmarked)
+    ]
 
 
 def appeal_word_count(text: Optional[str]) -> int:
@@ -132,7 +153,8 @@ def appeal_has_words(text: Optional[str]) -> bool:
         return True
     # Scripts written without spaces (Chinese, Japanese, Thai) put a whole
     # clause in a single run, so one long run of letters is prose as well.
-    return any(len(w) >= MIN_APPEAL_CHARS for w in words)
+    # Measured on the width, i.e. the run as written, marks included.
+    return any(width >= MIN_APPEAL_CHARS for _, width in words)
 
 
 def is_real_appeal(x: Optional[str]) -> TypeGuard[str]:
