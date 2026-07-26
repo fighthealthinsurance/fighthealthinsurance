@@ -431,8 +431,16 @@ function hideLoading(): void {
   }
 }
 
+// The payload appeals.html hands to doQuery: a plain object built from the
+// form context, NOT a Map. It was typed as Map<string, string> while every
+// consumer read it as an object through `as any` -- a real Map would have
+// broken the wire long ago, since JSON.stringify(new Map()) is "{}" and the
+// server would see no denial_id. Typing it honestly keeps the object spread in
+// ws.onopen (and the reads below) checked rather than cast away.
+type AppealQueryData = Record<string, string>;
+
 // Hacky, TODO: Fix this.
-let my_data: Map<string, string> = new Map<string, string>();
+let my_data: AppealQueryData = {};
 let my_backend_url = "";
 let my_rest_fallback_url = "";
 let usingRestFallback = false;
@@ -1388,7 +1396,13 @@ function connectWebSocket(
     ws.onopen = () => {
       console.log("WebSocket connection opened");
       updateStatusIndicator('connected', appealsSoFar.length);
-      ws.send(JSON.stringify(data));
+      // Tell the server this socket is a reconnect (retries is only non-zero
+      // after scheduleReconnect, and resets for a fresh query). Someone who
+      // has already lost a socket has been waiting through a dropped
+      // connection on top of the generation itself, so the server hands over
+      // the speculative reserve immediately instead of holding it for its
+      // usual deadline -- as long as they are still short of a full set.
+      ws.send(JSON.stringify({ ...data, reconnect: retries > 0 }));
       // Arm the inactivity timer now, not just on the first message: a
       // socket the server accepts but never replies on would otherwise
       // have no timeout, no error and no close — i.e. spin forever.
@@ -1462,7 +1476,7 @@ function connectWebSocket(
   startWebSocket();
 }
 
-export function doQuery(backend_url: string, data: Map<string, string>, rest_fallback_url?: string): void {
+export function doQuery(backend_url: string, data: AppealQueryData, rest_fallback_url?: string): void {
   showLoading();
   my_backend_url = backend_url;
   my_data = data;

@@ -54,6 +54,25 @@ if TYPE_CHECKING:
 # user gets nothing, so fall back.
 MIN_APPEAL_CHARS = 15
 
+# Minimum number of word-like tokens (see appeal_word_count) an appeal must
+# have. Denials are often word-sparse -- a claim number, a date, a CPT code,
+# a dollar amount -- but an appeal is a letter, so it has to say something.
+# Deliberately a floor for the worst-of-the-worst (a model echoing back the
+# denial's identifiers instead of writing), NOT a quality bar: real appeals
+# run to a couple hundred words, so anything with fewer than two words is
+# junk by any measure.
+MIN_APPEAL_WORDS = 2
+
+# A word-like token: a run of two or more letters that is not welded to a
+# digit or underscore on either side. Digits, punctuation, and lone letters
+# are excluded, so "99213", "$1,250.00", "11/02/2026" and the "A" in "Plan A"
+# contribute nothing -- and neither do the letter prefixes inside claim,
+# member, and authorization identifiers ("AB123456789", "H5521-001"), which
+# would otherwise read as words in exactly the identifier-echo output this
+# filter exists to reject. Ordinary hyphenated and possessive prose is
+# unaffected: "well-documented" is two tokens, "patient's" is one.
+_APPEAL_WORD_RE = re.compile(r"(?<!\w)[^\W\d_]{2,}(?!\w)")
+
 
 def meaningful_appeal_length(text: Optional[str]) -> int:
     """Count the characters in ``text`` that actually carry content.
@@ -74,14 +93,83 @@ def meaningful_appeal_length(text: Optional[str]) -> int:
     )
 
 
+def _appeal_word_tokens(text: Optional[str]) -> List[Tuple[str, int]]:
+    """Split ``text`` into word-like tokens (see ``_APPEAL_WORD_RE``), as
+    ``(token, width)`` pairs where ``width`` is the token's length in the
+    original text.
+
+    Combining marks are dropped before matching. A mark (Unicode category M)
+    attaches to the letter before it rather than being a letter itself -- Thai
+    and Indic vowel and tone signs, for instance -- so leaving them in would
+    break "ที่นี่ดี" into single-letter runs and score a perfectly ordinary
+    appeal as wordless.
+
+    ``width`` counts each dropped mark back onto the letter it belonged to, so
+    the caller can measure a token as it was actually written. Without it the
+    unspaced-script check below would shortchange exactly the scripts the mark
+    handling is here for: a 24-character Thai clause strips to 9 base letters.
+    Text without marks (including all English) is unaffected either way --
+    every width is then the token's own length.
+    """
+    if not isinstance(text, str):
+        return []
+    chars: List[str] = []
+    widths: List[int] = []
+    for ch in text:
+        if unicodedata.category(ch)[0] == "M":
+            # A mark with no letter before it (malformed text) has nothing to
+            # attach to, so it is simply dropped.
+            if widths:
+                widths[-1] += 1
+        else:
+            chars.append(ch)
+            widths.append(1)
+    unmarked = "".join(chars)
+    return [
+        (m.group(), sum(widths[m.start() : m.end()]))
+        for m in _APPEAL_WORD_RE.finditer(unmarked)
+    ]
+
+
+def appeal_word_count(text: Optional[str]) -> int:
+    """Count the word-like tokens in ``text`` (runs of two or more letters).
+
+    Unicode-aware, so words in non-Latin scripts count too. A non-string
+    returns 0.
+    """
+    return len(_appeal_word_tokens(text))
+
+
+def appeal_has_words(text: Optional[str]) -> bool:
+    """True when ``text`` says something rather than just listing values.
+
+    An output made only of digits, punctuation, and symbols -- a model
+    echoing back the claim number, the date of service, the billed amount,
+    or a row of dashes -- is not a letter no matter how long it is, and
+    would otherwise sail past the ``MIN_APPEAL_CHARS`` length check.
+    """
+    words = _appeal_word_tokens(text)
+    if len(words) >= MIN_APPEAL_WORDS:
+        return True
+    # Scripts written without spaces (Chinese, Japanese, Thai) put a whole
+    # clause in a single run, so one long run of letters is prose as well.
+    # Measured on the width, i.e. the run as written, marks included.
+    return any(width >= MIN_APPEAL_CHARS for _, width in words)
+
+
 def is_real_appeal(x: Optional[str]) -> TypeGuard[str]:
     """True when ``x`` is a deliverable appeal: a string with at least
-    ``MIN_APPEAL_CHARS`` non-whitespace, non-control characters.
+    ``MIN_APPEAL_CHARS`` non-whitespace, non-control characters that also
+    contains actual words (see ``appeal_has_words``).
 
     Typed as a ``TypeGuard[str]`` so callers narrow ``Optional[str]`` to
     ``str`` inside the truthy branch (e.g. when building the streamed
     appeal payload)."""
-    return isinstance(x, str) and meaningful_appeal_length(x) >= MIN_APPEAL_CHARS
+    return (
+        isinstance(x, str)
+        and meaningful_appeal_length(x) >= MIN_APPEAL_CHARS
+        and appeal_has_words(x)
+    )
 
 
 import asyncstdlib
@@ -102,20 +190,33 @@ pubmed_fetcher = (
 )
 
 
-def warn_too_short_appeal(text: Optional[str], context: str) -> None:
-    """Log a warning that a too-short appeal is being filtered out.
+def describe_unusable_appeal(text: Optional[str]) -> str:
+    """Describe why ``text`` fails ``is_real_appeal``, for logging.
 
-    Centralizes the message format shared by the generation, streaming, and
-    synthesis drop sites so a runt appeal is reported consistently wherever
-    it is dropped. ``context`` identifies the source (e.g. the model name,
-    a saved-appeal id, or "synthesis output") plus the denial id. The logged
-    length is the meaningful (non-whitespace, non-control) count actually
-    used by the filter.
+    The reported length is the meaningful (non-whitespace, non-control)
+    count actually used by the filter. Called only on text already known to
+    be unusable, so it always names one of the two rejection reasons -- too
+    short, or long enough but not made of words.
     """
     length = meaningful_appeal_length(text)
+    if length < MIN_APPEAL_CHARS:
+        return f"too-short (len={length} < {MIN_APPEAL_CHARS} chars)"
+    return (
+        f"not-words (words={appeal_word_count(text)} "
+        f"< {MIN_APPEAL_WORDS}, len={length})"
+    )
+
+
+def warn_unusable_appeal(text: Optional[str], context: str) -> None:
+    """Log a warning that an undeliverable appeal is being filtered out.
+
+    Centralizes the message format shared by the generation, streaming, and
+    synthesis drop sites so a rejected appeal is reported consistently
+    wherever it is dropped. ``context`` identifies the source (e.g. the model
+    name, a saved-appeal id, or "synthesis output") plus the denial id.
+    """
     logger.warning(
-        f"Filtering out too-short appeal "
-        f"(len={length} < {MIN_APPEAL_CHARS} chars): {context}"
+        f"Filtering out unusable appeal -- {describe_unusable_appeal(text)}: {context}"
     )
 
 

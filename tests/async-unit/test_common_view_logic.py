@@ -13,9 +13,11 @@ from fighthealthinsurance.common_view_logic import (
 )
 from fighthealthinsurance.utils import (
     MIN_APPEAL_CHARS,
+    appeal_has_words,
+    appeal_word_count,
     is_real_appeal,
     meaningful_appeal_length,
-    warn_too_short_appeal,
+    warn_unusable_appeal,
 )
 from fighthealthinsurance.generate_appeal import GeneratedAppeal
 from fighthealthinsurance.helpers import SendFaxHelper, RemoveDataHelper
@@ -31,8 +33,25 @@ import pytest
 from django.test import TestCase
 
 
+@contextmanager
+def capture_logs(level="INFO"):
+    """Capture loguru output for the duration of the block."""
+    from loguru import logger as loguru_logger
+
+    sink = io.StringIO()
+    handler_id = loguru_logger.add(sink, level=level)
+    try:
+        yield sink
+    finally:
+        loguru_logger.remove(handler_id)
+
+
 class TestCommonViewLogic(TestCase):
     fixtures = ["fighthealthinsurance/fixtures/initial.yaml"]
+
+    # Module-level helper, exposed on the class so the existing `self.` call
+    # sites keep working.
+    _capture_logs = staticmethod(capture_logs)
 
     def _create_test_denial(self, denial_id, gen_attempts=0):
         """Helper to create a test denial with specified gen_attempts."""
@@ -44,19 +63,6 @@ class TestCommonViewLogic(TestCase):
             gen_attempts=gen_attempts,
         )
         return email, denial
-
-    @staticmethod
-    @contextmanager
-    def _capture_logs(level="INFO"):
-        """Capture loguru output for the duration of the block."""
-        from loguru import logger as loguru_logger
-
-        sink = io.StringIO()
-        handler_id = loguru_logger.add(sink, level=level)
-        try:
-            yield sink
-        finally:
-            loguru_logger.remove(handler_id)
 
     @staticmethod
     def _fast_keepalive():
@@ -1066,6 +1072,204 @@ class TestCommonViewLogic(TestCase):
 
     @pytest.mark.django_db
     @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_reconnect_serves_the_reserve_without_waiting_out_a_deadline(
+        self, mock_appeal_generator
+    ):
+        """A reconnecting socket restarts this run's clock, but not the user's
+        wait. With the default (far-off) deadlines a first connect holds the
+        reserve back; reconnect=True hands it over in the first frames."""
+        email, denial = self._create_test_denial(32, gen_attempts=3)
+        reserve_text = "A reserve draft owed to a user whose socket dropped."
+        ProposedAppeal.objects.create(
+            for_denial=denial,
+            appeal_text=reserve_text,
+            speculative=True,
+            context_level="speculative",
+        )
+        mock_appeal_generator.make_appeals.side_effect = self._slow_make_appeals(
+            1.0, []
+        )
+
+        async def test():
+            try:
+                # Deadlines left at their defaults, so nothing here is "stalled"
+                # by the usual rule -- only the reconnect flag can flush this.
+                _, appeal_contents, _ = await self.collect_appeal_responses(
+                    {
+                        "denial_id": 32,
+                        "email": email,
+                        "semi_sekret": denial.semi_sekret,
+                        "reconnect": True,
+                    }
+                )
+                self.assertIn(reserve_text, appeal_contents)
+            finally:
+                await Denial.objects.filter(denial_id=32).adelete()
+
+        async_to_sync(test)()
+
+    @pytest.mark.django_db
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_a_reserve_row_another_run_already_claimed_is_not_re_served(
+        self, mock_appeal_generator
+    ):
+        """Promotion claims the row atomically. A row that a concurrent flow
+        promoted after this one selected it (the overlap a reconnect makes
+        likely, since the dropped socket's generator may still be draining)
+        must not be served twice."""
+        email, denial = self._create_test_denial(34, gen_attempts=3)
+        reserve_text = "A reserve draft that two overlapping runs both found."
+        spec = ProposedAppeal.objects.create(
+            for_denial=denial,
+            appeal_text=reserve_text,
+            speculative=True,
+            context_level="speculative",
+        )
+        mock_appeal_generator.make_appeals.return_value = iter([])
+
+        async def test():
+            try:
+                # Stand in for the concurrent run: the row is selected as
+                # speculative, then claimed by someone else before this flow
+                # promotes it. Patching aupdate to report "no rows updated" is
+                # exactly what the losing side of that race observes.
+                real_filter = ProposedAppeal.objects.filter
+
+                def filter_with_lost_claim(*args, **kwargs):
+                    qs = real_filter(*args, **kwargs)
+                    if "pk" in kwargs:
+                        qs.aupdate = AsyncMock(return_value=0)
+                    return qs
+
+                with patch.object(
+                    AppealsBackendHelper, "SPECULATIVE_FALLBACK_NO_APPEAL_SECONDS", 0.0
+                ), patch.object(
+                    ProposedAppeal.objects,
+                    "filter",
+                    side_effect=filter_with_lost_claim,
+                ):
+                    _, appeal_contents, _ = await self.collect_appeal_responses(
+                        {
+                            "denial_id": 34,
+                            "email": email,
+                            "semi_sekret": denial.semi_sekret,
+                        }
+                    )
+                self.assertNotIn(reserve_text, appeal_contents)
+                # The row is left exactly as the claim found it, for the run
+                # that actually won it.
+                await spec.arefresh_from_db()
+                self.assertTrue(spec.speculative)
+            finally:
+                await Denial.objects.filter(denial_id=34).adelete()
+
+        async_to_sync(test)()
+
+    @pytest.mark.django_db
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_reconnect_holds_the_reserve_once_enough_appeals_are_in_hand(
+        self, mock_appeal_generator
+    ):
+        """The reconnect waiver drops the deadline, not the ENOUGH_APPEALS
+        condition: a user who already has a full set keeps their reserve held
+        back even on a reconnect."""
+        email, denial = self._create_test_denial(33, gen_attempts=3)
+        for i in range(AppealsBackendHelper.ENOUGH_APPEALS):
+            ProposedAppeal.objects.create(
+                for_denial=denial,
+                appeal_text=f"An appeal this user already has in hand, no {i}.",
+                speculative=False,
+                context_level="full",
+            )
+        reserve_text = "A reserve draft that a full set must keep held back."
+        spec = ProposedAppeal.objects.create(
+            for_denial=denial,
+            appeal_text=reserve_text,
+            speculative=True,
+            context_level="speculative",
+        )
+        mock_appeal_generator.make_appeals.return_value = iter([])
+
+        async def test():
+            try:
+                _, appeal_contents, _ = await self.collect_appeal_responses(
+                    {
+                        "denial_id": 33,
+                        "email": email,
+                        "semi_sekret": denial.semi_sekret,
+                        "reconnect": True,
+                    }
+                )
+                self.assertNotIn(reserve_text, appeal_contents)
+                await spec.arefresh_from_db()
+                self.assertTrue(spec.speculative)
+            finally:
+                await Denial.objects.filter(denial_id=33).adelete()
+
+        async_to_sync(test)()
+
+    @pytest.mark.django_db
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_undeliverable_reserve_rows_are_not_counted_or_served(
+        self, mock_appeal_generator
+    ):
+        """A reserve of junk is no safety net. Rows that fail the deliverability
+        rule must be filtered out before the availability count and the serving
+        gate see them, and must never reach the user -- covering both halves:
+        the runt is dropped DB-side, the long identifier-echo row survives that
+        and is caught by is_real_appeal at serve time."""
+        email, denial = self._create_test_denial(31, gen_attempts=3)
+        runt = "$1,250"
+        wordless = "AB123456789 CD987654321 99213 11/02/2026 $1,250.00"
+        real = "A reserve draft with real words the user should receive."
+        for text in (runt, wordless, real):
+            ProposedAppeal.objects.create(
+                for_denial=denial,
+                appeal_text=text,
+                speculative=True,
+                context_level="speculative",
+            )
+        mock_appeal_generator.make_appeals.side_effect = self._slow_make_appeals(
+            1.5, []
+        )
+
+        async def test():
+            try:
+                with self._capture_logs() as sink, self._fast_keepalive(), patch.object(
+                    AppealsBackendHelper,
+                    "SPECULATIVE_FALLBACK_NO_APPEAL_SECONDS",
+                    0.5,
+                ):
+                    _, appeal_contents, _ = await self.collect_appeal_responses(
+                        {
+                            "denial_id": 31,
+                            "email": email,
+                            "semi_sekret": denial.semi_sekret,
+                        }
+                    )
+
+                self.assertIn(real, appeal_contents)
+                self.assertNotIn(runt, appeal_contents)
+                self.assertNotIn(wordless, appeal_contents)
+                # Undeliverable rows are never promoted: promotion is what makes
+                # a row persist as a real appeal for every later call.
+                for text in (runt, wordless):
+                    row = await ProposedAppeal.objects.aget(
+                        for_denial=denial, appeal_text=text
+                    )
+                    self.assertTrue(row.speculative, f"{text!r} must stay held back")
+                # The availability figure counts the one row that could be
+                # served, not all three.
+                self.assertIn(
+                    "speculative reserve available at start=1", sink.getvalue()
+                )
+            finally:
+                await Denial.objects.filter(denial_id=31).adelete()
+
+        async_to_sync(test)()
+
+    @pytest.mark.django_db
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
     def test_early_served_reserve_is_not_fed_to_synthesis(self, mock_appeal_generator):
         """Promotion flips an early-served reserve row to speculative=False, but
         it must still not count toward the >=2 synthesis gate -- synthesizing
@@ -1583,10 +1787,84 @@ class TestCommonViewLogic(TestCase):
         ("a" * MIN_APPEAL_CHARS + "\x07" * 20, True),
         # Tabs/newlines between letters are ignored (only 12 real letters).
         ("a\tb\nc d e f g h i j k l", False),
+        # Long enough, but nothing except digits and punctuation: not words.
+        ("1234-5678-90, 11/02/2026: $1,250.00", False),
+        ("1" * 500, False),
+        ("-" * 80, False),
+        (".,;:!?()[]{}<>/\\-_=+*&^%$#@~", False),
+        # One word among the identifiers is still not a letter.
+        ("Denied. 99213 11/02/2026 -- $1,250.00", False),
+        # Letter prefixes welded to identifiers are not words: this is the
+        # identifier-echo output the filter exists to reject.
+        ("AB123456789 CD987654321", False),
+        ("H5521-001 BCBS12345 99213 $1,250.00", False),
+        # Two words clears the floor: it is deliberately a worst-of-the-worst
+        # bar, not a quality bar (real appeals run to hundreds of words).
+        ("Claim #1234-5678-90 denied 11/02/2026 -- $1,250.00", True),
+        # Non-Latin scripts count: one unspaced run of letters is prose.
+        ("这是一封足够长的申诉信正文内容示例。", True),
     ],
 )
 def test_is_real_appeal(value, expected):
     assert is_real_appeal(value) is expected
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        (None, False),
+        (123, False),
+        ("", False),
+        ("   ", False),
+        ("1234567890", False),
+        ("$1,250.00 (11/02/2026)", False),
+        ("---===---", False),
+        ("a", False),  # a lone letter is not a word
+        ("Plan A 1234", False),  # only one word-like token
+        ("Claim 1234 denied", True),
+        # Unspaced script: one run of MIN_APPEAL_CHARS+ letters counts as prose.
+        ("这是一封足够长的申诉信正文内容示例", True),
+        ("申诉信", False),  # one short run is not enough
+        # Combining marks attach to the letter before them rather than being
+        # letters themselves, so scripts that use them (Thai, Devanagari) must
+        # still tokenize into words.
+        ("ที่นี่ดี ที่นี่ดี ที่นี่ดี", True),
+        ("नमस्ते दुनिया यह एक अपील है", True),
+        # Unspaced AND mark-heavy: one token, whose length has to be measured
+        # as written (24 characters) rather than on its 9 base letters.
+        ("ที่นี่ดีที่นี่ดีที่นี่ดี", True),
+        # ...but the length bar still applies: 8 characters is not prose.
+        ("ที่นี่ดี", False),
+    ],
+)
+def test_appeal_has_words(value, expected):
+    assert appeal_has_words(value) is expected
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        (None, 0),
+        (123, 0),
+        ("", 0),
+        ("1234-5678-90, 11/02/2026: $1,250.00", 0),
+        ("Plan A 1234", 1),  # the lone "A" is not a token
+        ("Claim 1234 denied", 2),
+        ("this is a long enough appeal text for delivery", 8),  # "a" excluded
+        # Letters welded to digits are identifier fragments, not words.
+        ("AB123456789 CD987654321", 0),
+        ("H5521-001 BCBS12345", 0),
+        # ...but ordinary hyphenated and possessive prose still counts.
+        ("well-documented", 2),
+        # the / patient / rays; the possessive "s" and the lone "X" don't count
+        ("the patient's X-rays", 3),
+        ("COVID-19 treatment", 2),
+        # Combining marks don't split a word: three Thai words, not zero.
+        ("ที่นี่ดี ที่นี่ดี ที่นี่ดี", 3),
+    ],
+)
+def test_appeal_word_count(value, expected):
+    assert appeal_word_count(value) == expected
 
 
 @pytest.mark.parametrize(
@@ -1608,35 +1886,37 @@ def test_meaningful_appeal_length(value, expected):
     assert meaningful_appeal_length(value) == expected
 
 
-def test_warn_too_short_appeal_logs_length_and_context():
+def test_warn_unusable_appeal_logs_length_and_context():
     """The shared drop-site warning reports the measured length, the
     threshold, and the caller-supplied context. The reported length is the
     meaningful (non-whitespace) count, so internal spaces are not counted."""
-    from loguru import logger as loguru_logger
-
-    sink = io.StringIO()
-    handler_id = loguru_logger.add(sink, level="WARNING")
-    try:
-        warn_too_short_appeal("a b c", "model='m' for denial 7")
-    finally:
-        loguru_logger.remove(handler_id)
+    with capture_logs(level="WARNING") as sink:
+        warn_unusable_appeal("a b c", "model='m' for denial 7")
     output = sink.getvalue()
-    assert "too-short appeal" in output
+    assert "too-short" in output
     assert "len=3" in output  # 3 letters, the 2 spaces are excluded
     assert f"< {MIN_APPEAL_CHARS} chars" in output
     assert "model='m' for denial 7" in output
 
 
-def test_warn_too_short_appeal_handles_non_string():
-    """A non-string (e.g. None) is reported as length 0 without raising."""
-    from loguru import logger as loguru_logger
+def test_warn_unusable_appeal_reports_wordless_reason():
+    """A long-enough but wordless appeal is reported as not-words rather
+    than as too short."""
+    with capture_logs(level="WARNING") as sink:
+        warn_unusable_appeal(
+            "1234-5678-90, 11/02/2026: $1,250.00", "model='m' for denial 7"
+        )
+    output = sink.getvalue()
+    assert "not-words" in output
+    assert "words=0" in output
+    assert "too-short" not in output
+    assert "model='m' for denial 7" in output
 
-    sink = io.StringIO()
-    handler_id = loguru_logger.add(sink, level="WARNING")
-    try:
-        warn_too_short_appeal(None, "some context")
-    finally:
-        loguru_logger.remove(handler_id)
+
+def test_warn_unusable_appeal_handles_non_string():
+    """A non-string (e.g. None) is reported as length 0 without raising."""
+    with capture_logs(level="WARNING") as sink:
+        warn_unusable_appeal(None, "some context")
     output = sink.getvalue()
     assert "len=0" in output
 

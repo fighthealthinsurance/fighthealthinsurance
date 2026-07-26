@@ -60,7 +60,12 @@ from .payer_policy_helper import (
 )
 from .process_denial import ProcessDenialRegex
 from .pubmed_tools import PubMedTools
-from .utils import as_available_nested, best_within_timelimit, is_real_appeal
+from .utils import (
+    as_available_nested,
+    best_within_timelimit,
+    describe_unusable_appeal,
+    is_real_appeal,
+)
 
 
 class AppealTemplateGenerator(object):
@@ -1240,15 +1245,15 @@ def _peek_real_or_none(
     it: Iterator["GeneratedAppeal"], denial_id: Any, stage: str
 ) -> Tuple[Optional["GeneratedAppeal"], Iterator["GeneratedAppeal"]]:
     """Like _peek_or_none, but returns (None, _) when the first item is
-    non-None but fails is_real_appeal. Without this, a runt first item
+    non-None but fails is_real_appeal. Without this, an unusable first item
     would suppress the fallback path even though downstream filtering
     drops it — leading to zero deliverable appeals."""
     first, it = _peek_or_none(it)
     if first is not None and not is_real_appeal(first.text):
-        first_len = len(first.text.strip()) if isinstance(first.text, str) else 0
         logger.warning(
-            f"make_appeals: {stage} first item is a runt (len={first_len}) "
-            f"for denial {denial_id}; treating as empty to trigger fallback"
+            f"make_appeals: {stage} first item is unusable "
+            f"({describe_unusable_appeal(first.text)}) for denial {denial_id}; "
+            f"treating as empty to trigger fallback"
         )
         return None, it
     return first, it

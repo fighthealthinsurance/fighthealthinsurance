@@ -36,6 +36,7 @@ from django.core.files import File
 from django.core.mail import send_mail
 from django.core.validators import validate_email
 from django.db.models import F, Q, QuerySet
+from django.db.models.functions import Length
 from django.forms import Form
 from django.template.loader import render_to_string
 from django.urls import reverse
@@ -91,7 +92,7 @@ from fighthealthinsurance.utils import (
     keepalive_frames,
     MIN_APPEAL_CHARS,
     sync_iterator_to_async,
-    warn_too_short_appeal,
+    warn_unusable_appeal,
 )
 from .clinicaltrials_tools import ClinicalTrialsTools
 from .pubmed_tools import PubMedTools
@@ -2621,6 +2622,31 @@ def _uspstf_context_getter_factory() -> typing.Callable[[Any], Optional[str]]:
     return get_uspstf_context_for_denial
 
 
+def deliverable_candidates(qs: QuerySet) -> QuerySet:
+    """Narrow a ProposedAppeal queryset to rows that could be deliverable.
+
+    The DB-side half of the deliverability rule, applied BEFORE anything
+    counts, gates on, or decides what to do with these rows -- so a reserve
+    holding nothing but junk reads as the empty reserve it effectively is,
+    rather than as rows we are about to serve.
+
+    Only the cheap half pushes into SQL: a raw character count is an upper
+    bound on ``meaningful_appeal_length`` (whitespace and control characters
+    only ever subtract), so anything shorter than ``MIN_APPEAL_CHARS`` raw can
+    never pass and is not worth fetching. The word rule can't be expressed in
+    SQL, so ``is_real_appeal`` stays the authority and still runs on every row
+    AFTER this, immediately before it is served.
+    """
+    # Annotated rather than returned directly: django-stubs types the alias()
+    # chain as Any, which trips --warn-return-any.
+    narrowed: QuerySet = (
+        qs.exclude(appeal_text__isnull=True)
+        .alias(_appeal_len=Length("appeal_text"))
+        .filter(_appeal_len__gte=MIN_APPEAL_CHARS)
+    )
+    return narrowed
+
+
 class AppealsBackendHelper:
     regex_denial_processor = ProcessDenialRegex()
     pmt = PubMedTools()
@@ -2671,6 +2697,15 @@ class AppealsBackendHelper:
         hashed_email = Denial.get_hashed_email(email)
         # Extract the professional_to_finish parameter from the input, default to False
         professional_to_finish = parameters.get("professional_to_finish", False)
+        # Set by the JS client when this socket replaces one that dropped (see
+        # ws.onopen in appeal_fetcher.ts). Such a user has already waited out a
+        # broken connection on top of whatever generation has cost so far, and
+        # a fresh flow restarts flow_started at zero -- so the reserve's
+        # deadlines would make them wait the full 45s/90s all over again. On a
+        # reconnect the reserve goes out as soon as we know they are short of
+        # ENOUGH_APPEALS. Absent (REST, older clients) means False, i.e. the
+        # deadline behaviour is unchanged.
+        is_reconnect = bool(parameters.get("reconnect", False))
         # Medical reason provided?
         medical_reasons = set()
         if (
@@ -2917,10 +2952,10 @@ class AppealsBackendHelper:
         old = 0
         new = 0
         async for appeal in existing_appeals:
-            # Enforce the minimum-length rule on previously-saved appeals too:
-            # the DB may hold short drafts saved before this threshold existed
-            # (or by paths that skipped the filter), and we must not re-deliver
-            # them.
+            # Enforce the deliverability rules on previously-saved appeals too:
+            # the DB may hold short or wordless drafts saved before those
+            # checks existed (or by paths that skipped the filter), and we must
+            # not re-deliver them.
             if is_real_appeal(appeal.appeal_text):
                 old = old + 1
                 logger.debug(f"Found existing appeal {appeal}, yielding")
@@ -2930,7 +2965,7 @@ class AppealsBackendHelper:
                 )
                 yield await format_response(existing_appeal_dict)
             elif appeal.appeal_text is not None and str(appeal.appeal_text).strip():
-                warn_too_short_appeal(
+                warn_unusable_appeal(
                     appeal.appeal_text,
                     f"saved appeal id={appeal.id} for denial {denial_id}",
                 )
@@ -2941,13 +2976,24 @@ class AppealsBackendHelper:
         # net -- and so the "we served the reserve" logs below can say whether
         # those rows were waiting all along or landed while we generated (the
         # precompute is a detached actor and finishes on its own schedule).
+        #
+        # Counts only rows that could actually be served: a reserve of runts or
+        # identifier-echo junk is no safety net at all, and reporting it as one
+        # would send an incident review looking for a fallback that could never
+        # have fired. The reserve caps at MAX_SPECULATIVE_APPEALS rows, so
+        # applying the full is_real_appeal rule here costs a handful of short
+        # reads rather than a COUNT(*).
         # Best-effort: a failed count must not take the generation down with it.
         reserve_at_start = -1
         try:
-            reserve_at_start = await ProposedAppeal.objects.filter(
-                for_denial=denial, speculative=True
-            ).acount()
+            reserve_at_start = 0
+            async for _row in deliverable_candidates(
+                ProposedAppeal.objects.filter(for_denial=denial, speculative=True)
+            ).only("appeal_text"):
+                if is_real_appeal(_row.appeal_text):
+                    reserve_at_start += 1
         except Exception:
+            reserve_at_start = -1
             logger.opt(exception=True).warning(
                 f"[gen_id={generation_id}] could not count the speculative "
                 f"reserve for denial {denial_id}"
@@ -2956,9 +3002,17 @@ class AppealsBackendHelper:
             f"[gen_id={generation_id}] starting appeal generation for denial "
             f"{denial_id}: speculative reserve available at start="
             f"{reserve_at_start} (existing appeals={old}, deadlines: "
-            f"{cls.SPECULATIVE_FALLBACK_NO_APPEAL_SECONDS:.0f}s with nothing "
-            f"delivered / {cls.SPECULATIVE_FALLBACK_UNDER_TARGET_SECONDS:.0f}s "
-            f"under {cls.ENOUGH_APPEALS})"
+            + (
+                "waived, reconnect"
+                if is_reconnect
+                else (
+                    f"{cls.SPECULATIVE_FALLBACK_NO_APPEAL_SECONDS:.0f}s with "
+                    f"nothing delivered / "
+                    f"{cls.SPECULATIVE_FALLBACK_UNDER_TARGET_SECONDS:.0f}s "
+                    f"under {cls.ENOUGH_APPEALS}"
+                )
+            )
+            + ")"
         )
 
         # Rows served early by serve_reserve_if_stalled, tracked by normalized
@@ -2980,6 +3034,12 @@ class AppealsBackendHelper:
             ENOUGH_APPEALS this is a no-op, so a run that is delivering keeps
             its reserve held back exactly as before.
 
+            On a WS reconnect neither deadline applies: the wait this run
+            measures started when the replacement socket opened, so honouring
+            it would make someone who already lost a connection start their
+            45s/90s over. There, being under ENOUGH_APPEALS is the whole
+            condition and the reserve goes out at the first checkpoint.
+
             Past the applicable mark it serves the held-back precompute (oldest
             first), promoting each row to speculative=False so it persists as a
             real appeal and a later call serves it as existing -- the same
@@ -2998,19 +3058,31 @@ class AppealsBackendHelper:
             delivered = new + old
             if delivered >= cls.ENOUGH_APPEALS:
                 return
-            if delivered == 0:
-                deadline = cls.SPECULATIVE_FALLBACK_NO_APPEAL_SECONDS
-                rule = f"no-appeal@{deadline:.0f}s"
+            if is_reconnect:
+                # No deadline on a reconnect: this run's clock started when the
+                # replacement socket opened, but the user's wait didn't. Being
+                # under ENOUGH_APPEALS is the whole condition.
+                rule = "reconnect"
             else:
-                deadline = cls.SPECULATIVE_FALLBACK_UNDER_TARGET_SECONDS
-                rule = f"under-target@{deadline:.0f}s"
-            if (time.monotonic() - flow_started) < deadline:
-                return
+                if delivered == 0:
+                    deadline = cls.SPECULATIVE_FALLBACK_NO_APPEAL_SECONDS
+                    rule = f"no-appeal@{deadline:.0f}s"
+                else:
+                    deadline = cls.SPECULATIVE_FALLBACK_UNDER_TARGET_SECONDS
+                    rule = f"under-target@{deadline:.0f}s"
+                if (time.monotonic() - flow_started) < deadline:
+                    return
             try:
                 # chosen=False: never hand the user their own pick back as a
                 # new appeal (see the same filter in the reconciliation).
-                async for row in ProposedAppeal.objects.filter(
-                    for_denial=denial, speculative=True, chosen=False
+                # deliverable_candidates keeps junk out of the loop entirely, so
+                # it can't reach the ENOUGH_APPEALS check below and can't be the
+                # row we stop on; is_real_appeal then re-checks each survivor,
+                # since the word rule doesn't fit in SQL.
+                async for row in deliverable_candidates(
+                    ProposedAppeal.objects.filter(
+                        for_denial=denial, speculative=True, chosen=False
+                    )
                 ).order_by("id"):
                     if (new + old) >= cls.ENOUGH_APPEALS:
                         break
@@ -3019,8 +3091,19 @@ class AppealsBackendHelper:
                     normalized = str(row.appeal_text).strip()
                     if normalized in served_texts:
                         continue
+                    # Claim the row atomically. served_texts is per-run, so it
+                    # cannot dedupe against a concurrent flow -- and a reconnect
+                    # makes exactly that overlap likely, since the dropped
+                    # socket's generator can still be draining server-side while
+                    # the replacement flushes the reserve. Both would otherwise
+                    # select and serve the same held-back draft; the client
+                    # dedupes by content, so the done frame would promise more
+                    # appeals than are on screen. The loser of the race skips.
+                    if not await ProposedAppeal.objects.filter(
+                        pk=row.pk, speculative=True, chosen=False
+                    ).aupdate(speculative=False):
+                        continue
                     row.speculative = False
-                    await row.asave(update_fields=["speculative"])
                     if not reserve_notice_sent:
                         reserve_notice_sent = True
                         yield json.dumps(
@@ -3054,6 +3137,14 @@ class AppealsBackendHelper:
                     f"for denial {denial_id}; the end-of-flow reconciliation "
                     f"remains as the backstop"
                 )
+
+        # First checkpoint, placed before research/generation rather than after
+        # them: on a reconnect this fires immediately (no deadline to wait out),
+        # so a user whose socket dropped gets the reserve in their first frames
+        # instead of sitting through the whole flow again. On an ordinary run
+        # nothing is past its deadline this early, so it is a no-op.
+        async for _spec in serve_reserve_if_stalled():
+            yield _spec
 
         # Yield status after any previously saved appeals have been sent
         yield json.dumps(
@@ -3921,9 +4012,9 @@ class AppealsBackendHelper:
                 f"{summarize_denial_context_tokens(denial)}"
             )
             appeals = iter([])
-        # Drop None / empty / whitespace / runt outputs. Track runts so the
-        # zero-appeal diagnostic can distinguish "models silent" from
-        # "models producing only short strings".
+        # Drop None / empty / whitespace / runt / wordless outputs. Track the
+        # rejects so the zero-appeal diagnostic can distinguish "models silent"
+        # from "models producing only undeliverable strings".
         runts = 0
         dupes = 0
 
@@ -3957,7 +4048,7 @@ class AppealsBackendHelper:
                 return True
             if isinstance(text, str) and text.strip():
                 runts += 1
-                warn_too_short_appeal(
+                warn_unusable_appeal(
                     text,
                     f"model={item.model_name!r} for denial {denial_id}",
                 )
@@ -4030,8 +4121,8 @@ class AppealsBackendHelper:
         # exactly what that filter is there to prevent.
         saved_appeal_texts: list[str] = [
             str(pa.appeal_text)
-            async for pa in ProposedAppeal.objects.filter(
-                for_denial=denial, speculative=False
+            async for pa in deliverable_candidates(
+                ProposedAppeal.objects.filter(for_denial=denial, speculative=False)
             )
             if is_real_appeal(pa.appeal_text)
             and str(pa.appeal_text).strip() not in early_reserve_texts
@@ -4094,10 +4185,11 @@ class AppealsBackendHelper:
                 else:
                     synthesized = synthesis_task.result()
                     if synthesized and not is_real_appeal(synthesized):
-                        # Non-empty but below the deliverable threshold: filter
-                        # it out so synthesis can't bypass the minimum-length
-                        # rule that the streaming path enforces.
-                        warn_too_short_appeal(
+                        # Non-empty but not deliverable (too short, or not
+                        # made of words): filter it out so
+                        # synthesis can't bypass the rules the streaming path
+                        # enforces.
+                        warn_unusable_appeal(
                             synthesized,
                             f"synthesis output for denial {denial_id}",
                         )
@@ -4183,8 +4275,8 @@ class AppealsBackendHelper:
             # another request mid-stream lands a chosen row (for an editted one,
             # text the user wrote, which was never a draft) in between that
             # query and this one, leaving it absent from served_texts.
-            async for row in ProposedAppeal.objects.filter(
-                for_denial=denial, chosen=False
+            async for row in deliverable_candidates(
+                ProposedAppeal.objects.filter(for_denial=denial, chosen=False)
             ).order_by("id"):
                 text = row.appeal_text
                 if not is_real_appeal(text):
@@ -4209,9 +4301,14 @@ class AppealsBackendHelper:
                 )
                 if row.speculative:
                     # Promote to a real appeal so it persists and later calls
-                    # serve it as existing.
+                    # serve it as existing. Claimed atomically for the same
+                    # reason as the early flush above: a concurrent run must not
+                    # serve the same held-back draft, and the loser skips it.
+                    if not await ProposedAppeal.objects.filter(
+                        pk=row.pk, speculative=True, chosen=False
+                    ).aupdate(speculative=False):
+                        continue
                     row.speculative = False
-                    await row.asave(update_fields=["speculative"])
                 row_dict = await sub_in_appeals({"id": str(row.id), "content": text})
                 yield await format_response(row_dict)
                 served_texts.add(normalized)
@@ -4231,8 +4328,9 @@ class AppealsBackendHelper:
                 f"(new={new}, old={old})"
             )
 
-        # runt_count=0 means models were silent; >0 means models produced
-        # only too-short outputs — different root causes for incident review.
+        # runt_count=0 means models were silent; >0 means models produced only
+        # undeliverable outputs (too short, or not made of words) —
+        # different root causes for incident review.
         shed_tier = make_appeals_diag.get("shed_tier")
         winning_stage = make_appeals_diag.get("winning_stage")
         models_tried = make_appeals_diag.get("models_tried") or "none"
