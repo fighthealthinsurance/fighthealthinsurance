@@ -3,13 +3,14 @@ fax/model health helpers it relies on."""
 
 import datetime
 import os
+import tempfile
 import threading
 import time
 from unittest import mock
 
 import requests
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
@@ -155,6 +156,36 @@ class AdminStatusFaxQueueTest(TestCase):
         self.assertEqual(q["awaiting_confirmation"], 1)  # C
         self.assertEqual(q["in_flight"], 1)  # D
         self.assertEqual(q["failures_recent"], 1)  # E
+
+
+class AdminStatusStorageTest(TestCase):
+    """_storage_status must degrade to an error row, never raise."""
+
+    @staticmethod
+    def _status_for(location):
+        from django.core.files.storage import FileSystemStorage
+
+        from fighthealthinsurance.staff_views import AdminStatusView
+
+        with override_settings(EXTERNAL_STORAGE=FileSystemStorage(location=location)):
+            return AdminStatusView._storage_status()
+
+    def test_reachable_storage_reports_ok_and_location(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            status = self._status_for(tmp)
+        self.assertTrue(status["ok"])
+        self.assertIsNone(status["error"])
+        self.assertEqual(status["location"], tmp)
+
+    def test_missing_storage_location_reports_error_without_raising(self):
+        """The dev/unmounted case: /external_data (or any absent root) must
+        render as UNREACHABLE naming the path, not blow up the status page."""
+        with tempfile.TemporaryDirectory() as tmp:
+            missing = os.path.join(tmp, "not-mounted")
+        status = self._status_for(missing)
+        self.assertFalse(status["ok"])
+        self.assertIn(missing, status["error"])
+        self.assertEqual(status["location"], missing)
 
 
 class ComputeModelHealthDetailsTest(TestCase):
