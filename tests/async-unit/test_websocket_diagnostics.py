@@ -14,6 +14,7 @@ don't accidentally collapse the lookup-failed case back into the
 """
 
 import json
+import re
 from unittest.mock import patch, AsyncMock, MagicMock
 
 import pytest
@@ -569,6 +570,59 @@ async def test_rest_fallback_wires_error_from_send_false():
     assert errors, "expected a zero-appeal ERROR from the REST fallback"
     assert "Generation produced nothing" in errors[-1]
     assert reset_error in errors[-1]
+
+
+@pytest.mark.asyncio
+async def test_rest_fallback_disconnect_log_includes_stream_timing():
+    """A REST client hanging up mid-stream logs how long the stream ran and
+    how long it had been silent.
+
+    The client can only report "the connection dropped"; the server-side
+    elapsed/idle pair is what tells triage whether an intermediary reaped an
+    idle stream (long idle gap) or the connection died while we were actively
+    writing (idle near zero).
+    """
+    from rest_framework.test import APIRequestFactory
+
+    from fighthealthinsurance import rest_views
+
+    async def _two_status_frames(_data):
+        yield json.dumps({"type": "status", "phase": "generating"}) + "\n"
+        yield json.dumps({"type": "status", "phase": "generating"}) + "\n"
+
+    request = APIRequestFactory().post(
+        "/ziggy/rest/appeals/streaming_fallback",
+        {"denial_id": 42, "email": "a@b.com", "semi_sekret": "s"},
+        format="json",
+    )
+
+    fake_logger = MagicMock()
+    with patch.object(
+        rest_views.common_view_logic,
+        "get_denial_for_action",
+        return_value=MagicMock(),
+    ), patch.object(
+        rest_views.common_view_logic.AppealsBackendHelper,
+        "generate_appeals",
+        _two_status_frames,
+    ), patch.object(
+        rest_views, "logger", fake_logger
+    ):
+        response = rest_views.streaming_appeals_rest_fallback(request)
+        # Drive the view's own generator (not the `streaming_content`
+        # wrapper): closing it is what delivers GeneratorExit to the
+        # disconnect branch, exactly as an ASGI client hangup does.
+        stream = response._iterator
+        # Leading "\n", first record, its framing "\n", then the second
+        # record -- leaving the generator suspended on a yield, mid-stream.
+        for _ in range(4):
+            await stream.__anext__()
+        await stream.aclose()
+
+    messages = [call.args[0] for call in fake_logger.warning.call_args_list]
+    assert messages, "expected a client-disconnect WARNING"
+    assert "client disconnected mid-stream" in messages[-1]
+    assert re.search(r"elapsed=\d+\.\d+s idle=\d+\.\d+s", messages[-1]), messages[-1]
 
 
 @pytest.mark.asyncio

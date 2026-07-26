@@ -461,6 +461,37 @@ let lastWsCloseCode = -1;
 let lastWsCloseReason = '';
 let lastWsErrorMessage = '';
 let lastRestErrorMessage = '';
+// REST fallback leg diagnostics. The browser's message for a failed fetch is
+// uselessly vague on its own -- Chrome says "Failed to fetch" when the request
+// never got headers and "network error" when the *body stream* dies after a
+// successful response, Safari says "Load failed", Firefox "NetworkError when
+// attempting to fetch resource" -- and none of them say whether we ever
+// reached the server, whether any bytes arrived, or how long the connection
+// sat idle before dying. Those three facts are what separates "origin/proxy
+// killed an idle stream" from "user's network dropped" from "server 5xx'd
+// instantly", so track them explicitly.
+//
+// restStage is the furthest point the REST leg reached:
+//   'none'        -- REST fallback never ran
+//   'connecting'  -- fetch() issued, no response headers yet
+//   'headers'     -- headers arrived, body reader not started
+//   'streaming'   -- reading the body
+//   'complete'    -- body fully read
+let restStage = 'none';
+let restHttpStatus = -1;
+let restTimeToHeadersMs = -1;
+let restBytesReceived = 0;
+let restFramesReceived = 0;
+let restStartedAtMs = 0;
+// Timestamp of the most recent byte off the REST body, so a failure can
+// report how long the stream had been silent. A proxy/gateway idle timeout
+// shows up as "died after ~N seconds of silence"; a mid-flow reset (user
+// network dropped, server crashed while writing) shows a near-zero idle gap.
+let restLastByteAtMs = 0;
+// Set when our own inactivity watchdog aborts the REST fetch, so the
+// resulting AbortError is reported as a deliberate client-side give-up
+// rather than an unexplained "network error".
+let restAbortReason = '';
 // Why the WebSocket transport ended, for the error report. `retries` only
 // counts WS reconnects, so a timeout-driven escalation to REST reports
 // retries=0 — which reads as "gave up immediately" unless we also say the
@@ -509,6 +540,13 @@ const WS_INACTIVITY_TIMEOUT_MS = 90000;
 // isn't stuck. Kept generous because a healthy run can legitimately take
 // several minutes; the 90s inactivity timeout handles dead streams sooner.
 const WS_HARD_TIMEOUT_MS = 420000;
+// Inactivity watchdog for the REST fallback leg. Without it the REST leg has
+// no timeout at all: escalateToRest() clears both WS timers and nothing
+// re-arms them, so a fetch that connects and then hangs leaves the user on a
+// spinner indefinitely. Same 90s budget as the WS inactivity timeout -- the
+// REST fallback streams the *same* generator with the same keep-alive
+// cadence, so the same "longest legitimate quiet stretch" reasoning applies.
+const REST_INACTIVITY_TIMEOUT_MS = 90000;
 
 let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
 // Absolute-deadline timer for the WebSocket transport (see escalateToRest).
@@ -629,6 +667,10 @@ function reportClientError(error: string): void {
     ? Date.now() - doQueryStartedAtMs : -1;
   const inflightWaitMs = currentAttemptStartedAtMs > 0
     ? Date.now() - currentAttemptStartedAtMs : -1;
+  // How long the REST body had been silent when we gave up. -1 when the REST
+  // leg never ran; measured from the last byte (or from the request start, if
+  // nothing ever arrived).
+  const restIdleMs = restStartedAtMs > 0 ? Date.now() - restLastByteAtMs : -1;
   // Delivery diagnostics live in their own field so a long mobile
   // user-agent string in browser_info doesn't truncate them.
   const diagnostics = [
@@ -649,6 +691,25 @@ function reportClientError(error: string): void {
     `max_retries=${maxRetries}`,
     `rest_fallback=${usingRestFallback}`,
     `rest_err=${lastRestErrorMessage || 'none'}`,
+    // How far the REST leg got and what it saw. A bare "network error" is
+    // ambiguous without these: stage tells us whether the server ever
+    // answered, status/ttfb whether it answered healthily, and bytes/frames
+    // whether the stream was producing before it died.
+    `rest_stage=${restStage}`,
+    `rest_status=${restHttpStatus}`,
+    `rest_ttfb_ms=${restTimeToHeadersMs}`,
+    `rest_bytes=${restBytesReceived}`,
+    `rest_frames=${restFramesReceived}`,
+    // Silence before the failure. Close to a round number of seconds (60s,
+    // 100s) points at an intermediary's idle timeout rather than a flaky
+    // client network; near zero means the connection was cut mid-write.
+    `rest_idle_ms=${restIdleMs}`,
+    // Client-side environment at report time. `offline` explains an
+    // otherwise-inexplicable transport failure outright, and a hidden tab is
+    // the usual cause on mobile Safari, where backgrounding kills in-flight
+    // streams.
+    `net_online=${typeof navigator.onLine === 'boolean' ? navigator.onLine : 'unknown'}`,
+    `page_hidden=${document.visibilityState === 'hidden'}`,
     `wait_total_ms=${aggregateWaitMs}`,
     `wait_attempts_ms=${attemptDurationsMs.join(',') || 'none'}`,
     `wait_inflight_ms=${inflightWaitMs}`,
@@ -705,8 +766,14 @@ function done(): void {
       // "WS went silent mid-generation -> inactivity timeout -> REST fallback
       // also failed", which the old "exhausted N retries" wording hid because
       // a timeout escalation never increments `retries`.
+      // Name the REST leg's outcome in the headline, not just in the
+      // diagnostics blob: "REST fallback delivered 0 appeals" reads like the
+      // server returned nothing, when the common case is that the transport
+      // died before the server got to answer.
       const detail = usingRestFallback
-        ? `WS ended (${wsEndReason}) then REST fallback delivered 0 appeals`
+        ? `WS ended (${wsEndReason}) then REST fallback delivered 0 appeals ` +
+          `[stage=${restStage} frames=${restFramesReceived} bytes=${restBytesReceived} ` +
+          `err=${lastRestErrorMessage || 'none'}]`
         : `WS ended (${wsEndReason}) with 0 appeals and no REST fallback`;
       reportClientError(
         `Client received 0 appeals via ${transport}: ${detail} ` +
@@ -838,6 +905,46 @@ async function requestExternalModels(
   }
 }
 
+// Turn a thrown fetch failure into something a log reader can act on.
+// `error.message` alone is the ambiguous part ("network error", "Failed to
+// fetch", "Load failed"), so prefix the constructor name and append the stage
+// we died at plus a plain-English reading of the browser's wording. The result
+// lands in `rest_err=` in the client error report.
+function describeFetchError(error: unknown): string {
+  const name = (error as any)?.name || 'Error';
+  const message = (error as any)?.message || String(error);
+  const normalized = String(message).toLowerCase();
+  let interpretation = '';
+  if (name === 'AbortError') {
+    // Our own watchdog (restAbortReason) or a page teardown.
+    interpretation = restAbortReason
+      ? `client aborted: ${restAbortReason}`
+      : 'request aborted (page navigation/teardown?)';
+  } else if (
+    // Chrome uses the bare "network error" specifically for a body stream
+    // that dies AFTER response headers were accepted -- i.e. we did reach
+    // the server and it did answer; the connection was cut mid-response.
+    // Safari's equivalent is "the network connection was lost".
+    normalized === 'network error' ||
+    normalized.includes('connection was lost') ||
+    normalized.includes('connection closed')
+  ) {
+    interpretation = 'connection dropped mid-response (idle proxy timeout, origin restart, or transient network loss)';
+  } else if (
+    // Every browser's "the request never completed a round trip" wording.
+    normalized.includes('failed to fetch') ||
+    normalized.includes('load failed') ||
+    normalized.includes('networkerror when attempting')
+  ) {
+    interpretation = 'request never got a response (DNS/TLS/connect refused, offline, or blocked)';
+  }
+  const parts = [`${name}: ${message}`, `stage=${restStage}`];
+  if (interpretation) {
+    parts.push(interpretation);
+  }
+  return parts.join(' | ');
+}
+
 // REST fallback for when WebSockets are unavailable (e.g. iPhone Safari, corporate proxies)
 async function fetchFallback(url: string, data: object, csrfToken: string): Promise<void> {
   console.log("Using REST fallback for appeal generation");
@@ -845,12 +952,40 @@ async function fetchFallback(url: string, data: object, csrfToken: string): Prom
   // ws.onerror already called endCurrentAttempt() before handoff, so
   // start a fresh attempt timer for the REST leg.
   beginAttempt();
+  restStage = 'connecting';
+  restStartedAtMs = Date.now();
+  restLastByteAtMs = restStartedAtMs;
   const statusMessage = document.getElementById('status-message');
   if (statusMessage) {
     statusMessage.textContent = 'Using alternative connection method...';
   }
   updateStatusIndicator('connected', appealsSoFar.length);
 
+  // Watchdog: abort the fetch if the stream goes quiet. Re-armed on every
+  // chunk (and on headers), cleared in the finally below.
+  const controller = new AbortController();
+  let restIdleHandle: ReturnType<typeof setTimeout> | null = null;
+  const armRestIdleTimer = () => {
+    if (restIdleHandle) clearTimeout(restIdleHandle);
+    restIdleHandle = setTimeout(() => {
+      restIdleHandle = null;
+      restAbortReason =
+        `no data for ${REST_INACTIVITY_TIMEOUT_MS / 1000}s at stage=${restStage}`;
+      console.error(`REST fallback stalled: ${restAbortReason}`);
+      try {
+        controller.abort();
+      } catch (e) {
+        /* ignore */
+      }
+    }, REST_INACTIVITY_TIMEOUT_MS);
+  };
+  const noteBytes = (byteLength: number) => {
+    restBytesReceived += byteLength;
+    restLastByteAtMs = Date.now();
+    armRestIdleTimer();
+  };
+
+  armRestIdleTimer();
   try {
     const response = await fetch(url, {
       method: 'POST',
@@ -859,17 +994,27 @@ async function fetchFallback(url: string, data: object, csrfToken: string): Prom
         'X-CSRFToken': csrfToken,
       },
       body: JSON.stringify(data),
+      signal: controller.signal,
     });
+
+    restStage = 'headers';
+    restHttpStatus = response.status;
+    restTimeToHeadersMs = Date.now() - restStartedAtMs;
+    restLastByteAtMs = Date.now();
+    armRestIdleTimer();
 
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
 
+    restStage = 'streaming';
     if (!response.body) {
       // No streaming body available — read entire response as text
       const text = await response.text();
+      noteBytes(text.length);
       for (const line of text.split('\n')) {
         if (line.trim()) {
+          restFramesReceived++;
           processResponseChunk(line + '\n');
         }
       }
@@ -881,27 +1026,38 @@ async function fetchFallback(url: string, data: object, csrfToken: string): Prom
       while (true) {
         const { done: streamDone, value } = await reader.read();
         if (streamDone) break;
+        noteBytes(value?.byteLength ?? 0);
         buffer += decoder.decode(value, { stream: true });
         // Process complete lines
         while (buffer.includes('\n')) {
           const idx = buffer.indexOf('\n');
           const line = buffer.slice(0, idx + 1);
           buffer = buffer.slice(idx + 1);
+          if (line.trim()) {
+            restFramesReceived++;
+          }
           processResponseChunk(line);
         }
       }
       // Process any remaining data
       if (buffer.trim()) {
+        restFramesReceived++;
         processResponseChunk(buffer + '\n');
       }
     }
+    restStage = 'complete';
     updateStatusIndicator('done', appealsSoFar.length);
   } catch (error) {
     console.error("REST fallback error:", error);
-    lastRestErrorMessage = (error as any)?.message || String(error);
+    lastRestErrorMessage = describeFetchError(error);
     if (statusMessage) {
       statusMessage.textContent = 'Connection failed. Please try refreshing the page.';
       statusMessage.style.color = '#dc3545';
+    }
+  } finally {
+    if (restIdleHandle) {
+      clearTimeout(restIdleHandle);
+      restIdleHandle = null;
     }
   }
   // Record REST attempt duration before reporting / hiding UI.
@@ -1321,6 +1477,18 @@ export function doQuery(backend_url: string, data: Map<string, string>, rest_fal
   // own generation_id, so a stale id would mis-join the server trace.
   wsEndReason = 'none';
   serverGenerationId = '';
+  // Same reasoning for the REST leg's counters: the external-models rerun
+  // goes back to the WebSocket, so leaving the previous pass's stage/bytes
+  // latched would attribute a stale transport failure to the new attempt.
+  restStage = 'none';
+  restHttpStatus = -1;
+  restTimeToHeadersMs = -1;
+  restBytesReceived = 0;
+  restFramesReceived = 0;
+  restStartedAtMs = 0;
+  restLastByteAtMs = 0;
+  restAbortReason = '';
+  lastRestErrorMessage = '';
   // Start the aggregate wait clock only on the first call. doQuery
   // recurses on retry via done(), and we want the total to span the
   // entire user-visible wait, not just the latest retry.
