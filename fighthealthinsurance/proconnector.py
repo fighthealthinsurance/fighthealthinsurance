@@ -31,7 +31,7 @@ from django.utils import timezone
 
 from loguru import logger
 
-from fighthealthinsurance.email_utils import is_blocked_email
+from fighthealthinsurance.email_utils import is_blocked_email, is_sendable_email
 from fighthealthinsurance.ml.ml_inference import infer_with_fallback
 from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance.models import InterestedProfessional, ScheduledEmail
@@ -213,6 +213,28 @@ def get_cofactor_cc_email() -> Optional[str]:
     if cleaned.lower() == CC_DISABLED_SENTINEL:
         return None
     return cleaned
+
+
+def cofactor_cc_problem() -> Optional[str]:
+    """Reason the configured Cofactor CC address is unusable, or ``None``.
+
+    A typo'd (no ``@``) or blocked-domain ``COFACTOR_CC_EMAIL`` is *silently*
+    dropped from the CC list by ``send_fallback_email``, which then reports a
+    successful send -- so the intro would go out telling the recipient Cofactor AI
+    is "cc'd here", and be recorded as sent, while Cofactor never received it.
+    Real sends fail closed on this instead (see :func:`_intro_cc_recipients`).
+    Deliberately disabling the CC with the ``"none"`` sentinel is a choice, not a
+    problem, so it returns ``None``.
+    """
+    address = get_cofactor_cc_email()
+    if address is None or is_sendable_email(address):
+        return None
+    return (
+        f"COFACTOR_CC_EMAIL is set to '{address}', which is not a sendable "
+        f"address, so Cofactor AI would be silently dropped from the CC. Fix the "
+        f"setting, or set it to '{CC_DISABLED_SENTINEL}' to send intros without "
+        f"CC'ing Cofactor AI."
+    )
 
 
 def _greeting_name(pro: InterestedProfessional) -> str:
@@ -470,7 +492,16 @@ def default_intro_cc_recipients() -> list[str]:
 def _intro_cc_recipients(extra_cc: Optional[list[str]] = None) -> list[str]:
     """CC list for an intro email: the always-CC'd defaults (professional
     contact, Cofactor AI) first, then any caller-supplied extras, deduplicated
-    case-insensitively in order."""
+    case-insensitively in order.
+
+    Raises ``ValueError`` when the configured Cofactor address is unusable (see
+    :func:`cofactor_cc_problem`). Every real send path goes through here to build
+    its CC list, so this is the chokepoint that keeps a misconfigured setting from
+    quietly turning into an intro that claims a CC it doesn't have.
+    """
+    problem = cofactor_cc_problem()
+    if problem:
+        raise ValueError(problem)
     return _dedup_addresses([*default_intro_cc_recipients(), *(extra_cc or [])])
 
 

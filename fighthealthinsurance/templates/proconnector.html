@@ -216,7 +216,9 @@
 
         <label>CC</label>
         <input type="text" class="readonly" value="{{ cc_emails|join:', ' }}" readonly>
-        {% if cofactor_cc_email %}
+        {% if cofactor_cc_problem %}
+          <p class="error">⚠️ {{ cofactor_cc_problem }}</p>
+        {% elif cofactor_cc_email %}
           <p class="hint">
             Cofactor AI is CC'd alongside the FHI professional address &mdash; the
             email tells the recipient they are cc'd here.
