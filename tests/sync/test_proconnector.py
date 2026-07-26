@@ -25,8 +25,10 @@ from fighthealthinsurance.proconnector import (
     build_base_intro_email,
     build_base_intro_letter,
     build_search_links,
+    default_intro_cc_recipients,
     describe_known_info,
     generate_intro_email,
+    get_cofactor_cc_email,
     get_next_interested_professional,
     get_professional_cc_email,
     partner_framing_problem,
@@ -603,6 +605,19 @@ class _ProcessViewTestCase(TestCase):
         return self.client.post(self.url, {"action": action, **fields})
 
 
+class ProcessPageCCDisplayTest(_ProcessViewTestCase):
+    @patch(
+        "fighthealthinsurance.staff_views.generate_intro_email",
+        return_value="A draft body with compensation disclosure.",
+    )
+    def test_cc_field_shows_professional_and_cofactor(self, _mock_gen):
+        _make_pro(email="jane@janeclinic.com")
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, get_professional_cc_email())
+        self.assertContains(response, get_cofactor_cc_email())
+
+
 # ---------------------------------------------------------------------------
 # Send flow
 # ---------------------------------------------------------------------------
@@ -990,10 +1005,10 @@ class SkipFlowTest(_ProcessViewTestCase):
 
 
 # ---------------------------------------------------------------------------
-# Email send helper (CC professional@)
+# Email send helper (CC professional@ + Cofactor AI)
 # ---------------------------------------------------------------------------
 class SendHelperTest(TestCase):
-    def test_send_proconnector_intro_email_ccs_professional(self):
+    def test_send_proconnector_intro_email_ccs_professional_and_cofactor(self):
         pro = _make_pro(email="jane@janeclinic.com")
         proconnector.send_proconnector_intro_email(
             pro,
@@ -1003,13 +1018,35 @@ class SendHelperTest(TestCase):
         self.assertGreaterEqual(len(mail.outbox), 1)
         msg = mail.outbox[0]
         self.assertIn("jane@janeclinic.com", msg.to)
-        self.assertEqual(msg.cc, [get_professional_cc_email()])
+        self.assertEqual(msg.cc, [get_professional_cc_email(), get_cofactor_cc_email()])
         self.assertEqual(msg.subject, "Intro to Cofactor AI")
         self.assertIn("compensation disclosure", msg.body)
+
+    def test_cofactor_contact_is_cced_so_the_email_matches_the_copy(self):
+        # The base email tells the recipient Cofactor AI is "cc'd here", so their
+        # contact has to actually be on the CC line by default.
+        self.assertIn("cc'd here", BASE_INTRO_EMAIL)
+        self.assertEqual(get_cofactor_cc_email(), "rmorales@cofactorai.com")
+        self.assertIn("rmorales@cofactorai.com", default_intro_cc_recipients())
 
     @override_settings(PROFESSIONAL_CC_EMAIL="custom-pro@example-host.com")
     def test_cc_uses_configured_setting(self):
         self.assertEqual(get_professional_cc_email(), "custom-pro@example-host.com")
+
+    @override_settings(COFACTOR_CC_EMAIL="someone-else@cofactorai.com")
+    def test_cofactor_cc_uses_configured_setting(self):
+        self.assertEqual(get_cofactor_cc_email(), "someone-else@cofactorai.com")
+        self.assertIn("someone-else@cofactorai.com", default_intro_cc_recipients())
+        self.assertNotIn("rmorales@cofactorai.com", default_intro_cc_recipients())
+
+    @override_settings(
+        PROFESSIONAL_CC_EMAIL="shared@fighthealthinsurance.com",
+        COFACTOR_CC_EMAIL="SHARED@fighthealthinsurance.com",
+    )
+    def test_default_cc_dedups_when_both_settings_match(self):
+        self.assertEqual(
+            default_intro_cc_recipients(), ["shared@fighthealthinsurance.com"]
+        )
 
     def test_plaintext_body_is_not_html_escaped(self):
         # The .txt template must not HTML-escape the body, or apostrophes and
@@ -1163,7 +1200,9 @@ class QueueHelperTest(TestCase):
         self.assertEqual(se.purpose, "proconnector_intro")
         self.assertEqual(se.send_timezone, "America/New_York")
         self.assertTrue(se.timezone_is_specific)
+        # Queued sends carry the same default CC list as immediate sends.
         self.assertIn(get_professional_cc_email(), se.cc)
+        self.assertIn(get_cofactor_cc_email(), se.cc)
         self.assertEqual(se.context["body"], "Body with compensation disclosure.")
         self.assertFalse(se.sent)
 

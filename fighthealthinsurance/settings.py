@@ -164,6 +164,12 @@ class Base(Configuration):
         "PROFESSIONAL_CC_EMAIL", "professional@fighthealthinsurance.com"
     )
 
+    # Cofactor AI's contact address, CC'd on pro-connector intro emails alongside
+    # PROFESSIONAL_CC_EMAIL -- the intro copy says Cofactor AI is "cc'd here", so
+    # they have to actually be on the CC line. Configurable via env so a change
+    # of contact doesn't require a code change.
+    COFACTOR_CC_EMAIL = os.getenv("COFACTOR_CC_EMAIL", "rmorales@cofactorai.com")
+
     # Demo-request notifications always go to support42@; additional recipients
     # can be configured via the DEMO_REQUEST_EXTRA_NOTIFICATION_EMAILS env var
     # (comma-separated).

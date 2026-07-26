@@ -8,8 +8,9 @@ workflows.
 
 This module builds the introduction email -- optionally personalized by an
 (external) LLM and always falling back to a safe approved base template -- and
-sends it with the professional contact address CC'd. Staff review and edit every
-draft before it is sent; nothing here sends automatically.
+sends it with the professional contact address and Cofactor AI's contact CC'd
+(the copy tells the recipient Cofactor AI is "cc'd here"). Staff review and edit
+every draft before it is sent; nothing here sends automatically.
 
 Wording constraints (enforced by ``_is_safe_intro_draft``):
   * Never describe Cofactor AI as a "partner" or say FHI "partnered" with them.
@@ -39,6 +40,11 @@ from fighthealthinsurance.utils import send_fallback_email
 
 # Fallback CC address when no professional/support email setting is configured.
 DEFAULT_PROFESSIONAL_CC_EMAIL = "professional@fighthealthinsurance.com"
+
+# Fallback Cofactor AI contact when no COFACTOR_CC_EMAIL setting is configured.
+# The intro copy tells the recipient Cofactor AI is "cc'd here", so this address
+# is CC'd on every intro email alongside the professional contact address.
+DEFAULT_COFACTOR_CC_EMAIL = "rmorales@cofactorai.com"
 
 # Obvious test / spam signups we never introduce. These are filtered out of the
 # processing queue and the CSV export entirely (never shown, never counted)
@@ -183,6 +189,13 @@ def get_professional_cc_email() -> str:
     setting if set, otherwise the ``professional@`` default."""
     value = getattr(settings, "PROFESSIONAL_CC_EMAIL", None)
     return str(value) if value else DEFAULT_PROFESSIONAL_CC_EMAIL
+
+
+def get_cofactor_cc_email() -> str:
+    """Cofactor AI's CC address for intro emails: the configured
+    ``COFACTOR_CC_EMAIL`` setting if set, otherwise the known contact."""
+    value = getattr(settings, "COFACTOR_CC_EMAIL", None)
+    return str(value) if value else DEFAULT_COFACTOR_CC_EMAIL
 
 
 def _greeting_name(pro: InterestedProfessional) -> str:
@@ -411,17 +424,36 @@ def generate_intro_email(pro: InterestedProfessional) -> str:
     return async_to_sync(agenerate_intro_email)(pro)
 
 
-def _intro_cc_recipients(extra_cc: Optional[list[str]] = None) -> list[str]:
-    """CC list for an intro email: the professional contact address first, then
-    any caller-supplied extras, deduplicated case-insensitively in order."""
-    professional_cc = get_professional_cc_email()
-    recipients = [professional_cc]
-    seen = {professional_cc.lower()}
-    for addr in extra_cc or []:
-        if addr.lower() not in seen:
-            seen.add(addr.lower())
-            recipients.append(addr)
+def _dedup_addresses(addresses: list[str]) -> list[str]:
+    """Drop blanks and case-insensitive duplicates, preserving order."""
+    recipients: list[str] = []
+    seen: set[str] = set()
+    for addr in addresses:
+        cleaned = (addr or "").strip()
+        if cleaned and cleaned.lower() not in seen:
+            seen.add(cleaned.lower())
+            recipients.append(cleaned)
     return recipients
+
+
+def default_intro_cc_recipients() -> list[str]:
+    """Addresses always CC'd on an intro email.
+
+    The FHI professional contact address plus Cofactor AI's contact -- the intro
+    copy tells the recipient Cofactor AI is "cc'd here", so their address has to
+    actually be on the CC line for the email to match the copy. Both are
+    configurable (see :func:`get_professional_cc_email` /
+    :func:`get_cofactor_cc_email`), so they're deduplicated in case a deployment
+    points both settings at the same address.
+    """
+    return _dedup_addresses([get_professional_cc_email(), get_cofactor_cc_email()])
+
+
+def _intro_cc_recipients(extra_cc: Optional[list[str]] = None) -> list[str]:
+    """CC list for an intro email: the always-CC'd defaults (professional
+    contact, Cofactor AI) first, then any caller-supplied extras, deduplicated
+    case-insensitively in order."""
+    return _dedup_addresses([*default_intro_cc_recipients(), *(extra_cc or [])])
 
 
 def send_proconnector_intro_email(
@@ -431,9 +463,10 @@ def send_proconnector_intro_email(
     cc: Optional[list[str]] = None,
 ) -> None:
     """Send the (edited) intro email to ``pro`` now, always CC'ing the
-    professional address.
+    professional address and Cofactor AI.
 
-    The professional/support address is always included; any caller-supplied
+    The professional/support address and Cofactor AI's contact are always
+    included (see :func:`default_intro_cc_recipients`); any caller-supplied
     ``cc`` is treated as *additional* recipients, deduplicated while preserving
     order. Raises on send failure -- including a blocked/unsendable recipient,
     which ``send_fallback_email`` would otherwise skip silently -- so the caller
@@ -462,11 +495,12 @@ def send_proconnector_test_email(
 
     Lets staff preview exactly how the (edited) draft renders in a real inbox
     before committing to the real send. Unlike the real send it goes only to
-    the test address (the professional is NOT emailed and the professional
-    contact address is NOT CC'd), the subject and body are clearly marked as a
-    test, and -- critically -- nothing is written to the record: the intro is
-    not marked attempted/sent, so it stays in the queue. Raises on a blocked
-    test address or send failure so the caller can surface the problem.
+    the test address (the professional is NOT emailed and neither the
+    professional contact address nor Cofactor AI is CC'd), the subject and body
+    are clearly marked as a test, and -- critically -- nothing is written to the
+    record: the intro is not marked attempted/sent, so it stays in the queue.
+    Raises on a blocked test address or send failure so the caller can surface
+    the problem.
     """
     if is_blocked_email(test_email):
         raise ValueError("Test email address is blocked or unsendable")

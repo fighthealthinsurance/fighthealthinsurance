@@ -51,6 +51,7 @@ from fighthealthinsurance.proconnector import (
     build_base_intro_letter,
     build_search_links,
     claim_email_for_send,
+    default_intro_cc_recipients,
     generate_intro_email,
     get_next_interested_professional,
     get_professional_cc_email,
@@ -1052,7 +1053,10 @@ class ProConnectorProcessView(View):
             "pro": pro,
             "email_body": draft,
             "subject": subject or PROCONNECTOR_INTRO_SUBJECT,
-            "cc_email": get_professional_cc_email(),
+            # The email CCs both the professional contact address and Cofactor
+            # AI; the printable letter can only name the professional contact.
+            "cc_emails": default_intro_cc_recipients(),
+            "contact_email": get_professional_cc_email(),
             "google_search_url": links["google"],
             "linkedin_search_url": links["linkedin"],
             "google_address_search_url": links["google_address"],
