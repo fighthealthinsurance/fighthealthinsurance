@@ -63,10 +63,15 @@ MIN_APPEAL_CHARS = 15
 # junk by any measure.
 MIN_APPEAL_WORDS = 2
 
-# A word-like token: a run of two or more letters. Digits, punctuation, and
-# lone letters are excluded, so "99213", "$1,250.00", "11/02/2026" and the
-# "A" in "Plan A" contribute nothing.
-_APPEAL_WORD_RE = re.compile(r"[^\W\d_]{2,}")
+# A word-like token: a run of two or more letters that is not welded to a
+# digit or underscore on either side. Digits, punctuation, and lone letters
+# are excluded, so "99213", "$1,250.00", "11/02/2026" and the "A" in "Plan A"
+# contribute nothing -- and neither do the letter prefixes inside claim,
+# member, and authorization identifiers ("AB123456789", "H5521-001"), which
+# would otherwise read as words in exactly the identifier-echo output this
+# filter exists to reject. Ordinary hyphenated and possessive prose is
+# unaffected: "well-documented" is two tokens, "patient's" is one.
+_APPEAL_WORD_RE = re.compile(r"(?<!\w)[^\W\d_]{2,}(?!\w)")
 
 
 def meaningful_appeal_length(text: Optional[str]) -> int:

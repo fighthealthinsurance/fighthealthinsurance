@@ -1592,6 +1592,10 @@ class TestCommonViewLogic(TestCase):
         (".,;:!?()[]{}<>/\\-_=+*&^%$#@~", False),
         # One word among the identifiers is still not a letter.
         ("Denied. 99213 11/02/2026 -- $1,250.00", False),
+        # Letter prefixes welded to identifiers are not words: this is the
+        # identifier-echo output the filter exists to reject.
+        ("AB123456789 CD987654321", False),
+        ("H5521-001 BCBS12345 99213 $1,250.00", False),
         # Two words clears the floor: it is deliberately a worst-of-the-worst
         # bar, not a quality bar (real appeals run to hundreds of words).
         ("Claim #1234-5678-90 denied 11/02/2026 -- $1,250.00", True),
@@ -1635,6 +1639,14 @@ def test_appeal_has_words(value, expected):
         ("Plan A 1234", 1),  # the lone "A" is not a token
         ("Claim 1234 denied", 2),
         ("this is a long enough appeal text for delivery", 8),  # "a" excluded
+        # Letters welded to digits are identifier fragments, not words.
+        ("AB123456789 CD987654321", 0),
+        ("H5521-001 BCBS12345", 0),
+        # ...but ordinary hyphenated and possessive prose still counts.
+        ("well-documented", 2),
+        # the / patient / rays; the possessive "s" and the lone "X" don't count
+        ("the patient's X-rays", 3),
+        ("COVID-19 treatment", 2),
     ],
 )
 def test_appeal_word_count(value, expected):
