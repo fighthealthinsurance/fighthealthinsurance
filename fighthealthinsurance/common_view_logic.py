@@ -2926,6 +2926,29 @@ class AppealsBackendHelper:
                 )
 
         # --- Early speculative fallback ---
+        # What the precompute had ready before this run started. Logged here so
+        # a trace shows, from the first frames, whether there was ever a safety
+        # net -- and so the "we served the reserve" logs below can say whether
+        # those rows were waiting all along or landed while we generated (the
+        # precompute is a detached actor and finishes on its own schedule).
+        # Best-effort: a failed count must not take the generation down with it.
+        reserve_at_start = -1
+        try:
+            reserve_at_start = await ProposedAppeal.objects.filter(
+                for_denial=denial, speculative=True
+            ).acount()
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"[gen_id={generation_id}] could not count the speculative "
+                f"reserve for denial {denial_id}"
+            )
+        logger.info(
+            f"[gen_id={generation_id}] starting appeal generation for denial "
+            f"{denial_id}: speculative reserve available at start="
+            f"{reserve_at_start} (existing appeals={old}, deadline="
+            f"{cls.SPECULATIVE_FALLBACK_SECONDS:.0f}s)"
+        )
+
         # Rows served early by serve_reserve_if_stalled, tracked by normalized
         # text: they are promoted to speculative=False, so without this they
         # would look like ordinary live drafts to the synthesis input query.
@@ -2994,10 +3017,11 @@ class AppealsBackendHelper:
                     new += 1
                     reserve_served += 1
                     logger.info(
-                        f"[gen_id={generation_id}] served speculative reserve "
+                        f"[gen_id={generation_id}] picked speculative reserve "
                         f"appeal {row.id} for denial {denial_id} after "
                         f"{time.monotonic() - flow_started:.1f}s "
-                        f"(new={new}, old={old})"
+                        f"(new={new}, old={old}, "
+                        f"{'available at start' if reserve_at_start > 0 else 'arrived mid-generation'})"
                     )
             except Exception:
                 logger.opt(exception=True).warning(
@@ -3876,13 +3900,35 @@ class AppealsBackendHelper:
         # zero-appeal diagnostic can distinguish "models silent" from
         # "models producing only short strings".
         runts = 0
+        dupes = 0
 
         def keep(item: Optional[GeneratedAppeal]) -> bool:
-            nonlocal runts
+            nonlocal runts, dupes
             if item is None:
                 return False
             text = item.text
             if is_real_appeal(text):
+                # A live model can land on text we already sent -- most likely
+                # the reserve draft the early fallback just served, since the
+                # precompute runs the same internal models on the same denial.
+                # Drop it rather than stream a known duplicate: the client
+                # dedupes by content, so shipping it would make the done frame's
+                # count exceed what the user can see, which is precisely what
+                # trips the "partial delivery" error path in appeal_fetcher.ts.
+                # (Same reasoning as the verbatim-copy guard on synthesis.)
+                # This runs on the sync_iterator_to_async worker thread while the
+                # event loop may be adding to served_texts; a set membership test
+                # is a single atomic lookup, and the only cost of racing one is
+                # an occasional duplicate slipping through -- exactly today's
+                # behavior.
+                if str(text).strip() in served_texts:
+                    dupes += 1
+                    logger.info(
+                        f"[gen_id={generation_id}] dropping a live draft "
+                        f"(model={item.model_name!r}) for denial {denial_id} "
+                        f"that duplicates an appeal already sent"
+                    )
+                    return False
                 return True
             if isinstance(text, str) and text.strip():
                 runts += 1
@@ -3931,7 +3977,10 @@ class AppealsBackendHelper:
             # minutes still gets the reserve at the deadline.
             async for _spec in serve_reserve_if_stalled():
                 yield _spec
-        logger.debug(f"Normal appeals sent {new} and {old} (runt_count={runts})")
+        logger.debug(
+            f"Normal appeals sent {new} and {old} "
+            f"(runt_count={runts}, dupe_count={dupes})"
+        )
         yield json.dumps(
             {
                 "type": "status",
@@ -4082,6 +4131,10 @@ class AppealsBackendHelper:
             CONTEXT_LEVEL_TIER2_SHED,
         }
         reconciled = 0
+        # Subset of `reconciled` that actually came from the speculative
+        # precompute. The rest are late live drafts, which the reserve counters
+        # must not claim.
+        reconciled_from_reserve = 0
         # Snapshot the LIVE delivery count before the reserve tops it up. The
         # zero-appeal diagnostics below key off this, not the final total:
         # otherwise a run where generation produced nothing but the reserve
@@ -4118,6 +4171,17 @@ class AppealsBackendHelper:
                 # Re-evaluate the threshold each iteration: serving increments new.
                 if is_mini and (new + old) >= ENOUGH_APPEALS:
                     continue
+                # Attribution for the reserve counters below, taken BEFORE the
+                # promotion clears the flag. context_level is part of the test
+                # so a reserve row promoted by an earlier run still counts as
+                # precompute output; a late FULL-context draft (also served
+                # here) is live generation and must not be credited to the
+                # reserve, or the diagnostics would report a fallback that
+                # never happened.
+                from_precompute = (
+                    bool(row.speculative)
+                    or row.context_level == CONTEXT_LEVEL_SPECULATIVE
+                )
                 if row.speculative:
                     # Promote to a real appeal so it persists and later calls
                     # serve it as existing.
@@ -4128,6 +4192,8 @@ class AppealsBackendHelper:
                 served_texts.add(normalized)
                 new += 1
                 reconciled += 1
+                if from_precompute:
+                    reconciled_from_reserve += 1
         except Exception:
             logger.opt(exception=True).warning(
                 f"[gen_id={generation_id}] end-of-flow reconciliation failed for "
@@ -4150,10 +4216,31 @@ class AppealsBackendHelper:
         # was actually left empty-handed or the fallback covered it -- counting
         # both routes the reserve can take: the mid-flight deadline flush and
         # the end-of-flow reconciliation.
-        from_reserve = reconciled + reserve_served
+        from_reserve = reconciled_from_reserve + reserve_served
+        # Unconditional counterpart to the start-of-generation line above: every
+        # run that ends up leaning on the precompute says so exactly once,
+        # including runs the zero/underdelivery branches below never fire for
+        # (e.g. the live models returned one draft and the reserve filled the
+        # rest). reserve_at_start distinguishes a reserve that was waiting from
+        # one that landed mid-flight, which is the difference between "the
+        # precompute got ahead of the user" and "it barely kept up".
+        if from_reserve:
+            logger.info(
+                f"[gen_id={generation_id}] picked {from_reserve} appeal(s) from "
+                f"the speculative reserve for denial {denial_id} "
+                f"(early={reserve_served}, end_of_flow={reconciled_from_reserve}, "
+                f"available_at_start={reserve_at_start}, "
+                f"live_generated={live_new}, existing={old})"
+            )
+        elif reserve_at_start > 0:
+            logger.info(
+                f"[gen_id={generation_id}] did NOT need the speculative reserve "
+                f"for denial {denial_id} ({reserve_at_start} row(s) still held "
+                f"back, live_generated={live_new}, existing={old})"
+            )
         reserve_note = (
             f" served_from_reserve={from_reserve} "
-            f"(early={reserve_served}, end_of_flow={reconciled}) "
+            f"(early={reserve_served}, end_of_flow={reconciled_from_reserve}) "
             f"(user was NOT left empty-handed)"
             if from_reserve
             else ""
@@ -4165,6 +4252,7 @@ class AppealsBackendHelper:
                 f"APPEAL_GEN_DIAG [gen_id={generation_id}] Zero appeals "
                 f"generated for denial {denial_id}, "
                 f"gen_attempts={denial.gen_attempts}, runt_count={runts}, "
+                f"dupe_count={dupes}, "
                 f"make_appeals_s={make_appeals_seconds:.1f}, "
                 f"first_model={first_model}, winning_stage={winning_stage}, "
                 f"shed_tier={shed_tier}, models_tried=[{models_tried}], "
@@ -4176,6 +4264,7 @@ class AppealsBackendHelper:
                 f"generated for denial {denial_id} "
                 f"(but {old} existing appeals found), "
                 f"gen_attempts={denial.gen_attempts}, runt_count={runts}, "
+                f"dupe_count={dupes}, "
                 f"make_appeals_s={make_appeals_seconds:.1f}, "
                 f"first_model={first_model}, winning_stage={winning_stage}, "
                 f"models_tried=[{models_tried}]{reserve_note}"

@@ -107,31 +107,52 @@ def _make_empty_proposed_appeal_query():
     return mock_queryset
 
 
-def _make_proposed_appeal_query_with_texts(texts):
+def _make_proposed_appeal_query_with_texts(texts, existing_texts=None):
     """Create a queryset-like object that yields ProposedAppeal-like mocks
     each carrying one of the given appeal texts. Supports both:
       - `qs.all()` (used at common_view_logic.py:~2410)
       - `async for pa in qs` (used in the synthesis branch)
+
+    ``existing_texts`` overrides what `qs.all()` (the previously-saved appeals
+    served as `old` at the top of the flow) yields; it defaults to ``texts``,
+    i.e. every row was already there when the run started. Pass ``[]`` to model
+    a denial with no prior appeals, where ``texts`` are drafts this run saved
+    while streaming -- otherwise those drafts look like text already served and
+    the generator drops them as duplicates.
     """
-    pa_mocks = []
-    for text in texts:
-        pa = MagicMock()
-        pa.appeal_text = text
-        pa_mocks.append(pa)
+
+    def _mocks(values):
+        out = []
+        for text in values:
+            pa = MagicMock()
+            pa.appeal_text = text
+            out.append(pa)
+        return out
+
+    pa_mocks = _mocks(texts)
+    existing_mocks = pa_mocks if existing_texts is None else _mocks(existing_texts)
 
     class _Queryset:
-        def __init__(self, items):
+        def __init__(self, items, existing):
             self._items = items
+            self._existing = existing
 
-        def _gen(self):
+        def _gen(self, items=None):
             async def gen():
-                for item in self._items:
+                for item in self._items if items is None else items:
                     yield item
 
             return gen()
 
         def all(self):
-            return self._gen()
+            return self._gen(self._existing)
+
+        async def acount(self):
+            # The reserve-availability count at the start of generation. This
+            # fake ignores filter kwargs, so it cannot tell the speculative
+            # query from any other; none of these tests set up speculative
+            # rows, so report an empty reserve.
+            return 0
 
         def order_by(self, *args, **kwargs):
             # Mock ignores the sort key; the reconciliation query uses
@@ -141,7 +162,7 @@ def _make_proposed_appeal_query_with_texts(texts):
         def __aiter__(self):
             return self._gen()
 
-    return _Queryset(pa_mocks)
+    return _Queryset(pa_mocks, existing_mocks)
 
 
 def _sync_to_async_router(pa_wrapper, make_appeals_wrapper, uspstf_wrapper=None):
@@ -767,8 +788,10 @@ async def test_synthesis_skips_verbatim_duplicate():
             AsyncMock(return_value=[_ga(t) for t in saved_texts]),
         )
         mock_pa_cls.return_value = MagicMock(id=1, asave=AsyncMock())
+        # No prior appeals: saved_texts are the drafts THIS run streams, so the
+        # synthesis-input query sees them but the existing-appeals loop does not.
         mock_pa_cls.objects.filter.return_value = (
-            _make_proposed_appeal_query_with_texts(saved_texts)
+            _make_proposed_appeal_query_with_texts(saved_texts, existing_texts=[])
         )
         # Synthesizer returns a verbatim copy of the first saved draft —
         # the server must NOT yield it as a "new" appeal.
