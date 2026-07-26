@@ -216,10 +216,18 @@
 
         <label>CC</label>
         <input type="text" class="readonly" value="{{ cc_emails|join:', ' }}" readonly>
-        <p class="hint">
-          Cofactor AI is CC'd alongside the FHI professional address &mdash; the
-          email tells the recipient they are cc'd here.
-        </p>
+        {% if cofactor_cc_email %}
+          <p class="hint">
+            Cofactor AI is CC'd alongside the FHI professional address &mdash; the
+            email tells the recipient they are cc'd here.
+          </p>
+        {% else %}
+          <p class="hint">
+            The Cofactor AI CC is turned off in this deployment's configuration
+            &mdash; please edit the &ldquo;who are cc'd here&rdquo; wording out of
+            the draft below before sending.
+          </p>
+        {% endif %}
 
         <label for="subject">Subject</label>
         <input type="text" id="subject" name="subject" value="{{ subject }}">

@@ -21,7 +21,7 @@ Wording constraints (enforced by ``_is_safe_intro_draft``):
 
 import re
 import urllib.parse
-from typing import Optional
+from typing import Iterable, Optional
 
 from asgiref.sync import async_to_sync
 from django.conf import settings
@@ -45,6 +45,11 @@ DEFAULT_PROFESSIONAL_CC_EMAIL = "professional@fighthealthinsurance.com"
 # The intro copy tells the recipient Cofactor AI is "cc'd here", so this address
 # is CC'd on every intro email alongside the professional contact address.
 DEFAULT_COFACTOR_CC_EMAIL = "rmorales@cofactorai.com"
+
+# COFACTOR_CC_EMAIL value that explicitly disables the Cofactor AI CC. A blank
+# setting can't mean "off" -- an unset/empty env var has to keep falling back to
+# the default -- so opting out is spelled out (see get_cofactor_cc_email).
+CC_DISABLED_SENTINEL = "none"
 
 # Obvious test / spam signups we never introduce. These are filtered out of the
 # processing queue and the CSV export entirely (never shown, never counted)
@@ -191,11 +196,23 @@ def get_professional_cc_email() -> str:
     return str(value) if value else DEFAULT_PROFESSIONAL_CC_EMAIL
 
 
-def get_cofactor_cc_email() -> str:
-    """Cofactor AI's CC address for intro emails: the configured
-    ``COFACTOR_CC_EMAIL`` setting if set, otherwise the known contact."""
+def get_cofactor_cc_email() -> Optional[str]:
+    """Cofactor AI's CC address for intro emails, or ``None`` when turned off.
+
+    Uses the configured ``COFACTOR_CC_EMAIL`` setting, falling back to the known
+    contact. Setting it to ``"none"`` (any case) is an explicit opt-out and
+    returns ``None`` -- an unset or empty value means "not configured" and gets
+    the default instead, so switching the CC off takes the sentinel rather than a
+    blank. With it off, the base email's "who are cc'd here" line no longer
+    matches what is sent, so staff need to edit that out of the draft.
+    """
     value = getattr(settings, "COFACTOR_CC_EMAIL", None)
-    return str(value) if value else DEFAULT_COFACTOR_CC_EMAIL
+    cleaned = str(value).strip() if value is not None else ""
+    if not cleaned:
+        return DEFAULT_COFACTOR_CC_EMAIL
+    if cleaned.lower() == CC_DISABLED_SENTINEL:
+        return None
+    return cleaned
 
 
 def _greeting_name(pro: InterestedProfessional) -> str:
@@ -424,8 +441,8 @@ def generate_intro_email(pro: InterestedProfessional) -> str:
     return async_to_sync(agenerate_intro_email)(pro)
 
 
-def _dedup_addresses(addresses: list[str]) -> list[str]:
-    """Drop blanks and case-insensitive duplicates, preserving order."""
+def _dedup_addresses(addresses: Iterable[Optional[str]]) -> list[str]:
+    """Drop blanks/``None`` and case-insensitive duplicates, preserving order."""
     recipients: list[str] = []
     seen: set[str] = set()
     for addr in addresses:
@@ -444,7 +461,8 @@ def default_intro_cc_recipients() -> list[str]:
     actually be on the CC line for the email to match the copy. Both are
     configurable (see :func:`get_professional_cc_email` /
     :func:`get_cofactor_cc_email`), so they're deduplicated in case a deployment
-    points both settings at the same address.
+    points both settings at the same address, and the Cofactor CC drops out
+    entirely when it is explicitly disabled.
     """
     return _dedup_addresses([get_professional_cc_email(), get_cofactor_cc_email()])
 

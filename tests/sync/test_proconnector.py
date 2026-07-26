@@ -617,6 +617,20 @@ class ProcessPageCCDisplayTest(_ProcessViewTestCase):
         self.assertContains(response, get_professional_cc_email())
         self.assertContains(response, get_cofactor_cc_email())
 
+    @patch(
+        "fighthealthinsurance.staff_views.generate_intro_email",
+        return_value="A draft body with compensation disclosure.",
+    )
+    @override_settings(COFACTOR_CC_EMAIL="none")
+    def test_disabled_cofactor_cc_warns_instead_of_promising_a_cc(self, _mock_gen):
+        # With the CC off the page must not claim Cofactor AI is CC'd; it warns
+        # staff to edit the "cc'd here" wording out of the draft instead.
+        _make_pro(email="jane@janeclinic.com")
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, "cofactorai.com")
+        self.assertContains(response, "Cofactor AI CC is turned off")
+
 
 # ---------------------------------------------------------------------------
 # Send flow
@@ -1047,6 +1061,33 @@ class SendHelperTest(TestCase):
         self.assertEqual(
             default_intro_cc_recipients(), ["shared@fighthealthinsurance.com"]
         )
+
+    @override_settings(COFACTOR_CC_EMAIL="none")
+    def test_cofactor_cc_disabled_by_none_sentinel(self):
+        self.assertIsNone(get_cofactor_cc_email())
+        self.assertEqual(default_intro_cc_recipients(), [get_professional_cc_email()])
+
+    @override_settings(COFACTOR_CC_EMAIL="  NoNe  ")
+    def test_cofactor_cc_none_sentinel_ignores_case_and_whitespace(self):
+        self.assertIsNone(get_cofactor_cc_email())
+
+    @override_settings(COFACTOR_CC_EMAIL="none")
+    def test_send_omits_cofactor_cc_when_disabled(self):
+        pro = _make_pro(email="jane@janeclinic.com")
+        proconnector.send_proconnector_intro_email(
+            pro,
+            subject="Intro",
+            body="Body with compensation disclosure.",
+        )
+        msg = mail.outbox[0]
+        self.assertEqual(msg.cc, [get_professional_cc_email()])
+        self.assertNotIn("cofactorai.com", " ".join(msg.cc))
+
+    @override_settings(COFACTOR_CC_EMAIL="")
+    def test_empty_cofactor_setting_falls_back_to_default(self):
+        # Only the explicit sentinel disables the CC; an unset / empty env var
+        # means "not configured" and keeps the known contact.
+        self.assertEqual(get_cofactor_cc_email(), "rmorales@cofactorai.com")
 
     def test_plaintext_body_is_not_html_escaped(self):
         # The .txt template must not HTML-escape the body, or apostrophes and
