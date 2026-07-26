@@ -1,6 +1,7 @@
 import asyncio
 import json
 import io
+from contextlib import contextmanager
 from asgiref.sync import async_to_sync
 from unittest.mock import Mock, patch, AsyncMock
 from typing import AsyncIterator, List
@@ -43,6 +44,66 @@ class TestCommonViewLogic(TestCase):
             gen_attempts=gen_attempts,
         )
         return email, denial
+
+    @staticmethod
+    @contextmanager
+    def _capture_logs(level="INFO"):
+        """Capture loguru output for the duration of the block."""
+        from loguru import logger as loguru_logger
+
+        sink = io.StringIO()
+        handler_id = loguru_logger.add(sink, level=level)
+        try:
+            yield sink
+        finally:
+            loguru_logger.remove(handler_id)
+
+    @staticmethod
+    def _fast_keepalive():
+        """Patch the generating-phase heartbeat cadence from 15s down to 50ms.
+
+        Returns a context manager. The real ``keepalive_frames`` still runs --
+        only the interval shrinks -- so tests that depend on heartbeat-driven
+        behavior (heartbeat frames, the speculative-fallback checkpoints that
+        ride on them) exercise the production code path without a 15s sleep.
+        """
+        from fighthealthinsurance import utils as _fhi_utils
+
+        real_keepalive = _fhi_utils.keepalive_frames
+
+        def fast_keepalive(task, *, interval=15.0, overall_timeout=None, **kwargs):
+            return real_keepalive(
+                task, interval=0.05, overall_timeout=overall_timeout, **kwargs
+            )
+
+        return patch(
+            "fighthealthinsurance.common_view_logic.keepalive_frames",
+            fast_keepalive,
+        )
+
+    @staticmethod
+    def _live_drafts(texts: List[str]) -> List[GeneratedAppeal]:
+        """Wrap plain strings as the GeneratedAppeal drafts make_appeals emits."""
+        return [
+            GeneratedAppeal(text=t, model_name="fhi-internal", context_level="full")
+            for t in texts
+        ]
+
+    @classmethod
+    def _slow_make_appeals(cls, seconds: float, texts: List[str]):
+        """A make_appeals side effect that blocks ``seconds`` then yields ``texts``.
+
+        The sleep runs in the database_sync_to_async threadpool, so it does NOT
+        block the event loop -- the generating-phase keepalive loop (and the
+        checkpoints on it) keep running meanwhile.
+        """
+        import time as _time
+
+        def slow_make_appeals(*args, **kwargs):
+            _time.sleep(seconds)
+            return iter(cls._live_drafts(texts))
+
+        return slow_make_appeals
 
     @staticmethod
     async def collect_appeal_responses(data):
@@ -515,37 +576,15 @@ class TestCommonViewLogic(TestCase):
         """Regression for the silent-generation bug: while the blocking
         make_appeals runs, the generating phase must keep emitting status
         frames so the client's 90s inactivity watchdog never fires."""
-        import time as _time
-
-        from fighthealthinsurance import utils as _fhi_utils
-
         email, denial = self._create_test_denial(14, gen_attempts=3)
-
-        def slow_make_appeals(*args, **kwargs):
-            # Runs in a database_sync_to_async threadpool, so this sleep does
-            # NOT block the event loop -- the keepalive loop runs meanwhile.
-            _time.sleep(1.0)
-            return iter(
-                ["Dear Insurance Company, this is a sufficiently long appeal letter."]
-            )
-
-        mock_appeal_generator.make_appeals.side_effect = slow_make_appeals
-
-        real_keepalive = _fhi_utils.keepalive_frames
-
-        def fast_keepalive(task, *, interval=15.0, overall_timeout=None, **kwargs):
-            # Shrink the 15s cadence so the test doesn't have to sleep that long
-            # while still exercising the real keepalive_frames behavior.
-            return real_keepalive(
-                task, interval=0.05, overall_timeout=overall_timeout, **kwargs
-            )
+        mock_appeal_generator.make_appeals.side_effect = self._slow_make_appeals(
+            1.0,
+            ["Dear Insurance Company, this is a sufficiently long appeal letter."],
+        )
 
         async def test():
             try:
-                with patch(
-                    "fighthealthinsurance.common_view_logic.keepalive_frames",
-                    fast_keepalive,
-                ):
+                with self._fast_keepalive():
                     status_messages, _, _ = await self.collect_appeal_responses(
                         {
                             "denial_id": 14,
@@ -810,6 +849,533 @@ class TestCommonViewLogic(TestCase):
                 self.assertEqual(held, 2)
             finally:
                 await Denial.objects.filter(denial_id=18).adelete()
+
+        async_to_sync(test)()
+
+    @pytest.mark.django_db
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_reserve_is_served_before_a_slow_live_draft_past_the_deadline(
+        self, mock_appeal_generator
+    ):
+        """Once a run with nothing delivered passes the no-appeal deadline while short of
+        ENOUGH_APPEALS, the reserve is handed over mid-flight -- ahead of a live
+        draft that is still generating -- instead of being held to the end."""
+        email, denial = self._create_test_denial(20, gen_attempts=3)
+        spec = ProposedAppeal.objects.create(
+            for_denial=denial,
+            appeal_text="A reserve draft the user should get without waiting.",
+            speculative=True,
+            context_level="speculative",
+        )
+        live_text = "A slow live appeal letter that finishes much later on."
+        mock_appeal_generator.make_appeals.side_effect = self._slow_make_appeals(
+            1.5, [live_text]
+        )
+
+        async def test():
+            try:
+                with self._fast_keepalive(), patch.object(
+                    AppealsBackendHelper, "SPECULATIVE_FALLBACK_NO_APPEAL_SECONDS", 0.5
+                ):
+                    status_messages, appeal_contents, _ = (
+                        await self.collect_appeal_responses(
+                            {
+                                "denial_id": 20,
+                                "email": email,
+                                "semi_sekret": denial.semi_sekret,
+                            }
+                        )
+                    )
+                reserve_text = "A reserve draft the user should get without waiting."
+                self.assertIn(reserve_text, appeal_contents)
+                self.assertIn(live_text, appeal_contents)
+                self.assertLess(
+                    appeal_contents.index(reserve_text),
+                    appeal_contents.index(live_text),
+                    f"reserve must arrive first, got: {appeal_contents}",
+                )
+                # Served rows are promoted, exactly as the end-of-flow path does.
+                await spec.arefresh_from_db()
+                self.assertFalse(spec.speculative)
+                done = [m for m in status_messages if m.get("phase") == "done"][0]
+                self.assertEqual(done["new_appeals"], 2)
+                self.assertEqual(done["speculative_appeals"], 1)
+            finally:
+                await Denial.objects.filter(denial_id=20).adelete()
+
+        async_to_sync(test)()
+
+    @pytest.mark.django_db
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_reserve_lands_under_target_once_the_longer_deadline_passes(
+        self, mock_appeal_generator
+    ):
+        """A user holding one appeal is not empty-handed, so the reserve waits
+        for the longer under-target deadline -- but once that passes while still
+        short of ENOUGH_APPEALS, it lands rather than waiting out the run."""
+        email, denial = self._create_test_denial(29, gen_attempts=3)
+        # One appeal already on screen -> the no-appeal rule does not apply.
+        ProposedAppeal.objects.create(
+            for_denial=denial,
+            appeal_text="The one appeal this user already has in hand now.",
+            speculative=False,
+            context_level="full",
+        )
+        ProposedAppeal.objects.create(
+            for_denial=denial,
+            appeal_text="A reserve draft for a run that stays under target.",
+            speculative=True,
+            context_level="speculative",
+        )
+        live_text = "A slow live appeal letter that finishes much later on."
+        mock_appeal_generator.make_appeals.side_effect = self._slow_make_appeals(
+            1.5, [live_text]
+        )
+
+        async def test():
+            try:
+                with self._fast_keepalive(), patch.object(
+                    AppealsBackendHelper,
+                    "SPECULATIVE_FALLBACK_UNDER_TARGET_SECONDS",
+                    0.5,
+                ):
+                    status_messages, appeal_contents, _ = (
+                        await self.collect_appeal_responses(
+                            {
+                                "denial_id": 29,
+                                "email": email,
+                                "semi_sekret": denial.semi_sekret,
+                            }
+                        )
+                    )
+                reserve_text = "A reserve draft for a run that stays under target."
+                self.assertIn(reserve_text, appeal_contents)
+                self.assertLess(
+                    appeal_contents.index(reserve_text),
+                    appeal_contents.index(live_text),
+                    f"reserve must arrive before the slow live draft, got: "
+                    f"{appeal_contents}",
+                )
+                done = [m for m in status_messages if m.get("phase") == "done"][0]
+                self.assertEqual(done["speculative_appeals"], 1)
+            finally:
+                await Denial.objects.filter(denial_id=29).adelete()
+
+        async_to_sync(test)()
+
+    @pytest.mark.django_db
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_no_appeal_deadline_does_not_apply_once_one_appeal_is_in_hand(
+        self, mock_appeal_generator
+    ):
+        """The short deadline is the empty-screen rescue only. With an appeal
+        already delivered, passing it must NOT flush the reserve -- that run
+        waits for the longer under-target deadline instead."""
+        email, denial = self._create_test_denial(30, gen_attempts=3)
+        ProposedAppeal.objects.create(
+            for_denial=denial,
+            appeal_text="The one appeal this user already has in hand now.",
+            speculative=False,
+            context_level="full",
+        )
+        ProposedAppeal.objects.create(
+            for_denial=denial,
+            appeal_text="A reserve draft that the short deadline must not send.",
+            speculative=True,
+            context_level="speculative",
+        )
+        mock_appeal_generator.make_appeals.side_effect = self._slow_make_appeals(
+            1.0, []
+        )
+
+        async def test():
+            try:
+                # Short deadline already past, long deadline unreachable.
+                with self._fast_keepalive(), patch.object(
+                    AppealsBackendHelper, "SPECULATIVE_FALLBACK_NO_APPEAL_SECONDS", 0.0
+                ), patch.object(
+                    AppealsBackendHelper,
+                    "SPECULATIVE_FALLBACK_UNDER_TARGET_SECONDS",
+                    3600.0,
+                ):
+                    status_messages, _, _ = await self.collect_appeal_responses(
+                        {
+                            "denial_id": 30,
+                            "email": email,
+                            "semi_sekret": denial.semi_sekret,
+                        }
+                    )
+                # The mid-flight flush announces itself; the end-of-flow
+                # reconciliation (which still serves the reserve) does not.
+                self.assertEqual(
+                    [
+                        m
+                        for m in status_messages
+                        if "Sending a draft appeal now" in m.get("message", "")
+                    ],
+                    [],
+                )
+            finally:
+                await Denial.objects.filter(denial_id=30).adelete()
+
+        async_to_sync(test)()
+
+    @pytest.mark.django_db
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_reserve_stays_held_back_before_the_deadline(self, mock_appeal_generator):
+        """A run that is still inside its deadline keeps the reserve held back:
+        the early fallback only fires for runs that are actually stalling."""
+        email, denial = self._create_test_denial(21, gen_attempts=3)
+        ProposedAppeal.objects.create(
+            for_denial=denial,
+            appeal_text="A reserve draft that must not be served early here.",
+            speculative=True,
+            context_level="speculative",
+        )
+        live_texts = [
+            f"A live appeal letter number {i} of sufficient length here."
+            for i in range(3)
+        ]
+        mock_appeal_generator.make_appeals.return_value = iter(
+            self._live_drafts(live_texts)
+        )
+
+        async def test():
+            try:
+                # The default deadlines are far beyond this fast run, so the
+                # reserve is never reached: the live drafts cover the user.
+                _, appeal_contents, _ = await self.collect_appeal_responses(
+                    {
+                        "denial_id": 21,
+                        "email": email,
+                        "semi_sekret": denial.semi_sekret,
+                    }
+                )
+                self.assertNotIn(
+                    "A reserve draft that must not be served early here.",
+                    appeal_contents,
+                )
+                spec = await ProposedAppeal.objects.aget(
+                    for_denial=denial, speculative=True
+                )
+                self.assertTrue(spec.speculative)
+            finally:
+                await Denial.objects.filter(denial_id=21).adelete()
+
+        async_to_sync(test)()
+
+    @pytest.mark.django_db
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_early_served_reserve_is_not_fed_to_synthesis(self, mock_appeal_generator):
+        """Promotion flips an early-served reserve row to speculative=False, but
+        it must still not count toward the >=2 synthesis gate -- synthesizing
+        the reduced-context precompute with itself is what that gate excludes."""
+        email, denial = self._create_test_denial(22, gen_attempts=3)
+        for i in range(2):
+            ProposedAppeal.objects.create(
+                for_denial=denial,
+                appeal_text=f"Reserve draft number {i} with plenty of length here.",
+                speculative=True,
+                context_level="speculative",
+            )
+        # Live generation delivers nothing, so the only rows are the reserve.
+        mock_appeal_generator.make_appeals.return_value = iter([])
+
+        async def test():
+            try:
+                with patch.object(
+                    AppealsBackendHelper, "SPECULATIVE_FALLBACK_NO_APPEAL_SECONDS", 0.0
+                ):
+                    status_messages, _, _ = await self.collect_appeal_responses(
+                        {
+                            "denial_id": 22,
+                            "email": email,
+                            "semi_sekret": denial.semi_sekret,
+                        }
+                    )
+                mock_appeal_generator.synthesize_appeals.assert_not_called()
+                self.assertEqual(
+                    [m for m in status_messages if m.get("phase") == "synthesizing"],
+                    [],
+                )
+            finally:
+                await Denial.objects.filter(denial_id=22).adelete()
+
+        async_to_sync(test)()
+
+    @pytest.mark.django_db
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_early_served_reserve_is_not_re_served_at_end_of_flow(
+        self, mock_appeal_generator
+    ):
+        """The end-of-flow reconciliation must not ship a reserve row the early
+        fallback already sent (both paths dedupe through the same served set)."""
+        email, denial = self._create_test_denial(23, gen_attempts=3)
+        ProposedAppeal.objects.create(
+            for_denial=denial,
+            appeal_text="The one and only reserve draft for this denial here.",
+            speculative=True,
+            context_level="speculative",
+        )
+        mock_appeal_generator.make_appeals.return_value = iter([])
+
+        async def test():
+            try:
+                with patch.object(
+                    AppealsBackendHelper, "SPECULATIVE_FALLBACK_NO_APPEAL_SECONDS", 0.0
+                ):
+                    status_messages, appeal_contents, _ = (
+                        await self.collect_appeal_responses(
+                            {
+                                "denial_id": 23,
+                                "email": email,
+                                "semi_sekret": denial.semi_sekret,
+                            }
+                        )
+                    )
+                self.assertEqual(
+                    appeal_contents.count(
+                        "The one and only reserve draft for this denial here."
+                    ),
+                    1,
+                    f"reserve draft sent more than once: {appeal_contents}",
+                )
+                done = [m for m in status_messages if m.get("phase") == "done"][0]
+                self.assertEqual(done["new_appeals"], 1)
+            finally:
+                await Denial.objects.filter(denial_id=23).adelete()
+
+        async_to_sync(test)()
+
+    @pytest.mark.django_db
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_logs_reserve_availability_at_start_and_when_picked(
+        self, mock_appeal_generator
+    ):
+        """A trace must show, up front, whether a reserve was available, and
+        again at the end whether the run actually leaned on it."""
+        email, denial = self._create_test_denial(26, gen_attempts=3)
+        ProposedAppeal.objects.create(
+            for_denial=denial,
+            appeal_text="The reserve draft this run is going to fall back on.",
+            speculative=True,
+            context_level="speculative",
+        )
+        mock_appeal_generator.make_appeals.return_value = iter([])
+
+        async def test():
+            try:
+                with self._capture_logs() as sink:
+                    await self.collect_appeal_responses(
+                        {
+                            "denial_id": 26,
+                            "email": email,
+                            "semi_sekret": denial.semi_sekret,
+                        }
+                    )
+                logs = sink.getvalue()
+                self.assertIn("speculative reserve available at start=1", logs)
+                self.assertIn("picked 1 appeal(s) from the speculative reserve", logs)
+                self.assertIn("available_at_start=1", logs)
+            finally:
+                await Denial.objects.filter(denial_id=26).adelete()
+
+        async_to_sync(test)()
+
+    @pytest.mark.django_db
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_logs_a_reserve_that_arrives_mid_generation(self, mock_appeal_generator):
+        """The precompute is a detached actor, so a reserve can land after the
+        run starts. That case must log start=0 and still report the pick."""
+        email, denial = self._create_test_denial(27, gen_attempts=3)
+
+        async def land_a_reserve_row(*args, **kwargs):
+            # Runs on the event loop after the start-of-generation count and
+            # before generation -- i.e. the precompute finishing mid-flight.
+            await ProposedAppeal.objects.acreate(
+                for_denial=denial,
+                appeal_text="A reserve draft that landed while we generated.",
+                speculative=True,
+                context_level="speculative",
+            )
+            return None
+
+        mock_appeal_generator.make_appeals.return_value = iter([])
+
+        async def test():
+            try:
+                with self._capture_logs() as sink, patch(
+                    "fighthealthinsurance.common_view_logic."
+                    "MLAppealContextHelper.maybe_summarize_denial_text",
+                    side_effect=land_a_reserve_row,
+                ), patch.object(
+                    AppealsBackendHelper, "SPECULATIVE_FALLBACK_NO_APPEAL_SECONDS", 0.0
+                ):
+                    _, appeal_contents, _ = await self.collect_appeal_responses(
+                        {
+                            "denial_id": 27,
+                            "email": email,
+                            "semi_sekret": denial.semi_sekret,
+                        }
+                    )
+                logs = sink.getvalue()
+                self.assertIn("speculative reserve available at start=0", logs)
+                self.assertIn("arrived mid-generation", logs)
+                self.assertIn(
+                    "A reserve draft that landed while we generated.",
+                    appeal_contents,
+                )
+            finally:
+                await Denial.objects.filter(denial_id=27).adelete()
+
+        async_to_sync(test)()
+
+    @pytest.mark.django_db
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_logs_when_the_reserve_was_available_but_not_needed(
+        self, mock_appeal_generator
+    ):
+        """A held-back reserve on a run that delivered is worth saying out loud
+        too -- otherwise the only reserve signal in the logs is failure."""
+        email, denial = self._create_test_denial(28, gen_attempts=3)
+        ProposedAppeal.objects.create(
+            for_denial=denial,
+            appeal_text="A reserve draft this run will never need to use.",
+            speculative=True,
+            context_level="speculative",
+        )
+        mock_appeal_generator.make_appeals.return_value = iter(
+            self._live_drafts(
+                [
+                    f"A live appeal letter number {i} of sufficient length here."
+                    for i in range(3)
+                ]
+            )
+        )
+
+        async def test():
+            try:
+                with self._capture_logs() as sink:
+                    await self.collect_appeal_responses(
+                        {
+                            "denial_id": 28,
+                            "email": email,
+                            "semi_sekret": denial.semi_sekret,
+                        }
+                    )
+                logs = sink.getvalue()
+                self.assertIn("did NOT need the speculative reserve", logs)
+                self.assertIn("1 row(s) still held back", logs)
+            finally:
+                await Denial.objects.filter(denial_id=28).adelete()
+
+        async_to_sync(test)()
+
+    @pytest.mark.django_db
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_live_draft_matching_an_early_served_reserve_is_dropped(
+        self, mock_appeal_generator
+    ):
+        """The precompute runs the same internal models on the same denial, so a
+        live draft can come back identical to a reserve row already served. It
+        must not be streamed again: the client dedupes by content, so counting
+        it would make the done frame promise more appeals than are on screen."""
+        email, denial = self._create_test_denial(24, gen_attempts=3)
+        shared_text = "An appeal letter both the reserve and the live run produce."
+        ProposedAppeal.objects.create(
+            for_denial=denial,
+            appeal_text=shared_text,
+            speculative=True,
+            context_level="speculative",
+        )
+        mock_appeal_generator.make_appeals.return_value = iter(
+            self._live_drafts([shared_text])
+        )
+
+        async def test():
+            try:
+                with patch.object(
+                    AppealsBackendHelper, "SPECULATIVE_FALLBACK_NO_APPEAL_SECONDS", 0.0
+                ):
+                    status_messages, appeal_contents, _ = (
+                        await self.collect_appeal_responses(
+                            {
+                                "denial_id": 24,
+                                "email": email,
+                                "semi_sekret": denial.semi_sekret,
+                            }
+                        )
+                    )
+                self.assertEqual(appeal_contents.count(shared_text), 1)
+                done = [m for m in status_messages if m.get("phase") == "done"][0]
+                self.assertEqual(
+                    done["new_appeals"],
+                    1,
+                    "the count must match what the client can actually show",
+                )
+            finally:
+                await Denial.objects.filter(denial_id=24).adelete()
+
+        async_to_sync(test)()
+
+    @pytest.mark.django_db
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_late_live_draft_is_not_counted_as_a_speculative_appeal(
+        self, mock_appeal_generator
+    ):
+        """The reconciliation also serves late FULL-context drafts. Those are
+        live generation, so they must not be attributed to the reserve in the
+        done frame's speculative_appeals count."""
+        email, denial = self._create_test_denial(25, gen_attempts=3)
+        late_text = "A late live draft that missed the streaming window here."
+        # Two existing drafts so the run reaches the synthesis step, which is
+        # where the late row is landed below.
+        for i in range(2):
+            ProposedAppeal.objects.create(
+                for_denial=denial,
+                appeal_text=f"An existing appeal draft number {i} of real length.",
+                speculative=False,
+                context_level="full",
+            )
+        mock_appeal_generator.make_appeals.return_value = iter([])
+
+        async def land_a_late_full_context_row(*args, **kwargs):
+            # Synthesis runs after the flow has snapshotted what it sent and
+            # before the reconciliation, so a row written here is one no yield
+            # path saw -- the late full-context draft the reconciliation's
+            # non-mini branch exists to pick up. Returns None (no synthesized
+            # text) so nothing else is added to the stream.
+            await ProposedAppeal.objects.acreate(
+                for_denial=denial,
+                appeal_text=late_text,
+                speculative=False,
+                context_level="full",
+            )
+            return None
+
+        mock_appeal_generator.synthesize_appeals = AsyncMock(
+            side_effect=land_a_late_full_context_row
+        )
+
+        async def test():
+            try:
+                status_messages, appeal_contents, _ = (
+                    await self.collect_appeal_responses(
+                        {
+                            "denial_id": 25,
+                            "email": email,
+                            "semi_sekret": denial.semi_sekret,
+                        }
+                    )
+                )
+                # The reconciliation served it (it is a real appeal nobody sent)...
+                self.assertIn(late_text, appeal_contents)
+                done = [m for m in status_messages if m.get("phase") == "done"][0]
+                self.assertEqual(done["new_appeals"], 1)
+                # ...but it is live generation, not reserve output.
+                self.assertEqual(done["speculative_appeals"], 0)
+            finally:
+                await Denial.objects.filter(denial_id=25).adelete()
 
         async_to_sync(test)()
 
