@@ -2697,6 +2697,15 @@ class AppealsBackendHelper:
         hashed_email = Denial.get_hashed_email(email)
         # Extract the professional_to_finish parameter from the input, default to False
         professional_to_finish = parameters.get("professional_to_finish", False)
+        # Set by the JS client when this socket replaces one that dropped (see
+        # ws.onopen in appeal_fetcher.ts). Such a user has already waited out a
+        # broken connection on top of whatever generation has cost so far, and
+        # a fresh flow restarts flow_started at zero -- so the reserve's
+        # deadlines would make them wait the full 45s/90s all over again. On a
+        # reconnect the reserve goes out as soon as we know they are short of
+        # ENOUGH_APPEALS. Absent (REST, older clients) means False, i.e. the
+        # deadline behaviour is unchanged.
+        is_reconnect = bool(parameters.get("reconnect", False))
         # Medical reason provided?
         medical_reasons = set()
         if (
@@ -2993,9 +3002,17 @@ class AppealsBackendHelper:
             f"[gen_id={generation_id}] starting appeal generation for denial "
             f"{denial_id}: speculative reserve available at start="
             f"{reserve_at_start} (existing appeals={old}, deadlines: "
-            f"{cls.SPECULATIVE_FALLBACK_NO_APPEAL_SECONDS:.0f}s with nothing "
-            f"delivered / {cls.SPECULATIVE_FALLBACK_UNDER_TARGET_SECONDS:.0f}s "
-            f"under {cls.ENOUGH_APPEALS})"
+            + (
+                "waived, reconnect"
+                if is_reconnect
+                else (
+                    f"{cls.SPECULATIVE_FALLBACK_NO_APPEAL_SECONDS:.0f}s with "
+                    f"nothing delivered / "
+                    f"{cls.SPECULATIVE_FALLBACK_UNDER_TARGET_SECONDS:.0f}s "
+                    f"under {cls.ENOUGH_APPEALS}"
+                )
+            )
+            + ")"
         )
 
         # Rows served early by serve_reserve_if_stalled, tracked by normalized
@@ -3017,6 +3034,12 @@ class AppealsBackendHelper:
             ENOUGH_APPEALS this is a no-op, so a run that is delivering keeps
             its reserve held back exactly as before.
 
+            On a WS reconnect neither deadline applies: the wait this run
+            measures started when the replacement socket opened, so honouring
+            it would make someone who already lost a connection start their
+            45s/90s over. There, being under ENOUGH_APPEALS is the whole
+            condition and the reserve goes out at the first checkpoint.
+
             Past the applicable mark it serves the held-back precompute (oldest
             first), promoting each row to speculative=False so it persists as a
             real appeal and a later call serves it as existing -- the same
@@ -3035,14 +3058,20 @@ class AppealsBackendHelper:
             delivered = new + old
             if delivered >= cls.ENOUGH_APPEALS:
                 return
-            if delivered == 0:
-                deadline = cls.SPECULATIVE_FALLBACK_NO_APPEAL_SECONDS
-                rule = f"no-appeal@{deadline:.0f}s"
+            if is_reconnect:
+                # No deadline on a reconnect: this run's clock started when the
+                # replacement socket opened, but the user's wait didn't. Being
+                # under ENOUGH_APPEALS is the whole condition.
+                rule = "reconnect"
             else:
-                deadline = cls.SPECULATIVE_FALLBACK_UNDER_TARGET_SECONDS
-                rule = f"under-target@{deadline:.0f}s"
-            if (time.monotonic() - flow_started) < deadline:
-                return
+                if delivered == 0:
+                    deadline = cls.SPECULATIVE_FALLBACK_NO_APPEAL_SECONDS
+                    rule = f"no-appeal@{deadline:.0f}s"
+                else:
+                    deadline = cls.SPECULATIVE_FALLBACK_UNDER_TARGET_SECONDS
+                    rule = f"under-target@{deadline:.0f}s"
+                if (time.monotonic() - flow_started) < deadline:
+                    return
             try:
                 # chosen=False: never hand the user their own pick back as a
                 # new appeal (see the same filter in the reconciliation).
@@ -3097,6 +3126,14 @@ class AppealsBackendHelper:
                     f"for denial {denial_id}; the end-of-flow reconciliation "
                     f"remains as the backstop"
                 )
+
+        # First checkpoint, placed before research/generation rather than after
+        # them: on a reconnect this fires immediately (no deadline to wait out),
+        # so a user whose socket dropped gets the reserve in their first frames
+        # instead of sitting through the whole flow again. On an ordinary run
+        # nothing is past its deadline this early, so it is a no-op.
+        async for _spec in serve_reserve_if_stalled():
+            yield _spec
 
         # Yield status after any previously saved appeals have been sent
         yield json.dumps(

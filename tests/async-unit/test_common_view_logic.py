@@ -1068,6 +1068,87 @@ class TestCommonViewLogic(TestCase):
 
     @pytest.mark.django_db
     @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_reconnect_serves_the_reserve_without_waiting_out_a_deadline(
+        self, mock_appeal_generator
+    ):
+        """A reconnecting socket restarts this run's clock, but not the user's
+        wait. With the default (far-off) deadlines a first connect holds the
+        reserve back; reconnect=True hands it over in the first frames."""
+        email, denial = self._create_test_denial(32, gen_attempts=3)
+        reserve_text = "A reserve draft owed to a user whose socket dropped."
+        ProposedAppeal.objects.create(
+            for_denial=denial,
+            appeal_text=reserve_text,
+            speculative=True,
+            context_level="speculative",
+        )
+        mock_appeal_generator.make_appeals.side_effect = self._slow_make_appeals(
+            1.0, []
+        )
+
+        async def test():
+            try:
+                # Deadlines left at their defaults, so nothing here is "stalled"
+                # by the usual rule -- only the reconnect flag can flush this.
+                _, appeal_contents, _ = await self.collect_appeal_responses(
+                    {
+                        "denial_id": 32,
+                        "email": email,
+                        "semi_sekret": denial.semi_sekret,
+                        "reconnect": True,
+                    }
+                )
+                self.assertIn(reserve_text, appeal_contents)
+            finally:
+                await Denial.objects.filter(denial_id=32).adelete()
+
+        async_to_sync(test)()
+
+    @pytest.mark.django_db
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_reconnect_holds_the_reserve_once_enough_appeals_are_in_hand(
+        self, mock_appeal_generator
+    ):
+        """The reconnect waiver drops the deadline, not the ENOUGH_APPEALS
+        condition: a user who already has a full set keeps their reserve held
+        back even on a reconnect."""
+        email, denial = self._create_test_denial(33, gen_attempts=3)
+        for i in range(AppealsBackendHelper.ENOUGH_APPEALS):
+            ProposedAppeal.objects.create(
+                for_denial=denial,
+                appeal_text=f"An appeal this user already has in hand, no {i}.",
+                speculative=False,
+                context_level="full",
+            )
+        reserve_text = "A reserve draft that a full set must keep held back."
+        spec = ProposedAppeal.objects.create(
+            for_denial=denial,
+            appeal_text=reserve_text,
+            speculative=True,
+            context_level="speculative",
+        )
+        mock_appeal_generator.make_appeals.return_value = iter([])
+
+        async def test():
+            try:
+                _, appeal_contents, _ = await self.collect_appeal_responses(
+                    {
+                        "denial_id": 33,
+                        "email": email,
+                        "semi_sekret": denial.semi_sekret,
+                        "reconnect": True,
+                    }
+                )
+                self.assertNotIn(reserve_text, appeal_contents)
+                await spec.arefresh_from_db()
+                self.assertTrue(spec.speculative)
+            finally:
+                await Denial.objects.filter(denial_id=33).adelete()
+
+        async_to_sync(test)()
+
+    @pytest.mark.django_db
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
     def test_undeliverable_reserve_rows_are_not_counted_or_served(
         self, mock_appeal_generator
     ):

@@ -1388,7 +1388,13 @@ function connectWebSocket(
     ws.onopen = () => {
       console.log("WebSocket connection opened");
       updateStatusIndicator('connected', appealsSoFar.length);
-      ws.send(JSON.stringify(data));
+      // Tell the server this socket is a reconnect (retries is only non-zero
+      // after scheduleReconnect, and resets for a fresh query). Someone who
+      // has already lost a socket has been waiting through a dropped
+      // connection on top of the generation itself, so the server hands over
+      // the speculative reserve immediately instead of holding it for its
+      // usual deadline -- as long as they are still short of a full set.
+      ws.send(JSON.stringify({ ...data, reconnect: retries > 0 }));
       // Arm the inactivity timer now, not just on the first message: a
       // socket the server accepts but never replies on would otherwise
       // have no timeout, no error and no close — i.e. spin forever.
