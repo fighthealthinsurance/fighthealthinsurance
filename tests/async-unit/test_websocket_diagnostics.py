@@ -683,7 +683,8 @@ async def test_rest_fallback_disconnect_idle_excludes_generation_gap():
     elapsed, idle = float(match.group(1)), float(match.group(2))
     # Two generation gaps have elapsed, but we were writing at the moment of
     # the disconnect, so the idle window must not include either of them.
-    assert elapsed >= gap, message
+    # The 0.1s slack on elapsed is the log's formatting granularity.
+    assert elapsed >= 2 * gap - 0.1, message
     assert idle < gap / 2, message
 
 
