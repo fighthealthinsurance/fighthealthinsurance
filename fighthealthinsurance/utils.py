@@ -93,15 +93,30 @@ def meaningful_appeal_length(text: Optional[str]) -> int:
     )
 
 
+def _appeal_word_tokens(text: Optional[str]) -> List[str]:
+    """Split ``text`` into word-like tokens (see ``_APPEAL_WORD_RE``).
+
+    Combining marks are dropped first. A mark (Unicode category M) attaches to
+    the letter before it rather than being a letter itself -- Thai and Indic
+    vowel and tone signs, for instance -- so leaving them in would break
+    "ที่นี่ดี" into single-letter runs and score a perfectly ordinary appeal as
+    wordless. Removing them leaves the base letters, which is all a token count
+    needs. Text without marks (including English) tokenizes identically either
+    way.
+    """
+    if not isinstance(text, str):
+        return []
+    unmarked = "".join(ch for ch in text if unicodedata.category(ch)[0] != "M")
+    return _APPEAL_WORD_RE.findall(unmarked)
+
+
 def appeal_word_count(text: Optional[str]) -> int:
     """Count the word-like tokens in ``text`` (runs of two or more letters).
 
-    The regex is Unicode-aware, so words in non-Latin scripts count too. A
-    non-string returns 0.
+    Unicode-aware, so words in non-Latin scripts count too. A non-string
+    returns 0.
     """
-    if not isinstance(text, str):
-        return 0
-    return len(_APPEAL_WORD_RE.findall(text))
+    return len(_appeal_word_tokens(text))
 
 
 def appeal_has_words(text: Optional[str]) -> bool:
@@ -112,7 +127,7 @@ def appeal_has_words(text: Optional[str]) -> bool:
     or a row of dashes -- is not a letter no matter how long it is, and
     would otherwise sail past the ``MIN_APPEAL_CHARS`` length check.
     """
-    words = _APPEAL_WORD_RE.findall(text) if isinstance(text, str) else []
+    words = _appeal_word_tokens(text)
     if len(words) >= MIN_APPEAL_WORDS:
         return True
     # Scripts written without spaces (Chinese, Japanese, Thai) put a whole

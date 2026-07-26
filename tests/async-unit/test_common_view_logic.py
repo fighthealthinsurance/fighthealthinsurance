@@ -33,8 +33,25 @@ import pytest
 from django.test import TestCase
 
 
+@contextmanager
+def capture_logs(level="INFO"):
+    """Capture loguru output for the duration of the block."""
+    from loguru import logger as loguru_logger
+
+    sink = io.StringIO()
+    handler_id = loguru_logger.add(sink, level=level)
+    try:
+        yield sink
+    finally:
+        loguru_logger.remove(handler_id)
+
+
 class TestCommonViewLogic(TestCase):
     fixtures = ["fighthealthinsurance/fixtures/initial.yaml"]
+
+    # Module-level helper, exposed on the class so the existing `self.` call
+    # sites keep working.
+    _capture_logs = staticmethod(capture_logs)
 
     def _create_test_denial(self, denial_id, gen_attempts=0):
         """Helper to create a test denial with specified gen_attempts."""
@@ -46,19 +63,6 @@ class TestCommonViewLogic(TestCase):
             gen_attempts=gen_attempts,
         )
         return email, denial
-
-    @staticmethod
-    @contextmanager
-    def _capture_logs(level="INFO"):
-        """Capture loguru output for the duration of the block."""
-        from loguru import logger as loguru_logger
-
-        sink = io.StringIO()
-        handler_id = loguru_logger.add(sink, level=level)
-        try:
-            yield sink
-        finally:
-            loguru_logger.remove(handler_id)
 
     @staticmethod
     def _fast_keepalive():
@@ -1106,6 +1110,63 @@ class TestCommonViewLogic(TestCase):
 
     @pytest.mark.django_db
     @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_a_reserve_row_another_run_already_claimed_is_not_re_served(
+        self, mock_appeal_generator
+    ):
+        """Promotion claims the row atomically. A row that a concurrent flow
+        promoted after this one selected it (the overlap a reconnect makes
+        likely, since the dropped socket's generator may still be draining)
+        must not be served twice."""
+        email, denial = self._create_test_denial(34, gen_attempts=3)
+        reserve_text = "A reserve draft that two overlapping runs both found."
+        spec = ProposedAppeal.objects.create(
+            for_denial=denial,
+            appeal_text=reserve_text,
+            speculative=True,
+            context_level="speculative",
+        )
+        mock_appeal_generator.make_appeals.return_value = iter([])
+
+        async def test():
+            try:
+                # Stand in for the concurrent run: the row is selected as
+                # speculative, then claimed by someone else before this flow
+                # promotes it. Patching aupdate to report "no rows updated" is
+                # exactly what the losing side of that race observes.
+                real_filter = ProposedAppeal.objects.filter
+
+                def filter_with_lost_claim(*args, **kwargs):
+                    qs = real_filter(*args, **kwargs)
+                    if "pk" in kwargs:
+                        qs.aupdate = AsyncMock(return_value=0)
+                    return qs
+
+                with patch.object(
+                    AppealsBackendHelper, "SPECULATIVE_FALLBACK_NO_APPEAL_SECONDS", 0.0
+                ), patch.object(
+                    ProposedAppeal.objects,
+                    "filter",
+                    side_effect=filter_with_lost_claim,
+                ):
+                    _, appeal_contents, _ = await self.collect_appeal_responses(
+                        {
+                            "denial_id": 34,
+                            "email": email,
+                            "semi_sekret": denial.semi_sekret,
+                        }
+                    )
+                self.assertNotIn(reserve_text, appeal_contents)
+                # The row is left exactly as the claim found it, for the run
+                # that actually won it.
+                await spec.arefresh_from_db()
+                self.assertTrue(spec.speculative)
+            finally:
+                await Denial.objects.filter(denial_id=34).adelete()
+
+        async_to_sync(test)()
+
+    @pytest.mark.django_db
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
     def test_reconnect_holds_the_reserve_once_enough_appeals_are_in_hand(
         self, mock_appeal_generator
     ):
@@ -1764,6 +1825,11 @@ def test_is_real_appeal(value, expected):
         # Unspaced script: one run of MIN_APPEAL_CHARS+ letters counts as prose.
         ("这是一封足够长的申诉信正文内容示例", True),
         ("申诉信", False),  # one short run is not enough
+        # Combining marks attach to the letter before them rather than being
+        # letters themselves, so scripts that use them (Thai, Devanagari) must
+        # still tokenize into words.
+        ("ที่นี่ดี ที่นี่ดี ที่นี่ดี", True),
+        ("नमस्ते दुनिया यह एक अपील है", True),
     ],
 )
 def test_appeal_has_words(value, expected):
@@ -1788,6 +1854,8 @@ def test_appeal_has_words(value, expected):
         # the / patient / rays; the possessive "s" and the lone "X" don't count
         ("the patient's X-rays", 3),
         ("COVID-19 treatment", 2),
+        # Combining marks don't split a word: three Thai words, not zero.
+        ("ที่นี่ดี ที่นี่ดี ที่นี่ดี", 3),
     ],
 )
 def test_appeal_word_count(value, expected):
@@ -1817,14 +1885,8 @@ def test_warn_unusable_appeal_logs_length_and_context():
     """The shared drop-site warning reports the measured length, the
     threshold, and the caller-supplied context. The reported length is the
     meaningful (non-whitespace) count, so internal spaces are not counted."""
-    from loguru import logger as loguru_logger
-
-    sink = io.StringIO()
-    handler_id = loguru_logger.add(sink, level="WARNING")
-    try:
+    with capture_logs(level="WARNING") as sink:
         warn_unusable_appeal("a b c", "model='m' for denial 7")
-    finally:
-        loguru_logger.remove(handler_id)
     output = sink.getvalue()
     assert "too-short" in output
     assert "len=3" in output  # 3 letters, the 2 spaces are excluded
@@ -1835,16 +1897,10 @@ def test_warn_unusable_appeal_logs_length_and_context():
 def test_warn_unusable_appeal_reports_wordless_reason():
     """A long-enough but wordless appeal is reported as not-words rather
     than as too short."""
-    from loguru import logger as loguru_logger
-
-    sink = io.StringIO()
-    handler_id = loguru_logger.add(sink, level="WARNING")
-    try:
+    with capture_logs(level="WARNING") as sink:
         warn_unusable_appeal(
             "1234-5678-90, 11/02/2026: $1,250.00", "model='m' for denial 7"
         )
-    finally:
-        loguru_logger.remove(handler_id)
     output = sink.getvalue()
     assert "not-words" in output
     assert "words=0" in output
@@ -1854,14 +1910,8 @@ def test_warn_unusable_appeal_reports_wordless_reason():
 
 def test_warn_unusable_appeal_handles_non_string():
     """A non-string (e.g. None) is reported as length 0 without raising."""
-    from loguru import logger as loguru_logger
-
-    sink = io.StringIO()
-    handler_id = loguru_logger.add(sink, level="WARNING")
-    try:
+    with capture_logs(level="WARNING") as sink:
         warn_unusable_appeal(None, "some context")
-    finally:
-        loguru_logger.remove(handler_id)
     output = sink.getvalue()
     assert "len=0" in output
 

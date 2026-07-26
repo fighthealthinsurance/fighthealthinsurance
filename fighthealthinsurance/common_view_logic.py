@@ -3091,8 +3091,19 @@ class AppealsBackendHelper:
                     normalized = str(row.appeal_text).strip()
                     if normalized in served_texts:
                         continue
+                    # Claim the row atomically. served_texts is per-run, so it
+                    # cannot dedupe against a concurrent flow -- and a reconnect
+                    # makes exactly that overlap likely, since the dropped
+                    # socket's generator can still be draining server-side while
+                    # the replacement flushes the reserve. Both would otherwise
+                    # select and serve the same held-back draft; the client
+                    # dedupes by content, so the done frame would promise more
+                    # appeals than are on screen. The loser of the race skips.
+                    if not await ProposedAppeal.objects.filter(
+                        pk=row.pk, speculative=True, chosen=False
+                    ).aupdate(speculative=False):
+                        continue
                     row.speculative = False
-                    await row.asave(update_fields=["speculative"])
                     if not reserve_notice_sent:
                         reserve_notice_sent = True
                         yield json.dumps(
@@ -4110,8 +4121,8 @@ class AppealsBackendHelper:
         # exactly what that filter is there to prevent.
         saved_appeal_texts: list[str] = [
             str(pa.appeal_text)
-            async for pa in ProposedAppeal.objects.filter(
-                for_denial=denial, speculative=False
+            async for pa in deliverable_candidates(
+                ProposedAppeal.objects.filter(for_denial=denial, speculative=False)
             )
             if is_real_appeal(pa.appeal_text)
             and str(pa.appeal_text).strip() not in early_reserve_texts
@@ -4290,9 +4301,14 @@ class AppealsBackendHelper:
                 )
                 if row.speculative:
                     # Promote to a real appeal so it persists and later calls
-                    # serve it as existing.
+                    # serve it as existing. Claimed atomically for the same
+                    # reason as the early flush above: a concurrent run must not
+                    # serve the same held-back draft, and the loser skips it.
+                    if not await ProposedAppeal.objects.filter(
+                        pk=row.pk, speculative=True, chosen=False
+                    ).aupdate(speculative=False):
+                        continue
                     row.speculative = False
-                    await row.asave(update_fields=["speculative"])
                 row_dict = await sub_in_appeals({"id": str(row.id), "content": text})
                 yield await format_response(row_dict)
                 served_texts.add(normalized)

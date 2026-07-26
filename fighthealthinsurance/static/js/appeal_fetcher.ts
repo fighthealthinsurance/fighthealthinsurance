@@ -431,8 +431,16 @@ function hideLoading(): void {
   }
 }
 
+// The payload appeals.html hands to doQuery: a plain object built from the
+// form context, NOT a Map. It was typed as Map<string, string> while every
+// consumer read it as an object through `as any` -- a real Map would have
+// broken the wire long ago, since JSON.stringify(new Map()) is "{}" and the
+// server would see no denial_id. Typing it honestly keeps the object spread in
+// ws.onopen (and the reads below) checked rather than cast away.
+type AppealQueryData = Record<string, string>;
+
 // Hacky, TODO: Fix this.
-let my_data: Map<string, string> = new Map<string, string>();
+let my_data: AppealQueryData = {};
 let my_backend_url = "";
 let my_rest_fallback_url = "";
 let usingRestFallback = false;
@@ -1468,7 +1476,7 @@ function connectWebSocket(
   startWebSocket();
 }
 
-export function doQuery(backend_url: string, data: Map<string, string>, rest_fallback_url?: string): void {
+export function doQuery(backend_url: string, data: AppealQueryData, rest_fallback_url?: string): void {
   showLoading();
   my_backend_url = backend_url;
   my_data = data;
