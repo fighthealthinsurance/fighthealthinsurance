@@ -915,9 +915,9 @@ async def test_synthesis_too_short_output_is_filtered():
 
 
 @pytest.mark.asyncio
-async def test_synthesis_numbers_and_punctuation_output_is_filtered():
+async def test_synthesis_wordless_output_is_filtered():
     """A synthesized "appeal" of nothing but numbers and punctuation is long
-    enough to clear MIN_APPEAL_CHARS but is not a letter, so it must be
+    enough to clear MIN_APPEAL_CHARS but says nothing, so it must be
     filtered out rather than delivered."""
     junk = "1234-5678-90, 11/02/2026: $1,250.00 (99213)"
     chunks, output = await _run_generate_appeals_over_saved(
@@ -929,7 +929,7 @@ async def test_synthesis_numbers_and_punctuation_output_is_filtered():
     assert junk not in contents
     for c in chunks:
         assert '"synthesized": "true"' not in c
-    assert "unusable appeal -- numbers-and-punctuation-only" in output
+    assert "unusable appeal -- not-words" in output
     assert "synthesis output for denial 12345" in output
 
 
@@ -952,7 +952,7 @@ async def test_existing_too_short_appeal_is_skipped():
 
 
 @pytest.mark.asyncio
-async def test_existing_numbers_and_punctuation_appeal_is_skipped():
+async def test_existing_wordless_appeal_is_skipped():
     """A previously-saved row holding only numbers and punctuation must not
     be re-delivered, however long it is."""
     junk = "1234-5678-90 / 11-02-2026 / $1,250.00 / 99213"
@@ -963,5 +963,5 @@ async def test_existing_numbers_and_punctuation_appeal_is_skipped():
     contents = _collect_appeal_contents(chunks)
     assert junk not in contents
     assert "a valid existing appeal body" in contents
-    assert "unusable appeal -- numbers-and-punctuation-only" in output
+    assert "unusable appeal -- not-words" in output
     assert "saved appeal id=" in output

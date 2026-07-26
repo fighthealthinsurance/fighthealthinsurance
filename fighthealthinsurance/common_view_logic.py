@@ -2918,7 +2918,7 @@ class AppealsBackendHelper:
         new = 0
         async for appeal in existing_appeals:
             # Enforce the deliverability rules on previously-saved appeals too:
-            # the DB may hold short or letterless drafts saved before those
+            # the DB may hold short or wordless drafts saved before those
             # checks existed (or by paths that skipped the filter), and we must
             # not re-deliver them.
             if is_real_appeal(appeal.appeal_text):
@@ -3921,7 +3921,7 @@ class AppealsBackendHelper:
                 f"{summarize_denial_context_tokens(denial)}"
             )
             appeals = iter([])
-        # Drop None / empty / whitespace / runt / letterless outputs. Track the
+        # Drop None / empty / whitespace / runt / wordless outputs. Track the
         # rejects so the zero-appeal diagnostic can distinguish "models silent"
         # from "models producing only undeliverable strings".
         runts = 0
@@ -4094,8 +4094,8 @@ class AppealsBackendHelper:
                 else:
                     synthesized = synthesis_task.result()
                     if synthesized and not is_real_appeal(synthesized):
-                        # Non-empty but not deliverable (too short, or nothing
-                        # but numbers and punctuation): filter it out so
+                        # Non-empty but not deliverable (too short, or not
+                        # made of words): filter it out so
                         # synthesis can't bypass the rules the streaming path
                         # enforces.
                         warn_unusable_appeal(
@@ -4233,8 +4233,8 @@ class AppealsBackendHelper:
             )
 
         # runt_count=0 means models were silent; >0 means models produced only
-        # undeliverable outputs (too short, or nothing but numbers and
-        # punctuation) — different root causes for incident review.
+        # undeliverable outputs (too short, or not made of words) —
+        # different root causes for incident review.
         shed_tier = make_appeals_diag.get("shed_tier")
         winning_stage = make_appeals_diag.get("winning_stage")
         models_tried = make_appeals_diag.get("models_tried") or "none"

@@ -13,7 +13,8 @@ from fighthealthinsurance.common_view_logic import (
 )
 from fighthealthinsurance.utils import (
     MIN_APPEAL_CHARS,
-    appeal_has_letters,
+    appeal_has_words,
+    appeal_word_count,
     is_real_appeal,
     meaningful_appeal_length,
     warn_unusable_appeal,
@@ -1584,16 +1585,17 @@ class TestCommonViewLogic(TestCase):
         ("a" * MIN_APPEAL_CHARS + "\x07" * 20, True),
         # Tabs/newlines between letters are ignored (only 12 real letters).
         ("a\tb\nc d e f g h i j k l", False),
-        # Long enough, but nothing except digits and punctuation: not a letter.
+        # Long enough, but nothing except digits and punctuation: not words.
         ("1234-5678-90, 11/02/2026: $1,250.00", False),
         ("1" * 500, False),
         ("-" * 80, False),
         (".,;:!?()[]{}<>/\\-_=+*&^%$#@~", False),
-        # A single letter among the digits/punctuation is still too little to
-        # be a letter in practice, but the letter rule is deliberately a floor,
-        # not a ratio -- length is what keeps this class of junk out.
+        # One word among the identifiers is still not a letter.
+        ("Denied. 99213 11/02/2026 -- $1,250.00", False),
+        # Two words clears the floor: it is deliberately a worst-of-the-worst
+        # bar, not a quality bar (real appeals run to hundreds of words).
         ("Claim #1234-5678-90 denied 11/02/2026 -- $1,250.00", True),
-        # Non-Latin scripts count as letters.
+        # Non-Latin scripts count: one unspaced run of letters is prose.
         ("这是一封足够长的申诉信正文内容示例。", True),
     ],
 )
@@ -1611,13 +1613,32 @@ def test_is_real_appeal(value, expected):
         ("1234567890", False),
         ("$1,250.00 (11/02/2026)", False),
         ("---===---", False),
-        ("a", True),
+        ("a", False),  # a lone letter is not a word
+        ("Plan A 1234", False),  # only one word-like token
         ("Claim 1234 denied", True),
-        ("申诉", True),  # non-Latin script
+        # Unspaced script: one run of MIN_APPEAL_CHARS+ letters counts as prose.
+        ("这是一封足够长的申诉信正文内容示例", True),
+        ("申诉信", False),  # one short run is not enough
     ],
 )
-def test_appeal_has_letters(value, expected):
-    assert appeal_has_letters(value) is expected
+def test_appeal_has_words(value, expected):
+    assert appeal_has_words(value) is expected
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        (None, 0),
+        (123, 0),
+        ("", 0),
+        ("1234-5678-90, 11/02/2026: $1,250.00", 0),
+        ("Plan A 1234", 1),  # the lone "A" is not a token
+        ("Claim 1234 denied", 2),
+        ("this is a long enough appeal text for delivery", 8),  # "a" excluded
+    ],
+)
+def test_appeal_word_count(value, expected):
+    assert appeal_word_count(value) == expected
 
 
 @pytest.mark.parametrize(
@@ -1658,9 +1679,9 @@ def test_warn_unusable_appeal_logs_length_and_context():
     assert "model='m' for denial 7" in output
 
 
-def test_warn_unusable_appeal_reports_letterless_reason():
-    """A long-enough but letterless appeal is reported as numbers-and-
-    punctuation-only rather than as too short."""
+def test_warn_unusable_appeal_reports_wordless_reason():
+    """A long-enough but wordless appeal is reported as not-words rather
+    than as too short."""
     from loguru import logger as loguru_logger
 
     sink = io.StringIO()
@@ -1672,7 +1693,8 @@ def test_warn_unusable_appeal_reports_letterless_reason():
     finally:
         loguru_logger.remove(handler_id)
     output = sink.getvalue()
-    assert "numbers-and-punctuation-only" in output
+    assert "not-words" in output
+    assert "words=0" in output
     assert "too-short" not in output
     assert "model='m' for denial 7" in output
 

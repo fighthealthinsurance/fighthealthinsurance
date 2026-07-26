@@ -54,6 +54,20 @@ if TYPE_CHECKING:
 # user gets nothing, so fall back.
 MIN_APPEAL_CHARS = 15
 
+# Minimum number of word-like tokens (see appeal_word_count) an appeal must
+# have. Denials are often word-sparse -- a claim number, a date, a CPT code,
+# a dollar amount -- but an appeal is a letter, so it has to say something.
+# Deliberately a floor for the worst-of-the-worst (a model echoing back the
+# denial's identifiers instead of writing), NOT a quality bar: real appeals
+# run to a couple hundred words, so anything with fewer than two words is
+# junk by any measure.
+MIN_APPEAL_WORDS = 2
+
+# A word-like token: a run of two or more letters. Digits, punctuation, and
+# lone letters are excluded, so "99213", "$1,250.00", "11/02/2026" and the
+# "A" in "Plan A" contribute nothing.
+_APPEAL_WORD_RE = re.compile(r"[^\W\d_]{2,}")
+
 
 def meaningful_appeal_length(text: Optional[str]) -> int:
     """Count the characters in ``text`` that actually carry content.
@@ -74,23 +88,37 @@ def meaningful_appeal_length(text: Optional[str]) -> int:
     )
 
 
-def appeal_has_letters(text: Optional[str]) -> bool:
-    """True when ``text`` contains at least one alphabetic character.
+def appeal_word_count(text: Optional[str]) -> int:
+    """Count the word-like tokens in ``text`` (runs of two or more letters).
 
-    Text made up entirely of digits, punctuation, and symbols is not an
-    appeal letter no matter how long it is -- a model that echoes back a
-    claim number, a date, a dollar amount, or a row of dashes has produced
-    nothing deliverable, and such an output would otherwise sail past the
-    ``MIN_APPEAL_CHARS`` length check. ``str.isalpha`` is Unicode-aware, so
-    appeals written in non-Latin scripts still pass.
+    The regex is Unicode-aware, so words in non-Latin scripts count too. A
+    non-string returns 0.
     """
-    return isinstance(text, str) and any(ch.isalpha() for ch in text)
+    if not isinstance(text, str):
+        return 0
+    return len(_APPEAL_WORD_RE.findall(text))
+
+
+def appeal_has_words(text: Optional[str]) -> bool:
+    """True when ``text`` says something rather than just listing values.
+
+    An output made only of digits, punctuation, and symbols -- a model
+    echoing back the claim number, the date of service, the billed amount,
+    or a row of dashes -- is not a letter no matter how long it is, and
+    would otherwise sail past the ``MIN_APPEAL_CHARS`` length check.
+    """
+    words = _APPEAL_WORD_RE.findall(text) if isinstance(text, str) else []
+    if len(words) >= MIN_APPEAL_WORDS:
+        return True
+    # Scripts written without spaces (Chinese, Japanese, Thai) put a whole
+    # clause in a single run, so one long run of letters is prose as well.
+    return any(len(w) >= MIN_APPEAL_CHARS for w in words)
 
 
 def is_real_appeal(x: Optional[str]) -> TypeGuard[str]:
     """True when ``x`` is a deliverable appeal: a string with at least
-    ``MIN_APPEAL_CHARS`` non-whitespace, non-control characters, at least
-    one of which is a letter (see ``appeal_has_letters``).
+    ``MIN_APPEAL_CHARS`` non-whitespace, non-control characters that also
+    contains actual words (see ``appeal_has_words``).
 
     Typed as a ``TypeGuard[str]`` so callers narrow ``Optional[str]`` to
     ``str`` inside the truthy branch (e.g. when building the streamed
@@ -98,7 +126,7 @@ def is_real_appeal(x: Optional[str]) -> TypeGuard[str]:
     return (
         isinstance(x, str)
         and meaningful_appeal_length(x) >= MIN_APPEAL_CHARS
-        and appeal_has_letters(x)
+        and appeal_has_words(x)
     )
 
 
@@ -126,12 +154,15 @@ def describe_unusable_appeal(text: Optional[str]) -> str:
     The reported length is the meaningful (non-whitespace, non-control)
     count actually used by the filter. Called only on text already known to
     be unusable, so it always names one of the two rejection reasons -- too
-    short, or long enough but carrying no letters at all.
+    short, or long enough but not made of words.
     """
     length = meaningful_appeal_length(text)
     if length < MIN_APPEAL_CHARS:
         return f"too-short (len={length} < {MIN_APPEAL_CHARS} chars)"
-    return f"numbers-and-punctuation-only (len={length})"
+    return (
+        f"not-words (words={appeal_word_count(text)} "
+        f"< {MIN_APPEAL_WORDS}, len={length})"
+    )
 
 
 def warn_unusable_appeal(text: Optional[str], context: str) -> None:
