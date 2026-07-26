@@ -629,11 +629,16 @@ class Dev(Base):
     # check_storage REST endpoint both do -- raised FileNotFoundError, and
     # every CombinedStorage save silently failed for that backend. Point dev at
     # gitignored directories inside the repo and create them on first use.
+    # The defaults are their own constants so the fallback stays assertable
+    # without depending on the ambient environment (tox runs with passenv = *,
+    # so a host EXTERNAL_STORAGE_LOCATION would otherwise leak into the suite).
+    DEFAULT_EXTERNAL_STORAGE_LOCATION = os.path.join(BASE_DIR, "external_data")
+    DEFAULT_EXTERNAL_STORAGE_LOCATION_B = os.path.join(BASE_DIR, "external_data_b")
     EXTERNAL_STORAGE_LOCATION = os.getenv(
-        "EXTERNAL_STORAGE_LOCATION", os.path.join(BASE_DIR, "external_data")
+        "EXTERNAL_STORAGE_LOCATION", DEFAULT_EXTERNAL_STORAGE_LOCATION
     )
     EXTERNAL_STORAGE_LOCATION_B = os.getenv(
-        "EXTERNAL_STORAGE_LOCATION_B", os.path.join(BASE_DIR, "external_data_b")
+        "EXTERNAL_STORAGE_LOCATION_B", DEFAULT_EXTERNAL_STORAGE_LOCATION_B
     )
 
     @cached_property
