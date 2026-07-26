@@ -622,6 +622,34 @@ class Dev(Base):
     EMAIL_BACKEND = "django.core.mail.backends.filebased.EmailBackend"
     EMAIL_FILE_PATH = os.path.join(BASE_DIR, "sent_emails")
 
+    # Base points the external storage at /external_data, which only exists
+    # inside the container images that create it (see k8s/Dockerfile) or where
+    # the shared PVC is mounted. On a dev machine that path is absent, so
+    # listing it -- the staff status page's storage check and the
+    # check_storage REST endpoint both do -- raised FileNotFoundError, and
+    # every CombinedStorage save silently failed for that backend. Point dev at
+    # gitignored directories inside the repo and create them on first use.
+    EXTERNAL_STORAGE_LOCATION = os.getenv(
+        "EXTERNAL_STORAGE_LOCATION", os.path.join(BASE_DIR, "external_data")
+    )
+    EXTERNAL_STORAGE_LOCATION_B = os.getenv(
+        "EXTERNAL_STORAGE_LOCATION_B", os.path.join(BASE_DIR, "external_data_b")
+    )
+
+    @cached_property
+    def EXTERNAL_STORAGE(self) -> Optional[Storage]:
+        from django.core.files.storage import FileSystemStorage
+
+        os.makedirs(self.EXTERNAL_STORAGE_LOCATION, exist_ok=True)
+        return FileSystemStorage(location=self.EXTERNAL_STORAGE_LOCATION)
+
+    @cached_property
+    def EXTERNAL_STORAGE_B(self) -> Optional[Storage]:
+        from django.core.files.storage import FileSystemStorage
+
+        os.makedirs(self.EXTERNAL_STORAGE_LOCATION_B, exist_ok=True)
+        return FileSystemStorage(location=self.EXTERNAL_STORAGE_LOCATION_B)
+
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.sqlite3",

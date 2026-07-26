@@ -191,6 +191,7 @@
       {% else %}
         <span class="badge bad">UNREACHABLE</span>
       {% endif %}
+      {% if storage.location %}<span class="pill">{{ storage.location }}</span>{% endif %}
       {% if storage.error %}<span class="error-text">&nbsp;{{ storage.error }}</span>{% endif %}
     </p>
   </div>

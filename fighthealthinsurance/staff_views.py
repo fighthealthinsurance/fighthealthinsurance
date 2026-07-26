@@ -261,17 +261,25 @@ class AdminStatusView(generic.TemplateView):
     @staticmethod
     def _storage_status() -> Dict[str, Any]:
         """Whether the external (encrypted) storage backend is reachable."""
-        out: Dict[str, Any] = {"ok": False, "error": None}
+        out: Dict[str, Any] = {"ok": False, "error": None, "location": None}
         try:
             from django.conf import settings
             from stopit import ThreadingTimeout as Timeout
 
             es = settings.EXTERNAL_STORAGE
+            out["location"] = getattr(es, "location", None)
             with Timeout(3.0):
                 es.listdir("./")
                 out["ok"] = True
                 return out
             out["error"] = "timeout"
+        except FileNotFoundError as e:
+            # The storage root itself is missing: in prod that means the shared
+            # volume isn't mounted, locally it usually means the directory was
+            # never created. A full traceback adds nothing over the path, so
+            # log a one-liner instead of dumping a stack on every page load.
+            logger.warning(f"External storage location missing: {e}")
+            out["error"] = f"storage location does not exist: {e.filename}"
         except Exception as e:
             logger.opt(exception=True).warning("External storage health check failed")
             out["error"] = str(e)
