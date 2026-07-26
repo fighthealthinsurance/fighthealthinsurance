@@ -43,7 +43,16 @@ DEFAULT_SYSTEM_PROMPT = (
 DEFAULT_TEMPERATURE = 0.7
 DEFAULT_TIMEOUT = 60.0
 # Bounds for staff-supplied values; a direct query is a debugging tool, not a
-# way to pin a web worker to a backend indefinitely.
+# way to wait on a backend indefinitely.
+#
+# MAX_TIMEOUT matches ``RemoteOpenLike._timeout`` (300s), the backend's own
+# per-inference ceiling: past that the model layer gives up on its own, so a
+# larger value here would buy nothing. It sits well inside the ingress
+# ``proxy-read-timeout`` (3600s in k8s/deploy*.yaml), so a query that runs to
+# the ceiling still returns a real answer rather than a gateway error. Only a
+# staff user who deliberately raises the field gets near it -- the default is
+# a minute -- and the sync view runs in the ASGI thread pool, so a long query
+# holds one thread rather than blocking its uvicorn worker.
 MIN_TIMEOUT = 1.0
 MAX_TIMEOUT = 300.0
 MAX_PROMPT_LENGTH = 20000
