@@ -1,6 +1,7 @@
 import asyncio
 import datetime
 import json
+import time
 import typing
 from typing import Optional
 
@@ -551,13 +552,16 @@ class ReportClientError(APIView):
         # Sanitize inputs: truncate and strip CR/LF to prevent log injection
         denial_id = _sanitize(str(request.data.get("denial_id", "unknown")), 200)
         denial_id_raw = _sanitize(str(request.data.get("denial_id_raw", "")), 200)
-        error_message = _sanitize(str(request.data.get("error", "unknown error")), 500)
+        error_message = _sanitize(str(request.data.get("error", "unknown error")), 800)
         browser_info = _sanitize(str(request.data.get("browser_info", "")), 500)
         # Delivery diagnostics are client-collected counters (status frames,
         # ws close code/reason, server-reported totals, etc). They share the
         # same sanitization rules but get their own field so a long mobile
-        # user-agent string in browser_info doesn't crowd them out.
-        diagnostics = _sanitize(str(request.data.get("diagnostics", "")), 1000)
+        # user-agent string in browser_info doesn't crowd them out. The cap is
+        # well above the ~650 chars the client currently emits: truncation
+        # silently drops the trailing fields (wait times, gen_id), which are
+        # the ones triage joins on, so keep real headroom for new counters.
+        diagnostics = _sanitize(str(request.data.get("diagnostics", "")), 1600)
         session_key = request.session.session_key or "no_session_key"
         denial_id_valid = is_valid_denial_id(denial_id)
         # Annotate with the (estimated) token sizes of the denial text and the
@@ -738,20 +742,46 @@ def streaming_appeals_rest_fallback(request: Request):
         status_count = 0
         last_status_phase: Optional[str] = None
         gen_fields = _AppealGenTraceFields()
+        # Server-side mirror of the client's rest_idle_ms. When a REST
+        # fallback dies mid-stream the client can only report "the connection
+        # dropped"; pairing that with how long WE had gone without producing a
+        # frame is what distinguishes "an intermediary reaped an idle stream"
+        # (long, suspiciously round idle gap) from "the user's network went
+        # away" (we were still writing when it died).
+        stream_started_at = time.monotonic()
+        last_yield_at = stream_started_at
+
+        def _timing() -> str:
+            now = time.monotonic()
+            return (
+                f"elapsed={now - stream_started_at:.1f}s "
+                f"idle={now - last_yield_at:.1f}s"
+            )
+
         try:
             # Flush a leading newline before awaiting generate_appeals
             # so anti-buffering headers and intermediary heuristics
             # engage immediately. Otherwise a slow first ML call can
             # make the fallback look hung even when it's working.
+            last_yield_at = time.monotonic()
             yield "\n"
             async for record in common_view_logic.AppealsBackendHelper.generate_appeals(
                 data
             ):
+                # Stamp BEFORE each yield, never after. A client hangup injects
+                # GeneratorExit at whichever `yield` we're suspended on, so a
+                # trailing assignment never runs for the frame just sent -- and
+                # the disconnect warning would then report the whole preceding
+                # generation gap as idle time, right when we were actively
+                # writing. That's the exact confusion this metric exists to
+                # remove.
+                last_yield_at = time.monotonic()
                 # Mirror the WebSocket framing: each record is already
                 # newline-terminated JSON, but we add an extra "\n"
                 # framing newline so intermediaries that buffer per-line
                 # still flush early, matching the WS keepalive cadence.
                 yield record
+                last_yield_at = time.monotonic()
                 yield "\n"
                 stripped = record.strip()
                 if stripped:
@@ -786,7 +816,8 @@ def streaming_appeals_rest_fallback(request: Request):
                     f"APPEAL_GEN_DIAG [rest] client disconnected mid-stream for "
                     f"denial {denial_id}: generation "
                     f"{'not reached' if last_status_phase in (None, 'init', 'research') else 'in progress'} "
-                    f"(last_phase={last_status_phase}, status_frames={status_count})"
+                    f"(last_phase={last_status_phase}, status_frames={status_count}, "
+                    f"{_timing()})"
                 )
             raise
         except Exception as e:
@@ -794,7 +825,7 @@ def streaming_appeals_rest_fallback(request: Request):
                 f"Error streaming REST fallback appeals for denial "
                 f"{denial_id} after {appeal_count} appeals / "
                 f"{status_count} status frames (last phase="
-                f"{last_status_phase}): {e}"
+                f"{last_status_phase}, {_timing()}): {e}"
             )
             if appeal_count == 0:
                 await log_zero_appeal_diagnostics(
