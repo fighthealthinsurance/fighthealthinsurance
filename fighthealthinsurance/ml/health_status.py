@@ -432,6 +432,17 @@ def compute_model_health_details(timeout_seconds: int = 8) -> List[Dict[str, Any
     if not candidates:
         return results
 
+    # Cross-process reference so the status page can link each row to a direct
+    # staff query of that exact backend. Best-effort: a backend we cannot label
+    # still gets a health row, just without the query link.
+    try:
+        from fighthealthinsurance.ml.model_query import model_refs_by_identity
+
+        ref_by_id = model_refs_by_identity()
+    except Exception:
+        logger.opt(exception=True).debug("Could not build model query references")
+        ref_by_id = {}
+
     ex = concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(candidates)))
     try:
         future_map = {ex.submit(m.model_is_ok): m for m in candidates}
@@ -453,7 +464,13 @@ def compute_model_health_details(timeout_seconds: int = 8) -> List[Dict[str, Any
             else:
                 err = f"timeout>{timeout_seconds}s"
             results.append(
-                {"name": name, "ok": ok, "external": is_external, "error": err}
+                {
+                    "name": name,
+                    "ok": ok,
+                    "external": is_external,
+                    "error": err,
+                    "ref": ref_by_id.get(id(m)),
+                }
             )
     finally:
         # Return at the deadline rather than blocking on stragglers. Exiting a

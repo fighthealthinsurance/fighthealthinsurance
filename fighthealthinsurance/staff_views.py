@@ -41,6 +41,7 @@ from fighthealthinsurance.models import (
 )
 from fighthealthinsurance.email_utils import is_sendable_email
 from fighthealthinsurance.business_hours import describe_send_window
+from fighthealthinsurance.ml import model_query
 from fighthealthinsurance.ml.model_identity import (
     LEGACY_UNATTRIBUTED_LABEL,
     normalize_model_label,
@@ -284,6 +285,135 @@ class AdminStatusView(generic.TemplateView):
             logger.opt(exception=True).warning("External storage health check failed")
             out["error"] = str(e)
         return out
+
+
+class AdminModelQueryView(View):
+    """Staff page to send an ad-hoc prompt at one specific model backend.
+
+    Reached from the "query" link on each row of the system status page. The
+    status page answers "is this backend up?"; this answers the follow-up
+    question, "what does it actually say?" -- useful for telling a backend
+    that is merely slow apart from one returning refusals, empty text, or a
+    credentials error, without waiting for a real appeal to route to it.
+
+    The prompt goes straight to the chosen backend via
+    ``model_query.query_model``: no router selection, no fan-out, no
+    fallback to a different model, so the captured response is attributable
+    to that backend. It makes a real (billable) inference call, hence
+    staff-only and never triggered by simply loading the page.
+    """
+
+    template_name = "admin_model_query.html"
+    unknown_ref_error = (
+        "Unknown model reference. It may be from an older deployment "
+        "-- pick a backend below and try again."
+    )
+
+    def get(self, request):
+        ref = request.GET.get("ref") or ""
+        return self._render(request, ref=ref)
+
+    def post(self, request):
+        ref = request.POST.get("ref") or ""
+        prompt = (request.POST.get("prompt") or "").strip()
+        system_prompt = (request.POST.get("system_prompt") or "").strip()
+        temperature = model_query.clamp_temperature(request.POST.get("temperature"))
+        timeout = model_query.clamp_timeout(request.POST.get("timeout"))
+
+        result: Optional[Dict[str, Any]] = None
+        error: Optional[str] = None
+        model = self._lookup(ref)
+        if model is None:
+            error = self.unknown_ref_error
+        elif not prompt:
+            error = "Enter a prompt to send."
+        elif len(prompt) > model_query.MAX_PROMPT_LENGTH:
+            error = (
+                f"Prompt is too long ({len(prompt)} characters); "
+                f"the limit is {model_query.MAX_PROMPT_LENGTH}."
+            )
+        else:
+            logger.info(
+                f"Staff user {request.user.username} sending a direct query to "
+                f"model {model} ({len(prompt)} chars, timeout {timeout:g}s)"
+            )
+            result = model_query.query_model(
+                model,
+                prompt,
+                system_prompt=system_prompt,
+                temperature=temperature,
+                timeout=timeout,
+            )
+
+        return render(
+            request,
+            self.template_name,
+            self._context(
+                ref=ref,
+                prompt=prompt,
+                system_prompt=system_prompt,
+                temperature=temperature,
+                timeout=timeout,
+                result=result,
+                error=error,
+            ),
+        )
+
+    @staticmethod
+    def _lookup(ref: str):
+        """Resolve a model reference, treating a broken router as "not found"
+        so the page renders an error row instead of a 500."""
+        try:
+            return model_query.find_model_by_ref(ref)
+        except Exception:
+            logger.opt(exception=True).error("Error resolving model reference")
+            return None
+
+    def _render(self, request, **kwargs):
+        return render(request, self.template_name, self._context(**kwargs))
+
+    def _context(
+        self,
+        ref: str = "",
+        prompt: str = "",
+        system_prompt: str = "",
+        temperature: float = model_query.DEFAULT_TEMPERATURE,
+        timeout: float = model_query.DEFAULT_TIMEOUT,
+        result: Optional[Dict[str, Any]] = None,
+        error: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        available: List[Dict[str, Any]] = []
+        selected: Optional[Dict[str, Any]] = None
+        enumeration_error: Optional[str] = None
+        try:
+            for candidate_ref, candidate in model_query.enumerate_queryable_models():
+                described = model_query.describe_model(candidate, ref=candidate_ref)
+                available.append(described)
+                if candidate_ref == ref:
+                    selected = described
+        except Exception as e:
+            logger.opt(exception=True).error("Error enumerating model backends")
+            enumeration_error = str(e)
+
+        if ref and selected is None and error is None and enumeration_error is None:
+            error = self.unknown_ref_error
+
+        return {
+            "title": "Query a Model Backend",
+            "ref": ref,
+            "selected": selected,
+            "available": available,
+            "enumeration_error": enumeration_error,
+            "prompt": prompt,
+            "system_prompt": system_prompt,
+            "temperature": temperature,
+            "timeout": timeout,
+            "default_system_prompt": model_query.DEFAULT_SYSTEM_PROMPT,
+            "max_prompt_length": model_query.MAX_PROMPT_LENGTH,
+            "max_timeout": model_query.MAX_TIMEOUT,
+            "result": result,
+            "error": error,
+        }
 
 
 class ScheduleFollowUps(View):

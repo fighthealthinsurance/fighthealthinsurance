@@ -59,7 +59,7 @@
       </p>
       {% if models.details %}
       <table class="status">
-        <thead><tr><th>Model</th><th>Type</th><th>Status</th><th>Error</th></tr></thead>
+        <thead><tr><th>Model</th><th>Type</th><th>Status</th><th>Error</th><th>Query</th></tr></thead>
         <tbody>
         {% for d in models.details %}
           <tr>
@@ -67,10 +67,20 @@
             <td><span class="pill">{% if d.external %}external{% else %}internal{% endif %}</span></td>
             <td>{% if d.ok %}<span class="badge ok">up</span>{% else %}<span class="badge bad">down</span>{% endif %}</td>
             <td class="error-text">{{ d.error|default:"" }}</td>
+            <td>
+              {% if d.ref %}
+                <a href="{% url 'admin_model_query' %}?ref={{ d.ref|urlencode }}"
+                   title="Send a prompt straight to this backend and capture the response">query</a>
+              {% endif %}
+            </td>
           </tr>
         {% endfor %}
         </tbody>
       </table>
+      <p class="meta" style="margin-top: 10px;">
+        &ldquo;query&rdquo; sends an ad-hoc prompt to that one backend (no router fan-out or fallback)
+        and shows the raw response &mdash; a real, billable inference call.
+      </p>
       {% else %}
         <p class="meta">No model backends registered.</p>
       {% endif %}

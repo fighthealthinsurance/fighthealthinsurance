@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>{{ title }}</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 1100px; margin: 0 auto; padding: 20px; background: #f5f5f5; color: #222; }
+    h1 { color: #333; border-bottom: 2px solid #007bff; padding-bottom: 10px; }
+    h2 { color: #555; margin-top: 0; border-left: 4px solid #007bff; padding-left: 10px; }
+    .status-section { background: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+    .nav-back { display: inline-block; margin-bottom: 14px; margin-right: 14px; color: #007bff; text-decoration: none; }
+    .nav-back:hover { text-decoration: underline; }
+    .meta { color: #666; font-size: 0.9em; margin-bottom: 18px; }
+    .badge { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 0.82em; font-weight: bold; color: white; }
+    .badge.ok { background: #28a745; }
+    .badge.bad { background: #dc3545; }
+    .badge.warn { background: #f0ad4e; color: #333; }
+    .pill { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 0.78em; background: #e9ecef; color: #555; }
+    .error-text { color: #dc3545; }
+    table.status { width: 100%; border-collapse: collapse; margin-top: 8px; }
+    table.status th, table.status td { padding: 6px 10px; text-align: left; border-bottom: 1px solid #eee; vertical-align: top; }
+    table.status th { background: #f0f4f8; }
+    table.status td.key { width: 180px; color: #666; }
+    label { display: block; font-weight: bold; margin: 12px 0 4px 0; font-size: 0.9em; color: #444; }
+    textarea, input[type=text], input[type=number] { width: 100%; box-sizing: border-box; padding: 8px; border: 1px solid #ced4da; border-radius: 4px; font-family: inherit; font-size: 0.95em; }
+    textarea { font-family: monospace; }
+    .field-row { display: flex; gap: 16px; }
+    .field-row > div { flex: 1; }
+    .hint { font-size: 0.8em; color: #777; font-weight: normal; }
+    button { margin-top: 14px; padding: 10px 22px; background: #007bff; color: white; border: none; border-radius: 4px; font-size: 1em; cursor: pointer; }
+    button:hover { background: #0069d9; }
+    pre.response { background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 6px; padding: 14px; white-space: pre-wrap; word-wrap: break-word; max-height: 640px; overflow-y: auto; }
+    .warn-box { background: #fff8e6; border: 1px solid #f0ad4e; border-radius: 6px; padding: 10px 14px; font-size: 0.9em; }
+  </style>
+</head>
+<body>
+  <a class="nav-back" href="{% url 'staff_dashboard' %}">&laquo; Back to Staff Dashboard</a>
+  <a class="nav-back" href="{% url 'admin_status' %}">&laquo; Back to System Status</a>
+  <h1>{{ title }}</h1>
+  <p class="meta">
+    Sends your prompt straight to one backend &mdash; no router selection, no fan-out, no fallback
+    to another model &mdash; so the response below came from that backend. This makes a real
+    (billable) inference call.
+  </p>
+
+  {% if error %}
+    <div class="status-section">
+      <p><span class="badge bad">ERROR</span> <span class="error-text">{{ error }}</span></p>
+    </div>
+  {% endif %}
+
+  {% if enumeration_error %}
+    <div class="status-section">
+      <p><span class="badge bad">ERROR</span>
+        <span class="error-text">Could not enumerate model backends: {{ enumeration_error }}</span></p>
+    </div>
+  {% endif %}
+
+  {% if selected %}
+  <div class="status-section">
+    <h2>🧠 {{ selected.label }}</h2>
+    <table class="status">
+      <tbody>
+        <tr><td class="key">Class</td><td>{{ selected.class_name }}</td></tr>
+        <tr><td class="key">Tracking name</td><td>{{ selected.name|default:"—" }}</td></tr>
+        <tr><td class="key">Wire model id</td><td>{{ selected.wire_model|default:"—" }}</td></tr>
+        <tr><td class="key">API base</td><td>{{ selected.api_base|default:"—" }}</td></tr>
+        <tr>
+          <td class="key">Kind</td>
+          <td>
+            <span class="pill">{% if selected.external %}external{% else %}internal{% endif %}</span>
+            {% if selected.context_only %}<span class="pill">context-only</span>{% endif %}
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    {% if selected.dual_mode %}
+      <p class="warn-box" style="margin-top: 14px;">
+        This backend runs in <strong>dual mode</strong>: it races
+        <code>{{ selected.wire_model }}</code> against
+        <code>{{ selected.backup_model|default:"a backup model" }}</code>
+        at <code>{{ selected.backup_api_base }}</code> and returns whichever answers first,
+        so the response may have come from the backup endpoint.
+      </p>
+    {% endif %}
+  </div>
+
+  <div class="status-section">
+    <h2>✉️ Send a Query</h2>
+    <form method="post">
+      {% csrf_token %}
+      <input type="hidden" name="ref" value="{{ selected.ref }}">
+      <label for="prompt">Prompt <span class="hint">(max {{ max_prompt_length }} characters)</span></label>
+      <textarea id="prompt" name="prompt" rows="8" required
+                maxlength="{{ max_prompt_length }}">{{ prompt }}</textarea>
+      <label for="system_prompt">System prompt <span class="hint">(optional; defaults to &ldquo;{{ default_system_prompt }}&rdquo;)</span></label>
+      <input type="text" id="system_prompt" name="system_prompt" value="{{ system_prompt }}">
+      <div class="field-row">
+        <div>
+          <label for="temperature">Temperature <span class="hint">(0&ndash;2)</span></label>
+          <input type="number" id="temperature" name="temperature" step="0.1" min="0" max="2"
+                 value="{{ temperature }}">
+        </div>
+        <div>
+          <label for="timeout">Timeout <span class="hint">(seconds, max {{ max_timeout|floatformat:0 }})</span></label>
+          <input type="number" id="timeout" name="timeout" step="1" min="1" max="{{ max_timeout|floatformat:0 }}"
+                 value="{{ timeout|floatformat:0 }}">
+        </div>
+      </div>
+      <button type="submit">Send to {{ selected.label }}</button>
+    </form>
+  </div>
+  {% endif %}
+
+  {% if result %}
+  <div class="status-section">
+    <h2>📥 Response</h2>
+    <p>
+      {% if result.ok %}
+        <span class="badge ok">RESPONDED</span>
+      {% else %}
+        <span class="badge bad">FAILED</span>
+      {% endif %}
+      <span class="pill">{{ result.elapsed|floatformat:2 }}s</span>
+      {% if result.error %}<span class="error-text">&nbsp;{{ result.error }}</span>{% endif %}
+    </p>
+    {% if result.response %}
+      <pre class="response">{{ result.response }}</pre>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  <div class="status-section">
+    <h2>📋 Registered Backends</h2>
+    {% if available %}
+    <table class="status">
+      <thead><tr><th>Model</th><th>Class</th><th>Wire model id</th><th>Kind</th><th></th></tr></thead>
+      <tbody>
+      {% for m in available %}
+        <tr>
+          <td>{{ m.label }}</td>
+          <td>{{ m.class_name }}</td>
+          <td>{{ m.wire_model|default:"—" }}</td>
+          <td>
+            <span class="pill">{% if m.external %}external{% else %}internal{% endif %}</span>
+            {% if m.context_only %}<span class="pill">context-only</span>{% endif %}
+          </td>
+          <td>
+            {% if m.ref == ref %}
+              <span class="pill">selected</span>
+            {% else %}
+              <a href="{% url 'admin_model_query' %}?ref={{ m.ref|urlencode }}">query</a>
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% elif not enumeration_error %}
+      <p class="meta">No model backends registered.</p>
+    {% endif %}
+  </div>
+</body>
+</html>
