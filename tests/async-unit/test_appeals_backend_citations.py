@@ -225,6 +225,13 @@ async def _run_generate_appeals_over_saved(saved_texts, synthesized=None):
             new_callable=AsyncMock,
             return_value="",
         ),
+        # generate_appeals awaits the RAG service (default http://localhost:8001)
+        # under a 30s wait_for; stub it so this unit test does no network I/O.
+        patch(
+            "fighthealthinsurance.common_view_logic.get_rag_context_for_denial",
+            new_callable=AsyncMock,
+            return_value="",
+        ),
         patch.object(
             AppealsBackendHelper.pmt,
             "find_context_for_denial",
@@ -748,6 +755,13 @@ async def test_synthesis_threshold(saved_texts, synthesis_should_run):
             new_callable=AsyncMock,
             return_value="",
         ),
+        # generate_appeals awaits the RAG service (default http://localhost:8001)
+        # under a 30s wait_for; stub it so this unit test does no network I/O.
+        patch(
+            "fighthealthinsurance.common_view_logic.get_rag_context_for_denial",
+            new_callable=AsyncMock,
+            return_value="",
+        ),
         patch.object(
             AppealsBackendHelper.pmt,
             "find_context_for_denial",
@@ -828,6 +842,13 @@ async def test_synthesis_skips_verbatim_duplicate():
         patch.object(AppealsBackendHelper, "regex_denial_processor") as mock_regex,
         patch(
             "fighthealthinsurance.common_view_logic.MLCitationsHelper.generate_citations_for_denial",
+            new_callable=AsyncMock,
+            return_value="",
+        ),
+        # generate_appeals awaits the RAG service (default http://localhost:8001)
+        # under a 30s wait_for; stub it so this unit test does no network I/O.
+        patch(
+            "fighthealthinsurance.common_view_logic.get_rag_context_for_denial",
             new_callable=AsyncMock,
             return_value="",
         ),
