@@ -2627,6 +2627,24 @@ class AppealsBackendHelper:
     nice = NICETools()
     clinical_trials = ClinicalTrialsTools()
 
+    # How many delivered appeals count as "enough" for this denial. Below it we
+    # top up from the reduced-context rows (the speculative reserve + the shed
+    # tiers); at or above it we leave them held back, because padding a
+    # sufficient result with weaker drafts adds no value.
+    ENOUGH_APPEALS = 3
+
+    # Deadline, measured from the start of the generation flow, after which a
+    # still-underdelivering run starts serving the speculative reserve instead
+    # of holding it to the very end. Research + make_appeals routinely run for
+    # minutes, and a reserve that only lands after all of it leaves the user
+    # staring at a spinner while a usable appeal sits in the DB. Past this mark
+    # every checkpoint in the flow (context gathering, the generating-phase
+    # heartbeats, the streaming loop) flushes what the reserve has, up to
+    # ENOUGH_APPEALS. Live drafts are unaffected: they are full-context rows and
+    # are always streamed as they arrive, so this only ever adds to what the
+    # user gets -- it never trades a good appeal for a speculative one.
+    SPECULATIVE_FALLBACK_SECONDS = 30.0
+
     @classmethod
     async def generate_appeals(cls, parameters) -> AsyncIterator[str]:
         """
@@ -2662,6 +2680,12 @@ class AppealsBackendHelper:
         # done frame. Lets a client-side ReportClientError be tied back to the
         # server-side generation trace. See APPEAL_GEN_DIAG logging below.
         generation_id = uuid.uuid4().hex[:12]
+
+        # Start of the user's wait. The speculative-reserve deadline is measured
+        # from here (not from the generating phase) because what the user
+        # experiences is one uninterrupted wait: research/enrichment happens
+        # before generation and can eat the whole budget on its own.
+        flow_started = time.monotonic()
 
         # Instrumentation captured during the generating phase and surfaced in
         # the done frame + zero-appeal diagnostics.
@@ -2874,8 +2898,14 @@ class AppealsBackendHelper:
         existing_appeals = ProposedAppeal.objects.filter(
             for_denial=denial, speculative=False
         ).all()
+        # Everything already delivered to this client, by normalized raw text.
+        # Grown by every path that ships an appeal (existing rows, streamed
+        # drafts, the early reserve flush, synthesis, the end-of-flow
+        # reconciliation) so no path can send the same text twice.
+        served_texts: set[str] = set()
         # Yield the existing appeals first
         old = 0
+        new = 0
         async for appeal in existing_appeals:
             # Enforce the minimum-length rule on previously-saved appeals too:
             # the DB may hold short drafts saved before this threshold existed
@@ -2884,6 +2914,7 @@ class AppealsBackendHelper:
             if is_real_appeal(appeal.appeal_text):
                 old = old + 1
                 logger.debug(f"Found existing appeal {appeal}, yielding")
+                served_texts.add(str(appeal.appeal_text).strip())
                 existing_appeal_dict = await sub_in_appeals(
                     {"id": str(appeal.id), "content": appeal.appeal_text}
                 )
@@ -2892,6 +2923,87 @@ class AppealsBackendHelper:
                 warn_too_short_appeal(
                     appeal.appeal_text,
                     f"saved appeal id={appeal.id} for denial {denial_id}",
+                )
+
+        # --- Early speculative fallback ---
+        # Rows served early by serve_reserve_if_stalled, tracked by normalized
+        # text: they are promoted to speculative=False, so without this they
+        # would look like ordinary live drafts to the synthesis input query.
+        early_reserve_texts: set[str] = set()
+        reserve_served = 0
+        reserve_notice_sent = False
+
+        async def serve_reserve_if_stalled() -> AsyncIterator[str]:
+            """Flush the speculative reserve once the run is over its deadline.
+
+            A no-op until SPECULATIVE_FALLBACK_SECONDS have passed, and a no-op
+            whenever the user already has ENOUGH_APPEALS -- so a run that is
+            delivering keeps its reserve held back exactly as before. Past the
+            deadline it serves the held-back precompute (oldest first), promoting
+            each row to speculative=False so it persists as a real appeal and a
+            later call serves it as existing -- the same promotion the end-of-flow
+            reconciliation does, just early enough to matter to someone watching
+            a spinner.
+
+            Callers invoke it at the checkpoints where the flow is already
+            yielding (context gathering, generating-phase heartbeats, the
+            streaming loop), so it costs one indexed query per checkpoint and
+            only once the deadline is behind us.
+
+            Best-effort like the reconciliation: never raises, because a DB
+            hiccup here must not kill a stream that is otherwise fine.
+            """
+            nonlocal new, reserve_served, reserve_notice_sent
+            if (new + old) >= cls.ENOUGH_APPEALS:
+                return
+            if (time.monotonic() - flow_started) < cls.SPECULATIVE_FALLBACK_SECONDS:
+                return
+            try:
+                # chosen=False: never hand the user their own pick back as a
+                # new appeal (see the same filter in the reconciliation).
+                async for row in ProposedAppeal.objects.filter(
+                    for_denial=denial, speculative=True, chosen=False
+                ).order_by("id"):
+                    if (new + old) >= cls.ENOUGH_APPEALS:
+                        break
+                    if not is_real_appeal(row.appeal_text):
+                        continue
+                    normalized = str(row.appeal_text).strip()
+                    if normalized in served_texts:
+                        continue
+                    row.speculative = False
+                    await row.asave(update_fields=["speculative"])
+                    if not reserve_notice_sent:
+                        reserve_notice_sent = True
+                        yield json.dumps(
+                            {
+                                "type": "status",
+                                "phase": "generating",
+                                "message": (
+                                    "Sending a draft appeal now while the "
+                                    "full version keeps generating..."
+                                ),
+                            }
+                        ) + "\n"
+                    row_dict = await sub_in_appeals(
+                        {"id": str(row.id), "content": row.appeal_text}
+                    )
+                    yield await format_response(row_dict)
+                    served_texts.add(normalized)
+                    early_reserve_texts.add(normalized)
+                    new += 1
+                    reserve_served += 1
+                    logger.info(
+                        f"[gen_id={generation_id}] served speculative reserve "
+                        f"appeal {row.id} for denial {denial_id} after "
+                        f"{time.monotonic() - flow_started:.1f}s "
+                        f"(new={new}, old={old})"
+                    )
+            except Exception:
+                logger.opt(exception=True).warning(
+                    f"[gen_id={generation_id}] early speculative fallback failed "
+                    f"for denial {denial_id}; the end-of-flow reconciliation "
+                    f"remains as the backstop"
                 )
 
         # Yield status after any previously saved appeals have been sent
@@ -3485,6 +3597,13 @@ class AppealsBackendHelper:
                 }
             ) + "\n"
 
+        # Research/enrichment is the first stretch that can blow the reserve
+        # deadline on its own (each source is individually bounded, but they
+        # add up), so check here -- before the generating phase even starts --
+        # rather than making the user wait out generation too.
+        async for _spec in serve_reserve_if_stalled():
+            yield _spec
+
         # Get microsite context if available (optional, non-blocking)
         microsite_context: Optional[str] = None
         if denial.microsite_slug:
@@ -3542,6 +3661,11 @@ class AppealsBackendHelper:
                 pass
             passed = time.time() - t
             logger.debug(f"Saved appeal ({len(appeal_text)} chars) in {passed:.1f}s")
+            # Mark it served as soon as it is on its way out, so the early
+            # reserve flush running between streamed drafts can't ship a
+            # speculative row whose text matches one already sent.
+            if appeal_text:
+                served_texts.add(str(appeal_text).strip())
             return {"id": id, "content": appeal_text}
 
         # Yield status: generating appeals
@@ -3629,6 +3753,11 @@ class AppealsBackendHelper:
             + "\n",
         ):
             yield _hb
+            # Piggyback on the heartbeat cadence: every beat past the deadline
+            # is a chance to hand over the reserve instead of another "still
+            # working" frame.
+            async for _spec in serve_reserve_if_stalled():
+                yield _spec
         denial_text_override: Optional[str] = None
         if summarize_task.done():
             try:
@@ -3688,6 +3817,11 @@ class AppealsBackendHelper:
             make_heartbeat=_generating_heartbeat,
         ):
             yield _hb
+            # The longest blocking stretch of the whole flow, and the one the
+            # reserve was built for: check on every beat so a stalled backend
+            # costs the user at most one heartbeat interval past the deadline.
+            async for _spec in serve_reserve_if_stalled():
+                yield _spec
 
         make_appeals_seconds = time.monotonic() - gen_started
         appeals: Iterator[GeneratedAppeal]
@@ -3780,7 +3914,9 @@ class AppealsBackendHelper:
             appeals_json
         )
 
-        new = 0
+        # NB: `new` is NOT reset here -- the early speculative fallback may
+        # already have delivered rows, and they count toward both the done
+        # frame's totals and the ENOUGH_APPEALS gate.
         async for i in interleaved:
             # Interleave keep-alives are bare newlines; real appeals exceed
             # MIN_APPEAL_CHARS (same threshold as the generation-side filter).
@@ -3790,6 +3926,11 @@ class AppealsBackendHelper:
             else:
                 logger.debug("Sending keep alive....")
             yield i
+            # Also a checkpoint: draining this iterator blocks on the next model
+            # future, so a run that streams one draft and then stalls for
+            # minutes still gets the reserve at the deadline.
+            async for _spec in serve_reserve_if_stalled():
+                yield _spec
         logger.debug(f"Normal appeals sent {new} and {old} (runt_count={runts})")
         yield json.dumps(
             {
@@ -3808,24 +3949,29 @@ class AppealsBackendHelper:
         # frames.
         # Exclude speculative rows: synthesis should combine the live drafts,
         # not the held-back precompute (which could also spuriously push a
-        # 1-real-draft denial to the >=2 synthesis gate).
+        # 1-real-draft denial to the >=2 synthesis gate). Rows the early
+        # fallback served are excluded by text: promotion already flipped them
+        # to speculative=False, so the filter alone would no longer catch them
+        # -- and reaching the synthesis gate on the strength of the reserve is
+        # exactly what that filter is there to prevent.
         saved_appeal_texts: list[str] = [
             str(pa.appeal_text)
             async for pa in ProposedAppeal.objects.filter(
                 for_denial=denial, speculative=False
             )
             if is_real_appeal(pa.appeal_text)
+            and str(pa.appeal_text).strip() not in early_reserve_texts
         ]
         # Everything streamed so far this run persists as speculative=False
-        # (existing rows + drafts saved during streaming), so this doubles as the
-        # set already sent. Track it by normalized raw text and grow it as
-        # synthesis / the end-of-flow reconciliation serve more, so nothing is
-        # shipped twice. Caveat: save_appeal deliberately swallows a failed
-        # asave and still streams the draft, so a draft whose write failed is
-        # absent here -- the reconciliation may then re-serve an identical row.
-        # Harmless (the client dedupes by content) and preferable to dropping a
-        # generated appeal because its row could not be written.
-        served_texts: set[str] = {s.strip() for s in saved_appeal_texts if s}
+        # (existing rows + drafts saved during streaming), so this doubles as
+        # the set already sent. served_texts is tracked from the top of the flow
+        # (and grown by synthesis / the end-of-flow reconciliation below), so
+        # this only fills in anything a row landed for that no yield path saw.
+        # Caveat: save_appeal deliberately swallows a failed asave and still
+        # streams the draft; such a draft has no row here, but the streaming
+        # path already recorded its text, so the reconciliation still won't
+        # re-serve it.
+        served_texts.update({s.strip() for s in saved_appeal_texts if s})
         # Synthesis requires >=2 drafts to be meaningful: with a single
         # input, models often regurgitate it verbatim. The client dedupes
         # by content, so a verbatim copy gets silently dropped, which then
@@ -3929,7 +4075,7 @@ class AppealsBackendHelper:
         # as real appeals and later calls serve them as existing. Runs before
         # the zero/underdelivery logging and the done frame so the counts stay
         # truthful. Dedup is by normalized raw text via served_texts.
-        ENOUGH_APPEALS = 3
+        ENOUGH_APPEALS = cls.ENOUGH_APPEALS
         MINI_LEVELS = {
             CONTEXT_LEVEL_SPECULATIVE,
             CONTEXT_LEVEL_TIER1_SHED,
@@ -3941,8 +4087,10 @@ class AppealsBackendHelper:
         # otherwise a run where generation produced nothing but the reserve
         # covered it reports new=3 and neither branch fires, so a total backend
         # failure becomes invisible to alerting -- exactly the incident this
-        # instrumentation exists to catch.
-        live_new = new
+        # instrumentation exists to catch. reserve_served is subtracted for the
+        # same reason: rows the early fallback shipped mid-flight are already in
+        # `new`, and counting them as live delivery would hide the same failure.
+        live_new = new - reserve_served
         # Best-effort, like the synthesis block above: a failure here (e.g. a
         # promotion asave hitting DB lock contention -- save_appeal wraps its own
         # asave for exactly this reason) must NOT propagate, or the done frame
@@ -3999,10 +4147,15 @@ class AppealsBackendHelper:
         models_tried = make_appeals_diag.get("models_tried") or "none"
         # Keyed on live_new (pre-reserve), so a reserve that rescued the user
         # still reports the backend failure. reserve_note says whether the user
-        # was actually left empty-handed or the fallback covered it.
+        # was actually left empty-handed or the fallback covered it -- counting
+        # both routes the reserve can take: the mid-flight deadline flush and
+        # the end-of-flow reconciliation.
+        from_reserve = reconciled + reserve_served
         reserve_note = (
-            f" served_from_reserve={reconciled} (user was NOT left empty-handed)"
-            if reconciled
+            f" served_from_reserve={from_reserve} "
+            f"(early={reserve_served}, end_of_flow={reconciled}) "
+            f"(user was NOT left empty-handed)"
+            if from_reserve
             else ""
         )
         if gen_error:
@@ -4044,6 +4197,11 @@ class AppealsBackendHelper:
                 "first_model": first_model or "none",
                 "shed_tier": shed_tier,
                 "models_tried": models_tried,
+                # How many of new_appeals came from the speculative reserve
+                # rather than this run's live generation (early flush +
+                # end-of-flow reconciliation), so a client report can be read
+                # without guessing which path filled the stream.
+                "speculative_appeals": from_reserve,
             }
         ) + "\n"
 
