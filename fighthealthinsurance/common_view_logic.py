@@ -91,7 +91,7 @@ from fighthealthinsurance.utils import (
     keepalive_frames,
     MIN_APPEAL_CHARS,
     sync_iterator_to_async,
-    warn_too_short_appeal,
+    warn_unusable_appeal,
 )
 from .clinicaltrials_tools import ClinicalTrialsTools
 from .pubmed_tools import PubMedTools
@@ -2917,10 +2917,10 @@ class AppealsBackendHelper:
         old = 0
         new = 0
         async for appeal in existing_appeals:
-            # Enforce the minimum-length rule on previously-saved appeals too:
-            # the DB may hold short drafts saved before this threshold existed
-            # (or by paths that skipped the filter), and we must not re-deliver
-            # them.
+            # Enforce the deliverability rules on previously-saved appeals too:
+            # the DB may hold short or letterless drafts saved before those
+            # checks existed (or by paths that skipped the filter), and we must
+            # not re-deliver them.
             if is_real_appeal(appeal.appeal_text):
                 old = old + 1
                 logger.debug(f"Found existing appeal {appeal}, yielding")
@@ -2930,7 +2930,7 @@ class AppealsBackendHelper:
                 )
                 yield await format_response(existing_appeal_dict)
             elif appeal.appeal_text is not None and str(appeal.appeal_text).strip():
-                warn_too_short_appeal(
+                warn_unusable_appeal(
                     appeal.appeal_text,
                     f"saved appeal id={appeal.id} for denial {denial_id}",
                 )
@@ -3921,9 +3921,9 @@ class AppealsBackendHelper:
                 f"{summarize_denial_context_tokens(denial)}"
             )
             appeals = iter([])
-        # Drop None / empty / whitespace / runt outputs. Track runts so the
-        # zero-appeal diagnostic can distinguish "models silent" from
-        # "models producing only short strings".
+        # Drop None / empty / whitespace / runt / letterless outputs. Track the
+        # rejects so the zero-appeal diagnostic can distinguish "models silent"
+        # from "models producing only undeliverable strings".
         runts = 0
         dupes = 0
 
@@ -3957,7 +3957,7 @@ class AppealsBackendHelper:
                 return True
             if isinstance(text, str) and text.strip():
                 runts += 1
-                warn_too_short_appeal(
+                warn_unusable_appeal(
                     text,
                     f"model={item.model_name!r} for denial {denial_id}",
                 )
@@ -4094,10 +4094,11 @@ class AppealsBackendHelper:
                 else:
                     synthesized = synthesis_task.result()
                     if synthesized and not is_real_appeal(synthesized):
-                        # Non-empty but below the deliverable threshold: filter
-                        # it out so synthesis can't bypass the minimum-length
-                        # rule that the streaming path enforces.
-                        warn_too_short_appeal(
+                        # Non-empty but not deliverable (too short, or nothing
+                        # but numbers and punctuation): filter it out so
+                        # synthesis can't bypass the rules the streaming path
+                        # enforces.
+                        warn_unusable_appeal(
                             synthesized,
                             f"synthesis output for denial {denial_id}",
                         )
@@ -4231,8 +4232,9 @@ class AppealsBackendHelper:
                 f"(new={new}, old={old})"
             )
 
-        # runt_count=0 means models were silent; >0 means models produced
-        # only too-short outputs — different root causes for incident review.
+        # runt_count=0 means models were silent; >0 means models produced only
+        # undeliverable outputs (too short, or nothing but numbers and
+        # punctuation) — different root causes for incident review.
         shed_tier = make_appeals_diag.get("shed_tier")
         winning_stage = make_appeals_diag.get("winning_stage")
         models_tried = make_appeals_diag.get("models_tried") or "none"

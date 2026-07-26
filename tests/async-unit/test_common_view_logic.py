@@ -13,9 +13,10 @@ from fighthealthinsurance.common_view_logic import (
 )
 from fighthealthinsurance.utils import (
     MIN_APPEAL_CHARS,
+    appeal_has_letters,
     is_real_appeal,
     meaningful_appeal_length,
-    warn_too_short_appeal,
+    warn_unusable_appeal,
 )
 from fighthealthinsurance.generate_appeal import GeneratedAppeal
 from fighthealthinsurance.helpers import SendFaxHelper, RemoveDataHelper
@@ -1583,10 +1584,40 @@ class TestCommonViewLogic(TestCase):
         ("a" * MIN_APPEAL_CHARS + "\x07" * 20, True),
         # Tabs/newlines between letters are ignored (only 12 real letters).
         ("a\tb\nc d e f g h i j k l", False),
+        # Long enough, but nothing except digits and punctuation: not a letter.
+        ("1234-5678-90, 11/02/2026: $1,250.00", False),
+        ("1" * 500, False),
+        ("-" * 80, False),
+        (".,;:!?()[]{}<>/\\-_=+*&^%$#@~", False),
+        # A single letter among the digits/punctuation is still too little to
+        # be a letter in practice, but the letter rule is deliberately a floor,
+        # not a ratio -- length is what keeps this class of junk out.
+        ("Claim #1234-5678-90 denied 11/02/2026 -- $1,250.00", True),
+        # Non-Latin scripts count as letters.
+        ("这是一封足够长的申诉信正文内容示例。", True),
     ],
 )
 def test_is_real_appeal(value, expected):
     assert is_real_appeal(value) is expected
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        (None, False),
+        (123, False),
+        ("", False),
+        ("   ", False),
+        ("1234567890", False),
+        ("$1,250.00 (11/02/2026)", False),
+        ("---===---", False),
+        ("a", True),
+        ("Claim 1234 denied", True),
+        ("申诉", True),  # non-Latin script
+    ],
+)
+def test_appeal_has_letters(value, expected):
+    assert appeal_has_letters(value) is expected
 
 
 @pytest.mark.parametrize(
@@ -1608,7 +1639,7 @@ def test_meaningful_appeal_length(value, expected):
     assert meaningful_appeal_length(value) == expected
 
 
-def test_warn_too_short_appeal_logs_length_and_context():
+def test_warn_unusable_appeal_logs_length_and_context():
     """The shared drop-site warning reports the measured length, the
     threshold, and the caller-supplied context. The reported length is the
     meaningful (non-whitespace) count, so internal spaces are not counted."""
@@ -1617,24 +1648,43 @@ def test_warn_too_short_appeal_logs_length_and_context():
     sink = io.StringIO()
     handler_id = loguru_logger.add(sink, level="WARNING")
     try:
-        warn_too_short_appeal("a b c", "model='m' for denial 7")
+        warn_unusable_appeal("a b c", "model='m' for denial 7")
     finally:
         loguru_logger.remove(handler_id)
     output = sink.getvalue()
-    assert "too-short appeal" in output
+    assert "too-short" in output
     assert "len=3" in output  # 3 letters, the 2 spaces are excluded
     assert f"< {MIN_APPEAL_CHARS} chars" in output
     assert "model='m' for denial 7" in output
 
 
-def test_warn_too_short_appeal_handles_non_string():
+def test_warn_unusable_appeal_reports_letterless_reason():
+    """A long-enough but letterless appeal is reported as numbers-and-
+    punctuation-only rather than as too short."""
+    from loguru import logger as loguru_logger
+
+    sink = io.StringIO()
+    handler_id = loguru_logger.add(sink, level="WARNING")
+    try:
+        warn_unusable_appeal(
+            "1234-5678-90, 11/02/2026: $1,250.00", "model='m' for denial 7"
+        )
+    finally:
+        loguru_logger.remove(handler_id)
+    output = sink.getvalue()
+    assert "numbers-and-punctuation-only" in output
+    assert "too-short" not in output
+    assert "model='m' for denial 7" in output
+
+
+def test_warn_unusable_appeal_handles_non_string():
     """A non-string (e.g. None) is reported as length 0 without raising."""
     from loguru import logger as loguru_logger
 
     sink = io.StringIO()
     handler_id = loguru_logger.add(sink, level="WARNING")
     try:
-        warn_too_short_appeal(None, "some context")
+        warn_unusable_appeal(None, "some context")
     finally:
         loguru_logger.remove(handler_id)
     output = sink.getvalue()

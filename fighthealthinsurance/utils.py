@@ -74,14 +74,32 @@ def meaningful_appeal_length(text: Optional[str]) -> int:
     )
 
 
+def appeal_has_letters(text: Optional[str]) -> bool:
+    """True when ``text`` contains at least one alphabetic character.
+
+    Text made up entirely of digits, punctuation, and symbols is not an
+    appeal letter no matter how long it is -- a model that echoes back a
+    claim number, a date, a dollar amount, or a row of dashes has produced
+    nothing deliverable, and such an output would otherwise sail past the
+    ``MIN_APPEAL_CHARS`` length check. ``str.isalpha`` is Unicode-aware, so
+    appeals written in non-Latin scripts still pass.
+    """
+    return isinstance(text, str) and any(ch.isalpha() for ch in text)
+
+
 def is_real_appeal(x: Optional[str]) -> TypeGuard[str]:
     """True when ``x`` is a deliverable appeal: a string with at least
-    ``MIN_APPEAL_CHARS`` non-whitespace, non-control characters.
+    ``MIN_APPEAL_CHARS`` non-whitespace, non-control characters, at least
+    one of which is a letter (see ``appeal_has_letters``).
 
     Typed as a ``TypeGuard[str]`` so callers narrow ``Optional[str]`` to
     ``str`` inside the truthy branch (e.g. when building the streamed
     appeal payload)."""
-    return isinstance(x, str) and meaningful_appeal_length(x) >= MIN_APPEAL_CHARS
+    return (
+        isinstance(x, str)
+        and meaningful_appeal_length(x) >= MIN_APPEAL_CHARS
+        and appeal_has_letters(x)
+    )
 
 
 import asyncstdlib
@@ -102,20 +120,30 @@ pubmed_fetcher = (
 )
 
 
-def warn_too_short_appeal(text: Optional[str], context: str) -> None:
-    """Log a warning that a too-short appeal is being filtered out.
+def describe_unusable_appeal(text: Optional[str]) -> str:
+    """Describe why ``text`` fails ``is_real_appeal``, for logging.
 
-    Centralizes the message format shared by the generation, streaming, and
-    synthesis drop sites so a runt appeal is reported consistently wherever
-    it is dropped. ``context`` identifies the source (e.g. the model name,
-    a saved-appeal id, or "synthesis output") plus the denial id. The logged
-    length is the meaningful (non-whitespace, non-control) count actually
-    used by the filter.
+    The reported length is the meaningful (non-whitespace, non-control)
+    count actually used by the filter. Called only on text already known to
+    be unusable, so it always names one of the two rejection reasons -- too
+    short, or long enough but carrying no letters at all.
     """
     length = meaningful_appeal_length(text)
+    if length < MIN_APPEAL_CHARS:
+        return f"too-short (len={length} < {MIN_APPEAL_CHARS} chars)"
+    return f"numbers-and-punctuation-only (len={length})"
+
+
+def warn_unusable_appeal(text: Optional[str], context: str) -> None:
+    """Log a warning that an undeliverable appeal is being filtered out.
+
+    Centralizes the message format shared by the generation, streaming, and
+    synthesis drop sites so a rejected appeal is reported consistently
+    wherever it is dropped. ``context`` identifies the source (e.g. the model
+    name, a saved-appeal id, or "synthesis output") plus the denial id.
+    """
     logger.warning(
-        f"Filtering out too-short appeal "
-        f"(len={length} < {MIN_APPEAL_CHARS} chars): {context}"
+        f"Filtering out unusable appeal -- {describe_unusable_appeal(text)}: {context}"
     )
 
 

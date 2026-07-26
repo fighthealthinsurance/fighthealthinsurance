@@ -1174,5 +1174,15 @@ class TestPeekRealOrNone:
         with _loguru_capture() as sink:
             _peek_real_or_none(iter([_ga("short")]), denial_id=999, stage="primary")
         output = sink.getvalue()
-        assert "primary first item is a runt" in output
+        assert "primary first item is unusable" in output
         assert "denial 999" in output
+
+    def test_numbers_and_punctuation_first_returns_none(self):
+        """A long letterless first item (e.g. a model echoing a claim number)
+        must trigger fallback just like a runt does."""
+        first, _ = _peek_real_or_none(
+            iter([_ga("1234-5678-90, 11/02/2026: $1,250.00")]),
+            denial_id=1,
+            stage="primary",
+        )
+        assert first is None

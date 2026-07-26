@@ -195,6 +195,75 @@ def _sync_to_async_router(pa_wrapper, make_appeals_wrapper, uspstf_wrapper=None)
     return route
 
 
+async def _run_generate_appeals_over_saved(saved_texts, synthesized=None):
+    """Drive ``generate_appeals`` with ``saved_texts`` already in the DB and
+    no newly generated appeals, with the synthesis step returning
+    ``synthesized``.
+
+    Returns ``(chunks, warning_log_output)`` so callers can assert on both
+    what was delivered and what was logged.
+    """
+    mock_denial = _make_mock_denial()
+    parameters = {
+        "denial_id": "12345",
+        "email": "test@example.com",
+        "semi_sekret": "test-secret",
+    }
+
+    with (
+        patch(
+            "fighthealthinsurance.common_view_logic.Denial.objects.filter",
+            return_value=_make_mock_denial_query(mock_denial),
+        ),
+        patch(
+            "fighthealthinsurance.common_view_logic.Denial.get_hashed_email",
+            return_value="hashed",
+        ),
+        patch.object(AppealsBackendHelper, "regex_denial_processor") as mock_regex,
+        patch(
+            "fighthealthinsurance.common_view_logic.MLCitationsHelper.generate_citations_for_denial",
+            new_callable=AsyncMock,
+            return_value="",
+        ),
+        patch.object(
+            AppealsBackendHelper.pmt,
+            "find_context_for_denial",
+            new_callable=AsyncMock,
+            return_value="",
+        ),
+        patch(
+            "fighthealthinsurance.common_view_logic.database_sync_to_async",
+        ) as mock_sync_to_async,
+        patch(
+            "fighthealthinsurance.common_view_logic.interleave_iterator_for_keep_alive",
+            side_effect=passthrough_interleave,
+        ),
+        patch(
+            "fighthealthinsurance.common_view_logic.ProposedAppeal",
+        ) as mock_pa_cls,
+        patch(
+            "fighthealthinsurance.common_view_logic.appealGenerator"
+        ) as mock_appeal_gen,
+    ):
+        mock_regex.get_appeal_templates = AsyncMock(return_value=[])
+        mock_sync_to_async.side_effect = _sync_to_async_router(
+            AsyncMock(return_value=""),
+            AsyncMock(return_value=[]),  # no newly generated appeals
+        )
+        mock_pa_cls.return_value = MagicMock(id=1, asave=AsyncMock())
+        mock_pa_cls.objects.filter.return_value = (
+            _make_proposed_appeal_query_with_texts(saved_texts)
+        )
+        mock_appeal_gen.synthesize_appeals = AsyncMock(return_value=synthesized)
+
+        with _loguru_capture() as sink:
+            chunks = []
+            async for chunk in AppealsBackendHelper.generate_appeals(parameters):
+                chunks.append(chunk)
+
+    return chunks, sink.getvalue()
+
+
 class TestAppealsBackendHelperWithCitations:
     """Tests for the AppealsBackendHelper class with ML citations integration.
 
@@ -828,67 +897,12 @@ async def test_synthesis_too_short_output_is_filtered():
     """A synthesized appeal below MIN_APPEAL_CHARS must not be yielded — it
     would otherwise bypass the minimum-length rule the streaming path
     enforces — and the drop must be logged as a warning."""
-    mock_denial = _make_mock_denial()
-    parameters = {
-        "denial_id": "12345",
-        "email": "test@example.com",
-        "semi_sekret": "test-secret",
-    }
-    saved_texts = ["draft one text body", "draft two text body"]
-
-    with (
-        patch(
-            "fighthealthinsurance.common_view_logic.Denial.objects.filter",
-            return_value=_make_mock_denial_query(mock_denial),
-        ),
-        patch(
-            "fighthealthinsurance.common_view_logic.Denial.get_hashed_email",
-            return_value="hashed",
-        ),
-        patch.object(AppealsBackendHelper, "regex_denial_processor") as mock_regex,
-        patch(
-            "fighthealthinsurance.common_view_logic.MLCitationsHelper.generate_citations_for_denial",
-            new_callable=AsyncMock,
-            return_value="",
-        ),
-        patch.object(
-            AppealsBackendHelper.pmt,
-            "find_context_for_denial",
-            new_callable=AsyncMock,
-            return_value="",
-        ),
-        patch(
-            "fighthealthinsurance.common_view_logic.database_sync_to_async",
-        ) as mock_sync_to_async,
-        patch(
-            "fighthealthinsurance.common_view_logic.interleave_iterator_for_keep_alive",
-            side_effect=passthrough_interleave,
-        ),
-        patch(
-            "fighthealthinsurance.common_view_logic.ProposedAppeal",
-        ) as mock_pa_cls,
-        patch(
-            "fighthealthinsurance.common_view_logic.appealGenerator"
-        ) as mock_appeal_gen,
-    ):
-        mock_regex.get_appeal_templates = AsyncMock(return_value=[])
-        # make_appeals returns nothing new so the only synthesis candidate is
-        # the (too-short) synthesizer output under test.
-        mock_sync_to_async.side_effect = _sync_to_async_router(
-            AsyncMock(return_value=""),
-            AsyncMock(return_value=[]),
-        )
-        mock_pa_cls.return_value = MagicMock(id=1, asave=AsyncMock())
-        mock_pa_cls.objects.filter.return_value = (
-            _make_proposed_appeal_query_with_texts(saved_texts)
-        )
-        # Synthesizer returns a non-empty but too-short letter (< 15 chars).
-        mock_appeal_gen.synthesize_appeals = AsyncMock(return_value="too short")
-
-        with _loguru_capture() as sink:
-            chunks = []
-            async for chunk in AppealsBackendHelper.generate_appeals(parameters):
-                chunks.append(chunk)
+    # make_appeals returns nothing new so the only synthesis candidate is
+    # the (too-short) synthesizer output under test.
+    chunks, output = await _run_generate_appeals_over_saved(
+        ["draft one text body", "draft two text body"],
+        synthesized="too short",
+    )
 
     # The too-short synthesis must never be delivered.
     contents = _collect_appeal_contents(chunks)
@@ -896,8 +910,26 @@ async def test_synthesis_too_short_output_is_filtered():
     for c in chunks:
         assert '"synthesized": "true"' not in c
     # And the drop is logged as a warning naming the denial.
-    output = sink.getvalue()
-    assert "too-short appeal" in output
+    assert "unusable appeal -- too-short" in output
+    assert "synthesis output for denial 12345" in output
+
+
+@pytest.mark.asyncio
+async def test_synthesis_numbers_and_punctuation_output_is_filtered():
+    """A synthesized "appeal" of nothing but numbers and punctuation is long
+    enough to clear MIN_APPEAL_CHARS but is not a letter, so it must be
+    filtered out rather than delivered."""
+    junk = "1234-5678-90, 11/02/2026: $1,250.00 (99213)"
+    chunks, output = await _run_generate_appeals_over_saved(
+        ["draft one text body", "draft two text body"],
+        synthesized=junk,
+    )
+
+    contents = _collect_appeal_contents(chunks)
+    assert junk not in contents
+    for c in chunks:
+        assert '"synthesized": "true"' not in c
+    assert "unusable appeal -- numbers-and-punctuation-only" in output
     assert "synthesis output for denial 12345" in output
 
 
@@ -905,71 +937,31 @@ async def test_synthesis_too_short_output_is_filtered():
 async def test_existing_too_short_appeal_is_skipped():
     """Previously-saved appeals below MIN_APPEAL_CHARS (e.g. saved before the
     threshold existed) must not be re-delivered, and the skip is warned."""
-    mock_denial = _make_mock_denial()
-    parameters = {
-        "denial_id": "12345",
-        "email": "test@example.com",
-        "semi_sekret": "test-secret",
-    }
     # One runt (4 chars) and one deliverable existing appeal.
-    existing_texts = ["tiny", "a valid existing appeal body"]
-
-    with (
-        patch(
-            "fighthealthinsurance.common_view_logic.Denial.objects.filter",
-            return_value=_make_mock_denial_query(mock_denial),
-        ),
-        patch(
-            "fighthealthinsurance.common_view_logic.Denial.get_hashed_email",
-            return_value="hashed",
-        ),
-        patch.object(AppealsBackendHelper, "regex_denial_processor") as mock_regex,
-        patch(
-            "fighthealthinsurance.common_view_logic.MLCitationsHelper.generate_citations_for_denial",
-            new_callable=AsyncMock,
-            return_value="",
-        ),
-        patch.object(
-            AppealsBackendHelper.pmt,
-            "find_context_for_denial",
-            new_callable=AsyncMock,
-            return_value="",
-        ),
-        patch(
-            "fighthealthinsurance.common_view_logic.database_sync_to_async",
-        ) as mock_sync_to_async,
-        patch(
-            "fighthealthinsurance.common_view_logic.interleave_iterator_for_keep_alive",
-            side_effect=passthrough_interleave,
-        ),
-        patch(
-            "fighthealthinsurance.common_view_logic.ProposedAppeal",
-        ) as mock_pa_cls,
-        patch(
-            "fighthealthinsurance.common_view_logic.appealGenerator"
-        ) as mock_appeal_gen,
-    ):
-        mock_regex.get_appeal_templates = AsyncMock(return_value=[])
-        mock_sync_to_async.side_effect = _sync_to_async_router(
-            AsyncMock(return_value=""),
-            AsyncMock(return_value=[]),  # no newly generated appeals
-        )
-        mock_pa_cls.return_value = MagicMock(id=1, asave=AsyncMock())
-        mock_pa_cls.objects.filter.return_value = (
-            _make_proposed_appeal_query_with_texts(existing_texts)
-        )
-        mock_appeal_gen.synthesize_appeals = AsyncMock(return_value=None)
-
-        with _loguru_capture() as sink:
-            chunks = []
-            async for chunk in AppealsBackendHelper.generate_appeals(parameters):
-                chunks.append(chunk)
+    chunks, output = await _run_generate_appeals_over_saved(
+        ["tiny", "a valid existing appeal body"]
+    )
 
     contents = _collect_appeal_contents(chunks)
     # The runt is dropped; the valid existing appeal is delivered.
     assert "tiny" not in contents
     assert "a valid existing appeal body" in contents
     # The drop is logged as a warning identifying it as a saved appeal.
-    output = sink.getvalue()
-    assert "too-short appeal" in output
+    assert "unusable appeal -- too-short" in output
+    assert "saved appeal id=" in output
+
+
+@pytest.mark.asyncio
+async def test_existing_numbers_and_punctuation_appeal_is_skipped():
+    """A previously-saved row holding only numbers and punctuation must not
+    be re-delivered, however long it is."""
+    junk = "1234-5678-90 / 11-02-2026 / $1,250.00 / 99213"
+    chunks, output = await _run_generate_appeals_over_saved(
+        [junk, "a valid existing appeal body"]
+    )
+
+    contents = _collect_appeal_contents(chunks)
+    assert junk not in contents
+    assert "a valid existing appeal body" in contents
+    assert "unusable appeal -- numbers-and-punctuation-only" in output
     assert "saved appeal id=" in output
