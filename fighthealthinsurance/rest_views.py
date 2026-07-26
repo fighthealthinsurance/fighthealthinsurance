@@ -763,17 +763,26 @@ def streaming_appeals_rest_fallback(request: Request):
             # so anti-buffering headers and intermediary heuristics
             # engage immediately. Otherwise a slow first ML call can
             # make the fallback look hung even when it's working.
+            last_yield_at = time.monotonic()
             yield "\n"
             async for record in common_view_logic.AppealsBackendHelper.generate_appeals(
                 data
             ):
+                # Stamp BEFORE each yield, never after. A client hangup injects
+                # GeneratorExit at whichever `yield` we're suspended on, so a
+                # trailing assignment never runs for the frame just sent -- and
+                # the disconnect warning would then report the whole preceding
+                # generation gap as idle time, right when we were actively
+                # writing. That's the exact confusion this metric exists to
+                # remove.
+                last_yield_at = time.monotonic()
                 # Mirror the WebSocket framing: each record is already
                 # newline-terminated JSON, but we add an extra "\n"
                 # framing newline so intermediaries that buffer per-line
                 # still flush early, matching the WS keepalive cadence.
                 yield record
-                yield "\n"
                 last_yield_at = time.monotonic()
+                yield "\n"
                 stripped = record.strip()
                 if stripped:
                     try:

@@ -13,6 +13,7 @@ don't accidentally collapse the lookup-failed case back into the
 "generation produced nothing" bucket.
 """
 
+import asyncio
 import json
 import re
 from unittest.mock import patch, AsyncMock, MagicMock
@@ -623,6 +624,67 @@ async def test_rest_fallback_disconnect_log_includes_stream_timing():
     assert messages, "expected a client-disconnect WARNING"
     assert "client disconnected mid-stream" in messages[-1]
     assert re.search(r"elapsed=\d+\.\d+s idle=\d+\.\d+s", messages[-1]), messages[-1]
+
+
+@pytest.mark.asyncio
+async def test_rest_fallback_disconnect_idle_excludes_generation_gap():
+    """`idle` measures silence since the last frame WE sent, not since the last
+    frame we finished bookkeeping for.
+
+    A hangup injects GeneratorExit at whichever `yield` the stream is suspended
+    on, so the idle timestamp has to be stamped before each yield. Stamped
+    after, a disconnect immediately following a slow-to-produce frame reports
+    the whole generation gap as idle -- which would point triage at an idle
+    proxy timeout when the server was writing right up to the disconnect.
+    """
+    from rest_framework.test import APIRequestFactory
+
+    from fighthealthinsurance import rest_views
+
+    # Comfortably wider than the log's 0.1s formatting granularity, so the
+    # buggy (stamp-after-yield) reading of ~1 gap can't round into the passing
+    # band and make this flaky.
+    gap = 0.4
+
+    async def _slow_between_frames(_data):
+        for _ in range(2):
+            await asyncio.sleep(gap)
+            yield json.dumps({"type": "status", "phase": "generating"}) + "\n"
+
+    request = APIRequestFactory().post(
+        "/ziggy/rest/appeals/streaming_fallback",
+        {"denial_id": 42, "email": "a@b.com", "semi_sekret": "s"},
+        format="json",
+    )
+
+    fake_logger = MagicMock()
+    with patch.object(
+        rest_views.common_view_logic,
+        "get_denial_for_action",
+        return_value=MagicMock(),
+    ), patch.object(
+        rest_views.common_view_logic.AppealsBackendHelper,
+        "generate_appeals",
+        _slow_between_frames,
+    ), patch.object(
+        rest_views, "logger", fake_logger
+    ):
+        response = rest_views.streaming_appeals_rest_fallback(request)
+        stream = response._iterator
+        # Stop on the second record: the stream has just produced a frame after
+        # a `gap`-long wait, so a hangup here is the "died mid-write" case.
+        for _ in range(4):
+            await stream.__anext__()
+        await stream.aclose()
+
+    message = fake_logger.warning.call_args_list[-1].args[0]
+    match = re.search(r"elapsed=(\d+\.\d+)s idle=(\d+\.\d+)s", message)
+    assert match, message
+    elapsed, idle = float(match.group(1)), float(match.group(2))
+    # Two generation gaps have elapsed, but we were writing at the moment of
+    # the disconnect, so the idle window must not include either of them.
+    assert elapsed >= gap, message
+    assert idle < gap / 2, message
 
 
 @pytest.mark.asyncio
