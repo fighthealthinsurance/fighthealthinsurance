@@ -2633,17 +2633,27 @@ class AppealsBackendHelper:
     # sufficient result with weaker drafts adds no value.
     ENOUGH_APPEALS = 3
 
-    # Deadline, measured from the start of the generation flow, after which a
-    # still-underdelivering run starts serving the speculative reserve instead
-    # of holding it to the very end. Research + make_appeals routinely run for
-    # minutes, and a reserve that only lands after all of it leaves the user
-    # staring at a spinner while a usable appeal sits in the DB. Past this mark
-    # every checkpoint in the flow (context gathering, the generating-phase
-    # heartbeats, the streaming loop) flushes what the reserve has, up to
-    # ENOUGH_APPEALS. Live drafts are unaffected: they are full-context rows and
-    # are always streamed as they arrive, so this only ever adds to what the
-    # user gets -- it never trades a good appeal for a speculative one.
-    SPECULATIVE_FALLBACK_SECONDS = 30.0
+    # Deadlines, measured from the start of the generation flow, after which a
+    # run starts serving the speculative reserve instead of holding it to the
+    # very end. Research + make_appeals routinely run for minutes, and a reserve
+    # that only lands after all of it leaves the user staring at a spinner while
+    # a usable appeal sits in the DB. Past the applicable mark, every checkpoint
+    # in the flow (context gathering, the generating-phase heartbeats, the
+    # streaming loop) flushes what the reserve has, up to ENOUGH_APPEALS.
+    #
+    # Two marks, because "nothing at all" and "fewer than we aim for" are
+    # different problems. Someone with an empty screen is rescued first; someone
+    # who already has an appeal in hand can afford to wait longer for the
+    # full-context drafts, which are better than anything the reserve holds.
+    #
+    # Live drafts are unaffected either way: they are full-context rows and are
+    # always streamed as they arrive, so this only ever adds to what the user
+    # gets -- it never trades a good appeal for a speculative one.
+    #
+    # No appeal delivered at all yet:
+    SPECULATIVE_FALLBACK_NO_APPEAL_SECONDS = 45.0
+    # At least one delivered, but still short of ENOUGH_APPEALS:
+    SPECULATIVE_FALLBACK_UNDER_TARGET_SECONDS = 90.0
 
     @classmethod
     async def generate_appeals(cls, parameters) -> AsyncIterator[str]:
@@ -2945,8 +2955,10 @@ class AppealsBackendHelper:
         logger.info(
             f"[gen_id={generation_id}] starting appeal generation for denial "
             f"{denial_id}: speculative reserve available at start="
-            f"{reserve_at_start} (existing appeals={old}, deadline="
-            f"{cls.SPECULATIVE_FALLBACK_SECONDS:.0f}s)"
+            f"{reserve_at_start} (existing appeals={old}, deadlines: "
+            f"{cls.SPECULATIVE_FALLBACK_NO_APPEAL_SECONDS:.0f}s with nothing "
+            f"delivered / {cls.SPECULATIVE_FALLBACK_UNDER_TARGET_SECONDS:.0f}s "
+            f"under {cls.ENOUGH_APPEALS})"
         )
 
         # Rows served early by serve_reserve_if_stalled, tracked by normalized
@@ -2959,27 +2971,40 @@ class AppealsBackendHelper:
         async def serve_reserve_if_stalled() -> AsyncIterator[str]:
             """Flush the speculative reserve once the run is over its deadline.
 
-            A no-op until SPECULATIVE_FALLBACK_SECONDS have passed, and a no-op
-            whenever the user already has ENOUGH_APPEALS -- so a run that is
-            delivering keeps its reserve held back exactly as before. Past the
-            deadline it serves the held-back precompute (oldest first), promoting
-            each row to speculative=False so it persists as a real appeal and a
-            later call serves it as existing -- the same promotion the end-of-flow
-            reconciliation does, just early enough to matter to someone watching
-            a spinner.
+            Which deadline applies depends on what the user is looking at right
+            now: with nothing delivered they are rescued at
+            SPECULATIVE_FALLBACK_NO_APPEAL_SECONDS; with at least one appeal in
+            hand but fewer than ENOUGH_APPEALS they can wait until
+            SPECULATIVE_FALLBACK_UNDER_TARGET_SECONDS for the full-context
+            drafts, which beat anything the reserve holds. At or above
+            ENOUGH_APPEALS this is a no-op, so a run that is delivering keeps
+            its reserve held back exactly as before.
+
+            Past the applicable mark it serves the held-back precompute (oldest
+            first), promoting each row to speculative=False so it persists as a
+            real appeal and a later call serves it as existing -- the same
+            promotion the end-of-flow reconciliation does, just early enough to
+            matter to someone watching a spinner.
 
             Callers invoke it at the checkpoints where the flow is already
             yielding (context gathering, generating-phase heartbeats, the
             streaming loop), so it costs one indexed query per checkpoint and
-            only once the deadline is behind us.
+            only once a deadline is behind us.
 
             Best-effort like the reconciliation: never raises, because a DB
             hiccup here must not kill a stream that is otherwise fine.
             """
             nonlocal new, reserve_served, reserve_notice_sent
-            if (new + old) >= cls.ENOUGH_APPEALS:
+            delivered = new + old
+            if delivered >= cls.ENOUGH_APPEALS:
                 return
-            if (time.monotonic() - flow_started) < cls.SPECULATIVE_FALLBACK_SECONDS:
+            if delivered == 0:
+                deadline = cls.SPECULATIVE_FALLBACK_NO_APPEAL_SECONDS
+                rule = f"no-appeal@{deadline:.0f}s"
+            else:
+                deadline = cls.SPECULATIVE_FALLBACK_UNDER_TARGET_SECONDS
+                rule = f"under-target@{deadline:.0f}s"
+            if (time.monotonic() - flow_started) < deadline:
                 return
             try:
                 # chosen=False: never hand the user their own pick back as a
@@ -3020,7 +3045,7 @@ class AppealsBackendHelper:
                         f"[gen_id={generation_id}] picked speculative reserve "
                         f"appeal {row.id} for denial {denial_id} after "
                         f"{time.monotonic() - flow_started:.1f}s "
-                        f"(new={new}, old={old}, "
+                        f"(rule={rule}, new={new}, old={old}, "
                         f"{'available at start' if reserve_at_start > 0 else 'arrived mid-generation'})"
                     )
             except Exception:
