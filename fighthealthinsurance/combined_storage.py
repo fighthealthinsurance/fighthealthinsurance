@@ -2,13 +2,11 @@ from typing import IO, Any, List, Optional
 
 from django.core.files.base import File
 from django.core.files.storage import Storage
-from django.utils.deconstruct import deconstructible
 
 from loguru import logger
 from stopit import ThreadingTimeout as Timeout
 
 
-@deconstructible(path="fighthealthinsurance.combined_storage.CombinedStorage")
 class CombinedStorage(Storage):
     """A combined storage backend that uses timeouts."""
 
@@ -16,6 +14,20 @@ class CombinedStorage(Storage):
 
     def __init__(self, *args: Optional[Storage]):
         self.backends = [x for x in args if x is not None]
+
+    def deconstruct(self):
+        """Serialize into migrations without the wrapped backends.
+
+        Written by hand rather than via @deconstructible, whose generated
+        deconstruct() replays the constructor args -- that recorded each
+        backend's root in every migration that touches a FileField
+        (``FileSystemStorage(location="/external_data")``). Storage roots are
+        deployment configuration, not schema, so pointing dev at a directory
+        that exists there made makemigrations believe all twelve file fields
+        had changed. The backends come from settings at runtime; migration
+        state only needs to know the field uses this storage.
+        """
+        return ("fighthealthinsurance.combined_storage.CombinedStorage", [], {})
 
     def open(self, name: str, mode: str = "rb") -> File:
         last_error: Optional[BaseException] = None
