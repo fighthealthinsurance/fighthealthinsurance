@@ -164,6 +164,15 @@ class Base(Configuration):
         "PROFESSIONAL_CC_EMAIL", "professional@fighthealthinsurance.com"
     )
 
+    # Cofactor AI's contact address, CC'd on pro-connector intro emails alongside
+    # PROFESSIONAL_CC_EMAIL -- the intro copy says Cofactor AI is "cc'd here", so
+    # they have to actually be on the CC line. Configurable via env so a change
+    # of contact doesn't require a code change. Set it to "none" to turn the
+    # Cofactor CC off entirely (an empty value falls back to the default instead,
+    # so the opt-out has to be spelled out); with it off, staff need to edit the
+    # "cc'd here" line out of the draft.
+    COFACTOR_CC_EMAIL = os.getenv("COFACTOR_CC_EMAIL", "rmorales@cofactorai.com")
+
     # Demo-request notifications always go to support42@; additional recipients
     # can be configured via the DEMO_REQUEST_EXTRA_NOTIFICATION_EMAILS env var
     # (comma-separated).

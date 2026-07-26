@@ -8,8 +8,9 @@ workflows.
 
 This module builds the introduction email -- optionally personalized by an
 (external) LLM and always falling back to a safe approved base template -- and
-sends it with the professional contact address CC'd. Staff review and edit every
-draft before it is sent; nothing here sends automatically.
+sends it with the professional contact address and Cofactor AI's contact CC'd
+(the copy tells the recipient Cofactor AI is "cc'd here"). Staff review and edit
+every draft before it is sent; nothing here sends automatically.
 
 Wording constraints (enforced by ``_is_safe_intro_draft``):
   * Never describe Cofactor AI as a "partner" or say FHI "partnered" with them.
@@ -20,7 +21,7 @@ Wording constraints (enforced by ``_is_safe_intro_draft``):
 
 import re
 import urllib.parse
-from typing import Optional
+from typing import Iterable, Optional
 
 from asgiref.sync import async_to_sync
 from django.conf import settings
@@ -30,7 +31,7 @@ from django.utils import timezone
 
 from loguru import logger
 
-from fighthealthinsurance.email_utils import is_blocked_email
+from fighthealthinsurance.email_utils import is_blocked_email, is_sendable_email
 from fighthealthinsurance.ml.ml_inference import infer_with_fallback
 from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance.models import InterestedProfessional, ScheduledEmail
@@ -39,6 +40,16 @@ from fighthealthinsurance.utils import send_fallback_email
 
 # Fallback CC address when no professional/support email setting is configured.
 DEFAULT_PROFESSIONAL_CC_EMAIL = "professional@fighthealthinsurance.com"
+
+# Fallback Cofactor AI contact when no COFACTOR_CC_EMAIL setting is configured.
+# The intro copy tells the recipient Cofactor AI is "cc'd here", so this address
+# is CC'd on every intro email alongside the professional contact address.
+DEFAULT_COFACTOR_CC_EMAIL = "rmorales@cofactorai.com"
+
+# COFACTOR_CC_EMAIL value that explicitly disables the Cofactor AI CC. A blank
+# setting can't mean "off" -- an unset/empty env var has to keep falling back to
+# the default -- so opting out is spelled out (see get_cofactor_cc_email).
+CC_DISABLED_SENTINEL = "none"
 
 # Obvious test / spam signups we never introduce. These are filtered out of the
 # processing queue and the CSV export entirely (never shown, never counted)
@@ -183,6 +194,47 @@ def get_professional_cc_email() -> str:
     setting if set, otherwise the ``professional@`` default."""
     value = getattr(settings, "PROFESSIONAL_CC_EMAIL", None)
     return str(value) if value else DEFAULT_PROFESSIONAL_CC_EMAIL
+
+
+def get_cofactor_cc_email() -> Optional[str]:
+    """Cofactor AI's CC address for intro emails, or ``None`` when turned off.
+
+    Uses the configured ``COFACTOR_CC_EMAIL`` setting, falling back to the known
+    contact. Setting it to ``"none"`` (any case) is an explicit opt-out and
+    returns ``None`` -- an unset or empty value means "not configured" and gets
+    the default instead, so switching the CC off takes the sentinel rather than a
+    blank. With it off, the base email's "who are cc'd here" line no longer
+    matches what is sent, so staff need to edit that out of the draft.
+    """
+    value = getattr(settings, "COFACTOR_CC_EMAIL", None)
+    cleaned = str(value).strip() if value is not None else ""
+    if not cleaned:
+        return DEFAULT_COFACTOR_CC_EMAIL
+    if cleaned.lower() == CC_DISABLED_SENTINEL:
+        return None
+    return cleaned
+
+
+def cofactor_cc_problem() -> Optional[str]:
+    """Reason the configured Cofactor CC address is unusable, or ``None``.
+
+    A typo'd (no ``@``) or blocked-domain ``COFACTOR_CC_EMAIL`` is *silently*
+    dropped from the CC list by ``send_fallback_email``, which then reports a
+    successful send -- so the intro would go out telling the recipient Cofactor AI
+    is "cc'd here", and be recorded as sent, while Cofactor never received it.
+    Real sends fail closed on this instead (see :func:`_intro_cc_recipients`).
+    Deliberately disabling the CC with the ``"none"`` sentinel is a choice, not a
+    problem, so it returns ``None``.
+    """
+    address = get_cofactor_cc_email()
+    if address is None or is_sendable_email(address):
+        return None
+    return (
+        f"COFACTOR_CC_EMAIL is set to '{address}', which is not a sendable "
+        f"address, so Cofactor AI would be silently dropped from the CC. Fix the "
+        f"setting, or set it to '{CC_DISABLED_SENTINEL}' to send intros without "
+        f"CC'ing Cofactor AI."
+    )
 
 
 def _greeting_name(pro: InterestedProfessional) -> str:
@@ -411,17 +463,46 @@ def generate_intro_email(pro: InterestedProfessional) -> str:
     return async_to_sync(agenerate_intro_email)(pro)
 
 
-def _intro_cc_recipients(extra_cc: Optional[list[str]] = None) -> list[str]:
-    """CC list for an intro email: the professional contact address first, then
-    any caller-supplied extras, deduplicated case-insensitively in order."""
-    professional_cc = get_professional_cc_email()
-    recipients = [professional_cc]
-    seen = {professional_cc.lower()}
-    for addr in extra_cc or []:
-        if addr.lower() not in seen:
-            seen.add(addr.lower())
-            recipients.append(addr)
+def _dedup_addresses(addresses: Iterable[Optional[str]]) -> list[str]:
+    """Drop blanks/``None`` and case-insensitive duplicates, preserving order."""
+    recipients: list[str] = []
+    seen: set[str] = set()
+    for addr in addresses:
+        cleaned = (addr or "").strip()
+        if cleaned and cleaned.lower() not in seen:
+            seen.add(cleaned.lower())
+            recipients.append(cleaned)
     return recipients
+
+
+def default_intro_cc_recipients() -> list[str]:
+    """Addresses always CC'd on an intro email.
+
+    The FHI professional contact address plus Cofactor AI's contact -- the intro
+    copy tells the recipient Cofactor AI is "cc'd here", so their address has to
+    actually be on the CC line for the email to match the copy. Both are
+    configurable (see :func:`get_professional_cc_email` /
+    :func:`get_cofactor_cc_email`), so they're deduplicated in case a deployment
+    points both settings at the same address, and the Cofactor CC drops out
+    entirely when it is explicitly disabled.
+    """
+    return _dedup_addresses([get_professional_cc_email(), get_cofactor_cc_email()])
+
+
+def _intro_cc_recipients(extra_cc: Optional[list[str]] = None) -> list[str]:
+    """CC list for an intro email: the always-CC'd defaults (professional
+    contact, Cofactor AI) first, then any caller-supplied extras, deduplicated
+    case-insensitively in order.
+
+    Raises ``ValueError`` when the configured Cofactor address is unusable (see
+    :func:`cofactor_cc_problem`). Every real send path goes through here to build
+    its CC list, so this is the chokepoint that keeps a misconfigured setting from
+    quietly turning into an intro that claims a CC it doesn't have.
+    """
+    problem = cofactor_cc_problem()
+    if problem:
+        raise ValueError(problem)
+    return _dedup_addresses([*default_intro_cc_recipients(), *(extra_cc or [])])
 
 
 def send_proconnector_intro_email(
@@ -431,9 +512,10 @@ def send_proconnector_intro_email(
     cc: Optional[list[str]] = None,
 ) -> None:
     """Send the (edited) intro email to ``pro`` now, always CC'ing the
-    professional address.
+    professional address and Cofactor AI.
 
-    The professional/support address is always included; any caller-supplied
+    The professional/support address and Cofactor AI's contact are always
+    included (see :func:`default_intro_cc_recipients`); any caller-supplied
     ``cc`` is treated as *additional* recipients, deduplicated while preserving
     order. Raises on send failure -- including a blocked/unsendable recipient,
     which ``send_fallback_email`` would otherwise skip silently -- so the caller
@@ -462,11 +544,12 @@ def send_proconnector_test_email(
 
     Lets staff preview exactly how the (edited) draft renders in a real inbox
     before committing to the real send. Unlike the real send it goes only to
-    the test address (the professional is NOT emailed and the professional
-    contact address is NOT CC'd), the subject and body are clearly marked as a
-    test, and -- critically -- nothing is written to the record: the intro is
-    not marked attempted/sent, so it stays in the queue. Raises on a blocked
-    test address or send failure so the caller can surface the problem.
+    the test address (the professional is NOT emailed and neither the
+    professional contact address nor Cofactor AI is CC'd), the subject and body
+    are clearly marked as a test, and -- critically -- nothing is written to the
+    record: the intro is not marked attempted/sent, so it stays in the queue.
+    Raises on a blocked test address or send failure so the caller can surface
+    the problem.
     """
     if is_blocked_email(test_email):
         raise ValueError("Test email address is blocked or unsendable")

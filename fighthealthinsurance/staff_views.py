@@ -51,7 +51,10 @@ from fighthealthinsurance.proconnector import (
     build_base_intro_letter,
     build_search_links,
     claim_email_for_send,
+    cofactor_cc_problem,
+    default_intro_cc_recipients,
     generate_intro_email,
+    get_cofactor_cc_email,
     get_next_interested_professional,
     get_professional_cc_email,
     intro_wording_problem,
@@ -1052,7 +1055,14 @@ class ProConnectorProcessView(View):
             "pro": pro,
             "email_body": draft,
             "subject": subject or PROCONNECTOR_INTRO_SUBJECT,
-            "cc_email": get_professional_cc_email(),
+            # The email CCs both the professional contact address and Cofactor
+            # AI; the printable letter can only name the professional contact.
+            # cofactor_cc_email is None when the Cofactor CC is disabled, so the
+            # template doesn't promise a CC that isn't happening.
+            "cc_emails": default_intro_cc_recipients(),
+            "cofactor_cc_email": get_cofactor_cc_email(),
+            "cofactor_cc_problem": cofactor_cc_problem(),
+            "contact_email": get_professional_cc_email(),
             "google_search_url": links["google"],
             "linkedin_search_url": links["linkedin"],
             "google_address_search_url": links["google_address"],
@@ -1204,6 +1214,12 @@ class ProConnectorProcessView(View):
         error = self._intro_form_problem(body, subject)
         if error is None and not is_sendable_email(pro.email):
             error = f"{pro.email} is not a sendable address; cannot send."
+        # A misconfigured Cofactor CC makes the send helpers raise. Catch it here
+        # -- before the record is claimed -- so staff get the actual reason instead
+        # of a generic failure, and the record stays in the queue for a retry once
+        # the setting is fixed.
+        if error is None:
+            error = cofactor_cc_problem()
         if error:
             return self._render_record(
                 request,
