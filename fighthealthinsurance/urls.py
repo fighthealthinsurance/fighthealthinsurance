@@ -260,6 +260,14 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         views.MediaReferencesView.as_view(),
         name="media-references",
     ),
+    # Accept the conventional trailing-slash spelling too. APPEND_SLASH only
+    # redirects in the opposite direction (slashless -> slash), so without an
+    # explicit alias links to /media-references/ end in a 404.
+    path(
+        "media-references/",
+        RedirectView.as_view(pattern_name="media-references", permanent=True),
+        name="media-references-trailing-slash",
+    ),
     path(
         "bingo",
         views.BingoView.as_view(),

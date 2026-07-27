@@ -27,6 +27,16 @@ class TestMediaReferencesPage(TestCase):
         self.assertTemplateUsed(response, "media_references.html")
         self.assertTemplateUsed(response, "base.html")
 
+    def test_trailing_slash_url_redirects_to_media_references_page(self):
+        response = self.client.get("/media-references/")
+
+        self.assertRedirects(
+            response,
+            reverse("media-references"),
+            status_code=301,
+            fetch_redirect_response=False,
+        )
+
     def test_media_references_page_is_cached_like_other_static_ish_pages(self):
         response = self.client.get(reverse("media-references"))
         cache_control = response["Cache-Control"]
