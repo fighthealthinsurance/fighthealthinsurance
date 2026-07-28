@@ -92,7 +92,7 @@ Two independent, cheap reversals:
    kubectl -n totallylegitco patch configmap fhi-db-config --type=merge \
      -p '{"data":{"PDBHOST":"fhi-pg-main-8-rw.totallylegitco.svc"}}'
    kubectl -n totallylegitco rollout restart deployment/web
-   kubectl -n totallylegitco rollout restart deployment/web-staging  # only if wired
+   kubectl -n totallylegitco rollout restart deployment/web-staging
    ```
    `scripts/cutover-app-to-pg9.sh` writes this exact reverse patch to disk during
    cutover; `scripts/rollback-pre-write-cutover.sh` applies it (pre-write only).
