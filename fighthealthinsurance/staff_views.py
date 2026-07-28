@@ -6,6 +6,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from django.db import transaction
 from django.db.models import Count
+from django.db.models.functions import Lower
 from django.http import HttpResponse, StreamingHttpResponse
 from django.shortcuts import redirect, render
 from django.utils import timezone
@@ -58,6 +59,7 @@ from fighthealthinsurance.proconnector import (
     get_next_interested_professional,
     get_professional_cc_email,
     intro_wording_problem,
+    mailable_interested_professionals,
     mark_email_queued,
     mark_email_sent,
     mark_email_skipped,
@@ -565,15 +567,36 @@ class FollowUpFaxSenderView(generic.FormView):
         return HttpResponse(str(sent))
 
 
-class SendMailingListMailView(generic.FormView):
-    """A view to send emails to all mailing list subscribers."""
+class _SendBulkMailView(generic.FormView):
+    """Shared machinery for the staff broadcast-email pages.
 
-    template_name = "send_mailing_list_mail.html"
+    Subclasses pick an audience by naming the actor method that knows how to
+    enumerate its recipients and supplying a recipient count for the page. Both
+    audiences use the same compose form (subject + HTML + text + optional test
+    address), the same Ray-backed send, and the same result reporting; only the
+    recipient set and the page copy differ.
+    """
+
+    template_name = "send_bulk_email.html"
     form_class = core_forms.SendMailingListMailForm
+
+    # Name of the MailingListActor method that sends to this audience. Looked up
+    # by name so the actor handle stays a plain Ray handle.
+    actor_method_name: str = ""
+    # Page copy: the heading, and how recipients are described in the count box,
+    # the warning, and result/error messages.
+    page_title: str = ""
+    audience_label: str = ""
+    audience_noun: str = ""
+
+    def recipient_count(self) -> int:
+        raise NotImplementedError
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        context["subscriber_count"] = MailingListSubscriber.objects.count()
+        context["title"] = self.page_title
+        context["audience_label"] = self.audience_label
+        context["recipient_count"] = self.recipient_count()
         return context
 
     def form_valid(self, form):
@@ -588,17 +611,19 @@ class SendMailingListMailView(generic.FormView):
         # a clear message beats a silent cluster (and a confusing timeout).
         if not ray_cluster_available():
             logger.warning(
-                "Mailing list send requested but no Ray cluster is available"
+                f"{self.audience_noun.capitalize()} send requested but no Ray "
+                "cluster is available"
             )
             return HttpResponse(
-                "No Ray cluster available; mailing list email not sent.",
+                f"No Ray cluster available; {self.audience_noun} email not sent.",
                 status=503,
             )
 
         try:
             # Use ray actor for sending emails
             actor = mailing_list_actor_ref.get
-            future = actor.send_mailing_list_email.remote(
+            remote_method = getattr(actor, self.actor_method_name)
+            future = remote_method.remote(
                 subject, html_content, text_content, test_email
             )
             sent_count, failed_count, blocked_count = ray.get(future)
@@ -607,14 +632,63 @@ class SendMailingListMailView(generic.FormView):
                 masked_email = mask_email_for_logging(test_email)
                 return HttpResponse(f"Test email sent successfully to {masked_email}")
             else:
+                logger.info(
+                    f"Staff user {self.request.user.username} sent a "
+                    f"{self.audience_noun} email to {sent_count} recipients "
+                    f"({failed_count} failed, {blocked_count} blocked)"
+                )
                 return HttpResponse(
-                    f"Mailing list email sent. Success: {sent_count}, Failed: {failed_count}, Blocked: {blocked_count}"
+                    f"{self.audience_label} email sent. Success: {sent_count}, "
+                    f"Failed: {failed_count}, Blocked: {blocked_count}"
                 )
         except Exception as e:
-            logger.opt(exception=True).error(f"Error sending mailing list email: {e}")
-            return HttpResponse(
-                f"Error sending mailing list email: {str(e)}", status=500
+            logger.opt(exception=True).error(
+                f"Error sending {self.audience_noun} email: {e}"
             )
+            return HttpResponse(
+                f"Error sending {self.audience_noun} email: {str(e)}", status=500
+            )
+
+
+class SendMailingListMailView(_SendBulkMailView):
+    """A view to send emails to all mailing list subscribers."""
+
+    actor_method_name = "send_mailing_list_email"
+    page_title = "Send Mailing List Email"
+    audience_label = "Mailing list"
+    audience_noun = "mailing list"
+
+    def recipient_count(self) -> int:
+        return MailingListSubscriber.objects.count()
+
+
+class SendInterestedProfessionalMailView(_SendBulkMailView):
+    """A view to send emails to all interested professionals.
+
+    The counterpart of the mailing-list broadcast for the professional signup
+    list. Recipients are every professional signup except test/spam records and
+    anyone who opted out (see ``mailable_interested_professionals``), deduped by
+    address. Unlike the pro-connector workflow -- which introduces one
+    professional at a time and records per-record state -- this is a one-shot
+    broadcast and writes nothing back to the records, so it neither consumes nor
+    disturbs the pro-connector queue.
+    """
+
+    actor_method_name = "send_interested_professional_email"
+    page_title = "Send Interested Professional Email"
+    audience_label = "Interested professional"
+    audience_noun = "interested professional"
+
+    def recipient_count(self) -> int:
+        # Distinct addresses, matching what the actor actually sends: the raw
+        # row count would overstate the send whenever someone signed up twice.
+        return (
+            mailable_interested_professionals()
+            .annotate(_lower_email=Lower("email"))
+            .values("_lower_email")
+            .distinct()
+            .count()
+        )
 
 
 # Bucket label for chosen ProposedAppeal rows whose model_name is NULL and
@@ -1388,6 +1462,8 @@ class ProConnectorExtractCSVView(View):
         "proconnector_sent_at",
         "proconnector_skipped",
         "proconnector_skip_reason",
+        "unsubscribed",
+        "unsubscribed_at",
     ]
 
     def get(self, request) -> StreamingHttpResponse:

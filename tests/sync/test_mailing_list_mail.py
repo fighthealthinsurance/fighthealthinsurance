@@ -240,6 +240,7 @@ class TestStaffDashboardView(TestCase):
         # Check for key sections and links
         self.assertContains(response, "Staff Dashboard")
         self.assertContains(response, "Send Mailing List Email")
+        self.assertContains(response, "Send Interested Professional Email")
         self.assertContains(response, "Activate Pro User")
         self.assertContains(response, "Enable Beta Features")
         self.assertContains(response, "Charts")

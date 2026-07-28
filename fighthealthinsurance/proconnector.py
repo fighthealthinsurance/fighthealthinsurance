@@ -634,15 +634,32 @@ def non_spam_interested_professionals() -> "QuerySet[InterestedProfessional]":
     return _exclude_filtered(InterestedProfessional.objects.all())
 
 
+def mailable_interested_professionals() -> "QuerySet[InterestedProfessional]":
+    """Interested professionals eligible for bulk staff email.
+
+    Same test/spam filtering as the rest of the module, minus anyone who has
+    opted out. Unlike :func:`processable_queryset` this deliberately ignores
+    pro-connector state: a broadcast goes to everyone who signed up, whether or
+    not they have already had a Cofactor AI introduction.
+
+    Addresses can repeat (duplicate signups), so callers sending mail must
+    dedupe -- see ``dedupe_recipients_by_email``.
+    """
+    return _exclude_filtered(InterestedProfessional.objects.filter(unsubscribed=False))
+
+
 def processable_queryset() -> "QuerySet[InterestedProfessional]":
     """Interested professionals eligible for pro-connector processing.
 
-    Excludes already attempted/skipped records and filtered test/spam signups.
+    Excludes already attempted/skipped records, filtered test/spam signups, and
+    anyone who has unsubscribed -- an opt-out covers the introduction email too,
+    not just the broadcast that carried the unsubscribe link.
     """
     return _exclude_filtered(
         InterestedProfessional.objects.filter(
             proconnector_attempted=False,
             proconnector_skipped=False,
+            unsubscribed=False,
         )
     )
 
