@@ -65,9 +65,20 @@ class MailingListActor:
             # For test email, we don't include unsubscribe link
             recipients: list[tuple[str, Optional[str]]] = [(test_email, None)]
         else:
-            # Get all subscribers with their unsubscribe URLs
-            subscribers = MailingListSubscriber.objects.all().iterator()
-            recipients = [(sub.email, sub.get_unsubscribe_url()) for sub in subscribers]
+            # Get all subscribers with their unsubscribe URLs, one send per
+            # mailbox: the list can hold case-variant duplicates of the same
+            # address (the signup paths match on an exact email), and mailing
+            # somebody twice is both rude and a spam signal. The newest row wins
+            # -- that's the one the signup paths keep updated -- and the cleanup
+            # flow (see subscriber_hygiene.py) removes the older copies for good.
+            subscribers = MailingListSubscriber.objects.order_by("id").iterator()
+            by_mailbox: dict[str, tuple[str, Optional[str]]] = {}
+            for sub in subscribers:
+                by_mailbox[(sub.email or "").strip().lower()] = (
+                    sub.email,
+                    sub.get_unsubscribe_url(),
+                )
+            recipients = list(by_mailbox.values())
 
         # Use connection reuse for better performance
         connection = get_connection()

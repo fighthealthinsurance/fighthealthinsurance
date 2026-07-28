@@ -31,7 +31,12 @@ from django.utils import timezone
 
 from loguru import logger
 
-from fighthealthinsurance.email_utils import is_blocked_email, is_sendable_email
+from fighthealthinsurance.email_utils import (
+    INTERNAL_TEST_EMAILS,
+    SPAM_EMAIL_TLDS,
+    is_blocked_email,
+    is_sendable_email,
+)
 from fighthealthinsurance.ml.ml_inference import infer_with_fallback
 from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance.models import InterestedProfessional, ScheduledEmail
@@ -55,23 +60,9 @@ CC_DISABLED_SENTINEL = "none"
 # processing queue and the CSV export entirely (never shown, never counted)
 # rather than skipped, so they don't clutter the staff workflow. Includes FHI's
 # own internal test accounts (mirroring charts' signup-analytics exclusion) so
-# outreach and the export never target ourselves.
-FILTERED_EMAILS: frozenset[str] = frozenset(
-    {
-        "testing@example.com",
-        "farts@farts.com",
-        "holden@pigscanfly.ca",
-        # Also on charts' consumer-analytics exclusion list; without these an
-        # internal tester's signup would land (business domains even sort to the
-        # FRONT of the queue) and get a real Cofactor intro.
-        "holden.karau@gmail.com",
-        "holden@fighthealthinsurance.com",
-        "warrick@fighthealthinsurance.com",
-        "test@test.com",
-    }
-)
-# Signups on these TLDs are treated as spam / out of scope and filtered out.
-SPAM_EMAIL_TLDS: tuple[str, ...] = (".ru", ".ua")
+# outreach and the export never target ourselves. The lists themselves live in
+# email_utils so the subscriber cleanup flow flags the same addresses/TLDs.
+FILTERED_EMAILS: frozenset[str] = INTERNAL_TEST_EMAILS
 
 # Known personal / free-email provider domains. Professionals using a business
 # or organizational domain tend to be the strongest fit for Cofactor AI, so the

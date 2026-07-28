@@ -2606,7 +2606,12 @@ class UnsubscribeView(View):
                 unsubscribe_token=token
             )
             email = subscriber.email
-            subscriber.delete()
+            # Remove every row for this address, not just the one holding the
+            # token. The signup paths can create case-variant duplicates
+            # (get_or_create matches the email exactly), and deleting a single
+            # row would leave the others subscribed -- the person clicks
+            # unsubscribe and keeps getting mail.
+            models.MailingListSubscriber.objects.filter(email__iexact=email).delete()
             return render(
                 request,
                 "unsubscribed.html",

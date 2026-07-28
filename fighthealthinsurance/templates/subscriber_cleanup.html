@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>{{ title|default:"Subscriber Cleanup" }}</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 20px;
+      background-color: #f5f5f5;
+    }
+    h1 {
+      color: #333;
+      border-bottom: 2px solid #007bff;
+      padding-bottom: 10px;
+    }
+    .card {
+      background: white;
+      padding: 20px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    th, td {
+      text-align: left;
+      padding: 8px;
+      border-bottom: 1px solid #eee;
+      vertical-align: top;
+      font-size: 0.9em;
+    }
+    th {
+      background-color: #f8f9fa;
+    }
+    .tag {
+      display: inline-block;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-size: 0.8em;
+      margin: 1px 2px 1px 0;
+      white-space: nowrap;
+    }
+    .tag.auto {
+      background-color: #f8d7da;
+      color: #721c24;
+    }
+    .tag.review {
+      background-color: #fff3cd;
+      color: #856404;
+    }
+    .muted {
+      color: #666;
+      font-size: 0.85em;
+    }
+    .notice {
+      padding: 12px;
+      border-radius: 4px;
+      background-color: #d4edda;
+      color: #155724;
+      margin-bottom: 15px;
+    }
+    .error {
+      padding: 12px;
+      border-radius: 4px;
+      background-color: #f8d7da;
+      color: #721c24;
+      margin-bottom: 15px;
+    }
+    button {
+      padding: 10px 16px;
+      border: none;
+      border-radius: 4px;
+      color: white;
+      cursor: pointer;
+      margin-right: 8px;
+      font-size: 0.95em;
+    }
+    button.danger { background-color: #dc3545; }
+    button.keep { background-color: #28a745; }
+    button.bulk { background-color: #6c757d; }
+    .actions { margin: 15px 0; }
+    .pager a { margin-right: 10px; }
+    .wrap { max-width: 320px; overflow-wrap: anywhere; }
+  </style>
+</head>
+<body>
+  <h1>🧹 Subscriber Cleanup</h1>
+  <p class="muted">
+    <a href="{% url 'staff_dashboard' %}">&larr; Staff dashboard</a>
+  </p>
+
+  {% if notice %}<div class="notice">{{ notice }}</div>{% endif %}
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+
+  <div class="card">
+    <h2>Summary</h2>
+    <p>
+      Scanned <strong>{{ scanned }}</strong> unreviewed subscriber(s):
+      <strong>{{ flagged_count }}</strong> flagged,
+      <strong>{{ auto_cleanable_count }}</strong> carrying an auto-cleanable reason.
+    </p>
+    {% if summary %}
+    <table>
+      <tr><th>Reason</th><th>Rows</th><th>Bucket</th><th>What it means</th></tr>
+      {% for row in summary %}
+      <tr>
+        <td><strong>{{ row.label }}</strong><div class="muted">{{ row.code }}</div></td>
+        <td>{{ row.count }}</td>
+        <td>
+          {% if row.auto_cleanable %}
+            <span class="tag auto">auto-cleanable</span>
+          {% else %}
+            <span class="tag review">review only</span>
+          {% endif %}
+        </td>
+        <td class="muted">{{ row.description }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% else %}
+    <p>Nothing flagged — the list is clean. 🎉</p>
+    {% endif %}
+  </div>
+
+  {% if rows %}
+  <form method="post">
+    {% csrf_token %}
+    <div class="card">
+      <h2>Flagged subscribers (page {{ page_number }} of {{ total_pages }})</h2>
+      <table>
+        <tr>
+          <th></th>
+          <th>ID</th>
+          <th>Email</th>
+          <th>Name</th>
+          <th>Phone</th>
+          <th>Comments</th>
+          <th>Signed up</th>
+          <th>Flags</th>
+        </tr>
+        {% for row in rows %}
+        <tr>
+          <td><input type="checkbox" name="subscriber_id" value="{{ row.id }}"
+                     {% if row.auto_cleanable %}checked{% endif %}></td>
+          <td>{{ row.id }}</td>
+          <td class="wrap">{{ row.email }}</td>
+          <td class="wrap">{{ row.name }}</td>
+          <td class="wrap">{{ row.phone }}</td>
+          <td class="wrap">{{ row.comments|truncatechars:120 }}</td>
+          <td>{{ row.signup_date|default:"—" }}</td>
+          <td>
+            {% for reason in row.reasons %}
+              <span class="tag {% if reason.auto_cleanable %}auto{% else %}review{% endif %}"
+                    title="{{ reason.detail }}">{{ reason.label }}</span>
+            {% endfor %}
+            {% for reason in row.reasons %}
+              {% if reason.detail %}<div class="muted">{{ reason.detail }}</div>{% endif %}
+            {% endfor %}
+          </td>
+        </tr>
+        {% endfor %}
+      </table>
+
+      <div class="actions">
+        <button type="submit" name="action" value="delete_selected" class="danger">
+          Delete checked
+        </button>
+        <button type="submit" name="action" value="keep_selected" class="keep">
+          Keep checked (mark reviewed)
+        </button>
+      </div>
+      <p class="muted">
+        Auto-cleanable rows are pre-checked. "Keep" marks a row reviewed so it
+        never appears in this queue again; deletion is permanent (the same thing
+        unsubscribing does).
+      </p>
+    </div>
+
+    <div class="card">
+      <h2>Bulk cleanup</h2>
+      <p>
+        Delete <strong>every</strong> row carrying an auto-cleanable reason
+        ({{ auto_cleanable_count }} row(s) across all pages). Review-only rows are
+        never touched by this button.
+      </p>
+      <label>
+        <input type="checkbox" name="confirm" value="yes">
+        Yes, delete all {{ auto_cleanable_count }} auto-cleanable rows
+      </label>
+      <div class="actions">
+        <button type="submit" name="action" value="delete_auto" class="bulk">
+          Delete all auto-cleanable
+        </button>
+      </div>
+    </div>
+  </form>
+
+  {% if total_pages > 1 %}
+  <div class="card pager">
+    {% if page_number > 1 %}
+      <a href="?page={{ page_number|add:"-1" }}{% if include_leads %}&include_leads=1{% endif %}">&larr; Previous</a>
+    {% endif %}
+    {% if page_number < total_pages %}
+      <a href="?page={{ page_number|add:"1" }}{% if include_leads %}&include_leads=1{% endif %}">Next &rarr;</a>
+    {% endif %}
+  </div>
+  {% endif %}
+  {% endif %}
+
+  <div class="card">
+    <h2>Other inbound-contact tables</h2>
+    {% if include_leads %}
+      <p class="muted">
+        Read-only: these rows belong to the sales / lead workflows and are never
+        deleted from this page.
+      </p>
+      {% for lead in lead_results %}
+        <h3>{{ lead.source }}</h3>
+        <p>{{ lead.flagged }} flagged of {{ lead.scanned }} scanned.</p>
+        {% if lead.counts %}
+        <table>
+          <tr><th>Reason</th><th>Rows</th></tr>
+          {% for row in lead.counts %}
+          <tr><td>{{ row.label }} <span class="muted">({{ row.code }})</span></td><td>{{ row.count }}</td></tr>
+          {% endfor %}
+        </table>
+        {% endif %}
+      {% endfor %}
+    {% else %}
+      <p>
+        <a href="?include_leads=1">Also scan chat leads, demo requests and interested professionals</a>
+        <span class="muted">(read-only, slower)</span>
+      </p>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h2>From the command line</h2>
+    <pre class="muted">python manage.py cleanup_subscribers                  # report
+python manage.py cleanup_subscribers --all-sources    # include lead tables
+python manage.py cleanup_subscribers --apply          # delete auto-cleanable rows</pre>
+  </div>
+</body>
+</html>

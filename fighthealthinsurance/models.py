@@ -279,6 +279,14 @@ class MailingListSubscriber(models.Model):
     )
     referral_source_details = models.TextField(default="", blank=True, null=True)
 
+    # Subscriber cleanup flow (see subscriber_hygiene.py). Our signup forms are
+    # open, so the list collects bot submissions and junk rows. Staff review
+    # flagged rows and either delete them or mark them kept; a non-null
+    # reviewed_at means "a human looked and this row stays", which takes it out
+    # of the cleanup queue for good.
+    cleanup_reviewed_at = models.DateTimeField(null=True, blank=True)
+    cleanup_reviewed_by = models.CharField(max_length=150, default="", blank=True)
+
     def __str__(self):
         return self.email
 
