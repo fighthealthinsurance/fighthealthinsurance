@@ -137,6 +137,20 @@ class _HealthStatus:
         """
         self._ensure_sweep_scheduled(refresh_now=True)
 
+    def _background_enabled(self) -> bool:
+        """Whether the recurring sweep may run in this configuration.
+
+        Disabled in the ``Test*`` configs: the sweep writes (it claims alert
+        state) from a thread the test has no handle on, so it races
+        ``TestCase`` teardown -- it was one of the writers holding sqlite
+        table locks during the July 2026 async-suite flakes. Only the
+        *background* chain is gated; ``get_snapshot`` still refreshes
+        synchronously, so callers never see a stale empty snapshot.
+        """
+        from django.conf import settings
+
+        return bool(getattr(settings, "ML_HEALTH_BACKGROUND_REFRESH", True))
+
     def _ensure_sweep_scheduled(self, refresh_now: bool) -> None:
         """Kick off the recurring sweep exactly once (idempotent, non-blocking).
 
@@ -145,7 +159,7 @@ class _HealthStatus:
         start the timer chain, because the caller already refreshed
         synchronously and the snapshot is warm.
         """
-        if self._sweep_started:
+        if self._sweep_started or not self._background_enabled():
             return
         with self._start_lock:
             if self._sweep_started:
@@ -159,7 +173,14 @@ class _HealthStatus:
             self._schedule_refresh()
 
     def _schedule_refresh(self):
-        """Schedule the next refresh."""
+        """Schedule the next refresh.
+
+        Also gated, not just the initial kick-off: ``_refresh`` re-arms the
+        timer at the end of every sweep, so a single directly-invoked refresh
+        would otherwise restart the chain in a config that disabled it.
+        """
+        if not self._background_enabled():
+            return
         try:
             interval = 5 if self._fast_mode else REFRESH_INTERVAL_SECONDS
             self._timer = threading.Timer(interval, self._refresh)

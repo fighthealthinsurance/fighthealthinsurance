@@ -828,8 +828,16 @@ def trigger_prefill_async():
     """
     Trigger async pre-fill of chooser tasks.
     Safe to call from sync context - fires and forgets in a background thread.
+
+    No-op when ``settings.CHOOSER_BACKGROUND_PREFILL`` is False (the Test*
+    configs). The thread outlives the request that spawned it, so under a test
+    it goes on writing chooser rows while the case that triggered it tears
+    down -- one of the writers behind the sqlite lock-contention flakes.
     """
     import threading
+
+    if not getattr(settings, "CHOOSER_BACKGROUND_PREFILL", True):
+        return
 
     min_ready = 1
 

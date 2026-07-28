@@ -4,6 +4,7 @@ import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from django.contrib.auth import get_user_model
+from django.test import override_settings
 from django.urls import reverse
 
 from rest_framework import status
@@ -615,15 +616,27 @@ class ChooserPrefillTest(APITestCase):
 
     fixtures = ["./fighthealthinsurance/fixtures/initial.yaml"]
 
-    def test_trigger_prefill_async_does_not_raise(self):
-        """Test that trigger_prefill_async can be called without raising."""
+    def test_trigger_prefill_async_spawns_no_thread_under_test_settings(self):
+        """The Test* configs gate the prefill off: an un-awaited thread would
+        keep writing chooser rows while the case that spawned it tears down."""
         from fighthealthinsurance.chooser_tasks import trigger_prefill_async
 
-        # Should not raise any exceptions
-        try:
+        with patch("threading.Thread") as mock_thread:
             trigger_prefill_async()
-        except Exception as e:
-            self.fail(f"trigger_prefill_async raised exception: {e}")
+
+        mock_thread.assert_not_called()
+
+    @override_settings(CHOOSER_BACKGROUND_PREFILL=True)
+    def test_trigger_prefill_async_starts_daemon_thread_when_enabled(self):
+        """With the gate on (as in prod) it fires and forgets in a daemon."""
+        from fighthealthinsurance.chooser_tasks import trigger_prefill_async
+
+        with patch("threading.Thread") as mock_thread:
+            trigger_prefill_async()
+
+        mock_thread.assert_called_once()
+        self.assertTrue(mock_thread.return_value.daemon)
+        mock_thread.return_value.start.assert_called_once()
 
     def test_chooser_view_triggers_prefill(self):
         """Test that loading the chooser page triggers prefill."""

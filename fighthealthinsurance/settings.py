@@ -475,6 +475,16 @@ class Base(Configuration):
     # form, so every test that files a denial would start one.
     SPECULATIVE_APPEALS_PRECOMPUTE = True
 
+    # Pre-fill chooser tasks from the request path (see
+    # chooser_tasks.trigger_prefill_async) and run the recurring ML backend
+    # health sweep (see ml.health_status). Same reasoning again: both do DB
+    # work on threads the test has no handle on, so under the Test* configs
+    # they outlive the case that started them and write while it tears down.
+    # These two were the writers still holding sqlite table locks during the
+    # July 2026 async-suite lock-contention flakes.
+    CHOOSER_BACKGROUND_PREFILL = True
+    ML_HEALTH_BACKGROUND_REFRESH = True
+
     # Static files (CSS, JavaScript, Images)
     # https://docs.djangoproject.com/en/4.0/howto/static-files/
 
@@ -766,6 +776,9 @@ class Test(Dev):
     SITE_BANNER_BACKGROUND_REFRESH = False
     # No speculative precompute in tests (see Base).
     SPECULATIVE_APPEALS_PRECOMPUTE = False
+    # No background chooser prefill or ML health sweep in tests (see Base).
+    CHOOSER_BACKGROUND_PREFILL = False
+    ML_HEALTH_BACKGROUND_REFRESH = False
 
 
 class TestSync(Dev):
@@ -794,6 +807,9 @@ class TestSync(Dev):
     SITE_BANNER_BACKGROUND_REFRESH = False
     # No speculative precompute in tests (see Base).
     SPECULATIVE_APPEALS_PRECOMPUTE = False
+    # No background chooser prefill or ML health sweep in tests (see Base).
+    CHOOSER_BACKGROUND_PREFILL = False
+    ML_HEALTH_BACKGROUND_REFRESH = False
 
 
 class TestActor(Dev):
@@ -829,6 +845,9 @@ class TestActor(Dev):
     SITE_BANNER_BACKGROUND_REFRESH = False
     # No speculative precompute in tests (see Base).
     SPECULATIVE_APPEALS_PRECOMPUTE = False
+    # No background chooser prefill or ML health sweep in tests (see Base).
+    CHOOSER_BACKGROUND_PREFILL = False
+    ML_HEALTH_BACKGROUND_REFRESH = False
 
 
 class Prod(Base):

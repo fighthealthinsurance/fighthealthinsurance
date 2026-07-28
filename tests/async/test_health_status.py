@@ -2,7 +2,7 @@ import datetime
 import time
 from unittest import mock
 from django.core import mail
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.utils import timezone
 
 from fighthealthinsurance.ml.ml_router import ml_router
@@ -356,3 +356,46 @@ class TestHealthStatus(TestCase):
             m for m in mail.outbox if "internal models are dead" in m.subject.lower()
         ]
         assert len(alerts) == 1
+
+
+class HealthSweepBackgroundGatingTests(TestCase):
+    """The recurring sweep claims alert state from a thread the test never
+    joins, so the Test* configs gate it off (ML_HEALTH_BACKGROUND_REFRESH).
+
+    Each case builds its own _HealthStatus rather than using the module
+    singleton, whose _sweep_started flag would carry over between tests.
+    """
+
+    def test_ensure_started_schedules_nothing_under_test_settings(self):
+        from fighthealthinsurance.ml.health_status import _HealthStatus
+
+        status = _HealthStatus()
+        with mock.patch("threading.Thread") as thread, mock.patch(
+            "threading.Timer"
+        ) as timer:
+            status.ensure_started()
+
+        thread.assert_not_called()
+        timer.assert_not_called()
+
+    def test_refresh_does_not_rearm_the_timer_under_test_settings(self):
+        """_refresh re-arms at the end of every sweep, so the re-arm needs its
+        own gate -- otherwise one direct refresh restarts the whole chain."""
+        from fighthealthinsurance.ml.health_status import _HealthStatus
+
+        status = _HealthStatus()
+        with mock.patch("threading.Timer") as timer:
+            status._schedule_refresh()
+
+        timer.assert_not_called()
+
+    @override_settings(ML_HEALTH_BACKGROUND_REFRESH=True)
+    def test_ensure_started_runs_first_sweep_in_a_thread_when_enabled(self):
+        from fighthealthinsurance.ml.health_status import _HealthStatus
+
+        status = _HealthStatus()
+        with mock.patch("threading.Thread") as thread:
+            status.ensure_started()
+
+        thread.assert_called_once()
+        thread.return_value.start.assert_called_once()
