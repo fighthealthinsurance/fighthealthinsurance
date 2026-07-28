@@ -265,7 +265,13 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
     # explicit alias links to /media-references/ end in a 404.
     path(
         "media-references/",
-        RedirectView.as_view(pattern_name="media-references", permanent=True),
+        RedirectView.as_view(
+            pattern_name="media-references",
+            permanent=True,
+            # Press links are exactly the kind that carry utm_* params;
+            # don't strip them on the redirect.
+            query_string=True,
+        ),
         name="media-references-trailing-slash",
     ),
     path(

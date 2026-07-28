@@ -27,7 +27,7 @@ changed by editing a live Secret.
 ## The refactor
 
 New ConfigMap `k8s/db-config.yaml` (`fhi-db-config`) holds `PDBHOST`, defaulting
-to the **current** value `fhi-pg-main-8-rw.totallylegitco.svc`. Every
+to the **current** value `fhi-pg-main-9-rw.totallylegitco.svc`. Every
 DB-consuming production workload now takes `PDBHOST` as an explicit container
 `env` entry with `valueFrom.configMapKeyRef`.
 
@@ -40,7 +40,7 @@ changes nothing at runtime.**
 
 | File | Workload | Change |
 |---|---|---|
-| `k8s/db-config.yaml` | ConfigMap `fhi-db-config` (new) | Declares `PDBHOST` = `fhi-pg-main-8-rw.totallylegitco.svc` |
+| `k8s/db-config.yaml` | ConfigMap `fhi-db-config` (new) | Declares `PDBHOST` = `fhi-pg-main-9-rw.totallylegitco.svc` |
 | `k8s/deploy.yaml` | Job `web-migrations` | Added explicit `PDBHOST` env from ConfigMap |
 | `k8s/deploy.yaml` | Job `web-actor-launch` | Added explicit `PDBHOST` env from ConfigMap |
 | `k8s/deploy.yaml` | Job `web-extralink-prefetch` | Added explicit `PDBHOST` env from ConfigMap |
@@ -89,7 +89,7 @@ Two independent, cheap reversals:
 1. **Runtime host** (what the cutover flips) — patch the ConfigMap back and roll:
    ```bash
    kubectl -n totallylegitco patch configmap fhi-db-config --type=merge \
-     -p '{"data":{"PDBHOST":"fhi-pg-main-8-rw.totallylegitco.svc"}}'
+     -p '{"data":{"PDBHOST":"fhi-pg-main-9-rw.totallylegitco.svc"}}'
    kubectl -n totallylegitco rollout restart deployment/web
    kubectl -n totallylegitco rollout restart deployment/web-staging  # only if wired
    ```

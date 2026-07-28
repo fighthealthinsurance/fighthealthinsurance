@@ -52,6 +52,13 @@ RUN sudo -u www-data HOME=$(pwd) python initial.py
 RUN mkdir -p ~www-data
 RUN chown -R www-data ~www-data
 RUN chown -R www-data /external_data
+# The Dev configuration defaults storage to these repo-local paths; the
+# root-run manage.py commands above bake them into the image root-owned, so
+# without this chown a Dev-configured container (e.g. web-dev) hits
+# PermissionError on every storage write — which CombinedStorage swallows,
+# silently dropping uploads.
+RUN mkdir -p /opt/fighthealthinsurance/external_data /opt/fighthealthinsurance/external_data_b \
+    && chown -R www-data /opt/fighthealthinsurance/external_data /opt/fighthealthinsurance/external_data_b
 # RUN chown -R www-data:www-data /opt/fighthealthinsurance
 # start server
 EXPOSE 80
