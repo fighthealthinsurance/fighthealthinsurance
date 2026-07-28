@@ -54,13 +54,14 @@ workers.
 
 ### Deliberately NOT changed (with reasons)
 
-- **`k8s/deploy_staging.yaml`** (`web-staging`, `web-migrations-staging`) — staging's
-  effective `PDBHOST` comes from the same Secrets but its target DB is not
-  verifiable from the repo. Forcing it onto `fhi-db-config` (which defaults to the
-  **prod** -8 primary) could silently repoint staging at the prod database. The
-  cutover is prod-only, so staging is left untouched. If staging shares the -8
-  primary and should follow the cutover, add the same `PDBHOST` env block +
-  a staging-scoped ConfigMap — do it as a separate, explicitly-decided change.
+- **`k8s/deploy_staging.yaml`** (`web-staging`, `web-migrations-staging`) — was
+  originally left off the ConfigMap here because its target DB wasn't
+  verifiable from the repo, and forcing it onto the prod default could have
+  silently repointed staging at the prod database. That separate,
+  explicitly-decided change has since been made: staging now takes `PDBHOST`
+  from the same `fhi-db-config` ConfigMap (see the `PDBHOST` env blocks in
+  `deploy_staging.yaml`), so it follows the prod host — currently the -9
+  primary.
 - **`k8s/deploy_dev.yaml`** (`web-dev`) — dev uses SQLite (`DEV_DB_LOC=/tmp/db.sqlite3`),
   not Postgres. No `PDBHOST` involved.
 - **`k8s/ray/cluster-back.yaml`** — stale `-back` backup copy, not applied by
@@ -89,7 +90,7 @@ Two independent, cheap reversals:
 1. **Runtime host** (what the cutover flips) — patch the ConfigMap back and roll:
    ```bash
    kubectl -n totallylegitco patch configmap fhi-db-config --type=merge \
-     -p '{"data":{"PDBHOST":"fhi-pg-main-9-rw.totallylegitco.svc"}}'
+     -p '{"data":{"PDBHOST":"fhi-pg-main-8-rw.totallylegitco.svc"}}'
    kubectl -n totallylegitco rollout restart deployment/web
    kubectl -n totallylegitco rollout restart deployment/web-staging  # only if wired
    ```

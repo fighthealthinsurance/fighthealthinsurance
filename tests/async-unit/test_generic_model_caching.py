@@ -1,4 +1,5 @@
 import pytest
+import uuid
 from unittest import mock
 
 from fighthealthinsurance.models import (
@@ -8,6 +9,21 @@ from fighthealthinsurance.models import (
 from fighthealthinsurance.ml.ml_appeal_questions_helper import MLAppealQuestionsHelper
 from fighthealthinsurance.ml.ml_citations_helper import MLCitationsHelper
 import traceback
+
+
+def unique_pair(procedure: str, diagnosis: str) -> tuple[str, str]:
+    """Give a test its own (procedure, diagnosis) cache key.
+
+    Async-test ORM writes run on executor threads whose connections sit
+    outside the test transaction, so GenericContextGeneration rows leak
+    across tests (and across --reruns attempts) within a worker. Fixed
+    pairs then collide on the (procedure, diagnosis) unique constraint —
+    or pollute another test's cache-hit assertions. A per-invocation
+    suffix keeps every test's rows disjoint. Lowercase hex, so the
+    helpers' strip().lower() normalization leaves the pair unchanged.
+    """
+    suffix = uuid.uuid4().hex[:8]
+    return f"{procedure} {suffix}", f"{diagnosis} {suffix}"
 
 
 @pytest.mark.django_db
@@ -74,8 +90,7 @@ async def test_generic_question_generation_cache():
 async def test_generic_context_generation_cache():
     """Test that generic context/citations are cached and reused properly."""
     # Mock data
-    procedure = "knee replacement"
-    diagnosis = "osteoarthritis"
+    procedure, diagnosis = unique_pair("knee replacement", "osteoarthritis")
     mock_citations = ["Citation 1", "Citation 2", "Citation 3"]
 
     # Mock the citation backends to avoid actual ML calls
@@ -132,10 +147,12 @@ async def test_denial_uses_generic_cache_no_patient_data():
     """Test that a denial without patient-specific data uses cached generic questions/context."""
     from fighthealthinsurance.models import Denial
 
+    procedure, diagnosis = unique_pair("knee replacement", "osteoarthritis")
+
     # Create a test denial with only procedure and diagnosis (no patient data)
     test_denial = await Denial.objects.acreate(
-        procedure="knee replacement",
-        diagnosis="osteoarthritis",
+        procedure=procedure,
+        diagnosis=diagnosis,
         denial_text="",  # Empty to trigger generic path
         health_history="",  # Empty to trigger generic path
         use_external=False,
@@ -147,14 +164,14 @@ async def test_denial_uses_generic_cache_no_patient_data():
 
     # Create cache entries
     await GenericQuestionGeneration.objects.acreate(
-        procedure="knee replacement",
-        diagnosis="osteoarthritis",
+        procedure=procedure,
+        diagnosis=diagnosis,
         generated_questions=mock_questions,
     )
 
     await GenericContextGeneration.objects.acreate(
-        procedure="knee replacement",
-        diagnosis="osteoarthritis",
+        procedure=procedure,
+        diagnosis=diagnosis,
         generated_context=mock_citations,
     )
 
@@ -208,15 +225,16 @@ async def test_generic_context_unique_constraint_blocks_duplicate_rows():
     """The (procedure, diagnosis) unique constraint rejects a second cache row."""
     from django.db import IntegrityError
 
+    procedure, diagnosis = unique_pair("mri lumbar spine", "radiculopathy")
     await GenericContextGeneration.objects.acreate(
-        procedure="mri lumbar spine",
-        diagnosis="radiculopathy",
+        procedure=procedure,
+        diagnosis=diagnosis,
         generated_context=["Citation 1"],
     )
     with pytest.raises(IntegrityError):
         await GenericContextGeneration.objects.acreate(
-            procedure="mri lumbar spine",
-            diagnosis="radiculopathy",
+            procedure=procedure,
+            diagnosis=diagnosis,
             generated_context=["Citation 2"],
         )
 
@@ -226,8 +244,7 @@ async def test_generic_context_unique_constraint_blocks_duplicate_rows():
 async def test_generic_citation_cache_write_upserts_on_concurrent_miss():
     """A generation run that raced past the cache read refreshes the existing
     row instead of erroring on the unique constraint or duplicating it."""
-    procedure = "knee replacement"
-    diagnosis = "osteoarthritis"
+    procedure, diagnosis = unique_pair("knee replacement", "osteoarthritis")
     existing = await GenericContextGeneration.objects.acreate(
         procedure=procedure,
         diagnosis=diagnosis,
@@ -277,8 +294,7 @@ async def test_supplemental_citations_stay_out_of_generic_cache():
     """Supplemental extras are returned to the caller but never cached: the
     cache is shared across patients, and the read path re-appends extras on
     every hit (so caching them would also duplicate them)."""
-    procedure = "colonoscopy"
-    diagnosis = "colorectal cancer screening"
+    procedure, diagnosis = unique_pair("colonoscopy", "colorectal cancer screening")
     ml_citations = ["ML Citation A"]
     ecri_citation = "ECRI: Sample guideline citation"
 
