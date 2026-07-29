@@ -37,17 +37,25 @@ Analyzing Your Denial
     to { transform: rotate(360deg); }
 }
 </style>
+{{ form_context|json_script:"entity-form-context" }}
 <script>
   // Call the typescript on load
   document.addEventListener('DOMContentLoaded', () => {
-      const backendUrl = `wss://${window.location.host}/ws/streaming-entity-backend/`;
+      // wss:// over HTTPS, ws:// over plain HTTP (local dev) instead of a
+      // hardcoded wss:// that breaks on http://localhost.
+      const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const backendUrl = `${wsProto}//${window.location.host}/ws/streaming-entity-backend/`;
+      // form_context is emitted as JSON via json_script above, so values like
+      // an apostrophe in an email or a literal </script> in a field can't
+      // break out of the script and stall extraction.
+      const formContext = JSON.parse(
+          document.getElementById('entity-form-context').textContent
+      );
       const data = {
-	  {% autoescape off %}
-          ...{{form_context}},
-          {% endautoescape %}
-          ...{
-              'csrfmiddlewaretoken': '{{ csrf_token }}',
-              'timbit': 'is most awesomex2'}}
+          ...formContext,
+          csrfmiddlewaretoken: '{{ csrf_token }}',
+          timbit: 'is most awesomex2',
+      };
       const retries = 0;
 
       // Call the doQuery function
