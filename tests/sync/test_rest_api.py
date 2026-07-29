@@ -947,6 +947,78 @@ class GenerateAppealUseExternalContextTest(APITestCase):
         self.assertNotContains(response, "external-models-prompt")
 
 
+class AppealFlowInvalidFormTest(APITestCase):
+    """Invalid POSTs to the consumer appeal flow must never 500.
+
+    These handlers used to return None on an invalid form, which Django
+    turns into a raw 500 at the worst moment of the flow (the user has a
+    generated appeal on screen). They should redirect back into the flow
+    instead."""
+
+    def setUp(self):
+        self.email = "flow@example.com"
+        self.denial = Denial.objects.create(
+            denial_text="Test denial",
+            hashed_email=Denial.get_hashed_email(self.email),
+        )
+
+    def test_generate_appeal_post_empty_form_redirects_to_scan(self):
+        response = self.client.post(reverse("generate_appeal"), {})
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response["Location"], reverse("scan"))
+
+    def test_generate_appeal_post_non_integer_denial_id_redirects_to_scan(self):
+        response = self.client.post(
+            reverse("generate_appeal"),
+            {
+                "denial_id": "not-a-number",
+                "email": self.email,
+                "semi_sekret": self.denial.semi_sekret,
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response["Location"], reverse("scan"))
+
+    def test_choose_appeal_post_missing_appeal_text_returns_to_appeals(self):
+        """A valid ref triple with no appeal_text sends the user back to
+        the appeals page (which regenerates appeals) rather than 500ing."""
+        response = self.client.post(
+            reverse("choose_appeal"),
+            {
+                "denial_id": str(self.denial.denial_id),
+                "email": self.email,
+                "semi_sekret": self.denial.semi_sekret,
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(response["Location"].startswith(reverse("generate_appeal")))
+        followed = self.client.get(response["Location"])
+        self.assertEqual(followed.status_code, 200)
+        self.assertTemplateUsed(followed, "appeals.html")
+
+    def test_choose_appeal_post_broken_ref_redirects_to_scan(self):
+        response = self.client.post(
+            reverse("choose_appeal"),
+            {"appeal_text": "Dear insurance company..."},
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response["Location"], reverse("scan"))
+
+    def test_generate_appeal_post_wellformed_but_unmatched_ref_redirects(self):
+        """A well-formed triple that matches no denial (real id + email, wrong
+        semi_sekret) must redirect, not 500 on the .get() lookup."""
+        response = self.client.post(
+            reverse("generate_appeal"),
+            {
+                "denial_id": str(self.denial.denial_id),
+                "email": self.email,
+                "semi_sekret": "wrong-secret",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response["Location"], reverse("scan"))
+
+
 class NotifyPatientTest(APITestCase):
     """Test the notify_patient API endpoint."""
 
