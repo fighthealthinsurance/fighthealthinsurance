@@ -2,12 +2,15 @@ import asyncio
 import json
 import os
 import re
+import time
 import uuid
 from typing import AsyncIterator, Callable, Optional, Tuple, cast
 
 from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
 from django.db import transaction
+from django.db.models import Count, Max, Q
+from django.utils import timezone
 
 # channels' database_sync_to_async (NOT asgiref's sync_to_async): consumers run
 # outside the HTTP request cycle, so only its close_old_connections wrapping
@@ -170,6 +173,67 @@ class _AppealGenTraceFields:
         }
 
 
+class StreamWireTracker:
+    """Records what THIS SIDE actually put on the wire, and when.
+
+    A browser reporting a dead appeal stream can only say "the connection
+    died"; it cannot say whether we stopped feeding it first. Chrome renders
+    both cases as the same bare ``TypeError: network error``. The deciding
+    fact is the largest gap between two consecutive frames *as the server
+    measured it*:
+
+    * server ``max_gap`` ~= the client's reported idle gap -> WE went silent
+      (blocked event loop, wedged worker, a phase with no heartbeat), and an
+      intermediary reaped a stream we stopped writing to. Not a network fault.
+    * server ``max_gap`` ~= the heartbeat interval while the client saw a long
+      silence -> we were writing and the frames did not arrive, i.e. a real
+      wire/intermediary failure.
+
+    Used by both the WebSocket consumer and the REST fallback so the two
+    transports report the same shape.
+    """
+
+    __slots__ = ("frames", "bytes_sent", "max_gap", "max_gap_phase", "started", "last")
+
+    def __init__(self) -> None:
+        now = time.monotonic()
+        self.frames = 0
+        self.bytes_sent = 0
+        self.max_gap = 0.0
+        self.max_gap_phase: Optional[str] = None
+        self.started = now
+        self.last = now
+
+    def note_yield(self, payload: str, phase: Optional[str] = None) -> None:
+        """Record a frame about to go out. Call immediately BEFORE the write.
+
+        Stamping before the write (rather than after) matters for the same
+        reason the REST view stamps ``last_yield_at`` before its yield: a
+        client hangup interrupts us mid-write, and a gap measured from an
+        assignment that never ran would report the whole preceding wait as
+        idle time right when we were actively writing.
+        """
+        now = time.monotonic()
+        gap = now - self.last
+        if gap > self.max_gap:
+            self.max_gap = gap
+            # The phase we were in when the silence happened, which is what
+            # says *where* generation went quiet.
+            self.max_gap_phase = phase
+        self.last = now
+        self.frames += 1
+        self.bytes_sent += len(payload)
+
+    def summary(self) -> str:
+        now = time.monotonic()
+        return (
+            f"frames={self.frames} bytes={self.bytes_sent} "
+            f"max_gap_s={self.max_gap:.1f} "
+            f"max_gap_phase={self.max_gap_phase or 'none'} "
+            f"elapsed_s={now - self.started:.1f} idle_s={now - self.last:.1f}"
+        )
+
+
 # Substrings that mark a `stream_error` as the CLIENT going away mid-stream
 # rather than a server/model failure. uvloop raises a bare RuntimeError
 # ("unable to perform operation on <TCPTransport closed=True ...>; the handler
@@ -197,6 +261,46 @@ def _stream_error_is_client_disconnect(stream_error: Optional[str]) -> bool:
     return any(marker in lowered for marker in _CLIENT_DISCONNECT_MARKERS)
 
 
+def summarize_persisted_appeals(denial: Denial) -> str:
+    """Return a compact count of what the server actually has on disk for a
+    denial, for logging next to a client-reported failure.
+
+    A client report says "I received 0 appeals". That is a statement about
+    DELIVERY and says nothing about GENERATION -- yet every triage of one of
+    these starts by asking "did we generate anything at all?", which today
+    means leaving the log and querying by hand. The counts below answer it in
+    the same line: rows at all, how many are live (servable now) vs. still
+    held-back speculative precompute, and how recently the newest one landed
+    (a row younger than the report means generation was still working while
+    the client was giving up -- a delivery/timeout problem, not a model one).
+
+    Best-effort: never raises, because this is diagnostic enrichment on a
+    fire-and-forget error sink that must keep working in degraded states.
+    """
+    try:
+        agg = ProposedAppeal.objects.filter(for_denial=denial).aggregate(
+            total=Count("id"),
+            live=Count("id", filter=Q(speculative=False)),
+            speculative=Count("id", filter=Q(speculative=True)),
+            newest=Max("created_at"),
+        )
+        newest = agg.get("newest")
+        newest_age = (
+            f"{(timezone.now() - newest).total_seconds():.0f}s" if newest else "none"
+        )
+        return (
+            f"persisted={agg.get('total', 0)} live={agg.get('live', 0)} "
+            f"speculative={agg.get('speculative', 0)} "
+            f"newest_age={newest_age} gen_attempts={denial.gen_attempts}"
+        )
+    except Exception as e:
+        logger.opt(exception=True).debug(
+            f"Failed to summarize persisted appeals for denial "
+            f"{getattr(denial, 'denial_id', None)}: {e}"
+        )
+        return "unavailable"
+
+
 async def log_zero_appeal_diagnostics(
     denial_id: Optional[object],
     status_count: int,
@@ -210,6 +314,7 @@ async def log_zero_appeal_diagnostics(
     first_model: Optional[str] = None,
     shed_tier: Optional[int] = None,
     models_tried: Optional[str] = None,
+    wire: Optional[str] = None,
 ) -> None:
     """Emit a structured ERROR when an appeal session ends with 0 appeals delivered.
 
@@ -236,6 +341,11 @@ async def log_zero_appeal_diagnostics(
     WARNING. Pass False when the error provably came from the generator, True
     when it came from a socket write, and leave it None when the caller cannot
     tell (the string match is then trusted, preserving prior behavior).
+
+    `wire` is `StreamWireTracker.summary()` -- what this side actually wrote
+    and the largest silent window it observed. Pair it with the client's
+    reported idle gap to tell "we stopped writing" apart from "our writes
+    didn't arrive"; see StreamWireTracker.
     """
     # Coerce arbitrary JSON values to int for the FK/AutoField lookup.
     # Anything we can't coerce skips the DB cross-reference and just
@@ -278,6 +388,7 @@ async def log_zero_appeal_diagnostics(
             f"{denial_id}: {lookup_error}"
         )
     error_suffix = f" stream_error={stream_error}" if stream_error else ""
+    wire_suffix = f" wire=[{wire}]" if wire else ""
     # Shared trace fields: gen_id ties this to the client report; the timing/
     # model fields say whether generation ran long or which backend won;
     # models_tried lists each model attempted and why it failed.
@@ -323,7 +434,7 @@ async def log_zero_appeal_diagnostics(
             f"APPEAL_GEN_DIAG [{transport}] Appeal session ended with 0 "
             f"appeals for denial {denial_id}: {detail}.{persisted_note} "
             f"status_frames={status_count} last_phase={last_status_phase} "
-            f"gen_attempts={denial_attempts}{gen_suffix}{error_suffix}"
+            f"gen_attempts={denial_attempts}{gen_suffix}{error_suffix}{wire_suffix}"
         )
     elif persisted_count > 0:
         logger.error(
@@ -332,7 +443,7 @@ async def log_zero_appeal_diagnostics(
             f"for denial {denial_id}. This is a delivery/wire failure, not "
             f"a generation failure. status_frames={status_count} "
             f"last_phase={last_status_phase} gen_attempts={denial_attempts}"
-            f"{gen_suffix}{error_suffix}"
+            f"{gen_suffix}{error_suffix}{wire_suffix}"
         )
     elif persisted_count == 0:
         logger.error(
@@ -340,7 +451,7 @@ async def log_zero_appeal_diagnostics(
             f"appeals sent AND 0 ProposedAppeal rows persisted for denial "
             f"{denial_id}. Generation produced nothing. "
             f"status_frames={status_count} last_phase={last_status_phase} "
-            f"gen_attempts={denial_attempts}{gen_suffix}{error_suffix}"
+            f"gen_attempts={denial_attempts}{gen_suffix}{error_suffix}{wire_suffix}"
         )
     else:
         # persisted_count == -1: lookup never ran (no/invalid denial_id)
@@ -350,7 +461,7 @@ async def log_zero_appeal_diagnostics(
             f"client; persisted-count lookup unavailable for denial "
             f"{denial_id} (coerced={denial_id_int!r}). "
             f"status_frames={status_count} last_phase={last_status_phase} "
-            f"gen_attempts={denial_attempts}{gen_suffix}{error_suffix}"
+            f"gen_attempts={denial_attempts}{gen_suffix}{error_suffix}{wire_suffix}"
         )
 
 
@@ -474,6 +585,10 @@ class StreamingAppealsBackend(AsyncWebsocketConsumer):
         # generation_id; done carries timing/model). Forwarded into the
         # zero-appeal diagnostics so a wire failure joins to the server trace.
         gen_fields = _AppealGenTraceFields()
+        # What we actually put on the socket, and the biggest silent window we
+        # left between frames. Reported alongside the client's own idle-gap
+        # measurement so triage can tell a stalled server from a dropped wire.
+        wire = StreamWireTracker()
         # Distinguishes a wire failure from a generation failure for the
         # diagnostics below: the try block wraps BOTH the sends and the
         # `async for` that pulls from the appeal generator, so an exception
@@ -483,6 +598,9 @@ class StreamingAppealsBackend(AsyncWebsocketConsumer):
 
         async def _send(payload: str) -> None:
             nonlocal error_from_send
+            # Stamp before the write: a hangup interrupts us mid-send, and a
+            # gap recorded after a failed write never lands at all.
+            wire.note_yield(payload, last_status_phase)
             try:
                 await self.send(payload)
             except Exception:
@@ -523,6 +641,7 @@ class StreamingAppealsBackend(AsyncWebsocketConsumer):
                     status_count=status_count,
                     last_status_phase=last_status_phase,
                     transport="websocket",
+                    wire=wire.summary(),
                     **gen_fields.as_kwargs(),
                 )
             else:
@@ -533,7 +652,7 @@ class StreamingAppealsBackend(AsyncWebsocketConsumer):
             logger.opt(exception=True).error(
                 f"Error sending back appeals for denial {denial_id} after "
                 f"{appeal_count} appeals and {status_count} status frames "
-                f"(last phase={last_status_phase}): {e}"
+                f"(last phase={last_status_phase}, {wire.summary()}): {e}"
             )
             if appeal_count == 0:
                 await log_zero_appeal_diagnostics(
@@ -543,6 +662,7 @@ class StreamingAppealsBackend(AsyncWebsocketConsumer):
                     transport="websocket",
                     stream_error=str(e),
                     error_from_send=error_from_send,
+                    wire=wire.summary(),
                     **gen_fields.as_kwargs(),
                 )
             raise

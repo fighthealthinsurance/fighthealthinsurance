@@ -3880,6 +3880,7 @@ class AppealsBackendHelper:
             summarize_task,
             interval=MAKE_APPEALS_KEEPALIVE_INTERVAL,
             overall_timeout=SUMMARIZE_OVERALL_TIMEOUT,
+            label=f"summarize[gen_id={generation_id}]",
             make_heartbeat=lambda elapsed: json.dumps(
                 {
                     "type": "status",
@@ -3955,6 +3956,7 @@ class AppealsBackendHelper:
             interval=MAKE_APPEALS_KEEPALIVE_INTERVAL,
             overall_timeout=make_appeals_overall_timeout,
             make_heartbeat=_generating_heartbeat,
+            label=f"generating[gen_id={generation_id}]",
         ):
             yield _hb
             # The longest blocking stretch of the whole flow, and the one the

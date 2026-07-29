@@ -496,6 +496,27 @@ let restStartedAtMs = 0;
 // shows up as "died after ~N seconds of silence"; a mid-flow reset (user
 // network dropped, server crashed while writing) shows a near-zero idle gap.
 let restLastByteAtMs = 0;
+// Largest gap between two consecutive REST chunks. The trailing idle gap
+// (rest_idle_ms) only describes the moment we died; this says whether the
+// stream was ALREADY limping. The server heartbeats every 15s, so a max gap
+// well above that means the server was going quiet for long stretches
+// throughout — i.e. the final "network error" was the end of an ongoing
+// server-side stall, not a sudden loss of connectivity.
+let restMaxGapMs = 0;
+// Same three facts for the WebSocket leg, which until now reported only
+// `ws_end_reason=inactivity-timeout` — enough to say the socket went quiet,
+// but not whether it ever produced anything, nor how quiet it had been
+// before the watchdog fired. Without these the WS leg can't be compared
+// against the REST leg, and it's the AGREEMENT of the two legs (both silent
+// vs. only one) that separates a server-side stall from a transport fault.
+let wsFramesReceived = 0;
+let wsBytesReceived = 0;
+let wsLastFrameAtMs = 0;
+let wsMaxGapMs = 0;
+// When the server last told us which phase it was in. `last_phase` alone
+// says where generation stopped; pairing it with how long we'd been sitting
+// in that phase says whether it stalled there or had only just entered it.
+let lastPhaseChangedAtMs = 0;
 // Set when our own inactivity watchdog aborts the REST fetch, so the
 // resulting AbortError is reported as a deliberate client-side give-up
 // rather than an unexplained "network error".
@@ -679,6 +700,15 @@ function reportClientError(error: string): void {
   // leg never ran; measured from the last byte (or from the request start, if
   // nothing ever arrived).
   const restIdleMs = restStartedAtMs > 0 ? Date.now() - restLastByteAtMs : -1;
+  // The WS leg's trailing silence, frozen at the moment that leg ENDED rather
+  // than measured to now: once we hand off to REST the socket is closed, so a
+  // gap that keeps growing would just report how long the REST leg took. The
+  // REST request's start is the handoff instant.
+  const wsLegEndedAtMs = restStartedAtMs > 0 ? restStartedAtMs : Date.now();
+  const wsIdleMs = wsLastFrameAtMs > 0 ? wsLegEndedAtMs - wsLastFrameAtMs : -1;
+  // How long we'd been sitting in `last_phase` when we gave up.
+  const lastPhaseAgeMs =
+    lastPhaseChangedAtMs > 0 ? Date.now() - lastPhaseChangedAtMs : -1;
   // Delivery diagnostics live in their own field so a long mobile
   // user-agent string in browser_info doesn't truncate them.
   const diagnostics = [
@@ -687,11 +717,22 @@ function reportClientError(error: string): void {
     `retries=${retries}`,
     `status_msgs=${statusMessagesReceived}`,
     `last_phase=${lastPhaseReceived || 'none'}`,
+    // How long generation sat in that phase before we gave up. A phase age far
+    // beyond the server's 15s heartbeat cadence is the phase that stalled.
+    `last_phase_age_ms=${lastPhaseAgeMs}`,
     `server_total=${serverReportedTotalAppeals}`,
     `server_new=${serverReportedNewAppeals}`,
     `server_existing=${serverReportedExistingAppeals}`,
     `ws_close=${lastWsCloseCode}/${lastWsCloseReason || 'none'}`,
     `ws_err=${lastWsErrorMessage || 'none'}`,
+    // What the WS leg actually delivered before it went quiet, and how quiet.
+    // Read these against the rest_* equivalents below: two independent
+    // connections both showing multi-heartbeat silence is a server that
+    // stopped writing, not a client whose network failed twice.
+    `ws_frames=${wsFramesReceived}`,
+    `ws_bytes=${wsBytesReceived}`,
+    `ws_max_gap_ms=${wsMaxGapMs}`,
+    `ws_idle_ms=${wsIdleMs}`,
     // Why the WS ended. Distinguishes a timeout-driven REST escalation (which
     // leaves retries=0) from a genuine retry exhaustion — the whole point of
     // the "exhausted 0 retries" confusion in the original incident.
@@ -712,6 +753,10 @@ function reportClientError(error: string): void {
     // 100s) points at an intermediary's idle timeout rather than a flaky
     // client network; near zero means the connection was cut mid-write.
     `rest_idle_ms=${restIdleMs}`,
+    // The worst mid-stream gap, not just the final one. A max gap already far
+    // above the server's 15s heartbeat says the stream was starving before it
+    // died, which points at the origin rather than the last hop.
+    `rest_max_gap_ms=${restMaxGapMs}`,
     // Client-side environment at report time. `offline` explains an
     // otherwise-inexplicable transport failure outright, and a hidden tab is
     // the usual cause on mobile Safari, where backgrounding kills in-flight
@@ -988,8 +1033,12 @@ async function fetchFallback(url: string, data: object, csrfToken: string): Prom
     }, REST_INACTIVITY_TIMEOUT_MS);
   };
   const noteBytes = (byteLength: number) => {
+    const now = Date.now();
+    if (restLastByteAtMs > 0) {
+      restMaxGapMs = Math.max(restMaxGapMs, now - restLastByteAtMs);
+    }
     restBytesReceived += byteLength;
-    restLastByteAtMs = Date.now();
+    restLastByteAtMs = now;
     armRestIdleTimer();
   };
 
@@ -1096,6 +1145,13 @@ function processResponseChunk(chunk: string): void {
           const substep = parsedLine.substep;
           statusMessagesReceived++;
           if (phase) {
+            // Only a CHANGE restarts the clock: the generating phase
+            // heartbeats under the same phase name every 15s, and resetting on
+            // each beat would report a phase age of one heartbeat no matter
+            // how long generation had really been running.
+            if (phase !== lastPhaseReceived) {
+              lastPhaseChangedAtMs = Date.now();
+            }
             lastPhaseReceived = phase;
           }
           // Capture the server correlation id (sent in the init frame, so we
@@ -1416,6 +1472,17 @@ function connectWebSocket(
       if (handingOffToRest) return;
       resetTimeout();
       const chunk = event.data;
+      // Wire stats for the error report. Counted here rather than in
+      // processResponseChunk so keep-alive newlines — the frames that prove
+      // the server was alive — are included, exactly as the REST leg counts
+      // its bytes.
+      const nowMs = Date.now();
+      if (wsLastFrameAtMs > 0) {
+        wsMaxGapMs = Math.max(wsMaxGapMs, nowMs - wsLastFrameAtMs);
+      }
+      wsLastFrameAtMs = nowMs;
+      wsFramesReceived++;
+      wsBytesReceived += typeof chunk === 'string' ? chunk.length : 0;
       processResponseChunk(chunk);
     };
 
@@ -1501,8 +1568,19 @@ export function doQuery(backend_url: string, data: AppealQueryData, rest_fallbac
   restFramesReceived = 0;
   restStartedAtMs = 0;
   restLastByteAtMs = 0;
+  restMaxGapMs = 0;
   restAbortReason = '';
   lastRestErrorMessage = '';
+  // Wire stats and phase timing are per-pass for the same reason: the
+  // external-models rerun is a fresh generation, and carrying the previous
+  // pass's frame counts or phase clock would describe an attempt that already
+  // ended.
+  wsFramesReceived = 0;
+  wsBytesReceived = 0;
+  wsLastFrameAtMs = 0;
+  wsMaxGapMs = 0;
+  lastPhaseChangedAtMs = 0;
+  lastPhaseReceived = '';
   // Start the aggregate wait clock only on the first call. doQuery
   // recurses on retry via done(), and we want the total to span the
   // entire user-visible wait, not just the latest retry.

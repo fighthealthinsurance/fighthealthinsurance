@@ -924,12 +924,29 @@ async def _interleave_iterator_for_keep_alive(
             task = None
 
 
+# A heartbeat that lands more than this far past its scheduled interval was
+# not late because the work took longer -- `asyncio.wait_for` fires on a timer,
+# so overshoot is time the event loop could not run the callback. On a
+# single-worker ASGI pod that means every in-flight stream in the process went
+# silent at once, which is indistinguishable from "the user's network died"
+# from the browser's side. Logging it is the only way to tell those apart
+# after the fact.
+KEEPALIVE_LOOP_LAG_WARN_SECONDS = 5.0
+
+# Time between emitting a heartbeat and the consumer coming back for the next
+# one. That window is the caller's per-beat work plus the actual socket write,
+# so a large value means the frame is stuck downstream (backpressure, a slow
+# per-beat DB query) rather than never being produced.
+KEEPALIVE_DOWNSTREAM_WARN_SECONDS = 5.0
+
+
 async def keepalive_frames(
     task: "asyncio.Future[Any]",
     *,
     interval: float = 15.0,
     overall_timeout: Optional[float] = None,
     make_heartbeat: Callable[[float], str] = lambda elapsed: "\n",
+    label: str = "keepalive",
 ) -> AsyncIterator[str]:
     """Yield a heartbeat string every ``interval`` seconds while ``task`` is
     still pending, so a long blocking ``await`` leaves no silent gap on the
@@ -954,6 +971,9 @@ async def keepalive_frames(
     string to emit (default: a bare ``"\\n"`` keep-alive). A callback that
     returns a full status-frame JSON line lets callers both keep the socket
     alive and advance a client-side progress UI.
+
+    ``label`` names this heartbeat loop in the stall warnings below, so a log
+    line says which phase went quiet.
     """
     elapsed = 0.0
     while not task.done():
@@ -968,8 +988,31 @@ async def keepalive_frames(
             await asyncio.wait_for(asyncio.shield(task), timeout=wait_for)
         except asyncio.TimeoutError:
             # Only this iteration's shield was cancelled; ``task`` runs on.
-            elapsed += time.monotonic() - started
+            waited = time.monotonic() - started
+            elapsed += waited
+            # The timer was set for `wait_for`; anything beyond it is event-loop
+            # lag, i.e. the process could not get around to writing a keepalive.
+            # This is the server-side proof for a client that reports a silent
+            # stream: the client only ever sees "the connection died", never
+            # whether we stopped feeding it.
+            lag = waited - wait_for
+            if lag > KEEPALIVE_LOOP_LAG_WARN_SECONDS:
+                logger.warning(
+                    f"APPEAL_GEN_DIAG event loop lag: {label} heartbeat "
+                    f"scheduled for {wait_for:.1f}s took {waited:.1f}s "
+                    f"(lag={lag:.1f}s) -- every stream in this process was "
+                    f"silent for that window"
+                )
+            yielded_at = time.monotonic()
             yield make_heartbeat(elapsed)
+            downstream = time.monotonic() - yielded_at
+            if downstream > KEEPALIVE_DOWNSTREAM_WARN_SECONDS:
+                logger.warning(
+                    f"APPEAL_GEN_DIAG slow heartbeat drain: {label} beat took "
+                    f"{downstream:.1f}s to be consumed (socket write / "
+                    f"per-beat work), so the frame reached the client that "
+                    f"much later than it was produced"
+                )
             continue
         except Exception:
             # ``task`` finished by raising. Stop emitting keep-alives; the

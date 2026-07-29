@@ -2,6 +2,7 @@ import pytest
 import asyncio
 import time
 from typing import AsyncIterator
+from unittest.mock import patch
 from fighthealthinsurance.utils import (
     interleave_iterator_for_keep_alive,
     keepalive_frames,
@@ -317,6 +318,108 @@ class TestKeepaliveFrames:
         assert len(elapseds) >= 2
         assert elapseds == sorted(elapseds)
         assert elapseds[-1] >= 0.1
+
+
+class TestKeepaliveStallWarnings:
+    """A stream that goes silent looks identical from the browser whether the
+    connection died or the server stopped writing. These warnings are the
+    server-side half of that distinction, so they must fire on a real stall
+    and stay quiet on a healthy loop."""
+
+    @pytest.mark.asyncio
+    async def test_no_stall_warning_on_healthy_heartbeats(self):
+        """Heartbeats that land on schedule log nothing — the warnings must
+        not become background noise on every generation."""
+        warnings: list = []
+
+        async def slow():
+            await asyncio.sleep(0.35)
+            return "x"
+
+        task = asyncio.ensure_future(slow())
+        with patch(
+            "fighthealthinsurance.utils.logger.warning",
+            side_effect=lambda msg, *a, **k: warnings.append(msg),
+        ):
+            async for _ in keepalive_frames(task, interval=0.1, label="gen"):
+                pass
+
+        assert warnings == []
+
+    @pytest.mark.asyncio
+    async def test_event_loop_lag_is_reported(self):
+        """A heartbeat that lands far past its scheduled interval is reported
+        as event-loop lag, naming the loop that went quiet."""
+        warnings: list = []
+
+        async def slow():
+            await asyncio.sleep(5)
+            return "never"
+
+        async def block_loop():
+            # A synchronous sleep on the event loop thread: exactly the
+            # production shape (a blocking call starving the loop) that stops
+            # heartbeat timers from firing on schedule.
+            await asyncio.sleep(0.01)
+            time.sleep(0.4)
+
+        task = asyncio.ensure_future(slow())
+        blocker = asyncio.ensure_future(block_loop())
+        try:
+            with (
+                patch(
+                    "fighthealthinsurance.utils.logger.warning",
+                    side_effect=lambda msg, *a, **k: warnings.append(msg),
+                ),
+                patch(
+                    "fighthealthinsurance.utils.KEEPALIVE_LOOP_LAG_WARN_SECONDS", 0.05
+                ),
+            ):
+                async for _ in keepalive_frames(
+                    task,
+                    interval=0.05,
+                    overall_timeout=0.3,
+                    label="generating[gen_id=abc]",
+                ):
+                    pass
+        finally:
+            task.cancel()
+            await blocker
+
+        assert any("event loop lag" in m for m in warnings)
+        assert any("generating[gen_id=abc]" in m for m in warnings)
+
+    @pytest.mark.asyncio
+    async def test_slow_downstream_drain_is_reported(self):
+        """A consumer that takes a long time to accept a heartbeat means the
+        frame reached the wire late, which is a different failure from the
+        loop never producing it."""
+        warnings: list = []
+
+        async def slow():
+            await asyncio.sleep(5)
+            return "never"
+
+        task = asyncio.ensure_future(slow())
+        try:
+            with (
+                patch(
+                    "fighthealthinsurance.utils.logger.warning",
+                    side_effect=lambda msg, *a, **k: warnings.append(msg),
+                ),
+                patch(
+                    "fighthealthinsurance.utils.KEEPALIVE_DOWNSTREAM_WARN_SECONDS", 0.05
+                ),
+            ):
+                async for _ in keepalive_frames(
+                    task, interval=0.05, overall_timeout=0.15, label="rest"
+                ):
+                    # Stand in for a stalled socket write / slow per-beat work.
+                    await asyncio.sleep(0.15)
+        finally:
+            task.cancel()
+
+        assert any("slow heartbeat drain" in m for m in warnings)
 
 
 class TestFullAppealStreamingPipeline:
