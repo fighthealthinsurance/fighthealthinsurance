@@ -60,6 +60,7 @@ from fighthealthinsurance.extralink_context_helper import ExtraLinkContextHelper
 from fighthealthinsurance.rag_client import get_rag_context_for_denial
 from fighthealthinsurance.ml.ml_models import (
     RemoteModelLike,
+    _env_float,
     remove_repeated_blocks,
     remove_repeated_sentences,
 )
@@ -161,6 +162,28 @@ class ChatInterface:
         await self.send_json_message_func(
             {"status": message, "chat_id": str(self.chat.id)}
         )
+
+    async def _turn_heartbeat(self) -> None:
+        """Emit a status frame every FHI_CHAT_HEARTBEAT_SECONDS while a turn
+        is being generated.
+
+        Long tool/LLM turns can go minutes without a frame on the socket;
+        idle-reaping proxies kill those connections and the user sees a
+        spinner that never resolves. Cancelled by the caller when the turn
+        finishes; the client already renders ``status`` frames as its loading
+        state, so this needs no frontend changes.
+        """
+        interval = _env_float("FHI_CHAT_HEARTBEAT_SECONDS", 20.0)
+        try:
+            while True:
+                await asyncio.sleep(interval)
+                await self.send_status_message("Still working on your reply...")
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            # A failed heartbeat send means the socket is likely gone; the
+            # main turn will surface that on its own send.
+            logger.debug(f"Heartbeat send failed for chat {self.chat.id}")
 
     async def send_message_to_client(self, message: str):
         """Sends a message to the client."""
@@ -377,10 +400,13 @@ class ChatInterface:
         )
 
         try:
-            response_text, context_part = await best_within_timelimit(
+            best_call = await best_within_timelimit(
                 calls,
                 score_fn,
                 timeout=30.0,
+            )
+            response_text, context_part = (
+                best_call if best_call is not None else (None, None)
             )
         except Exception as e:
             logger.warning(f"Primary models all failed: {e}")
@@ -967,18 +993,28 @@ class ChatInterface:
         # (The double asterisks around the entire tool call are required)
         # USPSTF preventive recommendations: **uspstf_lookup {"query": "...", "grade": "A"}**
 
+        # Overall wall-clock budget for this turn's LLM + tool work, plus a
+        # heartbeat so the user (and any idle-reaping proxy between us) sees
+        # traffic while a long turn is still working. Without the budget a
+        # wedged backend chain could hold the turn open indefinitely with the
+        # client showing a spinner forever.
+        turn_budget = _env_float("FHI_CHAT_TURN_BUDGET", 150.0)
+        heartbeat_task = asyncio.create_task(self._turn_heartbeat())
         try:
-            response_text, context_part = await self._call_llm_with_actions(
-                primary_models,
-                llm_input_message,
-                summarized_context,
-                history_for_llm,
-                is_logged_in=(self.user is not None and self.user.is_authenticated),
-                is_professional=self.is_professional or self.is_trial_professional,
-                fallback_backends=fallback_models if fallback_models else None,
-                full_history=full_history_for_llm,  # Also try with full history if model supports it
-                user_message_for_scoring=user_message,
-                message_variants=llm_message_variants,
+            response_text, context_part = await asyncio.wait_for(
+                self._call_llm_with_actions(
+                    primary_models,
+                    llm_input_message,
+                    summarized_context,
+                    history_for_llm,
+                    is_logged_in=(self.user is not None and self.user.is_authenticated),
+                    is_professional=self.is_professional or self.is_trial_professional,
+                    fallback_backends=fallback_models if fallback_models else None,
+                    full_history=full_history_for_llm,  # Also try with full history if model supports it
+                    user_message_for_scoring=user_message,
+                    message_variants=llm_message_variants,
+                ),
+                timeout=turn_budget,
             )
 
             if response_text and response_text.strip():
@@ -991,11 +1027,18 @@ class ChatInterface:
                     cleaned = DELETE_DATA_RESPONSE
                 final_response_text = cleaned
                 final_context_part = context_part
+        except asyncio.TimeoutError:
+            logger.error(
+                f"Chat turn exceeded its {turn_budget:.0f}s budget for chat "
+                f"{chat.id}; giving up on this turn"
+            )
         except Exception as e:
             logger.opt(exception=True).error(
                 f"Chat generation failed for chat {chat.id}: {e}"
             )
             logger.debug(f"Models tried for failed chat {chat.id}: {primary_models}")
+        finally:
+            heartbeat_task.cancel()
 
         if final_response_text:
             if should_store_summary(chat.summary_for_next_call, final_context_part):

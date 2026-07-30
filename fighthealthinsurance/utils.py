@@ -25,6 +25,7 @@ from typing import (
     List,
     Optional,
     Sequence,
+    Set,
     TYPE_CHECKING,
     Tuple,
     TypeGuard,
@@ -1147,27 +1148,46 @@ def _log_fanout_task_error(e: Exception, where: str) -> None:
         logger.opt(exception=True).warning(f"Task error in {where}: {e}")
 
 
+def _extended_wait_cap() -> float:
+    """Upper bound (seconds) on the overtime window of best_within_timelimit."""
+    try:
+        return float(os.environ.get("FHI_ML_EXTENDED_WAIT", "300"))
+    except ValueError:
+        return 300.0
+
+
 async def best_within_timelimit(
     tasks: Sequence[Awaitable[T]],
     score_fn: Callable[[T, Awaitable[T]], float],
     timeout: float,
-) -> T:
+    extended_timeout: Optional[float] = None,
+) -> Optional[T]:
     """
     Runs a list of async tasks concurrently.
     Returns the best result (per score_fn) that completes before timeout.
-    Ignores late results.
+    If nothing usable completed in time, keeps waiting up to
+    ``extended_timeout`` extra seconds and takes the first truthy result to
+    arrive. Ignores late results; every still-pending task is cancelled on
+    every exit path.
 
     Args:
         tasks: List of awaitable tasks that return results of type T
         score_fn: Function to score each result (higher is better), takes both the result and its awaitable
         timeout: Maximum time to wait (seconds)
+        extended_timeout: Overtime window after ``timeout`` for slow stragglers.
+            Defaults to min(max(2*timeout, 60), $FHI_ML_EXTENDED_WAIT [300]).
+            Pass 0 for a strict single-window wait.
 
     Returns:
-        The best result according to score_fn, or None if no tasks complete in time
+        The best result according to score_fn, or None if nothing usable
+        completes within timeout + extended_timeout.
     """
     # Should not happen :)
     if not tasks:
-        return None  # type: ignore[return-value]
+        return None
+
+    if extended_timeout is None:
+        extended_timeout = min(max(timeout * 2, 60.0), _extended_wait_cap())
 
     # Create task objects with Future results and wrap them
     original_to_task: Dict[asyncio.Task[T], Awaitable[T]] = {}
@@ -1180,56 +1200,57 @@ async def best_within_timelimit(
         wrapped_tasks.append(wrapped)
         original_to_task[wrapped] = task
 
-    # Wait for either all tasks or the timeout
+    best_result_option: Optional[T] = None
+    best_score = float("-inf")  # Start with negative infinity for comparison
+
+    def _score_done(done_tasks: Set[asyncio.Task[T]]) -> None:
+        nonlocal best_result_option, best_score
+        for task in done_tasks:
+            try:
+                result = task.result()
+                original_task = original_to_task[task]
+                score = score_fn(result, original_task)
+                if score > best_score:
+                    best_score = score
+                    best_result_option = result
+            except Exception as e:
+                _log_fanout_task_error(e, "best_within_timelimit")
+
+    # Main window: wait for everything (or the timeout), take the best.
     done, pending = await asyncio.wait(
         wrapped_tasks, timeout=timeout, return_when=asyncio.ALL_COMPLETED
     )
-    # Find the best result from completed tasks
-    best_result_option: Optional[T] = None
-    best_score = float("-inf")  # Start with negative infinity for comparison
-    for task in done:
-        try:
-            result = await task  # Get task result
-            original_task = original_to_task[task]
-            score = score_fn(result, original_task)
-            if score > best_score:
-                best_score = score
-                best_result_option = result
-        except Exception as e:
-            _log_fanout_task_error(e, "best_within_timelimit")
-            continue
-
-    # Did we find a non empty best result?!?
+    _score_done(done)
     if best_result_option:
         asyncio.create_task(cancel_tasks(list(pending)))
         return best_result_option
-    elif len(pending) == 0:
-        raise Exception(f"No good answers found, ran out of all possibilities.")
 
-    # If nothing is done in the length of normal timeout we try again but short
-    # circuit on first.
-    done, pending = await asyncio.wait(
-        pending, timeout=(timeout + 1) * 20, return_when=asyncio.FIRST_COMPLETED
-    )
+    # Overtime window: bounded, first truthy result wins. This keeps
+    # slow-but-eventually-successful backends useful without the old
+    # unbounded ((timeout + 1) * 20) tail, and a falsy first completion no
+    # longer aborts the wait while other tasks are still running.
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + extended_timeout
+    while pending:
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            break
+        done, pending = await asyncio.wait(
+            pending, timeout=remaining, return_when=asyncio.FIRST_COMPLETED
+        )
+        _score_done(done)
+        if best_result_option:
+            break
 
-    for task in done:
-        try:
-            result = await task  # Get task result
-            original_task = original_to_task[task]
-            score = score_fn(result, original_task)
-            if score > best_score:
-                best_score = score
-                best_result_option = result
-        except Exception as e:
-            _log_fanout_task_error(e, "best_within_timelimit")
-            continue
-    if best_result_option:
+    if pending:
         asyncio.create_task(cancel_tasks(list(pending)))
+    if best_result_option:
         return best_result_option
-    # Ok somehow things are still _bad_
-    raise Exception(
-        f"No good answers found and we waited way past the expected time {timeout}"
+    logger.warning(
+        f"best_within_timelimit: no usable result from {len(tasks)} tasks "
+        f"within {timeout}s + {extended_timeout}s overtime"
     )
+    return None
 
 
 async def best_within_timelimit_static(
@@ -1276,6 +1297,12 @@ async def best_within_timelimit_static(
     best_result_so_far: Optional[T] = None
     best_score_so_far = float("-inf")
 
+    def _cancel_stragglers() -> None:
+        """Fire-and-forget cancellation of unfinished tasks (non-blocking)."""
+        unfinished = [t for t in tasks if not t.done()]
+        if unfinished:
+            asyncio.create_task(cancel_tasks(unfinished))
+
     # Wait for tasks to complete as they finish
     for future in asyncio.as_completed(tasks, timeout=timeout):
         try:
@@ -1288,7 +1315,7 @@ async def best_within_timelimit_static(
 
             # If this is one of our best tasks, return immediately
             if score == max_score:
-                # We don't explicitly cancel since cancel can be blocking depend on GC
+                _cancel_stragglers()
                 return result
 
         except Exception as e:
@@ -1299,6 +1326,7 @@ async def best_within_timelimit_static(
 
     # Return the best result we've seen so far
     if best_result_so_far is not None:
+        _cancel_stragglers()
         return best_result_so_far
 
     # Ok wait for any task to complete - don't filter for non-done tasks
@@ -1321,6 +1349,9 @@ async def best_within_timelimit_static(
         logger.opt(exception=True).warning(
             f"Error waiting for tasks after timeout: {e}"
         )
+
+    # Whatever happens next, don't leak still-running tasks.
+    _cancel_stragglers()
 
     # Return the best result we've found, or None if everything failed
     if best_result_so_far is not None:

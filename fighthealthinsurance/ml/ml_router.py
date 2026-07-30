@@ -652,6 +652,7 @@ class MLRouter(object):
                     ],
                     prompt=f"Summarize this conversation for context:\n\n{history_text}\n\n"
                     "Focus on: what was denied, why, any medical details, and what the user needs help with.",
+                    timeout=ml_task_timeout("summarize"),
                 )
                 if summary and len(summary) > 10:
                     return summary
@@ -751,7 +752,9 @@ class MLRouter(object):
             for prompt in attempts:
                 try:
                     r = await m._infer_no_context(
-                        system_prompts=system_prompts, prompt=prompt
+                        system_prompts=system_prompts,
+                        prompt=prompt,
+                        timeout=ml_task_timeout("summarize"),
                     )
                 except Exception as e:
                     # Per-model guard: subclasses with _propagate_http_errors

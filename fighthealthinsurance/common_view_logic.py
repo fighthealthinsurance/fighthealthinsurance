@@ -3744,31 +3744,50 @@ class AppealsBackendHelper:
         async for _spec in serve_reserve_if_stalled():
             yield _spec
 
-        # Get microsite context if available (optional, non-blocking)
+        # Get microsite context if available. Optional means OPTIONAL: this
+        # sits on the appeal generation critical path, so it gets a hard time
+        # bound and any failure degrades to "no microsite context" instead of
+        # killing the whole stream before generation starts.
         microsite_context: Optional[str] = None
         if denial.microsite_slug:
-            from fighthealthinsurance.microsites import get_microsite
+            try:
+                from fighthealthinsurance.microsites import get_microsite
 
-            microsite = get_microsite(denial.microsite_slug)
-            if microsite:
-                # Note: pubmed_tools not available in this context, so only extralinks will be fetched
-                microsite_context = await microsite.get_combined_context(
-                    pubmed_tools=None,
-                    max_extralink_docs=3,
-                    max_extralink_chars=1500,
+                microsite = get_microsite(denial.microsite_slug)
+                if microsite:
+                    # Note: pubmed_tools not available in this context, so only extralinks will be fetched
+                    microsite_context = await asyncio.wait_for(
+                        microsite.get_combined_context(
+                            pubmed_tools=None,
+                            max_extralink_docs=3,
+                            max_extralink_chars=1500,
+                        ),
+                        timeout=15,
+                    )
+            except Exception as e:
+                logger.warning(
+                    f"Skipping microsite context for {denial.microsite_slug}: {e}"
                 )
+                microsite_context = None
 
         # Merge supplemental contexts into the citation pipeline. Both
         # microsite and IMR context follow the same pattern: append to
         # ml_citation_context if present, else pubmed_context, else use
         # standalone. attach_supplemental_to_citations also dedupes against
         # the existing block so a retry doesn't re-append the same content.
-        ml_citation_context, pubmed_context = attach_supplemental_to_citations(
-            ml_citation_context, pubmed_context, microsite_context
-        )
-        ml_citation_context, pubmed_context = attach_supplemental_to_citations(
-            ml_citation_context, pubmed_context, imr_context
-        )
+        # Guarded: losing supplemental context must never cost the appeal.
+        try:
+            ml_citation_context, pubmed_context = attach_supplemental_to_citations(
+                ml_citation_context, pubmed_context, microsite_context
+            )
+            ml_citation_context, pubmed_context = attach_supplemental_to_citations(
+                ml_citation_context, pubmed_context, imr_context
+            )
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Failed to merge supplemental context into citations; "
+                "continuing with the unmerged contexts"
+            )
 
         async def save_appeal(item: GeneratedAppeal) -> dict[str, str]:
             # Save all of the proposed appeals, so we can use RL later.

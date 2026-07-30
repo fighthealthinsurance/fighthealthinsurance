@@ -5,6 +5,7 @@ Handles history truncation, summarization, and context accumulation
 to keep chat sessions manageable within LLM context limits.
 """
 
+import asyncio
 import uuid
 from typing import Dict, List, Optional, Tuple
 
@@ -106,9 +107,16 @@ async def _summarize_history(
         if notify_callback:
             await notify_callback("Summarizing conversation context...")
 
-        history_summary = await ml_router.summarize_chat_history(
-            messages_to_summarize,
-            max_messages=0,  # Summarize all dropped messages
+        # Hard bound: this runs on the interactive turn path, so a stalled
+        # summarization backend must degrade to "keep existing context", not
+        # stall the user's reply. (asyncio.TimeoutError lands in the except
+        # below.)
+        history_summary = await asyncio.wait_for(
+            ml_router.summarize_chat_history(
+                messages_to_summarize,
+                max_messages=0,  # Summarize all dropped messages
+            ),
+            timeout=90,
         )
 
         if history_summary:
