@@ -13,7 +13,7 @@ The footprint is modest because we reuse infrastructure we already run:
 | A SQL datastore | **The existing PostgreSQL** | Add two databases: `temporal` and `temporal_visibility`. |
 | Advanced visibility (search/list workflows) | **PostgreSQL 12+** | No Elasticsearch needed — Postgres ≥ 12 provides advanced visibility natively. This is the big saving on a small cluster. |
 | Server services (frontend/history/matching/worker) | One combined Deployment via Helm | Start at `replicaCount: 1`; split/scale later. |
-| Workers (our code) | `temporal-worker` Deployment (`worker.yaml`) | Runs `manage.py run_temporal_worker` on the existing app image. |
+| Workers (our code) | `fhi-fax-worker` Deployment (`worker.yaml`) | Runs `manage.py run_temporal_worker` on the existing app image. (Named `fhi-fax-worker` because the Helm chart itself owns a Deployment called `temporal-worker` — Temporal's internal worker service.) |
 | Web UI | Temporal Web (chart `web.enabled`) | Optional; expose through the existing nginx ingress. |
 
 Rough resource ask for the server at our scale: ~0.5–1 vCPU and ~1–2 GiB. That
@@ -27,12 +27,15 @@ fits comfortably next to the Ray heads (which already request 6 GiB each).
 1. **Create the databases and a user** on the existing Postgres:
 
    ```sql
-   CREATE DATABASE temporal;
-   CREATE DATABASE temporal_visibility;
    CREATE USER temporal WITH PASSWORD '...';
-   GRANT ALL PRIVILEGES ON DATABASE temporal TO temporal;
-   GRANT ALL PRIVILEGES ON DATABASE temporal_visibility TO temporal;
+   CREATE DATABASE temporal OWNER temporal;
+   CREATE DATABASE temporal_visibility OWNER temporal;
    ```
+
+   Ownership (not `GRANT ALL`) is required: on PostgreSQL 15+ `GRANT ALL
+   PRIVILEGES ON DATABASE` no longer allows creating tables in the `public`
+   schema, so the chart's schema job would fail. `values.yaml` sets
+   `createDatabase: false` accordingly — the databases must exist first.
 
 2. **Store the DB password** as a secret the chart reads:
 
@@ -46,8 +49,20 @@ fits comfortably next to the Ray heads (which already request 6 GiB each).
    ```sh
    helm repo add temporal https://go.temporal.io/helm-charts
    helm repo update
-   # Fill in TEMPORAL_PG_HOST / TEMPORAL_PG_USER in values.yaml first.
-   helm install temporal temporal/temporal -n totallylegitco -f values.yaml
+   # values.yaml has two ${...} placeholders Helm does NOT substitute:
+   TEMPORAL_PG_HOST=<postgres-rw-service>.totallylegitco.svc \
+   TEMPORAL_PG_USER=temporal \
+   envsubst '${TEMPORAL_PG_HOST} ${TEMPORAL_PG_USER}' < values.yaml > /tmp/temporal-values.yaml
+   helm install temporal temporal/temporal -n totallylegitco -f /tmp/temporal-values.yaml
+   ```
+
+   `values.yaml` targets chart **≥ 1.x** (verified against `temporal-1.6.0`);
+   pre-1.0 charts used a different layout and will not accept it. The chart
+   does not create the `default` namespace — after install:
+
+   ```sh
+   kubectl -n totallylegitco exec -i deploy/temporal-admintools -- \
+     temporal operator namespace create --address temporal-frontend:7233 --retention 720h default
    ```
 
    This creates the in-cluster `temporal-frontend:7233` service the worker and
@@ -93,54 +108,34 @@ back to plain TLS.
 
 ## Pre-flight checklist (verify before flipping the flag)
 
-The repo's manifests have some drift between the pods that currently touch fax
-documents; confirm these against the **live** namespace rather than trusting
-any one yaml:
+1. **Fax documents** — the worker deliberately mounts **no** documents PVC:
+   fax activities read stored PDFs through the external `COMBINED_STORAGE`
+   layers (object storage, credentials via the shared secrets) and regenerate
+   the document if it isn't found. Confirm the worker's boot log shows the
+   external storage check passing.
 
-1. **Fax-document PVC** — the worker mounts `new-uploads-longhorn-backup4` at
-   `/external_data` (see `k8s/uploads-pvc.yaml`; note the live web Deployment
-   in `k8s/deploy.yaml` does not mount it). The Ray back cluster
-   (`ray/cluster-back.yaml`) mounts `new-uploads-longhorn-backup3` at the same
-   path — if that's the claim with the real documents in your cluster, change
-   the worker's claim to match:
+2. **Fax SSH key + user** — the worker mounts the `faxymcfaxface-ssh` secret
+   with the key renamed to `id_ed25519` (SSH libraries only auto-offer keys
+   with standard filenames — a `ssh-auth` secret's raw `ssh-privatekey` name
+   is never searched), and sets `USER`/`LOGNAME=ray` so asyncssh/paramiko
+   connect as the account the fax host trusts even though the process runs as
+   root. If reusing this pattern elsewhere, keep both halves: standard key
+   filename **and** the right username.
 
-   ```sh
-   kubectl -n totallylegitco get pvc | grep new-uploads
-   ```
-
-2. **Fax SSH secret** — the worker mounts `faxymcfaxface-ssh` (as
-   `ray/cluster.yaml` does); `ray/cluster-back.yaml` uses `ssh-privatekey`
-   instead. Check which secret actually exists / holds the working key:
+3. **Smoke test** — after deploying the worker but before flipping the flag,
+   exercise the exact library calls the fax code makes:
 
    ```sh
-   kubectl -n totallylegitco get secret | grep -E 'ssh|fax'
+   kubectl -n totallylegitco exec deploy/fhi-fax-worker -- python -c \
+     "import asyncio, os, asyncssh; \
+      asyncio.new_event_loop().run_until_complete(asyncssh.connect(os.environ['FAXYMCFAXFACE_HOST'], known_hosts=None)); \
+      print('ssh ok')"
    ```
 
-3. **SSH user** — the worker process runs as **root**, so it connects to the
-   fax host as `root@$FAXYMCFAXFACE_HOST`. The Ray fax actor runs as the `ray`
-   user and connects as `ray@...`. Make sure the fax host's `authorized_keys`
-   accepts the key for the user the worker connects as (or add a `username=` to
-   the SSH client config).
+   (The plain `ssh` binary ignores `USER`, so for a CLI check use
+   `ssh ray@$FAXYMCFAXFACE_HOST` explicitly.)
 
-4. **Smoke test** — after deploying the worker but before flipping the flag on
-   the web pods, exec into the worker pod and confirm it can read a stored
-   document **and** authenticate to the fax host with the same user/key
-   mapping the worker uses (local user + `~/.ssh` + `$FAXYMCFAXFACE_HOST`):
-
-   ```sh
-   kubectl -n totallylegitco exec deploy/temporal-worker -- ls /external_data | head
-   kubectl -n totallylegitco exec deploy/temporal-worker -- \
-     sh -c 'ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new "$FAXYMCFAXFACE_HOST" true'
-   ```
-
-   If the image has no `ssh` binary, use the bundled asyncssh instead:
-
-   ```sh
-   kubectl -n totallylegitco exec deploy/temporal-worker -- python -c \
-     "import asyncio, os, asyncssh; asyncio.run(asyncssh.connect(os.environ['FAXYMCFAXFACE_HOST'])); print('ssh ok')"
-   ```
-
-5. **Drain the pre-flag backlog** — faxes queued before the flip
+4. **Drain the pre-flag backlog** — faxes queued before the flip
    (`should_send=True, sent=False`) have no Temporal workflow. The Ray delayed
    sweep only goes idle in a process that actually sees `TEMPORAL_ENABLED=true`,
    so this holds **only if the flag is set on the Ray pods** (via the shared
@@ -159,8 +154,9 @@ required.
 
 ## Files
 
-- `values.yaml` — Helm values: Postgres-backed, no Cassandra/Elasticsearch.
-- `worker.yaml` — the `temporal-worker` Deployment.
+- `values.yaml` — Helm values for chart ≥ 1.x: Postgres-backed, no
+  Cassandra/Elasticsearch.
+- `worker.yaml` — the `fhi-fax-worker` Deployment.
 
 ## What runs here today vs. next
 
