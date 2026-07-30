@@ -21,11 +21,16 @@ from fighthealthinsurance.utils import (
 )
 from fighthealthinsurance.generate_appeal import GeneratedAppeal
 from fighthealthinsurance.helpers import SendFaxHelper, RemoveDataHelper
+from fighthealthinsurance.ml.model_attempt_log import (
+    ModelAttemptRecord,
+    ModelAttemptRecorder,
+)
 from fighthealthinsurance.models import (
     Denial,
     DenialTypes,
     Appeal,
     FaxesToSend,
+    ModelCallAttempt,
     ProposedAppeal,
     Regulator,
 )
@@ -645,6 +650,66 @@ class TestCommonViewLogic(TestCase):
                 assert "make_appeals_seconds" in done[0]
             finally:
                 await Denial.objects.filter(denial_id=15).adelete()
+
+        async_to_sync(test)()
+
+    @pytest.mark.django_db
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_streaming_flow_flushes_late_model_attempts(self, mock_appeal_generator):
+        """The streaming flow's async flush is what captures the model outcomes
+        the winning stage short-circuited, and it must not disturb delivery.
+
+        Every other generate_appeals test here mocks appealGenerator wholesale,
+        which leaves no recorder in the diagnostics sink at all -- so the async
+        flush path would otherwise be entirely uncovered. This wires a real
+        recorder in and checks all three properties at once: appeals still
+        stream, the late record is persisted, and the done frame carries the
+        summary recomputed after drainage rather than make_appeals' snapshot.
+        """
+        email, denial = self._create_test_denial(35, gen_attempts=3)
+        recorder = ModelAttemptRecorder(denial_id=35, generation_id="asyncflush01")
+
+        def make_appeals(*args, **kwargs):
+            sink = kwargs["diagnostics_sink"]
+            sink["attempt_recorder"] = recorder
+            # What make_appeals itself would have written at the peek: a
+            # snapshot that predates drainage.
+            sink["models_tried"] = "early:no_output"
+            # Recorded as the generator drains, i.e. after make_appeals returned.
+            recorder.record(ModelAttemptRecord(model_name="late-model", outcome="ok"))
+            return iter(
+                self._live_drafts(
+                    ["Dear Insurance Company, this is a sufficiently long appeal."]
+                )
+            )
+
+        mock_appeal_generator.make_appeals.side_effect = make_appeals
+
+        async def test():
+            try:
+                status_messages, appeal_contents, _ = (
+                    await self.collect_appeal_responses(
+                        {
+                            "denial_id": 35,
+                            "email": email,
+                            "semi_sekret": denial.semi_sekret,
+                        }
+                    )
+                )
+
+                # Delivery is unaffected.
+                assert appeal_contents, "appeals must still reach the client"
+                # The late record was persisted by the async flush.
+                assert (
+                    await ModelCallAttempt.objects.filter(for_denial_id=35).acount()
+                    == 1
+                )
+                # And the done frame reports the post-drainage summary.
+                done = [m for m in status_messages if m.get("phase") == "done"]
+                assert done, status_messages
+                assert done[0]["models_tried"] == "late-model:ok"
+            finally:
+                await Denial.objects.filter(denial_id=35).adelete()
 
         async_to_sync(test)()
 

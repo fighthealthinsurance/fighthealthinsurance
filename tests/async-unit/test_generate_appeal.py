@@ -1,14 +1,17 @@
 import io
+import time
 from contextlib import contextmanager
 from unittest.mock import MagicMock, AsyncMock, patch
 import pytest
 from loguru import logger as loguru_logger
 from fighthealthinsurance.ml.ml_models import RemoteFullOpenLike
+from fighthealthinsurance.ml.model_attempt_log import ModelAttemptRecorder
 from fighthealthinsurance.generate_appeal import (
     AppealGenerator,
     AppealTemplateGenerator,
     GeneratedAppeal,
     _add_proactive_shed_variants,
+    _generated_to_appeals_text,
     _calls_over_context_budget,
     _DUAL_CALL_CONTEXT_RATIO,
     _estimate_call_token_footprint,
@@ -990,6 +993,92 @@ class TestGetModelResultLogging:
 
 
 # --- diagnostics_sink + denial_text_override tests -------------------------
+
+
+class TestGeneratedToAppealsTextRecording:
+    """_generated_to_appeals_text feeds the attempt recorder, whose records are
+    persisted against the denial. What each model actually returned -- including
+    the output the pipeline refuses to deliver -- is the reason these rows
+    exist, so it has to survive every branch."""
+
+    def _recorder(self):
+        return ModelAttemptRecorder(denial_id=42, generation_id="g")
+
+    def _drain(self, recorder, future, **kwargs):
+        tmpl = AppealTemplateGenerator(prefaces=["P"], main=["M"], footer=["F"])
+        return list(
+            _generated_to_appeals_text(
+                "some-model",
+                future,
+                tmpl,
+                None,
+                recorder,
+                **kwargs,
+            )
+        )
+
+    def test_deliverable_output_records_ok_with_the_text(self):
+        recorder = self._recorder()
+        appeal = "Dear insurer, " + "this claim is medically necessary. " * 20
+        future = MagicMock()
+        future.result.return_value = [("full", appeal)]
+
+        self._drain(recorder, future, stage="primary", infer_type="full")
+
+        (record,) = recorder._records
+        assert record.outcome == "ok"
+        assert record.stage == "primary"
+        assert record.response_text == appeal
+        assert record.response_chars == len(appeal)
+
+    def test_runt_output_keeps_the_text_that_was_rejected(self):
+        """A too-short response is dropped by the pipeline and used to be
+        unrecoverable -- 'runt_only' told you nothing about what was said."""
+        recorder = self._recorder()
+        future = MagicMock()
+        future.result.return_value = [("full", "no.")]
+
+        self._drain(recorder, future)
+
+        (record,) = recorder._records
+        assert record.outcome == "runt_only"
+        assert record.response_text == "no."
+        assert record.error_detail  # describe_unusable_appeal said why
+
+    def test_backend_failure_records_error_not_no_output(self):
+        """A model that 500s and a model that answered with nothing are
+        different problems; both used to be filed as no_output."""
+        recorder = self._recorder()
+        future = MagicMock()
+        future.result.side_effect = TimeoutError()
+
+        self._drain(recorder, future)
+
+        (record,) = recorder._records
+        assert record.outcome == "error"
+        assert "timed out" in record.error_detail
+
+    def test_silent_model_still_records_no_output(self):
+        recorder = self._recorder()
+        future = MagicMock()
+        future.result.return_value = []
+
+        self._drain(recorder, future)
+
+        (record,) = recorder._records
+        assert record.outcome == "no_output"
+        assert record.response_text is None
+
+    def test_timing_is_recorded_from_the_submit_stamp(self):
+        recorder = self._recorder()
+        future = MagicMock()
+        future.result.return_value = []
+
+        self._drain(recorder, future, submitted_at=time.monotonic() - 1.5)
+
+        (record,) = recorder._records
+        assert record.duration_ms is not None
+        assert record.duration_ms >= 1400
 
 
 class TestSummarizeModelOutcomes:

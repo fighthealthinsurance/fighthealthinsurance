@@ -14,7 +14,7 @@ from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from fighthealthinsurance.models import Denial
+from fighthealthinsurance.models import Denial, ProposedAppeal
 
 
 class ReportClientErrorTest(APITestCase):
@@ -109,6 +109,60 @@ class ReportClientErrorTest(APITestCase):
             )
         self.assertEqual(resp.status_code, status.HTTP_204_NO_CONTENT)
         self.assertIn("context_tokens: unauthorized", self._logged_error(mock_logger))
+
+    # --- persisted-appeal enrichment -----------------------------------------
+
+    def test_logs_persisted_appeal_counts_for_owned_denial(self):
+        """A client reporting "0 appeals" is describing DELIVERY. The counts
+        of what the server actually has on disk are what say whether
+        generation worked, and they belong in the same log line."""
+        denial = self._make_denial(denial_text="x" * 400)
+        ProposedAppeal.objects.create(for_denial=denial, appeal_text="live one")
+        ProposedAppeal.objects.create(
+            for_denial=denial, appeal_text="held back", speculative=True
+        )
+        with patch("fighthealthinsurance.rest_views.logger") as mock_logger:
+            self.client.post(self._url(), self._owner_payload(denial), format="json")
+        logged = self._logged_error(mock_logger)
+        self.assertIn("server_side:", logged)
+        self.assertIn("persisted=2", logged)
+        self.assertIn("live=1", logged)
+        self.assertIn("speculative=1", logged)
+
+    def test_reports_zero_persisted_when_generation_produced_nothing(self):
+        """The distinguishing case: no rows at all means the report really is
+        about a failed generation, not a lost connection."""
+        denial = self._make_denial(denial_text="x" * 400)
+        with patch("fighthealthinsurance.rest_views.logger") as mock_logger:
+            self.client.post(self._url(), self._owner_payload(denial), format="json")
+        logged = self._logged_error(mock_logger)
+        self.assertIn("persisted=0", logged)
+        self.assertIn("newest_age=none", logged)
+
+    def test_persisted_counts_are_not_computed_without_ownership(self):
+        """The counts are denial-scoped, so they follow the same ownership
+        gate as the token breakdown -- an unauthenticated caller must not be
+        able to probe whether a denial has appeals."""
+        denial = self._make_denial(denial_text="x" * 400)
+        ProposedAppeal.objects.create(for_denial=denial, appeal_text="live one")
+        with patch("fighthealthinsurance.rest_views.logger") as mock_logger:
+            self.client.post(
+                self._url(),
+                {"denial_id": str(denial.denial_id), "error": "e"},
+                format="json",
+            )
+        self.assertIn("server_side: unauthorized", self._logged_error(mock_logger))
+
+    def test_never_500_when_persisted_summary_raises(self):
+        denial = self._make_denial(denial_text="x")
+        with patch(
+            "fighthealthinsurance.rest_views.summarize_persisted_appeals",
+            side_effect=RuntimeError("db exploded"),
+        ):
+            resp = self.client.post(
+                self._url(), self._owner_payload(denial), format="json"
+            )
+        self.assertEqual(resp.status_code, status.HTTP_204_NO_CONTENT)
 
     # --- IDOR regression tests ------------------------------------------------
 

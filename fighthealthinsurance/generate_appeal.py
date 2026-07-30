@@ -9,6 +9,7 @@ from concurrent.futures import Future
 from dataclasses import dataclass
 from typing import Any, Callable, Coroutine, Iterator, List, Optional, Tuple, TypeVar
 
+from django.utils import timezone
 from loguru import logger
 
 
@@ -54,6 +55,15 @@ from .ml.ml_models import (
     repetition_penalty,
 )
 from .ml.ml_router import ml_router
+from .ml.model_attempt_log import (
+    MAX_RESPONSE_CHARS,
+    ModelAttemptRecord,
+    ModelAttemptRecorder,
+    # Re-exported under its historical private name: it lives with the recorder
+    # that owns the records now, but this module is where callers (and tests)
+    # have always found it.
+    summarize_model_outcomes as _summarize_model_outcomes,
+)
 from .payer_policy_helper import (
     get_combined_payer_policy_context,
     resolve_company_from_text,
@@ -1123,39 +1133,18 @@ def _peek_or_none(
         return None, iter([])
 
 
-def _summarize_model_outcomes(outcomes: List[Tuple[Optional[str], str]]) -> str:
-    """Compact ``model:outcome[,model:outcome...]`` summary from a list of
-    ``(model_name, outcome)`` records, for the models_tried diagnostic.
-
-    Deduped per model (the same model is attempted across the primary/backup/
-    shed stages). ``ok`` -- the model produced at least one deliverable appeal
-    -- wins over any failure outcome for that model. Capped so a large fan-out
-    can't bloat the log line.
-    """
-    if not outcomes:
-        return ""
-    best: dict[str, str] = {}
-    for name, outcome in outcomes:
-        key = str(name) if name is not None else "unknown"
-        # "ok" is the only success; keep it over any failure reason.
-        if best.get(key) == "ok":
-            continue
-        if key not in best or outcome == "ok":
-            best[key] = outcome
-    items = [f"{k}:{v}" for k, v in sorted(best.items())]
-    max_items = 12
-    if len(items) > max_items:
-        hidden = len(items) - max_items
-        items = items[:max_items] + [f"+{hidden}_more"]
-    return ",".join(items)
-
-
 def _generated_to_appeals_text(
     model_name: Optional[str],
     k_text_future: Future,
     template_generator: AppealTemplateGenerator,
     context_level: Optional[str] = None,
-    outcomes: Optional[List[Tuple[Optional[str], str]]] = None,
+    recorder: Optional[ModelAttemptRecorder] = None,
+    stage: str = "",
+    infer_type: str = "",
+    backend: str = "",
+    prompt_tokens_est: Optional[int] = None,
+    submitted_at: Optional[float] = None,
+    submitted_wall: Optional[Any] = None,
 ) -> Iterator[GeneratedAppeal]:
     """Map one model future's (infer_type, text) results to GeneratedAppeals.
 
@@ -1165,11 +1154,33 @@ def _generated_to_appeals_text(
     other model's results. Instead we log one concise line and yield nothing.
 
     ``context_level`` (full/tier1_shed/... provenance) is stamped onto each
-    emitted appeal. When ``outcomes`` is provided, this model's outcome
-    (``ok``/``no_output``) is appended to it for the models_tried diagnostic.
+    emitted appeal. When ``recorder`` is provided, this model's outcome plus
+    what it returned, how long it took and why it failed are recorded for the
+    models_tried diagnostic AND for persistence against the denial (see
+    ModelCallAttempt) -- the response text especially, because the runt and
+    refusal cases below are otherwise discarded with no record of what the
+    model actually said.
     """
     produced = False
     runt_only = False
+    error_detail = ""
+    # What this model returned, kept so the persisted row shows what was said
+    # even when nothing was deliverable. Capped as we go rather than at write
+    # time: the row is clipped either way, and holding a runaway model's full
+    # output in memory until the generator finishes buys nothing -- with one
+    # ASGI worker per pod, several such generators in flight is real memory
+    # pressure. `returned_chars` keeps the true total so the row can still say
+    # how much was produced.
+    returned_texts: List[str] = []
+    returned_chars = 0
+
+    def _note_returned(text: str) -> None:
+        nonlocal returned_chars
+        returned_chars += len(text)
+        room = MAX_RESPONSE_CHARS - sum(len(t) for t in returned_texts)
+        if room > 0:
+            returned_texts.append(text[:room])
+
     try:
         try:
             model_results = k_text_future.result()
@@ -1179,10 +1190,10 @@ def _generated_to_appeals_text(
             # code bug in the pipeline) keeps its traceback -- otherwise an
             # all-models-empty run caused by a defect would be indistinguishable
             # from ordinary backend downtime.
+            error_detail = describe_model_error(e)
             if isinstance(e, MODEL_TRANSPORT_ERRORS):
                 logger.warning(
-                    f"Appeal generation via {model_name} failed -- "
-                    f"{describe_model_error(e)}"
+                    f"Appeal generation via {model_name} failed -- {error_detail}"
                 )
             else:
                 logger.opt(exception=True).warning(
@@ -1190,6 +1201,7 @@ def _generated_to_appeals_text(
                 )
             return
         if model_results is None:
+            error_detail = "backend returned no result set"
             return
         for k, text in model_results:
             if text is None:
@@ -1197,6 +1209,7 @@ def _generated_to_appeals_text(
             # It's either full or a reason to plug into a template
             if k == "full":
                 logger.debug(f"Bubbling up full response ({len(text)} chars)")
+                _note_returned(text)
                 # Gate on is_real_appeal, NOT merely on having text: the ladder
                 # rejects runts downstream (_peek_real_or_none), so counting one
                 # as "ok" would report a model as working in the very zero-appeal
@@ -1206,16 +1219,21 @@ def _generated_to_appeals_text(
                     produced = True
                 else:
                     runt_only = True
+                    if not error_detail:
+                        error_detail = describe_unusable_appeal(text)
                 yield GeneratedAppeal(
                     text=text, model_name=model_name, context_level=context_level
                 )
             else:
+                _note_returned(text)
                 templated = template_generator.generate(text)
                 if templated is not None:
                     if is_real_appeal(templated):
                         produced = True
                     else:
                         runt_only = True
+                        if not error_detail:
+                            error_detail = describe_unusable_appeal(templated)
                     yield GeneratedAppeal(
                         text=templated,
                         model_name=model_name,
@@ -1223,38 +1241,91 @@ def _generated_to_appeals_text(
                     )
     finally:
         # Record whether this model produced any deliverable text, for the
-        # models_tried diagnostic.
+        # models_tried diagnostic and the persisted attempt row.
         #
         # Caveat, deliberate: this runs when the generator is exhausted or
         # collected. The zero-appeal ladder drains every stage, so the failure
         # case this diagnostic exists for is covered -- but a generator that is
         # never started records nothing, so on a run where an early model wins
         # the list is partial by design (see the note at the diagnostics_sink
-        # assignment).
-        if outcomes is not None:
+        # assignment). The recorder's second, async flush picks up the rest.
+        if recorder is not None:
             if produced:
                 outcome = "ok"
             elif runt_only:
                 outcome = "runt_only"
+            elif error_detail:
+                # A transport/backend failure, which used to be filed as
+                # `no_output` -- indistinguishable from a model that answered
+                # with nothing, which is a completely different problem.
+                outcome = "error"
             else:
                 outcome = "no_output"
-            outcomes.append((model_name, outcome))
+            joined = "\n---\n".join(returned_texts) if returned_texts else None
+            recorder.record(
+                ModelAttemptRecord(
+                    model_name=model_name,
+                    outcome=outcome,
+                    stage=stage,
+                    context_level=context_level,
+                    infer_type=infer_type,
+                    backend=backend,
+                    error_detail=error_detail,
+                    response_text=joined,
+                    # The true total, not len(joined): joined may already be
+                    # capped, and "how much did it produce" is the question a
+                    # truncated-output diagnosis turns on.
+                    response_chars=returned_chars if returned_texts else None,
+                    prompt_tokens_est=prompt_tokens_est,
+                    duration_ms=(
+                        int((time.monotonic() - submitted_at) * 1000)
+                        if submitted_at is not None
+                        else None
+                    ),
+                    started_at=submitted_wall,
+                )
+            )
 
 
 def _peek_real_or_none(
-    it: Iterator["GeneratedAppeal"], denial_id: Any, stage: str
+    it: Iterator["GeneratedAppeal"], denial_id: Any, stage: str, recorder=None
 ) -> Tuple[Optional["GeneratedAppeal"], Iterator["GeneratedAppeal"]]:
     """Like _peek_or_none, but returns (None, _) when the first item is
     non-None but fails is_real_appeal. Without this, an unusable first item
     would suppress the fallback path even though downstream filtering
-    drops it — leading to zero deliverable appeals."""
+    drops it — leading to zero deliverable appeals.
+
+    Records the rejected item when a ``recorder`` is given. That row would
+    otherwise be the one missing from the persisted attempt log: peeking pulls
+    a single item WITHOUT exhausting the producing generator, so the
+    generator's own end-of-iteration recording never runs for the stage that
+    fell through -- and the item that caused the fallthrough is the single most
+    useful thing to look at afterwards. Recorded under its own outcome rather
+    than as a plain ``runt_only``, both because it is a different fact ("this
+    is what made us try the next stage") and so it can't be mistaken for a
+    duplicate of the row the abandoned generator may still write if it is
+    drained or collected later.
+    """
     first, it = _peek_or_none(it)
     if first is not None and not is_real_appeal(first.text):
+        reason = describe_unusable_appeal(first.text)
         logger.warning(
             f"make_appeals: {stage} first item is unusable "
-            f"({describe_unusable_appeal(first.text)}) for denial {denial_id}; "
+            f"({reason}) for denial {denial_id}; "
             f"treating as empty to trigger fallback"
         )
+        if recorder is not None:
+            recorder.record(
+                ModelAttemptRecord(
+                    model_name=first.model_name,
+                    outcome="rejected_at_peek",
+                    stage=stage,
+                    context_level=first.context_level,
+                    error_detail=reason,
+                    response_text=first.text,
+                    response_chars=len(first.text) if first.text else 0,
+                )
+            )
         return None, it
     return first, it
 
@@ -2246,6 +2317,7 @@ class AppealGenerator(object):
         generation_id: Optional[str] = None,
         diagnostics_sink: Optional[dict] = None,
         denial_text_override: Optional[str] = None,
+        run_kind: str = "live",
     ) -> Iterator[GeneratedAppeal]:
         """
         Generates an iterator of appeal texts for a given insurance denial using templates, non-AI sources, and AI models.
@@ -2263,6 +2335,10 @@ class AppealGenerator(object):
             specialized_templates: Optional list of specialized denial-type
                 templates whose citation hints should be passed to the
                 highest-quality internal model only (one extra call).
+            run_kind: "live" for a user-facing generation, "speculative" for
+                the background precompute. Recorded on the persisted
+                ModelCallAttempt rows so the two runs against the same denial
+                can be told apart when debugging.
 
         Returns:
             An iterator of ``GeneratedAppeal`` items (each carries the
@@ -2359,14 +2435,23 @@ class AppealGenerator(object):
 
         # TODO: use the streaming and cancellable APIs (maybe some fancy JS on the client side?)
 
-        # Per-model attempt outcomes, for the "which models did we try and why
-        # did each fail" diagnostic. Appended by the nested get_model_result
-        # (synchronous reasons) and generated_to_appeals_text (ok/no_output) --
-        # both run on this (make_appeals) thread as futures are consumed, so no
-        # lock is needed. Folded into diagnostics_sink["models_tried"] at the
-        # end. The finer failure reason (timeout / http_<status> /
-        # context_length) is logged per-model by the inference layer.
-        model_outcomes: List[Tuple[Optional[str], str]] = []
+        # Per-model attempt records, for the "which models did we try and why
+        # did each fail" diagnostic AND for persistence against the denial (see
+        # ModelCallAttempt / model_attempt_log). Appended by the nested
+        # get_model_result (synchronous reasons) and generated_to_appeals_text
+        # (ok/runt_only/error/no_output). Folded into
+        # diagnostics_sink["models_tried"] and flushed to the DB at the end.
+        recorder = ModelAttemptRecorder(
+            denial_id=denial.denial_id,
+            generation_id=generation_id,
+            run_kind=run_kind,
+        )
+
+        # Which backend answered for a given model name on the most recent
+        # call, so the attempt row can name the endpoint rather than just the
+        # registry name. Written by get_model_result as it walks the backend
+        # list; read when the future's results are consumed.
+        winning_backend_by_model: dict[str, str] = {}
 
         # For any model that we have a prompt for try to call it and return futures
         def get_model_result(
@@ -2378,6 +2463,8 @@ class AppealGenerator(object):
             pubmed_context: Optional[str] = None,
             ml_citations_context: Optional[List[str]] = None,
             prof_pov: bool = False,
+            stage: str = "",
+            context_level: Optional[str] = None,
         ) -> List[Future[Tuple[str, Optional[str]]]]:
             if model_name not in ml_router.models_by_name:
                 sample = list(itertools.islice(ml_router.models_by_name.keys(), 10))
@@ -2386,13 +2473,37 @@ class AppealGenerator(object):
                     f"not in ml_router.models_by_name "
                     f"(available sample: {sample})"
                 )
-                model_outcomes.append((model_name, "not_registered"))
+                recorder.record(
+                    ModelAttemptRecord(
+                        model_name=model_name,
+                        outcome="not_registered",
+                        stage=stage,
+                        context_level=context_level,
+                        infer_type=infer_type,
+                        error_detail=(
+                            f"not in ml_router.models_by_name "
+                            f"(available sample: {sample})"
+                        ),
+                    )
+                )
                 return []
             model_backends = ml_router.models_by_name[model_name]
             if prompt is None:
                 logger.debug(f"get_model_result: no prompt for {model_name}, skipping")
-                model_outcomes.append((model_name, "no_prompt"))
+                recorder.record(
+                    ModelAttemptRecord(
+                        model_name=model_name,
+                        outcome="no_prompt",
+                        stage=stage,
+                        context_level=context_level,
+                        infer_type=infer_type,
+                    )
+                )
                 return []
+            # Per-backend failures on the way to a working one. Kept so the
+            # all_backends_failed row says which endpoints failed and how,
+            # rather than just "all of them".
+            backend_errors: List[str] = []
             for model in model_backends:
                 try:
                     result = _get_model_result(
@@ -2407,8 +2518,11 @@ class AppealGenerator(object):
                     )
 
                     if result is not None:
+                        winning_backend_by_model[model_name] = str(model)
                         return result
+                    backend_errors.append(f"{model}: returned no futures")
                 except Exception as e:
+                    backend_errors.append(f"{model}: {describe_model_error(e)}")
                     logger.opt(exception=True).warning(
                         f"get_model_result: backend {model} "
                         f"(for model_name={model_name}) failed: {e}"
@@ -2417,7 +2531,16 @@ class AppealGenerator(object):
                 f"get_model_result: all {len(model_backends)} backend(s) "
                 f"for model_name={model_name} failed"
             )
-            model_outcomes.append((model_name, "all_backends_failed"))
+            recorder.record(
+                ModelAttemptRecord(
+                    model_name=model_name,
+                    outcome="all_backends_failed",
+                    stage=stage,
+                    context_level=context_level,
+                    infer_type=infer_type,
+                    error_detail="; ".join(backend_errors),
+                )
+            )
             return []
 
         def _get_model_result(
@@ -2608,35 +2731,70 @@ class AppealGenerator(object):
 
         def make_async_model_calls(
             calls,
+            stage: str = "",
         ) -> List[Future[Iterator[GeneratedAppeal]]]:
             logger.debug(f"Calling models: {calls}")
             # Bind model_name AND context_level to each future so we can recover
             # them after the per-call iterator collapses results to (kind, text)
-            # pairs.
-            model_futures: List[Tuple[Optional[str], Optional[str], Future]] = []
+            # pairs. The submit timestamps and prompt size ride along so the
+            # persisted attempt row can report how long the call took and how
+            # big its prompt was -- the two numbers a context-overflow or
+            # slow-backend diagnosis needs.
+            model_futures: List[Tuple[dict, Future]] = []
             for call in calls:
-                model_name = call.get("model_name")
-                context_level = call.get("context_level")
                 # context_level is provenance metadata, not an inference arg;
                 # strip it before spreading the call into get_model_result.
+                context_level = call.get("context_level")
                 call_kwargs = {k: v for k, v in call.items() if k != "context_level"}
-                for fut in get_model_result(**call_kwargs):
-                    model_futures.append((model_name, context_level, fut))
+                prompt = call.get("prompt")
+                # Everything that doesn't depend on the future is computed once
+                # per call, not once per future: this loop is what gets the
+                # inference requests onto the wire, so nothing avoidable belongs
+                # between one call's submission and the next's.
+                prompt_tokens_est = estimate_tokens(prompt) if prompt else None
+                submitted_at = time.monotonic()
+                submitted_wall = timezone.now()
+                for fut in get_model_result(
+                    **call_kwargs, stage=stage, context_level=context_level
+                ):
+                    model_futures.append(
+                        (
+                            {
+                                "model_name": call.get("model_name"),
+                                "context_level": context_level,
+                                "stage": stage,
+                                "infer_type": call.get("infer_type") or "",
+                                "backend": winning_backend_by_model.get(
+                                    str(call.get("model_name")), ""
+                                ),
+                                "prompt_tokens_est": prompt_tokens_est,
+                                "submitted_at": submitted_at,
+                                "submitted_wall": submitted_wall,
+                            },
+                            fut,
+                        )
+                    )
 
-            # Python lack reasonable future chaining (ugh). Thread context_level
-            # (cl) and the shared model_outcomes collector into the module-level
+            # Python lack reasonable future chaining (ugh). Thread the call
+            # metadata and the shared attempt recorder into the module-level
             # mapper so each emitted appeal carries its shed level and each
-            # model's outcome is recorded for the models_tried diagnostic.
+            # model's outcome (plus its response text and timing) is recorded.
             generated_text_futures = [
                 executor.submit(
                     _generated_to_appeals_text,
-                    mn,
+                    meta["model_name"],
                     f,
                     template_generator,
-                    cl,
-                    model_outcomes,
+                    meta["context_level"],
+                    recorder,
+                    meta["stage"],
+                    meta["infer_type"],
+                    meta["backend"],
+                    meta["prompt_tokens_est"],
+                    meta["submitted_at"],
+                    meta["submitted_wall"],
                 )
-                for mn, cl, f in model_futures
+                for meta, f in model_futures
             ]
             return generated_text_futures
 
@@ -2658,7 +2816,7 @@ class AppealGenerator(object):
         )
 
         generated_text_futures: List[Future[Iterator[GeneratedAppeal]]] = (
-            make_async_model_calls(first_iteration_calls)
+            make_async_model_calls(first_iteration_calls, stage="primary")
         )
 
         # Tiered fallback: primary -> backup -> retry primary with shed
@@ -2671,7 +2829,7 @@ class AppealGenerator(object):
         # phase trace (init/done frames + ReportClientError) sharing this id.
         gen_prefix = f"[gen_id={generation_id}] " if generation_id else ""
         appeals = as_available_nested(generated_text_futures)
-        first, appeals = _peek_real_or_none(appeals, denial_id, "primary")
+        first, appeals = _peek_real_or_none(appeals, denial_id, "primary", recorder)
         # Which stage produced the first deliverable appeal, surfaced via
         # diagnostics_sink so the generating-phase logging/done-frame can
         # report whether the primary won or a shed-tier retry rescued it.
@@ -2683,8 +2841,10 @@ class AppealGenerator(object):
                 f"{gen_prefix}Primary empty for denial {denial_id}; trying "
                 f"backup_calls (n={len(backup_calls)}, use_external={use_ext})"
             )
-            appeals = as_available_nested(make_async_model_calls(backup_calls))
-            first, appeals = _peek_real_or_none(appeals, denial_id, "backup")
+            appeals = as_available_nested(
+                make_async_model_calls(backup_calls, stage="backup")
+            )
+            first, appeals = _peek_real_or_none(appeals, denial_id, "backup", recorder)
             if first is not None:
                 winning_stage = "backup"
 
@@ -2712,9 +2872,11 @@ class AppealGenerator(object):
                     f"{gen_prefix}make_appeals: retrying primary for denial "
                     f"{denial_id} with context shed (tier={tier}, changed={changed})"
                 )
-                appeals = as_available_nested(make_async_model_calls(shed_calls))
+                appeals = as_available_nested(
+                    make_async_model_calls(shed_calls, stage=f"retry_tier_{tier}")
+                )
                 first, appeals = _peek_real_or_none(
-                    appeals, denial_id, f"retry_tier_{tier}"
+                    appeals, denial_id, f"retry_tier_{tier}", recorder
                 )
                 if first is not None:
                     logger.warning(
@@ -2744,7 +2906,20 @@ class AppealGenerator(object):
             # for ("we produced nothing; which models did we try and why did
             # each fail") is complete. On a successful run it will under-report,
             # by design: the winning stage short-circuits the rest.
-            diagnostics_sink["models_tried"] = _summarize_model_outcomes(model_outcomes)
+            diagnostics_sink["models_tried"] = recorder.models_tried_summary()
+            # Hand the recorder to the caller so the streaming flow can flush
+            # the late records (the generators still lazily chained above) once
+            # drainage finishes. The sync flush below is the one that is
+            # guaranteed to happen.
+            diagnostics_sink["attempt_recorder"] = recorder
+        # Persist what we know NOW, on this thread. This runs inside
+        # database_sync_to_async, which cannot be cancelled -- so unlike the
+        # async flush in the streaming flow it still happens when the client
+        # hangs up mid-stream and the async generator above is closed. That is
+        # exactly the case these rows exist for, so it must not depend on the
+        # stream surviving. Anything recorded after this point is picked up by
+        # the caller's aflush().
+        recorder.flush()
         # Wrap template-based / non-AI appeals (plain strings) as
         # GeneratedAppeal so the downstream pipeline has a uniform type.
         initial_appeals_wrapped: Iterator[GeneratedAppeal] = (

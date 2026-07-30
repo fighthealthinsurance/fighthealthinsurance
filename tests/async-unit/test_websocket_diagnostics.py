@@ -24,6 +24,7 @@ from django.db.utils import OperationalError
 from fighthealthinsurance.websockets import (
     _AppealGenTraceFields,
     _stream_error_is_client_disconnect,
+    StreamWireTracker,
     log_zero_appeal_diagnostics,
 )
 
@@ -622,8 +623,12 @@ async def test_rest_fallback_disconnect_log_includes_stream_timing():
 
     messages = [call.args[0] for call in fake_logger.warning.call_args_list]
     assert messages, "expected a client-disconnect WARNING"
-    assert "client disconnected mid-stream" in messages[-1]
-    assert re.search(r"elapsed=\d+\.\d+s idle=\d+\.\d+s", messages[-1]), messages[-1]
+    assert "stream ended mid-flight" in messages[-1]
+    assert re.search(r"elapsed_s=\d+\.\d+ idle_s=\d+\.\d+", messages[-1]), messages[-1]
+    # gen_id is the only join key between this line, the generation trace and
+    # the client's own error report; without it the log is an orphan.
+    assert "gen_id=" in messages[-1], messages[-1]
+    assert "max_gap_s=" in messages[-1], messages[-1]
 
 
 @pytest.mark.asyncio
@@ -678,7 +683,7 @@ async def test_rest_fallback_disconnect_idle_excludes_generation_gap():
         await stream.aclose()
 
     message = fake_logger.warning.call_args_list[-1].args[0]
-    match = re.search(r"elapsed=(\d+\.\d+)s idle=(\d+\.\d+)s", message)
+    match = re.search(r"elapsed_s=(\d+\.\d+) idle_s=(\d+\.\d+)", message)
     assert match, message
     elapsed, idle = float(match.group(1)), float(match.group(2))
     # Two generation gaps have elapsed, but we were writing at the moment of
@@ -686,6 +691,11 @@ async def test_rest_fallback_disconnect_idle_excludes_generation_gap():
     # The 0.1s slack on elapsed is the log's formatting granularity.
     assert elapsed >= 2 * gap - 0.1, message
     assert idle < gap / 2, message
+    # The trailing idle window is near zero, but the run WAS starving the
+    # client between frames -- which is exactly the fact `idle` alone hides.
+    gap_match = re.search(r"max_gap_s=(\d+\.\d+)", message)
+    assert gap_match, message
+    assert float(gap_match.group(1)) >= gap - 0.1, message
 
 
 @pytest.mark.asyncio
@@ -704,6 +714,81 @@ async def test_zero_persisted_without_disconnect_still_generation_failure():
             stream_error="Server error while generating appeals.",
         )
     assert "Generation produced nothing" in errors[-1]
+
+
+class TestStreamWireTracker:
+    """The tracker is the server-side answer to "did WE go quiet, or did the
+    frames not arrive?" -- a client can only ever report the latter, and the
+    browser renders both as the same bare network error."""
+
+    def test_max_gap_records_the_worst_silence_not_the_last(self):
+        """A stream that stalls once then recovers must still report the stall:
+        the trailing gap alone would describe a healthy-looking end to a run
+        that had already starved the client."""
+        tracker = StreamWireTracker()
+        # Backdate the last-write stamp instead of freezing the clock: patching
+        # time.monotonic patches it for the whole process, asyncio included.
+        tracker.last -= 60.0
+        tracker.note_yield("a", "generating")
+        tracker.note_yield("b", "synthesizing")
+
+        assert tracker.max_gap >= 60.0
+        assert tracker.max_gap_phase == "generating"
+
+    def test_summary_reports_frames_bytes_and_phase(self):
+        tracker = StreamWireTracker()
+        tracker.note_yield("hello", "generating")
+        tracker.note_yield("!", "generating")
+        summary = tracker.summary()
+
+        assert "frames=2" in summary
+        assert "bytes=6" in summary
+        assert "max_gap_phase=" in summary
+
+    def test_summary_before_any_frame_is_still_loggable(self):
+        """A stream that dies before writing anything is the case most worth
+        logging, so the summary must not depend on a frame having happened."""
+        summary = StreamWireTracker().summary()
+
+        assert "frames=0" in summary
+        assert "bytes=0" in summary
+        assert "max_gap_phase=none" in summary
+
+
+@pytest.mark.asyncio
+async def test_wire_summary_is_included_in_zero_appeal_log():
+    """The wire summary has to reach the log line itself -- it is the only
+    field that separates "the server stopped writing" from "the writes did
+    not arrive", and both otherwise produce identical zero-appeal logs."""
+    objects = _make_count_mock(return_value=0)
+    p1, p2 = _patch_models(objects)
+    err_cm, errors = _captured_logger()
+    with p1, p2, err_cm:
+        await log_zero_appeal_diagnostics(
+            denial_id=42,
+            status_count=3,
+            last_status_phase="generating",
+            transport="rest",
+            wire="frames=16 bytes=1813 max_gap_s=60.1 max_gap_phase=generating",
+        )
+    assert "wire=[frames=16 bytes=1813 max_gap_s=60.1" in errors[-1]
+
+
+@pytest.mark.asyncio
+async def test_wire_summary_omitted_when_not_supplied():
+    """Callers that can't measure the wire must not emit an empty `wire=[]`
+    that reads as "we wrote nothing"."""
+    objects = _make_count_mock(return_value=0)
+    p1, p2 = _patch_models(objects)
+    err_cm, errors = _captured_logger()
+    with p1, p2, err_cm:
+        await log_zero_appeal_diagnostics(
+            denial_id=42,
+            status_count=3,
+            last_status_phase="generating",
+            transport="rest",
+        )
+    assert "wire=" not in errors[-1]
 
 
 class TestDeniedItemsAnalysisDispatchGuard:

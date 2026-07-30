@@ -240,12 +240,25 @@ class SpeculativeAppealsHelper:
                     clinical_trials_context=None,
                     denial_text_override=denial_text_override,
                     diagnostics_sink=diagnostics,
+                    # Tags the persisted ModelCallAttempt rows so this
+                    # background precompute doesn't read as part of the user's
+                    # live generation when debugging a failure on this denial.
+                    run_kind="speculative",
                 ):
                     if not is_real_appeal(item.text):
                         continue
                     drafts.append(item)
                     if len(drafts) >= cls.MAX_SPECULATIVE_APPEALS:
                         break
+                # make_appeals flushed the attempts it knew about before
+                # returning its lazy iterator; the loop above drained more of
+                # that iterator, so flush again. Still on this
+                # database_sync_to_async thread, so the sync flush is correct
+                # here -- and unlike the live flow there is no async
+                # end-of-stream hook to do it for us.
+                recorder = diagnostics.get("attempt_recorder")
+                if recorder is not None:
+                    recorder.flush()
                 return drafts
 
             # thread_sensitive=False: a burst of denial creations dispatches

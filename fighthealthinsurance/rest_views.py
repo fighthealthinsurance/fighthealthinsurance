@@ -1,7 +1,6 @@
 import asyncio
 import datetime
 import json
-import time
 import typing
 from typing import Optional
 
@@ -78,7 +77,9 @@ from fighthealthinsurance.rest_mixins import (
 from fighthealthinsurance.type_utils import User
 from fighthealthinsurance.websockets import (
     _AppealGenTraceFields,
+    StreamWireTracker,
     log_zero_appeal_diagnostics,
+    summarize_persisted_appeals,
 )
 
 from .common_view_logic import AppealAssemblyHelper
@@ -558,10 +559,10 @@ class ReportClientError(APIView):
         # ws close code/reason, server-reported totals, etc). They share the
         # same sanitization rules but get their own field so a long mobile
         # user-agent string in browser_info doesn't crowd them out. The cap is
-        # well above the ~650 chars the client currently emits: truncation
+        # well above the ~900 chars the client currently emits: truncation
         # silently drops the trailing fields (wait times, gen_id), which are
         # the ones triage joins on, so keep real headroom for new counters.
-        diagnostics = _sanitize(str(request.data.get("diagnostics", "")), 1600)
+        diagnostics = _sanitize(str(request.data.get("diagnostics", "")), 2400)
         session_key = request.session.session_key or "no_session_key"
         denial_id_valid = is_valid_denial_id(denial_id)
         # Annotate with the (estimated) token sizes of the denial text and the
@@ -578,11 +579,19 @@ class ReportClientError(APIView):
         # log without the token breakdown rather than reject. Never let the
         # enrichment break the report.
         context_tokens = "unauthorized"
-        # Wrap BOTH the ownership lookup and the summarize call: this endpoint's
-        # whole contract is "always 204, never let the diagnostic enrichment
-        # break the report", and get_denial_for_action does a DB query that can
-        # raise. Keeping it outside the try would let a DB/runtime error there
-        # escape and 500 the error reporter.
+        # The question every one of these reports raises -- "did the server
+        # actually generate anything, or is this really just a dead
+        # connection?" -- is answered by the persisted row counts, not by the
+        # client's transport diagnostics. Logging them here means a report
+        # claiming 0 appeals is self-contained: rows present => this was a
+        # delivery failure and the user's work is recoverable on a retry; no
+        # rows => generation genuinely produced nothing.
+        persisted_appeals = "unauthorized"
+        # Wrap BOTH the ownership lookup and the summarize calls: this
+        # endpoint's whole contract is "always 204, never let the diagnostic
+        # enrichment break the report", and get_denial_for_action does a DB
+        # query that can raise. Keeping it outside the try would let a
+        # DB/runtime error there escape and 500 the error reporter.
         try:
             denial = common_view_logic.get_denial_for_action(
                 denial_id=request.data.get("denial_id"),
@@ -591,8 +600,10 @@ class ReportClientError(APIView):
             )
             if denial is not None:
                 context_tokens = context_utils.summarize_denial_context_tokens(denial)
+                persisted_appeals = summarize_persisted_appeals(denial)
         except Exception as e:
             context_tokens = "unavailable"
+            persisted_appeals = "unavailable"
             logger.opt(exception=True).debug(
                 f"Failed to compute context token sizes for denial " f"{denial_id}: {e}"
             )
@@ -605,6 +616,7 @@ class ReportClientError(APIView):
             f"APPEAL_GEN_DIAG Client-reported appeal error for denial {denial_id}: "
             f"{error_message} | browser: {browser_info} | "
             f"diagnostics: {diagnostics} | "
+            f"server_side: {persisted_appeals} | "
             f"context_tokens: {context_tokens} | "
             f"session_key={session_key} | remote_ip={request.META.get('REMOTE_ADDR', 'unknown')} | "
             f"denial_id_valid={denial_id_valid} | denial_id_raw={denial_id_raw}"
@@ -748,22 +760,21 @@ def streaming_appeals_rest_fallback(request: Request):
         # frame is what distinguishes "an intermediary reaped an idle stream"
         # (long, suspiciously round idle gap) from "the user's network went
         # away" (we were still writing when it died).
-        stream_started_at = time.monotonic()
-        last_yield_at = stream_started_at
+        #
+        # StreamWireTracker also keeps the LARGEST gap we ever left, not just
+        # the final one: a client that reports 60s of silence and dies is only
+        # diagnosable against what the server thinks it wrote in that window.
+        wire = StreamWireTracker()
 
         def _timing() -> str:
-            now = time.monotonic()
-            return (
-                f"elapsed={now - stream_started_at:.1f}s "
-                f"idle={now - last_yield_at:.1f}s"
-            )
+            return wire.summary()
 
         try:
             # Flush a leading newline before awaiting generate_appeals
             # so anti-buffering headers and intermediary heuristics
             # engage immediately. Otherwise a slow first ML call can
             # make the fallback look hung even when it's working.
-            last_yield_at = time.monotonic()
+            wire.note_yield("\n", last_status_phase)
             yield "\n"
             async for record in common_view_logic.AppealsBackendHelper.generate_appeals(
                 data
@@ -775,13 +786,13 @@ def streaming_appeals_rest_fallback(request: Request):
                 # generation gap as idle time, right when we were actively
                 # writing. That's the exact confusion this metric exists to
                 # remove.
-                last_yield_at = time.monotonic()
+                wire.note_yield(record, last_status_phase)
                 # Mirror the WebSocket framing: each record is already
                 # newline-terminated JSON, but we add an extra "\n"
                 # framing newline so intermediaries that buffer per-line
                 # still flush early, matching the WS keepalive cadence.
                 yield record
-                last_yield_at = time.monotonic()
+                wire.note_yield("\n", last_status_phase)
                 yield "\n"
                 stripped = record.strip()
                 if stripped:
@@ -802,22 +813,33 @@ def streaming_appeals_rest_fallback(request: Request):
                     status_count=status_count,
                     last_status_phase=last_status_phase,
                     transport="rest",
+                    wire=wire.summary(),
                     **gen_fields.as_kwargs(),
                 )
         except (GeneratorExit, asyncio.CancelledError):
-            # The REST client hung up mid-stream (the async generator is being
-            # closed / the request task cancelled). This is a client
-            # disconnect, NOT a model failure. Log a concise line WITHOUT the
-            # DB lookup -- awaiting an ORM query while the generator is being
-            # torn down is unsafe -- and re-raise so close/cancel semantics are
-            # preserved.
+            # The stream went away mid-flight (the async generator is being
+            # closed / the request task cancelled). This is a DELIVERY end, NOT
+            # a model failure -- but "the client hung up" and "an intermediary
+            # reaped a stream we had stopped feeding" arrive here identically,
+            # and the browser cannot tell them apart either (Chrome reports
+            # both as a bare "network error"). The wire summary is what
+            # separates them: a max_gap far above the 15s heartbeat cadence
+            # means WE went quiet first and the disconnect is our own fault.
+            #
+            # Log a concise line WITHOUT the DB lookup -- awaiting an ORM query
+            # while the generator is being torn down is unsafe -- and re-raise
+            # so close/cancel semantics are preserved. gen_id is included even
+            # though it costs nothing: it is the only join key between this
+            # line, the generation trace, and the client's ReportClientError,
+            # and omitting it left this log unjoinable to either.
             if appeal_count == 0:
                 logger.warning(
-                    f"APPEAL_GEN_DIAG [rest] client disconnected mid-stream for "
+                    f"APPEAL_GEN_DIAG [rest] stream ended mid-flight (client "
+                    f"hangup or intermediary reap) for "
                     f"denial {denial_id}: generation "
                     f"{'not reached' if last_status_phase in (None, 'init', 'research') else 'in progress'} "
                     f"(last_phase={last_status_phase}, status_frames={status_count}, "
-                    f"{_timing()})"
+                    f"gen_id={gen_fields.generation_id}, {_timing()})"
                 )
             raise
         except Exception as e:
@@ -843,6 +865,7 @@ def streaming_appeals_rest_fallback(request: Request):
                     # (e.g. Postgres "could not receive data from server:
                     # Connection reset by peer") from ERROR to WARNING.
                     error_from_send=False,
+                    wire=wire.summary(),
                     **gen_fields.as_kwargs(),
                 )
             # Inform the client rather than terminating silently
