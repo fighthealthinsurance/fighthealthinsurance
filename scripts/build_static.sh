@@ -117,8 +117,10 @@ if [ "$SKIP_STATIC_COLLECT" = false ]; then
   # Generate the blog metadata so it's included in the container.
   ./manage.py generate_blog_metadata || echo "Warning: Failed to generate blog metadata. Continuing build without it."
 
-  # Save checksum after successful collect
-  if [ -n "$CURRENT_STATIC_CHECKSUM" ]; then
-    echo "$CURRENT_STATIC_CHECKSUM" > "$STATIC_CHECKSUM_FILE"
-  fi
+  # Save checksum after successful collect. Recompute rather than reuse
+  # CURRENT_STATIC_CHECKSUM: generate_blog_metadata just wrote
+  # blog_posts.json inside the scanned static tree, so the pre-build value
+  # is already stale and saving it would make the very next run rebuild
+  # everything once for no reason.
+  compute_static_checksum > "$STATIC_CHECKSUM_FILE"
 fi
