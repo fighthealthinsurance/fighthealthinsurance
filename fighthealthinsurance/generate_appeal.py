@@ -56,6 +56,7 @@ from .ml.ml_models import (
 )
 from .ml.ml_router import ml_router
 from .ml.model_attempt_log import (
+    MAX_RESPONSE_CHARS,
     ModelAttemptRecord,
     ModelAttemptRecorder,
     # Re-exported under its historical private name: it lives with the recorder
@@ -1163,9 +1164,23 @@ def _generated_to_appeals_text(
     produced = False
     runt_only = False
     error_detail = ""
-    # Every text this model returned, kept so the persisted row shows what was
-    # said even when nothing was deliverable. Bounded by the recorder's clip.
+    # What this model returned, kept so the persisted row shows what was said
+    # even when nothing was deliverable. Capped as we go rather than at write
+    # time: the row is clipped either way, and holding a runaway model's full
+    # output in memory until the generator finishes buys nothing -- with one
+    # ASGI worker per pod, several such generators in flight is real memory
+    # pressure. `returned_chars` keeps the true total so the row can still say
+    # how much was produced.
     returned_texts: List[str] = []
+    returned_chars = 0
+
+    def _note_returned(text: str) -> None:
+        nonlocal returned_chars
+        returned_chars += len(text)
+        room = MAX_RESPONSE_CHARS - sum(len(t) for t in returned_texts)
+        if room > 0:
+            returned_texts.append(text[:room])
+
     try:
         try:
             model_results = k_text_future.result()
@@ -1194,7 +1209,7 @@ def _generated_to_appeals_text(
             # It's either full or a reason to plug into a template
             if k == "full":
                 logger.debug(f"Bubbling up full response ({len(text)} chars)")
-                returned_texts.append(text)
+                _note_returned(text)
                 # Gate on is_real_appeal, NOT merely on having text: the ladder
                 # rejects runts downstream (_peek_real_or_none), so counting one
                 # as "ok" would report a model as working in the very zero-appeal
@@ -1210,7 +1225,7 @@ def _generated_to_appeals_text(
                     text=text, model_name=model_name, context_level=context_level
                 )
             else:
-                returned_texts.append(text)
+                _note_returned(text)
                 templated = template_generator.generate(text)
                 if templated is not None:
                     if is_real_appeal(templated):
@@ -1257,7 +1272,10 @@ def _generated_to_appeals_text(
                     backend=backend,
                     error_detail=error_detail,
                     response_text=joined,
-                    response_chars=len(joined) if joined is not None else None,
+                    # The true total, not len(joined): joined may already be
+                    # capped, and "how much did it produce" is the question a
+                    # truncated-output diagnosis turns on.
+                    response_chars=returned_chars if returned_texts else None,
                     prompt_tokens_est=prompt_tokens_est,
                     duration_ms=(
                         int((time.monotonic() - submitted_at) * 1000)
@@ -2729,6 +2747,11 @@ class AppealGenerator(object):
                 context_level = call.get("context_level")
                 call_kwargs = {k: v for k, v in call.items() if k != "context_level"}
                 prompt = call.get("prompt")
+                # Everything that doesn't depend on the future is computed once
+                # per call, not once per future: this loop is what gets the
+                # inference requests onto the wire, so nothing avoidable belongs
+                # between one call's submission and the next's.
+                prompt_tokens_est = estimate_tokens(prompt) if prompt else None
                 submitted_at = time.monotonic()
                 submitted_wall = timezone.now()
                 for fut in get_model_result(
@@ -2744,9 +2767,7 @@ class AppealGenerator(object):
                                 "backend": winning_backend_by_model.get(
                                     str(call.get("model_name")), ""
                                 ),
-                                "prompt_tokens_est": (
-                                    estimate_tokens(prompt) if prompt else None
-                                ),
+                                "prompt_tokens_est": prompt_tokens_est,
                                 "submitted_at": submitted_at,
                                 "submitted_wall": submitted_wall,
                             },

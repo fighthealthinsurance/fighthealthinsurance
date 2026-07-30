@@ -12,6 +12,7 @@ synchronously mid-run, the streaming flow flushes again at the end, and
 neither may duplicate or drop a record).
 """
 
+import threading
 from unittest.mock import MagicMock, patch
 
 from django.test import TestCase
@@ -345,6 +346,126 @@ class MakeAppealsPersistsAttemptsTest(TestCase):
 
         self.denial.delete()
         self.assertEqual(ModelCallAttempt.objects.count(), 0)
+
+
+class MakeAppealsStaysLazyTest(TestCase):
+    """Appeals must still reach the user as each inference completes.
+
+    make_appeals returns a LAZY iterator, and it now does two extra things
+    before returning it: it records attempt rows and it flushes them. Neither
+    may drain that iterator or block on I/O before the first appeal can be
+    served, so this pins both.
+    """
+
+    APPEAL_ONE = "Dear insurer, " + "this claim is medically necessary. " * 20
+    APPEAL_TWO = "Dear insurer, " + "the denial contradicts your policy. " * 20
+
+    def setUp(self):
+        self.denial = Denial.objects.create(
+            denial_text="denial letter text",
+            hashed_email=Denial.get_hashed_email("lazy@example.com"),
+            procedure="px",
+            diagnosis="dx",
+        )
+        self.gate = threading.Event()
+
+    def _lazy_backend(self):
+        """A backend whose results arrive one at a time, the second only after
+        `self.gate` opens.
+
+        Real backends hand back a materialized list per inference and the
+        streaming granularity in production is one future per inference; a
+        generator here is the deterministic way to prove the CONSUMER chain
+        (UnwrapIterator -> make_appeals' return value -> the caller) is lazy,
+        without depending on as_completed ordering across models.
+        """
+
+        def infer(**kwargs):
+            def results():
+                yield ("full", self.APPEAL_ONE)
+                self.gate.wait(timeout=10)
+                yield ("full", self.APPEAL_TWO)
+
+            return results()
+
+        backend = MagicMock()
+        backend.infer.side_effect = infer
+        return backend
+
+    def _make_appeals(self):
+        from fighthealthinsurance.generate_appeal import (
+            AppealGenerator,
+            AppealTemplateGenerator,
+        )
+
+        self.sink: dict = {}
+        with patch(
+            "fighthealthinsurance.generate_appeal.ml_router.generate_text_backend_names",
+            side_effect=lambda use_external=False: ["lazy"],
+        ), patch(
+            "fighthealthinsurance.generate_appeal.ml_router.models_by_name",
+            new={"lazy": [self._lazy_backend()]},
+        ):
+            return AppealGenerator().make_appeals(
+                self.denial,
+                AppealTemplateGenerator(prefaces=["P"], main=["M"], footer=["F"]),
+                medical_reasons=[],
+                non_ai_appeals=[],
+                generation_id="lazy00000001",
+                diagnostics_sink=self.sink,
+            )
+
+    def tearDown(self):
+        # Never leave the generator's thread parked on the gate.
+        self.gate.set()
+
+    def test_first_appeal_is_available_before_the_model_finishes(self):
+        """The core streaming guarantee: make_appeals hands back the first
+        appeal while the model still has work outstanding."""
+        appeals = self._make_appeals()
+
+        first = next(iter(appeals))
+
+        self.assertEqual(first.text, self.APPEAL_ONE)
+        # Still blocked on the second result, so the first genuinely arrived
+        # early rather than after the model was done.
+        self.assertFalse(self.gate.is_set())
+
+    def test_make_appeals_writes_nothing_before_serving_the_first_appeal(self):
+        """The synchronous flush must not put a DB round-trip in front of the
+        first appeal on a healthy run. Nothing is pending at that point (no
+        generator has been exhausted), so it has to short-circuit."""
+        self._make_appeals()
+
+        self.assertEqual(ModelCallAttempt.objects.count(), 0)
+
+    def test_draining_the_iterator_yields_every_appeal_in_order(self):
+        appeals = self._make_appeals()
+        it = iter(appeals)
+
+        first = next(it)
+        self.gate.set()
+        rest = [a.text for a in it]
+
+        self.assertEqual(first.text, self.APPEAL_ONE)
+        self.assertIn(self.APPEAL_TWO, rest)
+
+    def test_the_ok_row_lands_once_the_iterator_is_drained(self):
+        """Proof that the generator was NOT exhausted at return time: its row
+        only exists after drainage, which is what the second (async) flush in
+        the streaming flow is for."""
+        appeals = self._make_appeals()
+        self.gate.set()
+        list(appeals)
+
+        self.assertEqual(ModelCallAttempt.objects.count(), 0)
+        recorder = self.sink["attempt_recorder"]
+        self.assertEqual(recorder.flush(), 1)
+        row = ModelCallAttempt.objects.get()
+        self.assertEqual(row.outcome, "ok")
+        self.assertEqual(
+            row.response_chars, len(self.APPEAL_ONE) + len(self.APPEAL_TWO)
+        )
 
 
 class SummarizeModelOutcomesLocationTest(TestCase):

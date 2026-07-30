@@ -181,9 +181,24 @@ class ModelAttemptRecorder:
     def flush(self) -> int:
         """Persist pending records synchronously. Returns rows written.
 
-        Best-effort: a DB failure here must never break appeal generation, so
-        it is logged and swallowed. Records are consumed either way -- retrying
-        them on the next flush would risk writing a partial batch twice.
+        Call this ONLY from inside a callable already wrapped in
+        ``database_sync_to_async`` -- today ``make_appeals`` and the speculative
+        helper's ``_generate_drafts``, both of which are bridged by their
+        callers. Inside such a callable the sync ORM is the correct API and the
+        bridge closes the thread's connections around the call; bridging again
+        from in there would just churn connections, and there is nothing to
+        await from a sync function anyway. From async code use ``aflush``,
+        which uses the native async ORM.
+
+        Not a hard error if that is violated: Django raises
+        SynchronousOnlyOperation on the event loop, which the except below
+        turns into a WARNING naming this function -- diagnostics must not be
+        able to break generation, so a misplaced call loses rows loudly rather
+        than failing a user's appeal.
+
+        Best-effort for the same reason: a DB failure is logged and swallowed.
+        Records are consumed either way -- retrying them on the next flush
+        would risk writing a partial batch twice.
         """
         denial_id = self.denial_id
         if denial_id is None:
@@ -204,7 +219,11 @@ class ModelAttemptRecorder:
             return 0
 
     async def aflush(self) -> int:
-        """Async counterpart to ``flush``, for the end of the streaming flow."""
+        """Async counterpart to ``flush``, for the end of the streaming flow.
+
+        Uses the native async ORM (``abulk_create``) rather than bridging the
+        sync one, so there is no thread hop and no bridge to pick.
+        """
         denial_id = self.denial_id
         if denial_id is None:
             return 0
