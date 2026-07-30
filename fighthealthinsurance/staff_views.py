@@ -1173,9 +1173,11 @@ class ProConnectorProcessView(View):
             # another tab). Just advance to whatever is next.
             return redirect("proconnector_process")
 
-        if pro.proconnector_attempted or pro.proconnector_skipped:
-            # Already processed (stale tab, back button, or double submit). Don't
-            # re-send or overwrite; just advance.
+        if pro.proconnector_attempted or pro.proconnector_skipped or pro.unsubscribed:
+            # Already processed (stale tab, back button, or double submit) or
+            # unsubscribed while the record sat open in a tab. Don't send or
+            # overwrite; just advance. claim_email_for_send re-checks all three
+            # atomically, so this is UX, not the safety net.
             return redirect("proconnector_process")
 
         if action == "skip":
@@ -1384,9 +1386,9 @@ class ProConnectorLetterView(View):
     A companion to :class:`ProConnectorProcessView`: for professionals worth
     reaching by mail in addition to email, this renders the Cofactor AI
     introduction as a physical business letter that staff open, print, and mail.
-    The wording differs from the email -- a printed letter can't CC Cofactor AI,
-    so instead of naming a CC it asks the recipient to email the professional
-    contact address for the introduction. This view only renders the letter; it
+    It shares the email's call to action -- reach out to the professional
+    contact address to schedule a demo or learn more -- just formatted as a
+    letter. This view only renders the letter; it
     never claims, sends, or records anything on the professional's record, so it
     can be opened without affecting the processing queue.
     """
