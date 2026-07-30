@@ -5,7 +5,7 @@ from collections import Counter
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from django.db import transaction
-from django.db.models import Count
+from django.db.models import Count, QuerySet
 from django.db.models.functions import Lower
 from django.http import HttpResponse, StreamingHttpResponse
 from django.shortcuts import redirect, render
@@ -593,14 +593,14 @@ class _SendBulkMailView(generic.FormView):
         raise NotImplementedError
 
     @staticmethod
-    def _distinct_email_count(qs) -> int:
+    def _distinct_email_count(qs: QuerySet[Any]) -> int:
         """Count distinct (case-insensitive) email addresses in a queryset.
 
         Matches what the actor actually sends -- it dedupes recipients by
         lowercased address -- so the page never overstates a send because
         someone signed up twice.
         """
-        return (
+        return int(
             qs.annotate(_lower_email=Lower("email"))
             .values("_lower_email")
             .distinct()
