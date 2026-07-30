@@ -35,6 +35,7 @@ from django.conf import settings
 from django.core.files import File
 from django.core.mail import send_mail
 from django.core.validators import validate_email
+from django.db import close_old_connections
 from django.db.models import F, Q, QuerySet
 from django.db.models.functions import Length
 from django.forms import Form
@@ -75,6 +76,7 @@ from fighthealthinsurance.medical_code_extractor import (
     extract_procedure_codes,
 )
 from fighthealthinsurance.ml.bad_output_utils import strip_boilerplate_service
+from fighthealthinsurance.reliability_events import capture_reliability_event
 from fighthealthinsurance.form_utils import *
 from fighthealthinsurance.generate_appeal import *
 from fighthealthinsurance.ml.ml_appeal_context_helper import MLAppealContextHelper
@@ -2852,6 +2854,10 @@ class AppealsBackendHelper:
                 "$claim_id": claim_id,
                 "$CASEID": claim_id,
             }
+            # Each lookup individually guarded: one failing relation (e.g. a
+            # deleted professional profile) must not abort the LATER
+            # substitutions too, leaving [Patient Name]-style placeholders in
+            # the letter the user downloads.
             try:
                 if (
                     denial.professional_to_finish
@@ -2862,20 +2868,39 @@ class AppealsBackendHelper:
                     subs["[Your Name]"] = prof_name
                     subs["YourNameMagic"] = prof_name
                     subs["$your_name_here"] = prof_name
+            except Exception as e:
+                logger.opt(exception=True).error(
+                    f"Error fetching professional name for denial sub "
+                    f"{denial.denial_id}: {e}"
+                )
+            try:
                 if denial.patient_user is not None:
                     patient_name = denial.patient_user.get_legal_name()
                     subs["{{FIRST_NAME}} {{LAST_NAME}}"] = patient_name
                     subs["[Patient Name]"] = patient_name
                     subs["[patient name]"] = patient_name
+            except Exception as e:
+                logger.opt(exception=True).error(
+                    f"Error fetching patient name for denial sub "
+                    f"{denial.denial_id}: {e}"
+                )
+            try:
                 if denial and denial.primary_professional is not None:
                     subs["[Professional Name]"] = (
                         denial.primary_professional.get_full_name()
                     )
+            except Exception as e:
+                logger.opt(exception=True).error(
+                    f"Error fetching professional display name for denial sub "
+                    f"{denial.denial_id}: {e}"
+                )
+            try:
                 if denial.domain:
                     subs["[Professional Address]"] = denial.domain.get_address()
             except Exception as e:
                 logger.opt(exception=True).error(
-                    f"Error fetching info for denial sub {denial.denial_id}: {e}"
+                    f"Error fetching domain address for denial sub "
+                    f"{denial.denial_id}: {e}"
                 )
             for k, v in subs.items():
                 if v and v != "" and v != "UNKNOWN":
@@ -3744,33 +3769,52 @@ class AppealsBackendHelper:
         async for _spec in serve_reserve_if_stalled():
             yield _spec
 
-        # Get microsite context if available (optional, non-blocking)
+        # Get microsite context if available. Optional means OPTIONAL: this
+        # sits on the appeal generation critical path, so it gets a hard time
+        # bound and any failure degrades to "no microsite context" instead of
+        # killing the whole stream before generation starts.
         microsite_context: Optional[str] = None
         if denial.microsite_slug:
-            from fighthealthinsurance.microsites import get_microsite
+            try:
+                from fighthealthinsurance.microsites import get_microsite
 
-            microsite = get_microsite(denial.microsite_slug)
-            if microsite:
-                # Note: pubmed_tools not available in this context, so only extralinks will be fetched
-                microsite_context = await microsite.get_combined_context(
-                    pubmed_tools=None,
-                    max_extralink_docs=3,
-                    max_extralink_chars=1500,
+                microsite = get_microsite(denial.microsite_slug)
+                if microsite:
+                    # Note: pubmed_tools not available in this context, so only extralinks will be fetched
+                    microsite_context = await asyncio.wait_for(
+                        microsite.get_combined_context(
+                            pubmed_tools=None,
+                            max_extralink_docs=3,
+                            max_extralink_chars=1500,
+                        ),
+                        timeout=15,
+                    )
+            except Exception as e:
+                logger.warning(
+                    f"Skipping microsite context for {denial.microsite_slug}: {e}"
                 )
+                microsite_context = None
 
         # Merge supplemental contexts into the citation pipeline. Both
         # microsite and IMR context follow the same pattern: append to
         # ml_citation_context if present, else pubmed_context, else use
         # standalone. attach_supplemental_to_citations also dedupes against
         # the existing block so a retry doesn't re-append the same content.
-        ml_citation_context, pubmed_context = attach_supplemental_to_citations(
-            ml_citation_context, pubmed_context, microsite_context
-        )
-        ml_citation_context, pubmed_context = attach_supplemental_to_citations(
-            ml_citation_context, pubmed_context, imr_context
-        )
+        # Guarded: losing supplemental context must never cost the appeal.
+        try:
+            ml_citation_context, pubmed_context = attach_supplemental_to_citations(
+                ml_citation_context, pubmed_context, microsite_context
+            )
+            ml_citation_context, pubmed_context = attach_supplemental_to_citations(
+                ml_citation_context, pubmed_context, imr_context
+            )
+        except Exception:
+            logger.opt(exception=True).warning(
+                "Failed to merge supplemental context into citations; "
+                "continuing with the unmerged contexts"
+            )
 
-        async def save_appeal(item: GeneratedAppeal) -> dict[str, str]:
+        async def save_appeal(item: GeneratedAppeal) -> dict[str, Any]:
             # Save all of the proposed appeals, so we can use RL later.
             nonlocal first_model
             appeal_text = item.text
@@ -3782,8 +3826,8 @@ class AppealsBackendHelper:
             t = time.time()
             logger.debug(f"Saving appeal ({len(appeal_text)} chars)")
             await asyncio.sleep(0)
-            # YOLO on saving appeals, sqllite gets sad.
             id = "unknown"
+            save_failed = False
             try:
                 pa = ProposedAppeal(
                     appeal_text=appeal_text,
@@ -3792,13 +3836,23 @@ class AppealsBackendHelper:
                     synthesized=item.synthesized,
                     context_level=item.context_level,
                 )
-                await pa.asave()
+                try:
+                    await pa.asave()
+                except Exception:
+                    # Most save failures here are a stale/idle-killed
+                    # connection on this consumer's thread; refresh
+                    # connections and retry once before giving up.
+                    await database_sync_to_async(close_old_connections)()
+                    await pa.asave()
                 id = str(pa.id)
             except Exception as e:
+                # Still stream the draft -- the user gets their appeal even
+                # when the save fails -- but tell the client the row has no
+                # durable id so choose/edit affordances can be suppressed.
+                save_failed = True
                 logger.opt(exception=True).warning(
                     f"Failed to save proposed appeal: {e}"
                 )
-                pass
             passed = time.time() - t
             logger.debug(f"Saved appeal ({len(appeal_text)} chars) in {passed:.1f}s")
             # Mark it served as soon as it is on its way out, so the early
@@ -3806,7 +3860,10 @@ class AppealsBackendHelper:
             # speculative row whose text matches one already sent.
             if appeal_text:
                 served_texts.add(str(appeal_text).strip())
-            return {"id": id, "content": appeal_text}
+            result: dict[str, Any] = {"id": id, "content": appeal_text}
+            if save_failed:
+                result["save_failed"] = True
+            return result
 
         # Yield status: generating appeals
         yield json.dumps(
@@ -3946,6 +4003,12 @@ class AppealsBackendHelper:
                 generation_id=generation_id,
                 diagnostics_sink=make_appeals_diag,
                 denial_text_override=denial_text_override,
+                # Cooperative cutoff for the submitted model calls: when the
+                # keepalive loop below abandons this task at the overall
+                # timeout, the executor threads notice the same deadline and
+                # drain within one call boundary instead of running for
+                # minutes after the client is gone.
+                deadline=gen_started + make_appeals_overall_timeout,
             )
         )
         # Heartbeat while make_appeals blocks so no >90s silent window exists
@@ -3987,6 +4050,13 @@ class AppealsBackendHelper:
                     f"{denial_id} after {make_appeals_seconds:.1f}s; falling "
                     f"through to the reserve. {gen_error}"
                 )
+                capture_reliability_event(
+                    "make_appeals_raised",
+                    denial_id=denial_id,
+                    generation_id=generation_id,
+                    seconds=round(make_appeals_seconds, 1),
+                    error=gen_error,
+                )
                 appeals = iter([])
             else:
                 logger.info(
@@ -4012,6 +4082,12 @@ class AppealsBackendHelper:
                 f"{make_appeals_overall_timeout:.0f}s for denial {denial_id}; "
                 f"abandoning (background thread continues). "
                 f"{summarize_denial_context_tokens(denial)}"
+            )
+            capture_reliability_event(
+                "make_appeals_abandoned",
+                denial_id=denial_id,
+                generation_id=generation_id,
+                budget_seconds=round(make_appeals_overall_timeout, 0),
             )
             appeals = iter([])
         # Drop None / empty / whitespace / runt / wordless outputs. Track the

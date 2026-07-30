@@ -439,3 +439,166 @@ class TestAsyncTaskUtils:
 
         # At least the successful task should have completed
         assert "success" in results
+
+
+class TestBestWithinTimelimitOvertime:
+    """The bounded overtime window that replaced the old ((timeout+1)*20)
+    unbounded tail: slow-but-successful stragglers still land, exhaustion
+    returns None instead of raising, and no exit path leaks running tasks."""
+
+    @pytest.mark.asyncio
+    async def test_slow_success_in_overtime_window_is_returned(self):
+        async def slow_success() -> str:
+            await asyncio.sleep(0.5)
+            return "late but good"
+
+        result = await best_within_timelimit(
+            [slow_success()],
+            lambda r, _t: 1.0,
+            timeout=0.1,
+            extended_timeout=5.0,
+        )
+        assert result == "late but good"
+
+    @pytest.mark.asyncio
+    async def test_exhaustion_returns_none_instead_of_raising(self):
+        async def fails() -> str:
+            await asyncio.sleep(0.05)
+            raise ValueError("nope")
+
+        result = await best_within_timelimit(
+            [fails(), fails()],
+            lambda r, _t: 1.0,
+            timeout=0.5,
+            extended_timeout=0.5,
+        )
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_nothing_completes_returns_none_at_deadline(self):
+        async def never_finishes() -> str:
+            await asyncio.sleep(30)
+            return "way too late"
+
+        start = time.monotonic()
+        result = await best_within_timelimit(
+            [never_finishes()],
+            lambda r, _t: 1.0,
+            timeout=0.1,
+            extended_timeout=0.3,
+        )
+        elapsed = time.monotonic() - start
+        assert result is None
+        assert elapsed < 5.0  # nowhere near the old 20x tail
+
+    @pytest.mark.asyncio
+    async def test_extended_timeout_zero_is_strict(self):
+        async def slowish() -> str:
+            await asyncio.sleep(0.5)
+            return "late"
+
+        start = time.monotonic()
+        result = await best_within_timelimit(
+            [slowish()],
+            lambda r, _t: 1.0,
+            timeout=0.1,
+            extended_timeout=0.0,
+        )
+        assert result is None
+        assert time.monotonic() - start < 0.4
+
+    @pytest.mark.asyncio
+    async def test_pending_tasks_cancelled_after_result(self):
+        cancelled = asyncio.Event()
+
+        async def fast() -> str:
+            await asyncio.sleep(0.05)
+            return "winner"
+
+        async def hangs() -> str:
+            try:
+                await asyncio.sleep(30)
+                return "never"
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+
+        result = await best_within_timelimit(
+            [fast(), hangs()],
+            lambda r, _t: 1.0,
+            timeout=0.5,
+        )
+        assert result == "winner"
+        # Cancellation is fire-and-forget; give the loop a beat to run it.
+        await asyncio.wait_for(cancelled.wait(), timeout=5.0)
+
+    @pytest.mark.asyncio
+    async def test_falsy_first_overtime_completion_keeps_waiting(self):
+        """The old implementation raised as soon as the first overtime
+        completion was falsy, abandoning still-running tasks that would have
+        succeeded. The rewrite keeps waiting for the next completion."""
+
+        async def early_but_empty() -> str:
+            await asyncio.sleep(0.15)
+            return ""
+
+        async def later_and_good() -> str:
+            await asyncio.sleep(0.3)
+            return "good"
+
+        result = await best_within_timelimit(
+            [early_but_empty(), later_and_good()],
+            lambda r, _t: 1.0 if r else 0.0,
+            timeout=0.05,
+            extended_timeout=5.0,
+        )
+        assert result == "good"
+
+
+class TestBestWithinTimelimitCancellation:
+    """Cancelling the CALLER (e.g. the chat turn budget expiring) must cancel
+    the fan-out tasks too: asyncio.wait/as_completed never cancel their
+    children on their own, so without explicit propagation the model calls
+    kept running to their individual timeouts."""
+
+    @pytest.mark.asyncio
+    async def test_outer_cancellation_cancels_fanout_tasks(self):
+        child_cancelled = asyncio.Event()
+
+        async def hangs() -> str:
+            try:
+                await asyncio.sleep(30)
+                return "never"
+            except asyncio.CancelledError:
+                child_cancelled.set()
+                raise
+
+        outer = asyncio.create_task(
+            best_within_timelimit([hangs()], lambda r, _t: 1.0, timeout=10)
+        )
+        await asyncio.sleep(0.1)  # let the fan-out start
+        outer.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await outer
+        await asyncio.wait_for(child_cancelled.wait(), timeout=5.0)
+
+    @pytest.mark.asyncio
+    async def test_static_outer_cancellation_cancels_fanout_tasks(self):
+        child_cancelled = asyncio.Event()
+
+        async def hangs() -> str:
+            try:
+                await asyncio.sleep(30)
+                return "never"
+            except asyncio.CancelledError:
+                child_cancelled.set()
+                raise
+
+        outer = asyncio.create_task(
+            best_within_timelimit_static({hangs(): 1.0}, timeout=10)
+        )
+        await asyncio.sleep(0.1)
+        outer.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await outer
+        await asyncio.wait_for(child_cancelled.wait(), timeout=5.0)

@@ -5,6 +5,7 @@ Handles history truncation, summarization, and context accumulation
 to keep chat sessions manageable within LLM context limits.
 """
 
+import asyncio
 import uuid
 from typing import Dict, List, Optional, Tuple
 
@@ -106,9 +107,16 @@ async def _summarize_history(
         if notify_callback:
             await notify_callback("Summarizing conversation context...")
 
-        history_summary = await ml_router.summarize_chat_history(
-            messages_to_summarize,
-            max_messages=0,  # Summarize all dropped messages
+        # Hard bound: this runs on the interactive turn path, so a stalled
+        # summarization backend must degrade to "keep existing context", not
+        # stall the user's reply. (asyncio.TimeoutError lands in the except
+        # below.)
+        history_summary = await asyncio.wait_for(
+            ml_router.summarize_chat_history(
+                messages_to_summarize,
+                max_messages=0,  # Summarize all dropped messages
+            ),
+            timeout=90,
         )
 
         if history_summary:
@@ -225,23 +233,18 @@ async def background_generate_summary(chat_id: uuid.UUID, placeholder_tag: str) 
         logger.info(f"Background summary generation returned empty for chat {chat_id}")
         return
 
-    # Re-fetch to check for race conditions
-    try:
-        chat = await OngoingChat.objects.aget(id=chat_id)
-    except OngoingChat.DoesNotExist:
-        return
+    # Swap the placeholder for the real summary transactionally against the
+    # fresh row (the old refetch-modify-asave here was a lost-update writer
+    # racing the main turn's persist).
+    from fighthealthinsurance.chat.chat_persistence import (
+        areplace_summary_placeholder,
+    )
 
-    # Find and overwrite only the specific placeholder we created
-    if chat.summary_for_next_call:
-        for i, entry in enumerate(chat.summary_for_next_call):
-            if str(entry) == placeholder_tag:
-                chat.summary_for_next_call[i] = summary
-                await chat.asave()
-                logger.info(
-                    f"Background summary replaced placeholder for chat {chat_id}"
-                )
-                return
+    replaced = await areplace_summary_placeholder(chat_id, placeholder_tag, summary)
+    if replaced:
+        logger.info(f"Background summary replaced placeholder for chat {chat_id}")
+    else:
         logger.debug(
             f"Background summary: placeholder not found in chat {chat_id} "
-            f"after re-fetch, tag={placeholder_tag!r}"
+            f"after re-check, tag={placeholder_tag!r}"
         )

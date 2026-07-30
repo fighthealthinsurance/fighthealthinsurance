@@ -4,8 +4,8 @@ import json
 import random
 import re
 import time
-import traceback
 from concurrent.futures import Future
+from concurrent.futures import wait as futures_wait
 from dataclasses import dataclass
 from typing import Any, Callable, Coroutine, Iterator, List, Optional, Tuple, TypeVar
 
@@ -46,7 +46,7 @@ from fighthealthinsurance.context_utils import (
 )
 from fighthealthinsurance.denial_base import DenialBase
 
-from .exec import executor
+from .exec import background_executor, executor
 from .ml.ml_models import (
     MODEL_TRANSPORT_ERRORS,
     RemoteFullOpenLike,
@@ -92,6 +92,15 @@ class AppealTemplateGenerator(object):
             return None
 
     def generate(self, medical_reason: str):
+        if self.combined == "":
+            # No template configured (always the case for the speculative
+            # precompute, which builds this generator with empty parts).
+            # Returning None here used to throw away EVERY
+            # medically_necessary result on this path -- the model's reason
+            # text is a perfectly good appeal seed on its own, and the
+            # is_real_appeal delivery filter still drops runts downstream.
+            stripped = (medical_reason or "").strip()
+            return stripped or None
         result = self.combined.replace("{medical_reason}", medical_reason)
         if result != "":
             return result
@@ -1145,6 +1154,7 @@ def _generated_to_appeals_text(
     prompt_tokens_est: Optional[int] = None,
     submitted_at: Optional[float] = None,
     submitted_wall: Optional[Any] = None,
+    deadline: Optional[float] = None,
 ) -> Iterator[GeneratedAppeal]:
     """Map one model future's (infer_type, text) results to GeneratedAppeals.
 
@@ -1183,6 +1193,25 @@ def _generated_to_appeals_text(
 
     try:
         try:
+            # With a requester deadline, don't wait on the inner future past
+            # it (plus a grace beat for the deadline-aware model call to
+            # notice and return): threads can't be cancelled, so an unbounded
+            # result() here is how abandoned generations used to pin pool
+            # threads long after the client was gone. futures_wait (not
+            # result(timeout=...)) distinguishes "still pending at the
+            # deadline" from a TimeoutError RAISED BY the model call itself
+            # (the same builtin class on 3.11+), which must keep its normal
+            # "timed out" classification below.
+            if deadline is not None and not k_text_future.done():
+                remaining = max(1.0, deadline - time.monotonic() + 15.0)
+                _done, not_done = futures_wait([k_text_future], timeout=remaining)
+                if not_done:
+                    error_detail = "abandoned: requester deadline passed"
+                    logger.warning(
+                        f"Appeal generation via {model_name} abandoned -- "
+                        f"requester deadline passed"
+                    )
+                    return
             model_results = k_text_future.result()
         except Exception as e:
             # Same split as _log_fanout_task_error: expected transport failures
@@ -2242,11 +2271,12 @@ class AppealGenerator(object):
         """
         try:
             from fighthealthinsurance.models import MedicationContext
+            from fighthealthinsurance.medical_code_extractor import (
+                collect_denial_text,
+            )
         except Exception as e:
             logger.opt(exception=True).debug(f"MedicationContext unavailable: {e}")
             return None
-
-        from fighthealthinsurance.medical_code_extractor import collect_denial_text
 
         haystack = collect_denial_text(
             denial,
@@ -2318,6 +2348,7 @@ class AppealGenerator(object):
         diagnostics_sink: Optional[dict] = None,
         denial_text_override: Optional[str] = None,
         run_kind: str = "live",
+        deadline: Optional[float] = None,
     ) -> Iterator[GeneratedAppeal]:
         """
         Generates an iterator of appeal texts for a given insurance denial using templates, non-AI sources, and AI models.
@@ -2338,7 +2369,12 @@ class AppealGenerator(object):
             run_kind: "live" for a user-facing generation, "speculative" for
                 the background precompute. Recorded on the persisted
                 ModelCallAttempt rows so the two runs against the same denial
-                can be told apart when debugging.
+                can be told apart when debugging. Speculative runs also submit
+                to the background executor pool so precompute can never queue
+                ahead of a waiting user.
+            deadline: Optional time.monotonic()-based cutoff after which the
+                submitted model calls exit cooperatively (threads cannot be
+                cancelled) instead of continuing work nobody will read.
 
         Returns:
             An iterator of ``GeneratedAppeal`` items (each carries the
@@ -2346,6 +2382,9 @@ class AppealGenerator(object):
             template-based / non-AI appeals).
         """
         logger.debug("Starting to make appeals...")
+        # Background/speculative work uses its own pool so it can't starve
+        # interactive generations that a user is actively waiting on.
+        submit_pool = background_executor if run_kind == "speculative" else executor
         if medical_reasons is None:
             medical_reasons = []
         if non_ai_appeals is None:
@@ -2517,7 +2556,11 @@ class AppealGenerator(object):
                         prof_pov=prof_pov,
                     )
 
-                    if result is not None:
+                    # Truthiness matters: an empty futures list is a FAILED
+                    # backend, not a success -- returning [] here used to end
+                    # the whole model_name's attempt with zero futures and no
+                    # attempt row, one of the silent zero-appeal causes.
+                    if result:
                         winning_backend_by_model[model_name] = str(model)
                         return result
                     backend_errors.append(f"{model}: returned no futures")
@@ -2553,40 +2596,35 @@ class AppealGenerator(object):
             ml_citations_context: Optional[List[str]],
             prof_pov: bool = False,
         ) -> List[Future[Tuple[str, Optional[str]]]]:
-            # If the model has parallelism use it
-            results = None
-            try:
-                if isinstance(model, RemoteFullOpenLike):
-                    logger.debug(f"Using {model}'s parallel inference")
-                    results = model.parallel_infer(
-                        prompt=prompt,
-                        infer_type=infer_type,
-                        patient_context=patient_context,
-                        plan_context=plan_context,
-                        pubmed_context=pubmed_context,
-                        ml_citations_context=ml_citations_context,
-                        prof_pov=prof_pov,
-                    )
-                else:
-                    logger.debug(f"Using system level parallel inference for {model}")
-                    results = [
-                        executor.submit(
-                            model.infer,
-                            prompt=prompt,
-                            patient_context=patient_context,
-                            plan_context=plan_context,
-                            infer_type=infer_type,
-                            pubmed_context=pubmed_context,
-                            ml_citations_context=ml_citations_context,
-                            prof_pov=prof_pov,
-                        )
-                    ]
-            except Exception as e:
-                logger.debug(
-                    f"Error {e} {traceback.format_exc()} submitting to {model} falling back"
+            # If the model has parallelism use it.
+            if isinstance(model, RemoteFullOpenLike):
+                logger.debug(f"Using {model}'s parallel inference")
+                return model.parallel_infer(
+                    prompt=prompt,
+                    infer_type=infer_type,
+                    patient_context=patient_context,
+                    plan_context=plan_context,
+                    pubmed_context=pubmed_context,
+                    ml_citations_context=ml_citations_context,
+                    prof_pov=prof_pov,
+                    submit_executor=submit_pool,
+                    deadline=deadline,
                 )
-                results = [
-                    executor.submit(
+            # Otherwise submit the backend's own sync ``infer`` -- but ONLY a
+            # real override (this is also the seam tests use to inject fake
+            # backends). The BASE-CLASS ``infer`` is a stub that always
+            # returns None, and submitting it used to burn executor threads
+            # producing guaranteed-empty futures that looked like working
+            # submissions; a backend that never overrode it is an explicit
+            # failure, and a submission error propagates to the caller's
+            # per-backend handler where it lands in the attempt row.
+            infer_impl = getattr(model, "infer", None)
+            if infer_impl is not None and (
+                getattr(infer_impl, "__func__", None) is not RemoteModelLike.infer
+            ):
+                logger.debug(f"Using system level parallel inference for {model}")
+                return [
+                    submit_pool.submit(
                         model.infer,
                         prompt=prompt,
                         patient_context=patient_context,
@@ -2597,7 +2635,11 @@ class AppealGenerator(object):
                         prof_pov=prof_pov,
                     )
                 ]
-            return results
+            logger.error(
+                f"Model {model} has no working inference implementation "
+                f"(base-class stub); skipping this backend"
+            )
+            return []
 
         medical_context = ""
         if denial.qa_context is not None:
@@ -2780,7 +2822,7 @@ class AppealGenerator(object):
             # mapper so each emitted appeal carries its shed level and each
             # model's outcome (plus its response text and timing) is recorded.
             generated_text_futures = [
-                executor.submit(
+                submit_pool.submit(
                     _generated_to_appeals_text,
                     meta["model_name"],
                     f,
@@ -2793,6 +2835,7 @@ class AppealGenerator(object):
                     meta["prompt_tokens_est"],
                     meta["submitted_at"],
                     meta["submitted_wall"],
+                    deadline,
                 )
                 for meta, f in model_futures
             ]

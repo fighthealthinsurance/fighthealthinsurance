@@ -29,7 +29,12 @@ def _is_verbose_logging() -> bool:
         return False
 
 
-from fighthealthinsurance.utils import RateLimiter, ensure_message_alternation
+from fighthealthinsurance.ml.ml_metrics import record_ml_call, record_ml_failure
+from fighthealthinsurance.utils import (
+    RateLimiter,
+    ensure_message_alternation,
+    is_real_appeal,
+)
 
 # Import the appropriate async_timeout based on Python version
 if sys.version_info >= (3, 11):
@@ -548,6 +553,38 @@ def repetition_penalty(text: str, min_block_size: int = 3) -> float:
     return max(sentence_ratio, block_ratio)
 
 
+def _env_float(name: str, default: float) -> float:
+    """Read a float from the environment, falling back on missing/garbage."""
+    raw = os.environ.get(name)
+    if raw is None or raw == "":
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        logger.warning(f"Ignoring non-numeric {name}={raw!r}; using {default}")
+        return default
+
+
+# Per-task inference time budgets (seconds). The full-appeal budget stays at
+# the historical 300s; interactive tasks get tighter bounds because past a
+# certain point a "slow success" is indistinguishable from a failure to the
+# user (the chat client shows an error / the entity extraction stalls the
+# form). All env-overridable per deployment.
+_ML_TASK_TIMEOUT_ENVS: dict[str, tuple[str, float]] = {
+    "appeal": ("FHI_ML_TIMEOUT", 300.0),
+    "chat": ("FHI_ML_TIMEOUT_CHAT", 90.0),
+    "entity": ("FHI_ML_TIMEOUT_ENTITY", 45.0),
+    "context": ("FHI_ML_TIMEOUT_CONTEXT", 120.0),
+    "summarize": ("FHI_ML_TIMEOUT_SUMMARIZE", 60.0),
+}
+
+
+def ml_task_timeout(task: str) -> float:
+    """Effective inference timeout (seconds) for a named task type."""
+    env_name, default = _ML_TASK_TIMEOUT_ENVS.get(task, _ML_TASK_TIMEOUT_ENVS["appeal"])
+    return _env_float(env_name, default)
+
+
 class RemoteModelLike(DenialBase):
     """Base class for remote ML model backends used for chat and appeal generation."""
 
@@ -777,6 +814,7 @@ class RemoteModelLike(DenialBase):
         history: Optional[List[dict[str, str]]] = None,
         temperature=0.7,
         raise_http_errors: bool = False,
+        timeout: Optional[float] = None,
     ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
         """Do inference on a remote model."""
         await asyncio.sleep(0)  # yield
@@ -792,6 +830,7 @@ class RemoteModelLike(DenialBase):
         ml_citations_context=None,
         temperature=0.7,
         raise_http_errors: bool = False,
+        timeout: Optional[float] = None,
     ) -> Optional[str]:
         result = await self._infer(
             system_prompts=system_prompts,
@@ -802,6 +841,7 @@ class RemoteModelLike(DenialBase):
             ml_citations_context=ml_citations_context,
             temperature=temperature,
             raise_http_errors=raise_http_errors,
+            timeout=timeout,
         )
         if result:
             return result[0]
@@ -1189,11 +1229,17 @@ Remember in the last three sentences GLP-1 is just an _example_ check what the u
 """
         result: Optional[str] = None
         c = 0
+        chat_timeout = ml_task_timeout("chat")
+        loop_start = time.monotonic()
+        # Bounded to 2 attempts AND ~2 chat budgets of wall clock: each retry
+        # here is serial and invisible to the user, and past that point the
+        # turn has already failed from their perspective -- better to return
+        # fast and let the caller's retry/fallback machinery take over.
         while (
             result is None
             or result.strip().lower() == current_message.strip().lower()
             or self.bad_result(result, "chat")
-        ) and c < 4:
+        ) and (c < 2 and time.monotonic() - loop_start < 2 * chat_timeout):
             c = c + 1
             result_extra = ""
             if result and len(result) > 0 and "🐼" not in result:
@@ -1203,6 +1249,7 @@ Remember in the last three sentences GLP-1 is just an _example_ check what the u
                 prompt=f"{result_extra}{previous_context_extra}{current_message}",
                 history=history,
                 temperature=temperature,
+                timeout=chat_timeout,
             )
             if raw_result:
                 result = raw_result[0]
@@ -1235,6 +1282,7 @@ Remember in the last three sentences GLP-1 is just an _example_ check what the u
         result = await self._infer(
             system_prompts=["You are a helpful assistant."],
             prompt=prompt,
+            timeout=ml_task_timeout("entity"),
         )
         # Just get the text response.
         if _is_verbose_logging():
@@ -1544,7 +1592,9 @@ class RemoteOpenLike(RemoteModel):
         self.model = model
         self.system_prompts_map = system_prompts_map
         self.max_len = max_len or 4096 * 8
-        self._timeout = 300
+        # Default (full-appeal) inference budget; per-task callers pass an
+        # explicit ``timeout=ml_task_timeout(...)`` through _infer instead.
+        self._timeout: Optional[float] = _env_float("FHI_ML_TIMEOUT", 300.0)
         self.backup_model = backup_model or model
         self.invalid_diag_procedure_regex = re.compile(
             r"(not (available|provided|specified|applicable)|unknown|as per reviewer)",
@@ -1570,6 +1620,12 @@ class RemoteOpenLike(RemoteModel):
         # _note_missing_model). Keyed per pair because primary and backup use
         # different endpoints/models.
         self._missing_models: dict[tuple[str, str], float] = {}
+        # Short cooldown for repeated TRANSPORT failures (refused/DNS/timeout)
+        # between health sweeps: recent strike timestamps per (api_base,
+        # model), and pairs currently cooling down. See
+        # _note_transport_failure.
+        self._transport_strikes: dict[tuple[str, str], list[float]] = {}
+        self._transport_cooldowns: dict[tuple[str, str], float] = {}
 
     def model_is_ok(self):
         """Check that the backend supports this model, returns true if found in list.
@@ -1709,12 +1765,23 @@ class RemoteOpenLike(RemoteModel):
         )
 
     def bad_result(self, result: Optional[str], infer_type: str) -> bool:
-        return is_bad_output(
+        if is_bad_output(
             result,
             check_guardrail_phrases=True,
             check_severe_repetition=True,
             repetition_checker=has_severe_repetition,
-        )
+        ):
+            return True
+        # For FULL appeals, align the retry bar with the delivery bar
+        # (is_real_appeal: MIN_APPEAL_CHARS + MIN_APPEAL_WORDS). A 3-14 char
+        # fragment used to pass this check, skip the one-retry, and then die
+        # downstream as an undeliverable runt -- the model got no second
+        # chance exactly when it needed one. medically_necessary results are
+        # reason FRAGMENTS that get templated afterward, so they keep the
+        # permissive bar.
+        if infer_type == "full" and not is_real_appeal(result):
+            return True
+        return False
 
     def is_prior_auth(self, result: Optional[str]) -> bool:
         """
@@ -1823,7 +1890,18 @@ class RemoteOpenLike(RemoteModel):
         pubmed_context: Optional[str],
         ml_citations_context: Optional[List[str]] = None,
         prof_pov: bool = False,
+        submit_executor: Optional[ThreadPoolExecutor] = None,
+        deadline: Optional[float] = None,
     ) -> List[Future[Tuple[str, Optional[str]]]]:
+        """Fan this inference out over the thread pool.
+
+        ``submit_executor`` selects the pool (interactive by default;
+        background precompute passes its own so it can't starve waiting
+        users). ``deadline`` (time.monotonic()-based) makes each submitted
+        call exit almost immediately once the requester's budget has passed:
+        threads can't be cancelled, so this cooperative check is what keeps
+        abandoned generations from holding pool threads for minutes.
+        """
         logger.debug(f"Running inference on {self} of type {infer_type}")
         temperatures = [0.5]
         if infer_type == "full" and not self._expensive and not self.slow:
@@ -1845,6 +1923,7 @@ class RemoteOpenLike(RemoteModel):
                             "pubmed_context": pubmed_context,
                             "ml_citations_context": ml_citations_context,
                             "prof_pov": prof_pov,
+                            "deadline": deadline,
                         },
                     ),
                     system_prompts,
@@ -1852,7 +1931,8 @@ class RemoteOpenLike(RemoteModel):
                 temperatures,
             )
         )  # type: Iterable[Tuple[Callable[..., Tuple[str, Optional[str]]], dict[str, Union[Optional[str], float, Optional[List[str]]]]]]
-        futures = list(map(lambda x: executor.submit(x[0], **x[1]), calls))
+        pool = submit_executor if submit_executor is not None else executor
+        futures = list(map(lambda x: pool.submit(x[0], **x[1]), calls))
         return futures
 
     def _blocking_checked_infer(
@@ -1866,6 +1946,7 @@ class RemoteOpenLike(RemoteModel):
         temperature: float,
         ml_citations_context=None,
         prof_pov: bool = False,
+        deadline: Optional[float] = None,
     ):
         return async_to_sync(self._checked_infer)(
             prompt,
@@ -1877,6 +1958,7 @@ class RemoteOpenLike(RemoteModel):
             temperature,
             ml_citations_context,
             prof_pov,
+            deadline=deadline,
         )
 
     async def _checked_infer(
@@ -1891,7 +1973,21 @@ class RemoteOpenLike(RemoteModel):
         ml_citations_context: Optional[List[str]] = None,
         prof_pov: bool = False,
         pa: bool = False,
+        deadline: Optional[float] = None,
     ) -> List[Tuple[str, Optional[str]]]:
+        def _past_deadline() -> bool:
+            # Cooperative deadline: threads can't be cancelled, so once the
+            # requester's budget has passed we bail out instead of making
+            # further model calls nobody will read.
+            if deadline is not None and time.monotonic() > deadline:
+                logger.debug(
+                    f"{self}: skipping {infer_type} work -- requester deadline passed"
+                )
+                return True
+            return False
+
+        if _past_deadline():
+            return []
         # Extract URLs from the prompt to avoid checking them
         input_urls = []
         if prompt and isinstance(prompt, str):
@@ -1920,6 +2016,8 @@ class RemoteOpenLike(RemoteModel):
             )
         # One retry
         if self.bad_result(result, infer_type):
+            if _past_deadline():
+                return []
             result = await self._infer_no_context(
                 prompt=prompt,
                 patient_context=patient_context,
@@ -1937,7 +2035,18 @@ class RemoteOpenLike(RemoteModel):
         if prof_pov or pa:
             c = 0
             last_okish = result
-            while not self.check_is_ok(result, infer_type, prof_pov) and c < 5:
+            # Capped at 2 retries and ~2 task budgets of wall clock. The old
+            # cap of 5 meant a single _checked_infer future could hold an
+            # executor thread for over half an hour of serial model calls,
+            # long after the requesting client had given up.
+            pov_loop_start = time.monotonic()
+            pov_budget = 2 * ml_task_timeout("appeal")
+            while (
+                not self.check_is_ok(result, infer_type, prof_pov)
+                and c < 2
+                and time.monotonic() - pov_loop_start < pov_budget
+                and not _past_deadline()
+            ):
                 c = c + 1
                 result = await self._infer_no_context(
                     prompt=prompt,
@@ -1953,7 +2062,7 @@ class RemoteOpenLike(RemoteModel):
             if c > 0:
                 logger.debug(
                     f"Professional/PA check: {c} retries, "
-                    f"{'succeeded' if c < 5 else 'gave up'}"
+                    f"{'succeeded' if c < 2 else 'gave up'}"
                 )
 
         after_cleaners = CleanerUtils.note_remover(
@@ -2023,6 +2132,7 @@ class RemoteOpenLike(RemoteModel):
     async def get_fax_number(self, denial: str) -> Optional[str]:
         result = await self._infer_no_context(
             system_prompts=["You are a helpful assistant."],
+            timeout=ml_task_timeout("entity"),
             prompt=f"When possible output in the same format as is found in the denial. Tell me the appeal fax number is within the provided denial. If the fax number is unknown write UNKNOWN. If known just output the fax number without any pre-amble and as a snipper from the original doc. DO NOT GUESS IF YOU DON'T KNOW JUST SAY UNKNOWN. The denial follows: {denial}. Remember DO NOT GUESS IF YOU DON'T KNOW JUST SAY UNKNOWN.",
         )
         return result
@@ -2039,6 +2149,7 @@ class RemoteOpenLike(RemoteModel):
         """
         result = await self._infer_no_context(
             system_prompts=["You are a helpful assistant."],
+            timeout=ml_task_timeout("entity"),
             prompt=f"When possible output in the same format as is found in the denial. Tell me which insurance company is within the provided denial. If it is not present or otherwise unknown write UNKNOWN. If known just output the answer without any pre-amble and as a snipper from the original doc. Remember: DO NOT GUESS IF YOU DON'T KNOW JUST SAY UNKNOWN. The denial follows: {denial}. Remember DO NOT GUESS IF YOU DON'T KNOW JUST SAY UNKNOWN.",
         )
         if result and "The insurance company is" in result:
@@ -2057,6 +2168,7 @@ class RemoteOpenLike(RemoteModel):
         """
         result = await self._infer_no_context(
             system_prompts=["You are a helpful assistant."],
+            timeout=ml_task_timeout("entity"),
             prompt=f"Extract the plan ID (an alphanumeric identifier code containing digits, like 'H5521-001', 'PLAN987654', 'GRP12345') from the following denial letter. Plan IDs are NOT common English words -- they are codes assigned by insurance companies. Output ONLY the ID value exactly as it appears in the document, nothing else. If no plan ID is present or you are unsure, write UNKNOWN. DO NOT GUESS. The denial follows: {denial}. Remember: output ONLY the identifier code, DO NOT GUESS IF YOU DON'T KNOW JUST SAY UNKNOWN.",
         )
         if result and "The plan ID is" in result:
@@ -2075,6 +2187,7 @@ class RemoteOpenLike(RemoteModel):
         """
         result = await self._infer_no_context(
             system_prompts=["You are a helpful assistant."],
+            timeout=ml_task_timeout("entity"),
             prompt=f"Extract the claim ID (an alphanumeric identifier code containing digits, like 'CLM2024001234', '2024-12345-A', 'C987654321') from the following denial letter. Claim IDs are NOT common English words -- they are reference codes. It could be multiple but is normally just one. Output ONLY the ID value exactly as it appears in the document, nothing else. If no claim ID is present or you are unsure, write UNKNOWN. DO NOT GUESS. The denial follows: {denial}. REMEMBER DO NOT GUESS.",
         )
         if result and "Claim ID is" in result:
@@ -2093,6 +2206,7 @@ class RemoteOpenLike(RemoteModel):
         """
         result = await self._infer_no_context(
             system_prompts=["You are a helpful assistant."],
+            timeout=ml_task_timeout("entity"),
             prompt=f"When possible output in the same format as is found in the denial. Tell me the what the date of service was within the provided denial (it could be multiple or a date range, but it can also just be one day). If it is not present or otherwise unknown write UNKNOWN. If known just output the answer without any pre-amble and as a snipper from the original doc. The denial follows: {denial}",
         )
         if result and "Date of service is" in result:
@@ -2107,6 +2221,7 @@ class RemoteOpenLike(RemoteModel):
             prompt=prompt,
             patient_context=patient_context,
             plan_context=plan_context,
+            timeout=ml_task_timeout("context"),
         )
         if result:
             return result.split("\n")
@@ -2119,14 +2234,18 @@ class RemoteOpenLike(RemoteModel):
             f"Getting procedure and diagnosis for {self} ({len(prompt)} chars)"
         )
         model_response = await self._infer_no_context(
-            system_prompts=self.get_system_prompts("procedure"), prompt=prompt
+            system_prompts=self.get_system_prompts("procedure"),
+            prompt=prompt,
+            timeout=ml_task_timeout("entity"),
         )
         if model_response is None or "Diagnosis" not in model_response:
             logger.debug(
                 "Retrying procedure/diagnosis query (no Diagnosis in response)"
             )
             model_response = await self._infer_no_context(
-                system_prompts=self.get_system_prompts("procedure"), prompt=prompt
+                system_prompts=self.get_system_prompts("procedure"),
+                prompt=prompt,
+                timeout=ml_task_timeout("entity"),
             )
         if model_response is not None:
             responses: list[str] = model_response.split("\n")
@@ -2167,6 +2286,7 @@ class RemoteOpenLike(RemoteModel):
         history: Optional[List[dict[str, str]]] = None,
         temperature=0.7,
         raise_http_errors: bool = False,
+        timeout: Optional[float] = None,
     ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
         """
         Try and infer on a given model falling back to fallback in primary fails.
@@ -2192,6 +2312,7 @@ class RemoteOpenLike(RemoteModel):
                             history=history,
                             model=self.model,
                             raise_http_errors=raise_http_errors,
+                            timeout=timeout,
                         )
                     )
 
@@ -2208,6 +2329,7 @@ class RemoteOpenLike(RemoteModel):
                             model=self.backup_model,
                             api_base=self.backup_api_base,
                             raise_http_errors=raise_http_errors,
+                            timeout=timeout,
                         )
                     )
 
@@ -2278,6 +2400,7 @@ class RemoteOpenLike(RemoteModel):
                         history=history,
                         model=self.model,
                         raise_http_errors=raise_http_errors,
+                        timeout=timeout,
                     )
                 if raw_response and raw_response[0]:
                     return raw_response
@@ -2294,6 +2417,7 @@ class RemoteOpenLike(RemoteModel):
                         model=self.backup_model,
                         api_base=self.backup_api_base,
                         raise_http_errors=raise_http_errors,
+                        timeout=timeout,
                     )
                     if backup_response and backup_response[0]:
                         return backup_response
@@ -2408,24 +2532,124 @@ class RemoteOpenLike(RemoteModel):
             time.monotonic() + self.MODEL_MISSING_BACKOFF_SECONDS
         )
 
+    # Transport-failure cooldown: the hourly health sweep can leave a dead
+    # backend routable for up to an hour, and every request fanned to it
+    # burns its whole timeout. Three transport-classified failures inside a
+    # minute put the (api_base, model) pair on a short cooldown so the next
+    # requests skip it instantly; the pair is re-probed when the cooldown
+    # expires. The startup probe path (raise_http_errors=True) neither counts
+    # strikes nor honors the skip, so probes always see current reality.
+    TRANSPORT_STRIKE_WINDOW_SECONDS: ClassVar[float] = 60.0
+    TRANSPORT_STRIKES_TO_COOL: ClassVar[int] = 3
+
+    def _transport_cooling(self, api_base: str, model: str) -> bool:
+        """Whether the pair is inside a transport-failure cooldown.
+
+        Expired entries are dropped so the next call probes the endpoint
+        live again.
+        """
+        deadline = self._transport_cooldowns.get((api_base, model))
+        if deadline is None:
+            return False
+        if time.monotonic() >= deadline:
+            self._transport_cooldowns.pop((api_base, model), None)
+            return False
+        return True
+
+    def _note_transport_failure(self, api_base: str, model: str, detail: str) -> None:
+        """Record a transport failure; start a cooldown on repeated strikes."""
+        now = time.monotonic()
+        key = (api_base, model)
+        strikes = [
+            t
+            for t in self._transport_strikes.get(key, [])
+            if now - t < self.TRANSPORT_STRIKE_WINDOW_SECONDS
+        ]
+        strikes.append(now)
+        if len(strikes) >= self.TRANSPORT_STRIKES_TO_COOL:
+            cooldown = _env_float("FHI_TRANSPORT_COOLDOWN_SECONDS", 120.0)
+            self._transport_cooldowns[key] = now + cooldown
+            self._transport_strikes.pop(key, None)
+            logger.warning(
+                f"{self}: {model} at {api_base} hit {len(strikes)} transport "
+                f"failures within {self.TRANSPORT_STRIKE_WINDOW_SECONDS:.0f}s "
+                f"({detail}); cooling down for {cooldown:.0f}s"
+            )
+        else:
+            self._transport_strikes[key] = strikes
+
+    def is_available(self) -> bool:
+        """False while EVERY endpoint this instance can serve is inside a
+        transport-failure cooldown, so the router stops selecting it for
+        fan-out; fail-open otherwise. The router's own fail-open guard
+        (_filter_available) still keeps a last resort if this empties a pool.
+        """
+        pairs = [(self.api_base, self.model)]
+        if self.backup_api_base:
+            pairs.append((self.backup_api_base, self.backup_model))
+        live_pairs = [(a, m) for a, m in pairs if a]
+        if live_pairs and all(self._transport_cooling(a, m) for a, m in live_pairs):
+            return False
+        return True
+
     async def __timeout_infer(
         self,
         *args,
+        timeout: Optional[float] = None,
         **kwargs,
     ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
         """
         Do an inference with timeout.
+
+        ``timeout`` overrides the instance default (``self._timeout``) so
+        interactive tasks (chat, entity extraction) can run with tighter
+        budgets than full appeal generation.
         """
-        if self._timeout is not None:
+        effective_timeout = timeout if timeout is not None else self._timeout
+        call_model = kwargs.get("model") or self.model
+        started = time.monotonic()
+        if effective_timeout is not None:
             try:
                 # Use async_timeout instead of asyncio.wait_for
-                async with async_timeout(self._timeout):
-                    return await self.__infer(*args, **kwargs)
+                async with async_timeout(effective_timeout):
+                    result = await self.__infer(
+                        *args, request_timeout=effective_timeout, **kwargs
+                    )
+                record_ml_call(
+                    call_model,
+                    "ok" if result and result[0] else "none",
+                    time.monotonic() - started,
+                )
+                return result
             except asyncio.TimeoutError:
-                logger.warning(f"Timed out querying {self}")
+                logger.warning(
+                    f"Timed out querying {self} after {effective_timeout:.0f}s"
+                )
+                record_ml_call(call_model, "timeout", time.monotonic() - started)
+                # A whole-budget timeout is a transport-level strike too --
+                # but ONLY at the instance-wide budget. A tight interactive
+                # budget (entity 45s, chat 90s) timing out says the backend
+                # is slow for that task, not unreachable; striking on it
+                # could cool the pair for the appeal path whose 300s budget
+                # would have succeeded. Connect-phase failures still strike
+                # via the transport-error handler regardless of budget.
+                if not kwargs.get("raise_http_errors") and (
+                    self._timeout is None or effective_timeout >= self._timeout
+                ):
+                    self._note_transport_failure(
+                        kwargs.get("api_base") or self.api_base,
+                        call_model,
+                        f"timed out after {effective_timeout:.0f}s",
+                    )
                 return None
         else:
-            return await self.__infer(*args, **kwargs)
+            result = await self.__infer(*args, **kwargs)
+            record_ml_call(
+                call_model,
+                "ok" if result and result[0] else "none",
+                time.monotonic() - started,
+            )
+            return result
 
     async def __infer(
         self,
@@ -2440,6 +2664,8 @@ class RemoteOpenLike(RemoteModel):
         history: Optional[List[dict[str, str]]] = None,
         api_base=None,
         raise_http_errors: bool = False,
+        *,
+        request_timeout: Optional[float] = None,
     ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
         if api_base is None:
             api_base = self.api_base
@@ -2466,6 +2692,14 @@ class RemoteOpenLike(RemoteModel):
                 f"{self}: skipping {model} at {api_base} -- flagged as not served here"
             )
             return None
+        # Same idea for repeated transport failures (refused/DNS/timeout):
+        # skip quietly while the short cooldown lasts; probes bypass this so
+        # they always report current reality.
+        if not raise_http_errors and self._transport_cooling(api_base, model):
+            logger.debug(
+                f"{self}: skipping {model} at {api_base} -- transport-failure cooldown"
+            )
+            return None
         if self.token is None:
             logger.warning(f"No token provided for {model}")
         if prompt is None:
@@ -2474,8 +2708,17 @@ class RemoteOpenLike(RemoteModel):
         url = f"{api_base}/chat/completions"
         combined_content = None
         json_result = {}
+        # sock_connect bounds the TCP/TLS handshake so an unreachable host
+        # fails in seconds instead of consuming the whole task budget; total
+        # mirrors the outer async_timeout so aiohttp cleans up its own
+        # transport when the budget expires. No sock_read: non-streaming
+        # completions are legitimately silent until the full body arrives.
+        client_timeout = aiohttp.ClientTimeout(
+            total=request_timeout if request_timeout is not None else self._timeout,
+            sock_connect=_env_float("FHI_ML_SOCK_CONNECT", 10.0),
+        )
         try:
-            async with aiohttp.ClientSession() as s:
+            async with aiohttp.ClientSession(timeout=client_timeout) as s:
                 context_extra = self._build_context_extra(
                     patient_context,
                     pubmed_context,
@@ -2699,6 +2942,7 @@ class RemoteOpenLike(RemoteModel):
             logger.debug(
                 f"HTTP error {e.status} from {api_base} for model {model}: {e.message}"
             )
+            record_ml_failure(model, "http_error")
             raise
         except MODEL_TRANSPORT_ERRORS as e:
             # Expected operational failures (backend down, unreachable, slow,
@@ -2710,16 +2954,30 @@ class RemoteOpenLike(RemoteModel):
             logger.warning(
                 f"{self}: {model} via {api_base} failed -- {describe_model_error(e)}"
             )
+            record_ml_failure(model, "transport_error")
+            if not raise_http_errors:
+                self._note_transport_failure(api_base, model, describe_model_error(e))
             return None
         except Exception:
             logger.opt(exception=True).warning(
                 f"Unexpected error calling {api_base} for model {model}"
             )
+            record_ml_failure(model, "unexpected_error")
             await asyncio.sleep(1)
             return None
         try:
-            if "choices" not in json_result:
-                logger.debug(f"Response from {url} missing 'choices' key")
+            if "choices" not in json_result or not json_result.get("choices"):
+                # A 200 with no completions is a provider-side failure worth
+                # seeing: it was previously a DEBUG line, indistinguishable
+                # from routine noise while a backend served empty bodies for
+                # hours. Keep the snippet short and structural (no PHI beyond
+                # what the provider echoed).
+                body_snippet = str(json_result)[:300]
+                logger.warning(
+                    f"Response from {url} for {model} had no choices; "
+                    f"body starts: {body_snippet}"
+                )
+                record_ml_failure(model, "bad_body")
                 return None
 
             # Extract message content
@@ -2999,6 +3257,7 @@ class RemoteFullOpenLike(RemoteOpenLike):
             patient_context=patient_context,
             plan_context=plan_context,
             temperature=0.6,
+            timeout=ml_task_timeout("context"),
         )
 
         if result is None:
@@ -3572,11 +3831,12 @@ class RateLimitedRemoteOpenLike(RemoteFullOpenLike):
         return self._TIER_QUALITY.get(self.get_tier(), 85)
 
     def is_available(self) -> bool:
-        """Available when configured and not currently backing off. This mirrors
-        ``model_is_ok()`` for the paid providers, whose health signal is already
-        in-memory (API key/endpoint presence + rate-limit state) and never hits
-        the network, so it is safe to consult on the request path."""
-        return bool(self.model_is_ok())
+        """Available when configured, not currently backing off, and not in a
+        transport-failure cooldown (super()). The paid providers' health
+        signal is already in-memory (API key/endpoint presence + rate-limit
+        state) and never hits the network, so it is safe to consult on the
+        request path."""
+        return super().is_available() and bool(self.model_is_ok())
 
     @property
     def health_checked_live(self) -> bool:
@@ -3634,6 +3894,7 @@ class RateLimitedRemoteOpenLike(RemoteFullOpenLike):
         history: Optional[List[dict[str, str]]] = None,
         temperature: float = 0.7,
         raise_http_errors: bool = False,
+        timeout: Optional[float] = None,
     ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
         """Inference with rate-limit gating and 429 back-off.
 
@@ -3661,6 +3922,7 @@ class RateLimitedRemoteOpenLike(RemoteFullOpenLike):
                 history=history,
                 temperature=temperature,
                 raise_http_errors=raise_http_errors,
+                timeout=timeout,
             )
         except aiohttp.ClientResponseError as e:
             if raise_http_errors:
@@ -3701,6 +3963,7 @@ class RateLimitedRemoteOpenLike(RemoteFullOpenLike):
         history: Optional[List[dict[str, str]]] = None,
         temperature: float = 0.7,
         raise_http_errors: bool = False,
+        timeout: Optional[float] = None,
     ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
         """The actual transport call wrapped by ``_infer``'s rate-limit gating
         and 429 back-off.
@@ -3726,6 +3989,7 @@ class RateLimitedRemoteOpenLike(RemoteFullOpenLike):
             history=history,
             temperature=temperature,
             raise_http_errors=raise_http_errors,
+            timeout=timeout,
         )
 
 
@@ -4297,6 +4561,7 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
         history: Optional[List[dict[str, str]]] = None,
         temperature: float = 0.7,
         raise_http_errors: bool = False,
+        timeout: Optional[float] = None,
     ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
         """Inference via the Anthropic Messages API exposed by Azure AI Foundry.
 
@@ -4349,31 +4614,46 @@ class RemoteAzureClaude(RemoteAzureOpenLike):
                 "messages": cleaned_messages,
                 "temperature": temperature,
             }
-            result = await self._messages_request(url, headers, body)
+            result = await self._messages_request(url, headers, body, timeout=timeout)
             if result and result[0]:
                 return result
         return None
 
     async def _messages_request(
-        self, url: str, headers: dict, body: dict
+        self,
+        url: str,
+        headers: dict,
+        body: dict,
+        timeout: Optional[float] = None,
     ) -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
-        """POST a single Messages API request (honoring ``self._timeout``) and
-        parse the response. ``raise_for_status`` surfaces HTTP errors as
-        ``aiohttp.ClientResponseError`` so 429s reach the shared back-off."""
+        """POST a single Messages API request (honoring ``timeout`` /
+        ``self._timeout``) and parse the response. ``raise_for_status``
+        surfaces HTTP errors as ``aiohttp.ClientResponseError`` so 429s reach
+        the shared back-off."""
+        effective_timeout = timeout if timeout is not None else self._timeout
 
         async def _post() -> Optional[Tuple[Optional[str], Optional[List[str]]]]:
-            async with aiohttp.ClientSession() as session:
+            # Same rationale as RemoteOpenLike.__infer: fail fast on
+            # unreachable hosts, let aiohttp clean up on budget expiry, no
+            # sock_read for non-streaming completions.
+            client_timeout = aiohttp.ClientTimeout(
+                total=effective_timeout,
+                sock_connect=_env_float("FHI_ML_SOCK_CONNECT", 10.0),
+            )
+            async with aiohttp.ClientSession(timeout=client_timeout) as session:
                 async with session.post(url, headers=headers, json=body) as response:
                     response.raise_for_status()
                     json_result = await response.json()
             return self._parse_messages_response(json_result)
 
-        if self._timeout is not None:
+        if effective_timeout is not None:
             try:
-                async with async_timeout(self._timeout):
+                async with async_timeout(effective_timeout):
                     return await _post()
             except asyncio.TimeoutError:
-                logger.warning(f"Timed out querying {self}")
+                logger.warning(
+                    f"Timed out querying {self} after {effective_timeout:.0f}s"
+                )
                 return None
         return await _post()
 

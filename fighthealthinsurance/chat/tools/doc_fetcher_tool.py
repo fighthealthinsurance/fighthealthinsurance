@@ -219,11 +219,19 @@ class DocFetcherTool(BaseTool):
             except Exception as e:
                 logger.warning(f"Failed to store fetched document: {e}")
 
-        # Truncate for immediate LLM context only
+        # Truncate for immediate LLM context only. Include the user's actual
+        # question in the follow-up prompt -- without it the model was asked
+        # to "incorporate the document" with no question to answer, producing
+        # generic summaries instead of answering what the user asked.
         llm_text = full_text[:MAX_CHAT_TEXT_LENGTH]
+        user_question = kwargs.get("current_message_for_llm") or ""
+        question_part = (
+            f"The user's question was: {user_question}\n" if user_question else ""
+        )
         doc_context = (
             f"\n\nDocument fetched from {safe_url}:\n"
             f"{llm_text}\n\n"
+            f"{question_part}"
             f"Please incorporate the relevant information from the document above.\n"
         )
 
@@ -237,6 +245,8 @@ class DocFetcherTool(BaseTool):
                 depth=depth + 1,
                 is_logged_in=is_logged_in,
                 is_professional=is_professional,
+                fallback_backends=kwargs.get("fallback_backends"),
+                full_history=kwargs.get("full_history"),
             )
 
             if cleaned_response and additional_response:

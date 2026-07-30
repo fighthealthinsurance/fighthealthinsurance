@@ -162,10 +162,13 @@ async def retry_llm_with_fallback(
     )
 
     try:
-        retry_response, retry_context = await best_within_timelimit(
+        best_retry = await best_within_timelimit(
             retry_calls,
             retry_scorer,
             timeout=timeout,
+        )
+        retry_response, retry_context = (
+            best_retry if best_retry is not None else (None, None)
         )
 
         if retry_response and len(retry_response.strip()) > MIN_RESPONSE_LENGTH:

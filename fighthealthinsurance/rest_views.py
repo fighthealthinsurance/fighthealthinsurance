@@ -28,7 +28,7 @@ from rest_framework.decorators import (
     permission_classes,
 )
 from rest_framework.exceptions import ValidationError
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -97,6 +97,10 @@ class ChatViewSet(viewsets.ViewSet):
     Provides metadata about each chat including the first user message preview.
     """
 
+    # Anonymous requests used to fall through to
+    # ProfessionalUser.objects.get(user=AnonymousUser) and 500.
+    permission_classes = [IsAuthenticated]
+
     def list(self, request):
         """List all chats for the current professional user."""
         user: User = request.user  # type: ignore
@@ -107,10 +111,18 @@ class ChatViewSet(viewsets.ViewSet):
             logger.warning(f"Professional user not found for user {user.id}")
             return Response({"error": "Professional user not found"}, status=404)
 
-        # Get all chats for this professional user, ordered by most recently updated
+        # Bounded: chat_history rows are large JSON blobs, and this endpoint
+        # used to serialize EVERY chat the professional ever had.
+        try:
+            limit = int(request.query_params.get("limit", 100))
+        except (TypeError, ValueError):
+            limit = 100
+        limit = max(1, min(limit, 500))
+
+        # Get chats for this professional user, most recently updated first
         chats = OngoingChat.objects.filter(
             professional_user=professional_user
-        ).order_by("-updated_at")
+        ).order_by("-updated_at")[:limit]
 
         # Prepare the response data
         chat_list = []

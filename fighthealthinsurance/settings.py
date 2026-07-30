@@ -941,9 +941,13 @@ class Prod(Base):
         if _env_flag("PG_USE_POOL"):
             pool_min_size = _ucr_int("PG_POOL_MIN_SIZE", 2, 0)
             # Peak legitimate concurrent ORM users in one web worker: the
-            # single thread_sensitive sync lane (1) + exec.executor (10) +
-            # pubmed_executor (4) = 15; the default of 16 keeps a busy
-            # executor from starving the pool by itself. Non-web processes
+            # single thread_sensitive sync lane (1) + exec.executor (24
+            # interactive) + background_executor (8) + pubmed_executor (4)
+            # = 37; the default of 40 keeps busy executors from starving the
+            # pool by themselves. (Keep in sync with exec.py's pool sizes /
+            # their FHI_*_EXECUTOR_WORKERS overrides, and remember
+            # cluster-wide max_connections must cover pods * max_size.)
+            # Non-web processes
             # want other sizes via env: Ray actors / one-shot jobs small
             # (2-4), the Temporal worker at least
             # TEMPORAL_MAX_ACTIVITY_WORKERS. Every process keeps its own
@@ -954,7 +958,7 @@ class Prod(Base):
             # size at once -- opt in per Deployment (with a per-workload
             # PG_POOL_MAX_SIZE) instead.
             pool_max_size = max(
-                _ucr_int("PG_POOL_MAX_SIZE", 16, 1),
+                _ucr_int("PG_POOL_MAX_SIZE", 40, 1),
                 # A min above max would make ConnectionPool raise ValueError
                 # on first DB access (every request 500s, no crash at boot);
                 # grow max instead.

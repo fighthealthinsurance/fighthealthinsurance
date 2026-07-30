@@ -13,7 +13,7 @@ from loguru import logger
 
 from fighthealthinsurance.utils import aget_related
 
-from .base_tool import BaseTool
+from .base_tool import BaseTool, is_safe_tool_field, settable_model_fields
 from .patterns import CREATE_OR_UPDATE_PRIOR_AUTH_REGEX
 
 
@@ -169,6 +169,8 @@ class PriorAuthTool(BaseTool):
             prior_auth: The PriorAuthRequest object to update
             prior_auth_data: Dictionary of field values
         """
+        # Allowlist, not hasattr -- see AppealTool._update_appeal_fields.
+        allowed = settable_model_fields(type(prior_auth))
         for key, value in prior_auth_data.items():
             # Normalize the key
             key = key.lower().strip()
@@ -177,7 +179,7 @@ class PriorAuthTool(BaseTool):
             if key in self.FIELD_MAPPINGS:
                 key = self.FIELD_MAPPINGS[key]
 
-            if hasattr(prior_auth, key):
+            if is_safe_tool_field(key, allowed):
                 setattr(prior_auth, key, value)
             else:
-                logger.warning(f"Key {key} not found in Prior Auth model. Skipping.")
+                logger.warning(f"Key {key} not settable on Prior Auth model. Skipping.")

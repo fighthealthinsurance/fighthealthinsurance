@@ -254,6 +254,8 @@ class FinancialAssistanceTool(BaseTool):
                 depth=depth + 1,
                 is_logged_in=is_logged_in,
                 is_professional=is_professional,
+                fallback_backends=kwargs.get("fallback_backends"),
+                full_history=kwargs.get("full_history"),
             )
 
             if cleaned_response and additional_response:

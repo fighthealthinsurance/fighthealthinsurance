@@ -30,11 +30,28 @@ from channels.routing import ProtocolTypeRouter, URLRouter
 from configurations.asgi import get_asgi_application
 
 from fighthealthinsurance.routing import websocket_urlpatterns
+from fighthealthinsurance.ws_origin import allowed_hosts_browser_origin_validator
+
+_ws_stack = AuthMiddlewareStack(URLRouter(websocket_urlpatterns))
+# Cross-site WebSocket protection: browsers send an Origin header on WS
+# handshakes, and without validation any site a user visits can open an
+# authenticated socket to these consumers. Supplied origins are enforced
+# against ALLOWED_HOSTS; a MISSING Origin (non-browser clients, probes) is
+# allowed -- see ws_origin.BrowserOriginValidator for why that loses no
+# protection (channels' stock validator would reject those). Env-gated
+# (default ON) so an Origin-rewriting proxy can be unblocked without a
+# deploy while it gets fixed.
+if get_env_variable("FHI_WS_ENFORCE_ORIGIN", "true").lower() not in (
+    "false",
+    "0",
+    "no",
+):
+    _ws_stack = allowed_hosts_browser_origin_validator(_ws_stack)
 
 application = ProtocolTypeRouter(
     {
         "http": get_asgi_application(),
-        "websocket": AuthMiddlewareStack(URLRouter(websocket_urlpatterns)),
+        "websocket": _ws_stack,
     }
 )
 

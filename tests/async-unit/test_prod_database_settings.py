@@ -61,12 +61,14 @@ class TestProdDatabasesPooled:
 
     def test_pool_defaults(self):
         db = _prod_default_db({"PG_USE_POOL": "1"})
+        # max_size 40 covers 1 (sync lane) + 24 interactive + 8 background
+        # + 4 pubmed executor threads (see exec.py / settings.py comment).
         assert db["OPTIONS"]["pool"] == {
             "name": "fhi-default",
             "min_size": 2,
-            "max_size": 16,
+            "max_size": 40,
             "timeout": 5,
-            "max_waiting": 32,
+            "max_waiting": 80,
             "max_lifetime": 1800,
             "max_idle": 300,
         }
@@ -96,7 +98,7 @@ class TestProdDatabasesPooled:
 
     def test_pool_malformed_max_size_falls_back_to_default(self):
         db = _prod_default_db({"PG_USE_POOL": "1", "PG_POOL_MAX_SIZE": "banana"})
-        assert db["OPTIONS"]["pool"]["max_size"] == 16
+        assert db["OPTIONS"]["pool"]["max_size"] == 40
 
     def test_conn_max_age_stays_zero_when_pooled(self):
         # Django refuses to pool with CONN_MAX_AGE != 0 (raises

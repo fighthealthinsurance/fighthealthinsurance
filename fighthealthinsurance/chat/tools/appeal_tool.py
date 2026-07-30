@@ -13,7 +13,7 @@ from loguru import logger
 
 from fighthealthinsurance.utils import aget_related
 
-from .base_tool import BaseTool
+from .base_tool import BaseTool, is_safe_tool_field, settable_model_fields
 from .patterns import CREATE_OR_UPDATE_APPEAL_REGEX
 
 
@@ -179,20 +179,25 @@ class AppealTool(BaseTool):
             denial: The Denial object to update
             appeal_data: Dictionary of field values
         """
+        # Allowlist, not hasattr: hasattr/setattr accepted ANY attribute name,
+        # letting a crafted (or just confused) LLM payload overwrite pks,
+        # relation ids, methods, or private state on both models.
+        appeal_allowed = settable_model_fields(type(appeal))
+        denial_allowed = settable_model_fields(type(denial))
         for key, value in appeal_data.items():
             set_field = False
 
-            if hasattr(appeal, key):
+            if is_safe_tool_field(key, appeal_allowed):
                 set_field = True
                 setattr(appeal, key, value)
 
-            if hasattr(denial, key):
+            if is_safe_tool_field(key, denial_allowed):
                 set_field = True
                 setattr(denial, key, value)
 
             if not set_field:
                 logger.warning(
-                    f"Key {key} not found in Appeal or Denial model. Skipping."
+                    f"Key {key} not settable on Appeal or Denial model. Skipping."
                 )
                 await self.send_status_message(
                     f"Key {key} not found in Appeal or Denial model. "
