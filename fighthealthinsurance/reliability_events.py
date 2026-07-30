@@ -26,8 +26,7 @@ def capture_reliability_event(kind: str, **context: Any) -> None:
             return
         with sentry_sdk.new_scope() as scope:
             scope.set_tag("reliability_event", kind)
-            for key, value in context.items():
-                scope.set_extra(key, value)
+            scope.set_context("reliability", dict(context))
             sentry_sdk.capture_message(
                 f"reliability: {kind}",
                 level="error",

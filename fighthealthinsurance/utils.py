@@ -1169,6 +1169,21 @@ def _extended_wait_cap() -> float:
         return 300.0
 
 
+# Strong references to fire-and-forget cancellation tasks: a bare
+# asyncio.create_task result can be garbage-collected before it runs (RUF006),
+# which would let the stragglers it exists to cancel survive.
+_cleanup_tasks: set = set()
+
+
+def _spawn_cancellation(tasks_to_cancel: List) -> None:
+    """Fire-and-forget cancel_tasks() with a strong reference until done."""
+    if not tasks_to_cancel:
+        return
+    task = asyncio.create_task(cancel_tasks(tasks_to_cancel))
+    _cleanup_tasks.add(task)
+    task.add_done_callback(_cleanup_tasks.discard)
+
+
 async def best_within_timelimit(
     tasks: Sequence[Awaitable[T]],
     score_fn: Callable[[T, Awaitable[T]], float],
@@ -1223,7 +1238,12 @@ async def best_within_timelimit(
                 result = task.result()
                 original_task = original_to_task[task]
                 score = score_fn(result, original_task)
-                if score > best_score:
+                # A falsy result is never returned to callers (the truthiness
+                # gates below treat it as a failure), so it must not occupy
+                # the best slot and block a later truthy result.
+                if not result:
+                    continue
+                if score > best_score or not best_result_option:
                     best_score = score
                     best_result_option = result
             except Exception as e:
@@ -1236,7 +1256,7 @@ async def best_within_timelimit(
         )
         _score_done(done)
         if best_result_option:
-            asyncio.create_task(cancel_tasks(list(pending)))
+            _spawn_cancellation(list(pending))
             return best_result_option
 
         # Overtime window: bounded, first truthy result wins. This keeps
@@ -1260,13 +1280,11 @@ async def best_within_timelimit(
         # asyncio.wait never cancels its children, so without this the
         # fan-out tasks would survive the cancellation and keep burning
         # backend capacity until their own per-call timeouts.
-        unfinished = [t for t in wrapped_tasks if not t.done()]
-        if unfinished:
-            asyncio.create_task(cancel_tasks(unfinished))
+        _spawn_cancellation([t for t in wrapped_tasks if not t.done()])
         raise
 
     if pending:
-        asyncio.create_task(cancel_tasks(list(pending)))
+        _spawn_cancellation(list(pending))
     if best_result_option:
         return best_result_option
     logger.warning(
@@ -1322,9 +1340,7 @@ async def best_within_timelimit_static(
 
     def _cancel_stragglers() -> None:
         """Fire-and-forget cancellation of unfinished tasks (non-blocking)."""
-        unfinished = [t for t in tasks if not t.done()]
-        if unfinished:
-            asyncio.create_task(cancel_tasks(unfinished))
+        _spawn_cancellation([t for t in tasks if not t.done()])
 
     try:
         # Wait for tasks to complete as they finish

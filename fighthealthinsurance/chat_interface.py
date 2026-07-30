@@ -189,13 +189,16 @@ class ChatInterface:
         try:
             while True:
                 await asyncio.sleep(interval)
-                await self.send_status_message("Still working on your reply...")
+                try:
+                    await self.send_status_message("Still working on your reply...")
+                except Exception:
+                    # One failed send must not end heartbeats for the rest of
+                    # the turn (a transient send error is exactly the flaky
+                    # long-turn case this loop exists for). If the socket is
+                    # truly gone the main turn surfaces that on its own send.
+                    logger.debug(f"Heartbeat send failed for chat {self.chat.id}")
         except asyncio.CancelledError:
             pass
-        except Exception:
-            # A failed heartbeat send means the socket is likely gone; the
-            # main turn will surface that on its own send.
-            logger.debug(f"Heartbeat send failed for chat {self.chat.id}")
 
     async def send_message_to_client(self, message: str):
         """Sends a message to the client."""
@@ -998,14 +1001,23 @@ class ChatInterface:
             # object. Duplicate detection and consecutive-user-message merging
             # happen in the helper, against the fresh tail. Rebind to the
             # merged row so later turns and replays see the true state.
-            self.chat = chat = await apersist_chat_turn(
-                chat,
-                new_messages=[
-                    {"role": "user", "content": user_message},
-                    {"role": "assistant", "content": final_response_text},
-                ],
-                new_summaries=turn_summaries,
-            )
+            # Guarded: the chat row can vanish mid-turn (data deletion); the
+            # user still gets the generated reply, it just isn't persisted.
+            try:
+                self.chat = chat = await apersist_chat_turn(
+                    chat,
+                    new_messages=[
+                        {"role": "user", "content": user_message},
+                        {"role": "assistant", "content": final_response_text},
+                    ],
+                    new_summaries=turn_summaries,
+                )
+            except OngoingChat.DoesNotExist:
+                logger.warning(
+                    f"Chat {chat.id} vanished before the turn could be "
+                    f"persisted; delivering the reply unpersisted"
+                )
+                background_summary_task = None
 
             # Launch background summary after save so the task can read the latest history
             if background_summary_task is not None:

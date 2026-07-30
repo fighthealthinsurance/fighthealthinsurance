@@ -122,6 +122,9 @@ def ensure_executor_collector_registered() -> None:
         REGISTRY.register(ExecutorQueueCollector())
         _collector_registered = True
     except Exception:  # pragma: no cover - double registration in tests
+        logger.opt(exception=True).debug(
+            "Executor queue collector not registered (already registered?)"
+        )
         _collector_registered = True
 
 

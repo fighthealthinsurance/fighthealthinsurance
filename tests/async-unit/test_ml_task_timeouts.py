@@ -22,7 +22,15 @@ from fighthealthinsurance.ml.ml_models import (
 
 
 class TestMlTaskTimeoutConfig:
-    def test_defaults(self):
+    def test_defaults(self, monkeypatch):
+        for var in (
+            "FHI_ML_TIMEOUT",
+            "FHI_ML_TIMEOUT_CHAT",
+            "FHI_ML_TIMEOUT_ENTITY",
+            "FHI_ML_TIMEOUT_CONTEXT",
+            "FHI_ML_TIMEOUT_SUMMARIZE",
+        ):
+            monkeypatch.delenv(var, raising=False)
         assert ml_task_timeout("appeal") == 300.0
         assert ml_task_timeout("chat") == 90.0
         assert ml_task_timeout("entity") == 45.0
@@ -108,7 +116,7 @@ class TestBoundedRetryLoops:
             return (None, None)
 
         with patch.object(model, "_infer", side_effect=fake_infer):
-            answer, summary = await model.generate_chat_response(
+            answer, _ = await model.generate_chat_response(
                 "Help me appeal my denial",
                 previous_context_summary=None,
                 history=[],

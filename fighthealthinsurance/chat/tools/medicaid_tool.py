@@ -5,10 +5,14 @@ Handles medicaid_info and medicaid_eligibility tool calls from the LLM
 to look up Medicaid information and check eligibility.
 """
 
-import asyncio
 import json
 import re
 from typing import Any, Awaitable, Callable, List, Optional, Tuple
+
+# Plain asgiref sync_to_async (NOT database_sync_to_async): used below for a
+# non-ORM blocking call, per the repo convention for subprocess/network/file
+# work.
+from asgiref.sync import sync_to_async
 
 from loguru import logger
 
@@ -100,13 +104,11 @@ class MedicaidInfoTool(BaseTool):
             # Import here to avoid circular imports
             from fighthealthinsurance.medicaid_api import get_medicaid_info
 
-            # get_medicaid_info does blocking pandas/IO work (no ORM, so a
-            # plain thread offload is right; database_sync_to_async is
+            # get_medicaid_info does blocking pandas/IO work (no ORM, so
+            # plain sync_to_async is right; database_sync_to_async is
             # reserved for ORM-touching callables). Running it inline blocked
             # the event loop -- freezing every OTHER chat on this worker.
-            medicaid_info = await asyncio.to_thread(
-                get_medicaid_info, medicaid_info_data
-            )
+            medicaid_info = await sync_to_async(get_medicaid_info)(medicaid_info_data)
             logger.debug(
                 f"Got Medicaid info response: {medicaid_info[:200] if medicaid_info else 'None'}..."
             )

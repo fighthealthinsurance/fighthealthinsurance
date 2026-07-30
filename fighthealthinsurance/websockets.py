@@ -1304,7 +1304,7 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                 await self.send_json_message(
                     {"chat_id": str(chat.id), "chat_forked": True}
                 )
-            self.chat_id = chat.id
+            self.chat_id = str(chat.id)
             if (
                 not hasattr(self, "chat_interface")
                 or self.chat_interface is None

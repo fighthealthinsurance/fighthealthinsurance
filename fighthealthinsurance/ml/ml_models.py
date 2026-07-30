@@ -2627,8 +2627,15 @@ class RemoteOpenLike(RemoteModel):
                 )
                 record_ml_call(call_model, "timeout", time.monotonic() - started)
                 # A whole-budget timeout is a transport-level strike too --
-                # the endpoint is effectively unreachable at this budget.
-                if not kwargs.get("raise_http_errors"):
+                # but ONLY at the instance-wide budget. A tight interactive
+                # budget (entity 45s, chat 90s) timing out says the backend
+                # is slow for that task, not unreachable; striking on it
+                # could cool the pair for the appeal path whose 300s budget
+                # would have succeeded. Connect-phase failures still strike
+                # via the transport-error handler regardless of budget.
+                if not kwargs.get("raise_http_errors") and (
+                    self._timeout is None or effective_timeout >= self._timeout
+                ):
                     self._note_transport_failure(
                         kwargs.get("api_base") or self.api_base,
                         call_model,

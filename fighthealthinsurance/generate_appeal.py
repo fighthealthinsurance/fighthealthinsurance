@@ -5,7 +5,7 @@ import random
 import re
 import time
 from concurrent.futures import Future
-from concurrent.futures import TimeoutError as FuturesTimeoutError
+from concurrent.futures import wait as futures_wait
 from dataclasses import dataclass
 from typing import Any, Callable, Coroutine, Iterator, List, Optional, Tuple, TypeVar
 
@@ -1197,23 +1197,22 @@ def _generated_to_appeals_text(
             # it (plus a grace beat for the deadline-aware model call to
             # notice and return): threads can't be cancelled, so an unbounded
             # result() here is how abandoned generations used to pin pool
-            # threads long after the client was gone. The abandoned branch is
-            # scoped to the bounded wait -- a TimeoutError RAISED BY the model
-            # call itself (same builtin class) must keep its normal
+            # threads long after the client was gone. futures_wait (not
+            # result(timeout=...)) distinguishes "still pending at the
+            # deadline" from a TimeoutError RAISED BY the model call itself
+            # (the same builtin class on 3.11+), which must keep its normal
             # "timed out" classification below.
-            if deadline is not None:
+            if deadline is not None and not k_text_future.done():
                 remaining = max(1.0, deadline - time.monotonic() + 15.0)
-                try:
-                    model_results = k_text_future.result(timeout=remaining)
-                except FuturesTimeoutError:
+                _done, not_done = futures_wait([k_text_future], timeout=remaining)
+                if not_done:
                     error_detail = "abandoned: requester deadline passed"
                     logger.warning(
                         f"Appeal generation via {model_name} abandoned -- "
                         f"requester deadline passed"
                     )
                     return
-            else:
-                model_results = k_text_future.result()
+            model_results = k_text_future.result()
         except Exception as e:
             # Same split as _log_fanout_task_error: expected transport failures
             # get one concise classified line, but an unexpected exception (a
