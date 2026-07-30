@@ -13,6 +13,7 @@ from loguru import logger
 
 from fhi_users.models import User
 from fighthealthinsurance import settings
+from fighthealthinsurance.chat.chat_persistence import apersist_chat_turn
 from fighthealthinsurance.chat.context_manager import (
     MISSING_CONTEXT_PREFIX,
     background_generate_summary,
@@ -932,11 +933,17 @@ class ChatInterface:
             summarize_callback=self.send_status_message,
         )
 
+        # Summary entries added this turn. Persistence appends these to the
+        # FRESH row inside a transaction (apersist_chat_turn), so we track
+        # them separately from the in-memory list, which may be stale.
+        turn_summaries: List[Optional[str]] = []
+
         # Store the updated summary if it changed
         if should_store_summary(chat.summary_for_next_call, summarized_context):
             if not chat.summary_for_next_call:
                 chat.summary_for_next_call = []
             chat.summary_for_next_call.append(summarized_context)
+            turn_summaries.append(summarized_context)
             logger.info(f"Stored updated summary for chat {chat.id}")
 
         final_response_text = None
@@ -985,56 +992,17 @@ class ChatInterface:
                 final_response_text = cleaned
                 final_context_part = context_part
         except Exception as e:
-            await asyncio.sleep(0.1)
-            logger.opt(exception=True).debug(
-                f"Error with model on chat {primary_models}"
+            logger.opt(exception=True).error(
+                f"Chat generation failed for chat {chat.id}: {e}"
             )
+            logger.debug(f"Models tried for failed chat {chat.id}: {primary_models}")
 
         if final_response_text:
-            if not chat.chat_history:
-                chat.chat_history = []
-
-            # Check for duplicate messages - don't add the same user message twice in a row
-            is_duplicate = False
-            if chat.chat_history and len(chat.chat_history) > 0:
-                last_message = chat.chat_history[-1]
-                if (
-                    last_message.get("role") == "user"
-                    and last_message.get("content") == user_message
-                ):
-                    is_duplicate = True
-                    logger.info(
-                        f"Duplicate message detected in chat {chat.id}, not adding to history again"
-                    )
-
-            # Check for messages that should be merged - if the last message is from the user and there's been no response
-            should_merge = False
-            merged_message = user_message
-            if not is_duplicate and chat.chat_history and len(chat.chat_history) > 0:
-                last_message = chat.chat_history[-1]
-                if last_message.get("role") == "user":
-                    # User sent two messages in a row with no assistant response in between
-                    # Merge them together
-                    should_merge = True
-                    merged_message = f"{last_message.get('content')} {user_message}"
-                    logger.info(f"Merging consecutive user messages in chat {chat.id}")
-                    # Remove the last message since we're merging it
-                    chat.chat_history = chat.chat_history[:-1]
-
-            # Add the user message to history (unless it's a duplicate)
-            if not is_duplicate:
-                self._append_to_history(
-                    chat,
-                    "user",
-                    merged_message if should_merge else user_message,
-                )
-
             if should_store_summary(chat.summary_for_next_call, final_context_part):
                 if not chat.summary_for_next_call:
                     chat.summary_for_next_call = []
                 chat.summary_for_next_call.append(final_context_part)
-
-            self._append_to_history(chat, "assistant", final_response_text)
+                turn_summaries.append(final_context_part)
 
             # If model didn't return a context summary, store a placeholder and
             # fire a background task to generate one
@@ -1042,23 +1010,49 @@ class ChatInterface:
             if final_response_text and not final_context_part:
                 if not chat.summary_for_next_call:
                     chat.summary_for_next_call = []
-                history_len = len(chat.chat_history) if chat.chat_history else 0
+                # The counter only needs to make the placeholder tag unique;
+                # +2 accounts for the user/assistant pair persisted below.
+                history_len = (len(chat.chat_history) if chat.chat_history else 0) + 2
                 placeholder = make_placeholder(history_len)
                 chat.summary_for_next_call.append(placeholder)
+                turn_summaries.append(placeholder)
                 background_summary_task = background_generate_summary(
                     chat.id, placeholder
                 )
 
-            # Merge any microsite context from DB before saving to avoid overwriting
-            # background task updates
-            await self._merge_summary_from_db(chat)
-            await chat.asave()
+            # Persist against the fresh row (transactional re-read + merge) so
+            # concurrent writers -- background summaries, the microsite fetch,
+            # a second tab -- can't be clobbered by this stale in-memory
+            # object. Duplicate detection and consecutive-user-message merging
+            # happen in the helper, against the fresh tail. Rebind to the
+            # merged row so later turns and replays see the true state.
+            self.chat = chat = await apersist_chat_turn(
+                chat,
+                new_messages=[
+                    {"role": "user", "content": user_message},
+                    {"role": "assistant", "content": final_response_text},
+                ],
+                new_summaries=turn_summaries,
+            )
 
             # Launch background summary after save so the task can read the latest history
             if background_summary_task is not None:
                 await fire_and_forget_in_new_threadpool(background_summary_task)
             await self.send_message_to_client(final_response_text)
         else:
+            # The turn failed after the user already committed their message:
+            # persist it anyway so a reconnect/replay doesn't erase what they
+            # typed (previously the whole turn was dropped on failure).
+            try:
+                self.chat = chat = await apersist_chat_turn(
+                    chat,
+                    new_messages=[{"role": "user", "content": user_message}],
+                    new_summaries=turn_summaries,
+                )
+            except Exception:
+                logger.opt(exception=True).error(
+                    f"Could not persist user message for failed turn in chat {chat.id}"
+                )
             # Provide more helpful error message based on context
             err_msg = (
                 "Sorry, all available models (including backup models) are currently "

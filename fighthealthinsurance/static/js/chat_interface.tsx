@@ -354,7 +354,15 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
 
   // Connect to the WebSocket when the component mounts
   useEffect(() => {
+    // Reconnect with exponential backoff instead of a fixed 3s loop, and
+    // stop reconnecting entirely once the component unmounts (otherwise the
+    // cleanup close() schedules a zombie socket 3s later).
+    let unmounted = false;
+    let reconnectAttempts = 0;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+
     const connectWebSocket = () => {
+      if (unmounted) return;
       console.log("Connecting to WebSocket...");
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
       const wsUrl = `${protocol}//${window.location.host}/ws/ongoing-chat/`;
@@ -363,6 +371,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
       ws.onopen = () => {
         console.log("WebSocket connected");
         wsRef.current = ws;
+        reconnectAttempts = 0;
 
         // Track chat start conversion for UET (only once per session, not on reconnects)
         if (window.trackUETConversion && !hasSentChatStartUET) {
@@ -524,7 +533,18 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
       };
 
       ws.onmessage = (event) => {
-        const data = JSON.parse(event.data);
+        let data;
+        try {
+          data = JSON.parse(event.data);
+        } catch (parseError) {
+          // A malformed/truncated frame must not throw out of onmessage --
+          // that kills handling of every later frame on this socket.
+          console.error("Ignoring unparseable WebSocket frame", parseError);
+          return;
+        }
+        if (!data || typeof data !== "object") {
+          return;
+        }
         // Frames carry chat message content (PHI) -- log only the field names.
         console.debug("Received message frame, keys:", Object.keys(data ?? {}));
 
@@ -609,8 +629,13 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
       ws.onclose = () => {
         console.log("WebSocket disconnected");
         wsRef.current = null;
-        // Attempt to reconnect after a short delay
-        setTimeout(connectWebSocket, 3000);
+        if (unmounted) return;
+        // Exponential backoff: 3s, 6s, 12s, ... capped at 60s. A server
+        // rejecting connections gets breathing room instead of a thundering
+        // 3s retry loop from every open tab.
+        const delay = Math.min(3000 * 2 ** reconnectAttempts, 60000);
+        reconnectAttempts += 1;
+        reconnectTimer = setTimeout(connectWebSocket, delay);
       };
 
       ws.onerror = (error) => {
@@ -622,6 +647,10 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
 
     // Clean up WebSocket connection when component unmounts
     return () => {
+      unmounted = true;
+      if (reconnectTimer !== null) {
+        clearTimeout(reconnectTimer);
+      }
       if (wsRef.current) {
         wsRef.current.close();
       }

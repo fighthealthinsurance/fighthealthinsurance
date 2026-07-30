@@ -573,6 +573,27 @@ class StreamingAppealsBackend(AsyncWebsocketConsumer):
             await self.close()
             return
         denial_id = data.get("denial_id")
+        # Magic-key auth gate, mirroring the REST fallback: verify the
+        # (denial_id, email, semi_sekret) triple resolves to a real Denial
+        # BEFORE starting generation. Without this, wrong credentials burn
+        # ML cycles and then surface as an in-band error frame mid-stream;
+        # with it the client gets a deterministic error frame up front.
+        # Uniform message so we don't leak which field was wrong.
+        denial = await database_sync_to_async(common_view_logic.get_denial_for_action)(
+            denial_id=denial_id,
+            email=data.get("email") or "",
+            semi_sekret=data.get("semi_sekret") or "",
+        )
+        if denial is None:
+            logger.warning(f"appeals ws: auth failure for denial {denial_id!r}")
+            try:
+                await self.send(
+                    json.dumps({"type": "error", "message": "Not found"}) + "\n"
+                )
+            except Exception:
+                logger.debug("appeals ws: could not send auth error frame")
+            await self.close()
+            return
         logger.debug(f"appeals ws: starting generation for denial {denial_id}")
         aitr: AsyncIterator[str] = (
             common_view_logic.AppealsBackendHelper.generate_appeals(data)
@@ -665,6 +686,25 @@ class StreamingAppealsBackend(AsyncWebsocketConsumer):
                     wire=wire.summary(),
                     **gen_fields.as_kwargs(),
                 )
+            # Tell the client the stream failed so it can retry/fall back
+            # instead of interpreting the close as "generation finished with
+            # nothing". Skip when the failure came from the send side -- the
+            # socket is already dead and another send would just mask the
+            # original traceback.
+            if not error_from_send:
+                try:
+                    await self.send(
+                        json.dumps(
+                            {
+                                "type": "error",
+                                "message": "Appeal generation failed on the server."
+                                " Please retry.",
+                            }
+                        )
+                        + "\n"
+                    )
+                except Exception:
+                    logger.debug("appeals ws: could not send error frame")
             raise
         finally:
             await asyncio.sleep(0.1)
@@ -1277,10 +1317,19 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                 await self.chat_interface.replay_chat_history()
 
         except Exception as e:
-            logger.opt(exception=True).debug(f"Error in ongoing chat: {e}")
+            # Log the full traceback server-side at ERROR; send the client a
+            # correlation ref rather than str(e) -- raw exception text can leak
+            # internals (hostnames, SQL, model names) and is useless to users.
+            err_ref = uuid.uuid4().hex[:8]
+            logger.opt(exception=True).error(
+                f"[chat-err {err_ref}] Error in ongoing chat: {e}"
+            )
             await self.send_json_message(
-                {"error": f"Server error: {str(e)}"}
-            )  # Use helper
+                {
+                    "error": "Internal server error"
+                    f" (ref {err_ref}). Please try again."
+                }
+            )
 
     def _get_professional_user(self, user):
         """Get the professional user from the Django user."""
@@ -1337,8 +1386,12 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
 
                 return chat
             except OngoingChat.DoesNotExist as e:
+                # No positional args to loguru here: with args present loguru
+                # treats the (already interpolated) message as a format
+                # template, so a "{" in the client-controlled chat_id would
+                # raise/inject inside the logging call itself.
                 logger.warning(
-                    f"Chat with id {chat_id} not found. Creating new chat.", e
+                    f"Chat with id {chat_id!r} not found ({e}). Creating new chat."
                 )
                 pass  # Fall through to create a new one
 
