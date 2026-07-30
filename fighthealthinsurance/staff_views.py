@@ -592,6 +592,21 @@ class _SendBulkMailView(generic.FormView):
     def recipient_count(self) -> int:
         raise NotImplementedError
 
+    @staticmethod
+    def _distinct_email_count(qs) -> int:
+        """Count distinct (case-insensitive) email addresses in a queryset.
+
+        Matches what the actor actually sends -- it dedupes recipients by
+        lowercased address -- so the page never overstates a send because
+        someone signed up twice.
+        """
+        return (
+            qs.annotate(_lower_email=Lower("email"))
+            .values("_lower_email")
+            .distinct()
+            .count()
+        )
+
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context["title"] = self.page_title
@@ -659,7 +674,7 @@ class SendMailingListMailView(_SendBulkMailView):
     audience_noun = "mailing list"
 
     def recipient_count(self) -> int:
-        return MailingListSubscriber.objects.count()
+        return self._distinct_email_count(MailingListSubscriber.objects.all())
 
 
 class SendInterestedProfessionalMailView(_SendBulkMailView):
@@ -680,15 +695,7 @@ class SendInterestedProfessionalMailView(_SendBulkMailView):
     audience_noun = "interested professional"
 
     def recipient_count(self) -> int:
-        # Distinct addresses, matching what the actor actually sends: the raw
-        # row count would overstate the send whenever someone signed up twice.
-        return (
-            mailable_interested_professionals()
-            .annotate(_lower_email=Lower("email"))
-            .values("_lower_email")
-            .distinct()
-            .count()
-        )
+        return self._distinct_email_count(mailable_interested_professionals())
 
 
 # Bucket label for chosen ProposedAppeal rows whose model_name is NULL and

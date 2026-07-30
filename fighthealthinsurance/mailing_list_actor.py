@@ -221,10 +221,15 @@ class MailingListActor:
         return (sent_count, failed_count, blocked_count)
 
     def _append_unsubscribe_html(self, html_content: str, unsubscribe_url: str) -> str:
-        """Append unsubscribe link to HTML content."""
+        """Append unsubscribe link to HTML content.
+
+        Audience-agnostic wording ("future emails" rather than "this mailing
+        list") because the same footer goes on both subscriber and
+        interested-professional sends.
+        """
         unsubscribe_html = (
             f'<br><hr><p style="font-size: 12px; color: #666;">'
-            f"To unsubscribe from this mailing list, "
+            f"To unsubscribe from future emails, "
             f'<a href="{unsubscribe_url}">click here</a>.</p>'
         )
         return html_content + unsubscribe_html
@@ -232,7 +237,6 @@ class MailingListActor:
     def _append_unsubscribe_text(self, text_content: str, unsubscribe_url: str) -> str:
         """Append unsubscribe link to text content."""
         unsubscribe_text = (
-            f"\n\n---\n"
-            f"To unsubscribe from this mailing list, visit: {unsubscribe_url}"
+            f"\n\n---\n" f"To unsubscribe from future emails, visit: {unsubscribe_url}"
         )
         return text_content + unsubscribe_text
