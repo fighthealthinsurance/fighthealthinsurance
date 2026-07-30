@@ -660,8 +660,13 @@ class _SendBulkMailView(generic.FormView):
             logger.opt(exception=True).error(
                 f"Error sending {self.audience_noun} email: {e}"
             )
+            # Generic message only: exception text can carry hostnames or
+            # addresses, and HttpResponse renders it unescaped. Details stay in
+            # the log line above (matching ProConnectorProcessView's pattern).
             return HttpResponse(
-                f"Error sending {self.audience_noun} email: {str(e)}", status=500
+                f"Error sending {self.audience_noun} email. The error has been "
+                "logged; please try again.",
+                status=500,
             )
 
 

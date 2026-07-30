@@ -322,9 +322,12 @@ class SendInterestedProfessionalMailViewTest(TestCase):
     ):
         mock_actor = MagicMock()
         mock_actor_ref.get = mock_actor
-        mock_ray.get.side_effect = RuntimeError("actor died")
+        mock_ray.get.side_effect = RuntimeError("actor died at smtp.internal.host")
 
         self.client.login(username="staffuser", password="testpass123")
         response = self.client.post(SEND_URL, data=self.form_data)
 
         self.assertEqual(response.status_code, 500)
+        # The exception text (which can carry hostnames/addresses) must stay in
+        # the logs, not the HTTP response.
+        self.assertNotContains(response, "smtp.internal.host", status_code=500)
