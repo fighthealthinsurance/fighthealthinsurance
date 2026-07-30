@@ -102,3 +102,77 @@ async def apersist_chat_turn(
     )
     logger.debug(f"Persisted chat turn for chat {fresh.id}")
     return fresh
+
+
+MICROSITE_MARKER = "Microsite context:"
+
+
+def _persist_microsite_context_sync(chat_id: uuid.UUID, microsite_entry: str):
+    # Lazy import: context_manager will grow a dependency on this module.
+    from fighthealthinsurance.chat.context_manager import MISSING_CONTEXT_PREFIX
+    from fighthealthinsurance.models import OngoingChat
+
+    with transaction.atomic():
+        fresh = OngoingChat.objects.select_for_update().get(id=chat_id)
+        summary = fresh.summary_for_next_call or []
+        if any(MICROSITE_MARKER in str(e or "") for e in summary):
+            # Already stored (a concurrent fetch beat us) -- idempotent.
+            return fresh
+        last_entry = str(summary[-1]) if summary else ""
+        if not summary or MISSING_CONTEXT_PREFIX in last_entry:
+            # Never append to a placeholder entry: that would corrupt the tag
+            # background_generate_summary matches on. Own entry instead.
+            summary.append(microsite_entry)
+        else:
+            summary[-1] = (
+                f"{last_entry}\n\n{microsite_entry}" if last_entry else microsite_entry
+            )
+        fresh.summary_for_next_call = summary
+        fresh.save(update_fields=["summary_for_next_call", "updated_at"])
+        return fresh
+
+
+async def apersist_microsite_context(chat, microsite_entry: str):
+    """Store fetched microsite context on the chat without clobbering other
+    writers (the background fetch races the main turn's persist)."""
+    fresh = await database_sync_to_async(_persist_microsite_context_sync)(
+        chat.id, microsite_entry
+    )
+    logger.debug(f"Persisted microsite context for chat {fresh.id}")
+    return fresh
+
+
+def _replace_summary_placeholder_sync(
+    chat_id: uuid.UUID, placeholder_tag: str, summary_text: str
+) -> bool:
+    from fighthealthinsurance.models import OngoingChat
+
+    with transaction.atomic():
+        try:
+            fresh = OngoingChat.objects.select_for_update().get(id=chat_id)
+        except OngoingChat.DoesNotExist:
+            return False
+        entries = fresh.summary_for_next_call or []
+        replaced = False
+        for i, entry in enumerate(entries):
+            if str(entry) == placeholder_tag:
+                entries[i] = summary_text
+                replaced = True
+                break
+        if not replaced:
+            return False
+        fresh.summary_for_next_call = entries
+        fresh.save(update_fields=["summary_for_next_call", "updated_at"])
+        return True
+
+
+async def areplace_summary_placeholder(
+    chat_id: uuid.UUID, placeholder_tag: str, summary_text: str
+) -> bool:
+    """Swap a background-generated summary in for its placeholder, against
+    fresh row state. Returns False when the placeholder is gone (superseded
+    by a newer real summary) or the chat no longer exists."""
+    replaced: bool = await database_sync_to_async(_replace_summary_placeholder_sync)(
+        chat_id, placeholder_tag, summary_text
+    )
+    return replaced

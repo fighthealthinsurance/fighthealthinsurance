@@ -551,6 +551,26 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
         // Get user info for restoring personal info
         const userInfo = getUserInfo();
 
+        // Always store the chat ID when a frame carries one, BEFORE the
+        // branch below: replay/error frames also carry chat_id, and the old
+        // else-if chain meant a replay frame's messages short-circuited the
+        // chat_id branch -- so after a server-side fork the new id was never
+        // stored and every subsequent turn re-forked.
+        if (data.chat_id) {
+          if (data.chat_forked) {
+            console.log("Server forked this chat; new chat ID:", data.chat_id);
+          }
+          localStorage.setItem("fhi_chat_id", data.chat_id);
+          setState((prev) =>
+            prev.chatId === data.chat_id
+              ? prev
+              : {
+                  ...prev,
+                  chatId: data.chat_id,
+                },
+          );
+        }
+
         // Handle different types of messages from the server
         if (data.error) {
           // Skip the professional user error message as we're in patient mode
@@ -579,19 +599,20 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
             return msg;
           });
 
-          setState((prev) => ({
-            ...prev,
-            messages: processedMessages,
-          }));
-        } else if (data.chat_id) {
-          // Always update the chat ID when received from server
-          // This handles both new chats and reconnecting to existing ones
-          localStorage.setItem("fhi_chat_id", data.chat_id);
-          console.log("Setting chat ID:", data.chat_id);
-          setState((prev) => ({
-            ...prev,
-            chatId: data.chat_id,
-          }));
+          setState((prev) => {
+            // Guard the wipe: an empty replay (e.g. against a just-forked
+            // chat) must not erase messages the user can already see.
+            if (
+              !Array.isArray(processedMessages) ||
+              (processedMessages.length === 0 && prev.messages.length > 0)
+            ) {
+              return prev;
+            }
+            return {
+              ...prev,
+              messages: processedMessages,
+            };
+          });
         }
 
         if (data.content && data.role) {

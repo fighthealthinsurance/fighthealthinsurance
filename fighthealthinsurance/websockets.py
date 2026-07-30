@@ -1280,17 +1280,37 @@ class OngoingChatConsumer(AsyncWebsocketConsumer):
                 microsite_slug=microsite_slug,
                 tracking_info=tracking_info,
             )
+            # The client asked for a specific chat but got a NEW one (missing
+            # id or an identity/session mismatch). Say so explicitly with the
+            # new id up front: silently forking left clients replaying into a
+            # chat whose id they never stored, re-forking on every turn.
+            if chat_id and str(chat.id) != str(chat_id):
+                logger.info(
+                    f"chat ws: requested chat {chat_id!r} resolved to new "
+                    f"chat {chat.id} (forked)"
+                )
+                await self.send_json_message(
+                    {"chat_id": str(chat.id), "chat_forked": True}
+                )
             self.chat_id = chat.id
             if (
                 not hasattr(self, "chat_interface")
                 or self.chat_interface is None
                 or chat.id != self.chat_interface.chat.id
             ):
+                # Django session key from the WS scope (None for scopes with
+                # no session middleware): server-side artifacts like policy
+                # uploads are keyed by THIS, not the client-generated
+                # chat.session_key.
+                django_session_key = getattr(
+                    self.scope.get("session"), "session_key", None
+                )
                 self.chat_interface = ChatInterface(
                     send_json_message_func=self.send_json_message,
                     chat=chat,
                     user=user,
                     use_external_models=use_external_models,
+                    server_session_key=django_session_key,
                 )
             elif use_external_models != self.chat_interface.use_external_models:
                 # User changed their preference for external models mid-chat

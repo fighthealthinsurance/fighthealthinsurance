@@ -233,23 +233,18 @@ async def background_generate_summary(chat_id: uuid.UUID, placeholder_tag: str) 
         logger.info(f"Background summary generation returned empty for chat {chat_id}")
         return
 
-    # Re-fetch to check for race conditions
-    try:
-        chat = await OngoingChat.objects.aget(id=chat_id)
-    except OngoingChat.DoesNotExist:
-        return
+    # Swap the placeholder for the real summary transactionally against the
+    # fresh row (the old refetch-modify-asave here was a lost-update writer
+    # racing the main turn's persist).
+    from fighthealthinsurance.chat.chat_persistence import (
+        areplace_summary_placeholder,
+    )
 
-    # Find and overwrite only the specific placeholder we created
-    if chat.summary_for_next_call:
-        for i, entry in enumerate(chat.summary_for_next_call):
-            if str(entry) == placeholder_tag:
-                chat.summary_for_next_call[i] = summary
-                await chat.asave()
-                logger.info(
-                    f"Background summary replaced placeholder for chat {chat_id}"
-                )
-                return
+    replaced = await areplace_summary_placeholder(chat_id, placeholder_tag, summary)
+    if replaced:
+        logger.info(f"Background summary replaced placeholder for chat {chat_id}")
+    else:
         logger.debug(
             f"Background summary: placeholder not found in chat {chat_id} "
-            f"after re-fetch, tag={placeholder_tag!r}"
+            f"after re-check, tag={placeholder_tag!r}"
         )
