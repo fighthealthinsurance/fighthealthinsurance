@@ -329,5 +329,10 @@ class SendInterestedProfessionalMailViewTest(TestCase):
 
         self.assertEqual(response.status_code, 500)
         # The exception text (which can carry hostnames/addresses) must stay in
-        # the logs, not the HTTP response.
+        # the logs, not the HTTP response; the user sees the generic message.
         self.assertNotContains(response, "smtp.internal.host", status_code=500)
+        self.assertContains(
+            response,
+            "The error has been logged; please try again.",
+            status_code=500,
+        )
