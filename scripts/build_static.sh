@@ -112,13 +112,19 @@ if [ "$CURRENT_STATIC_CHECKSUM" = "$STORED_STATIC_CHECKSUM" ] && [ -d "static" ]
 fi
 
 if [ "$SKIP_STATIC_COLLECT" = false ]; then
+  # Generate the blog metadata BEFORE collectstatic: it writes
+  # blog_posts.json into the source static tree, and the views/sitemap read
+  # it through staticfiles_storage (STATIC_ROOT in production), so it must
+  # exist before collection copies the tree. Generating it after meant a
+  # single clean build shipped a STATIC_ROOT with no blog_posts.json.
+  ./manage.py generate_blog_metadata || echo "Warning: Failed to generate blog metadata. Continuing build without it."
   ./manage.py collectstatic --noinput --clear
   ./manage.py compress --force
-  # Generate the blog metadata so it's included in the container.
-  ./manage.py generate_blog_metadata || echo "Warning: Failed to generate blog metadata. Continuing build without it."
 
-  # Save checksum after successful collect
-  if [ -n "$CURRENT_STATIC_CHECKSUM" ]; then
-    echo "$CURRENT_STATIC_CHECKSUM" > "$STATIC_CHECKSUM_FILE"
-  fi
+  # Save checksum after successful collect. Recompute rather than reuse
+  # CURRENT_STATIC_CHECKSUM: generate_blog_metadata wrote blog_posts.json
+  # inside the scanned static tree after the pre-build value was computed,
+  # so saving the pre-build value would make the very next run rebuild
+  # everything once for no reason.
+  compute_static_checksum > "$STATIC_CHECKSUM_FILE"
 fi

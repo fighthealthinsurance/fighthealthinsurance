@@ -42,6 +42,9 @@ mypy --config-file mypy.ini -p fighthealthinsurance -p fhi_users
 python manage.py makemigrations
 python manage.py migrate
 python manage.py loaddata initial followup plan_source insurance_companies pa_requirements
+
+# Run every tox suite in parallel with a pass/fail summary (pre-push check)
+./scripts/good_to_go.sh
 ```
 
 ## Architecture
@@ -142,6 +145,34 @@ Tests are in `tests/` with subdirectories:
 
 Fixtures live in `fighthealthinsurance/fixtures/` (initial, followup, plan_source).
 
+## Claude Code Web Sessions
+
+Remote (web) sessions run `.claude/hooks/session-start.sh` before the session
+starts. It pre-builds the tox envs for the sync, async, async-unit, black, and
+mypy suites in parallel, installs the JS deps, and warms the webpack +
+collectstatic build. What to know:
+
+- `tox` is on PATH (installed to `~/.local/bin`); `tox -e ...` for the
+  pre-built envs starts immediately.
+- The selenium, sync-actor, and temporal tox envs are **not** pre-built: the
+  first `tox -e py313-django52-sync-actor` (etc.) pays a one-time env install
+  of a couple of minutes. That is expected — let it run.
+- A PostToolUse hook (`.claude/hooks/format-python.sh`) auto-runs the pinned
+  CI black on edited Python files in the black-enforced paths
+  (`fighthealthinsurance/`, `fhi_users/`, `charts/`, `setup.py`). When it
+  reports a reformat, re-read the file before doing further exact-match edits.
+  `tests/` is not auto-formatted.
+- `./scripts/run_local.sh` does not work in the container (it needs mkcert and
+  kubectl). To run the dev server for manual verification or screenshots, use
+  a pre-built tox env's interpreter — for the server only; tests still go
+  through `tox -e ...`:
+
+  ```bash
+  source .tox/py313-django52-async/bin/activate
+  python manage.py setup_local_db      # migrate + fixtures + test users (once)
+  python manage.py runserver 0.0.0.0:8000
+  ```
+
 ## Development Rules
 
 ### Local Development
@@ -154,7 +185,7 @@ Fixtures live in `fighthealthinsurance/fixtures/` (initial, followup, plan_sourc
 - After making changes, always run the relevant test suite before considering the work done.
 
 ### Code Style
-- **Check style and types via tox:** `tox -e py313-black` for formatting checks, `tox -e py313-mypy` for type checking.
+- **Check style and types via tox:** `tox -e py313-black` for formatting checks, `tox -e mypy` for type checking (`mypy` is the env CI runs and the one pre-built in web sessions; `py313-mypy` is a separate env dir that duplicates the same install).
 - To **fix** formatting issues, run `black fighthealthinsurance fhi_users` directly.
 - Follow existing code conventions in the file you're editing — match naming, import style, and structure.
 
