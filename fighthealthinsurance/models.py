@@ -74,8 +74,13 @@ class GenericContextGeneration(ExportModelOperationsMixin("GenericContextGenerat
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        indexes = [
-            models.Index(fields=["procedure", "diagnosis"]),
+        # The unique constraint's backing index also serves the
+        # (procedure, diagnosis) lookups, so no separate plain index.
+        constraints = [
+            models.UniqueConstraint(
+                fields=["procedure", "diagnosis"],
+                name="generic_ctx_proc_diag_uniq",
+            ),
         ]
 
     def __str__(self):

@@ -309,22 +309,25 @@ class MLCitationsHelper:
                     )
                     result = []
 
-                extras = await cls._get_supplemental_citations(
-                    denial=denial, procedure=procedure, diagnosis=diagnosis
-                )
-                if extras:
-                    logger.debug(
-                        f"Adding {len(extras)} supplemental citations to generated result"
-                    )
-                    result.extend(extras)
-
-                # If we have citations, cache them for future use
+                # Cache ONLY the ML-generated citations, before the
+                # supplemental extras are appended. The cache is shared
+                # across patients by (procedure, diagnosis), while the extras
+                # can be denial-specific (microsite evidence snippets and
+                # extralinks) -- caching the combined list both leaked one
+                # patient's microsite content into everyone else's citations
+                # and duplicated the extras on every cache hit, since the
+                # cached-read path appends them again.
+                # `aupdate_or_create` is atomic against the
+                # (procedure, diagnosis) unique constraint
+                # (generic_ctx_proc_diag_uniq), which closes the race where
+                # two concurrent cache misses could otherwise create
+                # duplicate rows (the loser now refreshes the winner's row).
                 if result:
                     try:
-                        await GenericContextGeneration.objects.acreate(
+                        await GenericContextGeneration.objects.aupdate_or_create(
                             procedure=procedure,
                             diagnosis=diagnosis,
-                            generated_context=result,
+                            defaults={"generated_context": result},
                         )
                         logger.debug(
                             f"Stored cached generic citations for {procedure}/{diagnosis} -- {result}"
@@ -333,6 +336,15 @@ class MLCitationsHelper:
                         logger.opt(exception=True).warning(
                             f"Error caching generic citations: {e}"
                         )
+
+                extras = await cls._get_supplemental_citations(
+                    denial=denial, procedure=procedure, diagnosis=diagnosis
+                )
+                if extras:
+                    logger.debug(
+                        f"Adding {len(extras)} supplemental citations to generated result"
+                    )
+                    result.extend(extras)
 
                 return result
             except Exception:

@@ -37,6 +37,17 @@ class TestMediaReferencesPage(TestCase):
             fetch_redirect_response=False,
         )
 
+    def test_trailing_slash_redirect_preserves_query_string(self):
+        # Press links carry utm_* params; the redirect must not strip them.
+        response = self.client.get("/media-references/?utm_source=press")
+
+        self.assertRedirects(
+            response,
+            reverse("media-references") + "?utm_source=press",
+            status_code=301,
+            fetch_redirect_response=False,
+        )
+
     def test_media_references_page_is_cached_like_other_static_ish_pages(self):
         response = self.client.get(reverse("media-references"))
         cache_control = response["Cache-Control"]
