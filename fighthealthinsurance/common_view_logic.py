@@ -3965,6 +3965,12 @@ class AppealsBackendHelper:
                 generation_id=generation_id,
                 diagnostics_sink=make_appeals_diag,
                 denial_text_override=denial_text_override,
+                # Cooperative cutoff for the submitted model calls: when the
+                # keepalive loop below abandons this task at the overall
+                # timeout, the executor threads notice the same deadline and
+                # drain within one call boundary instead of running for
+                # minutes after the client is gone.
+                deadline=gen_started + make_appeals_overall_timeout,
             )
         )
         # Heartbeat while make_appeals blocks so no >90s silent window exists

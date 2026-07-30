@@ -1055,6 +1055,19 @@ async def fire_and_forget_in_new_threadpool(task: Coroutine) -> None:
                 f"Exception in fire_and_forget task: {e}"
             )
         finally:
+            # Return this thread's DB checkouts before it dies (mirrors
+            # run_in_registered_daemon_thread): a task that touched the ORM
+            # here never went through a request cycle, so nothing else ever
+            # closes these connections -- the pooled-connection starvation
+            # failure mode.
+            try:
+                from django.db import close_old_connections
+
+                close_old_connections()
+            except Exception:
+                logger.opt(exception=True).warning(
+                    "Failed to close DB connections in fire_and_forget thread"
+                )
             loop.close()
             with _fire_and_forget_threads_lock:
                 _fire_and_forget_threads.discard(threading.current_thread())

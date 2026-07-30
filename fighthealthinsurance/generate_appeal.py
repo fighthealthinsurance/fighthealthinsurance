@@ -5,6 +5,7 @@ import random
 import re
 import time
 from concurrent.futures import Future
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 from dataclasses import dataclass
 from typing import Any, Callable, Coroutine, Iterator, List, Optional, Tuple, TypeVar
 
@@ -45,7 +46,7 @@ from fighthealthinsurance.context_utils import (
 )
 from fighthealthinsurance.denial_base import DenialBase
 
-from .exec import executor
+from .exec import background_executor, executor
 from .ml.ml_models import (
     MODEL_TRANSPORT_ERRORS,
     RemoteFullOpenLike,
@@ -1144,6 +1145,7 @@ def _generated_to_appeals_text(
     prompt_tokens_est: Optional[int] = None,
     submitted_at: Optional[float] = None,
     submitted_wall: Optional[Any] = None,
+    deadline: Optional[float] = None,
 ) -> Iterator[GeneratedAppeal]:
     """Map one model future's (infer_type, text) results to GeneratedAppeals.
 
@@ -1182,7 +1184,27 @@ def _generated_to_appeals_text(
 
     try:
         try:
-            model_results = k_text_future.result()
+            # With a requester deadline, don't wait on the inner future past
+            # it (plus a grace beat for the deadline-aware model call to
+            # notice and return): threads can't be cancelled, so an unbounded
+            # result() here is how abandoned generations used to pin pool
+            # threads long after the client was gone. The abandoned branch is
+            # scoped to the bounded wait -- a TimeoutError RAISED BY the model
+            # call itself (same builtin class) must keep its normal
+            # "timed out" classification below.
+            if deadline is not None:
+                remaining = max(1.0, deadline - time.monotonic() + 15.0)
+                try:
+                    model_results = k_text_future.result(timeout=remaining)
+                except FuturesTimeoutError:
+                    error_detail = "abandoned: requester deadline passed"
+                    logger.warning(
+                        f"Appeal generation via {model_name} abandoned -- "
+                        f"requester deadline passed"
+                    )
+                    return
+            else:
+                model_results = k_text_future.result()
         except Exception as e:
             # Same split as _log_fanout_task_error: expected transport failures
             # get one concise classified line, but an unexpected exception (a
@@ -2318,6 +2340,7 @@ class AppealGenerator(object):
         diagnostics_sink: Optional[dict] = None,
         denial_text_override: Optional[str] = None,
         run_kind: str = "live",
+        deadline: Optional[float] = None,
     ) -> Iterator[GeneratedAppeal]:
         """
         Generates an iterator of appeal texts for a given insurance denial using templates, non-AI sources, and AI models.
@@ -2338,7 +2361,12 @@ class AppealGenerator(object):
             run_kind: "live" for a user-facing generation, "speculative" for
                 the background precompute. Recorded on the persisted
                 ModelCallAttempt rows so the two runs against the same denial
-                can be told apart when debugging.
+                can be told apart when debugging. Speculative runs also submit
+                to the background executor pool so precompute can never queue
+                ahead of a waiting user.
+            deadline: Optional time.monotonic()-based cutoff after which the
+                submitted model calls exit cooperatively (threads cannot be
+                cancelled) instead of continuing work nobody will read.
 
         Returns:
             An iterator of ``GeneratedAppeal`` items (each carries the
@@ -2346,6 +2374,9 @@ class AppealGenerator(object):
             template-based / non-AI appeals).
         """
         logger.debug("Starting to make appeals...")
+        # Background/speculative work uses its own pool so it can't starve
+        # interactive generations that a user is actively waiting on.
+        submit_pool = background_executor if run_kind == "speculative" else executor
         if medical_reasons is None:
             medical_reasons = []
         if non_ai_appeals is None:
@@ -2575,6 +2606,8 @@ class AppealGenerator(object):
                     pubmed_context=pubmed_context,
                     ml_citations_context=ml_citations_context,
                     prof_pov=prof_pov,
+                    submit_executor=submit_pool,
+                    deadline=deadline,
                 )
             logger.error(
                 f"Model {model} has no parallel inference implementation; "
@@ -2763,7 +2796,7 @@ class AppealGenerator(object):
             # mapper so each emitted appeal carries its shed level and each
             # model's outcome (plus its response text and timing) is recorded.
             generated_text_futures = [
-                executor.submit(
+                submit_pool.submit(
                     _generated_to_appeals_text,
                     meta["model_name"],
                     f,
@@ -2776,6 +2809,7 @@ class AppealGenerator(object):
                     meta["prompt_tokens_est"],
                     meta["submitted_at"],
                     meta["submitted_wall"],
+                    deadline,
                 )
                 for meta, f in model_futures
             ]

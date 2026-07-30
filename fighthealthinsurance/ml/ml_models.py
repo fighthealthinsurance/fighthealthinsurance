@@ -1874,7 +1874,18 @@ class RemoteOpenLike(RemoteModel):
         pubmed_context: Optional[str],
         ml_citations_context: Optional[List[str]] = None,
         prof_pov: bool = False,
+        submit_executor: Optional[ThreadPoolExecutor] = None,
+        deadline: Optional[float] = None,
     ) -> List[Future[Tuple[str, Optional[str]]]]:
+        """Fan this inference out over the thread pool.
+
+        ``submit_executor`` selects the pool (interactive by default;
+        background precompute passes its own so it can't starve waiting
+        users). ``deadline`` (time.monotonic()-based) makes each submitted
+        call exit almost immediately once the requester's budget has passed:
+        threads can't be cancelled, so this cooperative check is what keeps
+        abandoned generations from holding pool threads for minutes.
+        """
         logger.debug(f"Running inference on {self} of type {infer_type}")
         temperatures = [0.5]
         if infer_type == "full" and not self._expensive and not self.slow:
@@ -1896,6 +1907,7 @@ class RemoteOpenLike(RemoteModel):
                             "pubmed_context": pubmed_context,
                             "ml_citations_context": ml_citations_context,
                             "prof_pov": prof_pov,
+                            "deadline": deadline,
                         },
                     ),
                     system_prompts,
@@ -1903,7 +1915,8 @@ class RemoteOpenLike(RemoteModel):
                 temperatures,
             )
         )  # type: Iterable[Tuple[Callable[..., Tuple[str, Optional[str]]], dict[str, Union[Optional[str], float, Optional[List[str]]]]]]
-        futures = list(map(lambda x: executor.submit(x[0], **x[1]), calls))
+        pool = submit_executor if submit_executor is not None else executor
+        futures = list(map(lambda x: pool.submit(x[0], **x[1]), calls))
         return futures
 
     def _blocking_checked_infer(
@@ -1917,6 +1930,7 @@ class RemoteOpenLike(RemoteModel):
         temperature: float,
         ml_citations_context=None,
         prof_pov: bool = False,
+        deadline: Optional[float] = None,
     ):
         return async_to_sync(self._checked_infer)(
             prompt,
@@ -1928,6 +1942,7 @@ class RemoteOpenLike(RemoteModel):
             temperature,
             ml_citations_context,
             prof_pov,
+            deadline=deadline,
         )
 
     async def _checked_infer(
@@ -1942,7 +1957,21 @@ class RemoteOpenLike(RemoteModel):
         ml_citations_context: Optional[List[str]] = None,
         prof_pov: bool = False,
         pa: bool = False,
+        deadline: Optional[float] = None,
     ) -> List[Tuple[str, Optional[str]]]:
+        def _past_deadline() -> bool:
+            # Cooperative deadline: threads can't be cancelled, so once the
+            # requester's budget has passed we bail out instead of making
+            # further model calls nobody will read.
+            if deadline is not None and time.monotonic() > deadline:
+                logger.debug(
+                    f"{self}: skipping {infer_type} work -- requester deadline passed"
+                )
+                return True
+            return False
+
+        if _past_deadline():
+            return []
         # Extract URLs from the prompt to avoid checking them
         input_urls = []
         if prompt and isinstance(prompt, str):
@@ -1971,6 +2000,8 @@ class RemoteOpenLike(RemoteModel):
             )
         # One retry
         if self.bad_result(result, infer_type):
+            if _past_deadline():
+                return []
             result = await self._infer_no_context(
                 prompt=prompt,
                 patient_context=patient_context,
@@ -1998,6 +2029,7 @@ class RemoteOpenLike(RemoteModel):
                 not self.check_is_ok(result, infer_type, prof_pov)
                 and c < 2
                 and time.monotonic() - pov_loop_start < pov_budget
+                and not _past_deadline()
             ):
                 c = c + 1
                 result = await self._infer_no_context(
