@@ -3837,6 +3837,102 @@ class ModelBackendHealthCheckResult(models.Model):
         )
 
 
+class ModelCallAttempt(models.Model):
+    """One row per model call made while generating appeals for a denial.
+
+    Exists so a failed generation can be reconstructed from the database
+    instead of from log archaeology: which models were called at which stage
+    of the primary -> backup -> shed ladder, how long each took, what each
+    actually returned (including the unusable outputs the pipeline drops), and
+    why each failed.
+
+    Deliberately stored here rather than logged. A model response is derived
+    from the denial letter, so it is PHI; putting the response bodies in the
+    log stream would spray patient data across log aggregation with no
+    deletion story and no access control. Scoped to a denial with
+    ``on_delete=CASCADE``, these rows instead inherit the denial's lifetime --
+    a ``Denial.delete()`` or a ``RemoveDataHelper.remove_data_for_email()``
+    takes them with it, the same guarantee ProposedAppeal has. ``for_denial``
+    is non-nullable precisely so no row can outlive that guarantee.
+
+    ``generation_id`` matches the id in the appeal stream's init/done frames
+    and in the APPEAL_GEN_DIAG log lines, so a client-reported failure joins
+    straight to the model calls behind it.
+    """
+
+    for_denial = models.ForeignKey(
+        Denial,
+        on_delete=models.CASCADE,
+        related_name="model_call_attempts",
+        # Non-nullable on purpose: the deletion guarantee above is the whole
+        # reason these rows are allowed to hold response text at all, and a
+        # NULL for_denial would be a row nothing ever cascades to.
+        null=False,
+    )
+    # Correlation id for one generation run (uuid4 hex[:12]), or "" for a run
+    # that had none (the speculative precompute).
+    generation_id = models.CharField(
+        max_length=64, blank=True, default="", db_index=True
+    )
+    # "live" for a user-facing generation, "speculative" for the background
+    # precompute. Without this the two interleave on the same denial and a
+    # failed live run can't be read apart from the precompute's attempts.
+    run_kind = models.CharField(
+        max_length=32, blank=True, default="live", db_index=True
+    )
+    # Friendly registry name (matches ProposedAppeal.model_name /
+    # ModelBackendHealthCheckResult.model_name), or "unknown".
+    model_name = models.CharField(max_length=200, blank=True, default="", db_index=True)
+    # repr of the specific backend the call went to, when one was reached.
+    backend = models.CharField(max_length=300, blank=True, default="")
+    # Ladder stage: primary / backup / retry_tier_1 / retry_tier_2.
+    stage = models.CharField(max_length=32, blank=True, default="")
+    # context_utils.CONTEXT_LEVEL_* for the context this call was given.
+    context_level = models.CharField(max_length=32, blank=True, default="")
+    # "full" or "medically_necessary".
+    infer_type = models.CharField(max_length=64, blank=True, default="")
+    # Why this attempt ended. Open vocabulary, not `choices`: the outcome
+    # strings come from the generation pipeline and the inference layer, and a
+    # stale choices list would be more misleading than none. Current values --
+    # ok, runt_only, rejected_at_peek (the undeliverable first item that made
+    # the ladder fall through to the next stage), no_output (the model answered
+    # with nothing), error (the call itself failed -- see error_detail),
+    # not_registered, no_prompt, all_backends_failed.
+    outcome = models.CharField(max_length=64, db_index=True)
+    # Classified failure reason (describe_model_error) or exception text.
+    error_detail = models.TextField(blank=True, default="")
+    # What the model returned, including output the pipeline refused to
+    # deliver -- the single most useful field here, since a runt or a refusal
+    # is currently discarded with no record of what was actually said.
+    # Truncated on write; response_chars keeps the true length.
+    response_text = models.TextField(null=True, blank=True)
+    response_chars = models.IntegerField(null=True, blank=True)
+    prompt_tokens_est = models.IntegerField(null=True, blank=True)
+    # Submit-to-result wall time, so it includes executor queueing -- that is
+    # deliberate, since a call that sat in the queue for a minute is just as
+    # much a cause of a stalled generation as a slow backend.
+    duration_ms = models.IntegerField(null=True, blank=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        indexes = [
+            # The debug query: everything tried for this denial, newest first.
+            models.Index(
+                fields=["for_denial", "-created_at"], name="mca_denial_created_idx"
+            ),
+            # Cross-denial triage: "every timeout in the last hour".
+            models.Index(fields=["outcome", "-created_at"], name="mca_outcome_idx"),
+        ]
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return (
+            f"ModelCallAttempt<{self.model_name or 'unknown'} {self.stage}: "
+            f"{self.outcome} for denial {self.for_denial_id}>"
+        )
+
+
 class SiteBanner(models.Model):
     """Admin-controlled banner shown in the site header to every visitor.
 

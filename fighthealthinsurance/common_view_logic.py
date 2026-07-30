@@ -4330,11 +4330,31 @@ class AppealsBackendHelper:
                 f"(new={new}, old={old})"
             )
 
+        # Every model call is drained by now (the streaming loop above pulls the
+        # generators to exhaustion), so this picks up the attempts that were
+        # still lazily chained when make_appeals returned and flushed its own
+        # batch. Best-effort and last: a DB hiccup here must not cost the user
+        # the done frame, and make_appeals' synchronous flush already saved the
+        # records that exist when a client hangs up before we get here.
+        attempt_recorder = make_appeals_diag.get("attempt_recorder")
+        if attempt_recorder is not None:
+            written = await attempt_recorder.aflush()
+            if written:
+                logger.debug(
+                    f"[gen_id={generation_id}] persisted {written} late model "
+                    f"attempt record(s) for denial {denial_id}"
+                )
         # runt_count=0 means models were silent; >0 means models produced only
         # undeliverable outputs (too short, or not made of words) —
         # different root causes for incident review.
         shed_tier = make_appeals_diag.get("shed_tier")
         winning_stage = make_appeals_diag.get("winning_stage")
+        # Recomputed from the recorder now that every generator has been
+        # drained: the string make_appeals built was a snapshot from the peek
+        # phase, so on a successful run it under-reported by design. The
+        # zero-appeal case was already complete, and stays so.
+        if attempt_recorder is not None:
+            make_appeals_diag["models_tried"] = attempt_recorder.models_tried_summary()
         models_tried = make_appeals_diag.get("models_tried") or "none"
         # Keyed on live_new (pre-reserve), so a reserve that rescued the user
         # still reports the backend failure. reserve_note says whether the user
