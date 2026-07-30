@@ -1229,31 +1229,41 @@ async def best_within_timelimit(
             except Exception as e:
                 _log_fanout_task_error(e, "best_within_timelimit")
 
-    # Main window: wait for everything (or the timeout), take the best.
-    done, pending = await asyncio.wait(
-        wrapped_tasks, timeout=timeout, return_when=asyncio.ALL_COMPLETED
-    )
-    _score_done(done)
-    if best_result_option:
-        asyncio.create_task(cancel_tasks(list(pending)))
-        return best_result_option
-
-    # Overtime window: bounded, first truthy result wins. This keeps
-    # slow-but-eventually-successful backends useful without the old
-    # unbounded ((timeout + 1) * 20) tail, and a falsy first completion no
-    # longer aborts the wait while other tasks are still running.
-    loop = asyncio.get_running_loop()
-    deadline = loop.time() + extended_timeout
-    while pending:
-        remaining = deadline - loop.time()
-        if remaining <= 0:
-            break
+    try:
+        # Main window: wait for everything (or the timeout), take the best.
         done, pending = await asyncio.wait(
-            pending, timeout=remaining, return_when=asyncio.FIRST_COMPLETED
+            wrapped_tasks, timeout=timeout, return_when=asyncio.ALL_COMPLETED
         )
         _score_done(done)
         if best_result_option:
-            break
+            asyncio.create_task(cancel_tasks(list(pending)))
+            return best_result_option
+
+        # Overtime window: bounded, first truthy result wins. This keeps
+        # slow-but-eventually-successful backends useful without the old
+        # unbounded ((timeout + 1) * 20) tail, and a falsy first completion no
+        # longer aborts the wait while other tasks are still running.
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + extended_timeout
+        while pending:
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                break
+            done, pending = await asyncio.wait(
+                pending, timeout=remaining, return_when=asyncio.FIRST_COMPLETED
+            )
+            _score_done(done)
+            if best_result_option:
+                break
+    except asyncio.CancelledError:
+        # The CALLER was cancelled (e.g. the chat turn budget expired).
+        # asyncio.wait never cancels its children, so without this the
+        # fan-out tasks would survive the cancellation and keep burning
+        # backend capacity until their own per-call timeouts.
+        unfinished = [t for t in wrapped_tasks if not t.done()]
+        if unfinished:
+            asyncio.create_task(cancel_tasks(unfinished))
+        raise
 
     if pending:
         asyncio.create_task(cancel_tasks(list(pending)))
@@ -1316,24 +1326,30 @@ async def best_within_timelimit_static(
         if unfinished:
             asyncio.create_task(cancel_tasks(unfinished))
 
-    # Wait for tasks to complete as they finish
-    for future in asyncio.as_completed(tasks, timeout=timeout):
-        try:
-            result, score = await future
+    try:
+        # Wait for tasks to complete as they finish
+        for future in asyncio.as_completed(tasks, timeout=timeout):
+            try:
+                result, score = await future
 
-            # Track the best result seen so far
-            if score > best_score_so_far:
-                best_score_so_far = score
-                best_result_so_far = result
+                # Track the best result seen so far
+                if score > best_score_so_far:
+                    best_score_so_far = score
+                    best_result_so_far = result
 
-            # If this is one of our best tasks, return immediately
-            if score == max_score:
-                _cancel_stragglers()
-                return result
+                # If this is one of our best tasks, return immediately
+                if score == max_score:
+                    _cancel_stragglers()
+                    return result
 
-        except Exception as e:
-            _log_fanout_task_error(e, "best_within_timelimit_static")
-            continue
+            except Exception as e:
+                _log_fanout_task_error(e, "best_within_timelimit_static")
+                continue
+    except asyncio.CancelledError:
+        # Caller cancelled (turn budget / client gone): as_completed does not
+        # cancel its children, so do it here before re-raising.
+        _cancel_stragglers()
+        raise
 
     # If we got here, timeout occurred or all tasks finished but none of the best ones succeeded
 

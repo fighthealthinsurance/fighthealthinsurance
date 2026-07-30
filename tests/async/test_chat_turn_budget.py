@@ -86,6 +86,16 @@ class ChatTurnBudgetTest(APITestCase):
         return chat, recorder
 
     async def test_stalled_turn_hits_budget_and_fails_cleanly(self):
+        from prometheus_client import REGISTRY
+
+        def _turns(outcome):
+            return (
+                REGISTRY.get_sample_value("fhi_chat_turns_total", {"outcome": outcome})
+                or 0.0
+            )
+
+        timeout_before = _turns("timeout")
+        failed_before = _turns("failed")
         chat, recorder = await self._run_stalled_turn(
             "turnbudget1",
             "9999920001",
@@ -99,6 +109,10 @@ class ChatTurnBudgetTest(APITestCase):
         fresh = await OngoingChat.objects.aget(id=chat.id)
         user_msgs = [m for m in (fresh.chat_history or []) if m.get("role") == "user"]
         self.assertEqual(len(user_msgs), 1)
+        # A timed-out turn counts once, as "timeout" -- NOT also as "failed"
+        # (the outcomes are mutually exclusive in fhi_chat_turns_total).
+        self.assertEqual(_turns("timeout"), timeout_before + 1)
+        self.assertEqual(_turns("failed"), failed_before)
 
     async def test_heartbeat_frames_flow_during_long_turn(self):
         chat, recorder = await self._run_stalled_turn(

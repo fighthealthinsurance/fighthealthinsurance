@@ -923,6 +923,7 @@ class ChatInterface:
         # wedged backend chain could hold the turn open indefinitely with the
         # client showing a spinner forever.
         turn_budget = _env_float("FHI_CHAT_TURN_BUDGET", 150.0)
+        turn_timed_out = False
         heartbeat_task = asyncio.create_task(self._turn_heartbeat())
         try:
             response_text, context_part = await asyncio.wait_for(
@@ -956,6 +957,9 @@ class ChatInterface:
                 f"Chat turn exceeded its {turn_budget:.0f}s budget for chat "
                 f"{chat.id}; giving up on this turn"
             )
+            # Recorded here as "timeout"; the shared failure branch below
+            # checks this flag so the same turn isn't also counted "failed".
+            turn_timed_out = True
             record_chat_turn("timeout")
         except Exception as e:
             logger.opt(exception=True).error(
@@ -1038,7 +1042,8 @@ class ChatInterface:
                 f"Failed to generate response for user_message: '{user_message}' in chat {chat.id} "
                 f"after trying all models. use_external_models={self.use_external_models}"
             )
-            record_chat_turn("failed")
+            if not turn_timed_out:
+                record_chat_turn("failed")
             capture_reliability_event(
                 "chat_turn_total_failure",
                 chat_id=str(chat.id),

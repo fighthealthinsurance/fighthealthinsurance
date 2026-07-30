@@ -25,26 +25,28 @@ os.environ.setdefault("DJANGO_CONFIGURATION", env)
 
 from channels.auth import AuthMiddlewareStack
 from channels.routing import ProtocolTypeRouter, URLRouter
-from channels.security.websocket import AllowedHostsOriginValidator
 
 # We make sure we have the env variables configured first
 from configurations.asgi import get_asgi_application
 
 from fighthealthinsurance.routing import websocket_urlpatterns
+from fighthealthinsurance.ws_origin import allowed_hosts_browser_origin_validator
 
 _ws_stack = AuthMiddlewareStack(URLRouter(websocket_urlpatterns))
 # Cross-site WebSocket protection: browsers send an Origin header on WS
 # handshakes, and without validation any site a user visits can open an
-# authenticated socket to these consumers. Enforced against ALLOWED_HOSTS;
-# non-browser clients that send no Origin header still connect. Env-gated
-# (default ON) so a proxy that rewrites/strips Origin can be unblocked
-# without a deploy while it gets fixed.
+# authenticated socket to these consumers. Supplied origins are enforced
+# against ALLOWED_HOSTS; a MISSING Origin (non-browser clients, probes) is
+# allowed -- see ws_origin.BrowserOriginValidator for why that loses no
+# protection (channels' stock validator would reject those). Env-gated
+# (default ON) so an Origin-rewriting proxy can be unblocked without a
+# deploy while it gets fixed.
 if get_env_variable("FHI_WS_ENFORCE_ORIGIN", "true").lower() not in (
     "false",
     "0",
     "no",
 ):
-    _ws_stack = AllowedHostsOriginValidator(_ws_stack)
+    _ws_stack = allowed_hosts_browser_origin_validator(_ws_stack)
 
 application = ProtocolTypeRouter(
     {

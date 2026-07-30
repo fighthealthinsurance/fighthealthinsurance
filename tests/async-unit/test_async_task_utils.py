@@ -553,3 +553,52 @@ class TestBestWithinTimelimitOvertime:
             extended_timeout=5.0,
         )
         assert result == "good"
+
+
+class TestBestWithinTimelimitCancellation:
+    """Cancelling the CALLER (e.g. the chat turn budget expiring) must cancel
+    the fan-out tasks too: asyncio.wait/as_completed never cancel their
+    children on their own, so without explicit propagation the model calls
+    kept running to their individual timeouts."""
+
+    @pytest.mark.asyncio
+    async def test_outer_cancellation_cancels_fanout_tasks(self):
+        child_cancelled = asyncio.Event()
+
+        async def hangs() -> str:
+            try:
+                await asyncio.sleep(30)
+                return "never"
+            except asyncio.CancelledError:
+                child_cancelled.set()
+                raise
+
+        outer = asyncio.create_task(
+            best_within_timelimit([hangs()], lambda r, _t: 1.0, timeout=10)
+        )
+        await asyncio.sleep(0.1)  # let the fan-out start
+        outer.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await outer
+        await asyncio.wait_for(child_cancelled.wait(), timeout=5.0)
+
+    @pytest.mark.asyncio
+    async def test_static_outer_cancellation_cancels_fanout_tasks(self):
+        child_cancelled = asyncio.Event()
+
+        async def hangs() -> str:
+            try:
+                await asyncio.sleep(30)
+                return "never"
+            except asyncio.CancelledError:
+                child_cancelled.set()
+                raise
+
+        outer = asyncio.create_task(
+            best_within_timelimit_static({hangs(): 1.0}, timeout=10)
+        )
+        await asyncio.sleep(0.1)
+        outer.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await outer
+        await asyncio.wait_for(child_cancelled.wait(), timeout=5.0)
