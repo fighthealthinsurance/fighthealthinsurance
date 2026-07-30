@@ -104,12 +104,25 @@ class TestEmptyFuturesAreFailures:
             "returned no futures" in log or "backend(s)" in log
         ), f"empty futures did not register as a backend failure; log: {log}"
 
-    def test_non_parallel_backend_is_an_explicit_error(self):
-        stub = MagicMock(spec=RemoteModelLike)
-        stub.__str__ = lambda self: "StubBackend"  # type: ignore[assignment]
+    def test_base_class_stub_infer_is_an_explicit_error(self):
+        """A backend that never overrode the base-class ``infer`` stub must be
+        an explicit failure, not a guaranteed-empty executor submission."""
+
+        class _StubInferBackend:
+            infer = RemoteModelLike.infer
+
+            def __str__(self):
+                return "StubInferBackend"
+
         with _loguru_capture(level="ERROR") as sink:
-            _drain_make_appeals({"stub-model-name": [stub]})
-        assert "no parallel inference implementation" in sink.getvalue()
-        # The old fallback submitted stub.infer to the executor; that must be
-        # gone.
-        stub.infer.assert_not_called()
+            _drain_make_appeals({"stub-model-name": [_StubInferBackend()]})
+        assert "no working inference implementation" in sink.getvalue()
+
+    def test_real_sync_infer_override_still_submits(self):
+        """A backend with a genuine sync ``infer`` implementation (also the
+        seam tests use to inject fakes) keeps the executor path."""
+        backend = MagicMock()
+        backend.__str__ = lambda self: "FakeSyncBackend"  # type: ignore[assignment]
+        backend.infer.return_value = [("full", "Dear insurer, " + "words " * 30)]
+        _drain_make_appeals({"sync-model-name": [backend]})
+        assert backend.infer.called

@@ -2597,14 +2597,7 @@ class AppealGenerator(object):
             ml_citations_context: Optional[List[str]],
             prof_pov: bool = False,
         ) -> List[Future[Tuple[str, Optional[str]]]]:
-            # If the model has parallelism use it. There used to be a
-            # fallback here that submitted the BASE-CLASS ``model.infer`` to
-            # the executor -- but that base method is a stub that always
-            # returns None, so the fallback burned executor threads to
-            # produce guaranteed-empty futures while looking like a working
-            # submission. A model without parallel inference is now an
-            # explicit failure, and a submission error propagates to the
-            # caller's per-backend handler where it lands in the attempt row.
+            # If the model has parallelism use it.
             if isinstance(model, RemoteFullOpenLike):
                 logger.debug(f"Using {model}'s parallel inference")
                 return model.parallel_infer(
@@ -2618,9 +2611,34 @@ class AppealGenerator(object):
                     submit_executor=submit_pool,
                     deadline=deadline,
                 )
+            # Otherwise submit the backend's own sync ``infer`` -- but ONLY a
+            # real override (this is also the seam tests use to inject fake
+            # backends). The BASE-CLASS ``infer`` is a stub that always
+            # returns None, and submitting it used to burn executor threads
+            # producing guaranteed-empty futures that looked like working
+            # submissions; a backend that never overrode it is an explicit
+            # failure, and a submission error propagates to the caller's
+            # per-backend handler where it lands in the attempt row.
+            infer_impl = getattr(model, "infer", None)
+            if infer_impl is not None and (
+                getattr(infer_impl, "__func__", None) is not RemoteModelLike.infer
+            ):
+                logger.debug(f"Using system level parallel inference for {model}")
+                return [
+                    submit_pool.submit(
+                        model.infer,
+                        prompt=prompt,
+                        patient_context=patient_context,
+                        plan_context=plan_context,
+                        infer_type=infer_type,
+                        pubmed_context=pubmed_context,
+                        ml_citations_context=ml_citations_context,
+                        prof_pov=prof_pov,
+                    )
+                ]
             logger.error(
-                f"Model {model} has no parallel inference implementation; "
-                f"skipping this backend"
+                f"Model {model} has no working inference implementation "
+                f"(base-class stub); skipping this backend"
             )
             return []
 
