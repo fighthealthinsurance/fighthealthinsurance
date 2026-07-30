@@ -185,7 +185,7 @@ collectstatic build. What to know:
 - After making changes, always run the relevant test suite before considering the work done.
 
 ### Code Style
-- **Check style and types via tox:** `tox -e py313-black` for formatting checks, `tox -e py313-mypy` for type checking.
+- **Check style and types via tox:** `tox -e py313-black` for formatting checks, `tox -e mypy` for type checking (`mypy` is the env CI runs and the one pre-built in web sessions; `py313-mypy` is a separate env dir that duplicates the same install).
 - To **fix** formatting issues, run `black fighthealthinsurance fhi_users` directly.
 - Follow existing code conventions in the file you're editing — match naming, import style, and structure.
 

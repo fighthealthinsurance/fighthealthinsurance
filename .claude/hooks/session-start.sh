@@ -92,8 +92,9 @@ fi
 # 3. Pre-build the tox environments the tests/linters use, in parallel.
 #    `--notest` installs every dependency into .tox/<env> but skips running
 #    the suites, so the session's `tox -e ...` reuses the env and starts
-#    fast. Note: the type-check env is `mypy` (the `py313-mypy` env resolves
-#    to an empty command list in tox 4, so it runs nothing).
+#    fast. Note: `mypy` (not `py313-mypy`) is the type-check env CI's types
+#    job runs; `py313-mypy` is a separate env dir that would duplicate the
+#    same ~2 minute install, so CLAUDE.md points at `tox -e mypy` instead.
 if ! tox --notest -p auto --parallel-no-spinner -e "$TOX_ENVS"; then
   echo "ERROR: tox environment build failed." >&2
   echo "If the failure above is a 'git clone ... 403' for one of the" >&2
