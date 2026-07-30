@@ -29,7 +29,11 @@ def _is_verbose_logging() -> bool:
         return False
 
 
-from fighthealthinsurance.utils import RateLimiter, ensure_message_alternation
+from fighthealthinsurance.utils import (
+    RateLimiter,
+    ensure_message_alternation,
+    is_real_appeal,
+)
 
 # Import the appropriate async_timeout based on Python version
 if sys.version_info >= (3, 11):
@@ -1760,12 +1764,23 @@ class RemoteOpenLike(RemoteModel):
         )
 
     def bad_result(self, result: Optional[str], infer_type: str) -> bool:
-        return is_bad_output(
+        if is_bad_output(
             result,
             check_guardrail_phrases=True,
             check_severe_repetition=True,
             repetition_checker=has_severe_repetition,
-        )
+        ):
+            return True
+        # For FULL appeals, align the retry bar with the delivery bar
+        # (is_real_appeal: MIN_APPEAL_CHARS + MIN_APPEAL_WORDS). A 3-14 char
+        # fragment used to pass this check, skip the one-retry, and then die
+        # downstream as an undeliverable runt -- the model got no second
+        # chance exactly when it needed one. medically_necessary results are
+        # reason FRAGMENTS that get templated afterward, so they keep the
+        # permissive bar.
+        if infer_type == "full" and not is_real_appeal(result):
+            return True
+        return False
 
     def is_prior_auth(self, result: Optional[str]) -> bool:
         """

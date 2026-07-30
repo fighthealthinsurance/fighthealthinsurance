@@ -35,6 +35,7 @@ from django.conf import settings
 from django.core.files import File
 from django.core.mail import send_mail
 from django.core.validators import validate_email
+from django.db import close_old_connections
 from django.db.models import F, Q, QuerySet
 from django.db.models.functions import Length
 from django.forms import Form
@@ -2852,6 +2853,10 @@ class AppealsBackendHelper:
                 "$claim_id": claim_id,
                 "$CASEID": claim_id,
             }
+            # Each lookup individually guarded: one failing relation (e.g. a
+            # deleted professional profile) must not abort the LATER
+            # substitutions too, leaving [Patient Name]-style placeholders in
+            # the letter the user downloads.
             try:
                 if (
                     denial.professional_to_finish
@@ -2862,20 +2867,39 @@ class AppealsBackendHelper:
                     subs["[Your Name]"] = prof_name
                     subs["YourNameMagic"] = prof_name
                     subs["$your_name_here"] = prof_name
+            except Exception as e:
+                logger.opt(exception=True).error(
+                    f"Error fetching professional name for denial sub "
+                    f"{denial.denial_id}: {e}"
+                )
+            try:
                 if denial.patient_user is not None:
                     patient_name = denial.patient_user.get_legal_name()
                     subs["{{FIRST_NAME}} {{LAST_NAME}}"] = patient_name
                     subs["[Patient Name]"] = patient_name
                     subs["[patient name]"] = patient_name
+            except Exception as e:
+                logger.opt(exception=True).error(
+                    f"Error fetching patient name for denial sub "
+                    f"{denial.denial_id}: {e}"
+                )
+            try:
                 if denial and denial.primary_professional is not None:
                     subs["[Professional Name]"] = (
                         denial.primary_professional.get_full_name()
                     )
+            except Exception as e:
+                logger.opt(exception=True).error(
+                    f"Error fetching professional display name for denial sub "
+                    f"{denial.denial_id}: {e}"
+                )
+            try:
                 if denial.domain:
                     subs["[Professional Address]"] = denial.domain.get_address()
             except Exception as e:
                 logger.opt(exception=True).error(
-                    f"Error fetching info for denial sub {denial.denial_id}: {e}"
+                    f"Error fetching domain address for denial sub "
+                    f"{denial.denial_id}: {e}"
                 )
             for k, v in subs.items():
                 if v and v != "" and v != "UNKNOWN":
@@ -3789,7 +3813,7 @@ class AppealsBackendHelper:
                 "continuing with the unmerged contexts"
             )
 
-        async def save_appeal(item: GeneratedAppeal) -> dict[str, str]:
+        async def save_appeal(item: GeneratedAppeal) -> dict[str, Any]:
             # Save all of the proposed appeals, so we can use RL later.
             nonlocal first_model
             appeal_text = item.text
@@ -3801,8 +3825,8 @@ class AppealsBackendHelper:
             t = time.time()
             logger.debug(f"Saving appeal ({len(appeal_text)} chars)")
             await asyncio.sleep(0)
-            # YOLO on saving appeals, sqllite gets sad.
             id = "unknown"
+            save_failed = False
             try:
                 pa = ProposedAppeal(
                     appeal_text=appeal_text,
@@ -3811,13 +3835,23 @@ class AppealsBackendHelper:
                     synthesized=item.synthesized,
                     context_level=item.context_level,
                 )
-                await pa.asave()
+                try:
+                    await pa.asave()
+                except Exception:
+                    # Most save failures here are a stale/idle-killed
+                    # connection on this consumer's thread; refresh
+                    # connections and retry once before giving up.
+                    await database_sync_to_async(close_old_connections)()
+                    await pa.asave()
                 id = str(pa.id)
             except Exception as e:
+                # Still stream the draft -- the user gets their appeal even
+                # when the save fails -- but tell the client the row has no
+                # durable id so choose/edit affordances can be suppressed.
+                save_failed = True
                 logger.opt(exception=True).warning(
                     f"Failed to save proposed appeal: {e}"
                 )
-                pass
             passed = time.time() - t
             logger.debug(f"Saved appeal ({len(appeal_text)} chars) in {passed:.1f}s")
             # Mark it served as soon as it is on its way out, so the early
@@ -3825,7 +3859,10 @@ class AppealsBackendHelper:
             # speculative row whose text matches one already sent.
             if appeal_text:
                 served_texts.add(str(appeal_text).strip())
-            return {"id": id, "content": appeal_text}
+            result: dict[str, Any] = {"id": id, "content": appeal_text}
+            if save_failed:
+                result["save_failed"] = True
+            return result
 
         # Yield status: generating appeals
         yield json.dumps(

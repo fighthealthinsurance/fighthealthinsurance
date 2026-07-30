@@ -364,12 +364,16 @@ class ChatInterface:
         # Process tool calls via modular tool handlers
         context = context_part or ""
 
-        # Shared kwargs for recursive tools (medicaid, pubmed, doc fetcher)
+        # Shared kwargs for recursive tools (medicaid, pubmed, doc fetcher).
+        # history_for_llm is COPIED: several tools append the current
+        # exchange to it in place before their recursive call, so sharing one
+        # list let the first tool's appends garble the second tool's view of
+        # the conversation.
         tool_kwargs = dict(
             model_backends=model_backends,
             current_message_for_llm=current_message_for_llm,
             previous_context_summary=previous_context_summary,
-            history_for_llm=history_for_llm,
+            history_for_llm=list(history_for_llm) if history_for_llm else [],
             depth=depth,
             is_logged_in=is_logged_in,
             is_professional=is_professional,
@@ -885,8 +889,16 @@ class ChatInterface:
         final_response_text = None
         final_context_part = None
 
-        # Inject uploaded document context into the LLM call
-        doc_context_str = await get_document_context_for_message(chat.id, user_message)
+        # Inject uploaded document context into the LLM call. Guarded: a
+        # failure searching stored documents must degrade to "no doc context"
+        # rather than kill the whole turn.
+        doc_context_str = None
+        try:
+            doc_context_str = await get_document_context_for_message(
+                chat.id, user_message
+            )
+        except Exception as e:
+            logger.warning(f"Skipping document context for chat {chat.id}: {e}")
         if doc_context_str:
             summarized_context = (
                 f"{doc_context_str}\n\n{summarized_context}"

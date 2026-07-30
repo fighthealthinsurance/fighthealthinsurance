@@ -150,6 +150,8 @@ class PubMedTool(BaseTool):
                 depth=depth + 1,
                 is_logged_in=is_logged_in,
                 is_professional=is_professional,
+                fallback_backends=kwargs.get("fallback_backends"),
+                full_history=kwargs.get("full_history"),
             )
 
             cleaned_response = self.merge_strings(cleaned_response, additional_response)

@@ -92,6 +92,15 @@ class AppealTemplateGenerator(object):
             return None
 
     def generate(self, medical_reason: str):
+        if self.combined == "":
+            # No template configured (always the case for the speculative
+            # precompute, which builds this generator with empty parts).
+            # Returning None here used to throw away EVERY
+            # medically_necessary result on this path -- the model's reason
+            # text is a perfectly good appeal seed on its own, and the
+            # is_real_appeal delivery filter still drops runts downstream.
+            stripped = (medical_reason or "").strip()
+            return stripped or None
         result = self.combined.replace("{medical_reason}", medical_reason)
         if result != "":
             return result

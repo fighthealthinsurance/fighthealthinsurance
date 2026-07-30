@@ -7,9 +7,46 @@ Each tool can detect its pattern in text, execute the tool action, and format re
 
 import re
 from abc import ABC, abstractmethod
-from typing import Awaitable, Callable, List, Optional, Tuple
+from typing import Awaitable, Callable, List, Optional, Set, Tuple
 
 from loguru import logger
+
+# Identity/audit fields that LLM-supplied tool payloads must never overwrite,
+# even though they are concrete editable columns.
+_TOOL_FIELD_DENYLIST = {
+    "id",
+    "pk",
+    "uuid",
+    "semi_sekret",
+    "follow_up_semi_sekret",
+    "session_key",
+}
+
+
+def settable_model_fields(model_cls) -> Set[str]:
+    """Field names an LLM tool payload may set on ``model_cls``.
+
+    Concrete, editable, non-primary-key, non-relation fields minus the
+    denylist. Relations (and their ``*_id`` attribute forms) are excluded so
+    a crafted payload can't re-point an appeal/prior auth at another user's
+    denial or chat; identity fields are excluded so it can't overwrite
+    lookup keys.
+    """
+    fields: Set[str] = set()
+    for f in model_cls._meta.concrete_fields:
+        if f.primary_key or f.is_relation or not getattr(f, "editable", True):
+            continue
+        if f.name in _TOOL_FIELD_DENYLIST:
+            continue
+        fields.add(f.name)
+    return fields
+
+
+def is_safe_tool_field(key: str, allowed: Set[str]) -> bool:
+    """Whether an LLM payload key may be applied to a model instance."""
+    if not key or key.startswith("_") or key.endswith("_id"):
+        return False
+    return key in allowed
 
 
 class BaseTool(ABC):
@@ -152,7 +189,22 @@ class BaseTool(ABC):
 
         except Exception as e:
             logger.opt(exception=True).warning(f"Error executing {self.name} tool: {e}")
-            await self.send_status_message(
-                f"Error processing {self.name} request. Continuing with original response."
-            )
-            return response_text, context, False
+            try:
+                await self.send_status_message(
+                    f"Error processing {self.name} request. Continuing with original response."
+                )
+            except Exception:
+                logger.debug(f"{self.name}: could not send tool-error status")
+            # Best-effort strip of the raw tool syntax before handing the text
+            # back: the user should never see `**create_or_update_appeal**
+            # {...}` in the chat because a tool blew up mid-execution.
+            cleaned_response = response_text
+            try:
+                stripped = re.sub(
+                    self.pattern, "", response_text, flags=self.detect_all_flags
+                ).strip()
+                if stripped:
+                    cleaned_response = stripped
+            except Exception:
+                logger.debug(f"{self.name}: could not strip tool syntax on error")
+            return cleaned_response, context, True
