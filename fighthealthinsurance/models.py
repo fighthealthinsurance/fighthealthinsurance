@@ -262,6 +262,38 @@ class InterestedProfessional(ExportModelOperationsMixin("InterestedProfessional"
     proconnector_skip_reason = models.TextField(null=True, blank=True)
     proconnector_email_body = models.TextField(null=True, blank=True)
 
+    # Bulk staff email (see SendInterestedProfessionalMailView). Unlike a
+    # mailing list subscriber -- whose row exists only to receive mail and is
+    # deleted on unsubscribe -- this row is a business record with pro-connector
+    # state on it, so opting out is a flag rather than a delete.
+    unsubscribe_token = models.CharField(
+        max_length=256, default=sekret_gen, unique=False
+    )
+    unsubscribed = models.BooleanField(default=False)
+    unsubscribed_at = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self):
+        return self.email
+
+    def get_unsubscribe_url(self) -> str:
+        """Generate the unsubscribe URL for this professional."""
+        return build_unsubscribe_url(self.unsubscribe_token)
+
+
+def build_unsubscribe_url(token: str) -> str:
+    """Absolute unsubscribe URL for an unsubscribe token.
+
+    Shared by every mailable model so the link is built one way. The host is
+    hard-coded rather than derived from the request because these URLs are
+    generated in background senders (Ray actors, scheduled email jobs) where
+    there is no request to derive a site from.
+    """
+    from django.urls import reverse
+
+    return "https://www.fighthealthinsurance.com" + reverse(
+        "unsubscribe", kwargs={"token": token}
+    )
+
 
 # Everyone else:
 class MailingListSubscriber(models.Model):
@@ -289,11 +321,7 @@ class MailingListSubscriber(models.Model):
 
     def get_unsubscribe_url(self) -> str:
         """Generate the unsubscribe URL for this subscriber."""
-        from django.urls import reverse
-
-        return "https://www.fighthealthinsurance.com" + reverse(
-            "unsubscribe", kwargs={"token": self.unsubscribe_token}
-        )
+        return build_unsubscribe_url(self.unsubscribe_token)
 
 
 class DemoRequests(models.Model):

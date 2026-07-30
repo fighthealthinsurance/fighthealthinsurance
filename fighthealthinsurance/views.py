@@ -2597,25 +2597,26 @@ def create_pwyw_checkout(request: HttpRequest) -> HttpResponse:
 
 
 class UnsubscribeView(View):
-    """View for handling mailing list unsubscribe requests."""
+    """View for handling marketing email unsubscribe requests.
+
+    Tokens are issued by two models -- MailingListSubscriber (newsletter) and
+    InterestedProfessional (bulk professional mail) -- so a token is resolved
+    against both. Whichever list the link came from, the opt-out is applied to
+    the address across *both*: someone clicking "unsubscribe" is asking to stop
+    receiving marketing mail from us, not to be removed from one list while
+    another keeps mailing them.
+
+    The two lists opt out differently. A subscriber row exists only to receive
+    mail, so it is deleted. An InterestedProfessional row is a business record
+    carrying pro-connector processing state, so it is flagged instead -- which
+    also means the address stays suppressed rather than being re-mailed if the
+    person signs up again later.
+    """
 
     def get(self, request: HttpRequest, token: str) -> HttpResponseBase:
-        """Handle GET request to unsubscribe a mailing list subscriber by token."""
-        try:
-            subscriber = models.MailingListSubscriber.objects.get(
-                unsubscribe_token=token
-            )
-            email = subscriber.email
-            subscriber.delete()
-            return render(
-                request,
-                "unsubscribed.html",
-                context={
-                    "title": "Unsubscribed",
-                    "email": email,
-                },
-            )
-        except models.MailingListSubscriber.DoesNotExist:
+        """Handle GET request to unsubscribe by token."""
+        email = self._email_for_token(token)
+        if email is None:
             return render(
                 request,
                 "unsubscribed.html",
@@ -2625,6 +2626,41 @@ class UnsubscribeView(View):
                     "error": "This unsubscribe link is invalid or has already been used.",
                 },
             )
+        # Match case-insensitively: addresses are stored as typed, so the same
+        # person can appear as "A@x.com" on one list and "a@x.com" on the other.
+        models.MailingListSubscriber.objects.filter(email__iexact=email).delete()
+        models.InterestedProfessional.objects.filter(
+            email__iexact=email, unsubscribed=False
+        ).update(unsubscribed=True, unsubscribed_at=timezone.now())
+        return render(
+            request,
+            "unsubscribed.html",
+            context={
+                "title": "Unsubscribed",
+                "email": email,
+            },
+        )
+
+    @staticmethod
+    def _email_for_token(token: str) -> typing.Optional[str]:
+        """Resolve an unsubscribe token to an email address, or None.
+
+        ``unsubscribe_token`` is not unique on either model (a person can hold
+        rows on both lists, and duplicate professional signups each get their
+        own token), so this filters rather than using ``get`` -- a duplicate
+        token must not turn a valid unsubscribe link into a 500.
+        """
+        subscriber = models.MailingListSubscriber.objects.filter(
+            unsubscribe_token=token
+        ).first()
+        if subscriber is not None:
+            return subscriber.email
+        pro = models.InterestedProfessional.objects.filter(
+            unsubscribe_token=token
+        ).first()
+        if pro is not None:
+            return pro.email
+        return None
 
 
 @method_decorator(xframe_options_exempt, name="dispatch")

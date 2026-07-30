@@ -188,11 +188,10 @@
       <h2>Physical letter (optional)</h2>
       <p>
         For professionals worth reaching by mail as well as email, print a
-        physical introduction letter to send by post. The printed letter uses
-        different wording &mdash; it can't CC Cofactor AI, so it asks the
-        recipient to email <strong>{{ contact_email }}</strong> for the introduction.
-        Use the <em>Google address</em> link above to find or verify a mailing
-        address.
+        physical introduction letter to send by post. It shares the email's
+        call to action &mdash; reach out to <strong>{{ contact_email }}</strong>
+        to schedule a demo or learn more. Use the <em>Google address</em> link
+        above to find or verify a mailing address.
       </p>
       <a class="print-letter" href="{% url 'proconnector_letter' pro.id %}" target="_blank" rel="noopener noreferrer">🖨 Open printable letter &#8599;</a>
     </div>
@@ -220,14 +219,13 @@
           <p class="error">⚠️ {{ cofactor_cc_problem }}</p>
         {% elif cofactor_cc_email %}
           <p class="hint">
-            Cofactor AI is CC'd alongside the FHI professional address &mdash; the
-            email tells the recipient they are cc'd here.
+            This deployment CCs Cofactor AI alongside the FHI professional
+            address (COFACTOR_CC_EMAIL is set).
           </p>
         {% else %}
           <p class="hint">
-            The Cofactor AI CC is turned off in this deployment's configuration
-            &mdash; please edit the &ldquo;who are cc'd here&rdquo; wording out of
-            the draft below before sending.
+            The email asks the recipient to reach out to
+            {{ contact_email }} to schedule a demo or learn more.
           </p>
         {% endif %}
 
