@@ -16,6 +16,10 @@ from fighthealthinsurance.websockets import OngoingChatConsumer
 SECRET_DETAIL = "secret-internal-hostname-db-1 OperationalError"
 
 
+# django_db: the consumer's dispatch sweeps DB connections on disconnect
+# (aclose_old_connections), which needs the test database available when an
+# earlier test on the same xdist worker initialized the connection wrapper.
+@pytest.mark.django_db
 @pytest.mark.asyncio
 async def test_chat_ws_error_frame_hides_exception_details():
     with patch(
@@ -43,6 +47,7 @@ async def test_chat_ws_error_frame_hides_exception_details():
     assert "ref " in frame["error"]
 
 
+@pytest.mark.django_db
 @pytest.mark.asyncio
 async def test_chat_ws_error_logged_at_error_level(log_capture):
     with patch(

@@ -38,11 +38,25 @@ class MLRouter(object):
         building_all_models_by_cost = []
         building_context_only_models_by_cost = []
         building_models_by_name: dict[str, List[ModelDescription]] = {}
-        for backend in candidate_model_backends:
+        # Sorted by class name: all_subclasses() yields a set, so without
+        # this the registration order -- and everything downstream that
+        # depends on it (models_by_name insertion order, which fhi-* backend
+        # chat doubles, dual-mode pairings) -- varied per process. Every pod
+        # must route identically.
+        for backend in sorted(candidate_model_backends, key=lambda c: c.__name__):
+            # Per-backend guard: a backend whose models() blows up is skipped
+            # without affecting the others.
             try:
                 models = backend.models()
-                logger.debug(f"MLRouter: {backend} provided {len(models)} models")
-                for m in models:
+            except Exception as e:
+                logger.warning(f"Skipping {backend} due to {e} of {type(e)}")
+                continue
+            logger.debug(f"MLRouter: {backend} provided {len(models)} models")
+            for m in models:
+                # Per-model guard: one bad model description (constructor
+                # failure, bad config) must skip only ITSELF -- previously the
+                # whole backend's remaining models were dropped with it.
+                try:
                     if m.model is None:
                         m.model = backend(model=m.internal_name)
                     # Honor the ENABLED_REMOTE_MODELS allow-list (if set): only
@@ -94,8 +108,11 @@ class MLRouter(object):
                         same_models = building_models_by_name[m.name]
                     same_models.append(m)
                     building_models_by_name[m.name] = same_models
-            except Exception as e:
-                logger.warning(f"Skipping {backend} due to {e} of {type(e)}")
+                except Exception as e:
+                    logger.warning(
+                        f"Skipping model {getattr(m, 'internal_name', m)} of "
+                        f"{backend} due to {e} of {type(e)}"
+                    )
         for k, v in building_models_by_name.items():
             sorted_model_descriptions: list[ModelDescription] = sorted(v)
             self.models_by_name[k] = [
@@ -182,25 +199,27 @@ class MLRouter(object):
         fanning out across every external backend, we route to the strongest
         few that are up.
         """
-        available = [
-            m for m in self.external_models_by_cost if self._external_selectable(m)
-        ]
+        available = [m for m in self.external_models_by_cost if self._selectable(m)]
         available = self._keep_single_groq(available)
         best = sorted(available, key=lambda m: -m.quality())
         return best[:limit]
 
-    def _external_selectable(self, model: RemoteModelLike) -> bool:
-        """Whether an external model should be offered for fan-out, using only
-        cheap, non-blocking signals — no live network calls in the router.
+    def _selectable(self, model: RemoteModelLike) -> bool:
+        """Whether a model should be offered for fan-out, using only cheap,
+        non-blocking signals — no live network calls in the router.
 
         * ``is_available()`` — the model's own in-memory signal (paid providers
           report config + rate-limit back-off; others fail open).
         * the last cached ``health_status`` sweep — consulted only for models
           that lack a live signal (``health_checked_live`` is False, e.g.
-          DeepInfra, which the sweep probes over the network). Models the last
-          sweep marked unhealthy are skipped; ones it hasn't checked yet fail
-          open, so we assume a backend is available until a real check says
-          otherwise.
+          DeepInfra and the INTERNAL vLLM backends, which the sweep probes over
+          the network). Models the last sweep marked unhealthy are skipped;
+          ones it hasn't checked yet fail open, so we assume a backend is
+          available until a real check says otherwise.
+
+        Applies to internal backends as much as external ones: an internal
+        vLLM the sweep already marked down used to be fanned out to anyway,
+        burning its whole timeout on every request between sweeps.
         """
         if not model.is_available():
             return False
@@ -212,6 +231,34 @@ class MLRouter(object):
             if health_status.model_ok(model) is False:
                 return False
         return True
+
+    # Backwards-compatible alias (tests and older call sites patch/call this
+    # under the external-specific name).
+    def _external_selectable(self, model: RemoteModelLike) -> bool:
+        return self._selectable(model)
+
+    def _filter_available(
+        self, models: Sequence[RemoteModelLike], context: str
+    ) -> list[RemoteModelLike]:
+        """Filter ``models`` down to the currently-selectable ones.
+
+        FAIL OPEN when the filter would empty a non-empty list: a stale or
+        wrong health cache must never zero out generation entirely -- in that
+        case every candidate is returned (with an ERROR logged) and the
+        per-call timeouts bound the damage.
+        """
+        candidates = list(models)
+        if not candidates:
+            return candidates
+        available = [m for m in candidates if self._selectable(m)]
+        if not available:
+            logger.error(
+                f"MLRouter: every candidate for {context} "
+                f"({[str(m) for m in candidates]}) is marked unavailable; "
+                f"failing open with the full list"
+            )
+            return candidates
+        return available
 
     def _get_forced_models(
         self, task_description: str = "", *, use_external: bool = True
@@ -282,9 +329,11 @@ class MLRouter(object):
     def entity_extract_backends(self, use_external) -> list[RemoteModelLike]:
         """Backends for entity extraction."""
         if use_external:
-            return self.all_models_by_cost
+            return self._filter_available(self.all_models_by_cost, "entity-extract")
         else:
-            return self.internal_models_by_cost
+            return self._filter_available(
+                self.internal_models_by_cost, "entity-extract-internal"
+            )
 
     def generate_text_backends(
         self, use_external: bool = False
@@ -304,10 +353,14 @@ class MLRouter(object):
         # ``use_external`` privacy gate below, routing internal-only requests
         # to an external model whenever DeepInfra was configured.
 
-        # Internal models first, optionally appending external if allowed
+        # Internal models first, optionally appending external if allowed.
+        # Filter BEFORE slicing so healthy backends past the slice boundary
+        # can step up when the cheapest ones are marked down.
         models: list[RemoteModelLike] = []
         if self.internal_models_by_cost:
-            models += self.internal_models_by_cost[:6]
+            models += self._filter_available(
+                self.internal_models_by_cost, "generate-text-internal"
+            )[:6]
         if use_external:
             models += self.best_external_models()
         # Only fall back to all_models if use_external is True
@@ -318,7 +371,7 @@ class MLRouter(object):
             models = [
                 m
                 for m in self.all_models_by_cost
-                if not m.external or self._external_selectable(m)
+                if not m.external or self._selectable(m)
             ][:6]
         return models
 
@@ -439,7 +492,7 @@ class MLRouter(object):
 
         models: list[RemoteModelLike] = []
         # Always include internal FHI models for question generation
-        models += self.internal_models_by_cost[:3]
+        models += self._filter_available(self.internal_models_by_cost, "full-qa")[:3]
 
         if use_external:
             # Add a cheap external generalist if available (successor to the
@@ -452,7 +505,7 @@ class MLRouter(object):
                 models += [
                     m
                     for m in self.cheapest("google/gemma-4-26B-A4B-it")
-                    if self._external_selectable(m)
+                    if self._selectable(m)
                 ]
             # Add Perplexity for web-informed questions
             if "sonar" in self.models_by_name:
@@ -473,7 +526,7 @@ class MLRouter(object):
         """
         models: list[RemoteModelLike] = []
         # Always include internal FHI models
-        models += self.internal_models_by_cost
+        models += self._filter_available(self.internal_models_by_cost, "partial-qa")
         return models
 
     def full_find_citation_backends(self, use_external=False) -> list[RemoteModelLike]:
@@ -519,7 +572,7 @@ class MLRouter(object):
         """
         Return models for generating prior authorizations.
         """
-        return self.internal_models_by_cost[:3]
+        return self._filter_available(self.internal_models_by_cost, "prior-auth")[:3]
 
     def get_chat_backends(self, use_external=False) -> list[RemoteModelLike]:
         """
@@ -536,15 +589,22 @@ class MLRouter(object):
             return forced_models
 
         models = []
-        # Try each fhi model twice
-        fhi_models = [
+        # Try each fhi model twice. Sorted so every pod doubles the SAME
+        # fhi backend (dict insertion order used to vary with registration
+        # order).
+        fhi_models = sorted(
             name for name in self.models_by_name.keys() if name.startswith("fhi-")
-        ]
+        )
         if fhi_models:
-            models += self.models_by_name[fhi_models[0]] * 2
+            models += (
+                self._filter_available(self.models_by_name[fhi_models[0]], "chat-fhi")
+                * 2
+            )
         if use_external:
             models += self.best_external_models()
-        internal_to_add = self.internal_models_by_cost[:6]
+        internal_to_add = self._filter_available(
+            self.internal_models_by_cost, "chat-internal"
+        )[:6]
         models += internal_to_add
         logger.debug(
             f"get_chat_backends(use_external={use_external}): {len(models)} models: "
@@ -641,7 +701,9 @@ class MLRouter(object):
                 "skipping summarization and returning None."
             )
             return None
-        models = self.internal_models_by_cost[:2]
+        models = self._filter_available(
+            self.internal_models_by_cost, "summarize-chat-history"
+        )[:2]
         for m in models:
             try:
                 summary = await m._infer_no_context(
@@ -702,14 +764,17 @@ class MLRouter(object):
         # would silently return None. Gated on availability AND on
         # use_external so a PHI caller (or a sweep-marked-down DeepInfra)
         # doesn't add a doomed/disallowed call before the internal fallbacks.
+        internal_pool = self._filter_available(
+            self.internal_models_by_cost, "summarize"
+        )
         if use_external and "google/gemma-4-26B-A4B-it" in self.models_by_name:
             models = [
                 m
                 for m in self.models_by_name["google/gemma-4-26B-A4B-it"]
-                if self._external_selectable(m)
-            ] + self.internal_models_by_cost
+                if self._selectable(m)
+            ] + internal_pool
         else:
-            models = self.internal_models_by_cost
+            models = internal_pool
         abstract_optional = ""
         text_optional = ""
         if abstract is not None:

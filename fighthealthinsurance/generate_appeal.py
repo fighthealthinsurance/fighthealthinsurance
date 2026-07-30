@@ -4,7 +4,6 @@ import json
 import random
 import re
 import time
-import traceback
 from concurrent.futures import Future
 from dataclasses import dataclass
 from typing import Any, Callable, Coroutine, Iterator, List, Optional, Tuple, TypeVar
@@ -2242,11 +2241,12 @@ class AppealGenerator(object):
         """
         try:
             from fighthealthinsurance.models import MedicationContext
+            from fighthealthinsurance.medical_code_extractor import (
+                collect_denial_text,
+            )
         except Exception as e:
             logger.opt(exception=True).debug(f"MedicationContext unavailable: {e}")
             return None
-
-        from fighthealthinsurance.medical_code_extractor import collect_denial_text
 
         haystack = collect_denial_text(
             denial,
@@ -2517,7 +2517,11 @@ class AppealGenerator(object):
                         prof_pov=prof_pov,
                     )
 
-                    if result is not None:
+                    # Truthiness matters: an empty futures list is a FAILED
+                    # backend, not a success -- returning [] here used to end
+                    # the whole model_name's attempt with zero futures and no
+                    # attempt row, one of the silent zero-appeal causes.
+                    if result:
                         winning_backend_by_model[model_name] = str(model)
                         return result
                     backend_errors.append(f"{model}: returned no futures")
@@ -2553,51 +2557,30 @@ class AppealGenerator(object):
             ml_citations_context: Optional[List[str]],
             prof_pov: bool = False,
         ) -> List[Future[Tuple[str, Optional[str]]]]:
-            # If the model has parallelism use it
-            results = None
-            try:
-                if isinstance(model, RemoteFullOpenLike):
-                    logger.debug(f"Using {model}'s parallel inference")
-                    results = model.parallel_infer(
-                        prompt=prompt,
-                        infer_type=infer_type,
-                        patient_context=patient_context,
-                        plan_context=plan_context,
-                        pubmed_context=pubmed_context,
-                        ml_citations_context=ml_citations_context,
-                        prof_pov=prof_pov,
-                    )
-                else:
-                    logger.debug(f"Using system level parallel inference for {model}")
-                    results = [
-                        executor.submit(
-                            model.infer,
-                            prompt=prompt,
-                            patient_context=patient_context,
-                            plan_context=plan_context,
-                            infer_type=infer_type,
-                            pubmed_context=pubmed_context,
-                            ml_citations_context=ml_citations_context,
-                            prof_pov=prof_pov,
-                        )
-                    ]
-            except Exception as e:
-                logger.debug(
-                    f"Error {e} {traceback.format_exc()} submitting to {model} falling back"
+            # If the model has parallelism use it. There used to be a
+            # fallback here that submitted the BASE-CLASS ``model.infer`` to
+            # the executor -- but that base method is a stub that always
+            # returns None, so the fallback burned executor threads to
+            # produce guaranteed-empty futures while looking like a working
+            # submission. A model without parallel inference is now an
+            # explicit failure, and a submission error propagates to the
+            # caller's per-backend handler where it lands in the attempt row.
+            if isinstance(model, RemoteFullOpenLike):
+                logger.debug(f"Using {model}'s parallel inference")
+                return model.parallel_infer(
+                    prompt=prompt,
+                    infer_type=infer_type,
+                    patient_context=patient_context,
+                    plan_context=plan_context,
+                    pubmed_context=pubmed_context,
+                    ml_citations_context=ml_citations_context,
+                    prof_pov=prof_pov,
                 )
-                results = [
-                    executor.submit(
-                        model.infer,
-                        prompt=prompt,
-                        patient_context=patient_context,
-                        plan_context=plan_context,
-                        infer_type=infer_type,
-                        pubmed_context=pubmed_context,
-                        ml_citations_context=ml_citations_context,
-                        prof_pov=prof_pov,
-                    )
-                ]
-            return results
+            logger.error(
+                f"Model {model} has no parallel inference implementation; "
+                f"skipping this backend"
+            )
+            return []
 
         medical_context = ""
         if denial.qa_context is not None:

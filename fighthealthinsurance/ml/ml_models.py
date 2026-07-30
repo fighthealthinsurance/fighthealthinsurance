@@ -1615,6 +1615,12 @@ class RemoteOpenLike(RemoteModel):
         # _note_missing_model). Keyed per pair because primary and backup use
         # different endpoints/models.
         self._missing_models: dict[tuple[str, str], float] = {}
+        # Short cooldown for repeated TRANSPORT failures (refused/DNS/timeout)
+        # between health sweeps: recent strike timestamps per (api_base,
+        # model), and pairs currently cooling down. See
+        # _note_transport_failure.
+        self._transport_strikes: dict[tuple[str, str], list[float]] = {}
+        self._transport_cooldowns: dict[tuple[str, str], float] = {}
 
     def model_is_ok(self):
         """Check that the backend supports this model, returns true if found in list.
@@ -2478,6 +2484,66 @@ class RemoteOpenLike(RemoteModel):
             time.monotonic() + self.MODEL_MISSING_BACKOFF_SECONDS
         )
 
+    # Transport-failure cooldown: the hourly health sweep can leave a dead
+    # backend routable for up to an hour, and every request fanned to it
+    # burns its whole timeout. Three transport-classified failures inside a
+    # minute put the (api_base, model) pair on a short cooldown so the next
+    # requests skip it instantly; the pair is re-probed when the cooldown
+    # expires. The startup probe path (raise_http_errors=True) neither counts
+    # strikes nor honors the skip, so probes always see current reality.
+    TRANSPORT_STRIKE_WINDOW_SECONDS: ClassVar[float] = 60.0
+    TRANSPORT_STRIKES_TO_COOL: ClassVar[int] = 3
+
+    def _transport_cooling(self, api_base: str, model: str) -> bool:
+        """Whether the pair is inside a transport-failure cooldown.
+
+        Expired entries are dropped so the next call probes the endpoint
+        live again.
+        """
+        deadline = self._transport_cooldowns.get((api_base, model))
+        if deadline is None:
+            return False
+        if time.monotonic() >= deadline:
+            self._transport_cooldowns.pop((api_base, model), None)
+            return False
+        return True
+
+    def _note_transport_failure(self, api_base: str, model: str, detail: str) -> None:
+        """Record a transport failure; start a cooldown on repeated strikes."""
+        now = time.monotonic()
+        key = (api_base, model)
+        strikes = [
+            t
+            for t in self._transport_strikes.get(key, [])
+            if now - t < self.TRANSPORT_STRIKE_WINDOW_SECONDS
+        ]
+        strikes.append(now)
+        if len(strikes) >= self.TRANSPORT_STRIKES_TO_COOL:
+            cooldown = _env_float("FHI_TRANSPORT_COOLDOWN_SECONDS", 120.0)
+            self._transport_cooldowns[key] = now + cooldown
+            self._transport_strikes.pop(key, None)
+            logger.warning(
+                f"{self}: {model} at {api_base} hit {len(strikes)} transport "
+                f"failures within {self.TRANSPORT_STRIKE_WINDOW_SECONDS:.0f}s "
+                f"({detail}); cooling down for {cooldown:.0f}s"
+            )
+        else:
+            self._transport_strikes[key] = strikes
+
+    def is_available(self) -> bool:
+        """False while EVERY endpoint this instance can serve is inside a
+        transport-failure cooldown, so the router stops selecting it for
+        fan-out; fail-open otherwise. The router's own fail-open guard
+        (_filter_available) still keeps a last resort if this empties a pool.
+        """
+        pairs = [(self.api_base, self.model)]
+        if self.backup_api_base:
+            pairs.append((self.backup_api_base, self.backup_model))
+        live_pairs = [(a, m) for a, m in pairs if a]
+        if live_pairs and all(self._transport_cooling(a, m) for a, m in live_pairs):
+            return False
+        return True
+
     async def __timeout_infer(
         self,
         *args,
@@ -2503,6 +2569,14 @@ class RemoteOpenLike(RemoteModel):
                 logger.warning(
                     f"Timed out querying {self} after {effective_timeout:.0f}s"
                 )
+                # A whole-budget timeout is a transport-level strike too --
+                # the endpoint is effectively unreachable at this budget.
+                if not kwargs.get("raise_http_errors"):
+                    self._note_transport_failure(
+                        kwargs.get("api_base") or self.api_base,
+                        kwargs.get("model") or self.model,
+                        f"timed out after {effective_timeout:.0f}s",
+                    )
                 return None
         else:
             return await self.__infer(*args, **kwargs)
@@ -2546,6 +2620,14 @@ class RemoteOpenLike(RemoteModel):
         if not raise_http_errors and self._model_marked_missing(api_base, model):
             logger.debug(
                 f"{self}: skipping {model} at {api_base} -- flagged as not served here"
+            )
+            return None
+        # Same idea for repeated transport failures (refused/DNS/timeout):
+        # skip quietly while the short cooldown lasts; probes bypass this so
+        # they always report current reality.
+        if not raise_http_errors and self._transport_cooling(api_base, model):
+            logger.debug(
+                f"{self}: skipping {model} at {api_base} -- transport-failure cooldown"
             )
             return None
         if self.token is None:
@@ -2801,6 +2883,8 @@ class RemoteOpenLike(RemoteModel):
             logger.warning(
                 f"{self}: {model} via {api_base} failed -- {describe_model_error(e)}"
             )
+            if not raise_http_errors:
+                self._note_transport_failure(api_base, model, describe_model_error(e))
             return None
         except Exception:
             logger.opt(exception=True).warning(
@@ -3664,11 +3748,12 @@ class RateLimitedRemoteOpenLike(RemoteFullOpenLike):
         return self._TIER_QUALITY.get(self.get_tier(), 85)
 
     def is_available(self) -> bool:
-        """Available when configured and not currently backing off. This mirrors
-        ``model_is_ok()`` for the paid providers, whose health signal is already
-        in-memory (API key/endpoint presence + rate-limit state) and never hits
-        the network, so it is safe to consult on the request path."""
-        return bool(self.model_is_ok())
+        """Available when configured, not currently backing off, and not in a
+        transport-failure cooldown (super()). The paid providers' health
+        signal is already in-memory (API key/endpoint presence + rate-limit
+        state) and never hits the network, so it is safe to consult on the
+        request path."""
+        return super().is_available() and bool(self.model_is_ok())
 
     @property
     def health_checked_live(self) -> bool:
