@@ -29,6 +29,7 @@ def _is_verbose_logging() -> bool:
         return False
 
 
+from fighthealthinsurance.ml.ml_metrics import record_ml_call, record_ml_failure
 from fighthealthinsurance.utils import (
     RateLimiter,
     ensure_message_alternation,
@@ -2605,28 +2606,43 @@ class RemoteOpenLike(RemoteModel):
         budgets than full appeal generation.
         """
         effective_timeout = timeout if timeout is not None else self._timeout
+        call_model = kwargs.get("model") or self.model
+        started = time.monotonic()
         if effective_timeout is not None:
             try:
                 # Use async_timeout instead of asyncio.wait_for
                 async with async_timeout(effective_timeout):
-                    return await self.__infer(
+                    result = await self.__infer(
                         *args, request_timeout=effective_timeout, **kwargs
                     )
+                record_ml_call(
+                    call_model,
+                    "ok" if result and result[0] else "none",
+                    time.monotonic() - started,
+                )
+                return result
             except asyncio.TimeoutError:
                 logger.warning(
                     f"Timed out querying {self} after {effective_timeout:.0f}s"
                 )
+                record_ml_call(call_model, "timeout", time.monotonic() - started)
                 # A whole-budget timeout is a transport-level strike too --
                 # the endpoint is effectively unreachable at this budget.
                 if not kwargs.get("raise_http_errors"):
                     self._note_transport_failure(
                         kwargs.get("api_base") or self.api_base,
-                        kwargs.get("model") or self.model,
+                        call_model,
                         f"timed out after {effective_timeout:.0f}s",
                     )
                 return None
         else:
-            return await self.__infer(*args, **kwargs)
+            result = await self.__infer(*args, **kwargs)
+            record_ml_call(
+                call_model,
+                "ok" if result and result[0] else "none",
+                time.monotonic() - started,
+            )
+            return result
 
     async def __infer(
         self,
@@ -2919,6 +2935,7 @@ class RemoteOpenLike(RemoteModel):
             logger.debug(
                 f"HTTP error {e.status} from {api_base} for model {model}: {e.message}"
             )
+            record_ml_failure(model, "http_error")
             raise
         except MODEL_TRANSPORT_ERRORS as e:
             # Expected operational failures (backend down, unreachable, slow,
@@ -2930,6 +2947,7 @@ class RemoteOpenLike(RemoteModel):
             logger.warning(
                 f"{self}: {model} via {api_base} failed -- {describe_model_error(e)}"
             )
+            record_ml_failure(model, "transport_error")
             if not raise_http_errors:
                 self._note_transport_failure(api_base, model, describe_model_error(e))
             return None
@@ -2937,11 +2955,22 @@ class RemoteOpenLike(RemoteModel):
             logger.opt(exception=True).warning(
                 f"Unexpected error calling {api_base} for model {model}"
             )
+            record_ml_failure(model, "unexpected_error")
             await asyncio.sleep(1)
             return None
         try:
-            if "choices" not in json_result:
-                logger.debug(f"Response from {url} missing 'choices' key")
+            if "choices" not in json_result or not json_result.get("choices"):
+                # A 200 with no completions is a provider-side failure worth
+                # seeing: it was previously a DEBUG line, indistinguishable
+                # from routine noise while a backend served empty bodies for
+                # hours. Keep the snippet short and structural (no PHI beyond
+                # what the provider echoed).
+                body_snippet = str(json_result)[:300]
+                logger.warning(
+                    f"Response from {url} for {model} had no choices; "
+                    f"body starts: {body_snippet}"
+                )
+                record_ml_failure(model, "bad_body")
                 return None
 
             # Extract message content

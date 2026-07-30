@@ -76,6 +76,7 @@ from fighthealthinsurance.medical_code_extractor import (
     extract_procedure_codes,
 )
 from fighthealthinsurance.ml.bad_output_utils import strip_boilerplate_service
+from fighthealthinsurance.reliability_events import capture_reliability_event
 from fighthealthinsurance.form_utils import *
 from fighthealthinsurance.generate_appeal import *
 from fighthealthinsurance.ml.ml_appeal_context_helper import MLAppealContextHelper
@@ -4049,6 +4050,13 @@ class AppealsBackendHelper:
                     f"{denial_id} after {make_appeals_seconds:.1f}s; falling "
                     f"through to the reserve. {gen_error}"
                 )
+                capture_reliability_event(
+                    "make_appeals_raised",
+                    denial_id=denial_id,
+                    generation_id=generation_id,
+                    seconds=round(make_appeals_seconds, 1),
+                    error=gen_error,
+                )
                 appeals = iter([])
             else:
                 logger.info(
@@ -4074,6 +4082,12 @@ class AppealsBackendHelper:
                 f"{make_appeals_overall_timeout:.0f}s for denial {denial_id}; "
                 f"abandoning (background thread continues). "
                 f"{summarize_denial_context_tokens(denial)}"
+            )
+            capture_reliability_event(
+                "make_appeals_abandoned",
+                denial_id=denial_id,
+                generation_id=generation_id,
+                budget_seconds=round(make_appeals_overall_timeout, 0),
             )
             appeals = iter([])
         # Drop None / empty / whitespace / runt / wordless outputs. Track the

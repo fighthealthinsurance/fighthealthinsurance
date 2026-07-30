@@ -25,6 +25,7 @@ from channels.generic.websocket import AsyncWebsocketConsumer
 from loguru import logger
 
 from fhi_users.audit import TrackingInfo, extract_tracking_info_from_scope
+from fighthealthinsurance.reliability_events import capture_reliability_event
 from fighthealthinsurance import common_view_logic
 from fighthealthinsurance.ml.bad_output_utils import strip_boilerplate_service
 from fighthealthinsurance.generate_prior_auth import prior_auth_generator
@@ -452,6 +453,17 @@ async def log_zero_appeal_diagnostics(
             f"{denial_id}. Generation produced nothing. "
             f"status_frames={status_count} last_phase={last_status_phase} "
             f"gen_attempts={denial_attempts}{gen_suffix}{error_suffix}{wire_suffix}"
+        )
+        # The one unambiguous "a user got NOTHING" case -- page on it.
+        capture_reliability_event(
+            "appeal_generation_produced_nothing",
+            denial_id=denial_id_int,
+            transport=transport,
+            generation_id=generation_id,
+            last_status_phase=last_status_phase,
+            models_tried=models_tried,
+            shed_tier=shed_tier,
+            make_appeals_seconds=make_appeals_seconds,
         )
     else:
         # persisted_count == -1: lookup never ran (no/invalid denial_id)

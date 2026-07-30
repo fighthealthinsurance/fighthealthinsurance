@@ -61,12 +61,14 @@ from fighthealthinsurance.chat.tools import (
 )
 from fighthealthinsurance.extralink_context_helper import ExtraLinkContextHelper
 from fighthealthinsurance.rag_client import get_rag_context_for_denial
+from fighthealthinsurance.ml.ml_metrics import record_chat_turn
 from fighthealthinsurance.ml.ml_models import (
     RemoteModelLike,
     _env_float,
     remove_repeated_blocks,
     remove_repeated_sentences,
 )
+from fighthealthinsurance.reliability_events import capture_reliability_event
 from fighthealthinsurance.ml.ml_router import ml_router
 from fighthealthinsurance.models import (
     Appeal,
@@ -954,6 +956,7 @@ class ChatInterface:
                 f"Chat turn exceeded its {turn_budget:.0f}s budget for chat "
                 f"{chat.id}; giving up on this turn"
             )
+            record_chat_turn("timeout")
         except Exception as e:
             logger.opt(exception=True).error(
                 f"Chat generation failed for chat {chat.id}: {e}"
@@ -1003,6 +1006,7 @@ class ChatInterface:
             # Launch background summary after save so the task can read the latest history
             if background_summary_task is not None:
                 await fire_and_forget_in_new_threadpool(background_summary_task)
+            record_chat_turn("ok")
             await self.send_message_to_client(final_response_text)
         else:
             # The turn failed after the user already committed their message:
@@ -1033,6 +1037,13 @@ class ChatInterface:
             logger.error(
                 f"Failed to generate response for user_message: '{user_message}' in chat {chat.id} "
                 f"after trying all models. use_external_models={self.use_external_models}"
+            )
+            record_chat_turn("failed")
+            capture_reliability_event(
+                "chat_turn_total_failure",
+                chat_id=str(chat.id),
+                use_external_models=self.use_external_models,
+                message_chars=len(user_message or ""),
             )
             await self.send_error_message(err_msg)
 
