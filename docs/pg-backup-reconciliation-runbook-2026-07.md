@@ -24,11 +24,15 @@ Live remediation for the state observed 2026-07-30:
    (chart 0.7.0 / app v0.13.0 — helm names it `barman-cloud-plugin-barman-cloud`).
 3. The helm pod can never acquire the plugin's leader-election Lease
    (`822e3f5c.cnpg.io`) — the manifest pod holds it — so it sits **0/1**
-   (readiness follows leadership), and with **two Services claiming plugin name
-   `barman-cloud.cloudnative-pg.io`** the operator's plugin discovery/gRPC is
-   broken → reconciliation blocked ever since. This is a **recurrence of the -8
-   outage pattern** (see `docs/pg-reliability-hardening.md`, Fault A: duplicate
-   installs + stale lease + dead Service endpoints), just without the cert break.
+   (readiness follows leadership). Worse, the two install methods **share
+   resource names**: the chart hardcodes Service `barman-cloud` (*"DO NOT
+   CHANGE THE SERVICE NAME"* — it must match the serving cert), so the Jul 18
+   helm install re-pointed the ONE existing `barman-cloud` Service at its own
+   — not-ready — pod, leaving the operator's gRPC/mTLS plugin channel with no
+   ready backend → reconciliation blocked ever since. This is a **recurrence
+   of the -8 outage pattern** (see `docs/pg-reliability-hardening.md`, Fault
+   A: duplicate installs + stale lease + a Service selecting zero ready pods),
+   just without the cert break.
 4. Independently, the `backup-example` ScheduledBackup (a CNPG docs example
    applied ~Nov 2025, targeting the long-dead `fhi-pg-main-7`) has left the new
    operator in a **catch-up storm**: every reconcile re-attempts creation of
@@ -46,8 +50,9 @@ ScheduledBackup aimed at a dead cluster, with no owner-refs on its Backups,
 **(d)** missing `-9` ScheduledBackup.
 
 Fixes in-repo: `k8s/fhi-pg-main-9-scheduledbackup.yaml` (new),
-`scripts/check-pg9-backup-health.sh` (new), and in `colo-scripts`: pinned
-chart versions + `cleanupbooks/cnpg-backup-cruft.yaml`.
+`scripts/check-pg9-backup-health.sh` (new), `scripts/build.sh` (now re-asserts
+the schedule on every deploy), and in `colo-scripts`: pinned chart versions +
+`cleanupbooks/cnpg-backup-cruft.yaml` (convergent cleanup + reinstall).
 
 ---
 
@@ -58,10 +63,14 @@ chart versions + `cleanupbooks/cnpg-backup-cruft.yaml`.
 kubectl -n default delete scheduledbackup backup-example
 kubectl -n default delete backup --all                      # all target dead -7; CRs only, no bucket data
 
-# 2. converge to ONE plugin install (keep helm, drop the manifest one)
-kubectl -n cnpg-system delete deployment barman-cloud service barman-cloud
-kubectl -n cnpg-system delete lease 822e3f5c.cnpg.io       # frees leadership immediately
-kubectl -n cnpg-system get pods -w                          # helm pod -> 1/1
+# 2. converge to ONE plugin install: uninstall + purge + clean pinned reinstall.
+#    Do NOT delete piecemeal by name — Service/Certificate/ConfigMap names are
+#    SHARED between the install methods (Phase 2 explains what that broke).
+helm -n cnpg-system uninstall barman-cloud || true
+for r in $(kubectl -n cnpg-system get deploy,svc,cm,sa,role,rolebinding,certificate,issuer -o name | grep -i barman); do kubectl -n cnpg-system delete "$r"; done
+for r in $(kubectl get clusterrole,clusterrolebinding -o name | grep -i barman); do kubectl delete "$r"; done
+helm repo update cnpg
+helm -n cnpg-system install barman-cloud cnpg/plugin-barman-cloud --version 0.7.0 --wait --timeout 5m
 
 # 3. reconciliation clears (restart operator only if it doesn't within ~3m)
 kubectl -n totallylegitco get cluster fhi-pg-main-9 -w
@@ -115,35 +124,59 @@ kubectl -n default delete backup --all        # ~241 objects, takes a minute
 **VALIDATION:** operator log goes quiet on `backup-example`:
 `kubectl -n cnpg-system logs deploy/cnpg-cloudnative-pg --since=10m | grep -c backup-example` → `0`.
 
-## Phase 2 — converge to ONE plugin install (keep helm, remove manifest)
+## Phase 2 — converge to ONE plugin install (helm-managed, reinstalled clean)
 
 We keep the **helm** release: it is what git (`colo-scripts`) manages, it is
 the same app version (v0.13.0) as the manifest install, and future upgrades
 become a reviewable one-line pin bump.
 
-```bash
-# GUARDS (all must hold before deleting anything):
-helm -n cnpg-system list                                   # releases: cnpg, barman-cloud
-helm -n cnpg-system get manifest barman-cloud | grep -B2 -A6 '^kind: \(Deployment\|Service\)$' \
-  | grep -E 'kind:|name:'
-#   -> the release must own barman-cloud-plugin-barman-cloud, and must NOT own
-#      the plain names deleted below.
-kubectl -n cnpg-system get deploy barman-cloud \
-  -o jsonpath='helm-owner={.metadata.annotations.meta\.helm\.sh/release-name}{"\n"}'
-#   -> must print 'helm-owner=' (EMPTY: manifest-based, safe to delete)
+**Do NOT delete the manifest install piecemeal by name** — several names are
+IDENTICAL across the two install methods: the chart hardcodes Service
+`barman-cloud` (its values.yaml: *"DO NOT CHANGE THE SERVICE NAME as it is
+currently used to generate the certificate"*), Certificates
+`barman-cloud-client`/`barman-cloud-server`, ConfigMap
+`plugin-barman-cloud-config`. Name-based deletion takes out shared objects the
+survivor needs. As executed on 2026-07-30 this is exactly what bit us:
+deleting `deployment/barman-cloud` freed the lease and the helm pod went
+Ready, but `service/barman-cloud` was the ONE shared discovery Service — with
+it gone the operator had no plugin endpoint at all, and the cluster stayed
+plugin-errored even with a perfectly healthy plugin pod (leader, gRPC up,
+ObjectStores reconciling).
 
-kubectl -n cnpg-system delete deployment barman-cloud service barman-cloud
-kubectl -n cnpg-system delete lease 822e3f5c.cnpg.io       # just a lock; recreated on acquire
-kubectl -n cnpg-system get pods -w
+Safe convergence = uninstall + purge + clean pinned reinstall. Safety facts:
+the ObjectStore **CRD carries `helm.sh/resource-policy: keep`**, so neither
+`helm uninstall` nor this purge can cascade-delete `fhi-backup-store-9`; the
+purge also skips CRDs and Secrets explicitly (cert-manager re-issues the TLS
+secrets from the fresh Certificates).
+
+```bash
+helm -n cnpg-system uninstall barman-cloud || true
+
+# purge every remaining plugin resource EXCEPT CRDs + Secrets:
+for r in $(kubectl -n cnpg-system get deploy,svc,cm,sa,role,rolebinding,certificate,issuer -o name | grep -i barman); do
+  kubectl -n cnpg-system delete "$r"; done
+for r in $(kubectl get clusterrole,clusterrolebinding -o name | grep -i barman); do
+  kubectl delete "$r"; done
+
+kubectl get crd objectstores.barmancloud.cnpg.io      # still present (resource-policy: keep)
+kubectl -n totallylegitco get objectstore             # fhi-backup-store + fhi-backup-store-9 intact
+
+helm repo update cnpg
+helm -n cnpg-system install barman-cloud cnpg/plugin-barman-cloud --version 0.7.0 --wait --timeout 5m
+# if helm refuses over ownership of the pre-existing CRDs: add --set crds.create=false
 ```
 
-**GATE:** `barman-cloud-plugin-barman-cloud-*` reaches **1/1**; its log shows
-`successfully acquired lease`; and its Service has ready endpoints (the -8
-selector-break check):
+(Codified equivalent: `ansible-playbook cleanupbooks/cnpg-backup-cruft.yaml`
+in colo-scripts — idempotent; converges from any of this incident's
+intermediate states.)
+
+**GATE:** plugin deployment **1/1**, and the discovery Service is back with
+ready endpoints (the -8 selector-break check):
 
 ```bash
-kubectl -n cnpg-system logs deploy/barman-cloud-plugin-barman-cloud | tail -5
-kubectl -n cnpg-system get endpointslices -l kubernetes.io/service-name=barman-cloud-plugin-barman-cloud
+kubectl -n cnpg-system get deploy barman-cloud-plugin-barman-cloud
+kubectl -n cnpg-system get svc barman-cloud --show-labels   # cnpg.io/pluginName=barman-cloud.cloudnative-pg.io
+kubectl -n cnpg-system get endpointslices -l kubernetes.io/service-name=barman-cloud
 ```
 
 Then reconciliation should clear on its own:
@@ -154,9 +187,11 @@ kubectl -n totallylegitco get cluster fhi-pg-main-9 -w    # -> "Cluster in healt
 kubectl -n cnpg-system rollout restart deploy cnpg-cloudnative-pg
 ```
 
-Leftover manifest RBAC/certs are inert; clean them in Phase 6, **never** the
-`barmancloud.cnpg.io` CRDs (deleting the ObjectStore CRD would cascade-delete
-`fhi-backup-store-9`).
+No cluster-spec change is needed afterwards: `spec.plugins[].name:
+barman-cloud.cloudnative-pg.io` is the plugin's *protocol* name — the operator
+matches it against the Service's `cnpg.io/pluginName` label, which is
+identical under both install methods — and `barmanObjectName`/`serverName`
+reference the ObjectStore CR, which the reinstall never touches.
 
 ## Phase 3 — re-prove `-9` backups end-to-end, then schedule them
 
@@ -255,13 +290,11 @@ ScheduledBackup treatment (its own bucket prefix / serverName).
 ## Phase 6 — cosmetic cleanup + keeping it fixed
 
 ```bash
-# leftover manifest-install RBAC/certs (inert; delete only what is NOT
-# helm-annotated and NOT a CRD):
-kubectl -n cnpg-system get sa,role,rolebinding,certificate,issuer,secret -o name | grep -i barman
-kubectl get clusterrole,clusterrolebinding -o name | grep -i barman
-#   check each:  -o jsonpath='{.metadata.annotations.meta\.helm\.sh/release-name}'
-#   empty -> manifest leftover -> deletable.  NEVER delete the
-#   barmancloud.cnpg.io CRDs (cascade-deletes fhi-backup-store-9).
+# after Phase 2's purge + reinstall, every plugin resource left in cnpg-system
+# must carry meta.helm.sh/release-name=barman-cloud; anything without it is a
+# leftover -> deletable. NEVER delete the barmancloud.cnpg.io CRDs
+# (cascade-deletes fhi-backup-store-9).
+kubectl -n cnpg-system get deploy,svc,cm,sa,role,rolebinding,certificate,issuer,secret -o name | grep -i barman
 
 kubectl -n totallylegitco get prometheusrule fhi-pg-main-9-backup-wal   # alerts actually applied?
 ```
@@ -277,3 +310,23 @@ kubectl -n totallylegitco get prometheusrule fhi-pg-main-9-backup-wal   # alerts
   of the above; run it after any operator/plugin change and whenever backups
   feel doubtful. The 26h-backup-age and WAL alerts in
   `k8s/fhi-pg-main-9-alerts.yaml` are the always-on version.
+
+### Redeploy idempotency — a redeploy can never mint a second install
+
+- **colo-scripts** `playbooks/cluster-setup.yaml`: the plugin is exactly ONE
+  pinned helm release (`barman-cloud`, chart 0.7.0). Re-running the playbook
+  `helm upgrade`s that release in place — it cannot create a second copy — and
+  `wait: yes` fails the run loudly if the rollout wedges (a 0/1 pod would have
+  failed the Jul 18 run instead of rotting for 12 days). The only path back to
+  two installs is hand-applying the GitHub release `manifest.yaml` — don't;
+  the health script (checks 1–3) and `cleanupbooks/cnpg-backup-cruft.yaml`
+  both detect and converge that state.
+- **fighthealthinsurance** `scripts/build.sh`: never touches the plugin. It
+  re-asserts `k8s/db-config.yaml` and `k8s/fhi-pg-main-9-scheduledbackup.yaml`
+  on every deploy (idempotent applies), so an app redeploy self-heals the
+  backup schedule and cannot affect the plugin install.
+- The `-9` cluster spec needs no per-install-method changes ever:
+  `spec.plugins[].name` is the plugin's protocol name (matched via the
+  Service's `cnpg.io/pluginName` label, identical under both install methods)
+  and `barmanObjectName`/`serverName` reference the ObjectStore CR, which
+  installs/uninstalls never touch.

@@ -116,6 +116,15 @@ esac
 kubectl apply -f k8s/db-config.yaml
 echo "PDBHOST now set to: $(kubectl -n totallylegitco get configmap fhi-db-config -o jsonpath='{.data.PDBHOST}')"
 
+# Backup schedule for fhi-pg-main-9 -- re-asserted on every deploy (same
+# pattern as db-config above) so a deleted/suspended schedule self-heals and
+# the 26h backup-age alert in k8s/fhi-pg-main-9-alerts.yaml always has a real
+# schedule behind it. Idempotent. NOTE: the barman-cloud plugin INSTALL is
+# deliberately NOT managed here -- colo-scripts owns it as a single pinned
+# helm release; this script must never apply a second copy (July 2026
+# incident: two plugin installs deadlocked reconciliation for 12 days).
+kubectl apply -f k8s/fhi-pg-main-9-scheduledbackup.yaml
+
 # The raycluster operator doesn't handle upgrades well so delete + recreate instead.
 kubectl delete raycluster -n totallylegitco raycluster-kuberay || echo "No raycluster present"
 envsubst < k8s/ray/cluster.yaml | kubectl apply -f -
