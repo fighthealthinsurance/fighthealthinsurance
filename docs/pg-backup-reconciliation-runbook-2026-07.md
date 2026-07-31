@@ -75,7 +75,8 @@ helm -n cnpg-system install barman-cloud cnpg/plugin-barman-cloud --version 0.7.
 # 3. reconciliation clears (restart operator only if it doesn't within ~3m)
 kubectl -n totallylegitco get cluster fhi-pg-main-9 -w
 
-# 4. backups: prove once, then schedule daily
+# 4. backups: prove once, then schedule daily. If the archiver is stuck on
+#    000000010000000000000001 / archived_count=0 -> Phase 3a (never worked).
 kubectl apply -f k8s/fhi-pg-main-9-scheduledbackup.yaml     # immediate: true takes one now
 ./scripts/check-pg9-backup-health.sh
 ```
@@ -166,9 +167,11 @@ helm -n cnpg-system install barman-cloud cnpg/plugin-barman-cloud --version 0.7.
 # if helm refuses over ownership of the pre-existing CRDs: add --set crds.create=false
 ```
 
-(Codified equivalent: `ansible-playbook cleanupbooks/cnpg-backup-cruft.yaml`
-in colo-scripts — idempotent; converges from any of this incident's
-intermediate states.)
+(Codified: `ansible-playbook cleanupbooks/cnpg-backup-cruft.yaml` does the
+teardown half — default-ns cruft + TOTAL plugin removal (helm release +
+leftovers; never CRDs/Secrets). It deliberately installs nothing: re-run
+`playbooks/cluster-setup.yaml` afterwards, whose pinned helm task performs
+the same clean install as above.)
 
 **GATE:** plugin deployment **1/1**, and the discovery Service is back with
 ready endpoints (the -8 selector-break check):
@@ -218,6 +221,60 @@ replicas first (`primaryUpdateStrategy: supervised` means nothing rolls
 without you): `kubectl cnpg restart fhi-pg-main-9 -n totallylegitco` — or
 plugin-free, delete pods `-2`/`-3` one at a time, then switchover, then the
 old primary.
+
+### Phase 3a — the archiver has NEVER worked (stuck on `…0001`)
+
+Observed live 2026-07-31 in the `fhi-pg-main-9-1` instance log:
+
+```
+Error while calling ArchiveWAL … unexpected failure invoking barman-cloud-wal-archive: exit status 1
+The failed archive command was: /controller/manager wal-archive … pg_wal/000000010000000000000001
+```
+
+`000000010000000000000001` is the **first segment of timeline 1**. Postgres
+archives strictly in order, so still failing on segment #1 means `-9` has
+archived **zero WAL since its Jul 11 birth** — independent of (and predating)
+the duplicate-install outage: the WAL path is instance manager → **local
+sidecar** → B2 and never touches the central plugin deployment. Consequences:
+
+- **pg_wal grows without bound.** Unarchived WAL is exempt from
+  `max_slot_wal_keep_size`; this is the exact mechanism that filled and
+  killed `-8-1`. Run the Phase 0 WAL-count/df block IMMEDIATELY.
+- The Jul 11 "completed" base backup is **probably not restorable**: a
+  barman base backup needs the archived WALs spanning its start/stop to
+  reach consistency, and the archive has none. Treat `-9` as having NO
+  usable backup until archiving works, a fresh backup completes, AND a
+  restore drill passes.
+
+The real error text lives in the sidecar container on the primary:
+
+```bash
+kubectl -n totallylegitco logs fhi-pg-main-9-1 -c plugin-barman-cloud --since=30m | tail -30
+```
+
+Likely causes, in rough order:
+
+1. **Empty-WAL-archive check failing.** On first archive the plugin verifies
+   the `wals/` prefix for `serverName: fhi-pg-main-9` is EMPTY (that is what
+   the `.check-empty-wal-archive` marker in PGDATA is about). If an earlier
+   `-9` incarnation or a restore-drill cluster (`pg-copy.yaml` /
+   `pg-recover.yaml`) ever archived under the same serverName, the check
+   fails forever. Inspect:
+   `aws --endpoint-url https://s3.us-west-004.backblazeb2.com s3 ls s3://fhi-pg-backup-second/fhi-pg-main-9/wals/ | head`
+   If foreign WAL is there with timestamps predating 2026-07-11, move/delete
+   ONLY that `wals/` prefix (leave `base/`); archiving proceeds on the next
+   retry.
+2. **B2 checksum env vars missing from the RUNNING sidecars.** The
+   ObjectStore sets `AWS_REQUEST_CHECKSUM_CALCULATION` /
+   `AWS_RESPONSE_CHECKSUM_VALIDATION`, but sidecar env is baked at pod
+   creation — pods older than the ObjectStore change never picked them up:
+   `kubectl -n totallylegitco get pod fhi-pg-main-9-1 -o jsonpath='{.spec.containers[?(@.name=="plugin-barman-cloud")].env}'`
+   If absent, restart instances one at a time (supervised) to re-inject.
+3. **Credentials** (`pg-backup2`) — the sidecar log will show S3 403s.
+
+After the fix, `pg_stat_archiver.archived_count` must RISE with
+`last_failed_wal` clearing; then take the fresh backup (Phase 3 above) and
+run a restore drill before trusting it.
 
 ## Phase 4 — pcfweb-pg: dead in-tree backup path (separate fix)
 
@@ -319,8 +376,9 @@ kubectl -n totallylegitco get prometheusrule fhi-pg-main-9-backup-wal   # alerts
   `wait: yes` fails the run loudly if the rollout wedges (a 0/1 pod would have
   failed the Jul 18 run instead of rotting for 12 days). The only path back to
   two installs is hand-applying the GitHub release `manifest.yaml` — don't;
-  the health script (checks 1–3) and `cleanupbooks/cnpg-backup-cruft.yaml`
-  both detect and converge that state.
+  the health script (checks 1–3) detects that state, and
+  `cleanupbooks/cnpg-backup-cruft.yaml` (total teardown) + a
+  `cluster-setup.yaml` re-run converge it.
 - **fighthealthinsurance** `scripts/build.sh`: never touches the plugin. It
   re-asserts `k8s/db-config.yaml` and `k8s/fhi-pg-main-9-scheduledbackup.yaml`
   on every deploy (idempotent applies), so an app redeploy self-heals the
