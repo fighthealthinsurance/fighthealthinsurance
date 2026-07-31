@@ -3986,7 +3986,24 @@ class AppealsBackendHelper:
             GENERATING_PHASE_BUDGET - (gen_started - generating_phase_started),
         )
         gen_task: "asyncio.Future[Iterator[GeneratedAppeal]]" = asyncio.ensure_future(
-            database_sync_to_async(appealGenerator.make_appeals)(
+            # thread_sensitive=False, for the same reason the speculative
+            # precompute passes it (ml_speculative_appeals_helper): the default
+            # (True) runs this on asgiref's ONE process-wide thread-sensitive
+            # executor thread, and make_appeals holds it for the whole
+            # generating budget (up to GENERATING_PHASE_BUDGET). Everything
+            # else that reaches the ORM through an async path -- including the
+            # `serve_reserve_if_stalled()` query on the heartbeat below, and
+            # every OTHER concurrent stream on this pod -- then queues behind
+            # it. Observed: the reserve checkpoint on the 45s beat blocked for
+            # 255s until make_appeals returned, so the socket went silent well
+            # past the client's 90s inactivity watchdog
+            # (WS_INACTIVITY_TIMEOUT_MS) and the run ended with 0 appeals
+            # delivered. DatabaseSyncToAsync still wraps each call in
+            # close_old_connections() either way, so connection handling is
+            # unchanged.
+            database_sync_to_async(
+                appealGenerator.make_appeals, thread_sensitive=False
+            )(
                 denial,
                 AppealTemplateGenerator(prefaces, main, footer),
                 medical_reasons=medical_reasons,

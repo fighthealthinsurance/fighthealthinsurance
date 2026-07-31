@@ -51,24 +51,48 @@ def _clip(text: Optional[str], limit: int) -> Optional[str]:
     return text[:limit] + _TRUNCATION_MARKER
 
 
+# Outcomes that mean "we never put a request on the wire for this model".
+# They are recorded synchronously (the call-list build hits them immediately),
+# while the outcome of a call that DID go out is only recorded once its future
+# is drained -- so without a ranking the never-called reason always lands first
+# and permanently masks the real failure. A model gets several records per run
+# (one per infer_type: `full`, `medically_necessary`, ...), and
+# `medically_necessary` is skipped as `no_prompt` whenever the denial has no
+# procedure, which is exactly when triage most needs the `full` call's reason.
+_NEVER_CALLED_OUTCOMES = frozenset({"no_prompt", "not_registered"})
+
+
+def _outcome_rank(outcome: str) -> int:
+    """Higher wins when collapsing several records for one model.
+
+    ``ok`` (the model produced a deliverable appeal) beats everything; a
+    real attempt that failed beats a never-called reason, which is the least
+    informative thing we can say about a model.
+    """
+    if outcome == "ok":
+        return 2
+    if outcome in _NEVER_CALLED_OUTCOMES:
+        return 0
+    return 1
+
+
 def summarize_model_outcomes(outcomes: List[Tuple[Optional[str], str]]) -> str:
     """Compact ``model:outcome[,model:outcome...]`` summary from a list of
     ``(model_name, outcome)`` records, for the models_tried diagnostic.
 
     Deduped per model (the same model is attempted across the primary/backup/
-    shed stages). ``ok`` -- the model produced at least one deliverable appeal
-    -- wins over any failure outcome for that model. Capped so a large fan-out
-    can't bloat the log line.
+    shed stages, and once per infer_type within a stage). The most informative
+    outcome wins per ``_outcome_rank``: ``ok`` over a failed attempt, and a
+    failed attempt over a never-called reason such as ``no_prompt``. Capped so
+    a large fan-out can't bloat the log line.
     """
     if not outcomes:
         return ""
     best: dict[str, str] = {}
     for name, outcome in outcomes:
         key = str(name) if name is not None else "unknown"
-        # "ok" is the only success; keep it over any failure reason.
-        if best.get(key) == "ok":
-            continue
-        if key not in best or outcome == "ok":
+        current = best.get(key)
+        if current is None or _outcome_rank(outcome) > _outcome_rank(current):
             best[key] = outcome
     items = [f"{k}:{v}" for k, v in sorted(best.items())]
     max_items = 12

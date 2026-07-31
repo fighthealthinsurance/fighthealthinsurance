@@ -1112,6 +1112,29 @@ class TestSummarizeModelOutcomes:
         )
         assert out2 == "fhi-legacy:ok"
 
+    def test_real_attempt_wins_over_never_called_reason(self):
+        # A model gets one record per infer_type. When the denial has no
+        # procedure the medically_necessary call is skipped as "no_prompt" and
+        # -- because that is recorded synchronously, before any future is
+        # drained -- it used to mask the reason the `full` call actually
+        # failed. The wire outcome is what triage needs.
+        out = _summarize_model_outcomes(
+            [("fhi-legacy", "no_prompt"), ("fhi-legacy", "all_backends_failed")]
+        )
+        assert out == "fhi-legacy:all_backends_failed"
+
+    def test_never_called_reason_kept_when_it_is_all_we_have(self):
+        out = _summarize_model_outcomes(
+            [("fhi-legacy", "no_prompt"), ("sonar", "not_registered")]
+        )
+        assert out == "fhi-legacy:no_prompt,sonar:not_registered"
+
+    def test_ok_wins_over_never_called_reason(self):
+        out = _summarize_model_outcomes(
+            [("fhi-legacy", "ok"), ("fhi-legacy", "no_prompt")]
+        )
+        assert out == "fhi-legacy:ok"
+
     def test_none_model_name_becomes_unknown(self):
         assert _summarize_model_outcomes([(None, "no_output")]) == "unknown:no_output"
 
