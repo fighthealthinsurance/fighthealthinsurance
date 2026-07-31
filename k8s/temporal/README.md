@@ -49,15 +49,18 @@ fits comfortably next to the Ray heads (which already request 6 GiB each).
    ```sh
    helm repo add temporal https://go.temporal.io/helm-charts
    helm repo update
-   # values.yaml has two ${...} placeholders Helm does NOT substitute:
-   TEMPORAL_PG_HOST=<postgres-rw-service>.totallylegitco.svc \
+   # values.yaml has two ${...} placeholders Helm does NOT substitute
+   # (TEMPORAL_PG_HOST is the CNPG read-write Service of the app Postgres):
+   TEMPORAL_PG_HOST=fhi-pg-main-9-rw.totallylegitco.svc \
    TEMPORAL_PG_USER=temporal \
    envsubst '${TEMPORAL_PG_HOST} ${TEMPORAL_PG_USER}' < values.yaml > /tmp/temporal-values.yaml
-   helm install temporal temporal/temporal -n totallylegitco -f /tmp/temporal-values.yaml
+   helm install temporal temporal/temporal --version 1.6.0 \
+     -n totallylegitco -f /tmp/temporal-values.yaml
    ```
 
-   `values.yaml` targets chart **≥ 1.x** (verified against `temporal-1.6.0`);
-   pre-1.0 charts used a different layout and will not accept it. The chart
+   The chart version is pinned to **1.6.0** — the version `values.yaml` was
+   validated against on the live cluster. Newer chart releases may change the
+   values layout again (pre-1.0 → 1.x did); re-validate before bumping the pin. The chart
    does not create the `default` namespace — after install:
 
    ```sh
@@ -132,8 +135,12 @@ back to plain TLS.
       print('ssh ok')"
    ```
 
-   (The plain `ssh` binary ignores `USER`, so for a CLI check use
-   `ssh ray@$FAXYMCFAXFACE_HOST` explicitly.)
+   Note this is a **connectivity + authentication check only**: `known_hosts=None`
+   mirrors what `fax_utils` itself does for this VPN-internal host, and means
+   neither the code nor this test validates the server's identity. If that
+   posture ever changes in `fax_utils`, mount a trusted `known_hosts` (e.g.
+   from a secret) and point both at it. (The plain `ssh` binary ignores `USER`,
+   so for a CLI check use `ssh ray@$FAXYMCFAXFACE_HOST` explicitly.)
 
 4. **Drain the pre-flag backlog** — faxes queued before the flip
    (`should_send=True, sent=False`) have no Temporal workflow. The Ray delayed
@@ -154,8 +161,8 @@ required.
 
 ## Files
 
-- `values.yaml` — Helm values for chart ≥ 1.x: Postgres-backed, no
-  Cassandra/Elasticsearch.
+- `values.yaml` — Helm values (validated against chart `temporal-1.6.0`, which
+  the install command pins): Postgres-backed, no Cassandra/Elasticsearch.
 - `worker.yaml` — the `fhi-fax-worker` Deployment.
 
 ## What runs here today vs. next

@@ -74,11 +74,13 @@ spec:
             # new-uploads-longhorn-backup4 does not exist here. Fax activities
             # read documents via the external COMBINED_STORAGE layers or
             # regenerate them.
-            # SSH key for the FaxyMcFaxFace backend. The worker runs as root
-            # (start-server.sh execs manage.py directly), so ~/.ssh is /root/.ssh.
-            # Pre-flight: confirm the fax host trusts this key for the *root*
-            # user, and whether the live secret is faxymcfaxface-ssh or
-            # ssh-privatekey (README checklist).
+            # SSH key for the FaxyMcFaxFace backend. The worker process runs
+            # locally as root (start-server.sh execs manage.py directly), so
+            # ~/.ssh is /root/.ssh -- but it connects to the fax host as REMOTE
+            # user "ray" (USER/LOGNAME above), the account setup_faxy_ssh.sh
+            # installs the key for. Pre-flight: the fax host must trust the
+            # faxymcfaxface-ssh secret's ssh-privatekey for user ray (README
+            # checklist).
             - name: faxymcfaxface-ssh
               readOnly: true
               mountPath: "/root/.ssh"
