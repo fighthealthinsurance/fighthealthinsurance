@@ -45,6 +45,17 @@ spec:
               value: "default"
             - name: TEMPORAL_TASK_QUEUE
               value: "fhi-fax"
+            # DB host from the fhi-db-config ConfigMap (see k8s/db-config.yaml),
+            # same as k8s/deploy.yaml: an explicit env entry overrides the STALE
+            # PDBHOST still carried by the envFrom Secrets. Without this the
+            # worker's activities dial the retired pg8 service and every
+            # DB-touching activity fails (found 2026-07-31 during the first
+            # end-to-end test).
+            - name: PDBHOST
+              valueFrom:
+                configMapKeyRef:
+                  name: fhi-db-config
+                  key: PDBHOST
           envFrom:
             # Same DB / app secrets the web + Ray pods use, so activities can
             # reach the database and regenerate fax documents.
