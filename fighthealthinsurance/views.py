@@ -1303,8 +1303,12 @@ class ChooseAppeal(View):
         form = core_forms.ChooseAppealForm(request.POST)
 
         if not form.is_valid():
-            logger.debug(form)
-            return
+            # A bare `return` was a 500 ("view didn't return an
+            # HttpResponse"). This fires for real users: clearing the appeal
+            # textarea before submitting makes appeal_text fail validation.
+            # Match ChooseEscalationLetter's recovery.
+            logger.debug(f"ChooseAppeal: invalid form {form.errors}")
+            return redirect("scan")
 
         (
             appeal_fax_number,
@@ -1425,17 +1429,30 @@ class GenerateAppeal(View):
     def post(self, request):
         form = core_forms.DenialRefForm(request.POST)
         if not form.is_valid():
-            # TODO: Send user back to fix the form.
-            return
+            # Same recovery as the GET path: a bare `return` here was a 500
+            # ("view didn't return an HttpResponse") that dead-ended the flow
+            # right before appeal generation.
+            logger.debug(f"GenerateAppeal: invalid ref form {form.errors}")
+            return redirect("scan")
 
         logger.debug("Finishing up prior to appeal gen.")
         denial_id = form.cleaned_data["denial_id"]
         email = form.cleaned_data["email"]
-        denial = models.Denial.objects.filter(
-            denial_id=denial_id,
-            hashed_email=models.Denial.get_hashed_email(email),
-            semi_sekret=form.cleaned_data["semi_sekret"],
-        ).get()
+        try:
+            denial = models.Denial.objects.filter(
+                denial_id=denial_id,
+                hashed_email=models.Denial.get_hashed_email(email),
+                semi_sekret=form.cleaned_data["semi_sekret"],
+            ).get()
+        except models.Denial.DoesNotExist:
+            # Stale/mismatched (denial_id, email, semi_sekret) triple -- e.g.
+            # a resubmitted old tab. The GET path redirects; a 500 here
+            # blocked generation for exactly the user most likely to retry.
+            logger.warning(
+                f"GenerateAppeal: no denial for id {denial_id} with supplied "
+                f"email/semi_sekret; redirecting to scan"
+            )
+            return redirect("scan")
 
         # We copy _most_ of the input over for the form context
         elems = dict(request.POST)

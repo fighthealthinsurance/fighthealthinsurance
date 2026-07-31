@@ -1217,6 +1217,8 @@ async def best_within_timelimit(
     if extended_timeout is None:
         extended_timeout = min(max(timeout * 2, 60.0), _extended_wait_cap())
 
+    wait_started = time.monotonic()
+
     # Create task objects with Future results and wrap them
     original_to_task: Dict[asyncio.Task[T], Awaitable[T]] = {}
     wrapped_tasks: List[asyncio.Task[T]] = []
@@ -1287,9 +1289,15 @@ async def best_within_timelimit(
         _spawn_cancellation(list(pending))
     if best_result_option:
         return best_result_option
+    # Report the ACTUAL elapsed wait, not just the configured window: every
+    # task failing instantly (no backends configured, connection refused)
+    # exits this function in milliseconds, and a message claiming we waited
+    # "30s + 60s overtime" sends triage hunting for a timeout that never
+    # happened instead of for the immediate failure.
     logger.warning(
         f"best_within_timelimit: no usable result from {len(tasks)} tasks "
-        f"within {timeout}s + {extended_timeout}s overtime"
+        f"after {time.monotonic() - wait_started:.1f}s "
+        f"(budget {timeout}s + {extended_timeout}s overtime)"
     )
     return None
 

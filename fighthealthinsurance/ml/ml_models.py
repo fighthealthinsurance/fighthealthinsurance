@@ -1716,9 +1716,17 @@ class RemoteOpenLike(RemoteModel):
         """
         key = prompt_type
         prompt = "Your are a helpful assistant with extensive medical knowledge who loves helping patients. CRITICAL: Only cite medical literature, studies, PMIDs, journal names, or author names that are EXPLICITLY provided in the input. NEVER fabricate or hallucinate citations. If no citations are provided, do not include any specific study references."
-        # If the prompt type is 'full' and the professional point of view is requested, use a different prompt.
-        if prof_pov or (
-            prof_pov and f"{prompt_type}_not_patient" in self.system_prompts_map
+        # Professional POV: switch to the *_not_patient variant only when the
+        # map has one, plus 'full' (whose hard-coded professional fallback
+        # below covers maps without the variant). Switching the key for every
+        # type used to send prompt types WITHOUT a variant -- medically_
+        # necessary in the professional flow -- through the .get() fallback,
+        # so the model was told to write an entire appeal letter where a
+        # one-line medical-necessity reason (templated into {medical_reason})
+        # was expected.
+        if prof_pov and (
+            f"{prompt_type}_not_patient" in self.system_prompts_map
+            or prompt_type == "full"
         ):
             key = f"{prompt_type}_not_patient"
             prompt = (
@@ -1994,9 +2002,15 @@ class RemoteOpenLike(RemoteModel):
             input_urls.extend(CleanerUtils.url_re.findall(prompt))
         if patient_context and isinstance(patient_context, str):
             input_urls.extend(CleanerUtils.url_re.findall(patient_context))
-        if plan_context and isinstance(patient_context, str):
+        # Each guard must check ITS OWN variable: checking patient_context here
+        # (an old copy-paste) meant that whenever patient_context was None the
+        # URLs inside plan/pubmed context were never registered as input URLs,
+        # so url_fixer treated them as hallucinated -- network-validating and,
+        # on any validation failure, silently stripping the very citations the
+        # context provided.
+        if plan_context and isinstance(plan_context, str):
             input_urls.extend(CleanerUtils.url_re.findall(plan_context))
-        if pubmed_context and isinstance(patient_context, str):
+        if pubmed_context and isinstance(pubmed_context, str):
             input_urls.extend(CleanerUtils.url_re.findall(pubmed_context))
 
         result = await self._infer_no_context(
@@ -2405,7 +2419,11 @@ class RemoteOpenLike(RemoteModel):
                 if raw_response and raw_response[0]:
                     return raw_response
 
-                # Try backup API if primary failed (even in dual mode)
+                # Try backup API if primary failed (even in dual mode).
+                # Same kwargs as the primary call: this fallback used to omit
+                # ml_citations_context and history, so an appeal served by the
+                # backup silently lost its citations context and a chat turn
+                # served by the backup lost the whole conversation history.
                 if self.backup_api_base:
                     backup_response = await self.__timeout_infer(
                         system_prompt=system_prompt,
@@ -2413,7 +2431,9 @@ class RemoteOpenLike(RemoteModel):
                         patient_context=patient_context,
                         plan_context=plan_context,
                         pubmed_context=pubmed_context,
+                        ml_citations_context=ml_citations_context,
                         temperature=temperature,
+                        history=history,
                         model=self.backup_model,
                         api_base=self.backup_api_base,
                         raise_http_errors=raise_http_errors,
@@ -3318,8 +3338,13 @@ class RemoteFullOpenLike(RemoteOpenLike):
             if len(question_parts) > 1:
                 question_text = question_parts[0].strip() + "?"
                 # Handle potential formatting in answers like "A: ", ": ", etc.
+                # The "A" must be followed by a colon to count as a prefix:
+                # the old character class [A:] matched a bare leading "A", so
+                # any answer that simply started with A lost its first letter
+                # ("Age 47" -> "ge 47", "Atorvastatin" -> "torvastatin") and
+                # the corrupted answer flowed into qa_context and the appeal.
                 answer_text = question_parts[1].strip()
-                answer_text = re.sub(r"^[A:][\s:]*", "", answer_text)
+                answer_text = re.sub(r"^(?:A\s*:|:)[\s:]*", "", answer_text)
                 questions_with_answers.append((question_text, answer_text))
             else:
                 # Ensure line ends with a question mark if it doesn't have one

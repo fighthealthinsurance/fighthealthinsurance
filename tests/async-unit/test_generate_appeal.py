@@ -213,6 +213,30 @@ class TestAppealQuestionsGeneration:
         assert result[1][0] == "Is this treatment FDA approved?"
         assert result[1][1] == "Yes it is"
 
+    @pytest.mark.asyncio
+    async def test_get_appeal_questions_answers_starting_with_a_keep_first_letter(
+        self,
+    ):
+        """The 'A:' prefix stripper must not eat a bare leading 'A': the old
+        [A:] character class turned 'Age 47' into 'ge 47' and 'Atorvastatin'
+        into 'torvastatin', corrupting answers on their way into qa_context
+        and from there into the appeal prompt."""
+        self.model._infer_no_context.return_value = """
+        What is the patient's age? Age 47
+        What medication was prescribed? Atorvastatin 40mg daily
+        """
+
+        result = await RemoteFullOpenLike.get_appeal_questions(
+            self.model,
+            denial_text="Test denial",
+            procedure="Test procedure",
+            diagnosis="Test diagnosis",
+        )
+
+        assert len(result) == 2
+        assert result[0][1] == "Age 47"
+        assert result[1][1] == "Atorvastatin 40mg daily"
+
 
 # --- Shared fixtures for make_appeals tests ----------------------------------
 
