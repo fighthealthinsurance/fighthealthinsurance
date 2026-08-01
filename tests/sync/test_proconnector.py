@@ -298,6 +298,13 @@ class QueueFilteringTest(TestCase):
         # Two distinct emails despite three records.
         self.assertEqual(proconnector.remaining_interested_professionals_count(), 2)
 
+    def test_filters_out_unsubscribed(self):
+        # An opt-out covers the introduction email too, not just the bulk
+        # broadcast that carried the unsubscribe link.
+        _make_pro(email="optout@clinic.org", unsubscribed=True)
+        self.assertIsNone(get_next_interested_professional())
+        self.assertEqual(proconnector.remaining_interested_professionals_count(), 0)
+
     def test_mark_email_sent_resolves_all_duplicates(self):
         a = _make_pro(email="dup@clinic.org")
         b = _make_pro(email="dup@clinic.org")
@@ -354,6 +361,14 @@ class ClaimTest(TestCase):
         _make_pro(email="nope@clinic.org")  # ensure a row exists post-skip
         proconnector.mark_email_skipped("nope@clinic.org", "not a fit")
         self.assertEqual(proconnector.claim_email_for_send("nope@clinic.org"), 0)
+
+    def test_claim_does_not_claim_unsubscribed_record(self):
+        # The unsubscribe can land while the record sits open in a staff tab;
+        # the atomic claim is the safety net that stops the send.
+        pro = _make_pro(email="optout@clinic.org", unsubscribed=True)
+        self.assertEqual(proconnector.claim_email_for_send("optout@clinic.org"), 0)
+        pro.refresh_from_db()
+        self.assertFalse(pro.proconnector_attempted)
 
     def test_release_restores_unsent_claim_to_queue(self):
         pro = _make_pro(email="retry@clinic.org")
@@ -611,12 +626,27 @@ class ProcessPageCCDisplayTest(_ProcessViewTestCase):
         "fighthealthinsurance.staff_views.generate_intro_email",
         return_value="A draft body with compensation disclosure.",
     )
-    def test_cc_field_shows_professional_and_cofactor(self, _mock_gen):
+    def test_cc_field_shows_only_professional_by_default(self, _mock_gen):
+        # The Cofactor CC is off by default; the page shows the professional
+        # contact on the CC line and the reach-out call to action instead.
         _make_pro(email="jane@janeclinic.com")
         response = self.client.get(self.url)
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, get_professional_cc_email())
-        self.assertContains(response, get_cofactor_cc_email())
+        self.assertNotContains(response, "cofactorai.com")
+        self.assertContains(response, "schedule a demo")
+
+    @patch(
+        "fighthealthinsurance.staff_views.generate_intro_email",
+        return_value="A draft body with compensation disclosure.",
+    )
+    @override_settings(COFACTOR_CC_EMAIL="rmorales@cofactorai.com")
+    def test_cc_field_shows_cofactor_when_enabled(self, _mock_gen):
+        _make_pro(email="jane@janeclinic.com")
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, get_professional_cc_email())
+        self.assertContains(response, "rmorales@cofactorai.com")
 
     @patch(
         "fighthealthinsurance.staff_views.generate_intro_email",
@@ -656,14 +686,14 @@ class ProcessPageCCDisplayTest(_ProcessViewTestCase):
         return_value="A draft body with compensation disclosure.",
     )
     @override_settings(COFACTOR_CC_EMAIL="none")
-    def test_disabled_cofactor_cc_warns_instead_of_promising_a_cc(self, _mock_gen):
-        # With the CC off the page must not claim Cofactor AI is CC'd; it warns
-        # staff to edit the "cc'd here" wording out of the draft instead.
+    def test_sentinel_disabled_cofactor_cc_matches_the_default(self, _mock_gen):
+        # The explicit "none" sentinel behaves like the (unset) default: no
+        # Cofactor address anywhere and the reach-out call to action shown.
         _make_pro(email="jane@janeclinic.com")
         response = self.client.get(self.url)
         self.assertEqual(response.status_code, 200)
         self.assertNotContains(response, "cofactorai.com")
-        self.assertContains(response, "Cofactor AI CC is turned off")
+        self.assertContains(response, "schedule a demo")
 
 
 # ---------------------------------------------------------------------------
@@ -695,6 +725,21 @@ class SendFlowTest(_ProcessViewTestCase):
         self.assertIsNotNone(pro.proconnector_sent_at)
         self.assertEqual(pro.proconnector_email_body, body)
         self.assertFalse(pro.proconnector_skipped)
+
+    @patch("fighthealthinsurance.staff_views.send_proconnector_intro_email")
+    def test_send_to_unsubscribed_record_advances_without_sending(self, mock_send):
+        # The professional unsubscribed while the record sat open in a tab:
+        # the POST must advance without emailing or marking the record.
+        pro = _make_pro(email="jane@janeclinic.com", unsubscribed=True)
+        response = self._post(
+            "send",
+            interested_professional_id=pro.id,
+            email_body="Body with compensation disclosure.",
+        )
+        self.assertEqual(response.status_code, 302)
+        mock_send.assert_not_called()
+        pro.refresh_from_db()
+        self.assertFalse(pro.proconnector_attempted)
 
     @patch("fighthealthinsurance.staff_views.send_proconnector_intro_email")
     def test_send_empty_body_rejected(self, mock_send):
@@ -1053,10 +1098,10 @@ class SkipFlowTest(_ProcessViewTestCase):
 
 
 # ---------------------------------------------------------------------------
-# Email send helper (CC professional@ + Cofactor AI)
+# Email send helper (CC professional@; Cofactor AI only when enabled)
 # ---------------------------------------------------------------------------
 class SendHelperTest(TestCase):
-    def test_send_proconnector_intro_email_ccs_professional_and_cofactor(self):
+    def test_send_proconnector_intro_email_ccs_professional_only_by_default(self):
         pro = _make_pro(email="jane@janeclinic.com")
         proconnector.send_proconnector_intro_email(
             pro,
@@ -1066,16 +1111,29 @@ class SendHelperTest(TestCase):
         self.assertGreaterEqual(len(mail.outbox), 1)
         msg = mail.outbox[0]
         self.assertIn("jane@janeclinic.com", msg.to)
-        self.assertEqual(msg.cc, [get_professional_cc_email(), get_cofactor_cc_email()])
+        self.assertEqual(msg.cc, [get_professional_cc_email()])
         self.assertEqual(msg.subject, "Intro to Cofactor AI")
         self.assertIn("compensation disclosure", msg.body)
 
-    def test_cofactor_contact_is_cced_so_the_email_matches_the_copy(self):
-        # The base email tells the recipient Cofactor AI is "cc'd here", so their
-        # contact has to actually be on the CC line by default.
-        self.assertIn("cc'd here", BASE_INTRO_EMAIL)
-        self.assertEqual(get_cofactor_cc_email(), "rmorales@cofactorai.com")
-        self.assertIn("rmorales@cofactorai.com", default_intro_cc_recipients())
+    @override_settings(COFACTOR_CC_EMAIL="rmorales@cofactorai.com")
+    def test_send_ccs_cofactor_when_enabled(self):
+        pro = _make_pro(email="jane@janeclinic.com")
+        proconnector.send_proconnector_intro_email(
+            pro,
+            subject="Intro",
+            body="Body with compensation disclosure.",
+        )
+        msg = mail.outbox[0]
+        self.assertEqual(
+            msg.cc, [get_professional_cc_email(), "rmorales@cofactorai.com"]
+        )
+
+    def test_base_email_does_not_claim_a_cofactor_cc(self):
+        # The copy asks the recipient to reach out to the professional contact
+        # address, so it must not promise a CC the default config doesn't send.
+        self.assertNotIn("cc'd here", BASE_INTRO_EMAIL)
+        self.assertIsNone(get_cofactor_cc_email())
+        self.assertEqual(default_intro_cc_recipients(), [get_professional_cc_email()])
 
     @override_settings(PROFESSIONAL_CC_EMAIL="custom-pro@example-host.com")
     def test_cc_uses_configured_setting(self):
@@ -1118,17 +1176,16 @@ class SendHelperTest(TestCase):
         self.assertNotIn("cofactorai.com", " ".join(msg.cc))
 
     @override_settings(COFACTOR_CC_EMAIL="")
-    def test_empty_cofactor_setting_falls_back_to_default(self):
-        # Only the explicit sentinel disables the CC; an unset / empty env var
-        # means "not configured" and keeps the known contact.
-        self.assertEqual(get_cofactor_cc_email(), "rmorales@cofactorai.com")
+    def test_empty_cofactor_setting_means_no_cc(self):
+        # Off is the default: an unset / empty setting sends no Cofactor CC.
+        self.assertIsNone(get_cofactor_cc_email())
 
 
 # ---------------------------------------------------------------------------
 # Misconfigured COFACTOR_CC_EMAIL (send_fallback_email would silently drop it)
 # ---------------------------------------------------------------------------
 class CofactorCCMisconfigurationTest(TestCase):
-    def test_no_problem_for_the_default_contact(self):
+    def test_no_problem_when_cc_is_off_by_default(self):
         self.assertIsNone(cofactor_cc_problem())
 
     @override_settings(COFACTOR_CC_EMAIL="none")
@@ -1151,8 +1208,9 @@ class CofactorCCMisconfigurationTest(TestCase):
 
     @override_settings(COFACTOR_CC_EMAIL="rmorales-at-cofactorai.com")
     def test_send_raises_rather_than_silently_dropping_the_cc(self):
-        # Without this the email goes out claiming Cofactor AI is "cc'd here"
-        # while send_fallback_email quietly filters the malformed CC address.
+        # A deployment that explicitly enabled the Cofactor CC would otherwise
+        # record a send while send_fallback_email quietly filters the malformed
+        # CC address, so Cofactor never receives the intro it expects.
         pro = _make_pro(email="jane@janeclinic.com")
         with self.assertRaises(ValueError):
             proconnector.send_proconnector_intro_email(
@@ -1322,8 +1380,7 @@ class QueueHelperTest(TestCase):
         self.assertEqual(se.send_timezone, "America/New_York")
         self.assertTrue(se.timezone_is_specific)
         # Queued sends carry the same default CC list as immediate sends.
-        self.assertIn(get_professional_cc_email(), se.cc)
-        self.assertIn(get_cofactor_cc_email(), se.cc)
+        self.assertEqual(se.cc, [get_professional_cc_email()])
         self.assertEqual(se.context["body"], "Body with compensation disclosure.")
         self.assertFalse(se.sent)
 
@@ -1450,6 +1507,15 @@ class BaseEmailWordingTest(TestCase):
         # Uses the agreed framing and includes the compensation disclosure.
         self.assertIn("sourcing agreement", BASE_INTRO_EMAIL)
         self.assertIn("compensation", BASE_INTRO_EMAIL)
+
+    def test_base_email_directs_recipient_to_professional_email(self):
+        # The call to action points at the professional contact address (no CC
+        # claims -- see SendHelperTest.test_base_email_does_not_claim_a_cofactor_cc).
+        self.assertIn("To schedule a demo or learn more", BASE_INTRO_EMAIL)
+        pro = _make_pro(name="Dr. Jane")
+        self.assertIn(
+            "professional@fighthealthinsurance.com", build_base_intro_email(pro)
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -164,6 +164,17 @@ class TestSendMailingListMailView(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "2")  # subscriber count
 
+    def test_subscriber_count_dedupes_by_email(self):
+        """Duplicate signups count once, matching what the actor sends."""
+        MailingListSubscriber.objects.create(email="dupe@example.com")
+        MailingListSubscriber.objects.create(email="DUPE@example.com")
+        MailingListSubscriber.objects.create(email="other@example.com")
+
+        self.client.login(username="staffuser", password="testpass123")
+        response = self.client.get("/timbit/help/send_mailing_list_mail")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["recipient_count"], 2)
+
     # ray_cluster_available is forced True to model production. Without a
     # cluster the view returns 503 rather than auto-initing a local Ray cluster
     # in the web process just to send staff mail.
@@ -240,6 +251,7 @@ class TestStaffDashboardView(TestCase):
         # Check for key sections and links
         self.assertContains(response, "Staff Dashboard")
         self.assertContains(response, "Send Mailing List Email")
+        self.assertContains(response, "Send Interested Professional Email")
         self.assertContains(response, "Activate Pro User")
         self.assertContains(response, "Enable Beta Features")
         self.assertContains(response, "Charts")

@@ -1,7 +1,9 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: temporal-worker
+  # Named fhi-fax-worker because the Temporal Helm chart already owns a
+  # Deployment called "temporal-worker" (the server's internal worker service).
+  name: fhi-fax-worker
   namespace: totallylegitco
   labels:
     app: fight-health-insurance-prod
@@ -24,6 +26,14 @@ spec:
           name: totallylegitco
           # start-server.sh runs `manage.py run_temporal_worker` when this is set.
           env:
+            # SSH to FaxyMcFaxFace must go as user "ray" (the account the fax
+            # host trusts). asyncssh/paramiko take the default username from
+            # getpass.getuser(), which reads USER/LOGNAME before /etc/passwd,
+            # so these override the root process identity for SSH only.
+            - name: USER
+              value: "ray"
+            - name: LOGNAME
+              value: "ray"
             - name: TEMPORAL_WORKER
               value: "1"
             - name: TEMPORAL_ENABLED
@@ -35,6 +45,17 @@ spec:
               value: "default"
             - name: TEMPORAL_TASK_QUEUE
               value: "fhi-fax"
+            # DB host from the fhi-db-config ConfigMap (see k8s/db-config.yaml),
+            # same as k8s/deploy.yaml: an explicit env entry overrides the STALE
+            # PDBHOST still carried by the envFrom Secrets. Without this the
+            # worker's activities dial the retired pg8 service and every
+            # DB-touching activity fails (found 2026-07-31 during the first
+            # end-to-end test).
+            - name: PDBHOST
+              valueFrom:
+                configMapKeyRef:
+                  name: fhi-db-config
+                  key: PDBHOST
           envFrom:
             # Same DB / app secrets the web + Ray pods use, so activities can
             # reach the database and regenerate fax documents.
@@ -59,29 +80,30 @@ spec:
               cpu: "1"
               memory: 1Gi
           volumeMounts:
-            # Fax documents live on COMBINED_STORAGE -> /external_data. Mount
-            # the shared uploads PVC (k8s/uploads-pvc.yaml) so activities can
-            # read the stored PDF instead of falling back to regeneration.
-            # NOTE: the live web Deployment (k8s/deploy.yaml) does not mount
-            # this claim, and the Ray back cluster mounts a *different* claim
-            # (backup3) at this path -- see the pre-flight checklist in
-            # README.md.
-            - name: new-uploads-longhorn-backup4
-              mountPath: /external_data
-            # SSH key for the FaxyMcFaxFace backend. The worker runs as root
-            # (start-server.sh execs manage.py directly), so ~/.ssh is /root/.ssh.
-            # Pre-flight: confirm the fax host trusts this key for the *root*
-            # user, and whether the live secret is faxymcfaxface-ssh or
-            # ssh-privatekey (README checklist).
+            # No documents PVC on the rebuilt cluster (2026-07-30): the live
+            # web Deployment mounts no uploads claim and
+            # new-uploads-longhorn-backup4 does not exist here. Fax activities
+            # read documents via the external COMBINED_STORAGE layers or
+            # regenerate them.
+            # SSH key for the FaxyMcFaxFace backend. The worker process runs
+            # locally as root (start-server.sh execs manage.py directly), so
+            # ~/.ssh is /root/.ssh -- but it connects to the fax host as REMOTE
+            # user "ray" (USER/LOGNAME above), the account setup_faxy_ssh.sh
+            # installs the key for. Pre-flight: the fax host must trust the
+            # faxymcfaxface-ssh secret's ssh-privatekey for user ray (README
+            # checklist).
             - name: faxymcfaxface-ssh
               readOnly: true
               mountPath: "/root/.ssh"
       volumes:
-        - name: new-uploads-longhorn-backup4
-          persistentVolumeClaim:
-            claimName: new-uploads-longhorn-backup4
         - name: faxymcfaxface-ssh
           secret:
             secretName: faxymcfaxface-ssh
-            # Private key: readable by the root worker process only.
+            # Private key: readable by the root worker process only. Renamed to
+            # id_ed25519 because asyncssh/paramiko only auto-offer keys with
+            # standard filenames; the secret's own key name (ssh-privatekey)
+            # is never searched.
+            items:
+              - key: ssh-privatekey
+                path: id_ed25519
             defaultMode: 0400

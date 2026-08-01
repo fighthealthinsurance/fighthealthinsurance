@@ -1,7 +1,10 @@
 <!DOCTYPE html>
+{# Shared compose page for the staff broadcast-email views (mailing list #}
+{# subscribers and interested professionals). The audience is supplied by the #}
+{# view via title / audience_label / recipient_count. #}
 <html>
 <head>
-  <title>Send Mailing List Email</title>
+  <title>{{ title }}</title>
   <style>
     body {
       font-family: Arial, sans-serif;
@@ -63,20 +66,22 @@
   </style>
 </head>
 <body>
-  <h1>Send Mailing List Email</h1>
-  
+  <h1>{{ title }}</h1>
+
   <div class="subscriber-count">
-    <strong>Total Subscribers:</strong> {{ subscriber_count }}
+    <strong>Total Recipients ({{ audience_label }}):</strong> {{ recipient_count }}
   </div>
-  
+
   <div class="warning">
-    <strong>Warning:</strong> This will send an email to all mailing list subscribers. 
-    Use the test email field to send a preview to yourself first.
+    <strong>Warning:</strong> This will send an email to all {{ recipient_count }}
+    recipients. Use the test email field to send a preview to yourself first.
+    Recipients who have unsubscribed are excluded automatically, and an
+    unsubscribe link is appended to every real send.
   </div>
-  
+
   <form method="post">
     {% csrf_token %}
-    
+
     <div class="form-group">
       <label for="id_subject">Subject:</label>
       {{ form.subject }}
@@ -84,7 +89,7 @@
         <div class="error">{{ form.subject.errors }}</div>
       {% endif %}
     </div>
-    
+
     <div class="form-group">
       <label for="id_test_email">Test Email (optional):</label>
       {{ form.test_email }}
@@ -93,7 +98,7 @@
         <div class="error">{{ form.test_email.errors }}</div>
       {% endif %}
     </div>
-    
+
     <div class="form-group">
       <label for="id_html_content">HTML Content:</label>
       {{ form.html_content }}
@@ -101,7 +106,7 @@
         <div class="error">{{ form.html_content.errors }}</div>
       {% endif %}
     </div>
-    
+
     <div class="form-group">
       <label for="id_text_content">Text Content:</label>
       {{ form.text_content }}
@@ -109,7 +114,7 @@
         <div class="error">{{ form.text_content.errors }}</div>
       {% endif %}
     </div>
-    
+
     <button type="submit">Send Email</button>
   </form>
 </body>

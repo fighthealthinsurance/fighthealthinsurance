@@ -20,51 +20,42 @@ server:
       datastores:
         default:
           sql:
-            driver: "postgres12"
-            host: "${TEMPORAL_PG_HOST}"      # e.g. your existing Postgres service
-            port: 5432
-            database: "temporal"
+            pluginName: "postgres12"
+            createDatabase: false   # databases pre-created with owner=temporal
+            connectAddr: "${TEMPORAL_PG_HOST}:5432"  # e.g. your existing Postgres service
+            connectProtocol: "tcp"
+            databaseName: "temporal"
             user: "${TEMPORAL_PG_USER}"
             existingSecret: "temporal-postgres"  # key: password
             maxConns: 20
             maxIdleConns: 20
             maxConnLifetime: "1h"
+            manageSchema: true
         visibility:
           sql:
-            driver: "postgres12"
-            host: "${TEMPORAL_PG_HOST}"
-            port: 5432
-            database: "temporal_visibility"
+            pluginName: "postgres12"
+            createDatabase: false   # databases pre-created with owner=temporal
+            connectAddr: "${TEMPORAL_PG_HOST}:5432"
+            connectProtocol: "tcp"
+            databaseName: "temporal_visibility"
             user: "${TEMPORAL_PG_USER}"
             existingSecret: "temporal-postgres"
             maxConns: 10
             maxIdleConns: 10
             maxConnLifetime: "1h"
+            manageSchema: true
 
-# We bring our own Postgres -- disable the bundled datastores and ES.
-cassandra:
-  enabled: false
-elasticsearch:
-  enabled: false
-mysql:
-  enabled: false
-postgresql:
-  enabled: false
+# We bring our own Postgres. Chart >= 1.0 no longer bundles Cassandra/ES/
+# MySQL/PostgreSQL subcharts, so there is nothing to disable -- external
+# datastores are configured entirely via the datastores block above.
 
-# Schema setup job runs the DDL against the external Postgres on install/upgrade.
-schema:
-  setup:
-    enabled: true
-  update:
-    enabled: true
+# Schema DDL runs against the external Postgres on install/upgrade via
+# manageSchema: true on each datastore above (chart >= 1.x replacement for
+# the old schema.setup/update toggles).
 
 # Temporal Web UI (browse/inspect workflows). Expose via the existing ingress.
 web:
   enabled: true
 
-# Keep the footprint small on a couple-server cluster: skip the bundled
-# monitoring stack (wire Temporal's metrics into existing Prometheus instead).
-prometheus:
-  enabled: false
-grafana:
-  enabled: false
+# Monitoring: chart >= 1.0 no longer bundles Prometheus/Grafana; wire
+# Temporal's metrics into the existing Prometheus later if wanted.

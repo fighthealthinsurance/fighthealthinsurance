@@ -114,6 +114,11 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         name="send_mailing_list_mail",
     ),
     path(
+        "timbit/help/send_interested_professional_mail",
+        staff_member_required(staff_views.SendInterestedProfessionalMailView.as_view()),
+        name="send_interested_professional_mail",
+    ),
+    path(
         "timbit/help/delete_user_data",
         staff_member_required(staff_views.AdminDeleteDataView.as_view()),
         name="admin_delete_user_data",
