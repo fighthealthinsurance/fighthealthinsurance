@@ -68,6 +68,40 @@ def _env_flag(name: str, default: str = "0") -> bool:
     return (os.getenv(name) or default).strip().lower() in ("1", "true", "yes", "on")
 
 
+def _sqlite_shared_file_options(timeout_seconds: int) -> dict:
+    """sqlite OPTIONS for a database FILE shared by several processes at once.
+
+    Dev and the sync-actor suite both run the web/test process plus Ray actor
+    workers (each booting its own Django) against one sqlite file. Stock
+    sqlite makes that combination flake with "database is locked":
+
+    * ``transaction_mode: IMMEDIATE`` -- Django's default DEFERRED begins a
+      write transaction as a reader and upgrades to writer at the first
+      write; if another writer committed in between, sqlite must fail the
+      upgrade *immediately* (the read snapshot is stale, so the busy handler
+      never runs). IMMEDIATE takes the write lock at BEGIN, turning that
+      hard failure into a plain wait.
+    * ``timeout`` -- passed to ``sqlite3.connect``; sets the busy handler so
+      lock waits block up to this long instead of raising at once.
+    * ``journal_mode=WAL`` -- readers stop blocking the writer (and vice
+      versa), which is the steady state of a dev server: actors write in the
+      background while requests read. Sticky per database file; harmless to
+      re-run per connection. (Would misbehave on a network mount, but dev
+      DB files live in the repo checkout.)
+    * ``synchronous=NORMAL`` -- the standard WAL pairing; loses at most the
+      final transactions on power loss, never consistency. Fine for dev and
+      throwaway test databases.
+
+    Returns a fresh dict per call: Django mutates settings_dict in place, so
+    sharing one literal between configuration classes would couple them.
+    """
+    return {
+        "transaction_mode": "IMMEDIATE",
+        "timeout": timeout_seconds,
+        "init_command": "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;",
+    }
+
+
 class Base(Configuration):
     SENTRY_ENDPOINT = os.getenv("SENTRY_ENDPOINT")
     COOKIE_CONSENT_ENABLED = False
@@ -690,6 +724,11 @@ class Dev(Base):
         "default": {
             "ENGINE": "django.db.backends.sqlite3",
             "NAME": os.getenv("DEV_DB_LOC", BASE_DIR / "db.sqlite3"),
+            # The dev server shares this file with the in-process Ray
+            # cluster's actor workers (see local_ray), so it needs the
+            # multi-process options or concurrent actor writes surface as
+            # "database is locked" errors in the web process.
+            "OPTIONS": _sqlite_shared_file_options(timeout_seconds=20),
             "TEST": {
                 "NAME": BASE_DIR / "test.db.sqlite3",
             },
@@ -842,7 +881,12 @@ class TestActor(Dev):
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.sqlite3",
-            "TIMEOUT": 10,
+            # Same shared-file shape as Dev: the test process and Ray actor
+            # workers hit this one file concurrently. (This replaces a
+            # top-level "TIMEOUT" key, which is not a Django database
+            # setting -- it was silently ignored, leaving the stock 5s
+            # busy handler.)
+            "OPTIONS": _sqlite_shared_file_options(timeout_seconds=10),
             "NAME": dbname,
             "TEST": {
                 "NAME": dbname,
