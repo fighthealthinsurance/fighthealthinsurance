@@ -1521,7 +1521,13 @@ class GenerateAppeal(View):
                 # discarded the entire questionnaire on the first bad key.
                 if "appeal_generated_" in k:
                     try:
-                        key = generated_questions[int(k.split("_")[-1]) - 1][0]
+                        question_index = int(k.rsplit("_", 1)[-1])
+                        # 1-based; reject 0/negative so a malformed key can't
+                        # silently alias Python's negative indexing onto the
+                        # wrong question.
+                        if not 1 <= question_index <= len(generated_questions):
+                            raise ValueError("question index out of range")
+                        key = generated_questions[question_index - 1][0]
                     except Exception as e:
                         logger.warning(
                             f"Could not map answer key {k!r} for denial "

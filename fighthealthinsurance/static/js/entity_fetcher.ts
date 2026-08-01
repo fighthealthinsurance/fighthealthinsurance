@@ -88,7 +88,7 @@ function processResponseChunk(chunk: string): void {
     try {
       const parsed = JSON.parse(trimmed);
       if (parsed && (parsed.type === "error" || parsed.error)) {
-        const statusList = document.getElementById("status-list");
+        const statusList = document.getElementById("entity-status-list");
         if (statusList) {
           const item = document.createElement("div");
           item.style.cssText = "color: #dc3545; margin: 4px 0;";
@@ -148,6 +148,10 @@ function connectWebSocket(
   maxRetries = 5,
 ) {
   const ws = new WebSocket(websocketUrl);
+  // Set when onerror has scheduled a replacement socket: the failed socket's
+  // onclose still fires, and calling done() there would complete the workflow
+  // (auto-advancing the user) before the retry even starts.
+  let retryScheduled = false;
 
   // Open the connection and send data
   ws.onopen = () => {
@@ -164,7 +168,9 @@ function connectWebSocket(
   // Handle connection closure
   ws.onclose = (event) => {
     console.log("WebSocket connection closed:", event.reason);
-    done();
+    if (!retryScheduled) {
+      done();
+    }
   };
 
   // Handle errors
@@ -174,6 +180,7 @@ function connectWebSocket(
       console.log(
         `Retrying WebSocket connection (${retries + 1}/${maxRetries})...`,
       );
+      retryScheduled = true;
       setTimeout(
         () =>
           connectWebSocket(
@@ -188,7 +195,7 @@ function connectWebSocket(
       );
     } else {
       console.error("Max retries reached. Closing connection.");
-      done();
+      // done() runs from onclose (retryScheduled stays false here).
     }
   };
 }

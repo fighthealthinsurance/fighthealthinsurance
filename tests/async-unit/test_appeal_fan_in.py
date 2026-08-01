@@ -19,7 +19,7 @@ from fighthealthinsurance.utils import UnwrapIterator
 
 def _mapper(name, future):
     """Minimal stand-in for _generated_to_appeals_text: wait, then map."""
-    for kind, text in future.result():
+    for _kind, text in future.result():
         yield GeneratedAppeal(text=text, model_name=name, context_level="full")
 
 

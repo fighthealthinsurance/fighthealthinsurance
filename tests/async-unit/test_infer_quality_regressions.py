@@ -79,6 +79,31 @@ class TestCheckedInferProtectsContextUrls:
         assert result, "expected a (kind, text) result"
         assert url in result[0][1]
 
+    @pytest.mark.asyncio
+    async def test_pubmed_context_urls_survive_without_patient_context(self):
+        """Same guarantee for the independent pubmed_context guard: its URLs
+        must be registered as input URLs even when patient_context is None."""
+        m = _model()
+        url = "https://pubmed.ncbi.nlm.nih.gov/33500244/"
+        m._infer_no_context = AsyncMock(  # type: ignore[method-assign]
+            return_value=f"Supported by the CGM outcomes study at {url} as cited."
+        )
+        with patch(
+            "llm_result_utils.cleaner_utils.CleanerUtils.is_valid_url",
+            new=lambda *a, **k: False,
+        ):
+            result = await m._checked_infer(
+                prompt="denial text",
+                patient_context=None,
+                plan_context=None,
+                infer_type="medically_necessary",
+                pubmed_context=f"PubMed: relevant study {url} on CGM outcomes.",
+                system_prompt="sys",
+                temperature=0.5,
+            )
+        assert result, "expected a (kind, text) result"
+        assert url in result[0][1]
+
 
 class TestProfPovPromptSelection:
     def test_medically_necessary_keeps_its_own_prompt_under_prof_pov(self):
