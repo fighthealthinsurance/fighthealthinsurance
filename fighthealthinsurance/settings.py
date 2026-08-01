@@ -485,6 +485,14 @@ class Base(Configuration):
     # transaction.
     WS_PER_CONNECTION_THREAD_SENSITIVE = True
 
+    # Deliberately boot an in-process local Ray cluster at server startup so
+    # the per-task dispatch sites take the same actor paths as production
+    # (see local_ray.maybe_init_local_ray). Off in Base/Prod -- production
+    # attaches to the real cluster via RAY_ADDRESS -- and on in Dev.
+    # Test* configs (which subclass Dev) must override this back off:
+    # background actor DB writes race TestCase transaction teardown.
+    RAY_LOCAL_DEV_CLUSTER = False
+
     # Static files (CSS, JavaScript, Images)
     # https://docs.djangoproject.com/en/4.0/howto/static-files/
 
@@ -618,6 +626,10 @@ class Dev(Base):
     # Keep the (production-closed) professional signup flow testable locally
     # and in the Test* configurations that subclass Dev.
     NEW_PROFESSIONAL_SIGNUP_ENABLED = True
+    # Dev servers boot an in-process Ray cluster at startup so local runs
+    # exercise the production actor-dispatch paths (see local_ray). The Test*
+    # subclasses turn this back off; FHI_LOCAL_RAY=false is the kill switch.
+    RAY_LOCAL_DEV_CLUSTER = True
     CSRF_TRUSTED_ORIGINS = [
         "https://fightpaperwork.com",
         "https://localhost:3000",
@@ -778,6 +790,8 @@ class Test(Dev):
     SPECULATIVE_APPEALS_PRECOMPUTE = False
     # Keep thread-sensitive bridge routing on the test thread (see Base).
     WS_PER_CONNECTION_THREAD_SENSITIVE = False
+    # No startup Ray boot in tests (see Base).
+    RAY_LOCAL_DEV_CLUSTER = False
 
 
 class TestSync(Dev):
@@ -808,6 +822,8 @@ class TestSync(Dev):
     SPECULATIVE_APPEALS_PRECOMPUTE = False
     # Keep thread-sensitive bridge routing on the test thread (see Base).
     WS_PER_CONNECTION_THREAD_SENSITIVE = False
+    # No startup Ray boot in tests (see Base).
+    RAY_LOCAL_DEV_CLUSTER = False
 
 
 class TestActor(Dev):
@@ -845,6 +861,9 @@ class TestActor(Dev):
     SPECULATIVE_APPEALS_PRECOMPUTE = False
     # Keep thread-sensitive bridge routing on the test thread (see Base).
     WS_PER_CONNECTION_THREAD_SENSITIVE = False
+    # No startup Ray boot in tests (see Base). The sync-actor suite manages
+    # ray.init/shutdown itself in each test's setUp/tearDown.
+    RAY_LOCAL_DEV_CLUSTER = False
 
 
 class Prod(Base):
