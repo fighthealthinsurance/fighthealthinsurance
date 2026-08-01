@@ -959,10 +959,16 @@ class Prod(Base):
             # Peak legitimate concurrent ORM users in one web worker: the
             # single thread_sensitive sync lane (1) + exec.executor (24
             # interactive) + background_executor (8) + pubmed_executor (4)
-            # = 37; the default of 40 keeps busy executors from starving the
-            # pool by themselves. (Keep in sync with exec.py's pool sizes /
-            # their FHI_*_EXECUTOR_WORKERS overrides, and remember
-            # cluster-wide max_connections must cover pods * max_size.)
+            # + bridge_executor (32, runs ORM-touching generation bridges)
+            # = 69, PLUS one thread-sensitive lane per live WebSocket
+            # (websockets.PerConnectionThreadSensitiveMixin). The historical
+            # default of 40 therefore NO LONGER covers a fully busy worker:
+            # before re-enabling pooling, set PG_POOL_MAX_SIZE with the
+            # bridge pool and expected concurrent sockets in the budget, or
+            # accept pool-wait throttling under peak. (Keep in sync with
+            # exec.py's pool sizes / their FHI_*_EXECUTOR_WORKERS overrides,
+            # and remember cluster-wide max_connections must cover
+            # pods * max_size.)
             # Non-web processes
             # want other sizes via env: Ray actors / one-shot jobs small
             # (2-4), the Temporal worker at least

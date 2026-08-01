@@ -406,29 +406,39 @@ def remove_repeated_sentences(
     if text is None:
         return None
 
-    sentences = _sentence_split_re.split(text.strip())
+    stripped_text = text.strip()
+    sentences = _sentence_split_re.split(stripped_text)
 
     # Short texts can have legitimate repetition — skip filtering.
     if len(sentences) < 6:
         return text
 
     seen_counts: dict[str, int] = {}
-    final_sentences: list[str] = []
-    for sent in sentences:
-        key = sent.strip().lower()
-        count = seen_counts.get(key, 0) + 1
-        seen_counts[key] = count
-        if count <= max_repeats:
-            final_sentences.append(sent)
+    removed = 0
+    # Filter PER PARAGRAPH (repeat counts still global) and rejoin with the
+    # original paragraph breaks: a flat " ".join collapsed every paragraph
+    # break, so any appeal that tripped the cap came back with letterhead,
+    # body, and sign-off welded into one wall of text.
+    final_paragraphs: list[str] = []
+    for paragraph in re.split(r"\n\s*\n", stripped_text):
+        kept: list[str] = []
+        for sent in _sentence_split_re.split(paragraph):
+            key = sent.strip().lower()
+            count = seen_counts.get(key, 0) + 1
+            seen_counts[key] = count
+            if count <= max_repeats:
+                kept.append(sent)
+            else:
+                removed += 1
+        if kept:
+            final_paragraphs.append(" ".join(kept))
 
-    # Nothing removed: return the ORIGINAL text. Rejoining with spaces
-    # collapses every paragraph break, so without this short-circuit every
-    # clean appeal >= 6 sentences (i.e. all of them) had its letterhead,
-    # body paragraphs, and sign-off welded into a single wall of text.
-    if len(final_sentences) == len(sentences):
+    # Nothing removed: return the ORIGINAL text (single-newline breaks
+    # inside paragraphs survive too).
+    if removed == 0:
         return text
 
-    result = " ".join(final_sentences)
+    result = "\n\n".join(final_paragraphs)
 
     # If we stripped away too much, the original was unsalvageable
     if len(result) < 0.3 * len(text):
@@ -1683,6 +1693,11 @@ class RemoteOpenLike(RemoteModel):
         # _note_transport_failure.
         self._transport_strikes: dict[tuple[str, str], list[float]] = {}
         self._transport_cooldowns: dict[tuple[str, str], float] = {}
+        # Last generous-window TIMEOUT strike per (api_base, model): budget
+        # timeouts are deduped to one strike per window so parallel legs of
+        # one slow inference can't trip the cooldown together (see
+        # __timeout_infer).
+        self._timeout_strike_last: dict[tuple[str, str], float] = {}
 
     def model_is_ok(self):
         """Check that the backend supports this model, returns true if found in list.
@@ -2147,9 +2162,13 @@ class RemoteOpenLike(RemoteModel):
         # inside a worker thread, but the escalation/prior-auth paths await it
         # directly on the ASGI loop, where these synchronous probes would
         # stall every other request on the pod. No ORM access, so the plain
-        # executor hop (not database_sync_to_async) is correct.
+        # executor hop (not database_sync_to_async) is correct. The DEDICATED
+        # cleaner pool, never bridge_executor: bridge workers block waiting
+        # on model futures, and every model future depends on this hop --
+        # sharing the pool would deadlock generation under saturation (see
+        # exec.py).
         after_cleaners = await asyncio.get_running_loop().run_in_executor(
-            bridge_executor,
+            cleaner_executor,
             lambda: CleanerUtils.note_remover(
                 CleanerUtils.url_fixer(
                     CleanerUtils.tla_fixer(result), input_urls=input_urls
@@ -2718,16 +2737,34 @@ class RemoteOpenLike(RemoteModel):
                     f"Timed out querying {self} after {effective_timeout:.0f}s"
                 )
                 record_ml_call(call_model, "timeout", time.monotonic() - started)
-                # Deliberately NO transport strike on a budget timeout. A
-                # backend that answers the TCP handshake but is slow is
-                # overloaded, not unreachable -- and the appeal path fires 4
-                # near-simultaneous legs (2 temperatures x dual-mode), so one
-                # slow long-prompt inference used to land 4 strikes inside
-                # the 60s window at once, tripping the 120s cooldown and
-                # ZEROING generation on that backend right when it was merely
-                # busy (a self-amplifying brownout). Genuinely-unreachable
-                # hosts still strike within seconds via the connect-phase
-                # failure handler (sock_connect bounds the handshake).
+                # Budget timeouts strike ONLY when (a) the backend had a
+                # GENEROUS window (>=120s of nothing is a wedged backend, not
+                # deadline pressure -- tight windows near a requester
+                # deadline must never strike a healthy-but-busy backend) and
+                # (b) at most once per endpoint per strike-window: the
+                # appeal path fires 4 near-simultaneous legs (2 temperatures
+                # x dual-mode), so per-leg strikes let ONE slow long-prompt
+                # inference trip the whole 120s cooldown at once and zero
+                # generation right when the backend was merely busy (a
+                # self-amplifying brownout). Deduped, one busy episode is one
+                # strike (harmless, decays), while an accept-then-hang
+                # backend keeps striking across requests and cools down
+                # instead of burning every caller's full budget until the
+                # hourly health sweep. Genuinely-unreachable hosts still
+                # strike within seconds via the connect-phase handler.
+                strike_base = kwargs.get("api_base") or self.api_base
+                if effective_timeout >= 120.0 and strike_base:
+                    now = time.monotonic()
+                    pair = (strike_base, call_model)
+                    last = self._timeout_strike_last.get(pair, float("-inf"))
+                    if now - last >= self.TRANSPORT_STRIKE_WINDOW_SECONDS:
+                        self._timeout_strike_last[pair] = now
+                        self._note_transport_failure(
+                            strike_base,
+                            call_model,
+                            f"no answer within a generous "
+                            f"{effective_timeout:.0f}s window",
+                        )
                 return None
         else:
             result = await self.__infer(*args, **kwargs)
@@ -3578,18 +3615,23 @@ class RemoteHealthInsurance(RemoteFullOpenLike):
         )
         backup_model = os.getenv("HEALTH_BACKUP_BACKEND_MODEL") or model
         # With no distinct backup configured the "backup" resolves to the very
-        # same endpoint+model as the primary; racing/failing over to it just
-        # doubles load on one box without adding redundancy.
-        if self.backup_url == self.url and backup_model == model:
-            self.backup_url = None
-        logger.debug(f"Setting backup to {self.backup_url}")
+        # same endpoint+model as the primary. Racing it in dual mode just
+        # doubles every request's load on one box without adding redundancy,
+        # so that is disabled -- but the SEQUENTIAL backup fallback is kept:
+        # a retry against the same endpoint still rescues per-request
+        # transient faults (connection reset, single 502, worker restart).
+        identical_backup = self.backup_url == self.url and backup_model == model
+        logger.debug(
+            f"Setting backup to {self.backup_url} "
+            f"(identical_backup={identical_backup})"
+        )
         super().__init__(
             self.url,
             token="",
             backup_api_base=self.backup_url,
             model=model,
             backup_model=backup_model,
-            dual_mode=dual_mode and self.backup_url is not None,
+            dual_mode=dual_mode and not identical_backup,
         )
 
     @property

@@ -37,12 +37,18 @@ def _clear_env(monkeypatch):
 
 
 class TestIdenticalBackupDisabled:
-    def test_no_distinct_backup_disables_backup_and_dual_mode(self, monkeypatch):
+    def test_no_distinct_backup_disables_racing_keeps_sequential_retry(
+        self, monkeypatch
+    ):
+        """An identical backup must not RACE (doubles load on one box for
+        zero redundancy) but must remain as a sequential fallback: a retry
+        against the same endpoint still rescues transient per-request
+        faults."""
         _clear_env(monkeypatch)
         monkeypatch.setenv("HEALTH_BACKEND_HOST", "primary.internal")
         m = RemoteHealthInsurance("some-model", dual_mode=True)
         assert m.api_base == "http://primary.internal:80/v1"
-        assert m.backup_api_base is None
+        assert m.backup_api_base == "http://primary.internal:80/v1"
         assert m.dual_mode is False
 
     def test_distinct_backup_host_keeps_backup_and_dual_mode(self, monkeypatch):
@@ -65,12 +71,17 @@ class TestIdenticalBackupDisabled:
 
 
 class TestEmptyStringEnvIsUnset:
-    def test_empty_backup_host_means_no_backup(self, monkeypatch):
+    def test_empty_backup_host_falls_back_to_primary_without_racing(
+        self, monkeypatch
+    ):
         _clear_env(monkeypatch)
         monkeypatch.setenv("HEALTH_BACKEND_HOST", "primary.internal")
         monkeypatch.setenv("HEALTH_BACKUP_BACKEND_HOST", "")
         m = RemoteHealthInsurance("some-model", dual_mode=True)
-        assert m.backup_api_base is None
+        # "" means unset -> backup defaults to the primary: kept as a
+        # sequential retry, but never raced.
+        assert m.backup_api_base == "http://primary.internal:80/v1"
+        assert m.dual_mode is False
 
     def test_empty_port_falls_back_to_default(self, monkeypatch):
         _clear_env(monkeypatch)

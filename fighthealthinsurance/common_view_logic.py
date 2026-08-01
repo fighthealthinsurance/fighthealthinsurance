@@ -1149,8 +1149,12 @@ class FindNextStepsHelper:
             denial.single_case = single_case
             changed_fields.add("single_case")
 
-        if changed_fields:
-            denial.save(update_fields=sorted(changed_fields))
+        # Always include last_interaction: with update_fields, Django only
+        # writes auto_now columns that are LISTED, so omitting it would
+        # silently freeze the denial's activity timestamp at creation time.
+        # And save even when nothing else changed -- reaching this step IS an
+        # interaction, and the full-row save this replaced always touched it.
+        denial.save(update_fields=sorted(changed_fields | {"last_interaction"}))
 
         # Round-2 speculative precompute: the user has now CONFIRMED (and
         # possibly corrected) procedure/diagnosis, which the create-time

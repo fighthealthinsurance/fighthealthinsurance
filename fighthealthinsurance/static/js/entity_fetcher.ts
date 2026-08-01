@@ -6,6 +6,9 @@ const nextButton = document.getElementById("next");
 let startTime: number | null = null;
 let timerInterval: ReturnType<typeof setInterval> | null = null;
 let statusMessages: Set<string> = new Set();
+// Set when the server streamed an error frame: done() must not paint
+// "Complete!" and auto-advance past a failed extraction.
+let serverErrorSeen = false;
 
 function createStatusIndicator(): HTMLElement {
   const statusDiv = document.createElement('div');
@@ -88,6 +91,7 @@ function processResponseChunk(chunk: string): void {
     try {
       const parsed = JSON.parse(trimmed);
       if (parsed && (parsed.type === "error" || parsed.error)) {
+        serverErrorSeen = true;
         const statusList = document.getElementById("entity-status-list");
         if (statusList) {
           const item = document.createElement("div");
@@ -110,15 +114,35 @@ function processResponseChunk(chunk: string): void {
 }
 
 function done(): void {
-  console.log("Moving to the next step :)");
-
   // Stop the timer
   if (timerInterval) {
     clearInterval(timerInterval);
   }
 
-  // Update status to complete
   const statusIndicator = document.getElementById('entity-status-indicator');
+
+  // A server error frame arrived: the socket closing cleanly afterwards is
+  // NOT success. Auto-advancing here landed the user on the review form
+  // with nothing extracted, looking exactly like a successful run -- the
+  // drop-off the server-side error frame exists to prevent. Leave the page
+  // up with a clear failure state; the Next button still works for a
+  // deliberate manual continue.
+  if (serverErrorSeen) {
+    console.warn("Extraction reported a server error; not auto-advancing.");
+    if (statusIndicator) {
+      statusIndicator.style.borderColor = '#dc3545';
+      const titleEl = statusIndicator.querySelector('div');
+      if (titleEl) {
+        titleEl.innerHTML =
+          '⚠️ Extraction failed — you can continue and enter the details manually.';
+      }
+    }
+    return;
+  }
+
+  console.log("Moving to the next step :)");
+
+  // Update status to complete
   if (statusIndicator) {
     statusIndicator.style.borderColor = '#28a745';
     const titleEl = statusIndicator.querySelector('div');

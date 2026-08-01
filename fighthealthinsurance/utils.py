@@ -826,7 +826,14 @@ class SyncIteratorToAsync(AsyncIterator[T]):
 
     def __init__(self, sync_iter: Iterator[T]):
         self._sync_iter = sync_iter
-        self._pending: Optional[asyncio.Future[object]] = None
+        # The CONCURRENT future for the in-flight next(), not the asyncio
+        # wrapper: cancelling an awaiting task marks the asyncio wrapper
+        # CANCELLED even though the executor thread keeps running, so a kept
+        # wrapper could never deliver the item -- every retried __anext__
+        # would just re-raise CancelledError forever. The concurrent future
+        # survives the cancellation and still resolves with the item, so a
+        # retry re-wraps it and picks up exactly where the stream left off.
+        self._pending: Optional[Future[object]] = None
         self._exhausted = False
 
     def __aiter__(self) -> "SyncIteratorToAsync[T]":
@@ -838,22 +845,27 @@ class SyncIteratorToAsync(AsyncIterator[T]):
     async def __anext__(self) -> T:
         if self._exhausted:
             raise StopAsyncIteration
+        if self._pending is not None and self._pending.cancelled():
+            # A previous await was cancelled BEFORE the executor started
+            # next() (so nothing ran and nothing was lost): submit fresh.
+            self._pending = None
         if self._pending is None:
             from fighthealthinsurance.exec import bridge_executor
 
-            loop = asyncio.get_running_loop()
-            self._pending = loop.run_in_executor(
-                bridge_executor, self._next_with_default
-            )
+            self._pending = bridge_executor.submit(self._next_with_default)
         try:
-            item = await self._pending
+            # Fresh wrapper per await: a wrapper cancelled by an earlier
+            # attempt stays cancelled, but the underlying concurrent future
+            # is still good.
+            item = await asyncio.wrap_future(self._pending)
         except asyncio.CancelledError:
-            # Keep _pending: the executor thread is still inside next() and
-            # will produce an item. Clearing it here (the old finally did)
-            # dropped that item on the floor AND let a retried __anext__
-            # start a SECOND concurrent next() on the same non-reentrant
-            # iterator chain -- exactly what the class docstring promises
-            # can't happen.
+            # Keep _pending: if the executor thread is inside next(), the
+            # concurrent future will still resolve with its item and a
+            # retried __anext__ reuses it (see __init__). Clearing it here
+            # would drop that item AND let a retry start a SECOND concurrent
+            # next() on the same non-reentrant iterator chain -- exactly what
+            # the class docstring promises can't happen. (The cancelled()
+            # guard above handles the never-started case.)
             raise
         except BaseException:
             # The sync iterator itself raised; that future is spent.

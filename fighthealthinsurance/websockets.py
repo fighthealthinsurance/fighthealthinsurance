@@ -1091,6 +1091,18 @@ class PriorAuthConsumer(PerConnectionThreadSensitiveMixin, AsyncWebsocketConsume
                 await self.close()
         except Exception as e:
             logger.opt(exception=True).error(f"Error in prior auth consumer: {e}")
+            # Failures BEFORE the generation loop (auth lookup, status
+            # update, initial send) leave the socket open with no frame
+            # sent yet -- send an error frame so the client can tell this
+            # apart from "finished with zero proposals". For inner-loop
+            # failures the socket is already closed and this send just
+            # no-ops into the except below.
+            try:
+                await self.send(
+                    json.dumps({"error": "Server error generating prior auth."}) + "\n"
+                )
+            except Exception:
+                logger.debug("prior-auth ws: could not send outer error frame")
             try:
                 await self.close()
             except Exception:
