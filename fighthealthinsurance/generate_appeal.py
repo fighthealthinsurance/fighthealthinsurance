@@ -1196,16 +1196,19 @@ def _generated_to_appeals_text(
     try:
         try:
             # With a requester deadline, don't wait on the inner future past
-            # it (plus a grace beat for the deadline-aware model call to
-            # notice and return): threads can't be cancelled, so an unbounded
-            # result() here is how abandoned generations used to pin pool
-            # threads long after the client was gone. futures_wait (not
-            # result(timeout=...)) distinguishes "still pending at the
-            # deadline" from a TimeoutError RAISED BY the model call itself
-            # (the same builtin class on 3.11+), which must keep its normal
-            # "timed out" classification below.
+            # it: threads can't be cancelled, so an unbounded result() here is
+            # how abandoned generations used to pin pool threads long after
+            # the client was gone. We stop ~10s BEFORE the deadline rather
+            # than granting grace past it -- the caller (WS consumer /
+            # streaming budget) enforces the same deadline, and finishing
+            # inside it is what lets the attempt rows flush and an error
+            # frame reach the client instead of the whole task being killed
+            # mid-drain. futures_wait (not result(timeout=...)) distinguishes
+            # "still pending at the deadline" from a TimeoutError RAISED BY
+            # the model call itself (the same builtin class on 3.11+), which
+            # must keep its normal "timed out" classification below.
             if deadline is not None and not k_text_future.done():
-                remaining = max(1.0, deadline - time.monotonic() + 15.0)
+                remaining = max(1.0, deadline - time.monotonic() - 10.0)
                 _done, not_done = futures_wait([k_text_future], timeout=remaining)
                 if not_done:
                     error_detail = "abandoned: requester deadline passed"
@@ -1365,7 +1368,11 @@ def _appeals_as_futures_complete(
         gens_by_future.setdefault(fut, []).append(gen)
     timeout = None
     if deadline is not None:
-        timeout = max(1.0, deadline - time.monotonic() + 15.0)
+        # Stop ~10s BEFORE the requester deadline (not after): the caller
+        # enforces the same deadline, and giving up inside it leaves time to
+        # drain the leftover mappers and flush their attempt rows before the
+        # surrounding task is torn down.
+        timeout = max(1.0, deadline - time.monotonic() - 10.0)
     try:
         for fut in futures_as_completed(list(gens_by_future), timeout=timeout):
             for gen in gens_by_future.pop(fut):
@@ -1384,29 +1391,33 @@ def _appeals_as_futures_complete(
 def _peek_real_or_none(
     it: Iterator["GeneratedAppeal"], denial_id: Any, stage: str, recorder=None
 ) -> Tuple[Optional["GeneratedAppeal"], Iterator["GeneratedAppeal"]]:
-    """Like _peek_or_none, but returns (None, _) when the first item is
-    non-None but fails is_real_appeal. Without this, an unusable first item
-    would suppress the fallback path even though downstream filtering
-    drops it — leading to zero deliverable appeals.
+    """Like _peek_or_none, but scans FORWARD past items that fail
+    is_real_appeal until it finds a usable one (or the stage runs dry).
+    Returning None on the first runt used to abandon the whole stage: with
+    several models fanned out, one fast model answering with an unusable
+    stub sent the ladder to the next stage even though a slower model in the
+    SAME stage was about to deliver a real appeal.
 
-    Records the rejected item when a ``recorder`` is given. That row would
-    otherwise be the one missing from the persisted attempt log: peeking pulls
-    a single item WITHOUT exhausting the producing generator, so the
+    Records each rejected item when a ``recorder`` is given. Those rows would
+    otherwise be the ones missing from the persisted attempt log: peeking
+    pulls items WITHOUT exhausting the producing generator, so the
     generator's own end-of-iteration recording never runs for the stage that
-    fell through -- and the item that caused the fallthrough is the single most
-    useful thing to look at afterwards. Recorded under its own outcome rather
-    than as a plain ``runt_only``, both because it is a different fact ("this
-    is what made us try the next stage") and so it can't be mistaken for a
-    duplicate of the row the abandoned generator may still write if it is
-    drained or collected later.
+    fell through -- and the items that caused the fallthrough are the most
+    useful thing to look at afterwards. Recorded under their own outcome
+    rather than as a plain ``runt_only``, both because it is a different fact
+    ("this is what made us keep looking / try the next stage") and so it
+    can't be mistaken for a duplicate of the row the abandoned generator may
+    still write if it is drained or collected later.
     """
-    first, it = _peek_or_none(it)
-    if first is not None and not is_real_appeal(first.text):
+    while True:
+        first, it = _peek_or_none(it)
+        if first is None or is_real_appeal(first.text):
+            return first, it
         reason = describe_unusable_appeal(first.text)
         logger.warning(
-            f"make_appeals: {stage} first item is unusable "
+            f"make_appeals: {stage} produced an unusable item "
             f"({reason}) for denial {denial_id}; "
-            f"treating as empty to trigger fallback"
+            f"skipping it and scanning the rest of the stage"
         )
         if recorder is not None:
             recorder.record(
@@ -1420,8 +1431,8 @@ def _peek_real_or_none(
                     response_chars=len(first.text) if first.text else 0,
                 )
             )
-        return None, it
-    return first, it
+        # Drop the unusable head and keep scanning.
+        next(it, None)
 
 
 class AppealGenerator(object):
@@ -2890,27 +2901,39 @@ class AppealGenerator(object):
             # REAL model future so the fan-in can stream whichever model
             # answers first -- see _appeals_as_futures_complete for why they
             # must not be pool-submitted.
-            mapper_pairs: List[Tuple[Future, Iterator[GeneratedAppeal]]] = [
-                (
+            # Full-letter calls drain (completion-ordered) BEFORE templated
+            # medically_necessary ones: the peek takes the first real appeal,
+            # and a fast one-liner-into-template must not beat a complete
+            # letter purely by racing. Within each group it's still whichever
+            # model answers first; the med-necessary group remains as
+            # fallback if every full call comes back empty/unusable.
+            full_pairs: List[Tuple[Future, Iterator[GeneratedAppeal]]] = []
+            other_pairs: List[Tuple[Future, Iterator[GeneratedAppeal]]] = []
+            for meta, f in model_futures:
+                mapper = _generated_to_appeals_text(
+                    meta["model_name"],
                     f,
-                    _generated_to_appeals_text(
-                        meta["model_name"],
-                        f,
-                        template_generator,
-                        meta["context_level"],
-                        recorder,
-                        meta["stage"],
-                        meta["infer_type"],
-                        meta["backend"],
-                        meta["prompt_tokens_est"],
-                        meta["submitted_at"],
-                        meta["submitted_wall"],
-                        deadline,
-                    ),
+                    template_generator,
+                    meta["context_level"],
+                    recorder,
+                    meta["stage"],
+                    meta["infer_type"],
+                    meta["backend"],
+                    meta["prompt_tokens_est"],
+                    meta["submitted_at"],
+                    meta["submitted_wall"],
+                    deadline,
                 )
-                for meta, f in model_futures
-            ]
-            return _appeals_as_futures_complete(mapper_pairs, deadline)
+                if meta["infer_type"] == "full":
+                    full_pairs.append((f, mapper))
+                else:
+                    other_pairs.append((f, mapper))
+            if full_pairs and other_pairs:
+                return itertools.chain(
+                    _appeals_as_futures_complete(full_pairs, deadline),
+                    _appeals_as_futures_complete(other_pairs, deadline),
+                )
+            return _appeals_as_futures_complete(full_pairs or other_pairs, deadline)
 
         # Proactive dual-call: when a call is estimated to exceed its model's
         # (fuzzy) context window, fan out a tier-1 context-shed variant

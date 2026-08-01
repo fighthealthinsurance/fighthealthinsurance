@@ -107,7 +107,7 @@ async def test_generic_context_generation_cache():
 
         # First call should create a new cache entry
         result1 = await MLCitationsHelper.generate_generic_citations(
-            procedure_opt=procedure, diagnosis_opt=diagnosis
+            procedure_opt=procedure, diagnosis_opt=diagnosis, use_external=True
         )
 
         # Verify the result matches our mock data
@@ -122,7 +122,7 @@ async def test_generic_context_generation_cache():
 
         # Second call should use cached data
         result2 = await MLCitationsHelper.generate_generic_citations(
-            procedure_opt=procedure, diagnosis_opt=diagnosis
+            procedure_opt=procedure, diagnosis_opt=diagnosis, use_external=True
         )
 
         # Verify the result is the same
@@ -273,7 +273,7 @@ async def test_generic_citation_cache_write_upserts_on_concurrent_miss():
         )
 
         result = await MLCitationsHelper.generate_generic_citations(
-            procedure_opt=procedure, diagnosis_opt=diagnosis
+            procedure_opt=procedure, diagnosis_opt=diagnosis, use_external=True
         )
 
     assert result == new_citations
@@ -312,7 +312,7 @@ async def test_supplemental_citations_stay_out_of_generic_cache():
 
         # Cache miss: generates, returns ML + extras.
         result1 = await MLCitationsHelper.generate_generic_citations(
-            procedure_opt=procedure, diagnosis_opt=diagnosis
+            procedure_opt=procedure, diagnosis_opt=diagnosis, use_external=True
         )
         assert result1 == ml_citations + [ecri_citation]
 
@@ -324,7 +324,7 @@ async def test_supplemental_citations_stay_out_of_generic_cache():
 
         # Cache hit: extras are appended exactly once, not compounded.
         result2 = await MLCitationsHelper.generate_generic_citations(
-            procedure_opt=procedure, diagnosis_opt=diagnosis
+            procedure_opt=procedure, diagnosis_opt=diagnosis, use_external=True
         )
         assert result2 == ml_citations + [ecri_citation]
         assert result2.count(ecri_citation) == 1

@@ -33,6 +33,7 @@ from django.conf import settings
 from loguru import logger
 
 from fighthealthinsurance.base_actor_ref import ray_cluster_available
+from fighthealthinsurance.exec import bridge_executor
 from fighthealthinsurance.context_utils import (
     CONTEXT_LEVEL_SPECULATIVE,
     CONTEXT_LEVEL_SPECULATIVE_CONFIRMED,
@@ -328,6 +329,11 @@ class SpeculativeAppealsHelper:
                     # background precompute doesn't read as part of the user's
                     # live generation when debugging a failure on this denial.
                     run_kind="speculative",
+                    # No user is waiting, but "no deadline" means a hung
+                    # backend pins this worker thread (and its mapper drain)
+                    # forever -- generous bound instead, well past any sane
+                    # generation time.
+                    deadline=time.monotonic() + 600.0,
                 ):
                     if not is_real_appeal(item.text):
                         continue
@@ -353,8 +359,12 @@ class SpeculativeAppealsHelper:
             # of precomputing. A pool thread per call restores the concurrency;
             # DatabaseSyncToAsync still wraps each call in close_old_connections()
             # either way, so per-call connection isolation is unchanged.
+            # executor=bridge_executor keeps this minutes-long drain off the
+            # loop's small shared default executor (see exec.py).
             drafts = await database_sync_to_async(
-                _generate_drafts, thread_sensitive=False
+                _generate_drafts,
+                thread_sensitive=False,
+                executor=bridge_executor,
             )()
 
             # Generation is done; make sure it is still about the CURRENT letter
@@ -551,7 +561,11 @@ def dispatch_speculative_appeals(
             trigger=trigger,
             confirmed_context=confirmed_context,
         )
-        logger.info(
+        # WARNING, not info: expected in dev (no Ray cluster), but in
+        # production this line means the pod couldn't reach Ray -- the
+        # precompute now dies with worker restarts and has a request-process
+        # deadline. If it shows up in prod logs, Ray connectivity is broken.
+        logger.warning(
             f"speculative appeals[{trigger}]: dispatched denial {denial_id} to "
             f"daemon thread (force={force}, confirmed_context={confirmed_context})"
         )

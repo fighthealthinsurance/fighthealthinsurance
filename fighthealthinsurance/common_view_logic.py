@@ -57,6 +57,7 @@ from fhi_users.audit import TrackingInfo
 from fhi_users.models import ProfessionalUser, UserDomain
 from fighthealthinsurance import stripe_utils
 from fighthealthinsurance.context_barrier import warm_then_fetch
+from fighthealthinsurance.exec import bridge_executor
 from fighthealthinsurance.context_utils import (
     attach_supplemental_to_citations,
     CONTEXT_LEVEL_SPECULATIVE,
@@ -4196,9 +4197,13 @@ class AppealsBackendHelper:
             # (WS_INACTIVITY_TIMEOUT_MS) and the run ended with 0 appeals
             # delivered. DatabaseSyncToAsync still wraps each call in
             # close_old_connections() either way, so connection handling is
-            # unchanged.
+            # unchanged. executor=bridge_executor keeps this minutes-long
+            # block off the loop's small shared default executor (see
+            # exec.py).
             database_sync_to_async(
-                appealGenerator.make_appeals, thread_sensitive=False
+                appealGenerator.make_appeals,
+                thread_sensitive=False,
+                executor=bridge_executor,
             )(
                 denial,
                 AppealTemplateGenerator(prefaces, main, footer),

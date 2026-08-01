@@ -45,6 +45,47 @@ else:
 from llm_result_utils.cleaner_utils import CleanerUtils
 from llm_result_utils.llm_utils import LLMResponseUtils
 
+import urllib.request as _urllib_request
+
+
+def _bounded_is_valid_url(cls, url):
+    """Bounded replacement for CleanerUtils.is_valid_url.
+
+    The upstream implementation network-validates candidate URLs with a bare
+    ``urlopen`` (no timeout), so a single unresponsive host stalls the
+    appeal's post-processing in ``url_fixer`` indefinitely. Same semantics,
+    but with a hard per-request timeout and a capped read (the bad-result
+    regex only matches at the start of the body anyway).
+    """
+    try:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.45 "
+            "Safari/537.36"
+        }
+        request = _urllib_request.Request(url, headers=headers)
+        result = _urllib_request.urlopen(request, timeout=5)
+        if "pdf" not in url:
+            try:
+                result_text = result.read(65536).decode("utf-8").lower()
+            except Exception:
+                # Content that can't be decoded could be a PDF; treat as valid
+                # like upstream does.
+                return True
+            if cls.common_bad_result_regex.match(result_text):
+                return False
+        return True
+    except Exception:
+        groups = cls.maybe_bad_url_endings.search(url)
+        if groups is not None:
+            return cls.is_valid_url(groups.group(1))
+        return False
+
+
+CleanerUtils.is_valid_url = classmethod(  # type: ignore[assignment,method-assign]
+    _bounded_is_valid_url
+)
+
 from fighthealthinsurance.exec import *
 from fighthealthinsurance.ml.bad_output_utils import (
     is_bad_output,
@@ -370,6 +411,13 @@ def remove_repeated_sentences(
         seen_counts[key] = count
         if count <= max_repeats:
             final_sentences.append(sent)
+
+    # Nothing removed: return the ORIGINAL text. Rejoining with spaces
+    # collapses every paragraph break, so without this short-circuit every
+    # clean appeal >= 6 sentences (i.e. all of them) had its letterhead,
+    # body paragraphs, and sign-off welded into a single wall of text.
+    if len(final_sentences) == len(sentences):
+        return text
 
     result = " ".join(final_sentences)
 
@@ -1630,10 +1678,15 @@ class RemoteOpenLike(RemoteModel):
     def model_is_ok(self):
         """Check that the backend supports this model, returns true if found in list.
         Return false if not found. Logs supported models from the backend."""
-        if not self.api_base:
+        # A backup-only configuration (e.g. HEALTH_BACKUP_BACKEND_HOST set
+        # without HEALTH_BACKEND_HOST) leaves api_base None while inference
+        # would still be served by the backup — probe whichever exists.
+        probe_base = self.api_base or self.backup_api_base
+        probe_model = self.model if self.api_base else self.backup_model
+        if not probe_base:
             raise RuntimeError("No api_base configured for RemoteOpenLike.")
 
-        url = f"{self.api_base}/models"
+        url = f"{probe_base}/models"
 
         headers = {}
         if self.token:
@@ -1647,7 +1700,7 @@ class RemoteOpenLike(RemoteModel):
 
         if resp.status_code != 200:
             logger.debug(
-                f"Backend {self.api_base} returned status {resp.status_code} "
+                f"Backend {probe_base} returned status {resp.status_code} "
                 f"for /models request."
             )
             return False
@@ -1656,7 +1709,7 @@ class RemoteOpenLike(RemoteModel):
             payload = resp.json()
         except ValueError as exc:
             logger.debug(
-                f"Backend {self.api_base} returned non-JSON response for /models."
+                f"Backend {probe_base} returned non-JSON response for /models."
             )
             return False
 
@@ -1688,14 +1741,14 @@ class RemoteOpenLike(RemoteModel):
                 if mid:
                     model_ids.add(mid)
 
-        if self.model not in model_ids:
+        if probe_model not in model_ids:
             available_sorted = sorted(model_ids)
             preview = available_sorted[:15]
             # INFO, not DEBUG: this is the health sweep disabling the backend,
             # and "why is this model not being used" should be answerable
             # without debug logging. Sweep-frequency only, so it can't spam.
             logger.info(
-                f"Model '{self.model}' is not served at {self.api_base}; "
+                f"Model '{probe_model}' is not served at {probe_base}; "
                 f"marking backend unhealthy. Backend serves "
                 f"{len(available_sorted)} model(s), e.g. {preview}"
             )
@@ -2646,21 +2699,16 @@ class RemoteOpenLike(RemoteModel):
                     f"Timed out querying {self} after {effective_timeout:.0f}s"
                 )
                 record_ml_call(call_model, "timeout", time.monotonic() - started)
-                # A whole-budget timeout is a transport-level strike too --
-                # but ONLY at the instance-wide budget. A tight interactive
-                # budget (entity 45s, chat 90s) timing out says the backend
-                # is slow for that task, not unreachable; striking on it
-                # could cool the pair for the appeal path whose 300s budget
-                # would have succeeded. Connect-phase failures still strike
-                # via the transport-error handler regardless of budget.
-                if not kwargs.get("raise_http_errors") and (
-                    self._timeout is None or effective_timeout >= self._timeout
-                ):
-                    self._note_transport_failure(
-                        kwargs.get("api_base") or self.api_base,
-                        call_model,
-                        f"timed out after {effective_timeout:.0f}s",
-                    )
+                # Deliberately NO transport strike on a budget timeout. A
+                # backend that answers the TCP handshake but is slow is
+                # overloaded, not unreachable -- and the appeal path fires 4
+                # near-simultaneous legs (2 temperatures x dual-mode), so one
+                # slow long-prompt inference used to land 4 strikes inside
+                # the 60s window at once, tripping the 120s cooldown and
+                # ZEROING generation on that backend right when it was merely
+                # busy (a self-amplifying brownout). Genuinely-unreachable
+                # hosts still strike within seconds via the connect-phase
+                # failure handler (sock_connect bounds the handshake).
                 return None
         else:
             result = await self.__infer(*args, **kwargs)
@@ -3491,10 +3539,12 @@ class RemoteHealthInsurance(RemoteFullOpenLike):
         return ("not_configured", "HEALTH_BACKEND_HOST not set")
 
     def __init__(self, model: str, dual_mode: bool = True):
-        self.port = os.getenv("HEALTH_BACKEND_PORT", "80")
-        self.host = os.getenv("HEALTH_BACKEND_HOST")
-        self.backup_port = os.getenv("HEALTH_BACKUP_BACKEND_PORT", self.port)
-        self.backup_host = os.getenv("HEALTH_BACKUP_BACKEND_HOST", self.host)
+        # `or` (not getenv defaults): k8s/compose templating can materialize
+        # these as empty strings, which must mean "unset".
+        self.port = os.getenv("HEALTH_BACKEND_PORT") or "80"
+        self.host = os.getenv("HEALTH_BACKEND_HOST") or None
+        self.backup_port = os.getenv("HEALTH_BACKUP_BACKEND_PORT") or self.port
+        self.backup_host = os.getenv("HEALTH_BACKUP_BACKEND_HOST") or self.host
         if self.host is None and self.backup_host is None:
             raise Exception("Can not construct FHI backend without a host")
         self.url = None
@@ -3502,15 +3552,25 @@ class RemoteHealthInsurance(RemoteFullOpenLike):
             self.url = f"http://{self.host}:{self.port}/v1"
         else:
             logger.debug(f"Error setting up remote health {self.host}:{self.port}")
-        self.backup_url = f"http://{self.backup_host}:{self.backup_port}/v1"
+        self.backup_url = (
+            f"http://{self.backup_host}:{self.backup_port}/v1"
+            if self.backup_host is not None
+            else None
+        )
+        backup_model = os.getenv("HEALTH_BACKUP_BACKEND_MODEL") or model
+        # With no distinct backup configured the "backup" resolves to the very
+        # same endpoint+model as the primary; racing/failing over to it just
+        # doubles load on one box without adding redundancy.
+        if self.backup_url == self.url and backup_model == model:
+            self.backup_url = None
         logger.debug(f"Setting backup to {self.backup_url}")
         super().__init__(
             self.url,
             token="",
             backup_api_base=self.backup_url,
             model=model,
-            backup_model=os.getenv("HEALTH_BACKUP_BACKEND_MODEL", model),
-            dual_mode=dual_mode,
+            backup_model=backup_model,
+            dual_mode=dual_mode and self.backup_url is not None,
         )
 
     @property
@@ -3540,10 +3600,12 @@ class NewRemoteInternal(RemoteFullOpenLike):
         return ("not_configured", "NEW_HEALTH_BACKEND_HOST not set")
 
     def __init__(self, model: str, dual_mode: bool = True):
-        self.port = os.getenv("NEW_HEALTH_BACKEND_PORT", "80")
-        self.host = os.getenv("NEW_HEALTH_BACKEND_HOST")
-        self.secondary_port = os.getenv("SECONDARY_NEW_HEALTH_BACKEND_PORT", "80")
-        self.secondary_host = os.getenv("SECONDARY_NEW_HEALTH_BACKEND_HOST")
+        # `or` (not getenv defaults): k8s/compose templating can materialize
+        # these as empty strings, which must mean "unset".
+        self.port = os.getenv("NEW_HEALTH_BACKEND_PORT") or "80"
+        self.host = os.getenv("NEW_HEALTH_BACKEND_HOST") or None
+        self.secondary_port = os.getenv("SECONDARY_NEW_HEALTH_BACKEND_PORT") or "80"
+        self.secondary_host = os.getenv("SECONDARY_NEW_HEALTH_BACKEND_HOST") or None
         if self.host is None:
             raise Exception("Can not construct New FHI backend without a host")
         self.url = None
@@ -3605,10 +3667,12 @@ class AlphaRemoteInternal(RemoteFullOpenLike):
         return ("not_configured", "ALPHA_HEALTH_BACKEND_HOST not set")
 
     def __init__(self, model: str, dual_mode: bool = True):
-        self.port = os.getenv("ALPHA_HEALTH_BACKEND_PORT", "8000")
-        self.host = os.getenv("ALPHA_HEALTH_BACKEND_HOST")
-        self.backup_port = os.getenv("ALPHA_HEALTH_BACKUP_BACKEND_PORT", None)
-        self.backup_host = os.getenv("ALPHA_HEALTH_BACKUP_BACKEND_HOST", None)
+        # `or` (not getenv defaults): k8s/compose templating can materialize
+        # these as empty strings, which must mean "unset".
+        self.port = os.getenv("ALPHA_HEALTH_BACKEND_PORT") or "8000"
+        self.host = os.getenv("ALPHA_HEALTH_BACKEND_HOST") or None
+        self.backup_port = os.getenv("ALPHA_HEALTH_BACKUP_BACKEND_PORT") or None
+        self.backup_host = os.getenv("ALPHA_HEALTH_BACKUP_BACKEND_HOST") or None
         backup_model = "/app/model"
         if self.host is None:
             raise Exception("Can not construct New FHI backend without a host")

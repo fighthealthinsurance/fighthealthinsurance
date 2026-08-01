@@ -34,3 +34,15 @@ pubmed_executor = ThreadPoolExecutor(
     max_workers=_pool_size("FHI_PUBMED_EXECUTOR_WORKERS", 4),
     thread_name_prefix="fhi-pubmed",
 )
+
+# Async→sync bridge hops: thread_sensitive=False database_sync_to_async call
+# sites and SyncIteratorToAsync's per-item next() hops. Without an explicit
+# executor these land on the event loop's DEFAULT executor (min(32, cpus+4)
+# threads -- single digits on a small pod), shared with everything else the
+# loop offloads; a handful of long-blocking generation drains there starves
+# every other bridge hop in the process. Isolated and sized for many
+# concurrent short hops plus a few long drains.
+bridge_executor = ThreadPoolExecutor(
+    max_workers=_pool_size("FHI_BRIDGE_EXECUTOR_WORKERS", 32),
+    thread_name_prefix="fhi-bridge",
+)

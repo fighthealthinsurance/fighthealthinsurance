@@ -809,8 +809,11 @@ def as_available(futures: List[Future[U]]) -> Iterator[U]:
 class SyncIteratorToAsync(AsyncIterator[T]):
     """Convert a blocking synchronous iterator to a non-blocking async iterator.
 
-    Runs each next() call in the default thread pool executor so that blocking
-    operations (e.g. concurrent.futures.as_completed) do not stall the event loop.
+    Runs each next() call in the dedicated bridge executor (not the event
+    loop's small default executor, which is shared with everything else the
+    loop offloads) so that blocking operations (e.g.
+    concurrent.futures.as_completed) neither stall the event loop nor starve
+    other offloaded work.
 
     Implemented as a class (not an async generator) to support overlapping
     __anext__() calls from asyncio.shield() in interleave_iterator_for_keep_alive.
@@ -836,8 +839,12 @@ class SyncIteratorToAsync(AsyncIterator[T]):
         if self._exhausted:
             raise StopAsyncIteration
         if self._pending is None:
+            from fighthealthinsurance.exec import bridge_executor
+
             loop = asyncio.get_running_loop()
-            self._pending = loop.run_in_executor(None, self._next_with_default)
+            self._pending = loop.run_in_executor(
+                bridge_executor, self._next_with_default
+            )
         try:
             item = await self._pending
         except asyncio.CancelledError:

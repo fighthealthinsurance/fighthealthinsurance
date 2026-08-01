@@ -181,6 +181,46 @@ class TestMLCitationsHelper:
         )
         assert result == ["Citation X", "Citation Y"]
 
+    @pytest.mark.asyncio
+    @patch("fighthealthinsurance.ml.ml_citations_helper.ml_router")
+    async def test_specific_citations_forward_consent_to_backend_selection(
+        self, mock_ml_router
+    ):
+        """Regression: full_find_citation_backends used to be called with NO
+        argument, whose default returns [] -- so specific citations were dead
+        code. The consent flag must be forwarded so opted-in users get the
+        full backends and opted-out users get only internal ones."""
+        mock_ml_router.full_find_citation_backends.return_value = []
+        await MLCitationsHelper.generate_specific_citations(denial=self.mock_denial)
+        mock_ml_router.full_find_citation_backends.assert_called_once_with(
+            use_external=False
+        )
+
+    @pytest.mark.django_db
+    @pytest.mark.asyncio
+    @patch("fighthealthinsurance.ml.ml_citations_helper.ml_router")
+    async def test_generic_citations_skip_external_backends_when_opted_out(
+        self, mock_ml_router
+    ):
+        """Regression: the generic-citation partial backends are context-only
+        EXTERNAL models (Perplexity); a fresh call for a use_external=False
+        denial violated the opt-out even though only procedure/diagnosis are
+        sent."""
+        self.mock_denial.use_external = False
+        await MLCitationsHelper.generate_generic_citations(denial=self.mock_denial)
+        mock_ml_router.partial_find_citation_backends.assert_not_called()
+
+    @pytest.mark.django_db
+    @pytest.mark.asyncio
+    @patch("fighthealthinsurance.ml.ml_citations_helper.ml_router")
+    async def test_generic_citations_without_denial_default_to_no_external(
+        self, mock_ml_router
+    ):
+        await MLCitationsHelper.generate_generic_citations(
+            procedure_opt="pci", diagnosis_opt="coronary artery disease"
+        )
+        mock_ml_router.partial_find_citation_backends.assert_not_called()
+
     @pytest.mark.django_db
     @pytest.mark.asyncio
     async def test_supplemental_citations_includes_ecri(self):

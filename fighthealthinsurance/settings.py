@@ -474,6 +474,17 @@ class Base(Configuration):
     # form, so every test that files a denial would start one.
     SPECULATIVE_APPEALS_PRECOMPUTE = True
 
+    # Per-WebSocket-connection ThreadSensitiveContext (see
+    # websockets.PerConnectionThreadSensitiveMixin): without it every
+    # thread_sensitive=True bridge in the process shares asgiref's single
+    # global executor thread. Off in the Test* configs: sync tests drive
+    # consumers through async_to_sync from the test thread, and asgiref
+    # routes thread-sensitive work back onto that thread (same connection,
+    # same transaction) -- a per-connection executor preempts that routing
+    # and its foreign-thread sqlite connection deadlocks against the test
+    # transaction.
+    WS_PER_CONNECTION_THREAD_SENSITIVE = True
+
     # Static files (CSS, JavaScript, Images)
     # https://docs.djangoproject.com/en/4.0/howto/static-files/
 
@@ -765,6 +776,8 @@ class Test(Dev):
     SITE_BANNER_BACKGROUND_REFRESH = False
     # No speculative precompute in tests (see Base).
     SPECULATIVE_APPEALS_PRECOMPUTE = False
+    # Keep thread-sensitive bridge routing on the test thread (see Base).
+    WS_PER_CONNECTION_THREAD_SENSITIVE = False
 
 
 class TestSync(Dev):
@@ -793,6 +806,8 @@ class TestSync(Dev):
     SITE_BANNER_BACKGROUND_REFRESH = False
     # No speculative precompute in tests (see Base).
     SPECULATIVE_APPEALS_PRECOMPUTE = False
+    # Keep thread-sensitive bridge routing on the test thread (see Base).
+    WS_PER_CONNECTION_THREAD_SENSITIVE = False
 
 
 class TestActor(Dev):
@@ -828,6 +843,8 @@ class TestActor(Dev):
     SITE_BANNER_BACKGROUND_REFRESH = False
     # No speculative precompute in tests (see Base).
     SPECULATIVE_APPEALS_PRECOMPUTE = False
+    # Keep thread-sensitive bridge routing on the test thread (see Base).
+    WS_PER_CONNECTION_THREAD_SENSITIVE = False
 
 
 class Prod(Base):

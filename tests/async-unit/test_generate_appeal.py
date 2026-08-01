@@ -1310,8 +1310,31 @@ class TestPeekRealOrNone:
         with _loguru_capture() as sink:
             _peek_real_or_none(iter([_ga("short")]), denial_id=999, stage="primary")
         output = sink.getvalue()
-        assert "primary first item is unusable" in output
+        assert "primary produced an unusable item" in output
         assert "denial 999" in output
+
+    def test_scans_past_runt_to_real_item_in_same_stage(self):
+        """A fast model's runt must not abandon the whole stage: the peek
+        skips it and returns the real appeal a slower model in the SAME
+        stage produced."""
+        real = _ga("this is a long enough appeal text for delivery")
+        first, rest = _peek_real_or_none(
+            iter([_ga("no."), _ga(""), real]), denial_id=1, stage="primary"
+        )
+        assert first is real
+        assert next(rest) is real
+
+    def test_scan_records_each_rejected_item(self):
+        recorded = []
+        recorder = MagicMock()
+        recorder.record.side_effect = lambda rec: recorded.append(rec)
+        real = _ga("this is a long enough appeal text for delivery")
+        first, _ = _peek_real_or_none(
+            iter([_ga("no."), real]), denial_id=1, stage="primary", recorder=recorder
+        )
+        assert first is real
+        assert [r.outcome for r in recorded] == ["rejected_at_peek"]
+        assert recorded[0].response_text == "no."
 
     def test_wordless_first_returns_none(self):
         """A long but wordless first item (e.g. a model echoing back the claim

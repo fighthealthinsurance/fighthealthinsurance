@@ -150,9 +150,23 @@ spec:
         labelSelector:
           matchLabels:
             app: fight-health-insurance-prod
+      # An appeal generation stream legitimately runs for minutes (the WS
+      # client hard-caps at 7min); the default 30s grace means every deploy
+      # SIGKILLs whatever generations are mid-flight on each pod. 420s covers
+      # the longest client budget so rollouts drain instead of dropping.
+      terminationGracePeriodSeconds: 420
       containers:
         - image: ${FHI_BASE}:${FHI_VERSION}
           name: totallylegitco
+          # On pod termination: hold SIGTERM off the server briefly so
+          # in-flight/newly-routed requests aren't cut while the endpoint
+          # removal propagates to kube-proxy/ingress, then let uvicorn's own
+          # graceful shutdown finish the long-running streams within the
+          # grace period above.
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sleep", "15"]
           env:
           - name: BRB
             value: "LIVE"

@@ -103,8 +103,15 @@ class MLCitationsHelper:
         logger.debug(f"Generating specific citations for {denial}")
         result: List[str] = []
         try:
-            # Get the appropriate citation backends
-            full_citation_backends = ml_router.full_find_citation_backends()
+            # Get the appropriate citation backends. Citations run on
+            # context-only EXTERNAL backends (Perplexity), so this must carry
+            # the user's consent: without the argument the default
+            # (use_external=False) returned [] unconditionally -- specific,
+            # denial-text-informed citations were dead code in every
+            # deployment, for consenting users too.
+            full_citation_backends = ml_router.full_find_citation_backends(
+                use_external=bool(denial.use_external)
+            )
 
             # Only proceed if we have backends to use
             if not full_citation_backends:
@@ -203,6 +210,7 @@ class MLCitationsHelper:
         procedure_opt: Optional[str] = None,
         diagnosis_opt: Optional[str] = None,
         timeout: int = 60,
+        use_external: bool = False,
     ) -> List[str]:
         """
         Generate generic citations using ML models based only on procedure and diagnosis.
@@ -211,8 +219,13 @@ class MLCitationsHelper:
         If the denial has a microsite_slug, also includes the microsite's evidence_snippets.
 
         Args:
-            denial: the denial
+            denial: the denial; its ``use_external`` consent governs whether
+                external citation backends may be called (overriding the
+                ``use_external`` argument below)
             timeout: Maximum time to wait for citation generation
+            use_external: consent flag for denial-less callers; defaults to
+                False so no external backend is contacted without an explicit
+                opt-in
 
         Returns:
             List of citation strings
@@ -264,8 +277,19 @@ class MLCitationsHelper:
 
         # If no cached citations exist, generate them
         try:
-            # Get the appropriate citation backends - only partial backends for generic citations
-            partial_citation_backends = ml_router.partial_find_citation_backends()
+            # Only partial backends for generic citations -- and those are
+            # context-only EXTERNAL models (Perplexity), so the user's opt-out
+            # must gate them even though only procedure/diagnosis are sent:
+            # that pair is still health data derived from the denial. Serving
+            # a CACHED result above is fine (nothing leaves the perimeter);
+            # making a fresh external call for an opted-out user is not.
+            # denial=None callers use the explicit use_external argument
+            # (default False: no external call without an opt-in).
+            if denial:
+                use_external = bool(denial.use_external)
+            partial_citation_backends = (
+                ml_router.partial_find_citation_backends() if use_external else []
+            )
 
             # Only proceed if we have backends to use
             if not partial_citation_backends:

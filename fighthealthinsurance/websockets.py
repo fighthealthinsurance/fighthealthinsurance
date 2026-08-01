@@ -6,6 +6,8 @@ import time
 import uuid
 from typing import AsyncIterator, Callable, Optional, Tuple, cast
 
+from asgiref.sync import ThreadSensitiveContext
+
 from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
 from django.db import transaction
@@ -67,6 +69,54 @@ async def _aclose_if_socket_was_idle(consumer: AsyncWebsocketConsumer) -> None:
     consumer._last_receive_monotonic = now  # type: ignore[attr-defined]
     if last is not None and (now - last) >= _IDLE_SWEEP_THRESHOLD_SECONDS:
         await aclose_old_connections()
+
+
+class PerConnectionThreadSensitiveMixin:
+    """Give each WebSocket connection its own thread-sensitive executor.
+
+    Django's ASGI handler enters ThreadSensitiveContext around every HTTP
+    request, but channels does NOT around consumer callbacks -- so every
+    ``thread_sensitive=True`` bridge (asgiref's default, used by helpers all
+    over the codebase) from every WebSocket in the process funnels onto
+    asgiref's ONE global thread-sensitive executor thread. One consumer
+    holding it for a long ORM call serializes every other socket's
+    thread-sensitive work behind it.
+
+    Scoped per CONNECTION (entered before connect, exited after disconnect),
+    not per message: channels dispatches a consumer's events sequentially in
+    one task, so a contextvar set here is visible to every later callback,
+    and one executor (thread + DB connection) per socket restores isolation
+    without churning a fresh thread and DB connection on every frame -- the
+    per-message variant did exactly that and promptly reintroduced sqlite
+    lock storms in tests and connection churn in prod.
+
+    Disabled by ``settings.WS_PER_CONNECTION_THREAD_SENSITIVE=False`` (the
+    Test* configs): sync tests drive consumers through async_to_sync from
+    the test thread, and asgiref routes thread-sensitive work back onto that
+    thread (same connection, same transaction). The context var preempts
+    that routing, and its foreign-thread sqlite connection deadlocks against
+    the test transaction.
+    """
+
+    _ts_context: Optional[ThreadSensitiveContext] = None
+
+    async def websocket_connect(self, message):
+        from django.conf import settings
+
+        if getattr(settings, "WS_PER_CONNECTION_THREAD_SENSITIVE", True):
+            self._ts_context = ThreadSensitiveContext()
+            await self._ts_context.__aenter__()
+        await super().websocket_connect(message)  # type: ignore[misc]
+
+    async def websocket_disconnect(self, message):
+        try:
+            # Raises StopConsumer by design; the finally still runs.
+            await super().websocket_disconnect(message)  # type: ignore[misc]
+        finally:
+            ctx = getattr(self, "_ts_context", None)
+            if ctx is not None:
+                self._ts_context = None
+                await ctx.__aexit__(None, None, None)
 
 
 async def enqueue_denied_items_analysis(*, chat_id: str) -> None:
@@ -549,7 +599,9 @@ async def _parse_json_or_close(
 SUPPRESS_APPEAL_WS_DELIVERY = False
 
 
-class StreamingAppealsBackend(AsyncWebsocketConsumer):
+class StreamingAppealsBackend(
+    PerConnectionThreadSensitiveMixin, AsyncWebsocketConsumer
+):
     """Streaming back the appeals as json :D"""
 
     async def connect(self):
@@ -759,7 +811,9 @@ class StreamingAppealsBackend(AsyncWebsocketConsumer):
                 logger.debug("appeals ws: error closing connection")
 
 
-class StreamingEscalationBackend(AsyncWebsocketConsumer):
+class StreamingEscalationBackend(
+    PerConnectionThreadSensitiveMixin, AsyncWebsocketConsumer
+):
     """Streaming back regulator/executive escalation letters as JSON.
 
     Same envelope as StreamingAppealsBackend: client sends a single JSON
@@ -825,7 +879,7 @@ class StreamingEscalationBackend(AsyncWebsocketConsumer):
                 logger.debug("Error closing escalation connection")
 
 
-class StreamingEntityBackend(AsyncWebsocketConsumer):
+class StreamingEntityBackend(PerConnectionThreadSensitiveMixin, AsyncWebsocketConsumer):
     """Streaming Entity Extraction"""
 
     async def connect(self):
@@ -886,7 +940,7 @@ class StreamingEntityBackend(AsyncWebsocketConsumer):
                 logger.debug("entity ws: error closing connection")
 
 
-class PriorAuthConsumer(AsyncWebsocketConsumer):
+class PriorAuthConsumer(PerConnectionThreadSensitiveMixin, AsyncWebsocketConsumer):
     """Streaming back the proposed prior authorizations as JSON."""
 
     def __init__(self, *args, **kwargs):
@@ -1052,7 +1106,7 @@ async def resolve_chat_type(
     return ChatType.PATIENT, None
 
 
-class OngoingChatConsumer(AsyncWebsocketConsumer):
+class OngoingChatConsumer(PerConnectionThreadSensitiveMixin, AsyncWebsocketConsumer):
     """WebSocket consumer for ongoing chat with LLMs for both pro users and patients."""
 
     chat_interface: Optional[ChatInterface] = None
