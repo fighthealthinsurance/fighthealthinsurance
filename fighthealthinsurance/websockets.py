@@ -117,6 +117,21 @@ class PerConnectionThreadSensitiveMixin:
                 await ctx.__aexit__(None, None, None)
             raise
 
+    async def websocket_receive(self, message):
+        try:
+            await super().websocket_receive(message)  # type: ignore[misc]
+        except BaseException:
+            # Several receive() bodies deliberately re-raise after logging
+            # (diagnostics), which kills the whole consumer task -- and
+            # channels never dispatches websocket_disconnect to a dead
+            # consumer, so the disconnect-path cleanup below would not run.
+            # Exit the context here before propagating.
+            ctx = self._ts_context
+            if ctx is not None:
+                self._ts_context = None
+                await ctx.__aexit__(None, None, None)
+            raise
+
     async def websocket_disconnect(self, message):
         try:
             # Raises StopConsumer by design; the finally still runs.

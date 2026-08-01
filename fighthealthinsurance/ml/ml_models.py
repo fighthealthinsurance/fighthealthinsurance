@@ -2141,10 +2141,20 @@ class RemoteOpenLike(RemoteModel):
                     f"{'succeeded' if c < 2 else 'gave up'}"
                 )
 
-        after_cleaners = CleanerUtils.note_remover(
-            CleanerUtils.url_fixer(
-                CleanerUtils.tla_fixer(result), input_urls=input_urls
-            )
+        # Off the event loop: url_fixer network-validates every URL the model
+        # emitted that wasn't in the input (bounded 5s each, see
+        # _bounded_is_valid_url). The appeal path already runs _checked_infer
+        # inside a worker thread, but the escalation/prior-auth paths await it
+        # directly on the ASGI loop, where these synchronous probes would
+        # stall every other request on the pod. No ORM access, so the plain
+        # executor hop (not database_sync_to_async) is correct.
+        after_cleaners = await asyncio.get_running_loop().run_in_executor(
+            bridge_executor,
+            lambda: CleanerUtils.note_remover(
+                CleanerUtils.url_fixer(
+                    CleanerUtils.tla_fixer(result), input_urls=input_urls
+                )
+            ),
         )
 
         block_cleaned = remove_repeated_blocks(after_cleaners)

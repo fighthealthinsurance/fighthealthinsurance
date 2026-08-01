@@ -1208,7 +1208,19 @@ def _generated_to_appeals_text(
             # the model call itself (the same builtin class on 3.11+), which
             # must keep its normal "timed out" classification below.
             if deadline is not None and not k_text_future.done():
-                remaining = max(1.0, deadline - time.monotonic() - 10.0)
+                remaining = deadline - time.monotonic() - 10.0
+                if remaining <= 0.0:
+                    # Margin already blown: abandon immediately. Even a 1s
+                    # floor here compounds -- the post-deadline drain walks
+                    # every leftover mapper SERIALLY, so N pending models
+                    # would eat N extra seconds out of the margin that
+                    # exists to flush attempt rows and error frames.
+                    error_detail = "abandoned: requester deadline passed"
+                    logger.warning(
+                        f"Appeal generation via {model_name} abandoned -- "
+                        f"requester deadline passed"
+                    )
+                    return
                 _done, not_done = futures_wait([k_text_future], timeout=remaining)
                 if not_done:
                     error_detail = "abandoned: requester deadline passed"
@@ -1371,8 +1383,10 @@ def _appeals_as_futures_complete(
         # Stop ~10s BEFORE the requester deadline (not after): the caller
         # enforces the same deadline, and giving up inside it leaves time to
         # drain the leftover mappers and flush their attempt rows before the
-        # surrounding task is torn down.
-        timeout = max(1.0, deadline - time.monotonic() - 10.0)
+        # surrounding task is torn down. Zero (not a 1s floor) once the
+        # margin is blown -- as_completed with timeout=0 raises immediately
+        # for still-pending futures, which is exactly the drain path.
+        timeout = max(0.0, deadline - time.monotonic() - 10.0)
     try:
         for fut in futures_as_completed(list(gens_by_future), timeout=timeout):
             for gen in gens_by_future.pop(fut):
