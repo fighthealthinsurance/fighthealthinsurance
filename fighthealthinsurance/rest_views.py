@@ -781,6 +781,12 @@ def streaming_appeals_rest_fallback(request: Request):
         def _timing() -> str:
             return wire.summary()
 
+        # Named so the finally below can aclose() it deterministically: a
+        # client hangup used to leave the generator (and its threadpool
+        # make_appeals task + keepalive loops) to non-deterministic asyncgen
+        # GC finalization -- on the transport chosen by users whose WebSocket
+        # already failed.
+        aitr = common_view_logic.AppealsBackendHelper.generate_appeals(data)
         try:
             # Flush a leading newline before awaiting generate_appeals
             # so anti-buffering headers and intermediary heuristics
@@ -788,9 +794,7 @@ def streaming_appeals_rest_fallback(request: Request):
             # make the fallback look hung even when it's working.
             wire.note_yield("\n", last_status_phase)
             yield "\n"
-            async for record in common_view_logic.AppealsBackendHelper.generate_appeals(
-                data
-            ):
+            async for record in aitr:
                 # Stamp BEFORE each yield, never after. A client hangup injects
                 # GeneratorExit at whichever `yield` we're suspended on, so a
                 # trailing assignment never runs for the frame just sent -- and
@@ -890,6 +894,15 @@ def streaming_appeals_rest_fallback(request: Request):
                 )
                 + "\n"
             )
+        finally:
+            try:
+                # getattr: typed as AsyncIterator, which doesn't declare
+                # aclose; the concrete async generator always has it.
+                aclose = getattr(aitr, "aclose", None)
+                if aclose is not None:
+                    await aclose()
+            except Exception:
+                logger.debug("REST appeals fallback: error closing generator")
 
     response = StreamingHttpResponse(
         streaming_content=stream(),

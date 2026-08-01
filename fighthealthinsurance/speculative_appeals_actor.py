@@ -58,18 +58,31 @@ class SpeculativeAppealsActor:
     async def hello(self) -> str:
         return "Hi"
 
-    async def prefetch_for_denial(self, denial_id: Any, force: bool = False) -> int:
+    async def prefetch_for_denial(
+        self,
+        denial_id: Any,
+        force: bool = False,
+        trigger: str = "denial_created",
+        confirmed_context: bool = False,
+    ) -> int:
         """Generate + persist speculative candidate appeals for a denial.
 
         The helper is natively async, so it is awaited directly: it bridges only
         the blocking generation itself to a thread (non-thread-sensitive, so a
         burst of denial creations doesn't serialize onto one executor thread --
         see generate_for_denial) and keeps every query on the async ORM.
+
+        ``trigger``/``confirmed_context`` select and label the precompute round
+        (create-time bare pass vs. the post-confirmation refresh) -- see
+        SpeculativeAppealsHelper.generate_for_denial.
         """
         from fighthealthinsurance.ml.ml_speculative_appeals_helper import (
             SpeculativeAppealsHelper,
         )
 
         return await SpeculativeAppealsHelper.generate_for_denial(
-            denial_id, force=force
+            denial_id,
+            force=force,
+            trigger=trigger,
+            confirmed_context=confirmed_context,
         )

@@ -182,7 +182,11 @@ class FollowUpView(generic.FormView):
         # NOTE: Potential security issue here
         denial = common_view_logic.FollowUpHelper.fetch_denial(**self.kwargs)
         if denial is None:
-            raise Exception(f"Could not find denial for {self.kwargs}")
+            # 404, not a raw Exception/500: follow-up links live in emails for
+            # months and stale ones are routine (deleted data, mangled URLs).
+            from django.http import Http404
+
+            raise Http404("Could not find denial for follow-up link")
         return self.kwargs
 
     def form_valid(self, form):
@@ -1123,7 +1127,10 @@ class CategorizeReview(View):
             denial = models.Denial.objects.get(
                 denial_id=denial_id, semi_sekret=semi_sekret
             )
-        except models.Denial.DoesNotExist:
+        # ValueError/TypeError: a mangled back-nav URL with a non-integer
+        # denial_id raises from the field's to_python -- same recovery as a
+        # missing denial, not a 500.
+        except (models.Denial.DoesNotExist, ValueError, TypeError):
             return redirect("scan")
 
         # Check for microsite default procedure in session
@@ -1191,7 +1198,10 @@ class FindNextSteps(View):
             denial = models.Denial.objects.get(
                 denial_id=denial_id, semi_sekret=semi_sekret
             )
-        except models.Denial.DoesNotExist:
+        # ValueError/TypeError: a mangled back-nav URL with a non-integer
+        # denial_id raises from the field's to_python -- same recovery as a
+        # missing denial, not a 500.
+        except (models.Denial.DoesNotExist, ValueError, TypeError):
             return redirect("scan")
 
         # Get the next step info based on denial
@@ -1230,9 +1240,20 @@ class FindNextSteps(View):
             denial_id = form.cleaned_data["denial_id"]
             email = form.cleaned_data["email"]
 
-            next_step_info = common_view_logic.FindNextStepsHelper.find_next_steps(
-                **form.cleaned_data
-            )
+            try:
+                next_step_info = common_view_logic.FindNextStepsHelper.find_next_steps(
+                    **form.cleaned_data
+                )
+            except models.Denial.DoesNotExist:
+                # Stale/mismatched (denial_id, email, semi_sekret) -- e.g. a
+                # resubmitted old tab, or data deleted between steps. This
+                # used to 500 on the loading page, a hard dead end with no
+                # back link; recover the same way the GET path does.
+                logger.warning(
+                    f"FindNextSteps: no denial for id {denial_id} with "
+                    f"supplied email/semi_sekret; redirecting to scan"
+                )
+                return redirect("scan")
             denial_ref_form = core_forms.DenialRefForm(
                 initial={
                     "denial_id": denial_id,
@@ -1261,12 +1282,24 @@ class FindNextSteps(View):
             )
 
         # If not valid take the user back.
+        # Keep the navigation chain alive on the re-render: without back_url
+        # the template's only offer is "Start over with a new denial", turning
+        # a fixable validation error (e.g. an expired captcha) into a restart.
+        _ref = request.POST
+        _back = None
+        if _ref.get("denial_id") and _ref.get("email") and _ref.get("semi_sekret"):
+            _back = build_back_url(
+                "dvc", _ref["denial_id"], _ref["email"], _ref["semi_sekret"]
+            )
         return render(
             request,
             "categorize.html",
             context={
                 "post_infered_form": form,
                 "upload_more": True,
+                "current_step": 5,
+                "back_url": _back,
+                "back_label": "Back to plan documents",
             },
         )
 
@@ -1277,12 +1310,22 @@ class FindNextStepsLoading(View):
     def post(self, request):
         form = core_forms.BasePostInferedForm(request.POST)
         if not form.is_valid():
+            # Same navigation-preserving re-render as FindNextSteps.post.
+            _ref = request.POST
+            _back = None
+            if _ref.get("denial_id") and _ref.get("email") and _ref.get("semi_sekret"):
+                _back = build_back_url(
+                    "dvc", _ref["denial_id"], _ref["email"], _ref["semi_sekret"]
+                )
             return render(
                 request,
                 "categorize.html",
                 context={
                     "post_infered_form": form,
                     "upload_more": True,
+                    "current_step": 5,
+                    "back_url": _back,
+                    "back_label": "Back to plan documents",
                 },
             )
 
@@ -1378,7 +1421,11 @@ class GenerateAppeal(View):
         *, denial, denial_id: str, email: str, semi_sekret: str, elems: dict
     ) -> dict:
         return {
-            "form_context": json.dumps(elems),
+            # Raw dict; appeals.html serializes it with |json_script. The old
+            # json.dumps + {% autoescape off %} pair let any user-typed answer
+            # containing "</script>" terminate the inline script and freeze
+            # the page on the spinner forever.
+            "form_context": elems,
             "user_email": email,
             "denial_id": denial_id,
             "semi_sekret": semi_sekret,
@@ -1404,7 +1451,10 @@ class GenerateAppeal(View):
             denial = models.Denial.objects.get(
                 denial_id=denial_id, semi_sekret=semi_sekret
             )
-        except models.Denial.DoesNotExist:
+        # ValueError/TypeError: a mangled back-nav URL with a non-integer
+        # denial_id raises from the field's to_python -- same recovery as a
+        # missing denial, not a 500.
+        except (models.Denial.DoesNotExist, ValueError, TypeError):
             return redirect("scan")
 
         # Build form context from denial
@@ -1464,8 +1514,19 @@ class GenerateAppeal(View):
             updates: dict[str, str] = {}
             for k, v in elems.items():
                 key = k
+                # Per-key guard: one unmappable key (questions regenerated
+                # between render and submit -> IndexError, malformed key ->
+                # ValueError) must lose only ITS mapping, not silently drop
+                # every answer the user just typed -- the old whole-loop try
+                # discarded the entire questionnaire on the first bad key.
                 if "appeal_generated_" in k:
-                    key = generated_questions[int(k.split("_")[-1]) - 1][0]
+                    try:
+                        key = generated_questions[int(k.split("_")[-1]) - 1][0]
+                    except Exception as e:
+                        logger.warning(
+                            f"Could not map answer key {k!r} for denial "
+                            f"{denial_id}: {e}; keeping it under its raw name"
+                        )
                 if isinstance(v, list):
                     v = v[0]
                     elems[k] = v
@@ -1480,7 +1541,7 @@ class GenerateAppeal(View):
                 f"keys={sorted(elems.keys())}: {e}"
             )
 
-        del elems["csrfmiddlewaretoken"]
+        elems.pop("csrfmiddlewaretoken", None)
         return render(
             request,
             "appeals.html",
@@ -1629,7 +1690,12 @@ class OCRView(View):
                 "scrub.html",
                 context={
                     "ocr_result": doc_txt,
-                    "upload_more": False,
+                    # Keep the uploader visible: _ocr degrades to "" on an
+                    # unreadable scan, and upload_more=False rendered that as
+                    # an empty denial box with NO way to try another photo --
+                    # the user's only options were retyping the whole letter
+                    # or leaving.
+                    "upload_more": True,
                 },
             )
 
@@ -1975,9 +2041,19 @@ class EntityExtractView(SessionRequiredMixin, generic.FormView):
         return context
 
     def form_valid(self, form):
-        denial_response = common_view_logic.DenialCreatorHelper.update_denial(
-            **form.cleaned_data,
-        )
+        try:
+            denial_response = common_view_logic.DenialCreatorHelper.update_denial(
+                **form.cleaned_data,
+            )
+        except models.Denial.DoesNotExist:
+            # Stale ref (deleted denial / mismatched email hash): the GET
+            # renders fine because the mixin validates without hashed_email,
+            # so the POST is where this surfaces -- recover instead of 500ing
+            # after the user already typed their data.
+            logger.warning(
+                "EntityExtractView: stale denial ref on POST; redirecting to scan"
+            )
+            return redirect("scan")
 
         email = form.cleaned_data["email"]
 
@@ -2055,9 +2131,15 @@ class PlanDocumentsView(SessionRequiredMixin, generic.FormView):
         return context
 
     def form_valid(self, form):
-        denial_response = common_view_logic.DenialCreatorHelper.update_denial(
-            **form.cleaned_data,
-        )
+        try:
+            denial_response = common_view_logic.DenialCreatorHelper.update_denial(
+                **form.cleaned_data,
+            )
+        except models.Denial.DoesNotExist:
+            logger.warning(
+                "PlanDocumentsView: stale denial ref on POST; redirecting to scan"
+            )
+            return redirect("scan")
 
         email = form.cleaned_data["email"]
         new_form = core_forms.PlanDocumentsForm(
@@ -2108,7 +2190,13 @@ class DenialCollectedView(SessionRequiredMixin, generic.FormView):
 
     def form_valid(self, form):
         # TODO: Make use of the response from this
-        common_view_logic.DenialCreatorHelper.update_denial(**form.cleaned_data)
+        try:
+            common_view_logic.DenialCreatorHelper.update_denial(**form.cleaned_data)
+        except models.Denial.DoesNotExist:
+            logger.warning(
+                "DenialCollectedView: stale denial ref on POST; redirecting to scan"
+            )
+            return redirect("scan")
 
         new_form = core_forms.EntityExtractForm(
             initial={
@@ -2125,15 +2213,21 @@ class DenialCollectedView(SessionRequiredMixin, generic.FormView):
                 "form": new_form,
                 "next": reverse("eev"),
                 "current_step": 4,
+                # "dvc" (this page, plan documents), not "hh" (health
+                # history): the label promises a return to the plan-documents
+                # upload, and "hh" skipped it back two steps.
                 "back_url": build_back_url(
-                    "hh",
+                    "dvc",
                     form.cleaned_data["denial_id"],
                     form.cleaned_data["email"],
                     form.cleaned_data["semi_sekret"],
                 ),
                 "back_label": "Forgot some plan documents?",
+                # Raw dict: the template serializes it via |json_script, which
+                # HTML-escapes -- never interpolate user-derived values into an
+                # inline <script> directly.
                 "form_context": {
-                    "denial_id": form.cleaned_data["denial_id"],
+                    "denial_id": str(form.cleaned_data["denial_id"]),
                     "email": form.cleaned_data["email"],
                     "semi_sekret": form.cleaned_data["semi_sekret"],
                 },

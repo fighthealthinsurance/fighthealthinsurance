@@ -500,16 +500,23 @@ async def _parse_json_or_close(
     """
 
     async def _send_err(message: str) -> None:
-        if streaming_protocol:
-            # Trailing newline: appeal_fetcher.ts buffers ws.onmessage
-            # data and only parses lines terminated by "\n". Without it
-            # the close arrives before the error frame is parsed and
-            # the client falls through to its generic error path.
-            await consumer.send(
-                json.dumps({"type": "error", "message": message}) + "\n"
-            )
-        else:
-            await consumer.send(json.dumps({"error": message}))
+        # Guarded: a client that sends malformed input and immediately
+        # disconnects makes this send raise, and (this helper runs before any
+        # consumer-level try/except) the exception would escape receive()
+        # entirely -- no close, no log. The close below must still run.
+        try:
+            if streaming_protocol:
+                # Trailing newline: appeal_fetcher.ts buffers ws.onmessage
+                # data and only parses lines terminated by "\n". Without it
+                # the close arrives before the error frame is parsed and
+                # the client falls through to its generic error path.
+                await consumer.send(
+                    json.dumps({"type": "error", "message": message}) + "\n"
+                )
+            else:
+                await consumer.send(json.dumps({"error": message}))
+        except Exception:
+            logger.debug(f"{consumer_name} websocket: could not send parse-error frame")
 
     if text_data is None:
         logger.warning(f"Empty/None text frame received in {consumer_name} websocket")
@@ -718,7 +725,33 @@ class StreamingAppealsBackend(AsyncWebsocketConsumer):
                 except Exception:
                     logger.debug("appeals ws: could not send error frame")
             raise
+        except asyncio.CancelledError:
+            # A real client hangup / server shutdown cancels receive().
+            # Without this branch the WS transport logged NOTHING for exactly
+            # the mid-stream deaths under investigation (the REST fallback
+            # already logs its equivalent), making WS drop-offs look rarer
+            # than they are. Log-and-re-raise only -- teardown semantics
+            # unchanged.
+            logger.warning(
+                f"APPEAL_GEN_DIAG appeals ws: stream for denial {denial_id} "
+                f"cancelled mid-flight after {appeal_count} appeals and "
+                f"{status_count} status frames (last phase="
+                f"{last_status_phase}, {wire.summary()})"
+            )
+            raise
         finally:
+            # Close the generator deterministically: without this, a consumer
+            # torn down mid-stream left generate_appeals (and its threadpool
+            # make_appeals task, keepalive loops, summarize task) to
+            # non-deterministic asyncgen GC finalization.
+            try:
+                # getattr: typed as AsyncIterator, which doesn't declare
+                # aclose; the concrete async generator always has it.
+                aclose = getattr(aitr, "aclose", None)
+                if aclose is not None:
+                    await aclose()
+            except Exception:
+                logger.debug("appeals ws: error closing appeal generator")
             await asyncio.sleep(0.1)
             try:
                 await self.close()
@@ -770,6 +803,9 @@ class StreamingEscalationBackend(AsyncWebsocketConsumer):
                 f"Error sending back escalation letters: {e}"
             )
             try:
+                # Trailing newline required: the client is strictly
+                # line-buffered, so a frame without it sits in respBuffer
+                # forever and the error is never shown.
                 await self.send(
                     json.dumps(
                         {
@@ -777,6 +813,7 @@ class StreamingEscalationBackend(AsyncWebsocketConsumer):
                             "message": "Server error while drafting letters.",
                         }
                     )
+                    + "\n"
                 )
             except Exception:
                 pass
@@ -823,7 +860,23 @@ class StreamingEntityBackend(AsyncWebsocketConsumer):
                 await self.send("\n")
             await asyncio.sleep(1)
         except Exception as e:
-            logger.opt(exception=True).debug(f"Error sending back entity: {e}")
+            # ERROR, not debug: a systemic extraction failure was invisible in
+            # production logs. And send an error frame -- the client treats a
+            # bare close as success ("Extraction Complete!") and auto-advances
+            # the user to a blank form.
+            logger.opt(exception=True).error(f"Error sending back entity: {e}")
+            try:
+                await self.send(
+                    json.dumps(
+                        {
+                            "type": "error",
+                            "message": "Extraction failed on the server.",
+                        }
+                    )
+                    + "\n"
+                )
+            except Exception:
+                logger.debug("entity ws: could not send error frame")
             raise e
         finally:
             await asyncio.sleep(0.1)
@@ -911,17 +964,32 @@ class PriorAuthConsumer(AsyncWebsocketConsumer):
                         logger.debug(f"prior-auth ws: malformed proposal {proposal}")
                     await asyncio.sleep(0)
             except Exception as e:
-                logger.opt(exception=True).debug(
+                logger.opt(exception=True).error(
                     f"Error sending back prior auth proposals: {e}"
                 )
+                # Send the error frame BEFORE the close below: the old shape
+                # (inner finally closed, outer handler then sent) tried to
+                # write on a closed socket, raised again, and skipped its own
+                # close -- a hung socket instead of a clean error. Short
+                # correlation ref, not str(e): exception text can carry
+                # internal details.
+                try:
+                    await self.send(
+                        json.dumps({"error": "Server error generating prior auth."})
+                        + "\n"
+                    )
+                except Exception:
+                    logger.debug("prior-auth ws: could not send error frame")
                 raise e
             finally:
                 await asyncio.sleep(1)
                 await self.close()
         except Exception as e:
-            logger.opt(exception=True).debug(f"Error in prior auth consumer: {e}")
-            await self.send(json.dumps({"error": f"Server error: {str(e)}"}))
-            await self.close()
+            logger.opt(exception=True).error(f"Error in prior auth consumer: {e}")
+            try:
+                await self.close()
+            except Exception:
+                logger.debug("prior-auth ws: error closing connection")
 
     async def _get_prior_auth_request(self, prior_auth_id, token):
         """Get the prior auth request and validate the token."""

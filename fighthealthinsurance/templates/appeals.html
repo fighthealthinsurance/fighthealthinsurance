@@ -138,6 +138,10 @@ Fight Your Health Insurance Denial: Choose an Appeal
 </div>
 </div>
 
+{# json_script HTML-escapes, so a user-typed answer containing "</script>" (or
+   any other markup) can no longer terminate this script element and freeze
+   the page on the spinner. #}
+{{ form_context|json_script:"fhi-form-context" }}
 <script>
   // Call the typescript on load
   document.addEventListener('DOMContentLoaded', () => {
@@ -148,9 +152,7 @@ Fight Your Health Insurance Denial: Choose an Appeal
       const restFallbackUrl = `${window.location.protocol}//${window.location.host}{% url 'streaming_appeals_fallback' %}`;
       const enableExternalModelsUrl = `${window.location.protocol}//${window.location.host}{% url 'enable_external_models' %}`;
       const data = {
-	  {% autoescape off %}
-          ...{{form_context}},
-          {% endautoescape %}
+          ...JSON.parse(document.getElementById('fhi-form-context').textContent),
           ...{
               'csrfmiddlewaretoken': '{{ csrf_token }}',
               'timbit': 'is most awesomex2'}}

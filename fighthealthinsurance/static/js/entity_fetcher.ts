@@ -77,9 +77,35 @@ function updateStatusList(taskName: string): void {
 function processResponseChunk(chunk: string): void {
   // Chunks can carry extracted denial entities (PHI) -- log only the size.
   console.debug("Processing chunk, length", chunk.length);
+  const trimmed = (chunk || "").trim();
+  if (!trimmed) {
+    return;
+  }
+  // Server error frames are JSON ({"type": "error", ...} or {"error": ...});
+  // they used to pass the short-string filter below and be painted as GREEN
+  // completed steps. Surface them as errors instead.
+  if (trimmed.startsWith("{")) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (parsed && (parsed.type === "error" || parsed.error)) {
+        const statusList = document.getElementById("status-list");
+        if (statusList) {
+          const item = document.createElement("div");
+          item.style.cssText = "color: #dc3545; margin: 4px 0;";
+          item.textContent =
+            "⚠️ " +
+            (parsed.message || parsed.error || "Extraction hit a server error");
+        statusList.appendChild(item);
+        }
+        return;
+      }
+    } catch {
+      // Not JSON after all; fall through to the task-name path.
+    }
+  }
   // Try to parse as task name
-  if (chunk && chunk.length > 0 && chunk.length < 50) {
-    updateStatusList(chunk.trim());
+  if (trimmed.length < 50) {
+    updateStatusList(trimmed);
   }
 }
 
@@ -183,13 +209,17 @@ export function doQuery(
   startTime = Date.now();
   timerInterval = setInterval(updateTimer, 1000);
 
+  // The template passes retries=0, and this used to be forwarded as
+  // MAX retries -- so the very first ws.onerror gave up (0 < 0), silently
+  // auto-advancing the user with nothing extracted. Floor the retry budget
+  // so a transient blip actually gets retried.
   return connectWebSocket(
     backend_url,
     data,
     processResponseChunk,
     done,
     0,
-    retries,
+    Math.max(retries, 2),
   );
 }
 

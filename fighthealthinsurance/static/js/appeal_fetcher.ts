@@ -803,8 +803,13 @@ function done(): void {
   // If we've reached stream end but also less than maxRetries appeals retry.
   // Once we've fallen back to REST we stop retrying: REST is the last-resort
   // transport, so bouncing back to the flaky WebSocket would just spin.
+  //
+  // Count duplicates toward "delivered": the server counted them (synthesis
+  // often returns a draft verbatim), the user can see the content, and
+  // retrying over a benign duplicate burned up to four full regenerations
+  // while the page sat on a spinner it had already called done.
   if (
-    appealsSoFar.length < 3 &&
+    appealsSoFar.length + duplicatesSkipped < 3 &&
     retries < maxRetries &&
     !usingRestFallback &&
     !wsGaveUp
@@ -1581,6 +1586,11 @@ export function doQuery(backend_url: string, data: AppealQueryData, rest_fallbac
   wsMaxGapMs = 0;
   lastPhaseChangedAtMs = 0;
   lastPhaseReceived = '';
+  // Per-attempt like everything above: it feeds both the done-frame
+  // partial-delivery reconciliation and done()'s retry decision, and
+  // accumulating it across attempts would inflate `accountedFor` and mask a
+  // genuine partial delivery on attempts 2+.
+  duplicatesSkipped = 0;
   // Start the aggregate wait clock only on the first call. doQuery
   // recurses on retry via done(), and we want the total to span the
   // entire user-visible wait, not just the latest retry.

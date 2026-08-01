@@ -781,13 +781,16 @@ class UnwrapIterator(Iterator[T]):
         self.head: Optional[Iterator[T]] = None
 
     def __next__(self) -> T:
-        if self.head is None:
-            self.head = self.iterators.__next__()
-        try:
-            return self.head.__next__()
-        except StopIteration:
-            self.head = None
-            return self.__next__()
+        # Iterative, not recursive: the old `return self.__next__()` grew one
+        # stack frame per exhausted-empty sub-iterator, a RecursionError
+        # waiting on any large fan-out.
+        while True:
+            if self.head is None:
+                self.head = self.iterators.__next__()
+            try:
+                return self.head.__next__()
+            except StopIteration:
+                self.head = None
 
 
 def as_available_nested(futures: List[Future[Iterator[U]]]) -> Iterator[U]:
@@ -837,8 +840,19 @@ class SyncIteratorToAsync(AsyncIterator[T]):
             self._pending = loop.run_in_executor(None, self._next_with_default)
         try:
             item = await self._pending
-        finally:
+        except asyncio.CancelledError:
+            # Keep _pending: the executor thread is still inside next() and
+            # will produce an item. Clearing it here (the old finally did)
+            # dropped that item on the floor AND let a retried __anext__
+            # start a SECOND concurrent next() on the same non-reentrant
+            # iterator chain -- exactly what the class docstring promises
+            # can't happen.
+            raise
+        except BaseException:
+            # The sync iterator itself raised; that future is spent.
             self._pending = None
+            raise
+        self._pending = None
         if item is self._sentinel:
             self._exhausted = True
             raise StopAsyncIteration
