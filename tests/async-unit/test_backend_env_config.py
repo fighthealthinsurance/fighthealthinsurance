@@ -15,6 +15,10 @@ production x-review.
 
 from unittest.mock import MagicMock, patch
 
+from llm_result_utils.cleaner_utils import CleanerUtils
+
+# Importing ml_models installs the bounded is_valid_url override on
+# CleanerUtils (see _bounded_is_valid_url).
 from fighthealthinsurance.ml.ml_models import RemoteHealthInsurance
 
 
@@ -74,6 +78,28 @@ class TestEmptyStringEnvIsUnset:
         monkeypatch.setenv("HEALTH_BACKEND_PORT", "")
         m = RemoteHealthInsurance("some-model", dual_mode=False)
         assert m.api_base == "http://primary.internal:80/v1"
+
+
+class TestBoundedUrlValidatorSchemes:
+    def test_file_scheme_rejected_without_network(self):
+        """URLs come from LLM output; urllib would otherwise happily open
+        file:// (and other non-network schemes). Must be rejected before any
+        request is attempted."""
+        with patch(
+            "fighthealthinsurance.ml.ml_models._urllib_request.urlopen"
+        ) as mock_open:
+            assert CleanerUtils.is_valid_url("file:///etc/passwd") is False
+            assert CleanerUtils.is_valid_url("ftp://example.com/x") is False
+            assert CleanerUtils.is_valid_url("not a url") is False
+        mock_open.assert_not_called()
+
+    def test_https_scheme_probes_network(self):
+        with patch(
+            "fighthealthinsurance.ml.ml_models._urllib_request.urlopen"
+        ) as mock_open:
+            mock_open.return_value.read.return_value = b"ok page content"
+            assert CleanerUtils.is_valid_url("https://example.com/policy.pdf") is True
+        mock_open.assert_called_once()
 
 
 class TestModelIsOkProbesEffectiveBase:

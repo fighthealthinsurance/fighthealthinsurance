@@ -106,7 +106,16 @@ class PerConnectionThreadSensitiveMixin:
         if getattr(settings, "WS_PER_CONNECTION_THREAD_SENSITIVE", True):
             self._ts_context = ThreadSensitiveContext()
             await self._ts_context.__aenter__()
-        await super().websocket_connect(message)  # type: ignore[misc]
+        try:
+            await super().websocket_connect(message)  # type: ignore[misc]
+        except BaseException:
+            # A failed connect never reaches websocket_disconnect, so exit
+            # the context here or its executor leaks with the connection.
+            ctx = self._ts_context
+            if ctx is not None:
+                self._ts_context = None
+                await ctx.__aexit__(None, None, None)
+            raise
 
     async def websocket_disconnect(self, message):
         try:
@@ -872,6 +881,15 @@ class StreamingEscalationBackend(
             except Exception:
                 pass
         finally:
+            # Close the generator deterministically (same reasoning as the
+            # appeals consumer): a mid-stream disconnect otherwise leaves it
+            # to non-deterministic asyncgen GC finalization.
+            try:
+                aclose = getattr(aitr, "aclose", None)
+                if aclose is not None:
+                    await aclose()
+            except Exception:
+                logger.debug("escalation ws: error closing letter generator")
             await asyncio.sleep(0.1)
             try:
                 await self.close()
@@ -933,6 +951,15 @@ class StreamingEntityBackend(PerConnectionThreadSensitiveMixin, AsyncWebsocketCo
                 logger.debug("entity ws: could not send error frame")
             raise e
         finally:
+            # Close the generator deterministically (same reasoning as the
+            # appeals consumer): a mid-stream disconnect otherwise leaves it
+            # to non-deterministic asyncgen GC finalization.
+            try:
+                aclose = getattr(aitr, "aclose", None)
+                if aclose is not None:
+                    await aclose()
+            except Exception:
+                logger.debug("entity ws: error closing extraction generator")
             await asyncio.sleep(0.1)
             try:
                 await self.close()
@@ -1036,6 +1063,15 @@ class PriorAuthConsumer(PerConnectionThreadSensitiveMixin, AsyncWebsocketConsume
                     logger.debug("prior-auth ws: could not send error frame")
                 raise e
             finally:
+                # Close the generator deterministically (same reasoning as
+                # the appeals consumer): a mid-stream disconnect otherwise
+                # leaves it to non-deterministic asyncgen GC finalization.
+                try:
+                    aclose = getattr(generator, "aclose", None)
+                    if aclose is not None:
+                        await aclose()
+                except Exception:
+                    logger.debug("prior-auth ws: error closing proposal generator")
                 await asyncio.sleep(1)
                 await self.close()
         except Exception as e:

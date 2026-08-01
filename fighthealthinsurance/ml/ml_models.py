@@ -45,6 +45,7 @@ else:
 from llm_result_utils.cleaner_utils import CleanerUtils
 from llm_result_utils.llm_utils import LLMResponseUtils
 
+import urllib.parse
 import urllib.request as _urllib_request
 
 
@@ -55,8 +56,16 @@ def _bounded_is_valid_url(cls, url):
     ``urlopen`` (no timeout), so a single unresponsive host stalls the
     appeal's post-processing in ``url_fixer`` indefinitely. Same semantics,
     but with a hard per-request timeout and a capped read (the bad-result
-    regex only matches at the start of the body anyway).
+    regex only matches at the start of the body anyway) -- and restricted to
+    http(s): these URLs come from LLM OUTPUT, and urllib will otherwise
+    happily open file:// and other non-network schemes.
     """
+    try:
+        scheme = urllib.parse.urlsplit(url).scheme.lower()
+    except ValueError:
+        return False
+    if scheme not in ("http", "https"):
+        return False
     try:
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
