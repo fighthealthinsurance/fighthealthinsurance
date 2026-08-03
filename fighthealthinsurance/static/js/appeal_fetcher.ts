@@ -989,12 +989,22 @@ function describeFetchError(error: unknown): string {
   ) {
     interpretation = 'connection dropped mid-response (idle proxy timeout, origin restart, or transient network loss)';
   } else if (
-    // Every browser's "the request never completed a round trip" wording.
     normalized.includes('failed to fetch') ||
     normalized.includes('load failed') ||
     normalized.includes('networkerror when attempting')
   ) {
-    interpretation = 'request never got a response (DNS/TLS/connect refused, offline, or blocked)';
+    // These wordings are AMBIGUOUS in Safari and Firefox: "Load failed" /
+    // "NetworkError when attempting to fetch resource" are thrown both for
+    // a request that never connected AND for a body stream that dies
+    // mid-response. Only the stage disambiguates: once headers (let alone
+    // body bytes) arrived, the server provably answered, and "never got a
+    // response" would be flatly wrong -- production logs showed exactly
+    // that misread, blaming DNS/connect for a stream that delivered 16
+    // frames and then sat idle 60s before a proxy cut it.
+    interpretation =
+      restStage === 'streaming' || restStage === 'headers'
+        ? 'connection dropped mid-response (idle proxy timeout, origin restart, or transient network loss)'
+        : 'request never got a response (DNS/TLS/connect refused, offline, or blocked)';
   }
   const parts = [`${name}: ${message}`, `stage=${restStage}`];
   if (interpretation) {
