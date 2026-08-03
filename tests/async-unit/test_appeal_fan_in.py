@@ -9,10 +9,12 @@ appeals until the overall budget expired and they were abandoned with it.
 
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
+from unittest.mock import MagicMock
 
 from fighthealthinsurance.generate_appeal import (
     GeneratedAppeal,
     _appeals_as_futures_complete,
+    _generated_to_appeals_text,
 )
 from fighthealthinsurance.utils import UnwrapIterator
 
@@ -71,6 +73,33 @@ class TestAppealsAsFuturesComplete:
         assert drained == [True]
         # Unblock the leaked future so nothing lingers.
         never.set_result([])
+
+
+class TestMapperOutcomeRanking:
+    def test_runt_then_crash_records_error_not_runt_only(self):
+        """A model that yields a runt and THEN crashes mid-results must be
+        filed as `error` (the crash is the actionable fact), not as
+        `runt_only` (which reads as 'answered too briefly')."""
+
+        def _exploding_results():
+            yield ("full", "no.")
+            raise RuntimeError("backend fell over mid-stream")
+
+        fut: Future = Future()
+        fut.set_result(_exploding_results())
+        recorded = []
+        recorder = MagicMock()
+        recorder.record.side_effect = lambda rec: recorded.append(rec)
+        template_generator = MagicMock()
+        items = list(
+            _generated_to_appeals_text(
+                "flaky-model", fut, template_generator, "full", recorder
+            )
+        )
+        # The runt was still delivered before the crash.
+        assert [i.text for i in items] == ["no."]
+        assert [r.outcome for r in recorded] == ["error"]
+        assert "backend fell over" in recorded[0].error_detail
 
 
 class TestUnwrapIteratorIterative:

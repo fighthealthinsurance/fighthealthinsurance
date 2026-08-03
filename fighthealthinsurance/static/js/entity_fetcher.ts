@@ -229,6 +229,9 @@ export function doQuery(
   data: Map<string, string>,
   retries: number,
 ) {
+  // Fresh run, fresh error state: a stale flag from a previous run on this
+  // page would block auto-advance after a later successful extraction.
+  serverErrorSeen = false;
   // Initialize status indicator
   const waitingMsg = document.getElementById('waiting-msg');
   if (waitingMsg) {

@@ -1175,6 +1175,7 @@ def _generated_to_appeals_text(
     """
     produced = False
     runt_only = False
+    failed = False
     error_detail = ""
     # What this model returned, kept so the persisted row shows what was said
     # even when nothing was deliverable. Capped as we go rather than at write
@@ -1236,6 +1237,7 @@ def _generated_to_appeals_text(
             # code bug in the pipeline) keeps its traceback -- otherwise an
             # all-models-empty run caused by a defect would be indistinguishable
             # from ordinary backend downtime.
+            failed = True
             error_detail = describe_model_error(e)
             if isinstance(e, MODEL_TRANSPORT_ERRORS):
                 logger.warning(
@@ -1296,6 +1298,7 @@ def _generated_to_appeals_text(
             # with a clean 'done' frame, so neither side noticed the loss.
             # (Cancellation/GeneratorExit are BaseExceptions and still
             # propagate, so client-disconnect teardown is unaffected.)
+            failed = True
             error_detail = f"appeal mapping failed: {e}"
             logger.opt(exception=True).error(
                 f"Appeal mapping for {model_name} failed mid-results; dropping "
@@ -1315,12 +1318,17 @@ def _generated_to_appeals_text(
         if recorder is not None:
             if produced:
                 outcome = "ok"
+            elif failed:
+                # An actual raised failure outranks runt_only: a model that
+                # yielded a runt and THEN crashed mid-results should read as
+                # the error it hit, not as "answered too briefly". (error
+                # itself used to be filed as `no_output` -- indistinguishable
+                # from a model that answered with nothing, a completely
+                # different problem.)
+                outcome = "error"
             elif runt_only:
                 outcome = "runt_only"
             elif error_detail:
-                # A transport/backend failure, which used to be filed as
-                # `no_output` -- indistinguishable from a model that answered
-                # with nothing, which is a completely different problem.
                 outcome = "error"
             else:
                 outcome = "no_output"

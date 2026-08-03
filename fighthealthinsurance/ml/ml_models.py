@@ -15,7 +15,7 @@ from typing import Any, Callable, ClassVar, Iterable, List, Optional, Tuple, Uni
 
 import aiohttp
 import requests
-from asgiref.sync import async_to_sync
+from asgiref.sync import async_to_sync, sync_to_async
 from loguru import logger
 
 
@@ -1696,8 +1696,12 @@ class RemoteOpenLike(RemoteModel):
         # Last generous-window TIMEOUT strike per (api_base, model): budget
         # timeouts are deduped to one strike per window so parallel legs of
         # one slow inference can't trip the cooldown together (see
-        # __timeout_infer).
+        # __timeout_infer). The lock makes that dedup real: the legs run on
+        # separate executor threads and time out within microseconds of each
+        # other, so an unguarded check-then-set would let them all pass. It
+        # also guards _note_transport_failure's strike-list read-modify-write.
         self._timeout_strike_last: dict[tuple[str, str], float] = {}
+        self._strike_lock = threading.Lock()
 
     def model_is_ok(self):
         """Check that the backend supports this model, returns true if found in list.
@@ -2161,20 +2165,22 @@ class RemoteOpenLike(RemoteModel):
         # _bounded_is_valid_url). The appeal path already runs _checked_infer
         # inside a worker thread, but the escalation/prior-auth paths await it
         # directly on the ASGI loop, where these synchronous probes would
-        # stall every other request on the pod. No ORM access, so the plain
-        # executor hop (not database_sync_to_async) is correct. The DEDICATED
-        # cleaner pool, never bridge_executor: bridge workers block waiting
-        # on model futures, and every model future depends on this hop --
-        # sharing the pool would deadlock generation under saturation (see
-        # exec.py).
-        after_cleaners = await asyncio.get_running_loop().run_in_executor(
-            cleaner_executor,
+        # stall every other request on the pod. Plain asgiref sync_to_async
+        # (not database_sync_to_async): this is non-ORM network/string work,
+        # so the database variant's per-call connection churn buys nothing.
+        # The DEDICATED cleaner pool, never bridge_executor: bridge workers
+        # block waiting on model futures, and every model future depends on
+        # this hop -- sharing the pool would deadlock generation under
+        # saturation (see exec.py).
+        after_cleaners = await sync_to_async(
             lambda: CleanerUtils.note_remover(
                 CleanerUtils.url_fixer(
                     CleanerUtils.tla_fixer(result), input_urls=input_urls
                 )
             ),
-        )
+            thread_sensitive=False,
+            executor=cleaner_executor,
+        )()
 
         block_cleaned = remove_repeated_blocks(after_cleaners)
 
@@ -2668,26 +2674,33 @@ class RemoteOpenLike(RemoteModel):
         return True
 
     def _note_transport_failure(self, api_base: str, model: str, detail: str) -> None:
-        """Record a transport failure; start a cooldown on repeated strikes."""
+        """Record a transport failure; start a cooldown on repeated strikes.
+
+        Locked: callers run on parallel executor threads, and the strike
+        list is a read-modify-write.
+        """
         now = time.monotonic()
         key = (api_base, model)
-        strikes = [
-            t
-            for t in self._transport_strikes.get(key, [])
-            if now - t < self.TRANSPORT_STRIKE_WINDOW_SECONDS
-        ]
-        strikes.append(now)
-        if len(strikes) >= self.TRANSPORT_STRIKES_TO_COOL:
-            cooldown = _env_float("FHI_TRANSPORT_COOLDOWN_SECONDS", 120.0)
-            self._transport_cooldowns[key] = now + cooldown
-            self._transport_strikes.pop(key, None)
+        with self._strike_lock:
+            strikes = [
+                t
+                for t in self._transport_strikes.get(key, [])
+                if now - t < self.TRANSPORT_STRIKE_WINDOW_SECONDS
+            ]
+            strikes.append(now)
+            cooled = len(strikes) >= self.TRANSPORT_STRIKES_TO_COOL
+            if cooled:
+                cooldown = _env_float("FHI_TRANSPORT_COOLDOWN_SECONDS", 120.0)
+                self._transport_cooldowns[key] = now + cooldown
+                self._transport_strikes.pop(key, None)
+            else:
+                self._transport_strikes[key] = strikes
+        if cooled:
             logger.warning(
                 f"{self}: {model} at {api_base} hit {len(strikes)} transport "
                 f"failures within {self.TRANSPORT_STRIKE_WINDOW_SECONDS:.0f}s "
                 f"({detail}); cooling down for {cooldown:.0f}s"
             )
-        else:
-            self._transport_strikes[key] = strikes
 
     def is_available(self) -> bool:
         """False while EVERY endpoint this instance can serve is inside a
@@ -2756,9 +2769,17 @@ class RemoteOpenLike(RemoteModel):
                 if effective_timeout >= 120.0 and strike_base:
                     now = time.monotonic()
                     pair = (strike_base, call_model)
-                    last = self._timeout_strike_last.get(pair, float("-inf"))
-                    if now - last >= self.TRANSPORT_STRIKE_WINDOW_SECONDS:
-                        self._timeout_strike_last[pair] = now
+                    # Locked check-then-set: the parallel legs live on
+                    # separate executor threads and expire together, so an
+                    # unguarded check would let them all strike at once.
+                    with self._strike_lock:
+                        last = self._timeout_strike_last.get(pair, float("-inf"))
+                        should_strike = (
+                            now - last >= self.TRANSPORT_STRIKE_WINDOW_SECONDS
+                        )
+                        if should_strike:
+                            self._timeout_strike_last[pair] = now
+                    if should_strike:
                         self._note_transport_failure(
                             strike_base,
                             call_model,
