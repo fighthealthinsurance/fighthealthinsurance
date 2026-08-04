@@ -80,14 +80,20 @@ def _sqlite_shared_file_options(timeout_seconds: int) -> dict:
       write; if another writer committed in between, sqlite must fail the
       upgrade *immediately* (the read snapshot is stale, so the busy handler
       never runs). IMMEDIATE takes the write lock at BEGIN, turning that
-      hard failure into a plain wait.
+      hard failure into a plain wait. The known cost: EVERY outermost atomic
+      block takes the write lock, including read-only ones and the wrapper
+      transactions of Django ``TestCase`` -- so a sync-actor test written as
+      plain ``TestCase`` holds the write lock for its whole run and any
+      actor write against the shared file will time out. Actor-facing tests
+      there must keep using ``TransactionTestCase`` (they already do).
     * ``timeout`` -- passed to ``sqlite3.connect``; sets the busy handler so
       lock waits block up to this long instead of raising at once.
     * ``journal_mode=WAL`` -- readers stop blocking the writer (and vice
       versa), which is the steady state of a dev server: actors write in the
       background while requests read. Sticky per database file; harmless to
-      re-run per connection. (Would misbehave on a network mount, but dev
-      DB files live in the repo checkout.)
+      re-run per connection. (WAL is unsafe on network filesystems -- fine
+      for the default in-repo dev DB and the container paths, but don't
+      point ``DEV_DB_LOC`` at an NFS mount.)
     * ``synchronous=NORMAL`` -- the standard WAL pairing; loses at most the
       final transactions on power loss, never consistency. Fine for dev and
       throwaway test databases.
@@ -812,7 +818,6 @@ class Test(Dev):
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.sqlite3",
-            "TIMEOUT": 30,
             "CONN_MAX_AGE": 0,
             "NAME": "memory",
         },
@@ -845,7 +850,6 @@ class TestSync(Dev):
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.sqlite3",
-            "TIMEOUT": 4,
             "NAME": "memory",
         },
     }

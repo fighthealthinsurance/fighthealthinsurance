@@ -14,7 +14,11 @@ import ray
 from django.test import SimpleTestCase
 
 from fighthealthinsurance.base_actor_ref import ray_cluster_available
-from fighthealthinsurance.local_ray import LOCAL_RAY_ENV_VAR, maybe_init_local_ray
+from fighthealthinsurance.local_ray import (
+    LOCAL_RAY_ENV_VAR,
+    LOCAL_RAY_POLLING_ENV_VAR,
+    maybe_init_local_ray,
+)
 
 
 class TestLocalRayBoot(SimpleTestCase):
@@ -27,6 +31,10 @@ class TestLocalRayBoot(SimpleTestCase):
         # override -- which also exercises that override path for real.
         with patch.dict(os.environ, {LOCAL_RAY_ENV_VAR: "true"}, clear=False):
             os.environ.pop("RAY_ADDRESS", None)
+            # tox runs with passenv = *: a developer's exported
+            # FHI_LOCAL_RAY_POLLING would otherwise make this real boot
+            # launch the actual polling-actor fleet mid-suite.
+            os.environ.pop(LOCAL_RAY_POLLING_ENV_VAR, None)
             self.assertTrue(maybe_init_local_ray())
             self.assertTrue(ray.is_initialized())
             # The per-task dispatch sites gate on this: after the deliberate
