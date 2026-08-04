@@ -5,6 +5,7 @@ from contextlib import contextmanager
 from asgiref.sync import async_to_sync
 from unittest.mock import Mock, patch, AsyncMock
 from typing import AsyncIterator, List
+from fighthealthinsurance import common_view_logic
 from fighthealthinsurance.common_view_logic import (
     FindNextStepsHelper,
     AppealsBackendHelper,
@@ -619,6 +620,67 @@ class TestCommonViewLogic(TestCase):
                 )
             finally:
                 await Denial.objects.filter(denial_id=14).adelete()
+
+        async_to_sync(test)()
+
+    @pytest.mark.django_db
+    @patch("fighthealthinsurance.common_view_logic.appealGenerator")
+    def test_make_appeals_does_not_hold_the_thread_sensitive_executor(
+        self, mock_appeal_generator
+    ):
+        """make_appeals must be bridged with thread_sensitive=False.
+
+        The default (True) puts it on asgiref's ONE process-wide
+        thread-sensitive executor thread and holds it for the entire
+        generating budget. Everything else that reaches the ORM through an
+        async path then queues behind it -- including the
+        serve_reserve_if_stalled() query that rides the generating heartbeat,
+        which is how a slow backend turned into a multi-minute SILENT window
+        on the wire (past the client's 90s inactivity watchdog) and a run that
+        delivered nothing.
+        """
+        email, denial = self._create_test_denial(24, gen_attempts=3)
+        mock_appeal_generator.make_appeals.side_effect = self._slow_make_appeals(
+            0.0,
+            ["Dear Insurance Company, this is a sufficiently long appeal letter."],
+        )
+
+        real_bridge = common_view_logic.database_sync_to_async
+        bridged: List[tuple[object, object]] = []
+
+        def spy(func, *args, **kwargs):
+            bridged.append((func, kwargs.get("thread_sensitive")))
+            return real_bridge(func, *args, **kwargs)
+
+        async def test():
+            try:
+                with patch(
+                    "fighthealthinsurance.common_view_logic.database_sync_to_async",
+                    spy,
+                ):
+                    await self.collect_appeal_responses(
+                        {
+                            "denial_id": 24,
+                            "email": email,
+                            "semi_sekret": denial.semi_sekret,
+                        }
+                    )
+
+                make_appeals_bridges = [
+                    ts
+                    for func, ts in bridged
+                    if func is mock_appeal_generator.make_appeals
+                ]
+                assert make_appeals_bridges, (
+                    f"make_appeals was not bridged via database_sync_to_async; "
+                    f"saw {bridged}"
+                )
+                assert all(ts is False for ts in make_appeals_bridges), (
+                    f"make_appeals must be bridged with thread_sensitive=False, "
+                    f"got {make_appeals_bridges}"
+                )
+            finally:
+                await Denial.objects.filter(denial_id=24).adelete()
 
         async_to_sync(test)()
 

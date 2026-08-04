@@ -410,6 +410,184 @@ class DenialTextReplacedMidGenerationTest(TransactionTestCase):
         )
 
 
+class ConfirmedContextRefreshTest(TestCase):
+    """Round 2: the confirmed-dx/px refresh replaces the held-back reserve
+    without ever leaving the denial worse off than before the refresh."""
+
+    def setUp(self):
+        self.denial = Denial.objects.create(
+            hashed_email="hash",
+            denial_text="I was denied an MRI for chronic back pain.",
+            procedure="MRI",
+            diagnosis="chronic back pain",
+        )
+        self.round1 = ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="Round-one bare speculative draft, long enough to serve.",
+            model_name="m",
+            speculative=True,
+            context_level="speculative",
+        )
+
+    def _drafts(self, *texts):
+        return iter(
+            [GeneratedAppeal(text=t, model_name="m", context_level="full") for t in texts]
+        )
+
+    def test_refresh_replaces_held_back_reserve_with_confirmed_rows(self):
+        with patch(_MAKE_APPEALS) as mock_make, patch(
+            _SUMMARIZE, new_callable=AsyncMock, return_value=None
+        ):
+            mock_make.return_value = self._drafts(
+                "A refreshed draft that argues about the confirmed procedure."
+            )
+            count = SpeculativeAppealsHelper.generate_for_denial_sync(
+                self.denial.denial_id,
+                trigger="dx_px_confirmed",
+                confirmed_context=True,
+            )
+        self.assertEqual(count, 1)
+        rows = ProposedAppeal.objects.filter(for_denial=self.denial)
+        self.assertEqual(rows.count(), 1)
+        row = rows.get()
+        self.assertTrue(row.speculative)
+        self.assertEqual(row.context_level, "speculative_confirmed")
+        self.assertFalse(
+            ProposedAppeal.objects.filter(pk=self.round1.pk).exists(),
+            "the superseded round-1 reserve row must be retired",
+        )
+
+    def test_refresh_that_produces_nothing_keeps_the_round1_reserve(self):
+        with patch(_MAKE_APPEALS) as mock_make, patch(
+            _SUMMARIZE, new_callable=AsyncMock, return_value=None
+        ):
+            mock_make.return_value = iter([])
+            count = SpeculativeAppealsHelper.generate_for_denial_sync(
+                self.denial.denial_id,
+                trigger="dx_px_confirmed",
+                confirmed_context=True,
+            )
+        self.assertEqual(count, 0)
+        self.assertTrue(
+            ProposedAppeal.objects.filter(pk=self.round1.pk).exists(),
+            "an empty refresh must not delete the only reserve we have",
+        )
+
+    def test_refresh_skips_when_live_appeals_exist(self):
+        ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="A live draft the user's real generation produced.",
+            model_name="m",
+            speculative=False,
+        )
+        with patch(_MAKE_APPEALS) as mock_make:
+            count = SpeculativeAppealsHelper.generate_for_denial_sync(
+                self.denial.denial_id,
+                trigger="dx_px_confirmed",
+                confirmed_context=True,
+            )
+        self.assertEqual(count, 0)
+        mock_make.assert_not_called()
+
+    def test_duplicate_refresh_skipped_unless_forced(self):
+        ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="An existing confirmed-context reserve draft here.",
+            model_name="m",
+            speculative=True,
+            context_level="speculative_confirmed",
+        )
+        with patch(_MAKE_APPEALS) as mock_make:
+            count = SpeculativeAppealsHelper.generate_for_denial_sync(
+                self.denial.denial_id,
+                trigger="dx_px_confirmed",
+                confirmed_context=True,
+            )
+        self.assertEqual(count, 0)
+        mock_make.assert_not_called()
+
+        # force=True (the user changed dx/px again) regenerates past it.
+        with patch(_MAKE_APPEALS) as mock_make, patch(
+            _SUMMARIZE, new_callable=AsyncMock, return_value=None
+        ):
+            mock_make.return_value = self._drafts(
+                "A second confirmed refresh after the user edited the values."
+            )
+            count = SpeculativeAppealsHelper.generate_for_denial_sync(
+                self.denial.denial_id,
+                force=True,
+                trigger="dx_px_confirmed",
+                confirmed_context=True,
+            )
+        self.assertEqual(count, 1)
+
+
+class ConfirmedContextDispatchRuleTest(TestCase):
+    """FindNextStepsHelper._maybe_dispatch_confirmed_speculative decides when
+    the round-2 refresh fires."""
+
+    def setUp(self):
+        from fighthealthinsurance.common_view_logic import FindNextStepsHelper
+
+        self.helper = FindNextStepsHelper
+        self.denial = Denial.objects.create(
+            hashed_email="hash",
+            denial_text="Denied an MRI.",
+            procedure="MRI",
+            diagnosis="chronic back pain",
+        )
+
+    def test_changed_values_dispatch_with_force(self):
+        with patch(_DISPATCH) as mock_dispatch:
+            self.helper._maybe_dispatch_confirmed_speculative(
+                self.denial, prior_procedure="CT scan", prior_diagnosis="pain"
+            )
+        mock_dispatch.assert_called_once_with(
+            self.denial.denial_id,
+            force=True,
+            trigger="dx_px_confirmed",
+            confirmed_context=True,
+        )
+
+    def test_first_confirmation_with_unchanged_values_dispatches(self):
+        with patch(_DISPATCH) as mock_dispatch:
+            self.helper._maybe_dispatch_confirmed_speculative(
+                self.denial,
+                prior_procedure="MRI",
+                prior_diagnosis="chronic back pain",
+            )
+        mock_dispatch.assert_called_once_with(
+            self.denial.denial_id,
+            force=False,
+            trigger="dx_px_confirmed",
+            confirmed_context=True,
+        )
+
+    def test_unchanged_values_with_existing_confirmed_reserve_skip(self):
+        ProposedAppeal.objects.create(
+            for_denial=self.denial,
+            appeal_text="Existing confirmed-context reserve draft text here.",
+            speculative=True,
+            context_level="speculative_confirmed",
+        )
+        with patch(_DISPATCH) as mock_dispatch:
+            self.helper._maybe_dispatch_confirmed_speculative(
+                self.denial,
+                prior_procedure="MRI",
+                prior_diagnosis="chronic back pain",
+            )
+        mock_dispatch.assert_not_called()
+
+    def test_no_dx_or_px_skips(self):
+        self.denial.procedure = ""
+        self.denial.diagnosis = ""
+        with patch(_DISPATCH) as mock_dispatch:
+            self.helper._maybe_dispatch_confirmed_speculative(
+                self.denial, prior_procedure="", prior_diagnosis=""
+            )
+        mock_dispatch.assert_not_called()
+
+
 class DispatchGuardTest(TestCase):
     """dispatch_speculative_appeals must never start a local Ray cluster, and
     must be fully disabled in the Test* configs."""
@@ -530,7 +708,9 @@ class DispatchOnDenialCreateTest(TestCase):
         # force=True is essential here: the idempotency guard also matches the
         # PROMOTED row below, which invalidation deliberately keeps, so without
         # it this denial could never rebuild a reserve for its new letter.
-        mock_dispatch.assert_called_once_with(existing.denial_id, force=True)
+        mock_dispatch.assert_called_once_with(
+            existing.denial_id, force=True, trigger="denial_text_replaced"
+        )
         # The stale reserve is gone; the already-served row is untouched.
         self.assertFalse(
             ProposedAppeal.objects.filter(pk=held_back.pk).exists(),

@@ -87,7 +87,9 @@ class SeleniumFollowUp(BaseCase, StaticLiveServerTestCase):
             f"v0/followup/{denial.uuid}/{denial.hashed_email}/{denial.hashed_email}"
         )
         self.open(f"{self.live_server_url}/{mylink}")
-        self.assert_title("Something Went Wrong - Fight Health Insurance")
+        # A stale/mangled follow-up link is a 404 (these live in emails for
+        # months), not a 500 -- see FollowUpView + fetch_denial.
+        self.assert_title("Page Not Found - Fight Health Insurance")
 
     def test_follow_up_trailing_slash_link(self):
         """Email clients sometimes add a trailing slash; the page must load.

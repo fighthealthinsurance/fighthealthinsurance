@@ -34,3 +34,32 @@ pubmed_executor = ThreadPoolExecutor(
     max_workers=_pool_size("FHI_PUBMED_EXECUTOR_WORKERS", 4),
     thread_name_prefix="fhi-pubmed",
 )
+
+# Async→sync bridge hops: thread_sensitive=False database_sync_to_async call
+# sites and SyncIteratorToAsync's per-item next() hops. Without an explicit
+# executor these land on the event loop's DEFAULT executor (min(32, cpus+4)
+# threads -- single digits on a small pod), shared with everything else the
+# loop offloads; a handful of long-blocking generation drains there starves
+# every other bridge hop in the process. Isolated and sized for many
+# concurrent short hops plus a few long drains.
+#
+# DEADLOCK INVARIANT: work submitted to this pool may BLOCK ON model futures
+# (make_appeals peeks, iterator drains), so nothing a model call transitively
+# depends on may run here -- if it did, saturating this pool with waiting
+# generations would starve the very work those generations are waiting for.
+# That's why the result-cleaner hop below has its own pool.
+bridge_executor = ThreadPoolExecutor(
+    max_workers=_pool_size("FHI_BRIDGE_EXECUTOR_WORKERS", 32),
+    thread_name_prefix="fhi-bridge",
+)
+
+# Result-cleaner hops (_checked_infer's tla_fixer/url_fixer/note_remover
+# chain, which network-validates URLs): every MODEL CALL depends on one of
+# these to complete, and callers waiting on model calls occupy
+# bridge_executor -- putting these there would let saturation deadlock the
+# whole generation pipeline until its deadline (see invariant above). Small
+# and dedicated; tasks here depend on nothing but the network.
+cleaner_executor = ThreadPoolExecutor(
+    max_workers=_pool_size("FHI_CLEANER_EXECUTOR_WORKERS", 8),
+    thread_name_prefix="fhi-cleaner",
+)

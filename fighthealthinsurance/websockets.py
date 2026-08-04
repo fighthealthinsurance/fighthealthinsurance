@@ -6,6 +6,8 @@ import time
 import uuid
 from typing import AsyncIterator, Callable, Optional, Tuple, cast
 
+from asgiref.sync import ThreadSensitiveContext
+
 from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
 from django.db import transaction
@@ -67,6 +69,78 @@ async def _aclose_if_socket_was_idle(consumer: AsyncWebsocketConsumer) -> None:
     consumer._last_receive_monotonic = now  # type: ignore[attr-defined]
     if last is not None and (now - last) >= _IDLE_SWEEP_THRESHOLD_SECONDS:
         await aclose_old_connections()
+
+
+class PerConnectionThreadSensitiveMixin:
+    """Give each WebSocket connection its own thread-sensitive executor.
+
+    Django's ASGI handler enters ThreadSensitiveContext around every HTTP
+    request, but channels does NOT around consumer callbacks -- so every
+    ``thread_sensitive=True`` bridge (asgiref's default, used by helpers all
+    over the codebase) from every WebSocket in the process funnels onto
+    asgiref's ONE global thread-sensitive executor thread. One consumer
+    holding it for a long ORM call serializes every other socket's
+    thread-sensitive work behind it.
+
+    Scoped per CONNECTION (entered before connect, exited after disconnect),
+    not per message: channels dispatches a consumer's events sequentially in
+    one task, so a contextvar set here is visible to every later callback,
+    and one executor (thread + DB connection) per socket restores isolation
+    without churning a fresh thread and DB connection on every frame -- the
+    per-message variant did exactly that and promptly reintroduced sqlite
+    lock storms in tests and connection churn in prod.
+
+    Disabled by ``settings.WS_PER_CONNECTION_THREAD_SENSITIVE=False`` (the
+    Test* configs): sync tests drive consumers through async_to_sync from
+    the test thread, and asgiref routes thread-sensitive work back onto that
+    thread (same connection, same transaction). The context var preempts
+    that routing, and its foreign-thread sqlite connection deadlocks against
+    the test transaction.
+    """
+
+    _ts_context: Optional[ThreadSensitiveContext] = None
+
+    async def websocket_connect(self, message):
+        from django.conf import settings
+
+        if getattr(settings, "WS_PER_CONNECTION_THREAD_SENSITIVE", True):
+            self._ts_context = ThreadSensitiveContext()
+            await self._ts_context.__aenter__()
+        try:
+            await super().websocket_connect(message)  # type: ignore[misc]
+        except BaseException:
+            # A failed connect never reaches websocket_disconnect, so exit
+            # the context here or its executor leaks with the connection.
+            ctx = self._ts_context
+            if ctx is not None:
+                self._ts_context = None
+                await ctx.__aexit__(None, None, None)
+            raise
+
+    async def websocket_receive(self, message):
+        try:
+            await super().websocket_receive(message)  # type: ignore[misc]
+        except BaseException:
+            # Several receive() bodies deliberately re-raise after logging
+            # (diagnostics), which kills the whole consumer task -- and
+            # channels never dispatches websocket_disconnect to a dead
+            # consumer, so the disconnect-path cleanup below would not run.
+            # Exit the context here before propagating.
+            ctx = self._ts_context
+            if ctx is not None:
+                self._ts_context = None
+                await ctx.__aexit__(None, None, None)
+            raise
+
+    async def websocket_disconnect(self, message):
+        try:
+            # Raises StopConsumer by design; the finally still runs.
+            await super().websocket_disconnect(message)  # type: ignore[misc]
+        finally:
+            ctx = getattr(self, "_ts_context", None)
+            if ctx is not None:
+                self._ts_context = None
+                await ctx.__aexit__(None, None, None)
 
 
 async def enqueue_denied_items_analysis(*, chat_id: str) -> None:
@@ -500,16 +574,23 @@ async def _parse_json_or_close(
     """
 
     async def _send_err(message: str) -> None:
-        if streaming_protocol:
-            # Trailing newline: appeal_fetcher.ts buffers ws.onmessage
-            # data and only parses lines terminated by "\n". Without it
-            # the close arrives before the error frame is parsed and
-            # the client falls through to its generic error path.
-            await consumer.send(
-                json.dumps({"type": "error", "message": message}) + "\n"
-            )
-        else:
-            await consumer.send(json.dumps({"error": message}))
+        # Guarded: a client that sends malformed input and immediately
+        # disconnects makes this send raise, and (this helper runs before any
+        # consumer-level try/except) the exception would escape receive()
+        # entirely -- no close, no log. The close below must still run.
+        try:
+            if streaming_protocol:
+                # Trailing newline: appeal_fetcher.ts buffers ws.onmessage
+                # data and only parses lines terminated by "\n". Without it
+                # the close arrives before the error frame is parsed and
+                # the client falls through to its generic error path.
+                await consumer.send(
+                    json.dumps({"type": "error", "message": message}) + "\n"
+                )
+            else:
+                await consumer.send(json.dumps({"error": message}))
+        except Exception:
+            logger.debug(f"{consumer_name} websocket: could not send parse-error frame")
 
     if text_data is None:
         logger.warning(f"Empty/None text frame received in {consumer_name} websocket")
@@ -542,7 +623,9 @@ async def _parse_json_or_close(
 SUPPRESS_APPEAL_WS_DELIVERY = False
 
 
-class StreamingAppealsBackend(AsyncWebsocketConsumer):
+class StreamingAppealsBackend(
+    PerConnectionThreadSensitiveMixin, AsyncWebsocketConsumer
+):
     """Streaming back the appeals as json :D"""
 
     async def connect(self):
@@ -718,7 +801,33 @@ class StreamingAppealsBackend(AsyncWebsocketConsumer):
                 except Exception:
                     logger.debug("appeals ws: could not send error frame")
             raise
+        except asyncio.CancelledError:
+            # A real client hangup / server shutdown cancels receive().
+            # Without this branch the WS transport logged NOTHING for exactly
+            # the mid-stream deaths under investigation (the REST fallback
+            # already logs its equivalent), making WS drop-offs look rarer
+            # than they are. Log-and-re-raise only -- teardown semantics
+            # unchanged.
+            logger.warning(
+                f"APPEAL_GEN_DIAG appeals ws: stream for denial {denial_id} "
+                f"cancelled mid-flight after {appeal_count} appeals and "
+                f"{status_count} status frames (last phase="
+                f"{last_status_phase}, {wire.summary()})"
+            )
+            raise
         finally:
+            # Close the generator deterministically: without this, a consumer
+            # torn down mid-stream left generate_appeals (and its threadpool
+            # make_appeals task, keepalive loops, summarize task) to
+            # non-deterministic asyncgen GC finalization.
+            try:
+                # getattr: typed as AsyncIterator, which doesn't declare
+                # aclose; the concrete async generator always has it.
+                aclose = getattr(aitr, "aclose", None)
+                if aclose is not None:
+                    await aclose()
+            except Exception:
+                logger.debug("appeals ws: error closing appeal generator")
             await asyncio.sleep(0.1)
             try:
                 await self.close()
@@ -726,7 +835,9 @@ class StreamingAppealsBackend(AsyncWebsocketConsumer):
                 logger.debug("appeals ws: error closing connection")
 
 
-class StreamingEscalationBackend(AsyncWebsocketConsumer):
+class StreamingEscalationBackend(
+    PerConnectionThreadSensitiveMixin, AsyncWebsocketConsumer
+):
     """Streaming back regulator/executive escalation letters as JSON.
 
     Same envelope as StreamingAppealsBackend: client sends a single JSON
@@ -770,6 +881,9 @@ class StreamingEscalationBackend(AsyncWebsocketConsumer):
                 f"Error sending back escalation letters: {e}"
             )
             try:
+                # Trailing newline required: the client is strictly
+                # line-buffered, so a frame without it sits in respBuffer
+                # forever and the error is never shown.
                 await self.send(
                     json.dumps(
                         {
@@ -777,10 +891,20 @@ class StreamingEscalationBackend(AsyncWebsocketConsumer):
                             "message": "Server error while drafting letters.",
                         }
                     )
+                    + "\n"
                 )
             except Exception:
                 pass
         finally:
+            # Close the generator deterministically (same reasoning as the
+            # appeals consumer): a mid-stream disconnect otherwise leaves it
+            # to non-deterministic asyncgen GC finalization.
+            try:
+                aclose = getattr(aitr, "aclose", None)
+                if aclose is not None:
+                    await aclose()
+            except Exception:
+                logger.debug("escalation ws: error closing letter generator")
             await asyncio.sleep(0.1)
             try:
                 await self.close()
@@ -788,7 +912,7 @@ class StreamingEscalationBackend(AsyncWebsocketConsumer):
                 logger.debug("Error closing escalation connection")
 
 
-class StreamingEntityBackend(AsyncWebsocketConsumer):
+class StreamingEntityBackend(PerConnectionThreadSensitiveMixin, AsyncWebsocketConsumer):
     """Streaming Entity Extraction"""
 
     async def connect(self):
@@ -823,9 +947,34 @@ class StreamingEntityBackend(AsyncWebsocketConsumer):
                 await self.send("\n")
             await asyncio.sleep(1)
         except Exception as e:
-            logger.opt(exception=True).debug(f"Error sending back entity: {e}")
+            # ERROR, not debug: a systemic extraction failure was invisible in
+            # production logs. And send an error frame -- the client treats a
+            # bare close as success ("Extraction Complete!") and auto-advances
+            # the user to a blank form.
+            logger.opt(exception=True).error(f"Error sending back entity: {e}")
+            try:
+                await self.send(
+                    json.dumps(
+                        {
+                            "type": "error",
+                            "message": "Extraction failed on the server.",
+                        }
+                    )
+                    + "\n"
+                )
+            except Exception:
+                logger.debug("entity ws: could not send error frame")
             raise e
         finally:
+            # Close the generator deterministically (same reasoning as the
+            # appeals consumer): a mid-stream disconnect otherwise leaves it
+            # to non-deterministic asyncgen GC finalization.
+            try:
+                aclose = getattr(aitr, "aclose", None)
+                if aclose is not None:
+                    await aclose()
+            except Exception:
+                logger.debug("entity ws: error closing extraction generator")
             await asyncio.sleep(0.1)
             try:
                 await self.close()
@@ -833,7 +982,7 @@ class StreamingEntityBackend(AsyncWebsocketConsumer):
                 logger.debug("entity ws: error closing connection")
 
 
-class PriorAuthConsumer(AsyncWebsocketConsumer):
+class PriorAuthConsumer(PerConnectionThreadSensitiveMixin, AsyncWebsocketConsumer):
     """Streaming back the proposed prior authorizations as JSON."""
 
     def __init__(self, *args, **kwargs):
@@ -911,17 +1060,53 @@ class PriorAuthConsumer(AsyncWebsocketConsumer):
                         logger.debug(f"prior-auth ws: malformed proposal {proposal}")
                     await asyncio.sleep(0)
             except Exception as e:
-                logger.opt(exception=True).debug(
+                logger.opt(exception=True).error(
                     f"Error sending back prior auth proposals: {e}"
                 )
+                # Send the error frame BEFORE the close below: the old shape
+                # (inner finally closed, outer handler then sent) tried to
+                # write on a closed socket, raised again, and skipped its own
+                # close -- a hung socket instead of a clean error. Short
+                # correlation ref, not str(e): exception text can carry
+                # internal details.
+                try:
+                    await self.send(
+                        json.dumps({"error": "Server error generating prior auth."})
+                        + "\n"
+                    )
+                except Exception:
+                    logger.debug("prior-auth ws: could not send error frame")
                 raise e
             finally:
+                # Close the generator deterministically (same reasoning as
+                # the appeals consumer): a mid-stream disconnect otherwise
+                # leaves it to non-deterministic asyncgen GC finalization.
+                try:
+                    aclose = getattr(generator, "aclose", None)
+                    if aclose is not None:
+                        await aclose()
+                except Exception:
+                    logger.debug("prior-auth ws: error closing proposal generator")
                 await asyncio.sleep(1)
                 await self.close()
         except Exception as e:
-            logger.opt(exception=True).debug(f"Error in prior auth consumer: {e}")
-            await self.send(json.dumps({"error": f"Server error: {str(e)}"}))
-            await self.close()
+            logger.opt(exception=True).error(f"Error in prior auth consumer: {e}")
+            # Failures BEFORE the generation loop (auth lookup, status
+            # update, initial send) leave the socket open with no frame
+            # sent yet -- send an error frame so the client can tell this
+            # apart from "finished with zero proposals". For inner-loop
+            # failures the socket is already closed and this send just
+            # no-ops into the except below.
+            try:
+                await self.send(
+                    json.dumps({"error": "Server error generating prior auth."}) + "\n"
+                )
+            except Exception:
+                logger.debug("prior-auth ws: could not send outer error frame")
+            try:
+                await self.close()
+            except Exception:
+                logger.debug("prior-auth ws: error closing connection")
 
     async def _get_prior_auth_request(self, prior_auth_id, token):
         """Get the prior auth request and validate the token."""
@@ -984,7 +1169,7 @@ async def resolve_chat_type(
     return ChatType.PATIENT, None
 
 
-class OngoingChatConsumer(AsyncWebsocketConsumer):
+class OngoingChatConsumer(PerConnectionThreadSensitiveMixin, AsyncWebsocketConsumer):
     """WebSocket consumer for ongoing chat with LLMs for both pro users and patients."""
 
     chat_interface: Optional[ChatInterface] = None

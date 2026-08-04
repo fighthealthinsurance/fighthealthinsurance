@@ -474,6 +474,17 @@ class Base(Configuration):
     # form, so every test that files a denial would start one.
     SPECULATIVE_APPEALS_PRECOMPUTE = True
 
+    # Per-WebSocket-connection ThreadSensitiveContext (see
+    # websockets.PerConnectionThreadSensitiveMixin): without it every
+    # thread_sensitive=True bridge in the process shares asgiref's single
+    # global executor thread. Off in the Test* configs: sync tests drive
+    # consumers through async_to_sync from the test thread, and asgiref
+    # routes thread-sensitive work back onto that thread (same connection,
+    # same transaction) -- a per-connection executor preempts that routing
+    # and its foreign-thread sqlite connection deadlocks against the test
+    # transaction.
+    WS_PER_CONNECTION_THREAD_SENSITIVE = True
+
     # Static files (CSS, JavaScript, Images)
     # https://docs.djangoproject.com/en/4.0/howto/static-files/
 
@@ -765,6 +776,8 @@ class Test(Dev):
     SITE_BANNER_BACKGROUND_REFRESH = False
     # No speculative precompute in tests (see Base).
     SPECULATIVE_APPEALS_PRECOMPUTE = False
+    # Keep thread-sensitive bridge routing on the test thread (see Base).
+    WS_PER_CONNECTION_THREAD_SENSITIVE = False
 
 
 class TestSync(Dev):
@@ -793,6 +806,8 @@ class TestSync(Dev):
     SITE_BANNER_BACKGROUND_REFRESH = False
     # No speculative precompute in tests (see Base).
     SPECULATIVE_APPEALS_PRECOMPUTE = False
+    # Keep thread-sensitive bridge routing on the test thread (see Base).
+    WS_PER_CONNECTION_THREAD_SENSITIVE = False
 
 
 class TestActor(Dev):
@@ -828,6 +843,8 @@ class TestActor(Dev):
     SITE_BANNER_BACKGROUND_REFRESH = False
     # No speculative precompute in tests (see Base).
     SPECULATIVE_APPEALS_PRECOMPUTE = False
+    # Keep thread-sensitive bridge routing on the test thread (see Base).
+    WS_PER_CONNECTION_THREAD_SENSITIVE = False
 
 
 class Prod(Base):
@@ -942,10 +959,16 @@ class Prod(Base):
             # Peak legitimate concurrent ORM users in one web worker: the
             # single thread_sensitive sync lane (1) + exec.executor (24
             # interactive) + background_executor (8) + pubmed_executor (4)
-            # = 37; the default of 40 keeps busy executors from starving the
-            # pool by themselves. (Keep in sync with exec.py's pool sizes /
-            # their FHI_*_EXECUTOR_WORKERS overrides, and remember
-            # cluster-wide max_connections must cover pods * max_size.)
+            # + bridge_executor (32, runs ORM-touching generation bridges)
+            # = 69, PLUS one thread-sensitive lane per live WebSocket
+            # (websockets.PerConnectionThreadSensitiveMixin). The historical
+            # default of 40 therefore NO LONGER covers a fully busy worker:
+            # before re-enabling pooling, set PG_POOL_MAX_SIZE with the
+            # bridge pool and expected concurrent sockets in the budget, or
+            # accept pool-wait throttling under peak. (Keep in sync with
+            # exec.py's pool sizes / their FHI_*_EXECUTOR_WORKERS overrides,
+            # and remember cluster-wide max_connections must cover
+            # pods * max_size.)
             # Non-web processes
             # want other sizes via env: Ray actors / one-shot jobs small
             # (2-4), the Temporal worker at least

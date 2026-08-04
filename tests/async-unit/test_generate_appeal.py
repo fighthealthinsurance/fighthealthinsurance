@@ -213,6 +213,30 @@ class TestAppealQuestionsGeneration:
         assert result[1][0] == "Is this treatment FDA approved?"
         assert result[1][1] == "Yes it is"
 
+    @pytest.mark.asyncio
+    async def test_get_appeal_questions_answers_starting_with_a_keep_first_letter(
+        self,
+    ):
+        """The 'A:' prefix stripper must not eat a bare leading 'A': the old
+        [A:] character class turned 'Age 47' into 'ge 47' and 'Atorvastatin'
+        into 'torvastatin', corrupting answers on their way into qa_context
+        and from there into the appeal prompt."""
+        self.model._infer_no_context.return_value = """
+        What is the patient's age? Age 47
+        What medication was prescribed? Atorvastatin 40mg daily
+        """
+
+        result = await RemoteFullOpenLike.get_appeal_questions(
+            self.model,
+            denial_text="Test denial",
+            procedure="Test procedure",
+            diagnosis="Test diagnosis",
+        )
+
+        assert len(result) == 2
+        assert result[0][1] == "Age 47"
+        assert result[1][1] == "Atorvastatin 40mg daily"
+
 
 # --- Shared fixtures for make_appeals tests ----------------------------------
 
@@ -1112,6 +1136,29 @@ class TestSummarizeModelOutcomes:
         )
         assert out2 == "fhi-legacy:ok"
 
+    def test_real_attempt_wins_over_never_called_reason(self):
+        # A model gets one record per infer_type. When the denial has no
+        # procedure the medically_necessary call is skipped as "no_prompt" and
+        # -- because that is recorded synchronously, before any future is
+        # drained -- it used to mask the reason the `full` call actually
+        # failed. The wire outcome is what triage needs.
+        out = _summarize_model_outcomes(
+            [("fhi-legacy", "no_prompt"), ("fhi-legacy", "all_backends_failed")]
+        )
+        assert out == "fhi-legacy:all_backends_failed"
+
+    def test_never_called_reason_kept_when_it_is_all_we_have(self):
+        out = _summarize_model_outcomes(
+            [("fhi-legacy", "no_prompt"), ("sonar", "not_registered")]
+        )
+        assert out == "fhi-legacy:no_prompt,sonar:not_registered"
+
+    def test_ok_wins_over_never_called_reason(self):
+        out = _summarize_model_outcomes(
+            [("fhi-legacy", "ok"), ("fhi-legacy", "no_prompt")]
+        )
+        assert out == "fhi-legacy:ok"
+
     def test_none_model_name_becomes_unknown(self):
         assert _summarize_model_outcomes([(None, "no_output")]) == "unknown:no_output"
 
@@ -1263,8 +1310,31 @@ class TestPeekRealOrNone:
         with _loguru_capture() as sink:
             _peek_real_or_none(iter([_ga("short")]), denial_id=999, stage="primary")
         output = sink.getvalue()
-        assert "primary first item is unusable" in output
+        assert "primary produced an unusable item" in output
         assert "denial 999" in output
+
+    def test_scans_past_runt_to_real_item_in_same_stage(self):
+        """A fast model's runt must not abandon the whole stage: the peek
+        skips it and returns the real appeal a slower model in the SAME
+        stage produced."""
+        real = _ga("this is a long enough appeal text for delivery")
+        first, rest = _peek_real_or_none(
+            iter([_ga("no."), _ga(""), real]), denial_id=1, stage="primary"
+        )
+        assert first is real
+        assert next(rest) is real
+
+    def test_scan_records_each_rejected_item(self):
+        recorded = []
+        recorder = MagicMock()
+        recorder.record.side_effect = lambda rec: recorded.append(rec)
+        real = _ga("this is a long enough appeal text for delivery")
+        first, _ = _peek_real_or_none(
+            iter([_ga("no."), real]), denial_id=1, stage="primary", recorder=recorder
+        )
+        assert first is real
+        assert [r.outcome for r in recorded] == ["rejected_at_peek"]
+        assert recorded[0].response_text == "no."
 
     def test_wordless_first_returns_none(self):
         """A long but wordless first item (e.g. a model echoing back the claim

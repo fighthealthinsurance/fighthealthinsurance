@@ -159,21 +159,19 @@ class TestFollowUpViewSubmit(TestCase):
 
     def test_invalid_secret_does_not_render_form(self):
         """Wrong secret must NOT render the follow-up form (and must not
-        write a FollowUp row). The view currently lets the DoesNotExist
-        propagate, so the test client either surfaces the exception (when
-        request-exception propagation is on) or renders the custom 500
-        page — never the follow-up form."""
+        write a FollowUp row). The view raises Http404 for a stale or
+        mangled follow-up link -- these live in emails for months, so a
+        broken link is routine, not a server error."""
         bad_path = (
             f"/v0/followup/{self.denial.uuid}/"
             f"{self.denial.hashed_email}/not-the-real-sekret"
         )
-        self.client.raise_request_exception = False
         response = self.client.get(bad_path)
-        self.assertEqual(response.status_code, 500)
+        self.assertEqual(response.status_code, 404)
         self.assertNotContains(
             response,
             "Follow Up On Your Health Insurance Appeal",
-            status_code=500,
+            status_code=404,
         )
         self.assertEqual(FollowUp.objects.filter(denial_id=self.denial).count(), 0)
 
@@ -183,9 +181,8 @@ class TestFollowUpViewSubmit(TestCase):
             f"/v0/followup/{self.denial.uuid}/"
             f"{self.denial.hashed_email}/not-the-real-sekret"
         )
-        self.client.raise_request_exception = False
         response = self.client.post(bad_path, data=self._payload())
-        self.assertEqual(response.status_code, 500)
+        self.assertEqual(response.status_code, 404)
         self.assertEqual(FollowUp.objects.filter(denial_id=self.denial).count(), 0)
 
     def test_blank_appeal_result_leaves_denial_pending(self):
@@ -229,11 +226,32 @@ class TestFollowUpHelper(TestCase):
         self.assertEqual(found.pk, self.denial.pk)
 
     def test_fetch_denial_rejects_bad_sekret(self):
-        with self.assertRaises(Denial.DoesNotExist):
+        # Returns None (per its callers' `if denial is None` guards) rather
+        # than raising: the view maps this to a 404 for stale email links.
+        self.assertIsNone(
             FollowUpHelper.fetch_denial(
                 uuid=self.denial.uuid,
                 follow_up_semi_sekret="bogus-sekret",
                 hashed_email=self.denial.hashed_email,
+            )
+        )
+
+    def test_store_follow_up_result_rejects_bad_sekret(self):
+        # The WRITE path still refuses hard: a follow-up result can't be
+        # stored against a denial that doesn't match the link.
+        with self.assertRaises(Denial.DoesNotExist):
+            FollowUpHelper.store_follow_up_result(
+                uuid=self.denial.uuid,
+                follow_up_semi_sekret="bogus-sekret",
+                hashed_email=self.denial.hashed_email,
+                user_comments="x",
+                appeal_result="Yes",
+                follow_up_again=False,
+                medicare_someone_to_help=False,
+                email="me@example.com",
+                quote="",
+                name_for_quote="",
+                use_quote=False,
             )
 
     def test_store_follow_up_result_saves_all_fields(self):

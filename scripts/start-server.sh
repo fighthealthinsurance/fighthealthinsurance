@@ -69,6 +69,25 @@ export PYTHONUNBUFFERED
 # a single worker whose health the readiness/liveness probes can actually see
 # (with 2+ workers a wedged worker hides behind its healthy sibling: probes
 # mostly pass while a share of real traffic hangs).
+# Graceful shutdown: this bash is container PID 1, and bash neither forwards
+# SIGTERM to the backgrounded uvicorn pipeline nor to a foreground child --
+# without a trap the pod just sits until the kubelet SIGKILLs everything at
+# the end of terminationGracePeriodSeconds, hard-killing mid-flight appeal
+# generations AND making every rollout wait out the full grace period. On
+# SIGTERM: tell nginx to finish in-flight requests and stop (quit), signal
+# uvicorn to drain its connections, then wait for both; the kubelet's
+# SIGKILL at the grace-period deadline remains the backstop.
+_drain() {
+  trap - TERM INT
+  nginx -s quit 2>/dev/null || true
+  # Matches the sudo wrapper too; sudo relays the signal to uvicorn.
+  pkill -TERM -f "uvicorn fighthealthinsurance.asgi" 2>/dev/null || true
+  wait || true
+  exit 0
+}
+trap _drain TERM INT
+
 sudo -E -u www-data uvicorn fighthealthinsurance.asgi:application --host 0.0.0.0 --port 8010 --workers "${UVICORN_WORKERS:-2}" --proxy-headers --access-log --use-colors --log-config conf/uvlog_config.yaml 2>&1 | grep -v kube-probe  | grep -v kube-proxy &
 sleep 2
-nginx -g "daemon off;" 2>&1 |grep -v kube-proxy |grep -v kube-probe
+nginx -g "daemon off;" 2>&1 |grep -v kube-proxy |grep -v kube-probe &
+wait

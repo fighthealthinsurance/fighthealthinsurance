@@ -39,6 +39,12 @@ CONTEXT_LEVEL_FULL = "full"  # primary/backup call, no context shed
 CONTEXT_LEVEL_TIER1_SHED = "tier1_shed"  # enrichment contexts dropped
 CONTEXT_LEVEL_TIER2_SHED = "tier2_shed"  # + plan/patient context truncated
 CONTEXT_LEVEL_SPECULATIVE = "speculative"  # bare denial-text-only precompute
+# Second-round precompute: re-run after the user CONFIRMED procedure/diagnosis
+# on the categorize-review step, so the reserve drafts argue about the right
+# service. Distinct from plain "speculative" so (a) the round-2 dispatch can
+# tell whether a confirmed-context reserve already exists and (b) analytics
+# can compare pick rates between the bare and confirmed reserves.
+CONTEXT_LEVEL_SPECULATIVE_CONFIRMED = "speculative_confirmed"
 CONTEXT_LEVEL_SYNTHESIZED = "synthesized"  # merged from multiple drafts
 CONTEXT_LEVEL_TEMPLATE = "template"  # static/non-AI template appeal
 CONTEXT_LEVEL_CHOICES = [
@@ -46,9 +52,18 @@ CONTEXT_LEVEL_CHOICES = [
     (CONTEXT_LEVEL_TIER1_SHED, "Tier-1 shed (enrichment dropped)"),
     (CONTEXT_LEVEL_TIER2_SHED, "Tier-2 shed (core context truncated)"),
     (CONTEXT_LEVEL_SPECULATIVE, "Speculative (denial-text only)"),
+    (CONTEXT_LEVEL_SPECULATIVE_CONFIRMED, "Speculative (confirmed dx/px)"),
     (CONTEXT_LEVEL_SYNTHESIZED, "Synthesized (merged drafts)"),
     (CONTEXT_LEVEL_TEMPLATE, "Template (non-AI)"),
 ]
+
+# Every context level produced by the background speculative precompute
+# (either round). Use this -- not equality with CONTEXT_LEVEL_SPECULATIVE --
+# wherever "did this row come from the precompute reserve" is the question,
+# so round-2 rows aren't misattributed as live generation output.
+SPECULATIVE_CONTEXT_LEVELS = frozenset(
+    {CONTEXT_LEVEL_SPECULATIVE, CONTEXT_LEVEL_SPECULATIVE_CONFIRMED}
+)
 
 # Rough average characters-per-token for English prose. The real tokenizer
 # is model-specific, but ~4 chars/token is the standard back-of-envelope

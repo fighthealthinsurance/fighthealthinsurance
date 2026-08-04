@@ -781,13 +781,16 @@ class UnwrapIterator(Iterator[T]):
         self.head: Optional[Iterator[T]] = None
 
     def __next__(self) -> T:
-        if self.head is None:
-            self.head = self.iterators.__next__()
-        try:
-            return self.head.__next__()
-        except StopIteration:
-            self.head = None
-            return self.__next__()
+        # Iterative, not recursive: the old `return self.__next__()` grew one
+        # stack frame per exhausted-empty sub-iterator, a RecursionError
+        # waiting on any large fan-out.
+        while True:
+            if self.head is None:
+                self.head = self.iterators.__next__()
+            try:
+                return self.head.__next__()
+            except StopIteration:
+                self.head = None
 
 
 def as_available_nested(futures: List[Future[Iterator[U]]]) -> Iterator[U]:
@@ -806,8 +809,11 @@ def as_available(futures: List[Future[U]]) -> Iterator[U]:
 class SyncIteratorToAsync(AsyncIterator[T]):
     """Convert a blocking synchronous iterator to a non-blocking async iterator.
 
-    Runs each next() call in the default thread pool executor so that blocking
-    operations (e.g. concurrent.futures.as_completed) do not stall the event loop.
+    Runs each next() call in the dedicated bridge executor (not the event
+    loop's small default executor, which is shared with everything else the
+    loop offloads) so that blocking operations (e.g.
+    concurrent.futures.as_completed) neither stall the event loop nor starve
+    other offloaded work.
 
     Implemented as a class (not an async generator) to support overlapping
     __anext__() calls from asyncio.shield() in interleave_iterator_for_keep_alive.
@@ -820,7 +826,14 @@ class SyncIteratorToAsync(AsyncIterator[T]):
 
     def __init__(self, sync_iter: Iterator[T]):
         self._sync_iter = sync_iter
-        self._pending: Optional[asyncio.Future[object]] = None
+        # The CONCURRENT future for the in-flight next(), not the asyncio
+        # wrapper: cancelling an awaiting task marks the asyncio wrapper
+        # CANCELLED even though the executor thread keeps running, so a kept
+        # wrapper could never deliver the item -- every retried __anext__
+        # would just re-raise CancelledError forever. The concurrent future
+        # survives the cancellation and still resolves with the item, so a
+        # retry re-wraps it and picks up exactly where the stream left off.
+        self._pending: Optional[Future[object]] = None
         self._exhausted = False
 
     def __aiter__(self) -> "SyncIteratorToAsync[T]":
@@ -832,13 +845,33 @@ class SyncIteratorToAsync(AsyncIterator[T]):
     async def __anext__(self) -> T:
         if self._exhausted:
             raise StopAsyncIteration
-        if self._pending is None:
-            loop = asyncio.get_running_loop()
-            self._pending = loop.run_in_executor(None, self._next_with_default)
-        try:
-            item = await self._pending
-        finally:
+        if self._pending is not None and self._pending.cancelled():
+            # A previous await was cancelled BEFORE the executor started
+            # next() (so nothing ran and nothing was lost): submit fresh.
             self._pending = None
+        if self._pending is None:
+            from fighthealthinsurance.exec import bridge_executor
+
+            self._pending = bridge_executor.submit(self._next_with_default)
+        try:
+            # Fresh wrapper per await: a wrapper cancelled by an earlier
+            # attempt stays cancelled, but the underlying concurrent future
+            # is still good.
+            item = await asyncio.wrap_future(self._pending)
+        except asyncio.CancelledError:
+            # Keep _pending: if the executor thread is inside next(), the
+            # concurrent future will still resolve with its item and a
+            # retried __anext__ reuses it (see __init__). Clearing it here
+            # would drop that item AND let a retry start a SECOND concurrent
+            # next() on the same non-reentrant iterator chain -- exactly what
+            # the class docstring promises can't happen. (The cancelled()
+            # guard above handles the never-started case.)
+            raise
+        except BaseException:
+            # The sync iterator itself raised; that future is spent.
+            self._pending = None
+            raise
+        self._pending = None
         if item is self._sentinel:
             self._exhausted = True
             raise StopAsyncIteration
@@ -1217,6 +1250,8 @@ async def best_within_timelimit(
     if extended_timeout is None:
         extended_timeout = min(max(timeout * 2, 60.0), _extended_wait_cap())
 
+    wait_started = time.monotonic()
+
     # Create task objects with Future results and wrap them
     original_to_task: Dict[asyncio.Task[T], Awaitable[T]] = {}
     wrapped_tasks: List[asyncio.Task[T]] = []
@@ -1287,9 +1322,15 @@ async def best_within_timelimit(
         _spawn_cancellation(list(pending))
     if best_result_option:
         return best_result_option
+    # Report the ACTUAL elapsed wait, not just the configured window: every
+    # task failing instantly (no backends configured, connection refused)
+    # exits this function in milliseconds, and a message claiming we waited
+    # "30s + 60s overtime" sends triage hunting for a timeout that never
+    # happened instead of for the immediate failure.
     logger.warning(
         f"best_within_timelimit: no usable result from {len(tasks)} tasks "
-        f"within {timeout}s + {extended_timeout}s overtime"
+        f"after {time.monotonic() - wait_started:.1f}s "
+        f"(budget {timeout}s + {extended_timeout}s overtime)"
     )
     return None
 

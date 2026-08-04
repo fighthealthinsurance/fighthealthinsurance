@@ -63,8 +63,9 @@ Getting Your Questions Ready
         return;
       }
 
+      const manualContinue = document.getElementById('manual-continue');
+
       if (cameFromBackForward(event)) {
-        const manualContinue = document.getElementById('manual-continue');
         if (manualContinue) {
           manualContinue.style.display = 'block';
         }
@@ -74,6 +75,16 @@ Getting Your Questions Ready
       window.setTimeout(function () {
         form.submit();
       }, 250);
+
+      // Failure path for the auto-submit: if the POST is slow or errors, the
+      // user used to be stuck on the spinner with no visible control at all.
+      // Reveal the manual button after 20s; a successful navigation tears
+      // this page down before the timer matters.
+      window.setTimeout(function () {
+        if (manualContinue) {
+          manualContinue.style.display = 'block';
+        }
+      }, 20000);
     });
   }());
 </script>

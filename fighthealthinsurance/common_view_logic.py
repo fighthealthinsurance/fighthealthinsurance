@@ -57,15 +57,17 @@ from fhi_users.audit import TrackingInfo
 from fhi_users.models import ProfessionalUser, UserDomain
 from fighthealthinsurance import stripe_utils
 from fighthealthinsurance.context_barrier import warm_then_fetch
+from fighthealthinsurance.exec import bridge_executor
 from fighthealthinsurance.context_utils import (
     attach_supplemental_to_citations,
     CONTEXT_LEVEL_SPECULATIVE,
     CONTEXT_LEVEL_SYNTHESIZED,
     CONTEXT_LEVEL_TIER1_SHED,
     CONTEXT_LEVEL_TIER2_SHED,
+    SPECULATIVE_CONTEXT_LEVELS,
     summarize_denial_context_tokens,
 )
-from fighthealthinsurance.denial_context import merge_plan_context, merge_qa
+from fighthealthinsurance.denial_context import load_qa, merge_plan_context, merge_qa
 from fighthealthinsurance.denials.algorithmic_review_detector import (
     detect_algorithmic_review_terms,
     render_template_blocks,
@@ -710,14 +712,17 @@ class FollowUpHelper:
     def fetch_denial(
         cls, uuid: str, follow_up_semi_sekret: str, hashed_email: str, **kwargs
     ):
-        denial = Denial.objects.filter(
-            uuid=uuid, follow_up_semi_sekret=follow_up_semi_sekret
-        ).get()
-        if denial is None:
-            raise Exception(
-                f"Failed to find denial for {uuid} & {follow_up_semi_sekret}"
-            )
-        return denial
+        # Return None (per the callers' `if denial is None` guards) instead of
+        # letting DoesNotExist escape: follow-up links live in emails for
+        # months, and a denial deleted meanwhile -- or a link mangled by an
+        # email client -- used to 500 on page LOAD (get_initial runs on GET).
+        try:
+            return Denial.objects.filter(
+                uuid=uuid, follow_up_semi_sekret=follow_up_semi_sekret
+            ).get()
+        except Denial.DoesNotExist:
+            logger.info(f"fetch_denial: no denial for follow-up link uuid={uuid}")
+            return None
 
     @classmethod
     def store_follow_up_result(
@@ -742,6 +747,12 @@ class FollowUpHelper:
             follow_up_semi_sekret=follow_up_semi_sekret,
             hashed_email=hashed_email,
         )
+        if denial is None:
+            # Preserve the pre-None-contract behavior for this write path: a
+            # follow-up result cannot be stored against a missing denial.
+            raise Denial.DoesNotExist(
+                f"No denial for follow-up {uuid}/{follow_up_semi_sekret}"
+            )
         follow_up = FollowUp.objects.create(
             hashed_email=hashed_email,
             denial_id=denial,
@@ -1022,17 +1033,46 @@ class FindNextStepsHelper:
             semi_sekret=semi_sekret,
         ).get()
 
-        if procedure is not None and len(procedure) < 200:
+        # Snapshot dx/px before the user's confirmed values overwrite them, so
+        # the round-2 speculative dispatch below can tell "user corrected the
+        # extraction" from "user accepted it as-is".
+        prior_procedure = denial.procedure
+        prior_diagnosis = denial.diagnosis
+
+        # Track exactly which fields THIS request assigns so the save below
+        # can write only those columns. The old full-row ``denial.save()``
+        # wrote every column from the snapshot loaded above -- while the
+        # entity-extraction tasks (fax number, insurer, plan/claim id, date of
+        # service, regulator) persist concurrently via ``aupdate`` -- so any
+        # extraction landing between the load and the save was silently
+        # reverted. It even reverted this function's OWN fax-number write,
+        # which used a parallel ``.update()`` the stale instance never saw.
+        changed_fields: set[str] = set()
+
+        # A blank submit must not clobber data we already have: these fields
+        # are required=False on the form, so an empty string arrives whenever
+        # the user leaves the box alone (e.g. because extraction was still
+        # populating it) -- overwriting with "" turns a temporarily-empty form
+        # into permanent data loss.
+        if procedure and len(procedure) < 200:
             denial.procedure = procedure
-        if diagnosis is not None and len(diagnosis) < 200:
+            changed_fields.add("procedure")
+        if diagnosis and len(diagnosis) < 200:
             denial.diagnosis = diagnosis
-        if plan_source is not None:
+            changed_fields.add("diagnosis")
+        # Truthiness, not ``is not None``: an empty ModelMultipleChoiceField
+        # cleans to an empty queryset, and .set([]) would CLEAR the stored
+        # plan source (breaking Medicare detection downstream). Matches the
+        # ``if denial_type:`` guard below.
+        if plan_source:
             denial.plan_source.set(plan_source)
         if patient_health_history:
             denial.health_history = patient_health_history
+            changed_fields.add("health_history")
         # Only set employer name if it's not too long
         if employer_name is not None and len(employer_name) < 300:
             denial.employer_name = employer_name
+            changed_fields.add("employer_name")
         else:
             employer_name = None
         if (
@@ -1041,9 +1081,8 @@ class FindNextStepsHelper:
             and len(appeal_fax_number) < 30
         ):
             logger.debug(f"Setting appeal fax number to {appeal_fax_number}")
-            Denial.objects.filter(denial_id=denial_id).update(
-                appeal_fax_number=appeal_fax_number
-            )
+            denial.appeal_fax_number = appeal_fax_number
+            changed_fields.add("appeal_fax_number")
         else:
             logger.debug(f"Invalid appeal fax number {appeal_fax_number}")
 
@@ -1051,34 +1090,48 @@ class FindNextStepsHelper:
             denial.include_provided_health_history_in_appeal = (
                 include_provided_health_history_in_appeal
             )
+            changed_fields.add("include_provided_health_history_in_appeal")
 
         # Get outside help details using shared helper
         outside_help_details = cls._get_outside_help_details(denial, your_state)
 
-        denial.insurance_company = insurance_company
+        if insurance_company:
+            denial.insurance_company = insurance_company
+            changed_fields.add("insurance_company")
         if insurance_company_obj is not None:
             denial.insurance_company_obj = insurance_company_obj
+            changed_fields.add("insurance_company_obj")
         if insurance_plan_obj is not None:
             denial.insurance_plan_obj = insurance_plan_obj
-        denial.plan_id = plan_id
-        denial.claim_id = claim_id
+            changed_fields.add("insurance_plan_obj")
+        if plan_id:
+            denial.plan_id = plan_id
+            changed_fields.add("plan_id")
+        if claim_id:
+            denial.claim_id = claim_id
+            changed_fields.add("claim_id")
         if denial_type_text is not None:
             denial.denial_type_text = denial_type_text
+            changed_fields.add("denial_type_text")
         if denial_type:
             denial.denial_type.set(denial_type)
 
-        existing_answers: dict[str, str] = {}
-        if denial.qa_context is not None:
-            existing_answers = json.loads(denial.qa_context)
+        # load_qa, not a bare json.loads: qa_context is a plain TextField and
+        # historical rows hold free text -- a bare parse 500s the review POST
+        # on exactly those denials (every other reader is already defensive).
+        existing_answers: dict[str, str] = load_qa(denial)
 
         if your_state:
             denial.state = your_state
+            changed_fields.add("state")
         if denial_date is not None:
             denial.denial_date = denial_date
+            changed_fields.add("denial_date")
             if "denial date" not in existing_answers:
                 existing_answers["denial date"] = str(denial_date)
         if date_of_service is not None:
             denial.date_of_service = date_of_service
+            changed_fields.add("date_of_service")
             if "date of service" not in existing_answers:
                 existing_answers["date of service"] = date_of_service
             if "date_of_service" not in existing_answers:
@@ -1087,14 +1140,39 @@ class FindNextStepsHelper:
         prof_pov = denial.professional_to_finish
         if in_network is not None:
             denial.provider_in_network = in_network
+            changed_fields.add("provider_in_network")
             # If they know about in_network they are definitely a professional
             prof_pov = True
             if "in_network" not in existing_answers:
                 existing_answers["in_network"] = str(in_network)
         if single_case is not None:
             denial.single_case = single_case
+            changed_fields.add("single_case")
 
-        denial.save()
+        # Always include last_interaction: with update_fields, Django only
+        # writes auto_now columns that are LISTED, so omitting it would
+        # silently freeze the denial's activity timestamp at creation time.
+        # And save even when nothing else changed -- reaching this step IS an
+        # interaction, and the full-row save this replaced always touched it.
+        denial.save(update_fields=sorted(changed_fields | {"last_interaction"}))
+
+        # Round-2 speculative precompute: the user has now CONFIRMED (and
+        # possibly corrected) procedure/diagnosis, which the create-time
+        # reserve was generated without -- extraction hadn't run yet, let
+        # alone been reviewed. Refreshing the held-back reserve here means
+        # that if the live generation later underdelivers, the fallback
+        # drafts argue about the right service instead of the bare letter.
+        # Fire-and-forget with its own guards; never blocks or breaks the
+        # questions page.
+        try:
+            cls._maybe_dispatch_confirmed_speculative(
+                denial, prior_procedure, prior_diagnosis
+            )
+        except Exception:
+            logger.opt(exception=True).warning(
+                f"speculative appeals[dx_px_confirmed]: dispatch failed for "
+                f"denial {denial_id}"
+            )
 
         # Generate questions for better appeal creation if they don't exist yet
         try:
@@ -1136,6 +1214,71 @@ class FindNextStepsHelper:
                 pharmacy_coupon_suggestion=pharmacy_coupon_suggestion,
                 financial_assistance=financial_assistance,
             )
+
+    @classmethod
+    def _maybe_dispatch_confirmed_speculative(
+        cls,
+        denial: "Denial",
+        prior_procedure: Optional[str],
+        prior_diagnosis: Optional[str],
+    ) -> None:
+        """Kick off the round-2 (confirmed-context) speculative precompute.
+
+        Called after ``find_next_steps`` saves the user's confirmed
+        procedure/diagnosis. Fires when a dx or px is present AND either the
+        user actually changed a value (their correction supersedes any earlier
+        reserve, including a previous confirmed-context one) or no
+        confirmed-context reserve exists yet. Re-POSTs of the categorize-review
+        form with unchanged values therefore no-op here, and the helper's own
+        guards (skip when live appeals exist, replace only after new drafts
+        persist) bound the rest.
+        """
+        confirmed_procedure = (denial.procedure or "").strip()
+        confirmed_diagnosis = (denial.diagnosis or "").strip()
+        if not confirmed_procedure and not confirmed_diagnosis:
+            logger.debug(
+                f"speculative appeals[dx_px_confirmed]: denial "
+                f"{denial.denial_id} confirmed without procedure or diagnosis; "
+                f"nothing to refresh with"
+            )
+            return
+        values_changed = (prior_procedure or "").strip() != confirmed_procedure or (
+            prior_diagnosis or ""
+        ).strip() != confirmed_diagnosis
+        if not values_changed:
+            from fighthealthinsurance.context_utils import (
+                CONTEXT_LEVEL_SPECULATIVE_CONFIRMED,
+            )
+
+            # Values unchanged: only fire if this is the FIRST confirmation
+            # (no confirmed-context rows anywhere -- held-back or promoted).
+            # The create-time reserve almost always predates extraction, so
+            # "accepted as-is" still deserves one refresh with dx/px in the
+            # prompt; a second identical POST does not.
+            if ProposedAppeal.objects.filter(
+                for_denial=denial,
+                context_level=CONTEXT_LEVEL_SPECULATIVE_CONFIRMED,
+            ).exists():
+                logger.debug(
+                    f"speculative appeals[dx_px_confirmed]: denial "
+                    f"{denial.denial_id} unchanged dx/px and confirmed-context "
+                    f"reserve already exists; skipping"
+                )
+                return
+
+        from fighthealthinsurance.ml.ml_speculative_appeals_helper import (
+            dispatch_speculative_appeals,
+        )
+
+        # force carries "the values changed" into the helper: a stale
+        # confirmed-context reserve from an earlier confirmation must not
+        # veto the refresh there.
+        dispatch_speculative_appeals(
+            denial.denial_id,
+            force=values_changed,
+            trigger="dx_px_confirmed",
+            confirmed_context=True,
+        )
 
     @classmethod
     def find_next_steps_for_denial(cls, denial: "Denial", email: str) -> "NextStepInfo":
@@ -1479,7 +1622,12 @@ class DenialCreatorHelper:
             denial.hashed_email = hashed_email
             denial.use_external = use_external_models
             denial.raw_email = possible_email
-            denial.health_history = health_history
+            # Guarded like every other optional field here: the denial form
+            # has no health_history field, so this path is ALWAYS called with
+            # health_history=None -- unguarded, a user who went back to edit
+            # their denial letter lost their previously-entered history.
+            if health_history is not None:
+                denial.health_history = health_history
 
             # Only update these fields if they're provided
             if creating_professional is not None:
@@ -1575,7 +1723,15 @@ class DenialCreatorHelper:
                 # PROMOTED reserve rows, which invalidation deliberately keeps,
                 # so without this a denial that ever served one reserve appeal
                 # could never rebuild a reserve for its new text.
-                dispatch_speculative_appeals(denial_id, force=denial_text_changed)
+                dispatch_speculative_appeals(
+                    denial_id,
+                    force=denial_text_changed,
+                    trigger=(
+                        "denial_text_replaced"
+                        if denial_text_changed
+                        else "denial_created"
+                    ),
+                )
             except Exception:
                 logger.opt(exception=True).warning(
                     "Failed to dispatch speculative appeals precompute for "
@@ -1620,9 +1776,23 @@ class DenialCreatorHelper:
         # path via F() so the increment is race-safe.
         if (denial.extract_attempts or 0) >= 3:
             logger.warning(
-                f"extract_entity({denial_id}): skipping, "
+                f"extract_entity({denial_id}): skipping LLM extraction, "
                 f"extract_attempts={denial.extract_attempts} exhausted"
             )
+            # The counter measures procedure/diagnosis LLM failures only;
+            # regulator matching is a handful of regexes with no LLM in the
+            # loop, so run it anyway -- same reasoning as the already-done
+            # early exit above. Also yield a completion frame so the client's
+            # status list doesn't present an instant, empty close as success
+            # with no output at all.
+            try:
+                await cls.extract_set_regulator(denial_id)
+                yield "regulator"
+            except Exception:
+                logger.opt(exception=True).warning(
+                    f"extract_set_regulator failed for denial {denial_id}"
+                )
+            yield "Extraction complete"
             return
 
         # Define a wrapper function that returns both the name and result
@@ -1670,6 +1840,15 @@ class DenialCreatorHelper:
                 fire_and_forget=[cls._maybe_dispatch_ucr(denial_id)],
                 done_record=("Extraction complete", None),
                 timeout=90,
+                # The optional tasks (fax number, insurer, plan/claim id, date
+                # of service) are LLM roundtrips just like the required ones;
+                # the default 2s grace after the required set finishes
+                # cancelled them mid-call almost every run, which is why the
+                # review page kept coming up blank on exactly the fields the
+                # spinner said were being extracted. The user is still on the
+                # extraction page with a progress list -- give the extras a
+                # real window (the overall 90s cap above still bounds it).
+                max_extra_time_for_optional=45,
             ):
                 if item:
                     yield item[0]
@@ -1754,8 +1933,30 @@ class DenialCreatorHelper:
                     update_fields["diagnosis"] = diagnosis
                     update_fields["candidate_diagnosis"] = diagnosis
 
-            # Update all fields in a single atomic database operation
+            # The candidate_* mirrors and the finished flag are ours to write
+            # unconditionally, but procedure/diagnosis themselves may have
+            # been typed by the USER while this LLM call ran: the extraction
+            # page says "you can skip ahead and enter this manually", and
+            # find_next_steps saves those confirmed values. Last-writer-wins
+            # here used to replace the user's confirmed service with the
+            # model's guess and generate the whole appeal about the wrong
+            # thing -- so the live fields are only filled where still empty.
+            user_facing = {}
+            for field in ("procedure", "diagnosis"):
+                if field in update_fields:
+                    user_facing[field] = update_fields.pop(field)
             await Denial.objects.filter(denial_id=denial_id).aupdate(**update_fields)
+            for field, value in user_facing.items():
+                updated = await (
+                    Denial.objects.filter(denial_id=denial_id)
+                    .filter(Q(**{f"{field}__isnull": True}) | Q(**{field: ""}))
+                    .aupdate(**{field: value})
+                )
+                if not updated:
+                    logger.debug(
+                        f"extract_set_denial_and_diagnosis({denial_id}): "
+                        f"{field} already set (user or earlier run); keeping it"
+                    )
 
             # Refresh in-memory denial so enrichment sees updated values.
             await denial.arefresh_from_db()
@@ -3986,7 +4187,28 @@ class AppealsBackendHelper:
             GENERATING_PHASE_BUDGET - (gen_started - generating_phase_started),
         )
         gen_task: "asyncio.Future[Iterator[GeneratedAppeal]]" = asyncio.ensure_future(
-            database_sync_to_async(appealGenerator.make_appeals)(
+            # thread_sensitive=False, for the same reason the speculative
+            # precompute passes it (ml_speculative_appeals_helper): the default
+            # (True) runs this on asgiref's ONE process-wide thread-sensitive
+            # executor thread, and make_appeals holds it for the whole
+            # generating budget (up to GENERATING_PHASE_BUDGET). Everything
+            # else that reaches the ORM through an async path -- including the
+            # `serve_reserve_if_stalled()` query on the heartbeat below, and
+            # every OTHER concurrent stream on this pod -- then queues behind
+            # it. Observed: the reserve checkpoint on the 45s beat blocked for
+            # 255s until make_appeals returned, so the socket went silent well
+            # past the client's 90s inactivity watchdog
+            # (WS_INACTIVITY_TIMEOUT_MS) and the run ended with 0 appeals
+            # delivered. DatabaseSyncToAsync still wraps each call in
+            # close_old_connections() either way, so connection handling is
+            # unchanged. executor=bridge_executor keeps this minutes-long
+            # block off the loop's small shared default executor (see
+            # exec.py).
+            database_sync_to_async(
+                appealGenerator.make_appeals,
+                thread_sensitive=False,
+                executor=bridge_executor,
+            )(
                 denial,
                 AppealTemplateGenerator(prefaces, main, footer),
                 medical_reasons=medical_reasons,
@@ -4321,7 +4543,7 @@ class AppealsBackendHelper:
         # truthful. Dedup is by normalized raw text via served_texts.
         ENOUGH_APPEALS = cls.ENOUGH_APPEALS
         MINI_LEVELS = {
-            CONTEXT_LEVEL_SPECULATIVE,
+            *SPECULATIVE_CONTEXT_LEVELS,
             CONTEXT_LEVEL_TIER1_SHED,
             CONTEXT_LEVEL_TIER2_SHED,
         }
@@ -4375,7 +4597,7 @@ class AppealsBackendHelper:
                 # never happened.
                 from_precompute = (
                     bool(row.speculative)
-                    or row.context_level == CONTEXT_LEVEL_SPECULATIVE
+                    or row.context_level in SPECULATIVE_CONTEXT_LEVELS
                 )
                 if row.speculative:
                     # Promote to a real appeal so it persists and later calls

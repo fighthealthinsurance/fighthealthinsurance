@@ -6,6 +6,9 @@ const nextButton = document.getElementById("next");
 let startTime: number | null = null;
 let timerInterval: ReturnType<typeof setInterval> | null = null;
 let statusMessages: Set<string> = new Set();
+// Set when the server streamed an error frame: done() must not paint
+// "Complete!" and auto-advance past a failed extraction.
+let serverErrorSeen = false;
 
 function createStatusIndicator(): HTMLElement {
   const statusDiv = document.createElement('div');
@@ -77,22 +80,69 @@ function updateStatusList(taskName: string): void {
 function processResponseChunk(chunk: string): void {
   // Chunks can carry extracted denial entities (PHI) -- log only the size.
   console.debug("Processing chunk, length", chunk.length);
+  const trimmed = (chunk || "").trim();
+  if (!trimmed) {
+    return;
+  }
+  // Server error frames are JSON ({"type": "error", ...} or {"error": ...});
+  // they used to pass the short-string filter below and be painted as GREEN
+  // completed steps. Surface them as errors instead.
+  if (trimmed.startsWith("{")) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (parsed && (parsed.type === "error" || parsed.error)) {
+        serverErrorSeen = true;
+        const statusList = document.getElementById("entity-status-list");
+        if (statusList) {
+          const item = document.createElement("div");
+          item.style.cssText = "color: #dc3545; margin: 4px 0;";
+          item.textContent =
+            "⚠️ " +
+            (parsed.message || parsed.error || "Extraction hit a server error");
+        statusList.appendChild(item);
+        }
+        return;
+      }
+    } catch {
+      // Not JSON after all; fall through to the task-name path.
+    }
+  }
   // Try to parse as task name
-  if (chunk && chunk.length > 0 && chunk.length < 50) {
-    updateStatusList(chunk.trim());
+  if (trimmed.length < 50) {
+    updateStatusList(trimmed);
   }
 }
 
 function done(): void {
-  console.log("Moving to the next step :)");
-
   // Stop the timer
   if (timerInterval) {
     clearInterval(timerInterval);
   }
 
-  // Update status to complete
   const statusIndicator = document.getElementById('entity-status-indicator');
+
+  // A server error frame arrived: the socket closing cleanly afterwards is
+  // NOT success. Auto-advancing here landed the user on the review form
+  // with nothing extracted, looking exactly like a successful run -- the
+  // drop-off the server-side error frame exists to prevent. Leave the page
+  // up with a clear failure state; the Next button still works for a
+  // deliberate manual continue.
+  if (serverErrorSeen) {
+    console.warn("Extraction reported a server error; not auto-advancing.");
+    if (statusIndicator) {
+      statusIndicator.style.borderColor = '#dc3545';
+      const titleEl = statusIndicator.querySelector('div');
+      if (titleEl) {
+        titleEl.innerHTML =
+          '⚠️ Extraction failed — you can continue and enter the details manually.';
+      }
+    }
+    return;
+  }
+
+  console.log("Moving to the next step :)");
+
+  // Update status to complete
   if (statusIndicator) {
     statusIndicator.style.borderColor = '#28a745';
     const titleEl = statusIndicator.querySelector('div');
@@ -122,6 +172,10 @@ function connectWebSocket(
   maxRetries = 5,
 ) {
   const ws = new WebSocket(websocketUrl);
+  // Set when onerror has scheduled a replacement socket: the failed socket's
+  // onclose still fires, and calling done() there would complete the workflow
+  // (auto-advancing the user) before the retry even starts.
+  let retryScheduled = false;
 
   // Open the connection and send data
   ws.onopen = () => {
@@ -138,7 +192,9 @@ function connectWebSocket(
   // Handle connection closure
   ws.onclose = (event) => {
     console.log("WebSocket connection closed:", event.reason);
-    done();
+    if (!retryScheduled) {
+      done();
+    }
   };
 
   // Handle errors
@@ -148,6 +204,7 @@ function connectWebSocket(
       console.log(
         `Retrying WebSocket connection (${retries + 1}/${maxRetries})...`,
       );
+      retryScheduled = true;
       setTimeout(
         () =>
           connectWebSocket(
@@ -162,7 +219,7 @@ function connectWebSocket(
       );
     } else {
       console.error("Max retries reached. Closing connection.");
-      done();
+      // done() runs from onclose (retryScheduled stays false here).
     }
   };
 }
@@ -172,6 +229,9 @@ export function doQuery(
   data: Map<string, string>,
   retries: number,
 ) {
+  // Fresh run, fresh error state: a stale flag from a previous run on this
+  // page would block auto-advance after a later successful extraction.
+  serverErrorSeen = false;
   // Initialize status indicator
   const waitingMsg = document.getElementById('waiting-msg');
   if (waitingMsg) {
@@ -183,13 +243,17 @@ export function doQuery(
   startTime = Date.now();
   timerInterval = setInterval(updateTimer, 1000);
 
+  // The template passes retries=0, and this used to be forwarded as
+  // MAX retries -- so the very first ws.onerror gave up (0 < 0), silently
+  // auto-advancing the user with nothing extracted. Floor the retry budget
+  // so a transient blip actually gets retried.
   return connectWebSocket(
     backend_url,
     data,
     processResponseChunk,
     done,
     0,
-    retries,
+    Math.max(retries, 2),
   );
 }
 

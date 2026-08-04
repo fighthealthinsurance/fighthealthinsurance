@@ -38,6 +38,18 @@ server {
     location / {
 	proxy_pass http://127.0.0.1:8010;
 	proxy_set_header Host $host;
+	# The REST polling/streaming fallback (NDJSON under /ziggy/rest/) and
+	# long POSTs (OCR, appeal generation kickoff) run well past nginx's 60s
+	# proxy_read_timeout default; hitting it severs the stream mid-appeal
+	# with a 504 the client can't distinguish from a dead backend. Match
+	# the /ws budget so this in-pod proxy is never the layer that cuts a
+	# still-live response.
+	proxy_read_timeout 600s;
+	proxy_send_timeout 600s;
+	# Keep-alive to upstream + required for chunked streaming responses to
+	# pass through without buffering the whole body first.
+	proxy_http_version 1.1;
+	proxy_buffering off;
     }
 }
 

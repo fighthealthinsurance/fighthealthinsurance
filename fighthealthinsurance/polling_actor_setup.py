@@ -9,6 +9,9 @@ from fighthealthinsurance.email_polling_actor_ref import email_polling_actor_ref
 from fighthealthinsurance.fax_polling_actor_ref import fax_polling_actor_ref
 from fighthealthinsurance.imr_refresh_actor_ref import imr_refresh_actor_ref
 from fighthealthinsurance.pa_refresh_actor_ref import pa_refresh_actor_ref
+from fighthealthinsurance.speculative_appeals_actor_ref import (
+    speculative_appeals_actor_ref,
+)
 from fighthealthinsurance.ucr_refresh_actor_ref import ucr_refresh_actor_ref
 
 logger.info("Waiting for ray to (probably) launch.")
@@ -27,6 +30,7 @@ cpar = None
 ipar = None
 upar = None
 ppar = None
+spar = None
 while not success and attempt < 10:
     logger.info("Attempting to launch actors.")
     attempt = attempt + 1
@@ -54,6 +58,15 @@ while not success and attempt < 10:
         else:
             logger.info("TEMPORAL_ENABLED: skipping fax polling actor launch")
 
+        # Pre-create the detached speculative-appeals precompute actor here so
+        # the first denial of the day doesn't pay (or, if the web pod can't
+        # create actors, silently lose) the cold-start: the web pods' dispatch
+        # path just attaches to it by name. No polling loop, so it joins the
+        # health checks but not the running-task watch.
+        spar = speculative_appeals_actor_ref.get
+        logger.info(f"Launched speculative appeals actor {spar}")
+        logger.info(f"Speculative appeals actor says {ray.get(spar.hello.remote())}")
+
         logger.info("Checking that polling tasks are still running")
         time.sleep(10)
         ready, wait = ray.wait(tasks, timeout=10)
@@ -76,4 +89,4 @@ while not success and attempt < 10:
 if not success:
     logger.error("Failed to launch polling actors after all attempts")
 
-__all__ = ["epar", "fpar", "cpar", "ipar", "upar", "ppar"]
+__all__ = ["epar", "fpar", "cpar", "ipar", "upar", "ppar", "spar"]

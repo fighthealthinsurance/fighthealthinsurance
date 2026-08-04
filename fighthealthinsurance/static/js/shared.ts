@@ -55,12 +55,26 @@ function getLocalStorageItemWithTTL(key: string): string | null {
 
   try {
     const parsed: StoredValueWithTTL = JSON.parse(stored);
-    if (parsed.expiry && Date.now() > parsed.expiry) {
-      // Item has expired, remove it
-      window.localStorage.removeItem(key);
-      return null;
+    // Only trust the parse when it has the wrapper's actual shape. Raw
+    // values that happen to be valid JSON -- a digit-only subscriber or
+    // group ID like "123456789" stored directly by scrubText -- parse to a
+    // number, whose .value is undefined; returning that put the literal
+    // string "undefined" into finished appeal letters.
+    if (
+      parsed &&
+      typeof parsed === "object" &&
+      !Array.isArray(parsed) &&
+      "value" in parsed
+    ) {
+      if (parsed.expiry && Date.now() > parsed.expiry) {
+        // Item has expired, remove it
+        window.localStorage.removeItem(key);
+        return null;
+      }
+      return parsed.value;
     }
-    return parsed.value;
+    // Valid JSON but not our wrapper: treat as a legacy raw value.
+    return stored;
   } catch {
     // Backwards compatibility: if it's not JSON, return the raw value
     return stored;

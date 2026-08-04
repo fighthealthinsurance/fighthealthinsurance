@@ -25,13 +25,19 @@ fallback, which is dispatched from the sync denial-creation path.
 
 from typing import Any, List, Optional
 
+import time
+
 from asgiref.sync import async_to_sync
 from channels.db import aclose_old_connections, database_sync_to_async
 from django.conf import settings
 from loguru import logger
 
 from fighthealthinsurance.base_actor_ref import ray_cluster_available
-from fighthealthinsurance.context_utils import CONTEXT_LEVEL_SPECULATIVE
+from fighthealthinsurance.exec import bridge_executor
+from fighthealthinsurance.context_utils import (
+    CONTEXT_LEVEL_SPECULATIVE,
+    CONTEXT_LEVEL_SPECULATIVE_CONFIRMED,
+)
 from fighthealthinsurance.utils import is_real_appeal
 
 
@@ -42,7 +48,13 @@ class SpeculativeAppealsHelper:
     MAX_SPECULATIVE_APPEALS = 3
 
     @classmethod
-    def generate_for_denial_sync(cls, denial_id: Any, force: bool = False) -> int:
+    def generate_for_denial_sync(
+        cls,
+        denial_id: Any,
+        force: bool = False,
+        trigger: str = "denial_created",
+        confirmed_context: bool = False,
+    ) -> int:
         """Blocking entry point for the in-process daemon-thread fallback.
 
         ``generate_for_denial`` is the real implementation; this exists only
@@ -57,10 +69,21 @@ class SpeculativeAppealsHelper:
         ``try/except`` would catch it anyway. From async code, await
         ``generate_for_denial`` instead.
         """
-        return async_to_sync(cls.generate_for_denial)(denial_id, force=force)
+        return async_to_sync(cls.generate_for_denial)(
+            denial_id,
+            force=force,
+            trigger=trigger,
+            confirmed_context=confirmed_context,
+        )
 
     @classmethod
-    async def generate_for_denial(cls, denial_id: Any, force: bool = False) -> int:
+    async def generate_for_denial(
+        cls,
+        denial_id: Any,
+        force: bool = False,
+        trigger: str = "denial_created",
+        confirmed_context: bool = False,
+    ) -> int:
         """Generate + persist speculative candidate appeals for ``denial_id``.
 
         A no-op if the denial ALREADY HAS ANY proposed appeal -- reserve or
@@ -80,7 +103,23 @@ class SpeculativeAppealsHelper:
         letter (invalidation deletes only the held-back reserve, keeping served
         and ordinary rows), so the guard would match and a replaced letter could
         never get a reserve of its own.
+
+        ``trigger`` labels this run in every log line so the speculative
+        pipeline can be traced per dispatch reason ("denial_created",
+        "denial_text_replaced", "dx_px_confirmed", ...).
+
+        ``confirmed_context=True`` is the second-round refresh dispatched once
+        the user has confirmed procedure/diagnosis on the categorize-review
+        step. It changes three things: the run proceeds PAST an existing
+        held-back reserve (round 1's drafts predate the confirmed dx/px and are
+        superseded), but still skips when any LIVE (speculative=False) row
+        exists -- by then the user has reached generation and a refresh would
+        land too late; rows are stamped context_level="speculative_confirmed";
+        and after new drafts persist, the superseded round-1 held-back rows are
+        deleted. If the refresh produces nothing, the round-1 reserve is KEPT --
+        a stale-but-real reserve beats an empty one.
         """
+        started = time.monotonic()
         try:
             # Lazy imports: this module is imported from the denial-creation
             # path, and common_view_logic (appealGenerator) / the ORM models pull
@@ -126,14 +165,27 @@ class SpeculativeAppealsHelper:
             )
             if denial is None:
                 logger.warning(
-                    f"speculative appeals: denial {denial_id} not found; skipping"
+                    f"speculative appeals[{trigger}]: denial {denial_id} not "
+                    f"found; skipping"
                 )
                 return 0
             if not denial.denial_text:
                 logger.debug(
-                    f"speculative appeals: denial {denial_id} has no text; skipping"
+                    f"speculative appeals[{trigger}]: denial {denial_id} has no "
+                    f"text; skipping"
                 )
                 return 0
+            # One line per run saying what this generation has to work with --
+            # the reserve's quality is entirely determined by this snapshot, so
+            # a weak reserve should be explainable from the log alone.
+            logger.info(
+                f"speculative appeals[{trigger}]: starting for denial "
+                f"{denial_id} (text={len(denial.denial_text)} chars, "
+                f"procedure={'yes' if denial.procedure else 'no'}, "
+                f"diagnosis={'yes' if denial.diagnosis else 'no'}, "
+                f"health_history={'yes' if denial.health_history else 'no'}, "
+                f"force={force}, confirmed_context={confirmed_context})"
+            )
             # ANY existing proposed appeal means this run has nothing to add.
             #
             # Deliberately broader than "do we already have a reserve": it also
@@ -153,14 +205,47 @@ class SpeculativeAppealsHelper:
             # force=True bypasses it for a replaced denial letter -- see the
             # docstring: those old drafts are about a letter that no longer
             # exists, so they must not veto a reserve for the new one.
-            if (
+            #
+            # confirmed_context narrows it instead of bypassing it: a held-back
+            # reserve (speculative=True) is exactly what the refresh is here to
+            # replace, but any LIVE row (speculative=False -- a live draft or a
+            # reserve row that was already served) means the user has reached
+            # generation and the refresh would land too late.
+            if confirmed_context:
+                if await ProposedAppeal.objects.filter(
+                    for_denial=denial, speculative=False
+                ).aexists():
+                    logger.info(
+                        f"speculative appeals[{trigger}]: denial {denial_id} "
+                        f"already has live/served appeal(s); skipping "
+                        f"confirmed-context refresh (would land too late)"
+                    )
+                    return 0
+                # force=True here means the confirmed values CHANGED (the user
+                # corrected dx/px again), so an earlier confirmed-context
+                # reserve is itself stale and must not veto the refresh.
+                if (
+                    not force
+                    and await ProposedAppeal.objects.filter(
+                        for_denial=denial,
+                        speculative=True,
+                        context_level=CONTEXT_LEVEL_SPECULATIVE_CONFIRMED,
+                    ).aexists()
+                ):
+                    logger.info(
+                        f"speculative appeals[{trigger}]: denial {denial_id} "
+                        f"already has a confirmed-context reserve; skipping "
+                        f"duplicate refresh"
+                    )
+                    return 0
+            elif (
                 not force
                 and await ProposedAppeal.objects.filter(for_denial=denial).aexists()
             ):
-                logger.debug(
-                    f"speculative appeals: denial {denial_id} already has "
-                    f"proposed appeal(s); skipping (speculation would land too "
-                    f"late to be served)"
+                logger.info(
+                    f"speculative appeals[{trigger}]: denial {denial_id} already "
+                    f"has proposed appeal(s); skipping (speculation would land "
+                    f"too late to be served)"
                 )
                 return 0
 
@@ -200,8 +285,8 @@ class SpeculativeAppealsHelper:
                 )
             except Exception as e:
                 logger.opt(exception=True).warning(
-                    f"speculative appeals: denial-summary warm failed for "
-                    f"denial {denial_id}: {e}"
+                    f"speculative appeals[{trigger}]: denial-summary warm failed "
+                    f"for denial {denial_id}: {e}"
                 )
 
             diagnostics: dict = {}
@@ -244,6 +329,11 @@ class SpeculativeAppealsHelper:
                     # background precompute doesn't read as part of the user's
                     # live generation when debugging a failure on this denial.
                     run_kind="speculative",
+                    # No user is waiting, but "no deadline" means a hung
+                    # backend pins this worker thread (and its mapper drain)
+                    # forever -- generous bound instead, well past any sane
+                    # generation time.
+                    deadline=time.monotonic() + 600.0,
                 ):
                     if not is_real_appeal(item.text):
                         continue
@@ -269,8 +359,12 @@ class SpeculativeAppealsHelper:
             # of precomputing. A pool thread per call restores the concurrency;
             # DatabaseSyncToAsync still wraps each call in close_old_connections()
             # either way, so per-call connection isolation is unchanged.
+            # executor=bridge_executor keeps this minutes-long drain off the
+            # loop's small shared default executor (see exec.py).
             drafts = await database_sync_to_async(
-                _generate_drafts, thread_sensitive=False
+                _generate_drafts,
+                thread_sensitive=False,
+                executor=bridge_executor,
             )()
 
             # Generation is done; make sure it is still about the CURRENT letter
@@ -284,15 +378,23 @@ class SpeculativeAppealsHelper:
             )
             if current_text != generated_from_text:
                 logger.info(
-                    f"speculative appeals: denial {denial_id} text was replaced "
-                    f"while precomputing; discarding this reserve so a stale "
-                    f"letter can't be served (a fresh precompute is dispatched "
-                    f"by the text-change path)"
+                    f"speculative appeals[{trigger}]: denial {denial_id} text "
+                    f"was replaced while precomputing; discarding this reserve "
+                    f"so a stale letter can't be served (a fresh precompute is "
+                    f"dispatched by the text-change path)"
                 )
                 return 0
 
             saved = 0
             created_pks: List[int] = []
+            # Round-2 rows carry their own level so the dispatch-dedupe, the
+            # reserve attribution, and analytics can tell the confirmed-context
+            # refresh apart from the bare create-time pass.
+            row_context_level = (
+                CONTEXT_LEVEL_SPECULATIVE_CONFIRMED
+                if confirmed_context
+                else CONTEXT_LEVEL_SPECULATIVE
+            )
             # Already filtered to real appeals and capped in _generate_drafts.
             for item in drafts:
                 try:
@@ -304,14 +406,14 @@ class SpeculativeAppealsHelper:
                         # These are the speculative precompute regardless of the
                         # internal tier make_appeals used to produce them.
                         speculative=True,
-                        context_level=CONTEXT_LEVEL_SPECULATIVE,
+                        context_level=row_context_level,
                     )
                     saved += 1
                     created_pks.append(row.pk)
                 except Exception as e:
                     logger.opt(exception=True).warning(
-                        f"speculative appeals: failed to persist a draft for "
-                        f"denial {denial_id}: {e}"
+                        f"speculative appeals[{trigger}]: failed to persist a "
+                        f"draft for denial {denial_id}: {e}"
                     )
 
             # Re-check AFTER writing, which is what actually closes the race.
@@ -333,22 +435,48 @@ class SpeculativeAppealsHelper:
                         pk__in=created_pks
                     ).adelete()
                     logger.info(
-                        f"speculative appeals: denial {denial_id} text was "
-                        f"replaced while precomputing; removed {deleted} reserve "
-                        f"row(s) written about the old letter"
+                        f"speculative appeals[{trigger}]: denial {denial_id} "
+                        f"text was replaced while precomputing; removed "
+                        f"{deleted} reserve row(s) written about the old letter"
                     )
                     return 0
 
+            # Confirmed-context refresh: retire the superseded round-1 reserve,
+            # but ONLY once the replacement rows are safely in -- if this run
+            # produced nothing, the round-1 reserve stays (a bare-context
+            # reserve beats an empty one). Deleting AFTER inserting also means
+            # the reserve is never empty mid-refresh. Excluding created_pks and
+            # filtering speculative=True keeps this away from the new rows and
+            # from anything the live flow claimed (claiming flips
+            # speculative=False) while the refresh was running.
+            if confirmed_context and saved:
+                superseded, _ = (
+                    await ProposedAppeal.objects.filter(
+                        for_denial=denial, speculative=True, chosen=False
+                    )
+                    .exclude(pk__in=created_pks)
+                    .adelete()
+                )
+                if superseded:
+                    logger.info(
+                        f"speculative appeals[{trigger}]: retired {superseded} "
+                        f"superseded pre-confirmation reserve row(s) for denial "
+                        f"{denial_id}"
+                    )
+
             logger.info(
-                f"speculative appeals: persisted {saved} internal-only draft(s) "
-                f"for denial {denial_id} "
-                f"(models_tried={diagnostics.get('models_tried')})"
+                f"speculative appeals[{trigger}]: persisted {saved} "
+                f"internal-only draft(s) for denial {denial_id} in "
+                f"{time.monotonic() - started:.1f}s "
+                f"(context_level={row_context_level}, "
+                f"models_tried={diagnostics.get('models_tried')}, "
+                f"winning_stage={diagnostics.get('winning_stage')})"
             )
             return saved
         except Exception as e:
             logger.opt(exception=True).error(
-                f"speculative appeals: generation failed for denial "
-                f"{denial_id}: {e}"
+                f"speculative appeals[{trigger}]: generation failed for denial "
+                f"{denial_id} after {time.monotonic() - started:.1f}s: {e}"
             )
             return 0
         finally:
@@ -365,8 +493,13 @@ class SpeculativeAppealsHelper:
                 )
 
 
-def dispatch_speculative_appeals(denial_id: Any, force: bool = False) -> None:
-    """Fire-and-forget the speculative precompute for a freshly-created denial.
+def dispatch_speculative_appeals(
+    denial_id: Any,
+    force: bool = False,
+    trigger: str = "denial_created",
+    confirmed_context: bool = False,
+) -> None:
+    """Fire-and-forget the speculative precompute for a denial.
 
     Primary path (production): a detached Ray actor so the work survives the
     request and worker restarts with no deadline. Fallback (no Ray cluster to
@@ -380,10 +513,16 @@ def dispatch_speculative_appeals(denial_id: Any, force: bool = False) -> None:
 
     ``force`` is passed through to the helper's idempotency check; the
     denial-text-replacement path needs it (see generate_for_denial).
+    ``trigger``/``confirmed_context`` label and select the round -- see
+    generate_for_denial. NOTE: a detached actor still running pre-kwarg code
+    across a rolling deploy will reject the new kwargs inside its own task
+    (fire-and-forget, so unobserved); the round-2 refresh is then skipped until
+    the actor restarts on the new image. Degraded, not a drop-off -- the
+    round-1 reserve remains.
     """
     if not getattr(settings, "SPECULATIVE_APPEALS_PRECOMPUTE", True):
         logger.debug(
-            f"speculative appeals: precompute disabled by settings; "
+            f"speculative appeals[{trigger}]: precompute disabled by settings; "
             f"skipping denial {denial_id}"
         )
         return
@@ -395,22 +534,43 @@ def dispatch_speculative_appeals(denial_id: Any, force: bool = False) -> None:
             )
 
             actor = speculative_appeals_actor_ref.get
-            actor.prefetch_for_denial.remote(denial_id, force=force)
+            actor.prefetch_for_denial.remote(
+                denial_id,
+                force=force,
+                trigger=trigger,
+                confirmed_context=confirmed_context,
+            )
+            logger.info(
+                f"speculative appeals[{trigger}]: dispatched denial {denial_id} "
+                f"to actor (force={force}, confirmed_context={confirmed_context})"
+            )
             return
         except Exception:
             logger.opt(exception=True).warning(
-                "speculative appeals: actor dispatch unavailable; using thread "
-                "fallback"
+                f"speculative appeals[{trigger}]: actor dispatch unavailable; "
+                f"using thread fallback"
             )
 
     try:
         from fighthealthinsurance.utils import run_in_registered_daemon_thread
 
         run_in_registered_daemon_thread(
-            SpeculativeAppealsHelper.generate_for_denial_sync, denial_id, force=force
+            SpeculativeAppealsHelper.generate_for_denial_sync,
+            denial_id,
+            force=force,
+            trigger=trigger,
+            confirmed_context=confirmed_context,
+        )
+        # WARNING, not info: expected in dev (no Ray cluster), but in
+        # production this line means the pod couldn't reach Ray -- the
+        # precompute now dies with worker restarts and has a request-process
+        # deadline. If it shows up in prod logs, Ray connectivity is broken.
+        logger.warning(
+            f"speculative appeals[{trigger}]: dispatched denial {denial_id} to "
+            f"daemon thread (force={force}, confirmed_context={confirmed_context})"
         )
     except Exception:
         logger.opt(exception=True).error(
-            f"speculative appeals: thread-fallback dispatch failed for denial "
-            f"{denial_id}"
+            f"speculative appeals[{trigger}]: thread-fallback dispatch failed "
+            f"for denial {denial_id}"
         )

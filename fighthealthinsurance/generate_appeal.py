@@ -5,6 +5,8 @@ import random
 import re
 import time
 from concurrent.futures import Future
+from concurrent.futures import TimeoutError as FuturesTimeoutError
+from concurrent.futures import as_completed as futures_as_completed
 from concurrent.futures import wait as futures_wait
 from dataclasses import dataclass
 from typing import Any, Callable, Coroutine, Iterator, List, Optional, Tuple, TypeVar
@@ -71,7 +73,6 @@ from .payer_policy_helper import (
 from .process_denial import ProcessDenialRegex
 from .pubmed_tools import PubMedTools
 from .utils import (
-    as_available_nested,
     best_within_timelimit,
     describe_unusable_appeal,
     is_real_appeal,
@@ -1158,10 +1159,11 @@ def _generated_to_appeals_text(
 ) -> Iterator[GeneratedAppeal]:
     """Map one model future's (infer_type, text) results to GeneratedAppeals.
 
-    Contains that model's failure: as_available_nested re-raises future
-    exceptions mid-iteration, so an uncaught error from one backend (e.g. an
-    external provider 500) would abort the whole appeal stream and drop every
-    other model's results. Instead we log one concise line and yield nothing.
+    Contains that model's failure END TO END: an uncaught error from one
+    backend (a provider 500 on future retrieval, or an exception while
+    templating/iterating its results) would otherwise abort the whole appeal
+    stream and drop every other model's results. Instead we log one concise
+    line and yield nothing further from this model only.
 
     ``context_level`` (full/tier1_shed/... provenance) is stamped onto each
     emitted appeal. When ``recorder`` is provided, this model's outcome plus
@@ -1173,6 +1175,7 @@ def _generated_to_appeals_text(
     """
     produced = False
     runt_only = False
+    failed = False
     error_detail = ""
     # What this model returned, kept so the persisted row shows what was said
     # even when nothing was deliverable. Capped as we go rather than at write
@@ -1194,16 +1197,31 @@ def _generated_to_appeals_text(
     try:
         try:
             # With a requester deadline, don't wait on the inner future past
-            # it (plus a grace beat for the deadline-aware model call to
-            # notice and return): threads can't be cancelled, so an unbounded
-            # result() here is how abandoned generations used to pin pool
-            # threads long after the client was gone. futures_wait (not
-            # result(timeout=...)) distinguishes "still pending at the
-            # deadline" from a TimeoutError RAISED BY the model call itself
-            # (the same builtin class on 3.11+), which must keep its normal
-            # "timed out" classification below.
+            # it: threads can't be cancelled, so an unbounded result() here is
+            # how abandoned generations used to pin pool threads long after
+            # the client was gone. We stop ~10s BEFORE the deadline rather
+            # than granting grace past it -- the caller (WS consumer /
+            # streaming budget) enforces the same deadline, and finishing
+            # inside it is what lets the attempt rows flush and an error
+            # frame reach the client instead of the whole task being killed
+            # mid-drain. futures_wait (not result(timeout=...)) distinguishes
+            # "still pending at the deadline" from a TimeoutError RAISED BY
+            # the model call itself (the same builtin class on 3.11+), which
+            # must keep its normal "timed out" classification below.
             if deadline is not None and not k_text_future.done():
-                remaining = max(1.0, deadline - time.monotonic() + 15.0)
+                remaining = deadline - time.monotonic() - 10.0
+                if remaining <= 0.0:
+                    # Margin already blown: abandon immediately. Even a 1s
+                    # floor here compounds -- the post-deadline drain walks
+                    # every leftover mapper SERIALLY, so N pending models
+                    # would eat N extra seconds out of the margin that
+                    # exists to flush attempt rows and error frames.
+                    error_detail = "abandoned: requester deadline passed"
+                    logger.warning(
+                        f"Appeal generation via {model_name} abandoned -- "
+                        f"requester deadline passed"
+                    )
+                    return
                 _done, not_done = futures_wait([k_text_future], timeout=remaining)
                 if not_done:
                     error_detail = "abandoned: requester deadline passed"
@@ -1219,6 +1237,7 @@ def _generated_to_appeals_text(
             # code bug in the pipeline) keeps its traceback -- otherwise an
             # all-models-empty run caused by a defect would be indistinguishable
             # from ordinary backend downtime.
+            failed = True
             error_detail = describe_model_error(e)
             if isinstance(e, MODEL_TRANSPORT_ERRORS):
                 logger.warning(
@@ -1232,42 +1251,60 @@ def _generated_to_appeals_text(
         if model_results is None:
             error_detail = "backend returned no result set"
             return
-        for k, text in model_results:
-            if text is None:
-                continue
-            # It's either full or a reason to plug into a template
-            if k == "full":
-                logger.debug(f"Bubbling up full response ({len(text)} chars)")
-                _note_returned(text)
-                # Gate on is_real_appeal, NOT merely on having text: the ladder
-                # rejects runts downstream (_peek_real_or_none), so counting one
-                # as "ok" would report a model as working in the very zero-appeal
-                # log that exists to say which models failed -- and "ok" then
-                # masks that model's real failures at every other tier.
-                if is_real_appeal(text):
-                    produced = True
-                else:
-                    runt_only = True
-                    if not error_detail:
-                        error_detail = describe_unusable_appeal(text)
-                yield GeneratedAppeal(
-                    text=text, model_name=model_name, context_level=context_level
-                )
-            else:
-                _note_returned(text)
-                templated = template_generator.generate(text)
-                if templated is not None:
-                    if is_real_appeal(templated):
+        try:
+            for k, text in model_results:
+                if text is None:
+                    continue
+                # It's either full or a reason to plug into a template
+                if k == "full":
+                    logger.debug(f"Bubbling up full response ({len(text)} chars)")
+                    _note_returned(text)
+                    # Gate on is_real_appeal, NOT merely on having text: the
+                    # ladder rejects runts downstream (_peek_real_or_none), so
+                    # counting one as "ok" would report a model as working in
+                    # the very zero-appeal log that exists to say which models
+                    # failed -- and "ok" then masks that model's real failures
+                    # at every other tier.
+                    if is_real_appeal(text):
                         produced = True
                     else:
                         runt_only = True
                         if not error_detail:
-                            error_detail = describe_unusable_appeal(templated)
+                            error_detail = describe_unusable_appeal(text)
                     yield GeneratedAppeal(
-                        text=templated,
-                        model_name=model_name,
-                        context_level=context_level,
+                        text=text, model_name=model_name, context_level=context_level
                     )
+                else:
+                    _note_returned(text)
+                    templated = template_generator.generate(text)
+                    if templated is not None:
+                        if is_real_appeal(templated):
+                            produced = True
+                        else:
+                            runt_only = True
+                            if not error_detail:
+                                error_detail = describe_unusable_appeal(templated)
+                        yield GeneratedAppeal(
+                            text=templated,
+                            model_name=model_name,
+                            context_level=context_level,
+                        )
+        except Exception as e:
+            # The containment this function promises must cover the mapping
+            # BODY, not just the future retrieval above: an exception here
+            # (templating, results iteration) used to propagate through the
+            # whole a.map chain, permanently closing the appeal stream --
+            # everything not yet streamed was dropped and the run still ended
+            # with a clean 'done' frame, so neither side noticed the loss.
+            # (Cancellation/GeneratorExit are BaseExceptions and still
+            # propagate, so client-disconnect teardown is unaffected.)
+            failed = True
+            error_detail = f"appeal mapping failed: {e}"
+            logger.opt(exception=True).error(
+                f"Appeal mapping for {model_name} failed mid-results; dropping "
+                f"the remainder of this model's output only: {e}"
+            )
+            return
     finally:
         # Record whether this model produced any deliverable text, for the
         # models_tried diagnostic and the persisted attempt row.
@@ -1281,12 +1318,17 @@ def _generated_to_appeals_text(
         if recorder is not None:
             if produced:
                 outcome = "ok"
+            elif failed:
+                # An actual raised failure outranks runt_only: a model that
+                # yielded a runt and THEN crashed mid-results should read as
+                # the error it hit, not as "answered too briefly". (error
+                # itself used to be filed as `no_output` -- indistinguishable
+                # from a model that answered with nothing, a completely
+                # different problem.)
+                outcome = "error"
             elif runt_only:
                 outcome = "runt_only"
             elif error_detail:
-                # A transport/backend failure, which used to be filed as
-                # `no_output` -- indistinguishable from a model that answered
-                # with nothing, which is a completely different problem.
                 outcome = "error"
             else:
                 outcome = "no_output"
@@ -1316,32 +1358,88 @@ def _generated_to_appeals_text(
             )
 
 
+def _appeals_as_futures_complete(
+    pairs: List[Tuple[Future, Iterator["GeneratedAppeal"]]],
+    deadline: Optional[float] = None,
+) -> Iterator["GeneratedAppeal"]:
+    """Yield each mapper's appeals in the order the MODEL futures complete.
+
+    The previous shape -- ``submit_pool.submit(_generated_to_appeals_text,...)``
+    then ``as_available_nested`` -- looked like a completion-ordered fan-in but
+    wasn't: ``_generated_to_appeals_text`` is a generator FUNCTION, so the
+    submitted future resolved instantly with a fresh generator object,
+    ``as_completed`` ordering was meaningless, and the sub-iterators were then
+    drained serially in that arbitrary order. One hung backend at the front of
+    the line blocked consumption of every other model's already-finished
+    appeals -- and once make_appeals' overall budget expired, those finished
+    appeals were abandoned along with it.
+
+    Here the mappers stay lazy (no pool round-trip; the model calls themselves
+    were already submitted by parallel_infer) and we key completion on the
+    REAL model futures: whichever model answers first is streamed first.
+
+    On a requester deadline expiring while futures are still pending, the
+    leftover mappers are drained anyway: each notices the passed deadline
+    itself (bounded ~1s wait) and records its 'abandoned' attempt row, keeping
+    the zero-appeal models_tried diagnostic complete.
+    """
+    gens_by_future: dict[Future, List[Iterator["GeneratedAppeal"]]] = {}
+    for fut, gen in pairs:
+        gens_by_future.setdefault(fut, []).append(gen)
+    timeout = None
+    if deadline is not None:
+        # Stop ~10s BEFORE the requester deadline (not after): the caller
+        # enforces the same deadline, and giving up inside it leaves time to
+        # drain the leftover mappers and flush their attempt rows before the
+        # surrounding task is torn down. Zero (not a 1s floor) once the
+        # margin is blown -- as_completed with timeout=0 raises immediately
+        # for still-pending futures, which is exactly the drain path.
+        timeout = max(0.0, deadline - time.monotonic() - 10.0)
+    try:
+        for fut in futures_as_completed(list(gens_by_future), timeout=timeout):
+            for gen in gens_by_future.pop(fut):
+                yield from gen
+    except FuturesTimeoutError:
+        logger.warning(
+            f"appeal fan-in: requester deadline passed with "
+            f"{len(gens_by_future)} model future(s) still pending; draining "
+            f"their mappers for the attempt log"
+        )
+        for gens in gens_by_future.values():
+            for gen in gens:
+                yield from gen
+
+
 def _peek_real_or_none(
     it: Iterator["GeneratedAppeal"], denial_id: Any, stage: str, recorder=None
 ) -> Tuple[Optional["GeneratedAppeal"], Iterator["GeneratedAppeal"]]:
-    """Like _peek_or_none, but returns (None, _) when the first item is
-    non-None but fails is_real_appeal. Without this, an unusable first item
-    would suppress the fallback path even though downstream filtering
-    drops it — leading to zero deliverable appeals.
+    """Like _peek_or_none, but scans FORWARD past items that fail
+    is_real_appeal until it finds a usable one (or the stage runs dry).
+    Returning None on the first runt used to abandon the whole stage: with
+    several models fanned out, one fast model answering with an unusable
+    stub sent the ladder to the next stage even though a slower model in the
+    SAME stage was about to deliver a real appeal.
 
-    Records the rejected item when a ``recorder`` is given. That row would
-    otherwise be the one missing from the persisted attempt log: peeking pulls
-    a single item WITHOUT exhausting the producing generator, so the
+    Records each rejected item when a ``recorder`` is given. Those rows would
+    otherwise be the ones missing from the persisted attempt log: peeking
+    pulls items WITHOUT exhausting the producing generator, so the
     generator's own end-of-iteration recording never runs for the stage that
-    fell through -- and the item that caused the fallthrough is the single most
-    useful thing to look at afterwards. Recorded under its own outcome rather
-    than as a plain ``runt_only``, both because it is a different fact ("this
-    is what made us try the next stage") and so it can't be mistaken for a
-    duplicate of the row the abandoned generator may still write if it is
-    drained or collected later.
+    fell through -- and the items that caused the fallthrough are the most
+    useful thing to look at afterwards. Recorded under their own outcome
+    rather than as a plain ``runt_only``, both because it is a different fact
+    ("this is what made us keep looking / try the next stage") and so it
+    can't be mistaken for a duplicate of the row the abandoned generator may
+    still write if it is drained or collected later.
     """
-    first, it = _peek_or_none(it)
-    if first is not None and not is_real_appeal(first.text):
+    while True:
+        first, it = _peek_or_none(it)
+        if first is None or is_real_appeal(first.text):
+            return first, it
         reason = describe_unusable_appeal(first.text)
         logger.warning(
-            f"make_appeals: {stage} first item is unusable "
+            f"make_appeals: {stage} produced an unusable item "
             f"({reason}) for denial {denial_id}; "
-            f"treating as empty to trigger fallback"
+            f"skipping it and scanning the rest of the stage"
         )
         if recorder is not None:
             recorder.record(
@@ -1355,8 +1453,8 @@ def _peek_real_or_none(
                     response_chars=len(first.text) if first.text else 0,
                 )
             )
-        return None, it
-    return first, it
+        # Drop the unusable head and keep scanning.
+        next(it, None)
 
 
 class AppealGenerator(object):
@@ -2774,7 +2872,7 @@ class AppealGenerator(object):
         def make_async_model_calls(
             calls,
             stage: str = "",
-        ) -> List[Future[Iterator[GeneratedAppeal]]]:
+        ) -> Iterator[GeneratedAppeal]:
             logger.debug(f"Calling models: {calls}")
             # Bind model_name AND context_level to each future so we can recover
             # them after the per-call iterator collapses results to (kind, text)
@@ -2817,13 +2915,24 @@ class AppealGenerator(object):
                         )
                     )
 
-            # Python lack reasonable future chaining (ugh). Thread the call
-            # metadata and the shared attempt recorder into the module-level
-            # mapper so each emitted appeal carries its shed level and each
-            # model's outcome (plus its response text and timing) is recorded.
-            generated_text_futures = [
-                submit_pool.submit(
-                    _generated_to_appeals_text,
+            # Thread the call metadata and the shared attempt recorder into
+            # the module-level mapper so each emitted appeal carries its shed
+            # level and each model's outcome (plus its response text and
+            # timing) is recorded. The mappers are constructed lazily (a
+            # generator function call runs no body code) and paired with their
+            # REAL model future so the fan-in can stream whichever model
+            # answers first -- see _appeals_as_futures_complete for why they
+            # must not be pool-submitted.
+            # Full-letter calls drain (completion-ordered) BEFORE templated
+            # medically_necessary ones: the peek takes the first real appeal,
+            # and a fast one-liner-into-template must not beat a complete
+            # letter purely by racing. Within each group it's still whichever
+            # model answers first; the med-necessary group remains as
+            # fallback if every full call comes back empty/unusable.
+            full_pairs: List[Tuple[Future, Iterator[GeneratedAppeal]]] = []
+            other_pairs: List[Tuple[Future, Iterator[GeneratedAppeal]]] = []
+            for meta, f in model_futures:
+                mapper = _generated_to_appeals_text(
                     meta["model_name"],
                     f,
                     template_generator,
@@ -2837,9 +2946,16 @@ class AppealGenerator(object):
                     meta["submitted_wall"],
                     deadline,
                 )
-                for meta, f in model_futures
-            ]
-            return generated_text_futures
+                if meta["infer_type"] == "full":
+                    full_pairs.append((f, mapper))
+                else:
+                    other_pairs.append((f, mapper))
+            if full_pairs and other_pairs:
+                return itertools.chain(
+                    _appeals_as_futures_complete(full_pairs, deadline),
+                    _appeals_as_futures_complete(other_pairs, deadline),
+                )
+            return _appeals_as_futures_complete(full_pairs or other_pairs, deadline)
 
         # Proactive dual-call: when a call is estimated to exceed its model's
         # (fuzzy) context window, fan out a tier-1 context-shed variant
@@ -2847,19 +2963,16 @@ class AppealGenerator(object):
         # for the primary+backup cycle to fail before shedding. max_len is
         # approximate, so we keep BOTH: the full call may still fit (and tends
         # to be higher quality), while the shed call is insurance against an
-        # overflow. Whichever returns a real appeal first wins via
-        # as_available_nested. ``calls`` is left untouched so the reactive
-        # ladder below still escalates to tier 2 if every call comes back empty.
+        # overflow. Whichever returns a real appeal first wins via the
+        # completion-ordered fan-in. ``calls`` is left untouched so the
+        # reactive ladder below still escalates to tier 2 if every call comes
+        # back empty.
         first_iteration_calls = _add_proactive_shed_variants(
             calls,
             open_prompt_kwargs=open_prompt_kwargs,
             rebuild_prompt=self.make_open_prompt,
             original_open_prompt=open_prompt,
             denial_id=denial.denial_id,
-        )
-
-        generated_text_futures: List[Future[Iterator[GeneratedAppeal]]] = (
-            make_async_model_calls(first_iteration_calls, stage="primary")
         )
 
         # Tiered fallback: primary -> backup -> retry primary with shed
@@ -2871,7 +2984,7 @@ class AppealGenerator(object):
         # Correlation prefix so this ML cascade lines up with the generating
         # phase trace (init/done frames + ReportClientError) sharing this id.
         gen_prefix = f"[gen_id={generation_id}] " if generation_id else ""
-        appeals = as_available_nested(generated_text_futures)
+        appeals = make_async_model_calls(first_iteration_calls, stage="primary")
         first, appeals = _peek_real_or_none(appeals, denial_id, "primary", recorder)
         # Which stage produced the first deliverable appeal, surfaced via
         # diagnostics_sink so the generating-phase logging/done-frame can
@@ -2884,9 +2997,7 @@ class AppealGenerator(object):
                 f"{gen_prefix}Primary empty for denial {denial_id}; trying "
                 f"backup_calls (n={len(backup_calls)}, use_external={use_ext})"
             )
-            appeals = as_available_nested(
-                make_async_model_calls(backup_calls, stage="backup")
-            )
+            appeals = make_async_model_calls(backup_calls, stage="backup")
             first, appeals = _peek_real_or_none(appeals, denial_id, "backup", recorder)
             if first is not None:
                 winning_stage = "backup"
@@ -2915,9 +3026,7 @@ class AppealGenerator(object):
                     f"{gen_prefix}make_appeals: retrying primary for denial "
                     f"{denial_id} with context shed (tier={tier}, changed={changed})"
                 )
-                appeals = as_available_nested(
-                    make_async_model_calls(shed_calls, stage=f"retry_tier_{tier}")
-                )
+                appeals = make_async_model_calls(shed_calls, stage=f"retry_tier_{tier}")
                 first, appeals = _peek_real_or_none(
                     appeals, denial_id, f"retry_tier_{tier}", recorder
                 )

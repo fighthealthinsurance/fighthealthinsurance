@@ -1,5 +1,6 @@
 import asyncio
 import os
+import threading
 from typing import List, Optional, Sequence, Tuple
 
 from loguru import logger
@@ -905,13 +906,23 @@ class MLRouter(object):
 
 # Lazy singleton - initialized on first access
 _ml_router_instance: Optional[MLRouter] = None
+_ml_router_lock = threading.Lock()
 
 
 def _get_ml_router() -> MLRouter:
-    """Get or create the singleton MLRouter instance (lazy initialization)."""
+    """Get or create the singleton MLRouter instance (lazy initialization).
+
+    Locked: first access comes from concurrent request threads (and the
+    startup probe), and an unlocked check-then-create races into building
+    TWO routers -- each with its own backend instances, cooldown state, and
+    health view, with half the callers holding a router the health sweep
+    never updates again.
+    """
     global _ml_router_instance
     if _ml_router_instance is None:
-        _ml_router_instance = MLRouter()
+        with _ml_router_lock:
+            if _ml_router_instance is None:
+                _ml_router_instance = MLRouter()
     return _ml_router_instance
 
 

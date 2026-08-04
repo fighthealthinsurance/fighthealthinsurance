@@ -15,7 +15,7 @@ from typing import Any, Callable, ClassVar, Iterable, List, Optional, Tuple, Uni
 
 import aiohttp
 import requests
-from asgiref.sync import async_to_sync
+from asgiref.sync import async_to_sync, sync_to_async
 from loguru import logger
 
 
@@ -44,6 +44,56 @@ else:
 
 from llm_result_utils.cleaner_utils import CleanerUtils
 from llm_result_utils.llm_utils import LLMResponseUtils
+
+import urllib.parse
+import urllib.request as _urllib_request
+
+
+def _bounded_is_valid_url(cls, url):
+    """Bounded replacement for CleanerUtils.is_valid_url.
+
+    The upstream implementation network-validates candidate URLs with a bare
+    ``urlopen`` (no timeout), so a single unresponsive host stalls the
+    appeal's post-processing in ``url_fixer`` indefinitely. Same semantics,
+    but with a hard per-request timeout and a capped read (the bad-result
+    regex only matches at the start of the body anyway) -- and restricted to
+    http(s): these URLs come from LLM OUTPUT, and urllib will otherwise
+    happily open file:// and other non-network schemes.
+    """
+    try:
+        scheme = urllib.parse.urlsplit(url).scheme.lower()
+    except ValueError:
+        return False
+    if scheme not in ("http", "https"):
+        return False
+    try:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.45 "
+            "Safari/537.36"
+        }
+        request = _urllib_request.Request(url, headers=headers)
+        result = _urllib_request.urlopen(request, timeout=5)
+        if "pdf" not in url:
+            try:
+                result_text = result.read(65536).decode("utf-8").lower()
+            except Exception:
+                # Content that can't be decoded could be a PDF; treat as valid
+                # like upstream does.
+                return True
+            if cls.common_bad_result_regex.match(result_text):
+                return False
+        return True
+    except Exception:
+        groups = cls.maybe_bad_url_endings.search(url)
+        if groups is not None:
+            return cls.is_valid_url(groups.group(1))
+        return False
+
+
+CleanerUtils.is_valid_url = classmethod(  # type: ignore[assignment,method-assign]
+    _bounded_is_valid_url
+)
 
 from fighthealthinsurance.exec import *
 from fighthealthinsurance.ml.bad_output_utils import (
@@ -356,22 +406,39 @@ def remove_repeated_sentences(
     if text is None:
         return None
 
-    sentences = _sentence_split_re.split(text.strip())
+    stripped_text = text.strip()
+    sentences = _sentence_split_re.split(stripped_text)
 
     # Short texts can have legitimate repetition — skip filtering.
     if len(sentences) < 6:
         return text
 
     seen_counts: dict[str, int] = {}
-    final_sentences: list[str] = []
-    for sent in sentences:
-        key = sent.strip().lower()
-        count = seen_counts.get(key, 0) + 1
-        seen_counts[key] = count
-        if count <= max_repeats:
-            final_sentences.append(sent)
+    removed = 0
+    # Filter PER PARAGRAPH (repeat counts still global) and rejoin with the
+    # original paragraph breaks: a flat " ".join collapsed every paragraph
+    # break, so any appeal that tripped the cap came back with letterhead,
+    # body, and sign-off welded into one wall of text.
+    final_paragraphs: list[str] = []
+    for paragraph in re.split(r"\n\s*\n", stripped_text):
+        kept: list[str] = []
+        for sent in _sentence_split_re.split(paragraph):
+            key = sent.strip().lower()
+            count = seen_counts.get(key, 0) + 1
+            seen_counts[key] = count
+            if count <= max_repeats:
+                kept.append(sent)
+            else:
+                removed += 1
+        if kept:
+            final_paragraphs.append(" ".join(kept))
 
-    result = " ".join(final_sentences)
+    # Nothing removed: return the ORIGINAL text (single-newline breaks
+    # inside paragraphs survive too).
+    if removed == 0:
+        return text
+
+    result = "\n\n".join(final_paragraphs)
 
     # If we stripped away too much, the original was unsalvageable
     if len(result) < 0.3 * len(text):
@@ -1626,14 +1693,28 @@ class RemoteOpenLike(RemoteModel):
         # _note_transport_failure.
         self._transport_strikes: dict[tuple[str, str], list[float]] = {}
         self._transport_cooldowns: dict[tuple[str, str], float] = {}
+        # Last generous-window TIMEOUT strike per (api_base, model): budget
+        # timeouts are deduped to one strike per window so parallel legs of
+        # one slow inference can't trip the cooldown together (see
+        # __timeout_infer). The lock makes that dedup real: the legs run on
+        # separate executor threads and time out within microseconds of each
+        # other, so an unguarded check-then-set would let them all pass. It
+        # also guards _note_transport_failure's strike-list read-modify-write.
+        self._timeout_strike_last: dict[tuple[str, str], float] = {}
+        self._strike_lock = threading.Lock()
 
     def model_is_ok(self):
         """Check that the backend supports this model, returns true if found in list.
         Return false if not found. Logs supported models from the backend."""
-        if not self.api_base:
+        # A backup-only configuration (e.g. HEALTH_BACKUP_BACKEND_HOST set
+        # without HEALTH_BACKEND_HOST) leaves api_base None while inference
+        # would still be served by the backup — probe whichever exists.
+        probe_base = self.api_base or self.backup_api_base
+        probe_model = self.model if self.api_base else self.backup_model
+        if not probe_base:
             raise RuntimeError("No api_base configured for RemoteOpenLike.")
 
-        url = f"{self.api_base}/models"
+        url = f"{probe_base}/models"
 
         headers = {}
         if self.token:
@@ -1647,7 +1728,7 @@ class RemoteOpenLike(RemoteModel):
 
         if resp.status_code != 200:
             logger.debug(
-                f"Backend {self.api_base} returned status {resp.status_code} "
+                f"Backend {probe_base} returned status {resp.status_code} "
                 f"for /models request."
             )
             return False
@@ -1656,7 +1737,7 @@ class RemoteOpenLike(RemoteModel):
             payload = resp.json()
         except ValueError as exc:
             logger.debug(
-                f"Backend {self.api_base} returned non-JSON response for /models."
+                f"Backend {probe_base} returned non-JSON response for /models."
             )
             return False
 
@@ -1688,14 +1769,14 @@ class RemoteOpenLike(RemoteModel):
                 if mid:
                     model_ids.add(mid)
 
-        if self.model not in model_ids:
+        if probe_model not in model_ids:
             available_sorted = sorted(model_ids)
             preview = available_sorted[:15]
             # INFO, not DEBUG: this is the health sweep disabling the backend,
             # and "why is this model not being used" should be answerable
             # without debug logging. Sweep-frequency only, so it can't spam.
             logger.info(
-                f"Model '{self.model}' is not served at {self.api_base}; "
+                f"Model '{probe_model}' is not served at {probe_base}; "
                 f"marking backend unhealthy. Backend serves "
                 f"{len(available_sorted)} model(s), e.g. {preview}"
             )
@@ -1716,9 +1797,17 @@ class RemoteOpenLike(RemoteModel):
         """
         key = prompt_type
         prompt = "Your are a helpful assistant with extensive medical knowledge who loves helping patients. CRITICAL: Only cite medical literature, studies, PMIDs, journal names, or author names that are EXPLICITLY provided in the input. NEVER fabricate or hallucinate citations. If no citations are provided, do not include any specific study references."
-        # If the prompt type is 'full' and the professional point of view is requested, use a different prompt.
-        if prof_pov or (
-            prof_pov and f"{prompt_type}_not_patient" in self.system_prompts_map
+        # Professional POV: switch to the *_not_patient variant only when the
+        # map has one, plus 'full' (whose hard-coded professional fallback
+        # below covers maps without the variant). Switching the key for every
+        # type used to send prompt types WITHOUT a variant -- medically_
+        # necessary in the professional flow -- through the .get() fallback,
+        # so the model was told to write an entire appeal letter where a
+        # one-line medical-necessity reason (templated into {medical_reason})
+        # was expected.
+        if prof_pov and (
+            f"{prompt_type}_not_patient" in self.system_prompts_map
+            or prompt_type == "full"
         ):
             key = f"{prompt_type}_not_patient"
             prompt = (
@@ -1994,9 +2083,15 @@ class RemoteOpenLike(RemoteModel):
             input_urls.extend(CleanerUtils.url_re.findall(prompt))
         if patient_context and isinstance(patient_context, str):
             input_urls.extend(CleanerUtils.url_re.findall(patient_context))
-        if plan_context and isinstance(patient_context, str):
+        # Each guard must check ITS OWN variable: checking patient_context here
+        # (an old copy-paste) meant that whenever patient_context was None the
+        # URLs inside plan/pubmed context were never registered as input URLs,
+        # so url_fixer treated them as hallucinated -- network-validating and,
+        # on any validation failure, silently stripping the very citations the
+        # context provided.
+        if plan_context and isinstance(plan_context, str):
             input_urls.extend(CleanerUtils.url_re.findall(plan_context))
-        if pubmed_context and isinstance(patient_context, str):
+        if pubmed_context and isinstance(pubmed_context, str):
             input_urls.extend(CleanerUtils.url_re.findall(pubmed_context))
 
         result = await self._infer_no_context(
@@ -2065,11 +2160,27 @@ class RemoteOpenLike(RemoteModel):
                     f"{'succeeded' if c < 2 else 'gave up'}"
                 )
 
-        after_cleaners = CleanerUtils.note_remover(
-            CleanerUtils.url_fixer(
-                CleanerUtils.tla_fixer(result), input_urls=input_urls
-            )
-        )
+        # Off the event loop: url_fixer network-validates every URL the model
+        # emitted that wasn't in the input (bounded 5s each, see
+        # _bounded_is_valid_url). The appeal path already runs _checked_infer
+        # inside a worker thread, but the escalation/prior-auth paths await it
+        # directly on the ASGI loop, where these synchronous probes would
+        # stall every other request on the pod. Plain asgiref sync_to_async
+        # (not database_sync_to_async): this is non-ORM network/string work,
+        # so the database variant's per-call connection churn buys nothing.
+        # The DEDICATED cleaner pool, never bridge_executor: bridge workers
+        # block waiting on model futures, and every model future depends on
+        # this hop -- sharing the pool would deadlock generation under
+        # saturation (see exec.py).
+        after_cleaners = await sync_to_async(
+            lambda: CleanerUtils.note_remover(
+                CleanerUtils.url_fixer(
+                    CleanerUtils.tla_fixer(result), input_urls=input_urls
+                )
+            ),
+            thread_sensitive=False,
+            executor=cleaner_executor,
+        )()
 
         block_cleaned = remove_repeated_blocks(after_cleaners)
 
@@ -2405,7 +2516,11 @@ class RemoteOpenLike(RemoteModel):
                 if raw_response and raw_response[0]:
                     return raw_response
 
-                # Try backup API if primary failed (even in dual mode)
+                # Try backup API if primary failed (even in dual mode).
+                # Same kwargs as the primary call: this fallback used to omit
+                # ml_citations_context and history, so an appeal served by the
+                # backup silently lost its citations context and a chat turn
+                # served by the backup lost the whole conversation history.
                 if self.backup_api_base:
                     backup_response = await self.__timeout_infer(
                         system_prompt=system_prompt,
@@ -2413,7 +2528,9 @@ class RemoteOpenLike(RemoteModel):
                         patient_context=patient_context,
                         plan_context=plan_context,
                         pubmed_context=pubmed_context,
+                        ml_citations_context=ml_citations_context,
                         temperature=temperature,
+                        history=history,
                         model=self.backup_model,
                         api_base=self.backup_api_base,
                         raise_http_errors=raise_http_errors,
@@ -2557,26 +2674,33 @@ class RemoteOpenLike(RemoteModel):
         return True
 
     def _note_transport_failure(self, api_base: str, model: str, detail: str) -> None:
-        """Record a transport failure; start a cooldown on repeated strikes."""
+        """Record a transport failure; start a cooldown on repeated strikes.
+
+        Locked: callers run on parallel executor threads, and the strike
+        list is a read-modify-write.
+        """
         now = time.monotonic()
         key = (api_base, model)
-        strikes = [
-            t
-            for t in self._transport_strikes.get(key, [])
-            if now - t < self.TRANSPORT_STRIKE_WINDOW_SECONDS
-        ]
-        strikes.append(now)
-        if len(strikes) >= self.TRANSPORT_STRIKES_TO_COOL:
-            cooldown = _env_float("FHI_TRANSPORT_COOLDOWN_SECONDS", 120.0)
-            self._transport_cooldowns[key] = now + cooldown
-            self._transport_strikes.pop(key, None)
+        with self._strike_lock:
+            strikes = [
+                t
+                for t in self._transport_strikes.get(key, [])
+                if now - t < self.TRANSPORT_STRIKE_WINDOW_SECONDS
+            ]
+            strikes.append(now)
+            cooled = len(strikes) >= self.TRANSPORT_STRIKES_TO_COOL
+            if cooled:
+                cooldown = _env_float("FHI_TRANSPORT_COOLDOWN_SECONDS", 120.0)
+                self._transport_cooldowns[key] = now + cooldown
+                self._transport_strikes.pop(key, None)
+            else:
+                self._transport_strikes[key] = strikes
+        if cooled:
             logger.warning(
                 f"{self}: {model} at {api_base} hit {len(strikes)} transport "
                 f"failures within {self.TRANSPORT_STRIKE_WINDOW_SECONDS:.0f}s "
                 f"({detail}); cooling down for {cooldown:.0f}s"
             )
-        else:
-            self._transport_strikes[key] = strikes
 
     def is_available(self) -> bool:
         """False while EVERY endpoint this instance can serve is inside a
@@ -2626,21 +2750,42 @@ class RemoteOpenLike(RemoteModel):
                     f"Timed out querying {self} after {effective_timeout:.0f}s"
                 )
                 record_ml_call(call_model, "timeout", time.monotonic() - started)
-                # A whole-budget timeout is a transport-level strike too --
-                # but ONLY at the instance-wide budget. A tight interactive
-                # budget (entity 45s, chat 90s) timing out says the backend
-                # is slow for that task, not unreachable; striking on it
-                # could cool the pair for the appeal path whose 300s budget
-                # would have succeeded. Connect-phase failures still strike
-                # via the transport-error handler regardless of budget.
-                if not kwargs.get("raise_http_errors") and (
-                    self._timeout is None or effective_timeout >= self._timeout
-                ):
-                    self._note_transport_failure(
-                        kwargs.get("api_base") or self.api_base,
-                        call_model,
-                        f"timed out after {effective_timeout:.0f}s",
-                    )
+                # Budget timeouts strike ONLY when (a) the backend had a
+                # GENEROUS window (>=120s of nothing is a wedged backend, not
+                # deadline pressure -- tight windows near a requester
+                # deadline must never strike a healthy-but-busy backend) and
+                # (b) at most once per endpoint per strike-window: the
+                # appeal path fires 4 near-simultaneous legs (2 temperatures
+                # x dual-mode), so per-leg strikes let ONE slow long-prompt
+                # inference trip the whole 120s cooldown at once and zero
+                # generation right when the backend was merely busy (a
+                # self-amplifying brownout). Deduped, one busy episode is one
+                # strike (harmless, decays), while an accept-then-hang
+                # backend keeps striking across requests and cools down
+                # instead of burning every caller's full budget until the
+                # hourly health sweep. Genuinely-unreachable hosts still
+                # strike within seconds via the connect-phase handler.
+                strike_base = kwargs.get("api_base") or self.api_base
+                if effective_timeout >= 120.0 and strike_base:
+                    now = time.monotonic()
+                    pair = (strike_base, call_model)
+                    # Locked check-then-set: the parallel legs live on
+                    # separate executor threads and expire together, so an
+                    # unguarded check would let them all strike at once.
+                    with self._strike_lock:
+                        last = self._timeout_strike_last.get(pair, float("-inf"))
+                        should_strike = (
+                            now - last >= self.TRANSPORT_STRIKE_WINDOW_SECONDS
+                        )
+                        if should_strike:
+                            self._timeout_strike_last[pair] = now
+                    if should_strike:
+                        self._note_transport_failure(
+                            strike_base,
+                            call_model,
+                            f"no answer within a generous "
+                            f"{effective_timeout:.0f}s window",
+                        )
                 return None
         else:
             result = await self.__infer(*args, **kwargs)
@@ -3318,8 +3463,13 @@ class RemoteFullOpenLike(RemoteOpenLike):
             if len(question_parts) > 1:
                 question_text = question_parts[0].strip() + "?"
                 # Handle potential formatting in answers like "A: ", ": ", etc.
+                # The "A" must be followed by a colon to count as a prefix:
+                # the old character class [A:] matched a bare leading "A", so
+                # any answer that simply started with A lost its first letter
+                # ("Age 47" -> "ge 47", "Atorvastatin" -> "torvastatin") and
+                # the corrupted answer flowed into qa_context and the appeal.
                 answer_text = question_parts[1].strip()
-                answer_text = re.sub(r"^[A:][\s:]*", "", answer_text)
+                answer_text = re.sub(r"^(?:A\s*:|:)[\s:]*", "", answer_text)
                 questions_with_answers.append((question_text, answer_text))
             else:
                 # Ensure line ends with a question mark if it doesn't have one
@@ -3466,10 +3616,12 @@ class RemoteHealthInsurance(RemoteFullOpenLike):
         return ("not_configured", "HEALTH_BACKEND_HOST not set")
 
     def __init__(self, model: str, dual_mode: bool = True):
-        self.port = os.getenv("HEALTH_BACKEND_PORT", "80")
-        self.host = os.getenv("HEALTH_BACKEND_HOST")
-        self.backup_port = os.getenv("HEALTH_BACKUP_BACKEND_PORT", self.port)
-        self.backup_host = os.getenv("HEALTH_BACKUP_BACKEND_HOST", self.host)
+        # `or` (not getenv defaults): k8s/compose templating can materialize
+        # these as empty strings, which must mean "unset".
+        self.port = os.getenv("HEALTH_BACKEND_PORT") or "80"
+        self.host = os.getenv("HEALTH_BACKEND_HOST") or None
+        self.backup_port = os.getenv("HEALTH_BACKUP_BACKEND_PORT") or self.port
+        self.backup_host = os.getenv("HEALTH_BACKUP_BACKEND_HOST") or self.host
         if self.host is None and self.backup_host is None:
             raise Exception("Can not construct FHI backend without a host")
         self.url = None
@@ -3477,15 +3629,30 @@ class RemoteHealthInsurance(RemoteFullOpenLike):
             self.url = f"http://{self.host}:{self.port}/v1"
         else:
             logger.debug(f"Error setting up remote health {self.host}:{self.port}")
-        self.backup_url = f"http://{self.backup_host}:{self.backup_port}/v1"
-        logger.debug(f"Setting backup to {self.backup_url}")
+        self.backup_url = (
+            f"http://{self.backup_host}:{self.backup_port}/v1"
+            if self.backup_host is not None
+            else None
+        )
+        backup_model = os.getenv("HEALTH_BACKUP_BACKEND_MODEL") or model
+        # With no distinct backup configured the "backup" resolves to the very
+        # same endpoint+model as the primary. Racing it in dual mode just
+        # doubles every request's load on one box without adding redundancy,
+        # so that is disabled -- but the SEQUENTIAL backup fallback is kept:
+        # a retry against the same endpoint still rescues per-request
+        # transient faults (connection reset, single 502, worker restart).
+        identical_backup = self.backup_url == self.url and backup_model == model
+        logger.debug(
+            f"Setting backup to {self.backup_url} "
+            f"(identical_backup={identical_backup})"
+        )
         super().__init__(
             self.url,
             token="",
             backup_api_base=self.backup_url,
             model=model,
-            backup_model=os.getenv("HEALTH_BACKUP_BACKEND_MODEL", model),
-            dual_mode=dual_mode,
+            backup_model=backup_model,
+            dual_mode=dual_mode and not identical_backup,
         )
 
     @property
@@ -3515,10 +3682,12 @@ class NewRemoteInternal(RemoteFullOpenLike):
         return ("not_configured", "NEW_HEALTH_BACKEND_HOST not set")
 
     def __init__(self, model: str, dual_mode: bool = True):
-        self.port = os.getenv("NEW_HEALTH_BACKEND_PORT", "80")
-        self.host = os.getenv("NEW_HEALTH_BACKEND_HOST")
-        self.secondary_port = os.getenv("SECONDARY_NEW_HEALTH_BACKEND_PORT", "80")
-        self.secondary_host = os.getenv("SECONDARY_NEW_HEALTH_BACKEND_HOST")
+        # `or` (not getenv defaults): k8s/compose templating can materialize
+        # these as empty strings, which must mean "unset".
+        self.port = os.getenv("NEW_HEALTH_BACKEND_PORT") or "80"
+        self.host = os.getenv("NEW_HEALTH_BACKEND_HOST") or None
+        self.secondary_port = os.getenv("SECONDARY_NEW_HEALTH_BACKEND_PORT") or "80"
+        self.secondary_host = os.getenv("SECONDARY_NEW_HEALTH_BACKEND_HOST") or None
         if self.host is None:
             raise Exception("Can not construct New FHI backend without a host")
         self.url = None
@@ -3580,10 +3749,12 @@ class AlphaRemoteInternal(RemoteFullOpenLike):
         return ("not_configured", "ALPHA_HEALTH_BACKEND_HOST not set")
 
     def __init__(self, model: str, dual_mode: bool = True):
-        self.port = os.getenv("ALPHA_HEALTH_BACKEND_PORT", "8000")
-        self.host = os.getenv("ALPHA_HEALTH_BACKEND_HOST")
-        self.backup_port = os.getenv("ALPHA_HEALTH_BACKUP_BACKEND_PORT", None)
-        self.backup_host = os.getenv("ALPHA_HEALTH_BACKUP_BACKEND_HOST", None)
+        # `or` (not getenv defaults): k8s/compose templating can materialize
+        # these as empty strings, which must mean "unset".
+        self.port = os.getenv("ALPHA_HEALTH_BACKEND_PORT") or "8000"
+        self.host = os.getenv("ALPHA_HEALTH_BACKEND_HOST") or None
+        self.backup_port = os.getenv("ALPHA_HEALTH_BACKUP_BACKEND_PORT") or None
+        self.backup_host = os.getenv("ALPHA_HEALTH_BACKUP_BACKEND_HOST") or None
         backup_model = "/app/model"
         if self.host is None:
             raise Exception("Can not construct New FHI backend without a host")
