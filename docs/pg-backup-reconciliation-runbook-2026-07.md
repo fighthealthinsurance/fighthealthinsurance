@@ -254,16 +254,35 @@ kubectl -n totallylegitco logs fhi-pg-main-9-1 -c plugin-barman-cloud --since=30
 
 Likely causes, in rough order:
 
-1. **Empty-WAL-archive check failing.** On first archive the plugin verifies
+1. **Empty-WAL-archive check failing — CONFIRMED live 2026-08-04** (sidecar
+   log: `ERROR: WAL archive check failed for server fhi-pg-main-9: Expected
+   empty archive`, retried every ~60s). On first archive the plugin verifies
    the `wals/` prefix for `serverName: fhi-pg-main-9` is EMPTY (that is what
-   the `.check-empty-wal-archive` marker in PGDATA is about). If an earlier
-   `-9` incarnation or a restore-drill cluster (`pg-copy.yaml` /
-   `pg-recover.yaml`) ever archived under the same serverName, the check
-   fails forever. Inspect:
-   `aws --endpoint-url https://s3.us-west-004.backblazeb2.com s3 ls s3://fhi-pg-backup-second/fhi-pg-main-9/wals/ | head`
-   If foreign WAL is there with timestamps predating 2026-07-11, move/delete
-   ONLY that `wals/` prefix (leave `base/`); archiving proceeds on the next
-   retry.
+   the `.check-empty-wal-archive` marker in PGDATA is about). An earlier
+   `-9` incarnation or restore-drill cluster (`pg-copy.yaml` /
+   `pg-recover.yaml`) archived under the same serverName before this
+   cluster's 2026-07-11 birth, so the check fails forever. Fix by clearing
+   ONLY the `wals/` prefix (leave `base/`):
+
+   ```bash
+   B2="--endpoint-url https://s3.us-west-004.backblazeb2.com"
+   # sanity: size + dates — the content must all predate 2026-07-11
+   aws $B2 s3 ls --recursive --summarize s3://fhi-pg-backup-second/fhi-pg-main-9/wals/ | tail -5
+   # preferred: park it rather than destroy it
+   aws $B2 s3 mv --recursive s3://fhi-pg-backup-second/fhi-pg-main-9/wals/ \
+     s3://fhi-pg-backup-second/graveyard/fhi-pg-main-9-stale-wals/
+   # (aws s3 rm --recursive on wals/ is fine too once the dates are confirmed)
+   ```
+
+   The next ~60s retry passes the check — watch the sidecar log flip to
+   success and `pg_stat_archiver.archived_count` start rising; pg_wal on the
+   primary then drains as the backlog uploads. This fix is INDEPENDENT of
+   the plugin Service/reconciliation repair — archiving resumes even before
+   the reinstall, because the WAL path is instance → local sidecar → B2.
+   **Never "fix" this by deleting the `.check-empty-wal-archive` marker or
+   otherwise skipping the check** — it exists to stop two clusters from
+   interleaving WAL in one archive, which silently corrupts the restore
+   lineage.
 2. **B2 checksum env vars missing from the RUNNING sidecars.** The
    ObjectStore sets `AWS_REQUEST_CHECKSUM_CALCULATION` /
    `AWS_RESPONSE_CHECKSUM_VALIDATION`, but sidecar env is baked at pod
