@@ -299,9 +299,12 @@ Likely causes, in rough order:
    If absent, restart instances one at a time (supervised) to re-inject.
 3. **Credentials** (`pg-backup2`) — the sidecar log will show S3 403s.
 
-After the fix, `pg_stat_archiver.archived_count` must RISE with
-`last_failed_wal` clearing; then take the fresh backup (Phase 3 above) and
-run a restore drill before trusting it.
+After the fix, validate recovery by `pg_stat_archiver.archived_count` RISING
+with a fresh `last_archived_time`. Do NOT wait for `last_failed_wal` /
+`failed_count` to clear — they persist until an explicit stats reset and
+never clear on success; only their RECENCY vs the last success matters.
+Then take the fresh backup (Phase 3 above) and run a restore drill before
+trusting it.
 
 ## Phase 4 — pcfweb-pg: dead in-tree backup path (separate fix)
 

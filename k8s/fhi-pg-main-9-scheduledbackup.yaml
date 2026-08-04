@@ -58,3 +58,8 @@ spec:
     name: barman-cloud.cloudnative-pg.io
   immediate: true
   backupOwnerReference: self
+  # Explicit false is load-bearing: build.sh re-applies this manifest on every
+  # deploy, but a field ABSENT from the manifest survives kubectl apply's
+  # three-way merge -- a manual `kubectl patch ... suspend: true` would stick
+  # forever. Declared here, the next deploy reverts it.
+  suspend: false

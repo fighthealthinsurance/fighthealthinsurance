@@ -21,7 +21,7 @@
 #   6. pg_wal segment count bounded on every instance (matches 10/20GB alerts)
 #   7. PGDATA volume headroom on every instance
 #   8. newest completed base backup younger than 26h (matches FhiPg9BackupTooOld)
-#   9. ScheduledBackup exists and is not suspended
+#   9. ScheduledBackup exists, is not suspended, and matches the manifest spec
 #  10. cluster-wide cruft scan: ScheduledBackups aimed at dead clusters,
 #      long-pending Backup CRs (the backup-example failure mode)
 #
@@ -47,6 +47,7 @@ WAL_WARN_SEGS="${WAL_WARN_SEGS:-640}"              # 10GiB @ 16MB
 WAL_FAIL_SEGS="${WAL_FAIL_SEGS:-1280}"             # 20GiB @ 16MB
 MAX_BACKUP_AGE_S="${MAX_BACKUP_AGE_S:-93600}"      # 26h, FhiPg9BackupTooOld
 SCHEDULED_BACKUP="${SCHEDULED_BACKUP:-fhi-pg-main-9-nightly}"
+EXPECTED_SCHEDULE="${EXPECTED_SCHEDULE:-0 0 8 * * *}"  # must match the manifest
 PENDING_CRUFT_AGE_S="${PENDING_CRUFT_AGE_S:-172800}"  # pending >48h = cruft
 
 info() { printf '\033[0;36m[INFO]\033[0m %s\n' "$*"; }
@@ -76,20 +77,21 @@ else
   if [ "${PLUGIN_DEPLOYS[0]}" = "$PLUGIN_DEPLOY" ]; then
     pass "exactly one plugin deployment: ${PLUGIN_DEPLOYS[0]}"
   else
-    warn "single plugin deployment is '${PLUGIN_DEPLOYS[0]}' (expected '$PLUGIN_DEPLOY' from the helm release)"
+    # a lone NON-helm install still violates the runbook end-state: the next
+    # cluster-setup.yaml run would recreate the duplicate-install deadlock
+    fail "single plugin deployment is '${PLUGIN_DEPLOYS[0]}' (expected helm-managed '$PLUGIN_DEPLOY')"
   fi
 fi
 for d in "${PLUGIN_DEPLOYS[@]}"; do
   READY="$(kubectl -n "$PLUGIN_NS" get deploy "$d" \
     -o jsonpath='{.status.readyReplicas}/{.status.replicas}' 2>/dev/null || echo '?/?')"
-  case "$READY" in
-    */*)
-      if [ "${READY%/*}" = "${READY#*/}" ] && [ "${READY%/*}" != "" ]; then
-        pass "deployment $d ready: $READY"
-      else
-        fail "deployment $d NOT ready ($READY) -- likely waiting on the leader lease"
-      fi ;;
-  esac
+  if [ "$READY" = "?/?" ]; then
+    fail "deployment $d: could not read readiness (kubectl error)"
+  elif [ "${READY%/*}" = "${READY#*/}" ] && [ -n "${READY%/*}" ]; then
+    pass "deployment $d ready: $READY"
+  else
+    fail "deployment $d NOT ready ($READY) -- likely waiting on the leader lease"
+  fi
 done
 
 # --- 2. leader lease held by a live pod of the surviving deployment ----------
@@ -161,9 +163,10 @@ psql_primary() { kubectl -n "$NAMESPACE" exec -i "$PRIMARY" -c "$PG_CONTAINER" -
 info "=== [5] WAL archiver on $PRIMARY ==="
 ARCH="$(psql_primary "SELECT archived_count, failed_count,
   COALESCE(EXTRACT(EPOCH FROM (now()-last_archived_time))::bigint, -1),
-  COALESCE(last_archived_wal,''), COALESCE(last_failed_wal,'')
+  COALESCE(last_archived_wal,''), COALESCE(last_failed_wal,''),
+  COALESCE(EXTRACT(EPOCH FROM (now()-last_failed_time))::bigint, -1)
   FROM pg_stat_archiver;")"
-IFS='|' read -r ARCHIVED FAILED_N SINCE LAST_OK LAST_BAD <<<"$ARCH"
+IFS='|' read -r ARCHIVED FAILED_N SINCE LAST_OK LAST_BAD SINCE_FAIL <<<"$ARCH"
 info "archived_count=$ARCHIVED failed_count=$FAILED_N last_ok=$LAST_OK last_failed=$LAST_BAD"
 if [ "$ARCHIVED" -eq 0 ]; then
   fail "archiver has NEVER succeeded on this timeline (archived_count=0)"
@@ -171,6 +174,11 @@ elif [ "$SINCE" -lt 0 ]; then
   fail "no last_archived_time reported"
 elif [ "$SINCE" -gt "$MAX_ARCHIVE_AGE_S" ]; then
   fail "last successful archive was ${SINCE}s ago (> ${MAX_ARCHIVE_AGE_S}s) -- PITR coverage is stalled"
+elif [ "$SINCE_FAIL" -ge 0 ] && [ "$SINCE_FAIL" -lt "$SINCE" ]; then
+  # a failure NEWER than the last success = the archiver's most recent attempt
+  # failed; postgres retries the same segment, so this is a live stall even if
+  # the last success is only minutes old
+  fail "archiver is CURRENTLY failing: last failure ${SINCE_FAIL}s ago (newer than last success ${SINCE}s ago), failing on '$LAST_BAD'"
 else
   pass "last successful archive ${SINCE}s ago"
 fi
@@ -238,42 +246,62 @@ if ! kubectl -n "$NAMESPACE" get scheduledbackup "$SCHEDULED_BACKUP" >/dev/null 
 else
   SUSPENDED="$(kubectl -n "$NAMESPACE" get scheduledbackup "$SCHEDULED_BACKUP" \
     -o jsonpath='{.spec.suspend}' 2>/dev/null || true)"
+  SB_GOT="$(kubectl -n "$NAMESPACE" get scheduledbackup "$SCHEDULED_BACKUP" \
+    -o jsonpath='{.spec.cluster.name}|{.spec.method}|{.spec.pluginConfiguration.name}|{.spec.backupOwnerReference}|{.spec.schedule}' 2>/dev/null || true)"
+  SB_WANT="$CLUSTER|plugin|$PLUGIN_NAME|self|$EXPECTED_SCHEDULE"
   if [ "$SUSPENDED" = "true" ]; then
     fail "ScheduledBackup $SCHEDULED_BACKUP is SUSPENDED"
+  elif [ "$SB_GOT" != "$SB_WANT" ]; then
+    fail "ScheduledBackup $SCHEDULED_BACKUP spec drift (cluster|method|plugin|ownerRef|schedule): got '$SB_GOT', want '$SB_WANT' -- re-apply k8s/fhi-pg-main-9-scheduledbackup.yaml"
   else
-    pass "ScheduledBackup $SCHEDULED_BACKUP present and active"
+    pass "ScheduledBackup $SCHEDULED_BACKUP present, active, and matching the manifest"
   fi
 fi
 
 # --- 10. cluster-wide cruft scan (the backup-example failure mode) -----------
 info "=== [10] cluster-wide ScheduledBackup/Backup cruft ==="
 CRUFT=0
-while IFS=' ' read -r SNS SNAME SCLUSTER; do
-  [ -n "$SNS" ] || continue
-  if ! kubectl -n "$SNS" get cluster "$SCLUSTER" >/dev/null 2>&1; then
-    fail "ScheduledBackup $SNS/$SNAME targets NON-EXISTENT cluster '$SCLUSTER' -- delete it (its catch-up storm can starve ALL scheduled backups)"
-    CRUFT=1
-  fi
-done < <(kubectl get scheduledbackup -A \
+if ! SB_LIST="$(kubectl get scheduledbackup -A \
   -o custom-columns='NS:.metadata.namespace,NAME:.metadata.name,CLUSTER:.spec.cluster.name' \
-  --no-headers 2>/dev/null || true)
+  --no-headers 2>/dev/null)"; then
+  fail "could not list ScheduledBackups cluster-wide (RBAC/API?) -- dead-cluster scan did NOT run"
+  CRUFT=-1
+else
+  while IFS=' ' read -r SNS SNAME SCLUSTER; do
+    [ -n "$SNS" ] || continue
+    if ! kubectl -n "$SNS" get cluster "$SCLUSTER" >/dev/null 2>&1; then
+      fail "ScheduledBackup $SNS/$SNAME targets NON-EXISTENT cluster '$SCLUSTER' -- delete it (its catch-up storm can starve ALL scheduled backups)"
+      CRUFT=1
+    fi
+  done <<<"$SB_LIST"
+fi
 
 NOW_S="$(date +%s)"
 PENDING_OLD=0
-while IFS=' ' read -r BNS BNAME BPHASE BCREATED; do
-  [ -n "$BNS" ] || continue
-  case "$BPHASE" in pending|walArchivingFailing) ;; *) continue ;; esac
-  AGE=$(( NOW_S - $(date -d "$BCREATED" +%s) ))
-  [ "$AGE" -gt "$PENDING_CRUFT_AGE_S" ] && PENDING_OLD=$((PENDING_OLD+1))
-done < <(kubectl get backup -A \
+if ! B_LIST="$(kubectl get backup -A \
   -o custom-columns='NS:.metadata.namespace,NAME:.metadata.name,PHASE:.status.phase,CREATED:.metadata.creationTimestamp' \
-  --no-headers 2>/dev/null || true)
-if [ "$PENDING_OLD" -gt 0 ]; then
-  warn "$PENDING_OLD Backup CR(s) cluster-wide stuck pending/walArchivingFailing for >48h -- investigate/delete (kubectl get backup -A)"
+  --no-headers 2>/dev/null)"; then
+  fail "could not list Backups cluster-wide (RBAC/API?) -- pending-cruft scan did NOT run"
 else
-  pass "no long-pending Backup CRs cluster-wide"
+  while IFS=' ' read -r BNS BNAME BPHASE BCREATED; do
+    [ -n "$BNS" ] || continue
+    case "$BPHASE" in pending|walArchivingFailing) ;; *) continue ;; esac
+    AGE=$(( NOW_S - $(date -d "$BCREATED" +%s) ))
+    if [ "$AGE" -gt "$PENDING_CRUFT_AGE_S" ]; then
+      PENDING_OLD=$((PENDING_OLD+1))
+    fi
+  done <<<"$B_LIST"
+  if [ "$PENDING_OLD" -gt 0 ]; then
+    # fail, not warn: long-pending Backup CRs are the exact failure mode that
+    # starved ScheduledBackup processing cluster-wide in July 2026
+    fail "$PENDING_OLD Backup CR(s) cluster-wide stuck pending/walArchivingFailing for >48h -- investigate/delete (kubectl get backup -A)"
+  else
+    pass "no long-pending Backup CRs cluster-wide"
+  fi
 fi
-[ "$CRUFT" -eq 0 ] && pass "every ScheduledBackup targets a live cluster"
+if [ "$CRUFT" -eq 0 ]; then
+  pass "every ScheduledBackup targets a live cluster"
+fi
 
 # --- verdict -----------------------------------------------------------------
 echo
