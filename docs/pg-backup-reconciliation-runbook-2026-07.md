@@ -279,6 +279,14 @@ Likely causes, in rough order:
    primary then drains as the backlog uploads. This fix is INDEPENDENT of
    the plugin Service/reconciliation repair — archiving resumes even before
    the reinstall, because the WAL path is instance → local sidecar → B2.
+
+   **RESOLVED 2026-08-04:** the blocking content was 8 objects on timeline
+   4 (`wals/0000000400000003/…`) dated 2026-01-05 — a January incarnation
+   archiving under the same serverName — now parked in
+   `graveyard/fhi-pg-main-9-stale-wals/`. Archiving started within a minute
+   of the move (`archived_count` rising from 0, fresh `last_archived_time`).
+   `failed_count` ≈ 100k is the 24-day retry history — it is a lifetime
+   counter and never resets; only a rising trend is a problem.
    **Never "fix" this by deleting the `.check-empty-wal-archive` marker or
    otherwise skipping the check** — it exists to stop two clusters from
    interleaving WAL in one archive, which silently corrupts the restore
