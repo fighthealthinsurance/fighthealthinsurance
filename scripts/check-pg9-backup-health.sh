@@ -73,17 +73,22 @@ if [ "${#PLUGIN_DEPLOYS[@]}" -eq 0 ]; then
 elif [ "${#PLUGIN_DEPLOYS[@]}" -gt 1 ]; then
   fail "DUPLICATE plugin installs: ${PLUGIN_DEPLOYS[*]} -- they fight over the leader lease (the July 2026 reconciliation outage). Keep only the helm-managed '$PLUGIN_DEPLOY'; see docs/pg-backup-reconciliation-runbook-2026-07.md"
 else
-  [ "${PLUGIN_DEPLOYS[0]}" = "$PLUGIN_DEPLOY" ] \
-    && pass "exactly one plugin deployment: ${PLUGIN_DEPLOYS[0]}" \
-    || warn "single plugin deployment is '${PLUGIN_DEPLOYS[0]}' (expected '$PLUGIN_DEPLOY' from the helm release)"
+  if [ "${PLUGIN_DEPLOYS[0]}" = "$PLUGIN_DEPLOY" ]; then
+    pass "exactly one plugin deployment: ${PLUGIN_DEPLOYS[0]}"
+  else
+    warn "single plugin deployment is '${PLUGIN_DEPLOYS[0]}' (expected '$PLUGIN_DEPLOY' from the helm release)"
+  fi
 fi
 for d in "${PLUGIN_DEPLOYS[@]}"; do
   READY="$(kubectl -n "$PLUGIN_NS" get deploy "$d" \
     -o jsonpath='{.status.readyReplicas}/{.status.replicas}' 2>/dev/null || echo '?/?')"
   case "$READY" in
-    */*) [ "${READY%/*}" = "${READY#*/}" ] && [ "${READY%/*}" != "" ] \
-           && pass "deployment $d ready: $READY" \
-           || fail "deployment $d NOT ready ($READY) -- likely waiting on the leader lease" ;;
+    */*)
+      if [ "${READY%/*}" = "${READY#*/}" ] && [ "${READY%/*}" != "" ]; then
+        pass "deployment $d ready: $READY"
+      else
+        fail "deployment $d NOT ready ($READY) -- likely waiting on the leader lease"
+      fi ;;
   esac
 done
 
@@ -110,9 +115,11 @@ if [ "${#PLUGIN_SVCS[@]}" -eq 0 ]; then
   # fall back to name-based discovery in case the label key changed upstream
   mapfile -t PLUGIN_SVCS < <(kubectl -n "$PLUGIN_NS" get svc -o name 2>/dev/null \
     | sed 's|service/||' | grep -i barman || true)
-  [ "${#PLUGIN_SVCS[@]}" -gt 0 ] \
-    && warn "no Service labeled cnpg.io/pluginName=$PLUGIN_NAME; found by name: ${PLUGIN_SVCS[*]} -- verify the operator can discover the plugin" \
-    || fail "no plugin Service found in $PLUGIN_NS at all"
+  if [ "${#PLUGIN_SVCS[@]}" -gt 0 ]; then
+    warn "no Service labeled cnpg.io/pluginName=$PLUGIN_NAME; found by name: ${PLUGIN_SVCS[*]} -- verify the operator can discover the plugin"
+  else
+    fail "no plugin Service found in $PLUGIN_NS at all"
+  fi
 elif [ "${#PLUGIN_SVCS[@]}" -gt 1 ]; then
   fail "MULTIPLE Services claim plugin '$PLUGIN_NAME': ${PLUGIN_SVCS[*]} -- operator discovery is ambiguous (duplicate install)"
 else
@@ -123,9 +130,11 @@ for s in "${PLUGIN_SVCS[@]}"; do
     -l "kubernetes.io/service-name=$s" \
     -o jsonpath='{range .items[*]}{range .endpoints[*]}{.conditions.ready}{"\n"}{end}{end}' \
     2>/dev/null | grep -c true || true)"
-  [ "${READY_EPS:-0}" -ge 1 ] \
-    && pass "service $s has $READY_EPS ready endpoint(s)" \
-    || fail "service $s has NO ready endpoints -- operator gRPC to the plugin has no backend (exact -8 failure)"
+  if [ "${READY_EPS:-0}" -ge 1 ]; then
+    pass "service $s has $READY_EPS ready endpoint(s)"
+  else
+    fail "service $s has NO ready endpoints -- operator gRPC to the plugin has no backend (exact -8 failure)"
+  fi
 done
 
 # --- 4. cluster reconciliation status ---------------------------------------
@@ -229,9 +238,11 @@ if ! kubectl -n "$NAMESPACE" get scheduledbackup "$SCHEDULED_BACKUP" >/dev/null 
 else
   SUSPENDED="$(kubectl -n "$NAMESPACE" get scheduledbackup "$SCHEDULED_BACKUP" \
     -o jsonpath='{.spec.suspend}' 2>/dev/null || true)"
-  [ "$SUSPENDED" = "true" ] \
-    && fail "ScheduledBackup $SCHEDULED_BACKUP is SUSPENDED" \
-    || pass "ScheduledBackup $SCHEDULED_BACKUP present and active"
+  if [ "$SUSPENDED" = "true" ]; then
+    fail "ScheduledBackup $SCHEDULED_BACKUP is SUSPENDED"
+  else
+    pass "ScheduledBackup $SCHEDULED_BACKUP present and active"
+  fi
 fi
 
 # --- 10. cluster-wide cruft scan (the backup-example failure mode) -----------
