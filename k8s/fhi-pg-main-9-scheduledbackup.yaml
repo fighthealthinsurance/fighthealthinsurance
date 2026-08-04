@@ -1,0 +1,65 @@
+# =============================================================================
+# ScheduledBackup for fhi-pg-main-9 -- the DAILY base backup the alerting
+# already assumes exists.
+#
+# WHY THIS FILE EXISTS
+# --------------------
+# k8s/fhi-pg-main-9-alerts.yaml pages on backup age > 26h ("daily schedule ->
+# anything older than 26h is a missed/failed backup") -- but until July 2026 no
+# ScheduledBackup was ever created for -9: only the initial manual Backup from
+# the migration's Phase 3 existed, so the newest base backup silently aged from
+# day one. This manifest is the daily schedule those alerts describe.
+#
+# FIELD SHAPES (postgresql.cnpg.io/v1 ScheduledBackup):
+#   spec.schedule  -- SIX-field cron WITH SECONDS (robfig/cron), NOT the
+#                     5-field Kubernetes CronJob format. "0 0 8 * * *" is
+#                     daily at 08:00:00 UTC (= midnight PST, low traffic for a
+#                     US-focused app; deliberately NOT 00:00 UTC, where the old
+#                     backup-example ScheduledBackup fired and where pcfweb's
+#                     nightly runs -- spreads B2 load).
+#   spec.method    -- MUST be "plugin" + pluginConfiguration.name. -9 has no
+#                     spec.backup section (in-tree barmanObjectStore was
+#                     removed); method: barmanObjectStore fails with "cluster
+#                     has no backup section" (see migration runbook Phase 3).
+#   spec.immediate -- take one backup as soon as this is applied, so applying
+#                     the manifest is self-proving (don't wait for 08:00 UTC).
+#
+# backupOwnerReference: self makes every Backup CR this schedule creates OWNED
+# by this ScheduledBackup, so the CRs are garbage-collected if the schedule is
+# ever deleted. This is a direct lesson from the July 2026 incident: the
+# orphaned `backup-example` ScheduledBackup in the `default` namespace left
+# ~240 forever-pending Backup CRs for the dead fhi-pg-main-7 cluster, and the
+# operator's catch-up re-create storm on those starved scheduling for every
+# OTHER ScheduledBackup in the cluster. Owner-refs keep that graveyard from
+# ever forming again. (Deleting Backup CRs never deletes object-store data;
+# on-disk retention is governed by the ObjectStore's retentionPolicy, 30d.)
+#
+# Verification after apply (see docs/pg-backup-reconciliation-runbook-2026-07.md
+# and scripts/check-pg9-backup-health.sh):
+#   kubectl -n totallylegitco get scheduledbackup fhi-pg-main-9-nightly
+#   kubectl -n totallylegitco get backup -l cnpg.io/cluster=fhi-pg-main-9 \
+#     --sort-by=.metadata.creationTimestamp | tail   # immediate backup -> completed
+# =============================================================================
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: fhi-pg-main-9-nightly
+  namespace: totallylegitco
+  labels:
+    app: fight-health-insurance
+    cnpg.io/cluster: fhi-pg-main-9
+spec:
+  # Six fields: sec min hour day-of-month month day-of-week.
+  schedule: "0 0 8 * * *"
+  cluster:
+    name: fhi-pg-main-9
+  method: plugin
+  pluginConfiguration:
+    name: barman-cloud.cloudnative-pg.io
+  immediate: true
+  backupOwnerReference: self
+  # Explicit false is load-bearing: build.sh re-applies this manifest on every
+  # deploy, but a field ABSENT from the manifest survives kubectl apply's
+  # three-way merge -- a manual `kubectl patch ... suspend: true` would stick
+  # forever. Declared here, the next deploy reverts it.
+  suspend: false
