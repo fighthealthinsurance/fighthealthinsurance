@@ -6,6 +6,7 @@ startup is the suite's normal cost.
 """
 
 import os
+import sys
 from unittest.mock import MagicMock, patch
 
 from django.conf import settings
@@ -70,6 +71,11 @@ class LocalRayGatingTest(TestCase):
         self.assertEqual(kwargs["namespace"], "fhi")
         # Local boot passes the dev sizing args (vs. the attach branch).
         self.assertIn("object_store_memory", kwargs)
+        # address="local" must be explicit: left unset, ray.init would
+        # auto-attach to any (possibly stale) /tmp/ray/ray_current_cluster
+        # address recorded by a past `ray start`, where the sizing kwargs
+        # raise and the boot silently dies.
+        self.assertEqual(kwargs["address"], "local")
 
     def test_env_var_true_overrides_test_setting(self):
         os.environ[LOCAL_RAY_ENV_VAR] = "true"
@@ -94,7 +100,8 @@ class LocalRayGatingTest(TestCase):
     @override_settings(RAY_LOCAL_DEV_CLUSTER=True)
     def test_real_ray_address_attaches_without_local_sizing_args(self):
         # Sizing kwargs are only legal when starting a new local cluster;
-        # with a real address ray.init must be left to attach.
+        # with a real address ray.init must be left to attach (it reads
+        # RAY_ADDRESS itself, so no address kwarg either).
         os.environ["RAY_ADDRESS"] = "ray://cluster:10001"
         with self._mock_ray() as mock_ray:
             self.assertTrue(maybe_init_local_ray())
@@ -102,6 +109,7 @@ class LocalRayGatingTest(TestCase):
         self.assertEqual(kwargs["namespace"], "fhi")
         self.assertNotIn("object_store_memory", kwargs)
         self.assertNotIn("include_dashboard", kwargs)
+        self.assertNotIn("address", kwargs)
 
     @override_settings(RAY_LOCAL_DEV_CLUSTER=True)
     def test_ray_address_local_takes_the_boot_branch(self):
@@ -120,6 +128,38 @@ class LocalRayGatingTest(TestCase):
         with self._mock_ray() as mock_ray:
             mock_ray.init.side_effect = RuntimeError("no cluster for you")
             self.assertFalse(maybe_init_local_ray())
+
+    def test_unrecognized_env_value_warns_and_uses_setting(self):
+        # A mistyped kill switch (=n, =flase) must not silently boot anyway.
+        os.environ[LOCAL_RAY_ENV_VAR] = "n"
+        with patch("fighthealthinsurance.local_ray.logger") as mock_logger:
+            self.assertFalse(local_ray_enabled())
+        mock_logger.warning.assert_called_once()
+
+    @override_settings(RAY_LOCAL_DEV_CLUSTER=True)
+    def test_runserver_plus_watcher_parent_skips_boot(self):
+        # runserver_plus imports wsgi.py in the werkzeug watcher parent
+        # before forking the serving child; booting there would leave an
+        # idle second cluster for the whole session.
+        argv = ["manage.py", "runserver_plus", "0.0.0.0:8000"]
+        with patch.object(sys, "argv", argv), self._mock_ray() as mock_ray:
+            os.environ.pop("WERKZEUG_RUN_MAIN", None)
+            self.assertFalse(maybe_init_local_ray())
+            mock_ray.init.assert_not_called()
+            # The serving child (WERKZEUG_RUN_MAIN=true) must boot.
+            os.environ["WERKZEUG_RUN_MAIN"] = "true"
+            self.assertTrue(maybe_init_local_ray())
+            mock_ray.init.assert_called_once()
+
+    @override_settings(RAY_LOCAL_DEV_CLUSTER=True)
+    def test_runserver_plus_noreload_boots_directly(self):
+        # With --noreload the first process serves, so it must boot despite
+        # WERKZEUG_RUN_MAIN never being set.
+        argv = ["manage.py", "runserver_plus", "--noreload"]
+        with patch.object(sys, "argv", argv), self._mock_ray() as mock_ray:
+            os.environ.pop("WERKZEUG_RUN_MAIN", None)
+            self.assertTrue(maybe_init_local_ray())
+        mock_ray.init.assert_called_once()
 
 
 class LocalRayPollingOptInTest(TestCase):

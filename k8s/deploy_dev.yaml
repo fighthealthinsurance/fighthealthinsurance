@@ -32,6 +32,15 @@ spec:
           env:
             - name: DEV_DB_LOC
               value: "/tmp/db.sqlite3"
+            # This pod runs the Dev configuration, whose default now boots an
+            # in-process Ray cluster per server process for laptop parity
+            # (see local_ray.py) -- here that would mean one cluster per
+            # uvicorn worker (start-server.sh defaults to 2) in a pod with no
+            # resource limits. Keep the pod on its pre-existing no-cluster
+            # behavior; to give it real parity instead, point RAY_ADDRESS at
+            # a dev RayCluster (or set UVICORN_WORKERS=1 and drop this).
+            - name: FHI_LOCAL_RAY
+              value: "false"
           imagePullPolicy: Always
           ports:
             - containerPort: 80
