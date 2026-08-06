@@ -24,6 +24,14 @@ def ray_cluster_available() -> bool:
     take their fallback instead. Polling actors don't need it: they're launched
     once by the dedicated ``launch_polling_actors`` command, which runs on the
     cluster and waits for Ray to come up.
+
+    Dev servers pass this gate the same way production does: ``local_ray.
+    maybe_init_local_ray()`` deliberately boots an in-process cluster once at
+    startup (Dev config only), so ``ray.is_initialized()`` is True and the
+    dispatch sites take their Ray paths locally too. That startup boot is the
+    sanctioned counterpart of the per-dispatch auto-init this guard blocks;
+    the fallbacks below each gate remain for Test* configs and for dev runs
+    with ``FHI_LOCAL_RAY=false``.
     """
     try:
         if ray.is_initialized():

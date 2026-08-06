@@ -61,6 +61,9 @@ coverage.xml
 local_settings.py
 db.sqlite3
 db.sqlite3-journal
+# WAL-mode sidecars (dev runs sqlite in journal_mode=WAL; see settings.py)
+db.sqlite3-wal
+db.sqlite3-shm
 
 # Flask stuff:
 instance/

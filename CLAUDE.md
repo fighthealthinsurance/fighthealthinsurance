@@ -72,6 +72,15 @@ python manage.py loaddata initial followup plan_source insurance_companies pa_re
 
 ### Async Processing
 - Ray actors (`*_actor.py`) for distributed background tasks
+- **Local dev runs the same Ray paths as production:** the Dev config boots an
+  in-process Ray cluster at server startup (`local_ray.maybe_init_local_ray`,
+  called from `asgi.py`/`wsgi.py`), so per-task dispatches (UCR refresh,
+  speculative appeals, denied-items analysis, fax, staff mail) go through real
+  actors instead of their inline/thread fallbacks. `FHI_LOCAL_RAY=false`
+  disables it (fallback paths return); `FHI_LOCAL_RAY_POLLING=true`
+  additionally launches the polling-actor fleet. Setting `RAY_ADDRESS` makes
+  startup attach to that cluster instead of booting one. Test* configs keep it
+  off — don't turn it on in tests.
 - WebSocket streaming for long-running ML operations
 - async/await patterns with sync-to-async bridges. **In async code, reach for
   Django's native async ORM first** — `aget`/`acreate`/`asave`/`adelete`/
