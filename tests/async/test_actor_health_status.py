@@ -53,7 +53,8 @@ class TestActorHealthStatus(TestCase):
         assert "alive_actors" in data
         assert "total_actors" in data
         assert "details" in data
-        # Total actors: email, fax, chooser, IMR refresh, UCR refresh, PA refresh
+        # Total actors: email, fax, chooser, IMR refresh, UCR refresh,
+        # PA refresh
         assert data["total_actors"] == 6
 
     @mock.patch(_CLUSTER_AVAILABLE, return_value=True)
