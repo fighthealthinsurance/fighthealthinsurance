@@ -482,6 +482,9 @@ class SshHylaFaxClient(HylaFaxClient):
 
     username = os.getenv("USERNAME", "idk")
     remote_host: Optional[str]
+    # Scratch/staging directory on the remote fax host. Fax payloads contain
+    # PII, so we stage them under the encrypted mount rather than plaintext /tmp.
+    remote_scratch_dir = "/db/encrypted/fax"
 
     def _create_ssh_client(self) -> SSHClient:
         if self.remote_host is None:
@@ -501,15 +504,21 @@ class SshHylaFaxClient(HylaFaxClient):
 
     async def _upload_file(self, path: str) -> Optional[str]:
         ssh = self._create_ssh_client()
-        target = f"/tmp/{self.username}/{path}"
+        target = f"{self.remote_scratch_dir}/{self.username}/{path}"
         # Avoid //s
         if path[0] == "/":
-            target = f"/tmp/{self.username}{path}"
+            target = f"{self.remote_scratch_dir}/{self.username}{path}"
         try:
             sftp_client = ssh.open_sftp()
-            # Make the remote directory if needed.
+            # Make the remote directory if needed. umask 007: both fax
+            # identities (root Temporal worker, ray actor) share this tree, so
+            # dirs must be group-writable (the scratch root is setgid fax) --
+            # with the default 022 whichever identity mkdirs first locks the
+            # other out, and PII dirs shouldn't be world-readable anyway.
             dir = os.path.dirname(target)
-            exit_code, _result_text = await self._run_command(["mkdir", "-p", dir])
+            exit_code, _result_text = await self._run_command(
+                ["sh", "-c", f"umask 007 && mkdir -p {shlex.quote(dir)}"]
+            )
             if exit_code != 0:
                 logger.warning("Failed to make dir")
                 return None
