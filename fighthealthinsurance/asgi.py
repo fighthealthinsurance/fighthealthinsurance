@@ -8,6 +8,7 @@ https://docs.djangoproject.com/en/4.1/howto/deployment/asgi/
 """
 
 import os
+import re
 import sys
 
 from fighthealthinsurance.env_utils import get_env_variable, should_enable_sentry
@@ -113,6 +114,26 @@ if should_enable_sentry(settings.SENTRY_ENDPOINT, settings.DEBUG):
                 logger.warning(
                     f"Ray gRPC channel error (filtered from Sentry): {exc_value[:200]}"
                 )
+                return None
+
+        # Drop URL-resolution 404s. These are internet background noise:
+        # scanners probing for exposed secrets (.bashrc, api/.env, key.pem,
+        # wp-login.php...). Django refuses them correctly, so there is nothing
+        # to action -- but each novel probe path is a NEW Sentry issue, which
+        # means a fresh alert for something nobody can or should fix.
+        #
+        # Deliberately narrow: only the resolver's "no route matched" error.
+        # A 404 raised deliberately inside a view (a missing appeal, an expired
+        # link) is a different class and still reports, because that one can
+        # indicate a real bug. IGNORABLE_404_URLS in settings covers Django's
+        # own 404 mail; this is the equivalent for Sentry.
+        for exc in exception_values:
+            if exc.get("type") == "Resolver404":
+                path = ""
+                match = re.search(r"'path':\s*'([^']*)'", exc.get("value", "") or "")
+                if match:
+                    path = match.group(1)
+                logger.info(f"Unrouted path (filtered from Sentry): {path[:100]!r}")
                 return None
 
         return event
