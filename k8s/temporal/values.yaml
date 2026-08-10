@@ -29,11 +29,16 @@ server:
             existingSecret: "temporal-postgres"  # key: password
             maxConns: 20
             # Tuned 2026-08-10: stock chart example was maxIdleConns 20 /
-            # maxConnLifetime 1h, which parks 20 idle connections until pg's
-            # 30-min idle_session_timeout reaps them (~46 kills/6h in the
-            # pg log). Lifetime under 30m lets Temporal recycle first, and
-            # this workload never needs 20 idle. maxConns unchanged, so
-            # burst capacity is untouched.
+            # maxConnLifetime 1h, which parks 20 idle connections until pg
+            # reaps them on idle_session_timeout -- measured on the primary,
+            # 46 "terminating connection due to idle-session timeout" entries
+            # for temporal@temporal in 6h. Note the timeout differs between
+            # config and cluster: k8s/fhi-pg-main-9-cluster.yaml declares
+            # 90min, but the running server reports 30min (the parameter
+            # needs a Postgres restart, deferred by primaryUpdateStrategy:
+            # supervised). 25m sits below both, so Temporal recycles first
+            # either way. This workload never needs 20 idle connections;
+            # maxConns is unchanged, so burst capacity is untouched.
             maxIdleConns: 5
             maxConnLifetime: "25m"
             manageSchema: true
