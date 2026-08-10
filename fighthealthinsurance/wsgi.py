@@ -20,3 +20,11 @@ os.environ.setdefault(
 os.environ.setdefault("DJANGO_CONFIGURATION", get_env_variable("ENVIRONMENT", "Dev"))
 
 application = get_wsgi_application()
+
+# Dev parity: deliberately bring up Ray once at startup, mirroring asgi.py --
+# `manage.py runserver` serves through this module (WSGI_APPLICATION), so the
+# hook has to live here too or runserver-based dev would keep the divergent
+# non-Ray fallbacks. No-op in Test*/Prod configs; never raises.
+from fighthealthinsurance.local_ray import maybe_init_local_ray
+
+maybe_init_local_ray()

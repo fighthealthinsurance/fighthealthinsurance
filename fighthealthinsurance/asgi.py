@@ -59,6 +59,14 @@ application = ProtocolTypeRouter(
 
 from django.conf import settings
 
+# Dev parity: deliberately bring up Ray once at startup (Dev boots an
+# in-process cluster; a set RAY_ADDRESS attaches instead) so the per-task
+# dispatch sites take the same actor paths locally as in production. No-op
+# in Test*/Prod configs; never raises. See local_ray for the gates.
+from fighthealthinsurance.local_ray import maybe_init_local_ray
+
+maybe_init_local_ray()
+
 if settings.SENTRY_ENDPOINT and not settings.DEBUG:
     import sentry_sdk
     from sentry_sdk.integrations.django import DjangoIntegration
