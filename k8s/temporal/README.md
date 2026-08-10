@@ -153,6 +153,30 @@ back to plain TLS.
    (`launch_polling_actors --force` relaunch excludes it under Temporal, but
    does not kill a live one).
 
+## Applying a values.yaml change
+
+Editing `values.yaml` does **not** change anything by itself, and neither does
+restarting the Temporal pods — Kubernetes re-reads the ConfigMap Helm already
+rendered, not this file. Changes land only via `helm upgrade`:
+
+```sh
+TEMPORAL_PG_HOST=fhi-pg-main-9-rw.totallylegitco.svc \
+TEMPORAL_PG_USER=temporal \
+envsubst '${TEMPORAL_PG_HOST} ${TEMPORAL_PG_USER}' < values.yaml > /tmp/temporal-values.yaml
+helm upgrade temporal temporal/temporal --version 1.6.0 \
+  -n totallylegitco -f /tmp/temporal-values.yaml
+```
+
+Datastore changes restart the four Temporal server pods, so the cluster is
+briefly unavailable (~30-60s). FHI's own pods (web, `fhi-fax-worker`) are not
+restarted, but a fax dispatched during that window fails over to the Ray path
+— pick a quiet moment. Verify after:
+
+```sh
+kubectl -n totallylegitco exec -i deploy/temporal-admintools -- \
+  temporal operator cluster health --address temporal-frontend:7233
+```
+
 ## Rollback
 
 Set `TEMPORAL_ENABLED=false` (or scale the worker to 0). Fax dispatch falls
