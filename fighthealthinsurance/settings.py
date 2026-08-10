@@ -1051,6 +1051,46 @@ class Prod(Base):
     RECAPTCHA_REQUIRED_SCORE = 0.85
     RECAPTCHA_TESTING = False
     os.environ["RECAPTCHA_TESTING"] = "False"
+
+    @classmethod
+    def pre_setup(cls):
+        """Undo test-config env pollution before Prod settings resolve.
+
+        Python executes EVERY class body in this module at import time, no
+        matter which configuration django-configurations goes on to select,
+        so the ``os.environ`` assignments in Test / TestSync / TestActor
+        above also land in the process running Prod. Verified in a production
+        pod before this change: ``TESTING`` was "True" and both API URLs were
+        pinned to the unroutable test address.
+
+        Left set, they:
+
+        - make ``os.getenv("TESTING")`` truthy, which several modules read as
+          "we are under test" -- model-health alerting and the startup model
+          probe disable themselves, ``SessionRequiredMixin`` changes
+          behaviour, and a websocket delivery kill-switch loses the second
+          half of its double-gate (its comment states outright that TESTING
+          is "set only by the TestSync settings class"),
+        - point the CMS Coverage and NICE lookups at http://127.0.0.1:1, so
+          those calls fail in production instead of reaching the real APIs.
+
+        This runs in ``pre_setup`` rather than the class body on purpose:
+        django-configurations calls it only on the SELECTED configuration
+        (see configurations/importer.py), so the test configs keep their own
+        environment. A class-body reset would run under every configuration
+        and clobber the test values it is meant to preserve -- which is what
+        the ``RECAPTCHA_TESTING`` line above quietly does today.
+
+        Values are cleared conditionally, so anything legitimately supplied
+        by the container environment is never touched.
+        """
+        super().pre_setup()
+        if os.environ.get("TESTING") == "True":
+            del os.environ["TESTING"]
+        for _test_pinned_url in ("CMS_COVERAGE_API_URL", "NICE_API_BASE_URL"):
+            if os.environ.get(_test_pinned_url) == "http://127.0.0.1:1":
+                del os.environ[_test_pinned_url]
+
     ADMINS = [("Holden Karau", "holden.karau@gmail.com")]
     SERVER_EMAIL = "support@pigscanfly.ca"
     LOGGING = {
