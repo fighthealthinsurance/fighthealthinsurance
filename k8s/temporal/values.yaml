@@ -28,8 +28,16 @@ server:
             user: "${TEMPORAL_PG_USER}"
             existingSecret: "temporal-postgres"  # key: password
             maxConns: 20
-            maxIdleConns: 20
-            maxConnLifetime: "1h"
+            # Tuned off the chart's stock example (20 / 20 / 1h). Parking
+            # 20 idle connections is far more than this workload needs, and
+            # a lifetime longer than pg's idle_session_timeout means the
+            # server severs connections before Temporal recycles them. 25m
+            # stays under that timeout whether it is the 30min the server
+            # currently reports or the 90min fhi-pg-main-9-cluster.yaml
+            # declares. maxConns is unchanged: burst capacity is identical,
+            # only the idle pool shrinks.
+            maxIdleConns: 5
+            maxConnLifetime: "25m"
             manageSchema: true
         visibility:
           sql:
@@ -41,8 +49,8 @@ server:
             user: "${TEMPORAL_PG_USER}"
             existingSecret: "temporal-postgres"
             maxConns: 10
-            maxIdleConns: 10
-            maxConnLifetime: "1h"
+            maxIdleConns: 2
+            maxConnLifetime: "25m"
             manageSchema: true
 
 # We bring our own Postgres. Chart >= 1.0 no longer bundles Cassandra/ES/
