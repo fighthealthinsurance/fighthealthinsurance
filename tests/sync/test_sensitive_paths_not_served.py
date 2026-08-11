@@ -12,8 +12,10 @@ normally happen: a new static-file route, a catch-all handler, or a
 misconfigured storage backend that quietly starts answering for paths nobody
 audited.
 
-Deliberately asserts "not successful" rather than "== 404" -- a 403 or a
-redirect to a login page is also fine. Serving the bytes is not.
+Asserts an allow-list of outcomes rather than "not 2xx": 404, 403, and
+redirects are all acceptable ways of not serving a file. Anything else --
+including a 5xx -- fails, because a server error on these paths can mask a
+routing problem rather than prove the path is safe.
 """
 
 from django.test import Client, SimpleTestCase
@@ -48,6 +50,17 @@ SENSITIVE_PATHS = [
 ]
 
 
+def _is_safe_response(status_code: int) -> bool:
+    """Outcomes that prove we did not serve the file.
+
+    404 and 403 are the expected refusals; a redirect (to a login page, or a
+    canonical URL) is also fine. Everything else fails -- notably 5xx, which
+    would mean the request reached something that broke rather than something
+    that refused, and could hide a routing bug behind an apparent "not served".
+    """
+    return status_code in (403, 404) or 300 <= status_code < 400
+
+
 class SensitivePathsNotServedTest(SimpleTestCase):
     """None of these may return a successful response.
 
@@ -60,15 +73,13 @@ class SensitivePathsNotServedTest(SimpleTestCase):
         served = []
         for path in SENSITIVE_PATHS:
             response = client.get(f"/{path}")
-            # 2xx means we handed the caller content. Anything else -- 404,
-            # 403, a redirect to login -- means we did not.
-            if 200 <= response.status_code < 300:
+            if not _is_safe_response(response.status_code):
                 served.append((path, response.status_code))
         self.assertEqual(
             served,
             [],
-            "These paths returned a successful response and may be exposing "
-            f"configuration or credentials: {served}. If a route legitimately "
+            "These paths did not cleanly refuse (expected 404/403/redirect) and "
+            f"may be exposing configuration or credentials: {served}. If a route legitimately "
             "needs one of these names, rename the route -- do not remove the "
             "path from this list.",
         )
@@ -79,6 +90,6 @@ class SensitivePathsNotServedTest(SimpleTestCase):
         served = []
         for path in (".ENV", ".Env", ".env?x=1", "static/.env", "media/.env"):
             response = client.get(f"/{path}")
-            if 200 <= response.status_code < 300:
+            if not _is_safe_response(response.status_code):
                 served.append((path, response.status_code))
-        self.assertEqual(served, [], f"Variant paths served content: {served}")
+        self.assertEqual(served, [], f"Variant paths did not cleanly refuse: {served}")

@@ -8,7 +8,6 @@ https://docs.djangoproject.com/en/4.1/howto/deployment/asgi/
 """
 
 import os
-import re
 import sys
 
 from fighthealthinsurance.env_utils import get_env_variable, should_enable_sentry
@@ -129,11 +128,13 @@ if should_enable_sentry(settings.SENTRY_ENDPOINT, settings.DEBUG):
         # own 404 mail; this is the equivalent for Sentry.
         for exc in exception_values:
             if exc.get("type") == "Resolver404":
-                path = ""
-                match = re.search(r"'path':\s*'([^']*)'", exc.get("value", "") or "")
-                if match:
-                    path = match.group(1)
-                logger.info(f"Unrouted path (filtered from Sentry): {path[:100]!r}")
+                # The attempted path is deliberately NOT recorded here. It is
+                # client-controlled and can carry sensitive segments (a
+                # mistyped follow-up link still contains its token and hashed
+                # email), and uvicorn already logs every request path via
+                # --access-log in scripts/start-server.sh -- so probe activity
+                # stays greppable without writing untrusted input a second time.
+                logger.info("Unrouted path (filtered from Sentry)")
                 return None
 
         return event
