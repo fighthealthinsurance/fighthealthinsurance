@@ -11,6 +11,7 @@ import os
 import sys
 
 from fighthealthinsurance.env_utils import get_env_variable, should_enable_sentry
+from fighthealthinsurance.sentry_filters import is_only_unrouted
 
 # Use stderr for startup messages since logging may not be configured yet
 print("Setting default envs", file=sys.stderr)
@@ -114,6 +115,27 @@ if should_enable_sentry(settings.SENTRY_ENDPOINT, settings.DEBUG):
                     f"Ray gRPC channel error (filtered from Sentry): {exc_value[:200]}"
                 )
                 return None
+
+        # Drop URL-resolution 404s. These are internet background noise:
+        # scanners probing for exposed secrets (.bashrc, api/.env, key.pem,
+        # wp-login.php...). Django refuses them correctly, so there is nothing
+        # to action -- but each novel probe path is a NEW Sentry issue, which
+        # means a fresh alert for something nobody can or should fix.
+        #
+        # Deliberately narrow: only the resolver's "no route matched" error.
+        # A 404 raised deliberately inside a view (a missing appeal, an expired
+        # link) is a different class and still reports, because that one can
+        # indicate a real bug. IGNORABLE_404_URLS in settings covers Django's
+        # own 404 mail; this is the equivalent for Sentry.
+        if is_only_unrouted(exception_values):
+            # The attempted path is deliberately NOT recorded here. It is
+            # client-controlled and can carry sensitive segments (a mistyped
+            # follow-up link still contains its token and hashed email), and
+            # uvicorn already logs every request path via --access-log in
+            # scripts/start-server.sh -- so probe activity stays greppable
+            # without writing untrusted input a second time.
+            logger.info("Unrouted path (filtered from Sentry)")
+            return None
 
         return event
 
