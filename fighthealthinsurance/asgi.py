@@ -10,7 +10,7 @@ https://docs.djangoproject.com/en/4.1/howto/deployment/asgi/
 import os
 import sys
 
-from fighthealthinsurance.env_utils import get_env_variable
+from fighthealthinsurance.env_utils import get_env_variable, should_enable_sentry
 
 # Use stderr for startup messages since logging may not be configured yet
 print("Setting default envs", file=sys.stderr)
@@ -59,7 +59,14 @@ application = ProtocolTypeRouter(
 
 from django.conf import settings
 
-if settings.SENTRY_ENDPOINT and not settings.DEBUG:
+# Sentry only fires from real (non-local) deployments. "endpoint set and
+# DEBUG off" is not enough: dev machines routinely carry the production
+# SENTRY_ENDPOINT plus a Prod DJANGO_CONFIGURATION (copied .env files, and
+# editors like Cursor export .env into the process env), which used to tag
+# every local hiccup as a production error. should_enable_sentry additionally
+# requires a deployment marker: KUBERNETES_SERVICE_HOST (present in every
+# k8s pod) or an explicit FHI_DEPLOYED=1.
+if should_enable_sentry(settings.SENTRY_ENDPOINT, settings.DEBUG):
     import sentry_sdk
     from sentry_sdk.integrations.django import DjangoIntegration
 
@@ -125,6 +132,18 @@ if settings.SENTRY_ENDPOINT and not settings.DEBUG:
             # possible.
             "continuous_profiling_auto_start": True,
         },
+    )
+elif settings.SENTRY_ENDPOINT:
+    # Startup-visible breadcrumb for "why aren't my errors in Sentry?"
+    print(
+        "SENTRY_ENDPOINT is set but Sentry stays off: "
+        + (
+            "DEBUG is on"
+            if settings.DEBUG
+            else "not a deployed environment "
+            "(no KUBERNETES_SERVICE_HOST; set FHI_DEPLOYED=1 to override)"
+        ),
+        file=sys.stderr,
     )
 
 # Optional Azure Log Analytics shipping. Activates only when both workspace
