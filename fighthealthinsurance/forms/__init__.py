@@ -409,14 +409,16 @@ class BasePostInferedForm(DenialRefForm):
     )
 
 
-class PostInferedForm(BasePostInferedForm):
+class PostInferedForm(ReCaptchaOptionalMixin, BasePostInferedForm):
+    """Public appeal form with conditionally-enforced reCAPTCHA.
+
+    Previously decided at import time from ``os.environ``, which made the
+    captcha depend on process-wide state rather than the active
+    configuration. See ReCaptchaOptionalMixin for how the field is
+    conditionally enforced from ``django.conf.settings`` instead.
+    """
+
     captcha = forms.CharField(required=False, widget=forms.HiddenInput())
-    # Instead of the default behaviour we skip the recaptcha field entirely for dev.
-    if "RECAPTCHA_PUBLIC_KEY" in os.environ and (
-        "RECAPTCHA_TESTING" not in os.environ
-        or os.environ["RECAPTCHA_TESTING"].lower() != "true"
-    ):
-        captcha = ReCaptchaField(widget=ReCaptchaV2Checkbox())
 
 
 class ProPostInferedForm(BasePostInferedForm):
