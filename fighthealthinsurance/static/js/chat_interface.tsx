@@ -192,14 +192,22 @@ const ChatMessageContent: React.FC<{ content: string }> = ({ content }) => {
 
 // Typing animation component for loading state with elapsed time
 // Collapsible side-by-side alternate answer (like ChatGPT's occasional
-// "which response do you prefer?"). Collapsed by default; the "prefer"
-// button sends lightweight feedback so we learn which answers users like.
+// "which response do you prefer?"). Collapsed by default; the preference
+// buttons send lightweight feedback (either direction) so we learn which
+// answers users like.
 const AlternateAnswer: React.FC<{
   content: string;
-  onPrefer: () => boolean;
+  onPrefer: (preferred: "primary" | "alternate") => boolean;
 }> = ({ content, onPrefer }) => {
   const [expanded, setExpanded] = useState(false);
-  const [preferred, setPreferred] = useState(false);
+  const [picked, setPicked] = useState<"primary" | "alternate" | null>(null);
+
+  const pick = (choice: "primary" | "alternate") => {
+    if (picked) return;
+    if (onPrefer(choice)) {
+      setPicked(choice);
+    }
+  };
 
   return (
     <Box mt="xs" style={{ borderTop: "1px dashed #d1d5db", paddingTop: 6 }}>
@@ -226,19 +234,28 @@ const AlternateAnswer: React.FC<{
           <Box style={messageContentStyle}>
             <ReactMarkdown>{content}</ReactMarkdown>
           </Box>
-          <Button
-            variant="light"
-            size="compact-xs"
-            mt={4}
-            disabled={preferred}
-            onClick={() => {
-              if (onPrefer()) {
-                setPreferred(true);
-              }
-            }}
-          >
-            {preferred ? "Thanks for the feedback!" : "👍 I prefer this answer"}
-          </Button>
+          {picked ? (
+            <MantineText size="xs" c="dimmed" mt={4}>
+              Thanks for the feedback!
+            </MantineText>
+          ) : (
+            <MantineGroup gap="xs" mt={4}>
+              <Button
+                variant="light"
+                size="compact-xs"
+                onClick={() => pick("alternate")}
+              >
+                👍 I prefer this answer
+              </Button>
+              <Button
+                variant="subtle"
+                size="compact-xs"
+                onClick={() => pick("primary")}
+              >
+                The original was better
+              </Button>
+            </MantineGroup>
+          )}
         </Box>
       )}
     </Box>
@@ -453,6 +470,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
           email: userInfo?.email, // Send email if available
           is_patient: true, // Indicate this is a patient session
           microsite_slug: micrositeSlug || undefined, // Include microsite slug if available
+          debug: isChatDebugEnabled() || undefined,
         };
 
         // If we have a chat ID, request the chat history we explicitily refresh from local storage
@@ -522,6 +540,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
                   session_key: getSessionKey(),
                   microsite_slug: micrositeSlug || undefined,
                   use_external_models: useExternalModels,
+                  debug: isChatDebugEnabled() || undefined,
                 }),
               );
             }, 500);
@@ -589,6 +608,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
                   session_key: getSessionKey(),
                   microsite_slug: micrositeSlug || undefined,
                   use_external_models: useExternalModels,
+                  debug: isChatDebugEnabled() || undefined,
                 }),
               );
             }, 500);
@@ -1077,7 +1097,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
                 {!isUser && message.alternate_content && (
                   <AlternateAnswer
                     content={message.alternate_content}
-                    onPrefer={() => sendAnswerFeedback("alternate")}
+                    onPrefer={(preferred) => sendAnswerFeedback(preferred)}
                   />
                 )}
               </>

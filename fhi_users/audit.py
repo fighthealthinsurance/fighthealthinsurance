@@ -354,8 +354,9 @@ def get_asn_info(ip_address: Optional[str]) -> tuple[str, str]:
         result = reader.lookup(str(ip_address).strip())
         if result is None:
             return ("", "")
-        # geoip2fast exposes asn_name (and asn_cidr); some builds/forks also
-        # expose a numeric asn. Probe defensively.
+        # geoip2fast (1.2.x) exposes asn_name and asn_cidr but NO numeric
+        # ASN field, so the numeric slot stays empty with this library (as it
+        # always has); the probe is kept for forks/builds that add one.
         asn_num = str(getattr(result, "asn", "") or "")
         asn_name = str(getattr(result, "asn_name", "") or "")[:200]
         return (asn_num, asn_name)
@@ -504,6 +505,16 @@ def geo_lookup_status() -> tuple[bool, Optional[str]]:
         return (False, "the geoip2fast package is not installed")
     if not os.path.exists(db_path):
         return (False, f"{GEOIP_CITY_DB_ENV}={db_path!r} does not exist")
+    # Cheap sanity only -- a full parse would load the multi-second database
+    # in every management command's ready(). A corrupt-but-nonempty file is
+    # still caught (and warned about) lazily by _get_geo_reader on first use.
+    if not os.access(db_path, os.R_OK):
+        return (False, f"{GEOIP_CITY_DB_ENV}={db_path!r} is not readable")
+    try:
+        if os.path.getsize(db_path) == 0:
+            return (False, f"{GEOIP_CITY_DB_ENV}={db_path!r} is an empty file")
+    except OSError as e:
+        return (False, f"{GEOIP_CITY_DB_ENV}={db_path!r} is not accessible: {e}")
     return (True, None)
 
 
@@ -572,8 +583,10 @@ def guess_us_state(ip_address: Optional[str]) -> Optional[str]:
         return None
     if result is None:
         return None
+    # Require an explicit US result: a missing/empty country code with a
+    # subdivision present is unconfirmed data, not a US state.
     country = str(getattr(result, "country_code", "") or "").strip().upper()
-    if country and country != "US":
+    if country != "US":
         return None
     # Probe the field shapes different geoip2fast versions/databases use for
     # subdivision info, on both the result and its nested city object.

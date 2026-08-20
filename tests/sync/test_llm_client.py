@@ -648,3 +648,25 @@ class TestCannedReplyExemption(TestCase):
             find_repeated_reply(LOOPED_REPLY, history, "CA"),
             "repeats_recent_assistant_reply",
         )
+
+
+class TestPenaltySeverityOrdering(TestCase):
+    """Near-verbatim detection outranks bag-of-words equality: a LONG reply
+    sharing the exact word set is a near-verbatim reorder and must get
+    NEAR_REPEAT_PENALTY, while short reorders still land in the mild
+    bag-of-words bucket."""
+
+    def test_long_reordered_repeat_gets_near_penalty(self):
+        paragraphs = LOOPED_REPLY.split("\n\n")
+        reordered = "\n\n".join(reversed(paragraphs))
+        history = [
+            {"role": "user", "content": "something distinct entirely"},
+            {"role": "assistant", "content": LOOPED_REPLY},
+        ]
+        penalty = compute_repetition_penalty(reordered, history)
+        self.assertEqual(penalty, NEAR_REPEAT_PENALTY)
+
+    def test_short_reorder_still_bag_of_words(self):
+        history = [{"role": "user", "content": "help with my denial"}]
+        penalty = compute_repetition_penalty("my denial with help", history)
+        self.assertEqual(penalty, BAG_OF_WORDS_REPEAT_PENALTY)

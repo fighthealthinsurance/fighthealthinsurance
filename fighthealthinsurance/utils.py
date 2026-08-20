@@ -1338,7 +1338,7 @@ async def best_two_within_timelimit(
                     second_score = score
                     second_result_option = result
             except Exception as e:
-                _log_fanout_task_error(e, "best_within_timelimit")
+                _log_fanout_task_error(e, "best_two_within_timelimit")
 
     try:
         # Main window: wait for everything (or the timeout), take the best.
@@ -1384,7 +1384,7 @@ async def best_two_within_timelimit(
     # "30s + 60s overtime" sends triage hunting for a timeout that never
     # happened instead of for the immediate failure.
     logger.warning(
-        f"best_within_timelimit: no usable result from {len(tasks)} tasks "
+        f"best_two_within_timelimit: no usable result from {len(tasks)} tasks "
         f"after {time.monotonic() - wait_started:.1f}s "
         f"(budget {timeout}s + {extended_timeout}s overtime)"
     )

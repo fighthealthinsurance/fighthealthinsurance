@@ -480,3 +480,68 @@ class TestBackgroundGenerateSummary:
 
         await chat.arefresh_from_db()
         assert chat.summary_for_next_call[-1] == placeholder
+
+
+class TestSummaryReplacesInsteadOfNesting:
+    """Re-summarization covers the whole dropped prefix, so a previous
+    full-prefix summary block is replaced -- adjacent band triggers must not
+    nest near-identical summaries inside each other."""
+
+    def _history(self, count):
+        history = []
+        for i in range(count):
+            role = "user" if i % 2 == 0 else "assistant"
+            history.append({"role": role, "content": f"Message {i}"})
+        return history
+
+    @pytest.mark.asyncio
+    async def test_previous_summary_block_is_replaced(self):
+        existing = (
+            "Earlier conversation summary: OLD SUMMARY\n\n"
+            "Additional context: microsite details here"
+        )
+        count = DEFAULT_MESSAGES_TO_KEEP + SUMMARIZATION_INTERVAL
+        with patch(
+            "fighthealthinsurance.chat.context_manager.ml_router.summarize_chat_history",
+            new=AsyncMock(return_value="NEW SUMMARY"),
+        ):
+            _, _, summary = await prepare_history_for_llm(
+                chat_history=self._history(count),
+                existing_summary=existing,
+            )
+        assert summary == (
+            "Earlier conversation summary: NEW SUMMARY\n\n"
+            "Additional context: microsite details here"
+        )
+        assert "OLD SUMMARY" not in summary
+
+    @pytest.mark.asyncio
+    async def test_summary_only_block_is_fully_replaced(self):
+        existing = "Earlier conversation summary: OLD SUMMARY"
+        count = DEFAULT_MESSAGES_TO_KEEP + SUMMARIZATION_INTERVAL
+        with patch(
+            "fighthealthinsurance.chat.context_manager.ml_router.summarize_chat_history",
+            new=AsyncMock(return_value="NEW SUMMARY"),
+        ):
+            _, _, summary = await prepare_history_for_llm(
+                chat_history=self._history(count),
+                existing_summary=existing,
+            )
+        assert summary == "Earlier conversation summary: NEW SUMMARY"
+
+    @pytest.mark.asyncio
+    async def test_non_summary_context_still_appended(self):
+        existing = "PubMed context: relevant study details"
+        count = DEFAULT_MESSAGES_TO_KEEP + SUMMARIZATION_INTERVAL
+        with patch(
+            "fighthealthinsurance.chat.context_manager.ml_router.summarize_chat_history",
+            new=AsyncMock(return_value="NEW SUMMARY"),
+        ):
+            _, _, summary = await prepare_history_for_llm(
+                chat_history=self._history(count),
+                existing_summary=existing,
+            )
+        assert summary == (
+            "Earlier conversation summary: NEW SUMMARY\n\n"
+            "Additional context: PubMed context: relevant study details"
+        )

@@ -151,3 +151,35 @@ async def test_context_framing_labels_summary_and_newest_message():
     assert "Context summary of the conversation so far" in prompt
     assert "The user's newest message is: CA" in prompt
     assert "Do not repeat an earlier reply" in prompt
+
+
+CANNED_REPLY = (
+    "New federal rules require many adults (ages 19-64) to complete at least "
+    "80 hours per month of work, job training, school, or community service "
+    "to keep Medicaid coverage. For detailed information, visit: "
+    "[Medicaid Work Requirements FAQ](/faq/medicaid/)"
+    "🐼 Provided the mandated work-requirements information."
+)
+
+
+@pytest.mark.asyncio
+async def test_canned_reply_repeat_needs_no_retry():
+    """Mandated verbatim replies repeat by design — the self-heal loop must
+    not burn a serial retry when the model re-sends one."""
+    canned_no_panda = CANNED_REPLY.split("🐼")[0]
+    history = [
+        {"role": "user", "content": "tell me about the medicaid work requirements"},
+        {"role": "assistant", "content": canned_no_panda},
+    ]
+    model = ScriptedModel([CANNED_REPLY])
+
+    response, _ = await model.generate_chat_response(
+        "what about the work requirements again?",
+        previous_context_summary=None,
+        history=history,
+        is_professional=False,
+        is_logged_in=False,
+    )
+
+    assert len(model.infer_calls) == 1
+    assert response == canned_no_panda

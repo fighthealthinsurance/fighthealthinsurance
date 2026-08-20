@@ -20,6 +20,16 @@ SUMMARIZATION_INTERVAL = 10
 
 MISSING_CONTEXT_PREFIX = "Missing context summary, refer to previous chat history"
 
+# Labels used when combining a fresh history summary with accumulated
+# context (see _summarize_history). A previous full-prefix summary is
+# REPLACED, not nested: every summarization call covers the entire dropped
+# prefix, so the fresh summary supersedes the old block. Without the strip,
+# adjacent band triggers (e.g. a failed turn shifting history length from a
+# remainder-0 boundary to remainder 1) nested near-identical summaries
+# inside each other.
+EARLIER_SUMMARY_LABEL = "Earlier conversation summary: "
+ADDITIONAL_CONTEXT_SEPARATOR = "\n\nAdditional context: "
+
 
 def make_placeholder(counter: int) -> str:
     """Create a uniquely-identified placeholder for a missing context summary."""
@@ -88,7 +98,13 @@ async def prepare_history_for_llm(
     # same-role messages get merged (ensure_message_alternation) so the
     # length can change parity -- a strict `% N == 0` then never fires again
     # and dropped messages stop being folded into the summary at all. `<= 1`
-    # fires exactly once per band for both parities.
+    # fires once per band for either parity. When a +1 length step lands
+    # right after a boundary (e.g. a failed turn persisting only its user
+    # message), remainders 0 and 1 can BOTH fire in one band; that costs one
+    # redundant bounded summarization call, and _summarize_history replaces
+    # (never nests) the previous summary block, so the result is identical.
+    # Tracking the exact summarized boundary would need persisted state,
+    # which this rare case doesn't justify.
     messages_over_threshold = len(history_for_llm) - DEFAULT_MESSAGES_TO_KEEP
     should_summarize = messages_over_threshold % SUMMARIZATION_INTERVAL <= 1
 
@@ -145,12 +161,19 @@ async def _summarize_history(
         )
 
         if history_summary:
+            # The fresh summary covers the whole dropped prefix, so a
+            # previous full-prefix summary block in existing_summary is
+            # superseded -- keep only the non-summary context that followed
+            # it (microsite/pubmed additions etc.).
+            if existing_summary and existing_summary.startswith(EARLIER_SUMMARY_LABEL):
+                split = existing_summary.split(ADDITIONAL_CONTEXT_SEPARATOR, 1)
+                existing_summary = split[1] if len(split) > 1 else None
             if existing_summary:
                 return (
-                    f"Earlier conversation summary: {history_summary}\n\n"
-                    f"Additional context: {existing_summary}"
+                    f"{EARLIER_SUMMARY_LABEL}{history_summary}"
+                    f"{ADDITIONAL_CONTEXT_SEPARATOR}{existing_summary}"
                 )
-            return f"Earlier conversation summary: {history_summary}"
+            return f"{EARLIER_SUMMARY_LABEL}{history_summary}"
 
         logger.info("Summarization returned empty, keeping existing context")
         return existing_summary

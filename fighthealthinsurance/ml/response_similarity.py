@@ -36,6 +36,37 @@ _MAX_COMPARE_CHARS = 4000
 
 _WORD_RE = re.compile(r"[a-z0-9]+")
 
+# Markers of replies the system prompt REQUIRES to be sent verbatim (e.g. the
+# Medicaid work-requirements block must always be that exact text). Repeating
+# them across turns is by design, so repeat-rejection layers exempt them --
+# soft scoring penalties still prefer a fresh non-canned answer when one
+# exists. Shared here (not in chat.llm_client) so the model layer's
+# self-heal retry loop can use it without an import cycle.
+CANNED_REPLY_MARKERS = ("Medicaid Work Requirements FAQ",)
+
+# When the user explicitly asks for a repeat, repeating is the right answer --
+# repeat-rejection layers skip themselves so the turn can succeed. NOTE:
+# match this against the user's RAW message only; system-injected wrapper
+# text (anti-repeat notes, bridge notes) legitimately contains the word
+# "repeat" and would false-positive.
+USER_REQUESTED_REPEAT_RE = re.compile(
+    r"\b(repeat|say (?:that|it) again|one more time|once more|again please|"
+    r"re-?send|(?:show|send) (?:that|it) again)\b",
+    re.IGNORECASE,
+)
+
+
+def is_canned_reply(text: Optional[str]) -> bool:
+    """Whether the reply is one of the mandated verbatim canned responses."""
+    if not text:
+        return False
+    return any(marker in text for marker in CANNED_REPLY_MARKERS)
+
+
+def user_requested_repeat(message: Optional[str]) -> bool:
+    """True when the user's message explicitly asks us to repeat ourselves."""
+    return bool(message and USER_REQUESTED_REPEAT_RE.search(message))
+
 
 def normalize_text(text: str) -> str:
     """Normalize text for comparison: lowercase, collapse whitespace, strip."""

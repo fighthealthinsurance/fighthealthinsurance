@@ -14,14 +14,19 @@ from fighthealthinsurance.chat.safety_filters import detect_false_promises
 from fighthealthinsurance.chat.tools.patterns import ALL_TOOL_PATTERNS as tools_regex
 from fighthealthinsurance.ml.ml_models import RemoteModelLike, repetition_penalty
 
-# Shared similarity helpers (stdlib-only module, importable from both this
-# layer and ml_models without a cycle). normalize_text/bag_of_words are
-# re-exported from here for existing importers/tests.
+# Shared similarity/exemption helpers (stdlib-only module, importable from
+# both this layer and ml_models without a cycle). normalize_text,
+# bag_of_words, is_canned_reply, user_requested_repeat and the exemption
+# constants are re-exported from here for existing importers/tests.
 from fighthealthinsurance.ml.response_similarity import (
+    CANNED_REPLY_MARKERS,
+    USER_REQUESTED_REPEAT_RE,
     bag_of_words,
+    is_canned_reply,
     is_mostly_repeated,
     normalize_text,
     response_similarity,
+    user_requested_repeat,
 )
 from fighthealthinsurance.utils import ensure_message_alternation
 
@@ -107,33 +112,6 @@ OLDER_USER_REPEAT_PENALTY = -10.0
 # HARD repeat rejection (covers both A-A loops and A-B-A alternation loops).
 RECENT_ASSISTANT_REPLIES_TO_CHECK = 3
 
-# When the user explicitly asks for a repeat, repeating is the right answer —
-# skip the hard rejection so the turn can succeed.
-USER_REQUESTED_REPEAT_RE = re.compile(
-    r"\b(repeat|say (?:that|it) again|one more time|once more|again please|"
-    r"re-?send|(?:show|send) (?:that|it) again)\b",
-    re.IGNORECASE,
-)
-
-# Markers of replies the system prompt REQUIRES to be sent verbatim (e.g. the
-# Medicaid work-requirements block must always be that exact text). Repeating
-# them across turns is by design, so they are exempt from HARD rejection —
-# soft repetition penalties still apply, keeping a fresh non-canned answer
-# preferred when one exists.
-CANNED_REPLY_MARKERS = ("Medicaid Work Requirements FAQ",)
-
-
-def is_canned_reply(text: Optional[str]) -> bool:
-    """Whether the reply is one of the mandated verbatim canned responses."""
-    if not text:
-        return False
-    return any(marker in text for marker in CANNED_REPLY_MARKERS)
-
-
-def user_requested_repeat(message: Optional[str]) -> bool:
-    """True when the user's message explicitly asks us to repeat ourselves."""
-    return bool(message and USER_REQUESTED_REPEAT_RE.search(message))
-
 
 def find_repeated_reply(
     response_text: str,
@@ -203,6 +181,11 @@ def compute_repetition_penalty(
     response_bow = bag_of_words(response_text)
 
     # --- Check against the current user message (not yet in history) ---
+    # Severity order: exact > near-verbatim > bag-of-words. The near-repeat
+    # check runs BEFORE bag-of-words equality so a long reply sharing the
+    # exact word set (which IS a near-verbatim reorder) gets the stronger
+    # penalty; short reorders never trip the similarity path and still land
+    # in the mild bag-of-words bucket.
     if current_message:
         normalized_current = normalize_text(current_message)
         if normalized_response == normalized_current:
@@ -210,15 +193,15 @@ def compute_repetition_penalty(
             logger.debug(
                 "Response is exact repeat of current user message, applying heavy penalty"
             )
-        elif response_bow == bag_of_words(current_message):
-            penalty += BAG_OF_WORDS_REPEAT_PENALTY
-            logger.debug(
-                "Response has same bag-of-words as current user message, applying mild penalty"
-            )
         elif is_mostly_repeated(response_text, current_message):
             penalty += NEAR_REPEAT_PENALTY
             logger.debug(
                 "Response is a near-verbatim repeat of current user message, penalizing"
+            )
+        elif response_bow == bag_of_words(current_message):
+            penalty += BAG_OF_WORDS_REPEAT_PENALTY
+            logger.debug(
+                "Response has same bag-of-words as current user message, applying mild penalty"
             )
 
     if not chat_history:
@@ -235,7 +218,9 @@ def compute_repetition_penalty(
         if last_user_msg is not None and last_assistant_msg is not None:
             break
 
-    # Heavy penalties for matching the immediate previous messages in history
+    # Heavy penalties for matching the immediate previous messages in
+    # history. Same severity order as above: exact > near-verbatim >
+    # bag-of-words.
     for prev_text in [last_user_msg, last_assistant_msg]:
         if not prev_text:
             continue
@@ -245,15 +230,15 @@ def compute_repetition_penalty(
             logger.debug(
                 "Response is exact repeat of previous message, applying heavy penalty"
             )
-        elif response_bow == bag_of_words(prev_text):
-            penalty += BAG_OF_WORDS_REPEAT_PENALTY
-            logger.debug(
-                "Response has same bag-of-words as previous message, applying mild penalty"
-            )
         elif is_mostly_repeated(response_text, prev_text):
             penalty += NEAR_REPEAT_PENALTY
             logger.debug(
                 "Response is a near-verbatim repeat of previous message, penalizing"
+            )
+        elif response_bow == bag_of_words(prev_text):
+            penalty += BAG_OF_WORDS_REPEAT_PENALTY
+            logger.debug(
+                "Response has same bag-of-words as previous message, applying mild penalty"
             )
 
     # Lighter penalties for matching older messages

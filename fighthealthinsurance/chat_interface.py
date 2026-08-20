@@ -1074,12 +1074,19 @@ class ChatInterface:
         # message travels separately). Guarded: persistence problems must
         # not block the turn -- worst case we fall back to the old
         # persist-at-end behavior.
+        # Once pre-persisted, the end-of-turn persists must NOT resubmit the
+        # user message: with two connections racing on one chat, the other
+        # turn's pre-persist can merge into this message ("A" -> "A B"), and
+        # resubmitting "A" against that merged tail would append it AGAIN
+        # ("A B A") instead of deduping.
+        user_message_prepersisted = False
         if user_message and user_message.strip():
             try:
                 await apersist_chat_turn(
                     chat,
                     new_messages=[{"role": "user", "content": user_message}],
                 )
+                user_message_prepersisted = True
             except OngoingChat.DoesNotExist:
                 logger.warning(
                     f"Chat {chat.id} vanished before the turn started; "
@@ -1216,12 +1223,18 @@ class ChatInterface:
             # Guarded: the chat row can vanish mid-turn (data deletion); the
             # user still gets the generated reply, it just isn't persisted.
             try:
+                # The user message is only resubmitted when the pre-persist
+                # failed -- see user_message_prepersisted above for why.
+                end_of_turn_messages = [
+                    {"role": "assistant", "content": final_response_text}
+                ]
+                if not user_message_prepersisted:
+                    end_of_turn_messages.insert(
+                        0, {"role": "user", "content": user_message}
+                    )
                 self.chat = chat = await apersist_chat_turn(
                     chat,
-                    new_messages=[
-                        {"role": "user", "content": user_message},
-                        {"role": "assistant", "content": final_response_text},
-                    ],
+                    new_messages=end_of_turn_messages,
                     new_summaries=turn_summaries,
                 )
             except OngoingChat.DoesNotExist:
@@ -1261,11 +1274,17 @@ class ChatInterface:
         else:
             # The turn failed after the user already committed their message:
             # persist it anyway so a reconnect/replay doesn't erase what they
-            # typed (previously the whole turn was dropped on failure).
+            # typed (previously the whole turn was dropped on failure). Only
+            # resubmitted when the pre-persist failed -- see
+            # user_message_prepersisted above.
             try:
                 self.chat = chat = await apersist_chat_turn(
                     chat,
-                    new_messages=[{"role": "user", "content": user_message}],
+                    new_messages=(
+                        []
+                        if user_message_prepersisted
+                        else [{"role": "user", "content": user_message}]
+                    ),
                     new_summaries=turn_summaries,
                 )
             except Exception:

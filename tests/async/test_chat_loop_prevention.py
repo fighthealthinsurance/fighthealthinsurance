@@ -460,3 +460,44 @@ class ChatReplayFilterTest(APITestCase):
         )
         # Normal user messages still replay.
         assert "Help me with the new medicaid requirements." in contents
+
+
+class ChatConcurrentPrePersistTest(APITestCase):
+    async def test_concurrent_prepersist_does_not_duplicate_user_message(self):
+        """Two connections racing on one chat: the second turn's pre-persist
+        merges into this turn's pending user message ("CA" -> "CA B"). The
+        end-of-turn persist must not resubmit this turn's user message, or
+        it would append AGAIN against the merged tail ("CA B CA")."""
+        from fighthealthinsurance.chat.chat_persistence import apersist_chat_turn
+
+        user, chat = await _make_chat(
+            "raceturn1", "9999930013", chat_history=_seed_history()
+        )
+        recorder = _FrameRecorder()
+        interface = ChatInterface(send_json_message_func=recorder, chat=chat, user=user)
+
+        class RacingModel(RecordingChatModel):
+            """Simulates the other connection's pre-persist landing while
+            this turn is mid-generation."""
+
+            async def generate_chat_response(self, *args, **kwargs):
+                await apersist_chat_turn(
+                    chat, new_messages=[{"role": "user", "content": "B"}]
+                )
+                return await super().generate_chat_response(*args, **kwargs)
+
+        model = RacingModel(always_reply=FRESH_REPLY)
+        with _patched_router([model]), _PATCH_FIRE_AND_FORGET:
+            await interface.handle_chat_message("CA")
+
+        fresh = await OngoingChat.objects.aget(id=chat.id)
+        user_contents = [
+            m["content"] for m in fresh.chat_history if m.get("role") == "user"
+        ]
+        # The racing message merged into this turn's pending user message,
+        # and this turn's text appears exactly once (no "CA B CA").
+        assert "CA B" in user_contents, f"history: {fresh.chat_history}"
+        assert not any(
+            c.count("CA") > 1 for c in user_contents
+        ), f"duplicated user text: {user_contents}"
+        assert fresh.chat_history[-1]["content"] == FRESH_REPLY

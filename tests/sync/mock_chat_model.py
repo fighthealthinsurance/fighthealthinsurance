@@ -1,6 +1,6 @@
 """Mock models for chat testing."""
 
-from typing import Tuple, Optional, Dict, Any
+from typing import Tuple, Optional
 
 
 class MockChatModel:
@@ -49,28 +49,28 @@ class MockChatModel:
     async def generate_chat_response(
         self,
         current_message_for_llm: str,
-        previous_context_summary: Optional[Dict[str, Any]] = None,
+        previous_context_summary: Optional[str] = None,
         history: Optional[list[dict[str, str]]] = None,
+        temperature: float = 0.7,
         is_professional: Optional[bool] = True,
         is_logged_in: Optional[bool] = True,
-        temperature: float = 0.7,
     ) -> Tuple[str, str]:
         """
         Generate a mock response to a chat message.
 
-        The first parameter is named ``current_message_for_llm`` to match
-        ``RemoteModelLike.generate_chat_response`` exactly — callers (like the
-        chooser) pass it by keyword, so a mismatched mock signature would hide
-        real TypeErrors. ``temperature`` likewise mirrors the real signature
-        (anti-repeat retries pass a raised value).
+        The parameter names, order, and types mirror
+        ``RemoteModelLike.generate_chat_response`` — callers (like the
+        chooser) pass them by keyword, so a mismatched mock signature would
+        hide real TypeErrors. ``temperature`` sits before the audience flags
+        for the same reason (anti-repeat retries pass a raised value).
 
         Args:
             current_message_for_llm: The user's message
             previous_context_summary: Optional context from previous interactions
             history: Optional history of messages
+            temperature: Sampling temperature (ignored by the mock)
             is_professional: Optional boolean indicating if the user is a professional
             is_logged_in: Optional boolean indicating if the user is logged in
-            temperature: Sampling temperature (ignored by the mock)
 
         Returns:
             A tuple of (response_text, updated_context)

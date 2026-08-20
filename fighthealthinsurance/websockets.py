@@ -1539,10 +1539,12 @@ class OngoingChatConsumer(PerConnectionThreadSensitiveMixin, AsyncWebsocketConsu
                 # guess_us_state): the connection IP is stable per socket so
                 # this is computed once per interface. Plain asgiref
                 # sync_to_async (no ORM): the first lookup loads the geo
-                # database from disk, which must not block the event loop.
-                state_hint = await sync_to_async(guess_us_state)(
-                    _get_client_ip_from_scope(self.scope)
-                )
+                # database from disk, which must not block the event loop --
+                # and thread_sensitive=False keeps that multi-second load off
+                # the thread-sensitive lane the ORM work runs on.
+                state_hint = await sync_to_async(
+                    guess_us_state, thread_sensitive=False
+                )(_get_client_ip_from_scope(self.scope))
                 self.chat_interface = ChatInterface(
                     send_json_message_func=self.send_json_message,
                     chat=chat,

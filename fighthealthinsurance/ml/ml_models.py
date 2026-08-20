@@ -30,7 +30,10 @@ def _is_verbose_logging() -> bool:
 
 
 from fighthealthinsurance.ml.ml_metrics import record_ml_call, record_ml_failure
-from fighthealthinsurance.ml.response_similarity import is_mostly_repeated
+from fighthealthinsurance.ml.response_similarity import (
+    is_canned_reply,
+    is_mostly_repeated,
+)
 from fighthealthinsurance.utils import (
     RateLimiter,
     ensure_message_alternation,
@@ -1321,6 +1324,14 @@ Remember in the last three sentences GLP-1 is just an _example_ check what the u
                     break
 
         def _repeats_last_reply(candidate: Optional[str]) -> bool:
+            # Mandated verbatim replies (see CANNED_REPLY_MARKERS) repeat by
+            # design -- retrying against them just burns a serial call. The
+            # user-asked-for-a-repeat case is handled by the SCORING layer,
+            # which sees the raw user message; the wrapped prompt available
+            # here contains system-injected text that itself says "repeat"
+            # and would false-positive.
+            if candidate and is_canned_reply(candidate):
+                return False
             return bool(
                 candidate
                 and last_assistant_reply
