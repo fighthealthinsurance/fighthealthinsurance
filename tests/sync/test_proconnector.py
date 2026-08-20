@@ -1921,6 +1921,27 @@ class QuickIntroSendTest(_QuickIntroTestCase):
         self.assertContains(response, "already queued")
         mock_send.assert_called_once()  # still exactly one delivery
 
+    @patch(
+        "fighthealthinsurance.staff_views.mark_email_queued",
+        side_effect=RuntimeError("db down"),
+    )
+    @patch("fighthealthinsurance.staff_views.queue_proconnector_intro_email")
+    def test_mark_failure_after_queue_never_requeues(self, mock_queue, _mock_mark):
+        # The queue-path twin of the send test above: if recording fails after
+        # the intro was handed to the business-hours queue, the claim must
+        # hold so a retry press cannot enqueue a second introduction.
+        pro = _make_pro(email="jane@janeclinic.com")
+        body = "Body with the compensation disclosure."
+        with self.assertRaises(RuntimeError):
+            self._post(pro.id, "queue", email_body=body)
+        mock_queue.assert_called_once()
+        pro.refresh_from_db()
+        self.assertTrue(pro.proconnector_attempted)
+        response = self._post(pro.id, "queue", email_body=body)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "already queued")
+        mock_queue.assert_called_once()  # still exactly one enqueue
+
     @patch("fighthealthinsurance.staff_views.send_proconnector_intro_email")
     def test_concurrent_delete_after_send_redirects(self, mock_send):
         # A record deleted mid-request (e.g. via the admin) must not 500 after
