@@ -563,6 +563,16 @@ class Base(Configuration):
         if cidr.strip()
     ]
 
+    # External monitors allowed to fetch /metrics *through* the ingress, on top
+    # of UptimeRobot's published probe addresses (which the middleware always
+    # honors -- see fighthealthinsurance/uptimerobot_ips.py). Matched against
+    # the client address the ingress observed, not the peer address.
+    METRICS_ALLOWED_FORWARDED_CIDRS = [
+        cidr.strip()
+        for cidr in os.getenv("METRICS_ALLOWED_FORWARDED_CIDRS", "").split(",")
+        if cidr.strip()
+    ]
+
     # STRIPE SETTINGS
     STRIPE_LIVE_MODE = False
     STRIPE_API_VERSION = "2024-09-30.acacia"

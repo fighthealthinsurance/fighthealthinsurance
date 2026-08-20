@@ -131,3 +131,9 @@ envsubst < k8s/ray/cluster.yaml | kubectl apply -f -
 
 # Deploy a staging env
 envsubst < k8s/deploy.yaml | kubectl apply -f -
+
+# In-cluster scraping of the app's /metrics (which is no longer reachable from
+# the internet -- see docs/metrics-endpoint-access.md). Needs the Prometheus
+# operator's PodMonitor CRD; skipped with a warning where that isn't installed.
+kubectl apply -f k8s/fhi-web-podmonitor.yaml || \
+  echo "WARNING: PodMonitor not applied (no monitoring.coreos.com CRD?) -- app metrics will not be scraped"

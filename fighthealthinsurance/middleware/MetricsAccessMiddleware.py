@@ -19,6 +19,16 @@ advertise its existence outward.
   ingress-controller pod IP and would sail through the check above. A direct
   in-cluster scrape of ``pod-ip:80/metrics`` sends none of them.
 
+One documented exception: UptimeRobot probes ``monitor.fighthealthinsurance.com``
+from the public internet, so a forwarded request is also served when the client
+address the ingress observed is an UptimeRobot probe (or is listed in
+``settings.METRICS_ALLOWED_FORWARDED_CIDRS``). That address comes from
+``X-Real-IP``, which ingress-nginx overwrites on every request, falling back to
+the last ``X-Forwarded-For`` entry -- the one the ingress itself appended, and
+so the only one a client cannot choose. ``k8s/deploy.yaml`` still denies
+``/metrics`` outright on every other host, so this exception is only reachable
+on the monitor host.
+
 This is defense in depth behind the ingress-level deny in ``k8s/deploy.yaml``;
 it also covers any future path into the pods that bypasses that Ingress.
 """
@@ -30,6 +40,8 @@ from asgiref.sync import iscoroutinefunction, markcoroutinefunction
 from django.conf import settings
 from django.http import HttpRequest, HttpResponse, HttpResponseNotFound
 from django.urls import NoReverseMatch, reverse
+
+from fighthealthinsurance.uptimerobot_ips import UPTIMEROBOT_IPS
 
 # Pod, node and loopback addresses live in these ranges on every cluster we
 # run on. Overridable via settings for clusters with public pod CIDRs.
@@ -52,6 +64,7 @@ FORWARDING_HEADERS: Tuple[str, ...] = (
 )
 
 IPNetwork = Union[ipaddress.IPv4Network, ipaddress.IPv6Network]
+IPAddress = Union[ipaddress.IPv4Address, ipaddress.IPv6Address]
 
 
 def _parse_networks(cidrs: Sequence[str]) -> Tuple[IPNetwork, ...]:
@@ -66,7 +79,7 @@ def _parse_networks(cidrs: Sequence[str]) -> Tuple[IPNetwork, ...]:
 
 
 class MetricsAccessMiddleware:
-    """404s requests to ``/metrics`` that did not come from inside the cluster."""
+    """404s ``/metrics`` for anything but in-cluster callers and known monitors."""
 
     sync_capable = True
     async_capable = True
@@ -81,6 +94,12 @@ class MetricsAccessMiddleware:
         configured = getattr(settings, "METRICS_ALLOWED_CIDRS", None)
         self.allowed_networks = _parse_networks(
             configured if configured else DEFAULT_METRICS_ALLOWED_CIDRS
+        )
+        # External monitors allowed through the ingress: UptimeRobot's probes
+        # plus anything the deployment adds.
+        self.allowed_forwarded_networks = _parse_networks(
+            tuple(UPTIMEROBOT_IPS)
+            + tuple(getattr(settings, "METRICS_ALLOWED_FORWARDED_CIDRS", None) or ())
         )
         self._metrics_path_cache: Optional[str] = None
         if iscoroutinefunction(self.get_response):
@@ -113,14 +132,15 @@ class MetricsAccessMiddleware:
     def _should_block(self, request: HttpRequest) -> bool:
         if request.path.rstrip("/") != self._metrics_path().rstrip("/"):
             return False
-        return not self._is_in_cluster(request)
+        return not self._is_allowed(request)
 
-    def _is_in_cluster(self, request: HttpRequest) -> bool:
+    def _is_allowed(self, request: HttpRequest) -> bool:
         # Anything a proxy touched came from outside; the ingress is the only
-        # proxy in front of these pods and it always sets these.
+        # proxy in front of these pods and it always sets these. Such a request
+        # is served only if it is a monitor we published the endpoint to.
         for header in FORWARDING_HEADERS:
             if request.META.get(header):
-                return False
+                return self._is_allowed_monitor(request)
         try:
             remote_addr = ipaddress.ip_address(
                 str(request.META.get("REMOTE_ADDR", "")).strip()
@@ -130,3 +150,28 @@ class MetricsAccessMiddleware:
             # something we can vouch for, so deny.
             return False
         return any(remote_addr in network for network in self.allowed_networks)
+
+    def _is_allowed_monitor(self, request: HttpRequest) -> bool:
+        """Is this forwarded request one of the external monitors we allow?"""
+        client_ip = self._forwarded_client_ip(request)
+        if client_ip is None:
+            return False
+        return any(client_ip in network for network in self.allowed_forwarded_networks)
+
+    @staticmethod
+    def _forwarded_client_ip(request: HttpRequest) -> Optional[IPAddress]:
+        """The client address the ingress itself observed, or None.
+
+        X-Real-IP is set (not appended) by ingress-nginx on every request, so a
+        client cannot choose it. X-Forwarded-For is the fallback, and there only
+        the LAST entry is the one the ingress added -- earlier entries may have
+        been sent by the client.
+        """
+        candidate = str(request.META.get("HTTP_X_REAL_IP", "")).strip()
+        if not candidate:
+            forwarded_for = str(request.META.get("HTTP_X_FORWARDED_FOR", ""))
+            candidate = forwarded_for.rsplit(",", 1)[-1].strip()
+        try:
+            return ipaddress.ip_address(candidate)
+        except ValueError:
+            return None

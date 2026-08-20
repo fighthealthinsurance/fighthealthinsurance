@@ -329,14 +329,23 @@ spec:
                 port:
                   number: 80
 ---
-# /metrics is for in-cluster scrapers only (see the PodMonitor in
-# k8s/fhi-web-podmonitor.yaml). django_prometheus mounts it at the URL root, so
-# every host above would otherwise serve the full metric set to the internet.
-# An Exact-path rule beats the "/" Prefix rules on the same hosts, and the
-# source-range allowlist (loopback only == nobody) makes the controller answer
-# 403 without ever proxying to the pods. TLS/cert-manager config stays on the
-# ingress above; ingress-nginx merges both rule sets into one server per host.
-# On ingress-nginx >= 1.12 the annotation is also spelled allowlist-source-range.
+# /metrics is for in-cluster scrapers (see the PodMonitor in
+# k8s/fhi-web-podmonitor.yaml) plus UptimeRobot. django_prometheus mounts it at
+# the URL root, so every host above would otherwise serve the full metric set to
+# the internet. An Exact-path rule beats the "/" Prefix rules on the same hosts,
+# and the source-range allowlist (loopback only == nobody) makes the controller
+# answer 403 without ever proxying to the pods. TLS/cert-manager config stays on
+# the ingress above; ingress-nginx merges both rule sets into one server per
+# host. On ingress-nginx >= 1.12 the annotation is also spelled
+# allowlist-source-range.
+#
+# monitor.fighthealthinsurance.com is deliberately ABSENT from the rules below:
+# that host is the UptimeRobot door. Requests to it reach the app, where
+# MetricsAccessMiddleware serves /metrics only to UptimeRobot's published probe
+# addresses (fighthealthinsurance/uptimerobot_ips.py) and 404s everyone else.
+# Keeping the probe list in the app rather than in this annotation means it
+# lives in exactly one place -- refresh it with
+# scripts/update_uptimerobot_ips.py.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -378,16 +387,6 @@ spec:
                 port:
                   number: 80
     - host: api.fightpaperwork.com
-      http:
-        paths:
-          - path: /metrics
-            pathType: Exact
-            backend:
-              service:
-                name:  web-svc
-                port:
-                  number: 80
-    - host: monitor.fighthealthinsurance.com
       http:
         paths:
           - path: /metrics
