@@ -1183,7 +1183,7 @@ All three keys are optional - supply whatever you know. The tool returns:
 
 Use this tool when the user asks about cost, affordability, copay assistance, "how can I afford this", coupons, GoodRx, manufacturer help, or whether the drug is available cheaper without insurance. Always remind the user that copay-foundation funds open and close throughout the year, and that pharmacy-discount payments don't count toward their OOP max."""
 
-        medicaid_eligibility_tool = """**Medicaid Eligibility Check**: To help check if someone is eligible Medicaid or medicare, you MUST ONLY use this tool format: **medicaid_eligibility {"state": "StateName", "married": false, ...}**
+        medicaid_eligibility_tool = """**Medicaid Eligibility Check**: To help check if someone is eligible for Medicaid or Medicare, you MUST ONLY use this tool format: **medicaid_eligibility {"state": "StateName", "married": false, ...}**
 
 ONLY USE THIS TOOL WHEN ASKED IF SOMEONE IS ELIGIBLE FOR MEDICARE/MEDICAID
 
@@ -1191,17 +1191,17 @@ DO NOT ASK ANY QUESTIONS UNTIL YOU HAVE CALLED THE TOOL TO FIGURE OUT WHAT QUEST
 
 This tool also checks for medicare eligibility.
 
-The parameters you are providing are in JSON format. If you don't know a parameter do not provide it.
+The parameters you are providing are in JSON format. If you don't know a parameter do not provide it. Never guess or make up a value the user hasn't given you.
 
 Note that format above is for example, you'd fill this in with the actual values when known.
 
-So (for example) if someone asks if their eligible for medicaid in california and you don't yet know anything else you would call **medicaid_eligibility {"state": "ca"}** or if someone were to ask if their eligible for medicaid but you don't yet know which state you would call **medicaid_eligibility {}**.
+So (for example) if someone asks if they're eligible for medicaid in california and you don't yet know anything else you would call **medicaid_eligibility {"state": "ca"}** or if someone were to ask if they're eligible for medicaid but you don't yet know which state you would call **medicaid_eligibility {}**.
 
-At each step call the tool to see what is left.
+At each step add the user's new answers to the parameters you've already collected (keep them in your panda context summary) and call the tool again to see what is left.
 
 Rules for medicaid eligibility:
 
-Call the tool, and the tool will tell you what other information is required until it eventually says probably eligibile under todays rules only, probably eligible under todays rules and with work requirements, or can't find elgibility. In any case you can send them to https://www.fighthealthinsurance.com/faq/medicaid/ once done along with the state specific medicaid information (see the next tool). You can suggest things like "maybe school or volunteering" to help get someone up to the 80 hours. Remind people to keep good records (while expressing empathy that this is unfair).
+Call the tool, and the tool will tell you what other information is required until it eventually says probably eligible under todays rules only, probably eligible under todays rules and with the 2026 work requirements, or can't find eligibility. In any case you can send them to https://www.fighthealthinsurance.com/faq/medicaid/ once done along with the state specific medicaid information (see the next tool). You can suggest things like "maybe school or volunteering" to help get someone up to the 80 hours. Remind people to keep good records (while expressing empathy that this is unfair).
 
 Possible kwargs (all optional; function will ask for missing, step-by-step):
       - state: str
@@ -1219,21 +1219,25 @@ Possible kwargs (all optional; function will ask for missing, step-by-step):
       - home_owner: bool
       - home_equity: float
       - children_in_household: int
-      - state_expanded_medicaid: bool
-      - state_has_medically_needy: bool
       - als: bool
       - esrd: bool
-      - ssdi_length: int # how many months have they been receiving ssdi
+      - ssdi_length: int # how many MONTHS they have been receiving SSDI
       - years_worked: int # how many years you or your spouse worked and paid medicare taxes
+      # 2026 federal work / community engagement requirement (80 qualifying hours per month;
+      # hours from work, school, volunteering, or caregiving all count):
+      - work_req_exempt_2026: bool                    # true if you know they're exempt (pregnant, disabled/medically frail, on medicare, etc.)
+      - avg_weekly_qualifying_hours_last_3mo: float   # average qualifying hours per week over the last 3 months
+      - total_qualifying_hours_last_3mo: float        # or the total over the last 3 months
+      - qualifying_hours_weekly_last_12: list of floats  # or 12 weekly numbers if they have detailed records
 
-Be clear that these are only a best guess as the rules are evolving and your an AI system who may not have the latest information and can also make mistakes.
+Be clear that these are only a best guess as the rules are evolving and you're an AI system who may not have the latest information and can also make mistakes.
 
-*Only ask a few questions at a time and only ask those suggested by the tool.*
-For example, if someone asks if their eligible for medi-cal you will call the tool with california and then only ask a few of the questions it gives back (although you can rephrase them).
+*Only ask a few (two or three) questions at a time, in the order the tool suggests them, and only ask those suggested by the tool (although you can rephrase them naturally and with empathy). Don't re-ask anything the user already told you — pass it in the parameters instead.*
+For example, if someone asks if they're eligible for medi-cal you will call the tool with california and then only ask a few of the questions it gives back (although you can rephrase them).
 
 When people ask about a state specific medicaid plan (e.g. medi-cal is california and STAR is texas) you can use that to infer the state.
 
-You can and should consider using the medicaid information tool once we've done an initial assesment and point them to state specific resources.
+You can and should consider using the medicaid information tool once we've done an initial assessment and point them to state specific resources (like where to apply and who to call).
 """
 
         # Build tools section conditionally based on whether the chat is Medicaid-related

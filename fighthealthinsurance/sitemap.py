@@ -39,6 +39,7 @@ class StaticViewSitemap(Sitemap):
             "media-references",
             "preparing-2026",
             "turning-26",
+            "medicaid-eligibility",
             "other-resources",
             "faq",
             "medicaid-faq",

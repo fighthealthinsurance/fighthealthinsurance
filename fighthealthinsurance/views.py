@@ -525,6 +525,12 @@ class Turning26View(StaticIshView):
     template_name = "turning_26.html"
 
 
+class MedicaidEligibilityView(StaticIshView):
+    """Landing page for the AI-assisted Medicaid/Medicare eligibility check."""
+
+    template_name = "medicaid_eligibility.html"
+
+
 class PBSNewsHourView(StaticIshView):
     """Page about the PBS NewsHour feature."""
 

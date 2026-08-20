@@ -322,12 +322,20 @@ class MedicaidEligibilityTool(BaseTool):
             )
 
             action_text = (
-                "Use this info to ask the user any follow up questions or deliver "
-                "the news of our determiniation and alternatives. Always be careful "
-                "to indicate that this is an approximation and they should contact "
-                "the state to know for sure (you can use the state tool call to get "
-                "more info to provide to the user). Remember to use the panda emoji "
-                "and context."
+                "\n\nUse this info to either ask the user the next follow-up "
+                "questions (no more than two or three per message, in the "
+                "order listed, rephrased naturally) or deliver the news of "
+                "our determination along with the alternatives. Don't re-ask "
+                "anything the user already answered. Always be careful to "
+                "indicate that this is an approximation and they should "
+                "contact the state to know for sure (you can use the "
+                "medicaid_info tool call to get state-specific contact info "
+                "to provide to the user). If the 2026 work requirement is "
+                "the barrier, suggest ways to reach 80 qualifying hours a "
+                "month (work, school, volunteering, or caregiving) and "
+                "remind them to keep good records -- with empathy, since "
+                "this is stressful and unfair. Remember to use the panda "
+                "emoji and context."
             )
 
             await self.send_status_message("Formatting response...")
@@ -388,57 +396,68 @@ class MedicaidEligibilityTool(BaseTool):
         missing: List[str],
     ) -> str:
         """
-        Build the eligibility information text.
+        Build the eligibility information text passed back to the LLM.
 
         Args:
-            eligible_2025: Whether eligible under 2025 rules
-            eligible_2026: Whether eligible under 2026 rules
+            eligible_2025: Whether eligible under the 2025 rules
+            eligible_2026: Whether eligible under the 2026 rules (which add
+                the federal work/community-engagement requirement)
             medicare: Whether eligible for Medicare
             alternatives: List of alternative suggestions
-            missing: List of missing information needed
+            missing: List of missing-information questions still to ask
 
         Returns:
             Formatted information text
         """
-        info_text = (
-            "We're helping figure out if someone is likely eligible for Medicaid. "
-            "Be clear this is an approximation and they'll need to confirm with "
-            "the state to be sure."
-        )
+        parts: List[str] = [
+            "We're helping figure out if someone is likely eligible for "
+            "Medicaid. Be clear this is an approximation and they'll need "
+            "to confirm with the state to be sure."
+        ]
 
         if len(missing) > 0:
-            info_text += (
-                f"To figure out if they're eligible we have {missing} questions to ask."
+            question_lines = "\n".join(f"- {q}" for q in missing)
+            parts.append(
+                "We don't have enough information yet, so we have the "
+                "following questions to ask (ask only two or three at a "
+                "time, in this order, rephrased naturally):\n"
+                f"{question_lines}"
             )
         else:
             if eligible_2025:
-                info_text += (
-                    "Our data so far suggests they could be eligible for medicaid "
-                    "under the 2025 rules."
+                parts.append(
+                    "Our data so far suggests they could be eligible for "
+                    "medicaid under the current (2025) rules."
                 )
             else:
-                info_text += (
-                    "Our data so far suggests they may not be eligible for medicaid "
-                    "under the 2025 rules."
+                parts.append(
+                    "Our data so far suggests they may not be eligible for "
+                    "medicaid under the current (2025) rules."
                 )
 
             if eligible_2026:
-                info_text += (
-                    "Our data so far suggests they could be eligible for medicaid "
-                    "under the 2026 rules."
+                parts.append(
+                    "Our data so far suggests they could be eligible for "
+                    "medicaid under the 2026 rules (which add the federal "
+                    "80-hours-per-month work/community-engagement "
+                    "requirement)."
                 )
             else:
-                info_text += (
-                    "Our data so far suggests they may not be eligible for medicaid "
-                    "under the 2026 rules."
+                parts.append(
+                    "Our data so far suggests they may not be eligible for "
+                    "medicaid under the 2026 rules (which add the federal "
+                    "80-hours-per-month work/community-engagement "
+                    "requirement)."
                 )
 
             if medicare:
-                info_text += "Our data suggests they may be eligible for medicare."
+                parts.append("Our data suggests they may be eligible for medicare.")
 
         if len(alternatives) > 0:
-            info_text += (
-                f"Some possible alternative suggestions to help are {alternatives}."
+            alternative_lines = "\n".join(f"- {a}" for a in alternatives)
+            parts.append(
+                "Alternative programs and next steps worth mentioning:\n"
+                f"{alternative_lines}"
             )
 
-        return info_text
+        return "\n\n".join(parts)

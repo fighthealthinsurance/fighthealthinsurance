@@ -458,6 +458,53 @@ class TestMedicaidEligibilityTool(TestCase):
 
         self.assertIn("questions to ask", info)
 
+    def test_build_eligibility_info_lists_questions_not_python_repr(self):
+        """Missing questions render as a readable list, not a list repr."""
+        mock_status = AsyncMock()
+        tool = MedicaidEligibilityTool(mock_status)
+
+        info = tool._build_eligibility_info(
+            eligible_2025=False,
+            eligible_2026=False,
+            medicare=False,
+            alternatives=[],
+            missing=["What state do you live in?", "How old are you?"],
+        )
+
+        self.assertIn("- What state do you live in?", info)
+        self.assertNotIn("['What state", info)
+
+    def test_build_eligibility_info_paces_questions(self):
+        """The LLM is told to ask only a few questions at a time."""
+        mock_status = AsyncMock()
+        tool = MedicaidEligibilityTool(mock_status)
+
+        info = tool._build_eligibility_info(
+            eligible_2025=False,
+            eligible_2026=False,
+            medicare=False,
+            alternatives=[],
+            missing=["q1", "q2", "q3", "q4"],
+        )
+
+        self.assertIn("two or three at a time", info)
+
+    def test_build_eligibility_info_lists_alternatives_not_python_repr(self):
+        """Alternatives render as a readable list, not a list repr."""
+        mock_status = AsyncMock()
+        tool = MedicaidEligibilityTool(mock_status)
+
+        info = tool._build_eligibility_info(
+            eligible_2025=False,
+            eligible_2026=False,
+            medicare=False,
+            alternatives=["Consider CHIP for the kids."],
+            missing=[],
+        )
+
+        self.assertIn("- Consider CHIP for the kids.", info)
+        self.assertNotIn("['Consider", info)
+
 
 class TestDocFetcherPatterns(TestCase):
     """Test FETCH_DOC_REGEX pattern matching."""

@@ -256,6 +256,11 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         name="turning-26",
     ),
     path(
+        "medicaid-eligibility",
+        views.MedicaidEligibilityView.as_view(),
+        name="medicaid-eligibility",
+    ),
+    path(
         "as-seen-on-pbs",
         views.PBSNewsHourView.as_view(),
         name="pbs-newshour",

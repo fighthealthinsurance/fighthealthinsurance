@@ -144,6 +144,12 @@ for full, abbr in list(_STATE_MAP.items()):
 # Precompute candidate keys (full names + aliases)
 _CANDIDATE_KEYS = set(_STATE_MAP.keys()) | set(_ALIASES.keys())
 
+# Reverse map: 2-letter code -> display name, derived from _STATE_MAP so the
+# two never drift apart. Later duplicate full-name keys ("washington dc",
+# "dc") overwrite earlier ones, so pin the DC display name explicitly.
+_ABBR_TO_NAME = {abbr: full.title() for full, abbr in _STATE_MAP.items()}
+_ABBR_TO_NAME["dc"] = "District of Columbia"
+
 
 def _clean_token(s: str) -> str:
     """Lower, trim, collapse spaces, remove most punctuation except spaces."""
@@ -266,7 +272,8 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
       - als: bool
       - esrd: bool
       - ssdi_length: int # how many months have they been receiving ssdi
-      - on_medicaid_past: bool
+      - years_worked: int # years you (or spouse/ex-spouse) worked paying medicare taxes
+      - on_medicaid_past: bool  # accepted for backwards compatibility; unused
 
       # 2026 federal work requirement (ALWAYS ASSUMED TRUE):
       - work_req_exempt_2026: Optional[bool]  # if caller knows the person is exempt from work rules
@@ -280,8 +287,11 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
       - Pregnant: <= 200% FPL (often higher).
       - ABD & LTC: asset limits approx $2k single / $3k married; LTC income cap ~ $3,000/mo;
         home equity must be below a default cap (use $750k if unknown). Medically-needy may help.
-      - 2026 work overlay: requires >=80 qualifying hours per month on average across the last 12 weeks.
-        If weekly detail is provided, we also require at least 8 of 12 weeks to meet or exceed 80.
+      - 2026 work overlay: requires >=80 qualifying hours per month, averaged across a
+        3-month lookback, with each of the 3 months individually meeting 80 hours.
+      - Questions we would never ask (e.g. "are you on Medicare?" for a healthy
+        30-year-old, or "are you pregnant?" for a toddler) are defaulted instead of
+        stalling the determination waiting on an answer that will never come.
 
     Returns:
       (eligible_2025: bool, eligible_2026: bool, eligible_medicare: bool, alternatives: List[str], missing_info: List[str])
@@ -315,13 +325,15 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
         except Exception:
             return None
 
-    # Rough FPL table for 2025 (annual). These are approximations; use official values when available.
+    # FPL table for 2025 (annual, 48 contiguous states + DC published guidelines:
+    # $15,650 for one person plus $5,500 per additional person). Alaska and
+    # Hawaii run higher; we keep the contiguous values as the approximation.
     # We'll work monthly: divide by 12. For 2026 we model +3% inflation on thresholds.
     def fpl_annual_2025(hh: int) -> float:
         if hh <= 0:
             hh = 1
-        base = 15000.0
-        add = 5300.0
+        base = 15650.0
+        add = 5500.0
         return base + add * (hh - 1)
 
     def pct_fpl(monthly_income: float, hh: int, year: int) -> float:
@@ -348,11 +360,21 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
     MIN_MONTHS_MEETING = 3  # require meeting monthly hours in at least this many months
 
     # ---- extract inputs ----
-    state = _normalize_state(kwargs.get("state"))
+    # A state we can't recognize (typo, garbled LLM value) becomes a re-ask
+    # instead of an exception that kills the whole eligibility check.
+    try:
+        state = _normalize_state(kwargs.get("state"))
+    except ValueError:
+        state = None
     married = get_bool("married")
     age = get_int("age")
     pregnant = get_bool("pregnant")
-    receiving_ssdi = get_bool("receiving_ssdi") or get_bool("disabled")
+    # NOTE: not `get_bool("receiving_ssdi") or get_bool("disabled")` -- that
+    # coerced an explicit False back to None (the `or` moves on), so answering
+    # "no" to the SSDI question got the user re-asked it forever.
+    receiving_ssdi = get_bool("receiving_ssdi")
+    if receiving_ssdi is None:
+        receiving_ssdi = get_bool("disabled")
     ssdi_length = get_int("ssdi_length")
     on_medicare = get_bool("on_medicare")
     veteran = get_bool("veteran_or_spouse_of_veteran")
@@ -402,7 +424,9 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
     als = get_bool("als")
     esrd = get_bool("esrd")
     years_worked = get_int("years_worked")
-    on_medicaid_past = get_bool("on_medicaid_past")
+    # on_medicaid_past is still accepted in kwargs for backwards compatibility
+    # but no longer changes the result: past Medicaid enrollment does not by
+    # itself confer Medicare eligibility.
 
     # 2026 work requirement inputs
     work_req_exempt_2026 = get_bool("work_req_exempt_2026")
@@ -428,7 +452,7 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
     # for now lets do 10 since asking is not terrible and some states do allow it.
     if age is not None and age < 10 and married is None:
         married = False
-    if age is not None and married is None and age > 10:
+    if age is not None and age >= 10 and married is None:
         missing.append("Are you married or single?")
     if household_size is None:
         missing.append(
@@ -440,8 +464,12 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
         )
 
     # https://en.wikipedia.org/wiki/Lina_Medina :/
-    if age and age > 4 and pregnant is None:
-        missing.append("Are you currently pregnant?")
+    if age is not None and pregnant is None:
+        if age > 4:
+            missing.append("Are you currently pregnant?")
+        else:
+            # Don't stall the determination on a question we'd never ask.
+            pregnant = False
     if kids is None:
         missing.append("How many children (under 19) live in your household?")
 
@@ -451,32 +479,52 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
         )
     if age is not None and age < 65:
         if receiving_ssdi is not None and receiving_ssdi and ssdi_length is None:
-            missing.append("How long have you been receiving SSDI?")
+            missing.append("How many months have you been receiving SSDI?")
         if (ssdi_length is None or ssdi_length < 24) and esrd is None:
             missing.append("Are you in end stage renal failure?")
         if esrd is not None and als is None:
             missing.append("Do you have ALS?")
-    if (
-        (age is not None and age > 65)
-        or (esrd is not None and esrd)
-        or (als is not None and als)
-    ) and on_medicare is None:
-        missing.append("Are you currently on Medicare?")
-        if years_worked is None:
-            missing.append(
-                "How many years did you (or spouse or ex-spouse) work and pay medicare taxes?"
-            )
-        elif years_worked > 10:
+
+    # ---- Medicare pathway: 65+, 24+ months of SSDI, ESRD, or ALS ----
+    medicare_pathway = (
+        (age is not None and age >= 65)
+        or bool(esrd)
+        or bool(als)
+        or (bool(receiving_ssdi) and ssdi_length is not None and ssdi_length >= 24)
+    )
+    if medicare_pathway:
+        if on_medicare is None:
+            missing.append("Are you currently on Medicare?")
+        if on_medicare:
+            # Already enrolled.
             eligible_medicare = True
-        elif on_medicaid_past is None:
-            missing.append("Were you on medicaid previously?")
-        elif on_medicaid_past or esrd or als or receiving_ssdi:
+        elif bool(esrd) or bool(als):
+            # ESRD and ALS have their own Medicare pathways regardless of age.
             eligible_medicare = True
-        else:
-            eligible_medicare = False
-            alts.append(
-                "You may be eligible to buy Part-A medicare even if you don't qualify for premium-free part A."
-            )
+        elif bool(receiving_ssdi) and ssdi_length is not None and ssdi_length >= 24:
+            # Medicare enrollment is automatic after 24 months of SSDI.
+            eligible_medicare = True
+        elif age is not None and age >= 65:
+            if years_worked is None:
+                missing.append(
+                    "How many years did you (or spouse or ex-spouse) work and pay medicare taxes?"
+                )
+            elif years_worked >= 10:
+                # 10 years (40 quarters) of Medicare taxes = premium-free Part A.
+                eligible_medicare = True
+            else:
+                eligible_medicare = False
+                alts.append(
+                    "You may be eligible to buy Part-A medicare even if you don't qualify for premium-free part A."
+                )
+                alts.append(
+                    "Medicare Savings Programs (QMB/SLMB/QI) can help pay Medicare premiums when income and assets are low."
+                )
+    elif age is not None and on_medicare is None:
+        # Under 65 with no disability pathway: almost never on Medicare, so
+        # assume not enrolled instead of stalling the flow on a question
+        # whose answer is essentially always "no".
+        on_medicare = False
 
     # LTC pathways
     if applying_reason in ("ltc_nursing_home", "ltc_home_care"):
@@ -513,7 +561,13 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
         or receiving_ssdi is None
         or on_medicare is None
     ):
-        return (eligible_2025, eligible_2026, eligible_medicare, alts, missing)
+        return (
+            eligible_2025,
+            eligible_2026,
+            eligible_medicare,
+            list(dict.fromkeys(alts)),
+            list(dict.fromkeys(missing)),
+        )
 
     # ---- with core info present, evaluate categories ----
     pfpl_2025 = pct_fpl(monthly_income, household_size, 2025)
@@ -540,10 +594,18 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
         work_req_exempt_2026 = True
     elif is_preg:
         eligible_2025 = pfpl_2025 <= THRESH_PREG
-    elif is_abd_age or is_abd_disability or on_medicare:
+    elif (is_abd_age or is_abd_disability or on_medicare) and applying_reason not in (
+        "ltc_nursing_home",
+        "ltc_home_care",
+    ):
+        # Someone explicitly applying for long-term care falls through to the
+        # LTC branch below (LTC applicants are almost always 65+/disabled, so
+        # without this carve-out they'd be evaluated under the wrong rules).
         if assets_total is None:
+            # Same phrasing as the stepwise ask above so the question
+            # dedupes instead of appearing twice with different wording.
             missing.append(
-                "We need your countable assets to check ABD rules (approx, excluding your primary home)."
+                "About how much are your countable financial assets (not including your primary home)?"
             )
         else:
             asset_limit = ABD_ASSET_LIMIT_MARRIED if married else ABD_ASSET_LIMIT_SINGLE
@@ -576,8 +638,10 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
             need_fields.append("home_equity")
         if need_fields:
             if "assets_total" in need_fields:
+                # Same phrasing as the stepwise ask above so the question
+                # dedupes instead of appearing twice with different wording.
                 missing.append(
-                    "About how much are your countable financial assets (exclude your primary home)?"
+                    "About how much are your countable financial assets (not including your primary home)?"
                 )
             if "home_owner" in need_fields:
                 missing.append("Do you own a home?")
@@ -594,18 +658,15 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
                 [
                     "If not eligible, ask about HCBS waivers or medically-needy/spend-down."
                 ],
-                missing,
+                list(dict.fromkeys(missing)),
             )
 
         asset_limit = ABD_ASSET_LIMIT_MARRIED if married else ABD_ASSET_LIMIT_SINGLE
 
-        assets_ok = False
-        if not assets_total:
-            missing.append("What are you total assets excluding home equity?")
-        elif assets_total <= asset_limit:
-            assets_ok = True
-        else:
-            assets_ok = False
+        # assets_total is not None here (the need_fields early-return above
+        # already asked for it -- the None arm just narrows for mypy), and
+        # zero assets passes the test.
+        assets_ok = assets_total is not None and assets_total <= asset_limit
         home_ok = True
         if home_owner:
             home_ok = (home_equity or 0.0) <= HOME_EQUITY_CAP_DEFAULT
@@ -630,8 +691,9 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
                 "Medically-needy/spend-down Medicaid may help if bills are very high."
             )
     elif is_adult_magi:
-        expanded_states = [  # Note: this is based of off KFF Aug 26 2025
-            "al",
+        # ACA expansion states (40 states + DC per KFF; the ten that have not
+        # adopted expansion are AL, FL, GA, KS, MS, SC, TN, TX, WI, and WY).
+        expanded_states = [
             "ak",
             "az",
             "ar",
@@ -644,11 +706,11 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
             "il",
             "in",
             "ia",
-            "ks",
             "ky",
             "la",
             "me",
             "md",
+            "ma",
             "mi",
             "mn",
             "mo",
@@ -660,6 +722,7 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
             "nm",
             "ny",
             "nc",
+            "nd",
             "oh",
             "ok",
             "or",
@@ -671,17 +734,25 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
             "va",
             "wa",
             "wv",
-            "wi",
             "dc",
         ]
         expanded = state in expanded_states
         if expanded:
             eligible_2025 = pfpl_2025 <= THRESH_ADULT_MAGI
+        elif state == "wi":
+            # Wisconsin hasn't adopted ACA expansion but covers adults up to
+            # 100% FPL under a waiver, so it has no coverage gap.
+            eligible_2025 = pfpl_2025 <= 100.0
         else:
             eligible_2025 = False
-            alts.append(
-                "In non-expansion states, childless adults often aren’t eligible—consider ACA marketplace subsidies."
-            )
+            if pfpl_2025 >= 100.0:
+                alts.append(
+                    "In non-expansion states, childless adults often aren’t eligible—consider ACA marketplace subsidies (available starting at 100% FPL)."
+                )
+            else:
+                alts.append(
+                    "Your state hasn't expanded Medicaid and marketplace subsidies generally start at 100% FPL (the 'coverage gap')—community health centers with sliding-scale fees can help in the meantime."
+                )
             if kids and kids > 0:
                 alts.append(
                     "If you’re a caretaker relative, check caretaker-relative Medicaid rules in your state."
@@ -692,8 +763,11 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
             alts.append("Children may qualify for CHIP.")
 
     # ---- 2026 eligibility = 2025 base eligibility + federal work overlay ----
-    # Exemptions (if caller knows): pregnancy, SSDI/disabled, Medicare are treated as exempt by default.
-    presumed_exempt = is_preg or is_abd_disability or bool(on_medicare) or is_child
+    # Exemptions (if caller knows): pregnancy, SSDI/disabled, Medicare, children,
+    # and 65+ (the requirement targets adults 19-64) are treated as exempt by default.
+    presumed_exempt = (
+        is_preg or is_abd_disability or bool(on_medicare) or is_child or is_abd_age
+    )
     exempt = (work_req_exempt_2026 is True) or presumed_exempt
 
     if not eligible_2025:
@@ -777,7 +851,7 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
         bool(eligible_2026),
         bool(eligible_medicare),
         list(dict.fromkeys(alts)),
-        missing,
+        list(dict.fromkeys(missing)),
     )
 
 
@@ -792,63 +866,10 @@ def get_medicaid_info(query: Dict[str, Any]) -> str:
     topic = (query.get("topic") or "").strip().lower()
     limit = int(query.get("limit") or 5)
 
-    # Normalize state name to title case and handle abbreviations
-    state_abbrev_map = {
-        "ca": "California",
-        "oh": "Ohio",
-        "ny": "New York",
-        "tx": "Texas",
-        "fl": "Florida",
-        "pa": "Pennsylvania",
-        "il": "Illinois",
-        "mi": "Michigan",
-        "ga": "Georgia",
-        "nc": "North Carolina",
-        "nj": "New Jersey",
-        "va": "Virginia",
-        "wa": "Washington",
-        "az": "Arizona",
-        "ma": "Massachusetts",
-        "tn": "Tennessee",
-        "in": "Indiana",
-        "mo": "Missouri",
-        "md": "Maryland",
-        "wi": "Wisconsin",
-        "co": "Colorado",
-        "mn": "Minnesota",
-        "sc": "South Carolina",
-        "al": "Alabama",
-        "la": "Louisiana",
-        "ky": "Kentucky",
-        "or": "Oregon",
-        "ok": "Oklahoma",
-        "ct": "Connecticut",
-        "ut": "Utah",
-        "ia": "Iowa",
-        "nv": "Nevada",
-        "ar": "Arkansas",
-        "ms": "Mississippi",
-        "ks": "Kansas",
-        "nm": "New Mexico",
-        "ne": "Nebraska",
-        "wv": "West Virginia",
-        "id": "Idaho",
-        "hi": "Hawaii",
-        "nh": "New Hampshire",
-        "me": "Maine",
-        "ri": "Rhode Island",
-        "mt": "Montana",
-        "de": "Delaware",
-        "sd": "South Dakota",
-        "nd": "North Dakota",
-        "ak": "Alaska",
-        "vt": "Vermont",
-        "wy": "Wyoming",
-        "dc": "District of Columbia",
-    }
-
-    if state_short in state_abbrev_map:
-        state = state_abbrev_map[state_short]
+    # Normalize the 2-letter code to a display name (shared reverse map keeps
+    # this in sync with _STATE_MAP instead of a second hand-maintained list).
+    if state_short in _ABBR_TO_NAME:
+        state = _ABBR_TO_NAME[state_short]
     else:
         # Try to match as full state name (title case)
         state = state_short or ""
