@@ -23,25 +23,7 @@ from fighthealthinsurance.chat.llm_client import (
     BAD_RESPONSE_PATTERNS,
     BAD_CONTEXT_PATTERNS,
 )
-
-# A realistic long assistant reply (matches the production loop shape).
-LOOPED_REPLY = (
-    "The new Medicaid requirements can be tricky! To help you understand them "
-    "better, could you tell me a bit more about your situation? For example:\n\n"
-    "* What state are you in?\n"
-    "* What is your current income and household size?\n"
-    "* Do you currently have Medicaid coverage?\n"
-    "* What specific requirements are you trying to understand?\n\n"
-    "Once I have this information, I can help you find the relevant resources "
-    "and explain how to navigate the new requirements."
-)
-
-FRESH_REPLY = (
-    "Great — since you're in California, your Medicaid program is Medi-Cal. "
-    "The new federal rules add an 80-hour monthly work/school/volunteering "
-    "requirement for many adults by the end of 2026. Want me to look up the "
-    "Medi-Cal specifics for you?"
-)
+from tests.chat_fixtures import FRESH_REPLY, LOOPED_REPLY
 
 
 class TestEstimateHistoryTokens(TestCase):

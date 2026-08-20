@@ -9,21 +9,7 @@ from fighthealthinsurance.chat.retry_handler import (
     create_simple_retry_scorer,
     retry_llm_with_fallback,
 )
-
-LOOPED_REPLY = (
-    "The new Medicaid requirements can be tricky! To help you understand them "
-    "better, could you tell me a bit more about your situation? For example:\n\n"
-    "* What state are you in?\n"
-    "* What is your current income and household size?\n"
-    "* Do you currently have Medicaid coverage?\n"
-    "* What specific requirements are you trying to understand?"
-)
-
-FRESH_REPLY = (
-    "Great — you're in California, so your program is Medi-Cal. The new rules "
-    "add an 80-hour monthly activity requirement for many adults; want me to "
-    "look up the Medi-Cal specifics?"
-)
+from tests.chat_fixtures import FRESH_REPLY, LOOPED_REPLY
 
 CHAT_HISTORY = [
     {"role": "user", "content": "Help me with the new medicaid requirements."},

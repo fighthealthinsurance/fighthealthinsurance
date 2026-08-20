@@ -19,37 +19,17 @@ from rest_framework.test import APITestCase
 from fighthealthinsurance.chat.retry_handler import ANTI_REPEAT_NOTE
 from fighthealthinsurance.chat_interface import ChatInterface
 from fighthealthinsurance.models import OngoingChat, ProfessionalUser
+from tests.chat_fixtures import (
+    FRESH_REPLY,
+    LOOPED_REPLY,
+    SECOND_OPINION_REPLY,
+    RecordingChatModel,
+)
 
 if typing.TYPE_CHECKING:
     from django.contrib.auth.models import User
 else:
     User = get_user_model()
-
-
-LOOPED_REPLY = (
-    "The new Medicaid requirements can be tricky! To help you understand them "
-    "better, could you tell me a bit more about your situation? For example:\n\n"
-    "* What state are you in?\n"
-    "* What is your current income and household size?\n"
-    "* Do you currently have Medicaid coverage?\n"
-    "* What specific requirements are you trying to understand?\n\n"
-    "Once I have this information, I can help you find the relevant resources "
-    "and explain how to navigate the new requirements."
-)
-
-FRESH_REPLY = (
-    "Great — since you're in California, your Medicaid program is Medi-Cal. "
-    "The new federal rules add an 80-hour monthly work, school, or "
-    "volunteering requirement for many adults by the end of 2026. Want me to "
-    "look up the Medi-Cal specifics for you?"
-)
-
-SECOND_OPINION_REPLY = (
-    "One way to start: call the Medi-Cal member help line and ask which of "
-    "the new requirements apply to your household, and keep records of any "
-    "qualifying hours. I can also walk you through the rules here if you "
-    "prefer."
-)
 
 
 class _FrameRecorder:
@@ -67,64 +47,6 @@ class _FrameRecorder:
 
     def debug_result_frames(self):
         return [f for f in self.frames if "debug_llm_result" in f]
-
-
-class RecordingChatModel:
-    """Chat backend stub: records calls; loops until told not to repeat.
-
-    Returns ``looped_reply`` for every call whose message does NOT carry the
-    anti-repeat instruction, and ``fresh_reply`` once it does — mimicking a
-    backend that re-emits its previous reply until explicitly steered.
-    """
-
-    def __init__(
-        self,
-        looped_reply=LOOPED_REPLY,
-        fresh_reply=FRESH_REPLY,
-        always_reply=None,
-        model_quality=100,
-        name="recording-model",
-    ):
-        self.calls = []
-        self._looped_reply = looped_reply
-        self._fresh_reply = fresh_reply
-        self._always_reply = always_reply
-        self._quality = model_quality
-        self._name = name
-
-    def __str__(self):
-        return self._name
-
-    def quality(self):
-        return self._quality
-
-    def get_max_context(self) -> int:
-        return 32768
-
-    async def generate_chat_response(
-        self,
-        current_message_for_llm,
-        previous_context_summary=None,
-        history=None,
-        is_professional=True,
-        is_logged_in=True,
-        temperature=0.7,
-        allow_repeated_reply=False,
-    ):
-        self.calls.append(
-            {
-                "message": current_message_for_llm,
-                "context": previous_context_summary,
-                "allow_repeated_reply": allow_repeated_reply,
-                "history": list(history) if history else [],
-                "temperature": temperature,
-            }
-        )
-        if self._always_reply is not None:
-            return (self._always_reply, "mock context summary")
-        if ANTI_REPEAT_NOTE in (current_message_for_llm or ""):
-            return (self._fresh_reply, "mock context summary")
-        return (self._looped_reply, "mock context summary")
 
 
 def _metric(name, labels=None):

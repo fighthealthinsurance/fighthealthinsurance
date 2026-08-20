@@ -14,19 +14,7 @@ from fighthealthinsurance.ml.response_similarity import (
     sequence_similarity,
     user_requested_repeat,
 )
-
-# The reply from the observed production loop (assistant re-sent it verbatim
-# after the user answered "CA").
-LOOPED_REPLY = (
-    "The new Medicaid requirements can be tricky! To help you understand them "
-    "better, could you tell me a bit more about your situation? For example:\n\n"
-    "* What state are you in?\n"
-    "* What is your current income and household size?\n"
-    "* Do you currently have Medicaid coverage?\n"
-    "* What specific requirements are you trying to understand?\n\n"
-    "Once I have this information, I can help you find the relevant resources "
-    "and explain how to navigate the new requirements."
-)
+from tests.chat_fixtures import LOOPED_REPLY
 
 
 class TestNormalizeAndBags(TestCase):

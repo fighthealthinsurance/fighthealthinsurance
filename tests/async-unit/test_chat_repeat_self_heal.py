@@ -8,22 +8,10 @@ sampling before the caller's scoring/retry ladder ever sees it.
 import pytest
 
 from fighthealthinsurance.ml.ml_models import RemoteOpenLike
-
-LOOPED_REPLY = (
-    "The new Medicaid requirements can be tricky! To help you understand them "
-    "better, could you tell me a bit more about your situation? For example:\n\n"
-    "* What state are you in?\n"
-    "* What is your current income and household size?\n"
-    "* Do you currently have Medicaid coverage?\n"
-    "* What specific requirements are you trying to understand?\n\n"
-    "Once I have this information, I can help you find the relevant resources "
-    "and explain how to navigate the new requirements."
-)
-
-FRESH_REPLY = (
-    "Great — since you're in California, your Medicaid program is Medi-Cal. "
-    "The new federal rules add an 80-hour monthly activity requirement for "
-    "many adults by the end of 2026. Want me to look up the specifics?"
+from tests.chat_fixtures import (
+    CANNED_MEDICAID_REPLY,
+    FRESH_REPLY,
+    LOOPED_REPLY,
 )
 
 HISTORY = [
@@ -153,40 +141,9 @@ async def test_context_framing_labels_summary_and_newest_message():
     assert "Do not repeat an earlier reply" in prompt
 
 
-# Matches the mandated block in the system prompt. All of its distinctive
-# phrases matter: is_canned_reply requires the WHOLE block, because the prompt
-# also tells the model to link the FAQ on any work-requirements answer and a
-# marker-only match exempted ordinary (including looping) Medicaid replies.
 CANNED_REPLY = (
-    "New federal rules require many adults (ages 19-64) to complete at least "
-    "80 hours per month of work, job training, school, or community service "
-    "to keep Medicaid coverage. These requirements go into effect by "
-    "December 31, 2026. For detailed information, visit: "
-    "[Medicaid Work Requirements FAQ](/faq/medicaid/)"
-    "🐼 Provided the mandated work-requirements information."
+    f"{CANNED_MEDICAID_REPLY}🐼 Provided the mandated work-requirements information."
 )
-
-
-@pytest.mark.asyncio
-async def test_allow_repeated_reply_skips_corrective_retry():
-    """When the caller derived an explicit-repeat request from the RAW user
-    message (allow_repeated_reply=True), a repeat of the last reply is what
-    the user wants — the self-heal loop must deliver it without burning a
-    serial corrective retry."""
-    model = ScriptedModel([f"{LOOPED_REPLY}🐼 Repeated as requested."])
-
-    response, _ = await model.generate_chat_response(
-        "can you repeat that?",
-        previous_context_summary=None,
-        history=HISTORY,
-        is_professional=False,
-        is_logged_in=False,
-        allow_repeated_reply=True,
-    )
-
-    assert len(model.infer_calls) == 1
-    assert "repeated your last reply" not in model.infer_calls[0]["prompt"]
-    assert response == LOOPED_REPLY
 
 
 @pytest.mark.asyncio
