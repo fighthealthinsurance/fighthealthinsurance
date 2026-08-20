@@ -496,3 +496,109 @@ class DenialTrackingInfoTest(TestCase):
         self.assertEqual(denial.user_agent, "RequestBrowser/3.0")
         # IP should not be stored for non-professional
         self.assertIsNone(denial.ip_address)
+
+
+class GuessUsStateTest(TestCase):
+    """Tests for the IP -> US state guess used to seed chat context.
+
+    geoip2fast is an optional dependency, so these tests inject a fake module
+    into sys.modules and reset the cached reader around each case.
+    """
+
+    def setUp(self):
+        import fhi_users.audit as audit_module
+
+        self.audit = audit_module
+        self.audit._reset_geo_reader_cache_for_tests()
+
+    def tearDown(self):
+        import sys
+
+        sys.modules.pop("geoip2fast", None)
+        self.audit._reset_geo_reader_cache_for_tests()
+
+    def _install_fake_geoip(self, lookup_result):
+        """Install a fake geoip2fast module whose lookup returns the given
+        object (or raises it, if it's an exception instance)."""
+        import sys
+        import types
+
+        fake_module = types.ModuleType("geoip2fast")
+
+        class FakeGeoIP2Fast:
+            def __init__(self, geoip2fast_data_file=None):
+                self.data_file = geoip2fast_data_file
+
+            def lookup(self, ip):
+                if isinstance(lookup_result, Exception):
+                    raise lookup_result
+                return lookup_result
+
+        fake_module.GeoIP2Fast = FakeGeoIP2Fast  # type: ignore[attr-defined]
+        sys.modules["geoip2fast"] = fake_module
+
+    def test_none_ip_returns_none(self):
+        self.assertIsNone(self.audit.guess_us_state(None))
+        self.assertIsNone(self.audit.guess_us_state(""))
+
+    def test_missing_geoip_returns_none(self):
+        # No fake module installed and (in the test env) geoip2fast is not a
+        # real dependency: the guess degrades to None without raising.
+        import sys
+
+        sys.modules.pop("geoip2fast", None)
+        self.assertIsNone(self.audit.guess_us_state("203.0.113.7"))
+
+    def test_us_subdivision_code_maps_to_state_name(self):
+        class Result:
+            country_code = "US"
+            subdivision_code = "CA"
+
+        self._install_fake_geoip(Result())
+        self.assertEqual(self.audit.guess_us_state("203.0.113.7"), "California")
+
+    def test_country_prefixed_subdivision_code(self):
+        class Result:
+            country_code = "US"
+            subdivision_code = "US-NY"
+
+        self._install_fake_geoip(Result())
+        self.assertEqual(self.audit.guess_us_state("203.0.113.7"), "New York")
+
+    def test_subdivision_name_on_nested_city_object(self):
+        class City:
+            subdivision_name = "Texas"
+
+        class Result:
+            country_code = "US"
+            city = City()
+
+        self._install_fake_geoip(Result())
+        self.assertEqual(self.audit.guess_us_state("203.0.113.7"), "Texas")
+
+    def test_non_us_ip_returns_none(self):
+        class Result:
+            country_code = "FR"
+            subdivision_code = "IDF"
+
+        self._install_fake_geoip(Result())
+        self.assertIsNone(self.audit.guess_us_state("203.0.113.7"))
+
+    def test_country_only_database_returns_none(self):
+        class Result:
+            country_code = "US"
+
+        self._install_fake_geoip(Result())
+        self.assertIsNone(self.audit.guess_us_state("203.0.113.7"))
+
+    def test_lookup_error_returns_none(self):
+        self._install_fake_geoip(RuntimeError("boom"))
+        self.assertIsNone(self.audit.guess_us_state("203.0.113.7"))
+
+    def test_unknown_subdivision_returns_none(self):
+        class Result:
+            country_code = "US"
+            subdivision_code = "ZZ"
+
+        self._install_fake_geoip(Result())
+        self.assertIsNone(self.audit.guess_us_state("203.0.113.7"))

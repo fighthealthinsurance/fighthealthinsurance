@@ -12,6 +12,8 @@ Design goals:
 - Optional: Controlled by ENABLE_AUDIT_LOGGING setting
 """
 
+import os
+import threading
 from dataclasses import dataclass
 from enum import Enum
 from typing import Optional, Union, Protocol, Any
@@ -361,6 +363,169 @@ def get_asn_info(ip_address: Optional[str]) -> tuple[str, str]:
         pass
 
     return ("", "")
+
+
+# --- IP -> US state guess (for chat context, transient only) ---
+
+# 2-letter postal code -> full state name, used to normalize whatever the geo
+# database returns into the full name the chat/Medicaid tooling expects.
+_US_STATE_NAMES_BY_CODE = {
+    "AL": "Alabama",
+    "AK": "Alaska",
+    "AZ": "Arizona",
+    "AR": "Arkansas",
+    "CA": "California",
+    "CO": "Colorado",
+    "CT": "Connecticut",
+    "DE": "Delaware",
+    "DC": "District of Columbia",
+    "FL": "Florida",
+    "GA": "Georgia",
+    "HI": "Hawaii",
+    "ID": "Idaho",
+    "IL": "Illinois",
+    "IN": "Indiana",
+    "IA": "Iowa",
+    "KS": "Kansas",
+    "KY": "Kentucky",
+    "LA": "Louisiana",
+    "ME": "Maine",
+    "MD": "Maryland",
+    "MA": "Massachusetts",
+    "MI": "Michigan",
+    "MN": "Minnesota",
+    "MS": "Mississippi",
+    "MO": "Missouri",
+    "MT": "Montana",
+    "NE": "Nebraska",
+    "NV": "Nevada",
+    "NH": "New Hampshire",
+    "NJ": "New Jersey",
+    "NM": "New Mexico",
+    "NY": "New York",
+    "NC": "North Carolina",
+    "ND": "North Dakota",
+    "OH": "Ohio",
+    "OK": "Oklahoma",
+    "OR": "Oregon",
+    "PA": "Pennsylvania",
+    "RI": "Rhode Island",
+    "SC": "South Carolina",
+    "SD": "South Dakota",
+    "TN": "Tennessee",
+    "TX": "Texas",
+    "UT": "Utah",
+    "VT": "Vermont",
+    "VA": "Virginia",
+    "WA": "Washington",
+    "WV": "West Virginia",
+    "WI": "Wisconsin",
+    "WY": "Wyoming",
+}
+_US_STATE_NAMES = {name.lower(): name for name in _US_STATE_NAMES_BY_CODE.values()}
+
+# Lazily-created, cached geo reader (loading the database per lookup would be
+# far too slow for a per-message call). _geo_reader_failed remembers a failed
+# init so we don't retry the import/load on every chat message.
+_geo_reader: Any = None
+_geo_reader_failed = False
+_geo_reader_lock = threading.Lock()
+
+
+def _get_geo_reader() -> Any:
+    global _geo_reader, _geo_reader_failed
+    if _geo_reader is not None or _geo_reader_failed:
+        return _geo_reader
+    with _geo_reader_lock:
+        if _geo_reader is not None or _geo_reader_failed:
+            return _geo_reader
+        try:
+            from geoip2fast import GeoIP2Fast
+
+            # Subdivision (state) data needs a city-level database; the
+            # default country-level file yields no state and guesses stay
+            # None. Point FHI_GEOIP_CITY_DB at a city .dat.gz to enable.
+            db_path = os.environ.get("FHI_GEOIP_CITY_DB")
+            if db_path:
+                _geo_reader = GeoIP2Fast(geoip2fast_data_file=db_path)
+            else:
+                _geo_reader = GeoIP2Fast()
+        except Exception:
+            # geoip2fast not installed / database missing: state guessing is
+            # an optional enhancement (same posture as get_asn_info above).
+            _geo_reader_failed = True
+            _geo_reader = None
+    return _geo_reader
+
+
+def _reset_geo_reader_cache_for_tests() -> None:
+    """Test hook: clear the cached geo reader / failure flag."""
+    global _geo_reader, _geo_reader_failed
+    with _geo_reader_lock:
+        _geo_reader = None
+        _geo_reader_failed = False
+
+
+def _normalize_state_guess(value: str) -> Optional[str]:
+    """Map a raw subdivision value (code or name) to a full US state name."""
+    cleaned = value.strip()
+    if not cleaned:
+        return None
+    # Some databases prefix subdivision codes with the country ("US-CA").
+    if "-" in cleaned:
+        cleaned = cleaned.rsplit("-", 1)[-1].strip()
+    if len(cleaned) == 2:
+        return _US_STATE_NAMES_BY_CODE.get(cleaned.upper())
+    return _US_STATE_NAMES.get(cleaned.lower())
+
+
+def guess_us_state(ip_address: Optional[str]) -> Optional[str]:
+    """Best-effort guess of the US state for an IP address, or None.
+
+    Used to seed the chat with an UNCONFIRMED location hint so the model can
+    ask "it looks like you might be in California, is that right?" instead of
+    a cold "which state are you in?". Requires geoip2fast with a city-level
+    database (see _get_geo_reader); returns None (never raises) when the
+    dependency, the database, or subdivision data is unavailable, when the IP
+    isn't clearly US, or on any lookup error. Callers must treat the value as
+    a transient guess: present it to the model as unconfirmed and never
+    persist it for anonymous users.
+    """
+    if not ip_address:
+        return None
+    reader = _get_geo_reader()
+    if reader is None:
+        return None
+    try:
+        result = reader.lookup(str(ip_address).strip())
+    except Exception:
+        return None
+    if result is None:
+        return None
+    country = str(getattr(result, "country_code", "") or "").strip().upper()
+    if country and country != "US":
+        return None
+    # Probe the field shapes different geoip2fast versions/databases use for
+    # subdivision info, on both the result and its nested city object.
+    city_obj = getattr(result, "city", None)
+    for source in (result, city_obj):
+        if source is None:
+            continue
+        for attr in (
+            "subdivision_code",
+            "subdivision_name",
+            "region_code",
+            "region_name",
+            "state",
+            "state_code",
+            "state_name",
+        ):
+            raw = getattr(source, attr, None)
+            if isinstance(raw, str) and raw.strip():
+                state = _normalize_state_guess(raw)
+                if state:
+                    return state
+    return None
 
 
 def tracking_metadata_for_request(

@@ -1227,9 +1227,15 @@ async def best_within_timelimit(
     Runs a list of async tasks concurrently.
     Returns the best result (per score_fn) that completes before timeout.
     If nothing usable completed in time, keeps waiting up to
-    ``extended_timeout`` extra seconds and takes the first truthy result to
+    ``extended_timeout`` extra seconds and takes the first usable result to
     arrive. Ignores late results; every still-pending task is cancelled on
     every exit path.
+
+    Results scored ``-inf`` are treated as INVALID (like falsy results): they
+    are never returned, even if they are the only thing that completed.
+    Scorers rely on this to hard-reject candidates (e.g. a chat reply that
+    just repeats the previous reply) so a bad-but-fast result can't win by
+    default.
 
     Args:
         tasks: List of awaitable tasks that return results of type T
@@ -1243,9 +1249,38 @@ async def best_within_timelimit(
         The best result according to score_fn, or None if nothing usable
         completes within timeout + extended_timeout.
     """
+    best_and_second = await best_two_within_timelimit(
+        tasks, score_fn, timeout, extended_timeout
+    )
+    return best_and_second[0]
+
+
+async def best_two_within_timelimit(
+    tasks: Sequence[Awaitable[T]],
+    score_fn: Callable[[T, Awaitable[T]], float],
+    timeout: float,
+    extended_timeout: Optional[float] = None,
+) -> Tuple[Optional[T], Optional[T]]:
+    """
+    Like :func:`best_within_timelimit`, but also returns the runner-up.
+
+    Returns ``(best, second_best)`` where ``second_best`` is the
+    highest-scored usable result that DIFFERS (by ``!=``) from the best
+    (None when no such result completed). Equal-valued results are skipped
+    for the runner-up slot: several backends often serve the same model and
+    return identical answers, and an identical "runner-up" is useless to
+    every conceivable caller. The chat interface uses the runner-up to
+    offer an occasional side-by-side alternate answer; every other caller
+    goes through ``best_within_timelimit`` and ignores it.
+
+    Semantics shared with best_within_timelimit: falsy results and results
+    scored ``-inf`` are invalid and never returned; the overtime window
+    stops at the first usable result; pending tasks are cancelled on every
+    exit path, including caller cancellation.
+    """
     # Should not happen :)
     if not tasks:
-        return None
+        return None, None
 
     if extended_timeout is None:
         extended_timeout = min(max(timeout * 2, 60.0), _extended_wait_cap())
@@ -1265,9 +1300,12 @@ async def best_within_timelimit(
 
     best_result_option: Optional[T] = None
     best_score = float("-inf")  # Start with negative infinity for comparison
+    second_result_option: Optional[T] = None
+    second_score = float("-inf")
 
     def _score_done(done_tasks: Set[asyncio.Task[T]]) -> None:
         nonlocal best_result_option, best_score
+        nonlocal second_result_option, second_score
         for task in done_tasks:
             try:
                 result = task.result()
@@ -1278,9 +1316,27 @@ async def best_within_timelimit(
                 # the best slot and block a later truthy result.
                 if not result:
                     continue
+                # -inf means the scorer hard-rejected the result (invalid /
+                # must never be delivered). Before this check a truthy
+                # -inf-scored result could still win via the "nothing better
+                # yet" fallback below -- which let a repeated chat reply
+                # through no matter how it was scored.
+                if score == float("-inf"):
+                    continue
                 if score > best_score or not best_result_option:
+                    # Demote the old best into the runner-up slot -- unless
+                    # the new best is equal-valued, in which case keeping the
+                    # old second avoids a runner-up identical to the best.
+                    if best_result_option is not None and best_result_option != result:
+                        second_score = best_score
+                        second_result_option = best_result_option
                     best_score = score
                     best_result_option = result
+                elif result != best_result_option and (
+                    score > second_score or not second_result_option
+                ):
+                    second_score = score
+                    second_result_option = result
             except Exception as e:
                 _log_fanout_task_error(e, "best_within_timelimit")
 
@@ -1292,9 +1348,9 @@ async def best_within_timelimit(
         _score_done(done)
         if best_result_option:
             _spawn_cancellation(list(pending))
-            return best_result_option
+            return best_result_option, second_result_option
 
-        # Overtime window: bounded, first truthy result wins. This keeps
+        # Overtime window: bounded, first usable result wins. This keeps
         # slow-but-eventually-successful backends useful without the old
         # unbounded ((timeout + 1) * 20) tail, and a falsy first completion no
         # longer aborts the wait while other tasks are still running.
@@ -1321,7 +1377,7 @@ async def best_within_timelimit(
     if pending:
         _spawn_cancellation(list(pending))
     if best_result_option:
-        return best_result_option
+        return best_result_option, second_result_option
     # Report the ACTUAL elapsed wait, not just the configured window: every
     # task failing instantly (no backends configured, connection refused)
     # exits this function in milliseconds, and a message claiming we waited
@@ -1332,7 +1388,7 @@ async def best_within_timelimit(
         f"after {time.monotonic() - wait_started:.1f}s "
         f"(budget {timeout}s + {extended_timeout}s overtime)"
     )
-    return None
+    return None, None
 
 
 async def best_within_timelimit_static(

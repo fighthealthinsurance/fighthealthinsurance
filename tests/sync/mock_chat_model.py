@@ -53,6 +53,7 @@ class MockChatModel:
         history: Optional[list[dict[str, str]]] = None,
         is_professional: Optional[bool] = True,
         is_logged_in: Optional[bool] = True,
+        temperature: float = 0.7,
     ) -> Tuple[str, str]:
         """
         Generate a mock response to a chat message.
@@ -60,7 +61,8 @@ class MockChatModel:
         The first parameter is named ``current_message_for_llm`` to match
         ``RemoteModelLike.generate_chat_response`` exactly — callers (like the
         chooser) pass it by keyword, so a mismatched mock signature would hide
-        real TypeErrors.
+        real TypeErrors. ``temperature`` likewise mirrors the real signature
+        (anti-repeat retries pass a raised value).
 
         Args:
             current_message_for_llm: The user's message
@@ -68,6 +70,7 @@ class MockChatModel:
             history: Optional history of messages
             is_professional: Optional boolean indicating if the user is a professional
             is_logged_in: Optional boolean indicating if the user is logged in
+            temperature: Sampling temperature (ignored by the mock)
 
         Returns:
             A tuple of (response_text, updated_context)

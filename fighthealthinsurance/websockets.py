@@ -6,7 +6,7 @@ import time
 import uuid
 from typing import AsyncIterator, Callable, Optional, Tuple, cast
 
-from asgiref.sync import ThreadSensitiveContext
+from asgiref.sync import ThreadSensitiveContext, sync_to_async
 
 from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
@@ -26,7 +26,12 @@ from channels.db import aclose_old_connections, database_sync_to_async
 from channels.generic.websocket import AsyncWebsocketConsumer
 from loguru import logger
 
-from fhi_users.audit import TrackingInfo, extract_tracking_info_from_scope
+from fhi_users.audit import (
+    TrackingInfo,
+    extract_tracking_info_from_scope,
+    guess_us_state,
+)
+from fighthealthinsurance.ml.ml_metrics import record_answer_feedback
 from fighthealthinsurance.reliability_events import capture_reliability_event
 from fighthealthinsurance import common_view_logic
 from fighthealthinsurance.ml.bad_output_utils import strip_boilerplate_service
@@ -1378,6 +1383,22 @@ class OngoingChatConsumer(PerConnectionThreadSensitiveMixin, AsyncWebsocketConsu
         message_raw = data.get("message", data.get("content", None))
         message: str = message_raw if isinstance(message_raw, str) else ""
         chat_id = data.get("chat_id", self.chat_id)
+
+        # Lightweight side-by-side answer feedback: which answer the user
+        # preferred. Metrics + log only (bounded label set) -- no LLM turn.
+        answer_feedback = data.get("answer_feedback")
+        if answer_feedback is not None:
+            preferred = (
+                answer_feedback.get("preferred")
+                if isinstance(answer_feedback, dict)
+                else None
+            )
+            record_answer_feedback(preferred)
+            logger.info(
+                f"chat ws: answer feedback preferred={str(preferred)[:16]!r} "
+                f"chat_id={chat_id}"
+            )
+            return
         replay_requested = data.get("replay", False)
         iterate_on_appeal = data.get("iterate_on_appeal")
         iterate_on_prior_auth = data.get("iterate_on_prior_auth")
@@ -1395,6 +1416,9 @@ class OngoingChatConsumer(PerConnectionThreadSensitiveMixin, AsyncWebsocketConsu
         # Document upload flags from frontend
         is_document = data.get("is_document", False)
         document_name = data.get("document_name", None)
+        # Client asked to see the exact LLM input for each turn (gated below
+        # to DEBUG deployments and staff users).
+        debug_requested = bool(data.get("debug", False))
 
         # Validate microsite_slug if provided
         if microsite_slug:
@@ -1490,6 +1514,15 @@ class OngoingChatConsumer(PerConnectionThreadSensitiveMixin, AsyncWebsocketConsu
                     {"chat_id": str(chat.id), "chat_forked": True}
                 )
             self.chat_id = str(chat.id)
+            # Whether this connection may see the exact LLM inputs: local
+            # DEBUG deployments and staff accounts only.
+            from django.conf import settings as django_settings
+
+            debug_llm = debug_requested and (
+                getattr(django_settings, "DEBUG", False)
+                or (is_authenticated and getattr(user, "is_staff", False))
+            )
+
             if (
                 not hasattr(self, "chat_interface")
                 or self.chat_interface is None
@@ -1502,16 +1535,29 @@ class OngoingChatConsumer(PerConnectionThreadSensitiveMixin, AsyncWebsocketConsu
                 django_session_key = getattr(
                     self.scope.get("session"), "session_key", None
                 )
+                # Transient IP-derived state guess (never persisted; see
+                # guess_us_state): the connection IP is stable per socket so
+                # this is computed once per interface. Plain asgiref
+                # sync_to_async (no ORM): the first lookup loads the geo
+                # database from disk, which must not block the event loop.
+                state_hint = await sync_to_async(guess_us_state)(
+                    _get_client_ip_from_scope(self.scope)
+                )
                 self.chat_interface = ChatInterface(
                     send_json_message_func=self.send_json_message,
                     chat=chat,
                     user=user,
                     use_external_models=use_external_models,
                     server_session_key=django_session_key,
+                    state_hint=state_hint,
+                    debug_llm=debug_llm,
                 )
-            elif use_external_models != self.chat_interface.use_external_models:
-                # User changed their preference for external models mid-chat
-                self.chat_interface.use_external_models = use_external_models
+            else:
+                if use_external_models != self.chat_interface.use_external_models:
+                    # User changed their preference for external models mid-chat
+                    self.chat_interface.use_external_models = use_external_models
+                # Debug preference can be toggled mid-chat.
+                self.chat_interface.debug_llm = debug_llm
 
             if not replay_requested:
                 # Allow empty message when linking an appeal or prior auth

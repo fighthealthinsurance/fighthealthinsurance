@@ -106,12 +106,22 @@ const PWYWBanner: React.FC<{ onDismiss: () => void }> = ({ onDismiss }) => {
 };
 
 // Define types for our chat messages
+// When true (set via localStorage from the console), each turn asks the
+// server to echo back exactly what was sent to the backend model; frames
+// arrive as debug_llm_input and are logged to the browser console. The
+// server only honors it for DEBUG deployments and staff accounts.
+const isChatDebugEnabled = (): boolean =>
+  localStorage.getItem("fhi_chat_debug") === "true";
+
 interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   timestamp?: string;
   status?: "done" | "typing" | "error";
   uid?: string;
+  // Optional side-by-side alternate answer (ephemeral: not persisted
+  // server-side, so it only appears on live turns, not replays).
+  alternate_content?: string;
 }
 
 interface ChatState {
@@ -181,6 +191,60 @@ const ChatMessageContent: React.FC<{ content: string }> = ({ content }) => {
 };
 
 // Typing animation component for loading state with elapsed time
+// Collapsible side-by-side alternate answer (like ChatGPT's occasional
+// "which response do you prefer?"). Collapsed by default; the "prefer"
+// button sends lightweight feedback so we learn which answers users like.
+const AlternateAnswer: React.FC<{
+  content: string;
+  onPrefer: () => boolean;
+}> = ({ content, onPrefer }) => {
+  const [expanded, setExpanded] = useState(false);
+  const [preferred, setPreferred] = useState(false);
+
+  return (
+    <Box mt="xs" style={{ borderTop: "1px dashed #d1d5db", paddingTop: 6 }}>
+      <Button
+        variant="subtle"
+        size="compact-xs"
+        onClick={() => setExpanded((prev) => !prev)}
+      >
+        {expanded ? "Hide alternate answer" : "🔀 See an alternate answer"}
+      </Button>
+      {expanded && (
+        <Box
+          mt="xs"
+          style={{
+            border: "1px solid #e5e7eb",
+            borderRadius: 8,
+            padding: "6px 10px",
+            backgroundColor: "#ffffff",
+          }}
+        >
+          <MantineText size="xs" c="dimmed" mb={4}>
+            Alternate answer
+          </MantineText>
+          <Box style={messageContentStyle}>
+            <ReactMarkdown>{content}</ReactMarkdown>
+          </Box>
+          <Button
+            variant="light"
+            size="compact-xs"
+            mt={4}
+            disabled={preferred}
+            onClick={() => {
+              if (onPrefer()) {
+                setPreferred(true);
+              }
+            }}
+          >
+            {preferred ? "Thanks for the feedback!" : "👍 I prefer this answer"}
+          </Button>
+        </Box>
+      )}
+    </Box>
+  );
+};
+
 const TypingAnimation: React.FC<{ startTime?: number | null }> = ({ startTime }) => {
   const [dots, setDots] = useState(".");
   const [elapsed, setElapsed] = useState(0);
@@ -548,6 +612,13 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
         // Frames carry chat message content (PHI) -- log only the field names.
         console.debug("Received message frame, keys:", Object.keys(data ?? {}));
 
+        // Debug echo of exactly what was sent to the backend model this
+        // turn (only sent when the debug flag was requested AND the server
+        // allows it). Surfaces in the browser console for inspection.
+        if (data.debug_llm_input) {
+          console.log("FHI chat debug — LLM input:", data.debug_llm_input);
+        }
+
         // Get user info for restoring personal info
         const userInfo = getUserInfo();
 
@@ -622,6 +693,14 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
               ? restorePersonalInfo(data.content, userInfo)
               : data.content;
 
+          // Optional side-by-side alternate answer, same restore treatment.
+          let alternateContent: string | undefined = undefined;
+          if (data.role === "assistant" && typeof data.alternate_content === "string") {
+            alternateContent = userInfo
+              ? restorePersonalInfo(data.alternate_content, userInfo)
+              : data.alternate_content;
+          }
+
           setState((prev) => ({
             ...prev,
             messages: [
@@ -629,6 +708,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
               {
                 role: data.role,
                 content: processedContent,
+                alternate_content: alternateContent,
                 timestamp: data.timestamp || new Date().toISOString(),
                 status: "done",
               },
@@ -733,6 +813,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
             is_document: true,
             document_name: file.name,
             use_external_models: state.useExternalModels,
+            debug: isChatDebugEnabled() || undefined,
           };
 
           wsRef.current.send(JSON.stringify(messageToSend));
@@ -767,9 +848,26 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
       session_key: getSessionKey(),
       use_external_models: state.useExternalModels,
       metadata: source ? { intake_source: source } : undefined,
+      debug: isChatDebugEnabled() || undefined,
     };
 
     wsRef.current.send(JSON.stringify(messageToSend));
+    return true;
+  };
+
+  // Lightweight feedback about a side-by-side alternate answer. Returns
+  // whether the frame was actually sent.
+  const sendAnswerFeedback = (preferred: "primary" | "alternate"): boolean => {
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+      return false;
+    }
+    wsRef.current.send(
+      JSON.stringify({
+        chat_id: state.chatId,
+        session_key: getSessionKey(),
+        answer_feedback: { preferred },
+      }),
+    );
     return true;
   };
 
@@ -965,7 +1063,15 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
             {message.status === "typing" ? (
               <TypingAnimation startTime={state.requestStartTime} />
             ) : (
-              <ChatMessageContent content={message.content} />
+              <>
+                <ChatMessageContent content={message.content} />
+                {!isUser && message.alternate_content && (
+                  <AlternateAnswer
+                    content={message.alternate_content}
+                    onPrefer={() => sendAnswerFeedback("alternate")}
+                  />
+                )}
+              </>
             )}
           </Box>
         </Flex>

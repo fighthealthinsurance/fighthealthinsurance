@@ -26,6 +26,26 @@ def make_placeholder(counter: int) -> str:
     return f"{MISSING_CONTEXT_PREFIX} [{counter}]"
 
 
+# Marker prepended when bound_summary_context trims accreted context.
+TRIMMED_CONTEXT_PREFIX = "[...earlier context trimmed...]\n"
+
+
+def bound_summary_context(context: Optional[str], max_chars: int) -> Optional[str]:
+    """Bound an accreted summary-context string to ``max_chars``.
+
+    Summaries accrete over long chats ("Earlier conversation summary: ...
+    Additional context: Earlier conversation summary: ..."), and an unbounded
+    blob crowds the actual conversation out of the model's attention -- one
+    of the ways replies degrade into replaying earlier turns. Keeps the TAIL
+    (most recent context lands last in the accreted string) with a marker so
+    the model knows earlier context was dropped.
+    """
+    if not context or max_chars <= 0 or len(context) <= max_chars:
+        return context
+    keep = max(0, max_chars - len(TRIMMED_CONTEXT_PREFIX))
+    return f"{TRIMMED_CONTEXT_PREFIX}{context[-keep:]}"
+
+
 async def prepare_history_for_llm(
     chat_history: Optional[List[Dict[str, str]]],
     existing_summary: Optional[str],
@@ -63,9 +83,14 @@ async def prepare_history_for_llm(
     # Preserve full history for models with large context windows
     full_history_for_llm = list(history_for_llm)
 
-    # Check if we should summarize (every N messages after threshold)
+    # Check if we should summarize (once per N-message band after the
+    # threshold). History normally grows by 2 per turn, but consecutive
+    # same-role messages get merged (ensure_message_alternation) so the
+    # length can change parity -- a strict `% N == 0` then never fires again
+    # and dropped messages stop being folded into the summary at all. `<= 1`
+    # fires exactly once per band for both parities.
     messages_over_threshold = len(history_for_llm) - DEFAULT_MESSAGES_TO_KEEP
-    should_summarize = messages_over_threshold % SUMMARIZATION_INTERVAL == 0
+    should_summarize = messages_over_threshold % SUMMARIZATION_INTERVAL <= 1
 
     if should_summarize:
         summarized_context = await _summarize_history(

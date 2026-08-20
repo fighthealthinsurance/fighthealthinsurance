@@ -47,6 +47,36 @@ CHAT_TURNS_TOTAL = Counter(
     labelnames=("outcome",),
 )
 
+# Loop-prevention visibility: how often candidate chat replies (nearly)
+# repeated a recent reply, and what happened to them. Actions:
+#   rejected_candidates -- a turn hard-rejected at least one repeated
+#       candidate in the primary pass (counted once per turn);
+#   delivered_repeat -- despite the ladder, the reply we delivered still
+#       repeated a recent reply (last-resort delivery; should stay rare).
+CHAT_REPEATED_RESPONSES_TOTAL = Counter(
+    "fhi_chat_repeated_responses_total",
+    "Chat turns where candidate replies repeated a recent reply, by action.",
+    labelnames=("action",),
+)
+
+# Side-by-side alternate answers: how often one was offered, and which
+# answer users said they preferred.
+CHAT_ALTERNATE_ANSWERS_TOTAL = Counter(
+    "fhi_chat_alternate_answers_total",
+    "Chat turns where an alternate (side-by-side) answer was offered.",
+)
+
+CHAT_ANSWER_FEEDBACK_TOTAL = Counter(
+    "fhi_chat_answer_feedback_total",
+    "User feedback on side-by-side answers (preferred=primary/alternate).",
+    labelnames=("preferred",),
+)
+
+# Bounded label set for the feedback counter: the value arrives from the
+# client, so anything unexpected is collapsed to "other" to keep metric
+# cardinality fixed.
+_ANSWER_FEEDBACK_ALLOWED = frozenset({"primary", "alternate"})
+
 
 def _safe_label(value: object, limit: int = 80) -> str:
     return str(value)[:limit] if value else "unknown"
@@ -76,6 +106,36 @@ def record_chat_turn(outcome: str) -> None:
         CHAT_TURNS_TOTAL.labels(outcome=outcome).inc()
     except Exception:  # pragma: no cover
         logger.opt(exception=True).debug("Failed to record chat turn metric")
+
+
+def record_chat_repeat(action: str) -> None:
+    """Record a repeated-reply event (see CHAT_REPEATED_RESPONSES_TOTAL).
+    Never raises."""
+    try:
+        CHAT_REPEATED_RESPONSES_TOTAL.labels(action=action).inc()
+    except Exception:  # pragma: no cover
+        logger.opt(exception=True).debug("Failed to record chat repeat metric")
+
+
+def record_chat_alternate_offered() -> None:
+    """Record that a side-by-side alternate answer was offered. Never raises."""
+    try:
+        CHAT_ALTERNATE_ANSWERS_TOTAL.inc()
+    except Exception:  # pragma: no cover
+        logger.opt(exception=True).debug("Failed to record alternate metric")
+
+
+def record_answer_feedback(preferred: object) -> None:
+    """Record which side-by-side answer the user preferred. The value comes
+    from the client, so it is collapsed to a bounded label set. Never
+    raises."""
+    try:
+        label = str(preferred) if preferred else "other"
+        if label not in _ANSWER_FEEDBACK_ALLOWED:
+            label = "other"
+        CHAT_ANSWER_FEEDBACK_TOTAL.labels(preferred=label).inc()
+    except Exception:  # pragma: no cover
+        logger.opt(exception=True).debug("Failed to record answer feedback metric")
 
 
 class ExecutorQueueCollector(Collector):

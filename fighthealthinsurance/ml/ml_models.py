@@ -30,6 +30,7 @@ def _is_verbose_logging() -> bool:
 
 
 from fighthealthinsurance.ml.ml_metrics import record_ml_call, record_ml_failure
+from fighthealthinsurance.ml.response_similarity import is_mostly_repeated
 from fighthealthinsurance.utils import (
     RateLimiter,
     ensure_message_alternation,
@@ -1000,8 +1001,16 @@ class RemoteModelLike(DenialBase):
         Returns:
             Generated response or None
         """
+        # Clearly-labeled framing: the old "The previous context is: ... And
+        # the active question is:" buried terse replies ("CA") behind the
+        # summary of the model's OWN previous turn, which invited weaker
+        # models to replay that turn instead of using the new answer.
         previous_context_extra = (
-            f"The previous context is: {previous_context_summary}\n\n And the active question is:"
+            f"Context summary of the conversation so far (background for you; "
+            f"the user has not seen this): {previous_context_summary}\n\n"
+            f"Reply to the user's newest message below. Do not repeat an "
+            f"earlier reply and do not re-ask questions the conversation "
+            f"history already answers.\n\nThe user's newest message is: "
             if previous_context_summary
             else ""
         )
@@ -1268,13 +1277,15 @@ If a chat is linked to an appeal or prior authorization record, pay attention to
 
 Don't tell people which tools your using.
 
-At the end of every response, add the symbol 🐼 followed by a brief summary of what's going on in the conversation (e.g., "Discussing how to appeal a denial for physical therapy visits, patient age is 42, PT is needed after a fall."). Or if the chat is regarding medicaid / medicare eligibility it should be the information collected so far (like income etc.). This summary is for internal use only and will not be shown to the user. Use it to maintain continuity in future replies.
+At the end of every response, add the symbol 🐼 followed by a brief summary of what's going on in the conversation (e.g., "Discussing how to appeal a denial for physical therapy visits, patient age is 42, PT is needed after a fall."). Or if the chat is regarding medicaid / medicare eligibility it should be the information collected so far (like income etc.). This summary is for internal use only and will not be shown to the user. Use it to maintain continuity in future replies. Always fold NEW details from the user's latest message into this summary -- their state, age, income, or answers to questions you asked -- so the summary tracks the answers you have collected, not just the questions you asked.
 (Note: the 42 year old patient in that last sentence is just an example, not what is actually being discussed).
 
 
 Some important notes:
 
 - You should not provide medical advice. If asked, gently steer the conversation back to billing/coverage/admin tasks.
+
+- Never repeat one of your earlier replies verbatim or near-verbatim. When the user answers a question you asked -- even tersely, like "CA" or "yes" -- treat it as new information: acknowledge it, combine it with the conversation so far, and take the next step instead of re-asking or re-sending your previous message.
 
 - If conversation strays (e.g., pop culture, venting, existential dread), redirect with warmth and focus.
 
@@ -1294,6 +1305,26 @@ So for example if a user asks a question and you have a follow up (like "How do 
 What reason did they give you for your GLP-1 denied?🐼Helping a patient appeal a GLP-1 denial.
 Remember in the last three sentences GLP-1 is just an _example_ check what the user is actually chatting about. You'll want to include all of the context collected so far in the summary after the panda emoji.
 """
+        # The most recent assistant reply in the history: a fresh generation
+        # that (nearly) repeats it is the chat-loop failure mode, so the
+        # retry loop below treats it like a bad result and asks the model to
+        # try again with corrective feedback and a temperature bump.
+        last_assistant_reply: Optional[str] = None
+        if history:
+            for prior_msg in reversed(history):
+                if prior_msg.get("role") in ("assistant", "agent") and prior_msg.get(
+                    "content"
+                ):
+                    last_assistant_reply = prior_msg.get("content")
+                    break
+
+        def _repeats_last_reply(candidate: Optional[str]) -> bool:
+            return bool(
+                candidate
+                and last_assistant_reply
+                and is_mostly_repeated(candidate, last_assistant_reply)
+            )
+
         result: Optional[str] = None
         c = 0
         chat_timeout = ml_task_timeout("chat")
@@ -1305,11 +1336,25 @@ Remember in the last three sentences GLP-1 is just an _example_ check what the u
         while (
             result is None
             or result.strip().lower() == current_message.strip().lower()
+            or _repeats_last_reply(result)
             or self.bad_result(result, "chat")
         ) and (c < 2 and time.monotonic() - loop_start < 2 * chat_timeout):
             c = c + 1
             result_extra = ""
-            if result and len(result) > 0 and "🐼" not in result:
+            if _repeats_last_reply(result):
+                # Corrective feedback + hotter sampling: the repeat is often
+                # near-deterministic, and the changed prompt text also busts
+                # any upstream response cache serving the same reply. Takes
+                # priority over the missing-panda feedback -- a repeated
+                # reply is the worse failure.
+                result_extra = (
+                    "Your previous draft repeated your last reply, which the "
+                    "user has already seen. Do not repeat it -- respond to "
+                    "the user's newest message directly, using the details "
+                    "they have already provided.\n\n"
+                )
+                temperature = min(1.0, temperature + 0.15)
+            elif result and len(result) > 0 and "🐼" not in result:
                 result_extra = f"Your previous answer -- {result} -- was missing the panda emoji 🐼 and the context information. Please try again.\n\n"
             raw_result = await self._infer(
                 system_prompts=[base_system_prompt],

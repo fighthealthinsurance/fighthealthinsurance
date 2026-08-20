@@ -13,6 +13,16 @@ from fighthealthinsurance.chat.message_preprocessor import MessageVariant
 from fighthealthinsurance.chat.safety_filters import detect_false_promises
 from fighthealthinsurance.chat.tools.patterns import ALL_TOOL_PATTERNS as tools_regex
 from fighthealthinsurance.ml.ml_models import RemoteModelLike, repetition_penalty
+
+# Shared similarity helpers (stdlib-only module, importable from both this
+# layer and ml_models without a cycle). normalize_text/bag_of_words are
+# re-exported from here for existing importers/tests.
+from fighthealthinsurance.ml.response_similarity import (
+    bag_of_words,
+    is_mostly_repeated,
+    normalize_text,
+    response_similarity,
+)
 from fighthealthinsurance.utils import ensure_message_alternation
 
 # Response patterns that indicate a bad/leaked response
@@ -84,21 +94,66 @@ def _extract_document_names_from_history(
 
 # Penalty for response that exactly matches (normalized) the last user/assistant message
 EXACT_REPEAT_PENALTY = -500.0
+# Penalty for response that is a near-verbatim (but not exact) rewording of a
+# recent message. Between exact and bag-of-words in severity.
+NEAR_REPEAT_PENALTY = -400.0
 # Penalty for response with same bag-of-words as the last user/assistant message
 BAG_OF_WORDS_REPEAT_PENALTY = -75.0
 # Lighter penalties for matching older messages in the history
 OLDER_ASSISTANT_REPEAT_PENALTY = -20.0
 OLDER_USER_REPEAT_PENALTY = -10.0
 
+# How many recent assistant replies a candidate is checked against for the
+# HARD repeat rejection (covers both A-A loops and A-B-A alternation loops).
+RECENT_ASSISTANT_REPLIES_TO_CHECK = 3
 
-def normalize_text(text: str) -> str:
-    """Normalize text for comparison: lowercase, collapse whitespace, strip."""
-    return re.sub(r"\s+", " ", text.lower().strip())
+# When the user explicitly asks for a repeat, repeating is the right answer —
+# skip the hard rejection so the turn can succeed.
+USER_REQUESTED_REPEAT_RE = re.compile(
+    r"\b(repeat|say (?:that|it) again|one more time|once more|again please|"
+    r"re-?send|(?:show|send) (?:that|it) again)\b",
+    re.IGNORECASE,
+)
 
 
-def bag_of_words(text: str) -> set:
-    """Extract a bag of words (lowercased) from text for unordered comparison."""
-    return set(re.findall(r"[a-z0-9]+", text.lower()))
+def user_requested_repeat(message: Optional[str]) -> bool:
+    """True when the user's message explicitly asks us to repeat ourselves."""
+    return bool(message and USER_REQUESTED_REPEAT_RE.search(message))
+
+
+def find_repeated_reply(
+    response_text: str,
+    chat_history: Optional[List[Dict[str, str]]],
+    current_message: Optional[str] = None,
+    max_assistant_messages: int = RECENT_ASSISTANT_REPLIES_TO_CHECK,
+) -> Optional[str]:
+    """Detect a candidate reply that mostly repeats the recent conversation.
+
+    Returns a short reason string ("echoes_user_message" /
+    "repeats_recent_assistant_reply") when the response is (nearly) identical
+    to the current user message or to one of the last few assistant replies,
+    None otherwise. This is the trigger for HARD rejection: the observed chat
+    loops were the model re-sending its previous reply verbatim after the
+    user answered its question, and soft score penalties (-500) were dwarfed
+    by per-model base scores (quality**2 scaling reaches ~8800), so the
+    repeat still won the fan-out race.
+    """
+    if not response_text:
+        return None
+    if current_message and is_mostly_repeated(response_text, current_message):
+        return "echoes_user_message"
+    if not chat_history:
+        return None
+    checked = 0
+    for msg in reversed(chat_history):
+        if msg.get("role") != "assistant":
+            continue
+        if is_mostly_repeated(response_text, msg.get("content", "")):
+            return "repeats_recent_assistant_reply"
+        checked += 1
+        if checked >= max_assistant_messages:
+            break
+    return None
 
 
 def compute_repetition_penalty(
@@ -144,6 +199,11 @@ def compute_repetition_penalty(
             logger.debug(
                 "Response has same bag-of-words as current user message, applying mild penalty"
             )
+        elif is_mostly_repeated(response_text, current_message):
+            penalty += NEAR_REPEAT_PENALTY
+            logger.debug(
+                "Response is a near-verbatim repeat of current user message, penalizing"
+            )
 
     if not chat_history:
         return penalty
@@ -173,6 +233,11 @@ def compute_repetition_penalty(
             penalty += BAG_OF_WORDS_REPEAT_PENALTY
             logger.debug(
                 "Response has same bag-of-words as previous message, applying mild penalty"
+            )
+        elif is_mostly_repeated(response_text, prev_text):
+            penalty += NEAR_REPEAT_PENALTY
+            logger.debug(
+                "Response is a near-verbatim repeat of previous message, penalizing"
             )
 
     # Lighter penalties for matching older messages
@@ -205,6 +270,7 @@ def score_llm_response(
     is_primary_call: bool = True,
     chat_history: Optional[List[Dict[str, str]]] = None,
     current_message: Optional[str] = None,
+    rejection_stats: Optional[Dict[str, int]] = None,
 ) -> float:
     """
     Score an LLM response for quality and safety.
@@ -217,9 +283,15 @@ def score_llm_response(
         current_message: The user message that triggered this response.
             Passed separately because it is not yet in chat_history
             at scoring time.
+        rejection_stats: Optional mutable dict; hard rejections increment
+            its "repeated_rejected" counter so the caller can tell "no
+            usable response" apart from "responses arrived but all repeated
+            earlier replies" and retry with an anti-repeat instruction.
 
     Returns:
-        Float score (higher is better, -inf for invalid responses)
+        Float score (higher is better, -inf for invalid responses).
+        -inf is a HARD rejection: best_within_timelimit never returns a
+        result scored -inf, so repeats can't be delivered from this pass.
     """
     if result is None:
         return float("-inf")
@@ -228,6 +300,27 @@ def score_llm_response(
 
     if not context_part and not response_text:
         return float("-inf")
+
+    # HARD rejection of (near-)repeated replies. Soft penalties are not
+    # enough here: per-model base scores reach ~8800 (quality**2 scaling),
+    # so a -500 nudge still let a verbatim repeat from the favorite backend
+    # win the fan-out race — which is exactly the observed chat loop.
+    # Skipped when the user explicitly asked us to repeat ourselves.
+    if (
+        response_text
+        and len(response_text) > MIN_RESPONSE_LENGTH
+        and not user_requested_repeat(current_message)
+    ):
+        repeat_reason = find_repeated_reply(
+            response_text, chat_history, current_message
+        )
+        if repeat_reason:
+            if rejection_stats is not None:
+                rejection_stats["repeated_rejected"] = (
+                    rejection_stats.get("repeated_rejected", 0) + 1
+                )
+            logger.info(f"Hard-rejecting candidate chat reply: {repeat_reason}")
+            return float("-inf")
 
     score = 0.0
 
@@ -304,6 +397,7 @@ def create_response_scorer(
     primary_calls: Optional[List[Awaitable]] = None,
     chat_history: Optional[List[Dict[str, str]]] = None,
     current_message: Optional[str] = None,
+    rejection_stats: Optional[Dict[str, int]] = None,
 ) -> Callable[[Optional[Tuple[Optional[str], Optional[str]]], Awaitable], float]:
     """
     Create a scoring function for use with best_within_timelimit.
@@ -315,6 +409,8 @@ def create_response_scorer(
         current_message: The user message that triggered this response.
             Passed separately because it is not yet in chat_history
             at scoring time.
+        rejection_stats: Optional mutable dict shared with the caller; see
+            score_llm_response.
 
     Returns:
         Scoring function compatible with best_within_timelimit
@@ -333,6 +429,7 @@ def create_response_scorer(
             is_primary,
             chat_history=chat_history,
             current_message=current_message,
+            rejection_stats=rejection_stats,
         )
 
     return score_fn
@@ -476,6 +573,7 @@ def build_retry_calls(
     is_professional: bool,
     is_logged_in: bool,
     fallback_backends: Optional[List[RemoteModelLike]] = None,
+    temperature: float = 0.7,
 ) -> Tuple[List[Awaitable[Tuple[Optional[str], Optional[str]]]], Dict[Awaitable, int]]:
     """
     Build retry LLM calls with shortened context and fallback backends.
@@ -488,6 +586,8 @@ def build_retry_calls(
         is_professional: Whether user is a professional
         is_logged_in: Whether user is logged in
         fallback_backends: Optional backup model backends
+        temperature: Sampling temperature for the retry calls. Anti-repeat
+            retries pass a higher value to break deterministic loops.
 
     Returns:
         Tuple of (list of call awaitables, dict mapping calls to quality scores)
@@ -507,6 +607,7 @@ def build_retry_calls(
             history=retry_history,
             is_professional=is_professional,
             is_logged_in=is_logged_in,
+            temperature=temperature,
         )
         calls.append(call)
         # Quadratic scaling, reduced for retry (lower priority than primary)
@@ -520,6 +621,7 @@ def build_retry_calls(
             history=history,
             is_professional=is_professional,
             is_logged_in=is_logged_in,
+            temperature=temperature,
         )
         calls.append(call)
         call_scores[call] = (model_backend.quality() ** 2) // 2
@@ -534,6 +636,7 @@ def build_retry_calls(
                 history=retry_history,
                 is_professional=is_professional,
                 is_logged_in=is_logged_in,
+                temperature=temperature,
             )
             calls.append(call)
             call_scores[call] = (model_backend.quality() ** 2) // 7
@@ -545,8 +648,61 @@ def build_retry_calls(
                 history=history,
                 is_professional=is_professional,
                 is_logged_in=is_logged_in,
+                temperature=temperature,
             )
             calls.append(call)
             call_scores[call] = (model_backend.quality() ** 2) // 5
 
     return calls, call_scores
+
+
+# --- Alternate ("side-by-side") answer support ---
+
+# An alternate answer is only offered when it is meaningfully different from
+# the primary one; above this similarity it reads as a reworded duplicate.
+ALTERNATE_MAX_SIMILARITY = 0.7
+# And only when it is a substantial reply on its own.
+ALTERNATE_MIN_CHARS = 30
+
+# Tokens that mean a reply is part of a tool/action flow rather than a plain
+# conversational answer (those flows mutate state; only the winner runs them).
+_ACTION_TOKEN_RE = re.compile(
+    r"\*\*(create_or_update_appeal|create_or_update_prior_auth)\*\*"
+)
+
+
+def alternate_is_presentable(
+    alternate_text: Optional[str],
+    primary_text: str,
+    chat_history: Optional[List[Dict[str, str]]] = None,
+    current_message: Optional[str] = None,
+) -> bool:
+    """Whether a runner-up reply is safe and useful to show side-by-side.
+
+    The alternate is shown raw (no tool processing runs on it), so anything
+    containing tool calls or action tokens is out, as is anything unsafe,
+    near-duplicate of the primary, or itself a repeat of the conversation.
+    """
+    if not alternate_text:
+        return False
+    text = alternate_text.strip()
+    if len(text) < ALTERNATE_MIN_CHARS:
+        return False
+    if "🐼" in text:
+        return False
+    if _ACTION_TOKEN_RE.search(text):
+        return False
+    for pattern in tools_regex:
+        if re.search(pattern, text):
+            return False
+    if BAD_RESPONSE_PATTERNS.search(text):
+        return False
+    if detect_false_promises(text):
+        return False
+    if ASKS_FOR_PATIENT_NAME.search(text):
+        return False
+    if response_similarity(text, primary_text) >= ALTERNATE_MAX_SIMILARITY:
+        return False
+    if find_repeated_reply(text, chat_history, current_message):
+        return False
+    return True
