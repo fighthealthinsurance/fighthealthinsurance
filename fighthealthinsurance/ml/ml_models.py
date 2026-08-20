@@ -1228,7 +1228,8 @@ Possible kwargs (all optional; function will ask for missing, step-by-step):
       # 2026 federal work / community engagement requirement (80 qualifying hours per month;
       # hours from work, school, volunteering, or caregiving all count):
       - work_req_exempt_2026: bool                    # true if you know they're exempt (pregnant, disabled/medically frail, on medicare, etc.)
-      - avg_weekly_qualifying_hours_last_3mo: float   # average qualifying hours per week over the last 3 months
+      - avg_monthly_qualifying_hours_last_3mo: float  # average qualifying hours per MONTH (the units the tool asks in)
+      - avg_weekly_qualifying_hours_last_3mo: float   # or average per WEEK -- watch the units, never put a monthly number here
       - total_qualifying_hours_last_3mo: float        # or the total over the last 3 months
       - qualifying_hours_weekly_last_12: list of floats  # or 12 weekly numbers if they have detailed records
 

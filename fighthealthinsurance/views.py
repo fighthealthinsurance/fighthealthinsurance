@@ -526,9 +526,24 @@ class Turning26View(StaticIshView):
 
 
 class MedicaidEligibilityView(StaticIshView):
-    """Landing page for the AI-assisted Medicaid/Medicare eligibility check."""
+    """Landing page for the AI-assisted Medicaid/Medicare eligibility check.
+
+    Staged behind MEDICAID_ELIGIBILITY_PAGE_ENABLED, checked per request
+    (the NEW_PROFESSIONAL_SIGNUP_ENABLED pattern): the route always exists so
+    reverse() and templates never break, but the page 404s in production
+    until the flag is flipped -- and both states are testable with
+    override_settings. cache_page only stores 200s, so a 404 here is never
+    served from the page cache after the flag turns on.
+    """
 
     template_name = "medicaid_eligibility.html"
+
+    def get(self, request, *args, **kwargs):
+        if not getattr(settings, "MEDICAID_ELIGIBILITY_PAGE_ENABLED", False):
+            from django.http import Http404
+
+            raise Http404("This page is not available yet.")
+        return super().get(request, *args, **kwargs)
 
 
 class PBSNewsHourView(StaticIshView):

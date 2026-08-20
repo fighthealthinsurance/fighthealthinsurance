@@ -15,9 +15,9 @@ domain (www.fighthealthinsurance.com) in production.
 import json
 from typing import Any
 
+from django.conf import settings
 from django.contrib.sitemaps import Sitemap
 from django.contrib.sites.requests import RequestSite
-from django.conf import settings
 from django.contrib.staticfiles.storage import staticfiles_storage
 from django.http import HttpRequest, HttpResponse
 from django.urls import reverse

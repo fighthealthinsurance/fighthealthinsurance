@@ -255,6 +255,14 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         views.Turning26View.as_view(),
         name="turning-26",
     ),
+    # Experimental page: always routed so reverse() works everywhere, but the
+    # view serves 404 unless MEDICAID_ELIGIBILITY_PAGE_ENABLED is on (checked
+    # per-request, like NEW_PROFESSIONAL_SIGNUP_ENABLED).
+    path(
+        "medicaid-eligibility",
+        views.MedicaidEligibilityView.as_view(),
+        name="medicaid-eligibility",
+    ),
     path(
         "as-seen-on-pbs",
         views.PBSNewsHourView.as_view(),
@@ -497,18 +505,6 @@ urlpatterns += [
 urlpatterns += staticfiles_urlpatterns()
 
 # Serve static files in development
-if getattr(settings, "MEDICAID_ELIGIBILITY_PAGE_ENABLED", False):
-    # Experimental Medicaid eligibility landing page -- staged behind a
-    # settings flag (see MEDICAID_ELIGIBILITY_PAGE_ENABLED) so the URL stays
-    # unrouted in production while the page is iterated on.
-    urlpatterns.append(
-        path(
-            "medicaid-eligibility",
-            views.MedicaidEligibilityView.as_view(),
-            name="medicaid-eligibility",
-        )
-    )
-
 if settings.DEBUG:
     # Serve files from the app static dir in development
     if settings.STATIC_URL:

@@ -415,23 +415,20 @@ class TestMedicaidInfoTool(TestCase):
 class TestMedicaidEligibilityTool(TestCase):
     """Test MedicaidEligibilityTool functionality."""
 
+    def setUp(self):
+        self.tool = MedicaidEligibilityTool(AsyncMock())
+
     def test_detect_medicaid_eligibility(self):
         """Test Medicaid eligibility tool detects pattern."""
-        mock_status = AsyncMock()
-        tool = MedicaidEligibilityTool(mock_status)
-
         text = 'medicaid_eligibility {"income": 25000}'
-        match = tool.detect(text)
+        match = self.tool.detect(text)
 
         self.assertIsNotNone(match)
         self.assertIn("income", match.group(1))
 
     def test_build_eligibility_info_eligible(self):
         """Test eligibility info text generation for eligible user."""
-        mock_status = AsyncMock()
-        tool = MedicaidEligibilityTool(mock_status)
-
-        info = tool._build_eligibility_info(
+        info = self.tool._build_eligibility_info(
             eligible_2025=True,
             eligible_2026=True,
             medicare=False,
@@ -445,10 +442,7 @@ class TestMedicaidEligibilityTool(TestCase):
 
     def test_build_eligibility_info_with_missing(self):
         """Test eligibility info text when questions are missing."""
-        mock_status = AsyncMock()
-        tool = MedicaidEligibilityTool(mock_status)
-
-        info = tool._build_eligibility_info(
+        info = self.tool._build_eligibility_info(
             eligible_2025=False,
             eligible_2026=False,
             medicare=False,
@@ -460,10 +454,7 @@ class TestMedicaidEligibilityTool(TestCase):
 
     def test_build_eligibility_info_lists_questions_not_python_repr(self):
         """Missing questions render as a readable list, not a list repr."""
-        mock_status = AsyncMock()
-        tool = MedicaidEligibilityTool(mock_status)
-
-        info = tool._build_eligibility_info(
+        info = self.tool._build_eligibility_info(
             eligible_2025=False,
             eligible_2026=False,
             medicare=False,
@@ -476,10 +467,7 @@ class TestMedicaidEligibilityTool(TestCase):
 
     def test_build_eligibility_info_flags_experimental_when_asking(self):
         """The LLM is told to disclose the experimental status while asking."""
-        mock_status = AsyncMock()
-        tool = MedicaidEligibilityTool(mock_status)
-
-        info = tool._build_eligibility_info(
+        info = self.tool._build_eligibility_info(
             eligible_2025=False,
             eligible_2026=False,
             medicare=False,
@@ -491,10 +479,7 @@ class TestMedicaidEligibilityTool(TestCase):
 
     def test_build_eligibility_info_flags_experimental_on_verdict(self):
         """The LLM is told to disclose the experimental status with verdicts."""
-        mock_status = AsyncMock()
-        tool = MedicaidEligibilityTool(mock_status)
-
-        info = tool._build_eligibility_info(
+        info = self.tool._build_eligibility_info(
             eligible_2025=True,
             eligible_2026=True,
             medicare=False,
@@ -506,10 +491,7 @@ class TestMedicaidEligibilityTool(TestCase):
 
     def test_build_eligibility_info_paces_questions(self):
         """The LLM is told to ask only a few questions at a time."""
-        mock_status = AsyncMock()
-        tool = MedicaidEligibilityTool(mock_status)
-
-        info = tool._build_eligibility_info(
+        info = self.tool._build_eligibility_info(
             eligible_2025=False,
             eligible_2026=False,
             medicare=False,
@@ -521,10 +503,7 @@ class TestMedicaidEligibilityTool(TestCase):
 
     def test_build_eligibility_info_lists_alternatives_not_python_repr(self):
         """Alternatives render as a readable list, not a list repr."""
-        mock_status = AsyncMock()
-        tool = MedicaidEligibilityTool(mock_status)
-
-        info = tool._build_eligibility_info(
+        info = self.tool._build_eligibility_info(
             eligible_2025=False,
             eligible_2026=False,
             medicare=False,

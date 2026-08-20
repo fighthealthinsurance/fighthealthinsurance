@@ -107,12 +107,10 @@ class Base(Configuration):
         os.getenv("NEW_PROFESSIONAL_SIGNUP_ENABLED", "false").lower() == "true"
     )
     # Experimental Medicaid eligibility landing page. Off by default: while
-    # the page is still cooking its URL isn't routed (and isn't in the
-    # sitemap), so it stays invisible in production. Dev/Test enable it so
-    # the page and its tests stay exercised.
-    MEDICAID_ELIGIBILITY_PAGE_ENABLED = (
-        os.getenv("MEDICAID_ELIGIBILITY_PAGE_ENABLED", "false").lower() == "true"
-    )
+    # the page is still cooking it serves 404 (and stays out of the sitemap),
+    # so the URL is invisible in production. Dev/Test enable it so the page
+    # and its tests stay exercised.
+    MEDICAID_ELIGIBILITY_PAGE_ENABLED = _env_flag("MEDICAID_ELIGIBILITY_PAGE_ENABLED")
 
     # --- Temporal (durable workflow execution) ---
     # Off by default: fax sending stays on the Ray fax actor until

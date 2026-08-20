@@ -13,7 +13,7 @@
             <div class="caption d-flex flex-column align-items-center justify-content-center">
                 <div class="hero-inner" style="max-width: 900px;">
                     <div class="mb-3">
-                        <span class="badge experimental-badge"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" focusable="false"><path d="M8.982 1.566a1.13 1.13 0 0 0-1.96 0L.165 13.233c-.457.778.091 1.767.98 1.767h13.713c.889 0 1.438-.99.98-1.767L8.982 1.566zM8 5c.535 0 .954.462.9.995l-.35 3.507a.552.552 0 0 1-1.1 0L7.1 5.995A.905.905 0 0 1 8 5zm.002 6a1 1 0 1 1 0 2 1 1 0 0 1 0-2z"/></svg>EXPERIMENTAL FEATURE</span>
+                        {% include "partials/experimental_badge.html" %}
                     </div>
                     <p class="hero-tagline">Medicaid rules are confusing&mdash;checking shouldn't be</p>
                     <h1 class="hero-headline">Do I Qualify for Medicaid?</h1>
@@ -357,7 +357,7 @@
         <div class="row">
             <div class="col-lg-8 mx-auto text-center">
                 <div class="mb-3">
-                    <span class="badge experimental-badge"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" focusable="false"><path d="M8.982 1.566a1.13 1.13 0 0 0-1.96 0L.165 13.233c-.457.778.091 1.767.98 1.767h13.713c.889 0 1.438-.99.98-1.767L8.982 1.566zM8 5c.535 0 .954.462.9.995l-.35 3.507a.552.552 0 0 1-1.1 0L7.1 5.995A.905.905 0 0 1 8 5zm.002 6a1 1 0 1 1 0 2 1 1 0 0 1 0-2z"/></svg>EXPERIMENTAL FEATURE</span>
+                    {% include "partials/experimental_badge.html" %}
                 </div>
                 <h2 class="mb-3">Find Out Where You Stand&mdash;In Minutes</h2>
                 <p class="lead mb-4">Free, no account needed. Get an experimental Medicaid and Medicare eligibility estimate, plus a plan for what to do next&mdash;then confirm everything with your state.</p>
@@ -611,19 +611,12 @@
     }
 
     /* ---------- Buttons ---------- */
-    .btn-green {
-        background: linear-gradient(to right, #ADD100 0%, #7B920A 51%, #ADD100 100%);
-        background-size: 200% auto;
-        border: none;
-        color: white;
-        transition: 0.5s;
-    }
+    /* .btn-green's gradient comes from the site-wide custom.css -- don't
+       re-declare it here or the page drifts when the brand style changes.
+       Only the page-specific sizing/recolor overrides below are local. */
 
-    .btn-green:hover {
-        background-position: right center;
-        color: white;
-    }
-
+    /* Page-scoped recolor: the site default (#a5c422 + black hover) reads
+       poorly on this page's white sections. */
     .btn-outline-green {
         color: #7B920A;
         border-color: #7B920A;
