@@ -21,6 +21,18 @@ from fighthealthinsurance.chat.context_manager import (
 )
 
 
+def _alternating_history(count):
+    """Alternating user/assistant history of `count` messages.
+
+    Module level so every test class here shares one definition (it was
+    duplicated across two classes).
+    """
+    return [
+        {"role": "user" if i % 2 == 0 else "assistant", "content": f"Message {i}"}
+        for i in range(count)
+    ]
+
+
 class TestPrepareHistoryForLLM:
     """Tests for prepare_history_for_llm function."""
 
@@ -137,13 +149,6 @@ class TestSummarizationTrigger:
     length parity (merged consecutive messages shift parity, and the old
     strict `% N == 0` check then never fired again)."""
 
-    def _history(self, count):
-        history = []
-        for i in range(count):
-            role = "user" if i % 2 == 0 else "assistant"
-            history.append({"role": role, "content": f"Message {i}"})
-        return history
-
     @pytest.mark.asyncio
     async def test_even_parity_summarizes_at_interval(self):
         count = DEFAULT_MESSAGES_TO_KEEP + SUMMARIZATION_INTERVAL
@@ -152,7 +157,7 @@ class TestSummarizationTrigger:
             new=AsyncMock(return_value="summary of old messages"),
         ) as mock_summarize:
             _, _, summary = await prepare_history_for_llm(
-                chat_history=self._history(count),
+                chat_history=_alternating_history(count),
                 existing_summary=None,
             )
         mock_summarize.assert_awaited_once()
@@ -168,7 +173,7 @@ class TestSummarizationTrigger:
             new=AsyncMock(return_value="summary of old messages"),
         ) as mock_summarize:
             _, _, summary = await prepare_history_for_llm(
-                chat_history=self._history(count),
+                chat_history=_alternating_history(count),
                 existing_summary=None,
             )
         mock_summarize.assert_awaited_once()
@@ -182,7 +187,7 @@ class TestSummarizationTrigger:
             new=AsyncMock(return_value="should not be called"),
         ) as mock_summarize:
             _, _, summary = await prepare_history_for_llm(
-                chat_history=self._history(count),
+                chat_history=_alternating_history(count),
                 existing_summary="keep me",
             )
         mock_summarize.assert_not_awaited()
@@ -488,13 +493,6 @@ class TestSummaryReplacesInsteadOfNesting:
     full-prefix summary block is replaced -- adjacent band triggers must not
     nest near-identical summaries inside each other."""
 
-    def _history(self, count):
-        history = []
-        for i in range(count):
-            role = "user" if i % 2 == 0 else "assistant"
-            history.append({"role": role, "content": f"Message {i}"})
-        return history
-
     @pytest.mark.asyncio
     async def test_previous_summary_block_is_replaced(self):
         existing = (
@@ -507,7 +505,7 @@ class TestSummaryReplacesInsteadOfNesting:
             new=AsyncMock(return_value="NEW SUMMARY"),
         ):
             _, _, summary = await prepare_history_for_llm(
-                chat_history=self._history(count),
+                chat_history=_alternating_history(count),
                 existing_summary=existing,
             )
         assert summary == (
@@ -525,7 +523,7 @@ class TestSummaryReplacesInsteadOfNesting:
             new=AsyncMock(return_value="NEW SUMMARY"),
         ):
             _, _, summary = await prepare_history_for_llm(
-                chat_history=self._history(count),
+                chat_history=_alternating_history(count),
                 existing_summary=existing,
             )
         assert summary == "Earlier conversation summary: NEW SUMMARY"
@@ -539,7 +537,7 @@ class TestSummaryReplacesInsteadOfNesting:
             new=AsyncMock(return_value="NEW SUMMARY"),
         ):
             _, _, summary = await prepare_history_for_llm(
-                chat_history=self._history(count),
+                chat_history=_alternating_history(count),
                 existing_summary=existing,
             )
         assert summary == (

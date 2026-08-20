@@ -160,10 +160,12 @@ def _sequence_similarity_normalized(na: str, nb: str, min_useful: float = 0.0) -
     vs 0.96 without, against a 0.9 threshold. Every long near-verbatim repeat
     -- exactly what this module exists to catch -- scored as unrelated.
 
-    Turning autojunk off makes ratio() genuinely O(n*m), so two cheap
-    O(n) upper bounds run first. Both are exact bounds on ratio(), so
-    skipping on them can only avoid work, never change a verdict near the
-    thresholds callers use.
+    Turning autojunk off makes ratio() genuinely O(n*m), so two cheap O(n)
+    gates run first. The LENGTH gate is an exact upper bound on ratio(), so
+    skipping on it can never change a verdict. The word-set gate is a
+    HEURISTIC, not a bound -- it only applies when the caller's threshold
+    sits above the floor, so the surrogate value it returns is still
+    guaranteed to fall below that threshold.
     """
     if not na or not nb:
         return 0.0
@@ -174,8 +176,14 @@ def _sequence_similarity_normalized(na: str, nb: str, min_useful: float = 0.0) -
         length_bound = 2 * min(len(na), len(nb)) / (len(na) + len(nb))
         if length_bound < min_useful:
             return length_bound
-        # Word-set bound: a near-verbatim repeat shares nearly all its words.
-        if jaccard_similarity(na, nb) < _SEQUENCE_JACCARD_FLOOR:
+        # Word-set gate (heuristic): a near-verbatim repeat shares nearly all
+        # its words. Only usable when the caller's threshold is above the
+        # floor -- otherwise the surrogate returned here could itself reach
+        # the threshold and report a repeat that was never measured.
+        if (
+            min_useful > _SEQUENCE_JACCARD_FLOOR
+            and jaccard_similarity(na, nb) < _SEQUENCE_JACCARD_FLOOR
+        ):
             return min(length_bound, _SEQUENCE_JACCARD_FLOOR)
     return SequenceMatcher(None, na, nb, autojunk=False).ratio()
 

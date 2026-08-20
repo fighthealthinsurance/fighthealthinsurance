@@ -9,7 +9,7 @@ next.
 
 ## 1. End-to-end flow of one turn
 
-```
+```text
 Browser (React chat_interface.tsx)
   │  scrub PII client-side ({{FIRST_NAME}}, {{Your Email Address}}, ...)
   │  ws frame: {content, chat_id, use_external_models, debug, ...}

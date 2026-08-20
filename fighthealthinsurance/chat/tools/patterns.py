@@ -131,6 +131,11 @@ ALL_TOOL_PATTERNS = [
 ]
 
 
+# Compiled once: contains_tool_call runs per alternate candidate, and relying
+# on re's bounded internal cache makes that cost implicit.
+_COMPILED_TOOL_PATTERNS = [re.compile(p, TOOL_DETECT_FLAGS) for p in ALL_TOOL_PATTERNS]
+
+
 def contains_tool_call(text: str) -> bool:
     """Whether ``text`` contains anything a tool handler would fire on.
 
@@ -143,4 +148,4 @@ def contains_tool_call(text: str) -> bool:
         return False
     if ACTION_TOKEN_MENTION_RE.search(text):
         return True
-    return any(re.search(p, text, TOOL_DETECT_FLAGS) for p in ALL_TOOL_PATTERNS)
+    return any(p.search(text) for p in _COMPILED_TOOL_PATTERNS)

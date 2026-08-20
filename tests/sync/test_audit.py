@@ -528,18 +528,23 @@ class GuessUsStateTest(TestCase):
         import types
 
         fake_module = types.ModuleType("geoip2fast")
+        # Counts reaching the parser, so guard tests can assert an invalid
+        # value was rejected BEFORE the third-party lookup.
+        fake_module.lookup_calls = 0  # type: ignore[attr-defined]
 
         class FakeGeoIP2Fast:
             def __init__(self, geoip2fast_data_file=None):
                 self.data_file = geoip2fast_data_file
 
             def lookup(self, ip):
+                fake_module.lookup_calls += 1  # type: ignore[attr-defined]
                 if isinstance(lookup_result, Exception):
                     raise lookup_result
                 return lookup_result
 
         fake_module.GeoIP2Fast = FakeGeoIP2Fast  # type: ignore[attr-defined]
         sys.modules["geoip2fast"] = fake_module
+        return fake_module
 
     def test_none_ip_returns_none(self):
         self.assertIsNone(self.audit.guess_us_state(None))
@@ -589,6 +594,30 @@ class GuessUsStateTest(TestCase):
         self._install_fake_geoip(Result())
         with patch.dict("os.environ", self.FAKE_DB):
             self.assertEqual(self.audit.guess_us_state("203.0.113.7"), "Texas")
+
+    def test_non_ip_value_is_rejected_before_lookup(self):
+        """The caller derives this from client-controlled X-Forwarded-For, so
+        anything that is not a literal IP must never reach the parser."""
+
+        class Result:
+            country_code = "US"
+            subdivision_code = "CA"
+
+        fake = self._install_fake_geoip(Result())
+        with patch.dict("os.environ", self.FAKE_DB):
+            self.assertIsNone(self.audit.guess_us_state("not-an-ip"))
+            self.assertIsNone(self.audit.guess_us_state("evil.example.com"))
+        self.assertEqual(getattr(fake, "lookup_calls", 0), 0)
+
+    def test_overlong_value_is_rejected_before_lookup(self):
+        class Result:
+            country_code = "US"
+            subdivision_code = "CA"
+
+        fake = self._install_fake_geoip(Result())
+        with patch.dict("os.environ", self.FAKE_DB):
+            self.assertIsNone(self.audit.guess_us_state("1" * 46))
+        self.assertEqual(getattr(fake, "lookup_calls", 0), 0)
 
     def test_empty_country_returns_none(self):
         # A subdivision without an explicit US country code is unconfirmed
@@ -739,6 +768,15 @@ class GeoLookupStatusTest(TestCase):
     def test_warn_helper_never_raises(self):
         import os
 
+        # The guard is process-global: restore whatever it was, or a later
+        # test can silently skip the warning path depending on run order.
+        previous_warning_state = self.audit._geo_startup_warning_emitted
+        self.addCleanup(
+            setattr,
+            self.audit,
+            "_geo_startup_warning_emitted",
+            previous_warning_state,
+        )
         with patch.dict("os.environ", {}, clear=False):
             os.environ.pop("FHI_GEOIP_CITY_DB", None)
             # Reset the once-per-process guard so the warning path runs.

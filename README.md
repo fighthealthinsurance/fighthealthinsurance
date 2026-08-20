@@ -156,10 +156,15 @@ GEOIP2FAST_RELEASE=v1.2.2
 curl -L -o geoip2fast-city-asn-ipv6.dat.gz \
   "https://github.com/rabuchaim/geoip2fast/releases/download/${GEOIP2FAST_RELEASE}/geoip2fast-city-asn-ipv6.dat.gz"
 
-# Record the checksum the first time, then VERIFY it on every later fetch and
-# in your deploy pipeline:
-sha256sum geoip2fast-city-asn-ipv6.dat.gz | tee geoip2fast-city-asn-ipv6.dat.gz.sha256
-sha256sum -c geoip2fast-city-asn-ipv6.dat.gz.sha256
+# Verify against a digest you already trust. GEOIP2FAST_SHA256 must come from
+# somewhere INDEPENDENT of this download -- the value published by the project
+# for this tag, or one you recorded on a trusted machine and then stored in
+# the repo / your secrets manager. Deriving it from the file you just fetched
+# (sha256sum file > file.sha256 && sha256sum -c) verifies nothing: a swapped
+# asset passes its own checksum.
+GEOIP2FAST_SHA256=<expected-digest-for-${GEOIP2FAST_RELEASE}>
+echo "${GEOIP2FAST_SHA256}  geoip2fast-city-asn-ipv6.dat.gz" | sha256sum -c - \
+  || { echo "GeoIP database failed checksum -- refusing to install"; exit 1; }
 
 export FHI_GEOIP_CITY_DB="$PWD/geoip2fast-city-asn-ipv6.dat.gz"
 ```

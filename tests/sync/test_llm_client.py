@@ -23,7 +23,7 @@ from fighthealthinsurance.chat.llm_client import (
     BAD_RESPONSE_PATTERNS,
     BAD_CONTEXT_PATTERNS,
 )
-from tests.chat_fixtures import FRESH_REPLY, LOOPED_REPLY
+from tests.chat_fixtures import CANNED_MEDICAID_REPLY, FRESH_REPLY, LOOPED_REPLY
 
 
 class TestEstimateHistoryTokens(TestCase):
@@ -601,28 +601,18 @@ class TestCannedReplyExemption(TestCase):
     may legitimately repeat across turns — they are exempt from HARD
     rejection while soft penalties still apply."""
 
-    # The mandated block from the system prompt. The exemption requires the
-    # WHOLE block, not just the FAQ link: the prompt tells the model to link
-    # that FAQ on any work-requirements answer, so a marker-only match
-    # exempted ordinary (including looping) Medicaid replies from the ladder.
-    CANNED = (
-        "New federal rules require many adults (ages 19-64) to complete at "
-        "least 80 hours per month of work, job training, school, or community "
-        "service to keep Medicaid coverage. These requirements go into effect "
-        "by December 31, 2026. For detailed information visit: "
-        "[Medicaid Work Requirements FAQ](/faq/medicaid/)"
-    )
-
     def test_canned_reply_repeat_not_hard_rejected(self):
         history = [
             {"role": "user", "content": "tell me about the work requirements"},
-            {"role": "assistant", "content": self.CANNED},
+            {"role": "assistant", "content": CANNED_MEDICAID_REPLY},
         ]
         self.assertIsNone(
-            find_repeated_reply(self.CANNED, history, "and the work requirements?")
+            find_repeated_reply(
+                CANNED_MEDICAID_REPLY, history, "and the work requirements?"
+            )
         )
         score = score_llm_response(
-            (self.CANNED, "ctx"),
+            (CANNED_MEDICAID_REPLY, "ctx"),
             call_score=100,
             chat_history=history,
             current_message="what about the work requirements again?",

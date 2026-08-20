@@ -54,6 +54,7 @@ class MockChatModel:
         temperature: float = 0.7,
         is_professional: Optional[bool] = True,
         is_logged_in: Optional[bool] = True,
+        is_medicaid_related: Optional[bool] = None,
         allow_repeated_reply: bool = False,
     ) -> Tuple[str, str]:
         """
@@ -72,6 +73,9 @@ class MockChatModel:
             temperature: Sampling temperature (ignored by the mock)
             is_professional: Optional boolean indicating if the user is a professional
             is_logged_in: Optional boolean indicating if the user is logged in
+            is_medicaid_related: Optional Medicaid-topic hint (ignored by the
+                mock; present so the mock accepts every keyword the real
+                signature does)
             allow_repeated_reply: True when the user explicitly asked for a
                 repeat (ignored by the mock; accepted because the call
                 builders always pass it)

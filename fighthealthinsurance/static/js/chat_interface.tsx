@@ -782,6 +782,10 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
 
         // Handle different types of messages from the server
         if (data.error) {
+          // Terminal frame for this turn: drop any buffered debug frames so
+          // they can't attach to a LATER assistant message and describe the
+          // wrong turn.
+          pendingDebugRef.current = null;
           // Skip the professional user error message as we're in patient mode
           if (
             data.error.includes("Professional user not found or not active")
@@ -796,6 +800,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
             // Keep requestStartTime so retry button remains visible with error
           }));
         } else if (data.messages) {
+          // History replay: same reasoning as the error branch above.
+          pendingDebugRef.current = null;
           // This is a history replay
           // Restore personal info for BOTH roles: user messages are stored
           // scrubbed ({{FIRST_NAME}} etc.), so without restoring them a

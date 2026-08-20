@@ -233,9 +233,30 @@ class TestAsyncTaskUtils:
         result = await best_two_within_timelimit(tasks, score_fn, timeout=2.0)
         assert result.best_score == 3.0
         assert result.runner_up_score == 2.5
+
+    @pytest.mark.asyncio
+    async def test_best_two_reports_originating_tasks(self):
+        """The ORIGINAL awaitables come back, so a caller can map a winner to
+        whatever it keyed its calls by (the chat layer maps them to models)."""
+        tasks = [
+            self.async_task_with_delay("best", 0.05),
+            self.async_task_with_delay("middle", 0.1),
+        ]
+        scores = {"best": 3.0, "middle": 2.5}
+
+        def score_fn(result: str, _: Awaitable[str]) -> float:
+            return scores.get(result, 0.0)
+
+        result = await best_two_within_timelimit(tasks, score_fn, timeout=2.0)
         assert result.best_task is tasks[0]
         assert result.runner_up_task is tasks[1]
-        # Field order keeps index 0 == best (older callers indexed).
+
+    @pytest.mark.asyncio
+    async def test_best_two_keeps_index_zero_as_best(self):
+        """Field order is load-bearing: older callers index result[0]."""
+        tasks = [self.async_task_with_delay("best", 0.05)]
+
+        result = await best_two_within_timelimit(tasks, lambda r, _: 1.0, timeout=2.0)
         assert result[0] == "best"
 
     @pytest.mark.asyncio

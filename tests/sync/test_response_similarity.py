@@ -14,7 +14,7 @@ from fighthealthinsurance.ml.response_similarity import (
     sequence_similarity,
     user_requested_repeat,
 )
-from tests.chat_fixtures import LOOPED_REPLY
+from tests.chat_fixtures import CANNED_MEDICAID_REPLY, LOOPED_REPLY
 
 
 class TestNormalizeAndBags(TestCase):
@@ -163,7 +163,7 @@ class TestUserRequestedRepeatPrecision(TestCase):
     every rung of the loop-prevention ladder — so it must match an explicit
     request to say something again, not the topic of the conversation."""
 
-    CLINICAL_MENTIONS = [
+    CLINICAL_MENTIONS = (
         "They denied my repeat colonoscopy.",
         "This is a repeat denial for the same MRI.",
         "I need a repeat prescription for my insulin.",
@@ -171,9 +171,9 @@ class TestUserRequestedRepeatPrecision(TestCase):
         "The insurer keeps denying repeat imaging",
         "Can you resend the fax to my doctor?",
         "I filed an appeal one more time last month",
-    ]
+    )
 
-    EXPLICIT_REQUESTS = [
+    EXPLICIT_REQUESTS = (
         "can you repeat that?",
         "repeat that please",
         "say that again",
@@ -183,7 +183,7 @@ class TestUserRequestedRepeatPrecision(TestCase):
         "one more time please",
         "resend it",
         "show that again",
-    ]
+    )
 
     def test_clinical_mentions_do_not_disable_the_ladder(self):
         for message in self.CLINICAL_MENTIONS:
@@ -201,16 +201,8 @@ class TestCannedReplyRequiresTheWholeBlock(TestCase):
     work-requirements answer, so matching the link alone exempted ordinary
     (including looping) Medicaid replies from the whole ladder."""
 
-    CANNED_BLOCK = (
-        "New federal rules require many adults (ages 19-64) to complete at "
-        "least 80 hours per month of work, job training, school, or community "
-        "service to keep Medicaid coverage. These requirements go into effect "
-        "by December 31, 2026. For detailed information, visit: "
-        "[Medicaid Work Requirements FAQ](/faq/medicaid/)"
-    )
-
     def test_full_canned_block_is_exempt(self):
-        self.assertTrue(is_canned_reply(self.CANNED_BLOCK))
+        self.assertTrue(is_canned_reply(CANNED_MEDICAID_REPLY))
 
     def test_reply_merely_linking_the_faq_is_not_exempt(self):
         linking = (
