@@ -619,10 +619,15 @@ class TestCannedReplyExemption(TestCase):
     may legitimately repeat across turns — they are exempt from HARD
     rejection while soft penalties still apply."""
 
+    # The mandated block from the system prompt. The exemption requires the
+    # WHOLE block, not just the FAQ link: the prompt tells the model to link
+    # that FAQ on any work-requirements answer, so a marker-only match
+    # exempted ordinary (including looping) Medicaid replies from the ladder.
     CANNED = (
         "New federal rules require many adults (ages 19-64) to complete at "
         "least 80 hours per month of work, job training, school, or community "
-        "service to keep Medicaid coverage. For detailed information visit: "
+        "service to keep Medicaid coverage. These requirements go into effect "
+        "by December 31, 2026. For detailed information visit: "
         "[Medicaid Work Requirements FAQ](/faq/medicaid/)"
     )
 
@@ -759,3 +764,88 @@ class TestRepeatOffenderDemotion(TestCase):
         )
         score = score_fn((FRESH_REPLY, self.CONTEXT), task)
         self.assertEqual(score_log, {task: score})
+
+
+class TestAlternateScreensRealToolCalls(TestCase):
+    """The tool handlers detect with DOTALL|MULTILINE|IGNORECASE. A flag-less
+    sweep over the `^...$`-anchored patterns only matched a tool call at the
+    very start of a reply, so an alternate whose tool call followed a line of
+    prose was shown to the user as raw syntax plus its JSON payload."""
+
+    PRIMARY = "Here is a summary of your options for this denial."
+
+    def test_appeal_tool_call_after_prose_is_rejected(self):
+        alternate = (
+            "I can draft that appeal for you.\n\n"
+            'create_or_update_appeal {"patient_name": "Jane Doe", '
+            '"appeal_text": "To whom it may concern..."}'
+        )
+        self.assertFalse(alternate_is_presentable(alternate, self.PRIMARY))
+
+    def test_mixed_case_bold_tool_call_is_rejected(self):
+        alternate = (
+            "Sure, drafting now.\n\n"
+            '**Create_Or_Update_Appeal** {"patient_name": "Jane Doe"}'
+        )
+        self.assertFalse(alternate_is_presentable(alternate, self.PRIMARY))
+
+    def test_prior_auth_tool_call_after_prose_is_rejected(self):
+        alternate = (
+            "Let me start that prior auth.\n\n"
+            'create_or_update_prior_auth {"procedure": "MRI"}'
+        )
+        self.assertFalse(alternate_is_presentable(alternate, self.PRIMARY))
+
+    def test_plain_answer_still_presentable(self):
+        alternate = (
+            "Another angle: ask the plan for its clinical policy bulletin for "
+            "this code, then cite the specific criteria you meet."
+        )
+        self.assertTrue(alternate_is_presentable(alternate, self.PRIMARY))
+
+
+class TestRepeatOffenderStrikesArePerTurn(TestCase):
+    """A backend contributes several candidates to one fan-out (the primary
+    backend is listed twice, each gets a truncated- and full-history call,
+    times message variants). Counting a strike per candidate ranked backends
+    by how many slots they filled and saturated the cap inside one turn."""
+
+    def test_one_looping_turn_costs_one_strike(self):
+        history = [
+            {"role": "user", "content": "Help me with the new requirements."},
+            {"role": "assistant", "content": LOOPED_REPLY},
+        ]
+        offenders: dict = {}
+        tasks = [object() for _ in range(4)]
+        score_fn = create_response_scorer(
+            call_scores={t: 1000 for t in tasks},
+            chat_history=history,
+            current_message="CA",
+            rejection_stats={},
+            call_labels={t: "looping-backend" for t in tasks},
+            repeat_offenders=offenders,
+        )
+        for task in tasks:
+            self.assertEqual(score_fn((LOOPED_REPLY, "ctx"), task), float("-inf"))
+
+        self.assertEqual(offenders, {"looping-backend": 1})
+
+    def test_strikes_accumulate_across_turns(self):
+        history = [
+            {"role": "user", "content": "Help me with the new requirements."},
+            {"role": "assistant", "content": LOOPED_REPLY},
+        ]
+        offenders: dict = {}
+        for _ in range(3):  # three separate turns, each with a fresh scorer
+            task = object()
+            score_fn = create_response_scorer(
+                call_scores={task: 1000},
+                chat_history=history,
+                current_message="CA",
+                rejection_stats={},
+                call_labels={task: "looping-backend"},
+                repeat_offenders=offenders,
+            )
+            score_fn((LOOPED_REPLY, "ctx"), task)
+
+        self.assertEqual(offenders, {"looping-backend": 3})

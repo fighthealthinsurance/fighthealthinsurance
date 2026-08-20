@@ -30,6 +30,52 @@ MISSING_CONTEXT_PREFIX = "Missing context summary, refer to previous chat histor
 EARLIER_SUMMARY_LABEL = "Earlier conversation summary: "
 ADDITIONAL_CONTEXT_SEPARATOR = "\n\nAdditional context: "
 
+# Wrapper labels chat_interface adds when it hands two stored summaries to the
+# LLM. They must be recognized here so a stale summary block wrapped in them is
+# still stripped (and so a label left dangling by a strip is cleaned up).
+_SUMMARY_WRAPPER_LABELS = (
+    "Previous context summary:",
+    "Most recent context summary:",
+)
+
+
+def strip_previous_summary_blocks(existing_summary: Optional[str]) -> Optional[str]:
+    """Remove already-generated summary blocks, keeping other accreted context.
+
+    A fresh summarization covers the ENTIRE dropped prefix, so any earlier
+    ``EARLIER_SUMMARY_LABEL`` block it contains is superseded and must be
+    dropped rather than nested inside the new one.
+
+    This deliberately searches ANYWHERE in the string rather than testing
+    ``startswith``: the production caller never passes a bare summary. It
+    passes the model's own per-turn summary, or chat_interface's
+    "Previous context summary: ... Most recent context summary: ..." wrapper,
+    optionally prefixed by ``TRIMMED_CONTEXT_PREFIX`` -- so a startswith test
+    never matched and summaries nested on every band.
+    """
+    if not existing_summary:
+        return None
+    index = existing_summary.find(EARLIER_SUMMARY_LABEL)
+    if index < 0:
+        return existing_summary
+    head = existing_summary[:index]
+    # Everything from the label onward is the stale summary, except any
+    # "Additional context:" tail it carried (which may itself nest more).
+    rest = existing_summary[index:].split(ADDITIONAL_CONTEXT_SEPARATOR, 1)
+    tail = strip_previous_summary_blocks(rest[1]) if len(rest) > 1 else None
+    parts = []
+    for part in (head, tail):
+        if not part:
+            continue
+        cleaned = part.strip()
+        # Drop wrapper labels left pointing at content we just removed.
+        for label in _SUMMARY_WRAPPER_LABELS:
+            if cleaned.endswith(label):
+                cleaned = cleaned[: -len(label)].strip()
+        if cleaned and cleaned not in _SUMMARY_WRAPPER_LABELS:
+            parts.append(cleaned)
+    return "\n\n".join(parts) or None
+
 
 def make_placeholder(counter: int) -> str:
     """Create a uniquely-identified placeholder for a missing context summary."""
@@ -52,7 +98,13 @@ def bound_summary_context(context: Optional[str], max_chars: int) -> Optional[st
     """
     if not context or max_chars <= 0 or len(context) <= max_chars:
         return context
-    keep = max(0, max_chars - len(TRIMMED_CONTEXT_PREFIX))
+    keep = max_chars - len(TRIMMED_CONTEXT_PREFIX)
+    if keep <= 0:
+        # No room for the marker plus any content. `context[-0:]` is the WHOLE
+        # string, so returning the marker + slice here produced output LONGER
+        # than the input for any max_chars <= len(TRIMMED_CONTEXT_PREFIX) --
+        # the bound silently inverted. Hard-truncate instead.
+        return context[-max_chars:]
     return f"{TRIMMED_CONTEXT_PREFIX}{context[-keep:]}"
 
 
@@ -161,13 +213,11 @@ async def _summarize_history(
         )
 
         if history_summary:
-            # The fresh summary covers the whole dropped prefix, so a
+            # The fresh summary covers the whole dropped prefix, so any
             # previous full-prefix summary block in existing_summary is
-            # superseded -- keep only the non-summary context that followed
-            # it (microsite/pubmed additions etc.).
-            if existing_summary and existing_summary.startswith(EARLIER_SUMMARY_LABEL):
-                split = existing_summary.split(ADDITIONAL_CONTEXT_SEPARATOR, 1)
-                existing_summary = split[1] if len(split) > 1 else None
+            # superseded -- keep only the non-summary context around it
+            # (microsite/pubmed additions etc.).
+            existing_summary = strip_previous_summary_blocks(existing_summary)
             if existing_summary:
                 return (
                     f"{EARLIER_SUMMARY_LABEL}{history_summary}"

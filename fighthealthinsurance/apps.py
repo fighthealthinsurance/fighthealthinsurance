@@ -16,6 +16,14 @@ class FightHealthInsuranceConfig(AppConfig):
         # Soft-fail visibility for IP geo lookups (chat state guessing +
         # ASN tracking): warn once, naming FHI_GEOIP_CITY_DB, when they are
         # disabled — otherwise the features silently return nothing.
-        from fhi_users.audit import warn_if_geo_lookups_disabled
+        from fhi_users.audit import (
+            warm_geo_reader_in_background,
+            warn_if_geo_lookups_disabled,
+        )
 
         warn_if_geo_lookups_disabled()
+        # Parse the (multi-second) city database at startup in a daemon
+        # thread, so no request — including the synchronous ASN lookup that
+        # runs inside the async chat consumer — pays the load on the event
+        # loop.
+        warm_geo_reader_in_background()

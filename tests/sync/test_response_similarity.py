@@ -6,11 +6,13 @@ from fighthealthinsurance.ml.response_similarity import (
     EXACT_REPEAT_MIN_CHARS,
     NEAR_REPEAT_MIN_CHARS,
     bag_of_words,
+    is_canned_reply,
     is_mostly_repeated,
     jaccard_similarity,
     normalize_text,
     response_similarity,
     sequence_similarity,
+    user_requested_repeat,
 )
 
 # The reply from the observed production loop (assistant re-sent it verbatim
@@ -140,3 +142,91 @@ class TestResponseSimilarity(TestCase):
             "the county office for you if you'd like."
         )
         self.assertLess(response_similarity(a, b), 0.7)
+
+
+class TestLongNearVerbatimRepeats(TestCase):
+    """Regression: difflib's default autojunk heuristic treats every common
+    character in a 200+ element sequence as junk, collapsing ratio() for
+    exactly the long replies this module targets (0.33 measured where the
+    true ratio was 0.96, against a 0.9 threshold)."""
+
+    def test_reworded_long_reply_is_a_repeat(self):
+        reworded = LOOPED_REPLY.replace("can be tricky!", "are confusing.").replace(
+            "Once I have this information,", "Once I have that,"
+        )
+        self.assertTrue(is_mostly_repeated(reworded, LOOPED_REPLY))
+
+    def test_long_similarity_scores_high(self):
+        reworded = LOOPED_REPLY.replace("can be tricky!", "are confusing.")
+        self.assertGreater(sequence_similarity(reworded, LOOPED_REPLY), 0.9)
+
+    def test_unrelated_long_replies_are_not_repeats(self):
+        unrelated = (
+            "Your plan denied this as investigational, so the strongest "
+            "argument is medical necessity backed by the trial registry. "
+            "Start by requesting the full denial letter and the plan's "
+            "clinical policy bulletin for this code. "
+        ) * 3
+        self.assertFalse(is_mostly_repeated(unrelated, LOOPED_REPLY * 3))
+
+
+class TestUserRequestedRepeatPrecision(TestCase):
+    """`repeat` is everyday clinical vocabulary here, and this flag disables
+    every rung of the loop-prevention ladder — so it must match an explicit
+    request to say something again, not the topic of the conversation."""
+
+    CLINICAL_MENTIONS = [
+        "They denied my repeat colonoscopy.",
+        "This is a repeat denial for the same MRI.",
+        "I need a repeat prescription for my insulin.",
+        "my doctor ordered a repeat echocardiogram",
+        "The insurer keeps denying repeat imaging",
+        "Can you resend the fax to my doctor?",
+        "I filed an appeal one more time last month",
+    ]
+
+    EXPLICIT_REQUESTS = [
+        "can you repeat that?",
+        "repeat that please",
+        "say that again",
+        "please repeat the last answer",
+        "send it again",
+        "repeat",
+        "one more time please",
+        "resend it",
+        "show that again",
+    ]
+
+    def test_clinical_mentions_do_not_disable_the_ladder(self):
+        for message in self.CLINICAL_MENTIONS:
+            with self.subTest(message=message):
+                self.assertFalse(user_requested_repeat(message))
+
+    def test_explicit_requests_are_honored(self):
+        for message in self.EXPLICIT_REQUESTS:
+            with self.subTest(message=message):
+                self.assertTrue(user_requested_repeat(message))
+
+
+class TestCannedReplyRequiresTheWholeBlock(TestCase):
+    """The system prompt tells the model to link the Medicaid FAQ on every
+    work-requirements answer, so matching the link alone exempted ordinary
+    (including looping) Medicaid replies from the whole ladder."""
+
+    CANNED_BLOCK = (
+        "New federal rules require many adults (ages 19-64) to complete at "
+        "least 80 hours per month of work, job training, school, or community "
+        "service to keep Medicaid coverage. These requirements go into effect "
+        "by December 31, 2026. For detailed information, visit: "
+        "[Medicaid Work Requirements FAQ](/faq/medicaid/)"
+    )
+
+    def test_full_canned_block_is_exempt(self):
+        self.assertTrue(is_canned_reply(self.CANNED_BLOCK))
+
+    def test_reply_merely_linking_the_faq_is_not_exempt(self):
+        linking = (
+            LOOPED_REPLY
+            + "\n\nSee the [Medicaid Work Requirements FAQ](/faq/medicaid/)."
+        )
+        self.assertFalse(is_canned_reply(linking))

@@ -265,9 +265,7 @@ async def test_generic_citation_cache_write_upserts_on_concurrent_miss():
         # Simulate the concurrent-miss race: the read sees no row (another
         # request's write hadn't landed yet at read time), the write must
         # still upsert against the row that exists by write time.
-        mock_gcg.objects.filter.return_value.afirst = mock.AsyncMock(
-            return_value=None
-        )
+        mock_gcg.objects.filter.return_value.afirst = mock.AsyncMock(return_value=None)
         mock_gcg.objects.aupdate_or_create = (
             GenericContextGeneration.objects.aupdate_or_create
         )

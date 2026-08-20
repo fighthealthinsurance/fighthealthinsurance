@@ -127,6 +127,6 @@ class TestProfPovPromptSelection:
 
     def test_patient_pov_unchanged(self):
         m = _model()
-        assert m.get_system_prompts("full", prof_pov=False) == m.system_prompts_map[
-            "full"
-        ]
+        assert (
+            m.get_system_prompts("full", prof_pov=False) == m.system_prompts_map["full"]
+        )

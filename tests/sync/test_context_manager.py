@@ -13,6 +13,7 @@ from fighthealthinsurance.chat.context_manager import (
     make_placeholder,
     prepare_history_for_llm,
     should_store_summary,
+    strip_previous_summary_blocks,
     get_current_context,
     ensure_message_alternation,
     DEFAULT_MESSAGES_TO_KEEP,
@@ -545,3 +546,57 @@ class TestSummaryReplacesInsteadOfNesting:
             "Earlier conversation summary: NEW SUMMARY\n\n"
             "Additional context: PubMed context: relevant study details"
         )
+
+
+class TestSummaryStripHandlesRealCallerShapes:
+    """The de-nesting guard used to test `startswith(EARLIER_SUMMARY_LABEL)`,
+    but the production caller never passes that shape — it passes the model's
+    own per-turn summary, or chat_interface's
+    "Previous context summary: ... Most recent context summary: ..." wrapper,
+    optionally prefixed by the trim marker. So the strip never fired and
+    summaries nested on every band."""
+
+    def test_wrapped_and_trimmed_summaries_are_stripped(self):
+        existing = (
+            f"{TRIMMED_CONTEXT_PREFIX}Previous context summary:\n"
+            "Earlier conversation summary: OLD SUMMARY\n\n"
+            "Additional context: Microsite context:\nacme-health\n\n"
+            "Most recent context summary:\n"
+            "Earlier conversation summary: NEWER SUMMARY\n\n"
+            "Additional context: PubMed context: an abstract"
+        )
+        stripped = strip_previous_summary_blocks(existing)
+
+        assert "OLD SUMMARY" not in stripped
+        assert "NEWER SUMMARY" not in stripped
+        # Non-summary context survives.
+        assert "Microsite context" in stripped
+        assert "PubMed context" in stripped
+
+    def test_context_without_a_summary_block_is_untouched(self):
+        plain = "User asked about a knee MRI denial from Blue Shield."
+        assert strip_previous_summary_blocks(plain) == plain
+
+    def test_bare_summary_leaves_nothing(self):
+        assert (
+            strip_previous_summary_blocks("Earlier conversation summary: OLD") is None
+        )
+
+
+class TestBoundSummaryContextSmallLimits:
+    """`context[-0:]` is the WHOLE string, so any max_chars at or below the
+    trim marker's length returned MORE than the input — the bound silently
+    inverted, with a marker claiming trimming had happened."""
+
+    def test_limit_below_marker_length_still_bounds(self):
+        context = "old context " * 500
+        for limit in (1, 5, len(TRIMMED_CONTEXT_PREFIX)):
+            bounded = bound_summary_context(context, limit)
+            assert len(bounded) <= limit, f"limit={limit} produced {len(bounded)} chars"
+
+    def test_limit_above_marker_length_keeps_tail_with_marker(self):
+        context = "old " * 500 + "MOST RECENT"
+        bounded = bound_summary_context(context, 100)
+        assert len(bounded) <= 100
+        assert bounded.startswith(TRIMMED_CONTEXT_PREFIX)
+        assert bounded.endswith("MOST RECENT")

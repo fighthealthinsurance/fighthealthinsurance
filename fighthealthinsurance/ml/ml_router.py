@@ -650,8 +650,16 @@ class MLRouter(object):
 
         fallback_models: list[RemoteModelLike] = []
         if use_external:
-            # Prefer the best available external models for chat fallback.
-            fallback_models = self.best_external_models()
+            # Only externals NOT already in the primary fan-out. build_retry_calls
+            # issues two calls per entry of model_backends AND two per entry of
+            # fallback_backends, so a backend present in both lists received
+            # four byte-identical requests per retry -- doubled paid spend and
+            # rate-limit pressure on exactly the turns that already failed,
+            # with no added diversity.
+            already_primary = {id(m) for m in primary_models}
+            fallback_models = [
+                m for m in self.best_external_models() if id(m) not in already_primary
+            ]
 
         return primary_models, fallback_models
 

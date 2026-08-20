@@ -12,6 +12,7 @@ Design goals:
 - Optional: Controlled by ENABLE_AUDIT_LOGGING setting
 """
 
+import ipaddress
 import os
 import threading
 from dataclasses import dataclass
@@ -547,6 +548,32 @@ def warn_if_geo_lookups_disabled() -> None:
     )
 
 
+def warm_geo_reader_in_background() -> None:
+    """Load the GeoIP database off the request path, at startup.
+
+    The city database takes seconds to parse and the load is serialized on a
+    process-global lock. Left lazy, that cost landed on whichever request
+    touched geo first -- and one of those call sites
+    (extract_tracking_info_from_scope -> get_asn_info) is a plain synchronous
+    call inside the async WebSocket consumer, so the parse ran ON the event
+    loop and stalled every other socket on the worker.
+
+    Daemon thread so it never delays or blocks process shutdown; failures are
+    already logged (and latched) by _get_geo_reader.
+    """
+    enabled, _ = geo_lookup_status()
+    if not enabled:
+        return
+
+    def _warm() -> None:
+        try:
+            _get_geo_reader()
+        except Exception as e:  # pragma: no cover - defensive
+            logger.warning(f"GeoIP warm-up failed: {type(e).__name__}: {e}")
+
+    threading.Thread(target=_warm, name="geoip-warmup", daemon=True).start()
+
+
 def _normalize_state_guess(value: str) -> Optional[str]:
     """Map a raw subdivision value (code or name) to a full US state name."""
     cleaned = value.strip()
@@ -574,11 +601,22 @@ def guess_us_state(ip_address: Optional[str]) -> Optional[str]:
     """
     if not ip_address:
         return None
+    # The caller derives this from X-Forwarded-For / X-Real-IP, which are
+    # client-supplied and never validated upstream, so reject anything that
+    # is not a literal IP address before it reaches the third-party parser
+    # (and bound the work an arbitrary header value can cause).
+    candidate = str(ip_address).strip()
+    if len(candidate) > 45:  # longest possible IPv6 form
+        return None
+    try:
+        ipaddress.ip_address(candidate)
+    except ValueError:
+        return None
     reader = _get_geo_reader()
     if reader is None:
         return None
     try:
-        result = reader.lookup(str(ip_address).strip())
+        result = reader.lookup(candidate)
     except Exception:
         return None
     if result is None:

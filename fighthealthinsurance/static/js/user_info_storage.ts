@@ -73,11 +73,11 @@ export function saveExternalModelsPreference(useExternalModels: boolean): void {
 export function getExternalModelsPreference(): boolean {
   try {
     const stored = localStorage.getItem(EXTERNAL_MODELS_KEY);
-    if (stored === null) {
-      localStorage.setItem(EXTERNAL_MODELS_KEY, "true");
-      return true;
-    }
-    return stored === "true";
+    // Pure read: no key means "no stored choice, use the default", and a read
+    // must not materialize a value. Writing "true" here recorded an explicit
+    // opt-in for anyone who merely opened the chat, which made a real choice
+    // indistinguishable from never having been asked.
+    return stored === null ? true : stored === "true";
   } catch (e) {
     console.error("Error getting external models preference from localStorage:", e);
   }

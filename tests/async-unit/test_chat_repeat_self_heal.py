@@ -153,10 +153,15 @@ async def test_context_framing_labels_summary_and_newest_message():
     assert "Do not repeat an earlier reply" in prompt
 
 
+# Matches the mandated block in the system prompt. All of its distinctive
+# phrases matter: is_canned_reply requires the WHOLE block, because the prompt
+# also tells the model to link the FAQ on any work-requirements answer and a
+# marker-only match exempted ordinary (including looping) Medicaid replies.
 CANNED_REPLY = (
     "New federal rules require many adults (ages 19-64) to complete at least "
     "80 hours per month of work, job training, school, or community service "
-    "to keep Medicaid coverage. For detailed information, visit: "
+    "to keep Medicaid coverage. These requirements go into effect by "
+    "December 31, 2026. For detailed information, visit: "
     "[Medicaid Work Requirements FAQ](/faq/medicaid/)"
     "🐼 Provided the mandated work-requirements information."
 )
@@ -205,3 +210,46 @@ async def test_canned_reply_repeat_needs_no_retry():
 
     assert len(model.infer_calls) == 1
     assert response == canned_no_panda
+
+
+@pytest.mark.asyncio
+async def test_repeat_detected_when_generation_carries_a_panda_summary():
+    """Real generations end with "🐼<context summary>" while history stores the
+    SPLIT answer. Comparing the two shapes put a byte-identical repeat at ~0.76
+    similarity — under the 0.9 threshold — so the self-heal never fired on
+    production output, only on the panda-less fixtures."""
+    looped_with_panda = f"{LOOPED_REPLY}🐼 User asked about Medicaid requirements."
+    model = ScriptedModel(
+        [looped_with_panda, f"{FRESH_REPLY}🐼 CA, Medi-Cal question."]
+    )
+
+    response, _ = await model.generate_chat_response(
+        "CA",
+        previous_context_summary=None,
+        history=HISTORY,
+        is_professional=False,
+        is_logged_in=False,
+    )
+
+    assert len(model.infer_calls) == 2, "self-heal did not fire on a real repeat"
+    assert "repeated your last reply" in model.infer_calls[1]["prompt"]
+    assert response == FRESH_REPLY
+
+
+@pytest.mark.asyncio
+async def test_explicit_repeat_request_skips_the_self_heal():
+    """When the user asks us to repeat, repeating is the right answer and the
+    serial retry would fight the request."""
+    model = ScriptedModel([f"{LOOPED_REPLY}🐼 repeat as asked."])
+
+    response, _ = await model.generate_chat_response(
+        "can you repeat that?",
+        previous_context_summary=None,
+        history=HISTORY,
+        is_professional=False,
+        is_logged_in=False,
+        allow_repeated_reply=True,
+    )
+
+    assert len(model.infer_calls) == 1
+    assert response == LOOPED_REPLY

@@ -94,6 +94,29 @@ canned reply) is what turned the scorer from "prefers not to loop" into
 "cannot deliver a loop from the primary pass". The old -500 soft penalty
 was invisible next to an 8000+ base — that was the production loop.
 
+### Similarity detection: two non-obvious constraints
+
+`response_similarity.py` is small but has two properties that must not be
+"cleaned up":
+
+* **`autojunk=False` is required for correctness.** difflib's default
+  autojunk heuristic marks any element appearing in >1% of a 200+ element
+  sequence as junk and refuses to match on it. On character-level natural
+  language that is every space and every common letter, so `ratio()`
+  collapses: two 430-char replies differing by one reworded sentence
+  measured **0.33 with autojunk vs 0.96 without**, against a 0.9 threshold.
+  With the default, every long near-verbatim repeat — precisely what the
+  detector exists for — scored as unrelated.
+* **The cheap gates in front of `ratio()` are load-bearing, not premature
+  optimization.** Scoring runs inline on the event loop inside the fan-out,
+  several comparisons per candidate, ~20 candidates per turn. With
+  `autojunk=False`, `ratio()` is genuinely O(n·m). Two exact upper bounds run
+  first — the length bound `2·min/(la+lb)`, then word-set Jaccard against a
+  loose 0.35 floor — so unrelated pairs (the overwhelming majority) cost
+  ~0.1ms instead of 15-60ms, and only plausible repeats pay the full
+  comparison. `quick_ratio` is *not* a useful gate here: it compares
+  character multisets and reads ~0.98 for two unrelated English texts.
+
 ## 3. The anti-loop ladder (all layers)
 
 Defenses stack from the inside out, so any single layer failing still
@@ -294,3 +317,27 @@ Three levels, in increasing detail:
   allowed to hard-block the reply.
 * Every wait on the turn path has an explicit bound that fits inside
   FHI_CHAT_TURN_BUDGET.
+* `user_requested_repeat` is the master switch that disables the whole
+  ladder, so it must match an explicit REQUEST ("repeat that", "say that
+  again"), never the topic. "repeat MRI", "repeat colonoscopy", "repeat
+  prescription" and "repeat denial" are ordinary vocabulary here, and a bare
+  `\brepeat\b` turned every one of those conversations into an unprotected
+  one. Erring toward not-matching is the safe direction.
+* `is_canned_reply` must require the WHOLE mandated block, not a marker
+  phrase: the system prompt tells the model to link the Medicaid FAQ on any
+  work-requirements answer, so a marker-only test exempted every ordinary
+  Medicaid reply — including the looping ones.
+* Anything that screens a reply for tool calls must use
+  `patterns.contains_tool_call` (the handlers' own flags). Several tool
+  patterns are `^...$`-anchored, so a flag-less `re.search` only matches a
+  call at the very start of a reply.
+* Compare like with like: a raw generation still carries its trailing
+  `🐼<summary>` while history stores the split answer. Comparing the two
+  shapes put a byte-identical repeat at ~0.76 similarity, under threshold.
+* Externals may appear in the primary fan-out OR the retry fallback list,
+  never both — `build_retry_calls` iterates both, so a backend in each got
+  four identical paid requests per retry.
+* Internal (LLM-context-only) history entries are identified by their
+  `internal` flag, not by a content prefix a user could type, and every view
+  of the history — WebSocket replay, REST listing, chat titles, previews —
+  must filter them the same way.

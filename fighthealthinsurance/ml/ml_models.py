@@ -1330,7 +1330,7 @@ Remember in the last three sentences GLP-1 is just an _example_ check what the u
                     break
 
         def _repeats_last_reply(candidate: Optional[str]) -> bool:
-            # Mandated verbatim replies (see CANNED_REPLY_MARKERS) repeat by
+            # Mandated verbatim replies (see CANNED_REPLY_SIGNATURES) repeat by
             # design, and an explicit "please repeat that" from the user
             # (allow_repeated_reply, derived from the RAW message upstream)
             # makes repeating the correct answer -- retrying against either
@@ -1338,15 +1338,24 @@ Remember in the last three sentences GLP-1 is just an _example_ check what the u
             # was asked.
             if allow_repeated_reply:
                 return False
-            if candidate and is_canned_reply(candidate):
+            # Compare like with like: `candidate` is the RAW generation, which
+            # still carries the trailing "🐼<context summary>", while history
+            # stores the split answer. Comparing the two shapes put a
+            # byte-identical repeat at ~0.76 similarity -- under the 0.9
+            # threshold -- so the self-heal never fired on real output.
+            answer = candidate.split("🐼")[0] if candidate else candidate
+            if answer and is_canned_reply(answer):
                 return False
             return bool(
-                candidate
+                answer
                 and last_assistant_reply
-                and is_mostly_repeated(candidate, last_assistant_reply)
+                and is_mostly_repeated(answer, last_assistant_reply)
             )
 
         result: Optional[str] = None
+        # Evaluated once per iteration and reused by the loop condition and
+        # the corrective-feedback branch (the comparison is not free).
+        repeats_last = False
         c = 0
         chat_timeout = ml_task_timeout("chat")
         loop_start = time.monotonic()
@@ -1357,12 +1366,12 @@ Remember in the last three sentences GLP-1 is just an _example_ check what the u
         while (
             result is None
             or result.strip().lower() == current_message.strip().lower()
-            or _repeats_last_reply(result)
+            or repeats_last
             or self.bad_result(result, "chat")
         ) and (c < 2 and time.monotonic() - loop_start < 2 * chat_timeout):
             c = c + 1
             result_extra = ""
-            if _repeats_last_reply(result):
+            if repeats_last:
                 # Corrective feedback + hotter sampling: the repeat is often
                 # near-deterministic, and the changed prompt text also busts
                 # any upstream response cache serving the same reply. Takes
@@ -1386,6 +1395,7 @@ Remember in the last three sentences GLP-1 is just an _example_ check what the u
             )
             if raw_result:
                 result = raw_result[0]
+            repeats_last = _repeats_last_reply(result)
         if result is None:
             return (None, None)
         if "🐼" not in result:

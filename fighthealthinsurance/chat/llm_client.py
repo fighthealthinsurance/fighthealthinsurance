@@ -12,7 +12,10 @@ from loguru import logger
 
 from fighthealthinsurance.chat.message_preprocessor import MessageVariant
 from fighthealthinsurance.chat.safety_filters import detect_false_promises
-from fighthealthinsurance.chat.tools.patterns import ALL_TOOL_PATTERNS as tools_regex
+from fighthealthinsurance.chat.tools.patterns import (
+    ALL_TOOL_PATTERNS as tools_regex,
+    contains_tool_call,
+)
 from fighthealthinsurance.ml.ml_models import RemoteModelLike, repetition_penalty
 
 # Shared similarity/exemption helpers (stdlib-only module, importable from
@@ -20,7 +23,7 @@ from fighthealthinsurance.ml.ml_models import RemoteModelLike, repetition_penalt
 # bag_of_words, is_canned_reply, user_requested_repeat and the exemption
 # constants are re-exported from here for existing importers/tests.
 from fighthealthinsurance.ml.response_similarity import (
-    CANNED_REPLY_MARKERS,
+    CANNED_REPLY_SIGNATURES,
     USER_REQUESTED_REPEAT_RE,
     bag_of_words,
     is_canned_reply,
@@ -395,13 +398,21 @@ def score_llm_response(
 
 
 # Per-session demotion for backends whose candidates were hard-rejected as
-# repeats earlier in the SAME chat session: each strike multiplies the
-# backend's base score by the decay (capped), so a persistent looper decays
-# from internal-tier preference (~8000 base) toward external-tier (~1900)
-# after ~4 strikes instead of winning every race on raw quality forever.
-# Content-quality signals are unaffected -- only the model-preference prior
-# decays. Strikes are in-memory per ChatInterface (one WebSocket session)
-# and never persisted.
+# repeats on earlier TURNS of the same chat session: each strike multiplies
+# the backend's base score by the decay (capped), so a persistent looper
+# decays from internal-tier preference (~8000 base) toward external-tier
+# (~1900) after ~4 looping turns instead of winning every race on raw quality
+# forever. Content-quality signals are unaffected -- only the model-preference
+# prior decays. Strikes are in-memory per ChatInterface (one WebSocket
+# session) and never persisted.
+#
+# At most ONE strike per backend per scorer (i.e. per turn): the number of
+# candidates a backend contributes to a fan-out is a property of the fan-out
+# shape -- the primary fhi backend is listed twice, each backend may get a
+# truncated- and a full-history call, and each message variant multiplies
+# again -- so counting per candidate ranked backends by how many slots they
+# occupy rather than how often they loop, and saturated the cap inside a
+# single turn.
 REPEAT_OFFENDER_DECAY = 0.7
 REPEAT_OFFENDER_CAP = 4
 
@@ -444,6 +455,9 @@ def create_response_scorer(
         Scoring function compatible with best_within_timelimit
     """
     primary_set = set(primary_calls) if primary_calls else set()
+    # Labels already struck by THIS scorer, so one looping turn costs a
+    # backend one strike no matter how many candidates it contributed.
+    struck_this_turn: set = set()
 
     def score_fn(
         result: Optional[Tuple[Optional[str], Optional[str]]],
@@ -452,7 +466,13 @@ def create_response_scorer(
         call_score = call_scores.get(original_task, 0)
         label = call_labels.get(original_task) if call_labels else None
         if label and repeat_offenders:
-            strikes = min(repeat_offenders.get(label, 0), REPEAT_OFFENDER_CAP)
+            # Strikes earned on EARLIER turns only: struck_this_turn keeps the
+            # current turn's strike from also demoting the candidates being
+            # scored alongside it.
+            earlier_strikes = repeat_offenders.get(label, 0) - (
+                1 if label in struck_this_turn else 0
+            )
+            strikes = min(max(earlier_strikes, 0), REPEAT_OFFENDER_CAP)
             if strikes:
                 call_score = int(call_score * (REPEAT_OFFENDER_DECAY**strikes))
         is_primary = original_task in primary_set
@@ -471,10 +491,12 @@ def create_response_scorer(
         )
         if (
             label
+            and label not in struck_this_turn
             and repeat_offenders is not None
             and rejection_stats is not None
             and rejection_stats.get("repeated_rejected", 0) > rejected_before
         ):
+            struck_this_turn.add(label)
             repeat_offenders[label] = repeat_offenders.get(label, 0) + 1
         if score_log is not None:
             score_log[original_task] = score
@@ -745,12 +767,6 @@ ALTERNATE_MAX_SIMILARITY = 0.7
 # And only when it is a substantial reply on its own.
 ALTERNATE_MIN_CHARS = 30
 
-# Tokens that mean a reply is part of a tool/action flow rather than a plain
-# conversational answer (those flows mutate state; only the winner runs them).
-_ACTION_TOKEN_RE = re.compile(
-    r"\*\*(create_or_update_appeal|create_or_update_prior_auth)\*\*"
-)
-
 
 def alternate_is_presentable(
     alternate_text: Optional[str],
@@ -771,11 +787,12 @@ def alternate_is_presentable(
         return False
     if "🐼" in text:
         return False
-    if _ACTION_TOKEN_RE.search(text):
+    # Screened with the same flags the tool handlers use: a flag-less sweep
+    # over the `^...$`-anchored patterns only caught a tool call at the very
+    # start of the reply, so an alternate whose tool call followed a line of
+    # prose was shown to the user as raw syntax plus its JSON payload.
+    if contains_tool_call(text):
         return False
-    for pattern in tools_regex:
-        if re.search(pattern, text):
-            return False
     if BAD_RESPONSE_PATTERNS.search(text):
         return False
     if detect_false_promises(text):

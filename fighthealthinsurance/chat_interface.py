@@ -18,6 +18,8 @@ from fighthealthinsurance import settings
 from fighthealthinsurance.chat.chat_persistence import (
     apersist_chat_turn,
     apersist_microsite_context,
+    is_internal_history_message,
+    visible_history,
 )
 from fighthealthinsurance.chat.context_manager import (
     MISSING_CONTEXT_PREFIX,
@@ -120,6 +122,18 @@ def _detect_policy_analysis_request(text: str) -> bool:
 # the terse-reply bridge note (see handle_chat_message): terse answers are
 # where models historically looped by re-asking instead of using the answer.
 TERSE_REPLY_MAX_CHARS = 60
+
+
+def _clean_reply(text: str) -> str:
+    """Strip the model's self-repetition from a reply before it is shown.
+
+    Shared by the primary answer and the side-by-side alternate: the two are
+    displayed next to each other, so cleaning them differently would make the
+    comparison the feature exists for unfair.
+    """
+    stripped = text.strip()
+    cleaned = remove_repeated_blocks(stripped) or stripped
+    return remove_repeated_sentences(cleaned) or cleaned
 
 
 class ChatInterface:
@@ -435,20 +449,26 @@ class ChatInterface:
 
         response_text = response_text or ""
 
+        # Record rejected repeats for EVERY turn that had them, not only turns
+        # that also needed a retry. The common success case is "an internal
+        # backend looped, its candidates were hard-rejected, another backend's
+        # answer won" -- which needs no retry, and used to leave the counter
+        # flat while the ladder was working hard. That made the metric read as
+        # "loops never happen" exactly when a backend started looping.
+        saw_repeats = bool(rejection_stats.get("repeated_rejected"))
+        if saw_repeats:
+            # Counted once per turn (the stat itself is per candidate).
+            record_chat_repeat("rejected_candidates")
+            logger.info(
+                f"Chat {chat.id}: primary pass rejected "
+                f"{rejection_stats['repeated_rejected']} repeated "
+                f"candidate replies"
+            )
+
         # If primary models failed, use retry handler with fallback
         retry_used = False
-        saw_repeats = False
         retry_debug: Dict[str, Any] = {}
         if should_retry_response(response_text):
-            saw_repeats = bool(rejection_stats.get("repeated_rejected"))
-            if saw_repeats:
-                # Counted once per turn (the stat itself is per candidate).
-                record_chat_repeat("rejected_candidates")
-                logger.info(
-                    f"Chat {chat.id}: primary pass rejected "
-                    f"{rejection_stats['repeated_rejected']} repeated "
-                    f"candidate replies; retrying with anti-repeat instruction"
-                )
             retry_response, retry_context = await retry_llm_with_fallback(
                 model_backends=model_backends,
                 current_message=current_message_for_llm,
@@ -1165,7 +1185,10 @@ class ChatInterface:
                 f"matters for your answer (for example Medicaid questions), "
                 f"confirm it with the user -- for instance 'It looks like "
                 f"you might be in {self.state_hint}, is that right?' -- "
-                f"instead of assuming."
+                f"instead of assuming. Do NOT put this guess in your context "
+                f"summary unless the user confirms it: the summary is stored "
+                f"with the chat, and an unconfirmed network-derived location "
+                f"must not be."
             )
             summarized_context = (
                 f"{summarized_context}\n\n{state_hint_context}"
@@ -1268,8 +1291,7 @@ class ChatInterface:
             )
 
             if response_text and response_text.strip():
-                cleaned = remove_repeated_blocks(response_text.strip())
-                cleaned = remove_repeated_sentences(cleaned) or cleaned
+                cleaned = _clean_reply(response_text)
                 if llm_requested_delete_handoff(cleaned):
                     logger.info(
                         f"LLM emitted delete-data sentinel in chat {chat.id}, swapping in canned response"
@@ -1374,8 +1396,18 @@ class ChatInterface:
             alternate_content = self._candidate_alternate
             self._candidate_alternate = None
             if alternate_content:
-                alt_cleaned = remove_repeated_blocks(alternate_content.strip())
-                alt_cleaned = remove_repeated_sentences(alt_cleaned) or alt_cleaned
+                alt_cleaned = _clean_reply(alternate_content)
+                # A runner-up that also asked for the delete-data handoff must
+                # never be shown: the primary gets swapped for the approved
+                # DELETE_DATA_RESPONSE, so an unswapped alternate would sit
+                # beside it either leaking the raw sentinel or making
+                # model-authored promises about deleting the user's data.
+                if alt_cleaned and llm_requested_delete_handoff(alt_cleaned):
+                    logger.info(
+                        f"Chat {chat.id}: dropping alternate that requested the "
+                        f"delete-data handoff"
+                    )
+                    alt_cleaned = ""
                 if alt_cleaned and alternate_is_presentable(
                     alt_cleaned,
                     final_response_text,
@@ -1439,30 +1471,20 @@ class ChatInterface:
     # Legacy prefixes of internal (LLM-context-only) user-role messages that
     # predate the explicit "internal" flag; matched so old chats don't replay
     # them either.
-    _INTERNAL_MESSAGE_PREFIXES = (
-        "Linked this chat to ",
-        "This chat is already linked to ",
-    )
-
     @classmethod
     def _is_internal_history_message(cls, message: Dict[str, Any]) -> bool:
         """Messages stored purely as LLM context (e.g. the appeal-linking
         notes recorded with role=user) must not replay as user bubbles."""
-        if message.get("internal"):
-            return True
-        content = message.get("content") or ""
-        return message.get("role") == "user" and content.startswith(
-            cls._INTERNAL_MESSAGE_PREFIXES
-        )
+        return is_internal_history_message(message)
 
     async def replay_chat_history(self):
         """Sends the existing chat history to the client, minus internal
         LLM-context-only messages (which would render as user bubbles the
         user never typed)."""
         chat = self.chat
-        history: List[Dict[str, Any]] = chat.chat_history or []
-        visible = [m for m in history if not self._is_internal_history_message(m)]
-        await self.send_json_message_func({"messages": visible})
+        await self.send_json_message_func(
+            {"messages": visible_history(chat.chat_history)}
+        )
 
     async def _handle_policy_analysis(
         self, chat: OngoingChat, user_message: str

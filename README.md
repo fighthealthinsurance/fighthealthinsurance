@@ -151,10 +151,26 @@ city-level file downloaded from the geoip2fast releases. Use the
 `-city-asn-ipv6` variant so ASN lookups work too:
 
 ```bash
+# Pin a specific release tag, never the moving `LATEST`.
+GEOIP2FAST_RELEASE=v1.2.2
 curl -L -o geoip2fast-city-asn-ipv6.dat.gz \
-  https://github.com/rabuchaim/geoip2fast/releases/download/LATEST/geoip2fast-city-asn-ipv6.dat.gz
+  "https://github.com/rabuchaim/geoip2fast/releases/download/${GEOIP2FAST_RELEASE}/geoip2fast-city-asn-ipv6.dat.gz"
+
+# Record the checksum the first time, then VERIFY it on every later fetch and
+# in your deploy pipeline:
+sha256sum geoip2fast-city-asn-ipv6.dat.gz | tee geoip2fast-city-asn-ipv6.dat.gz.sha256
+sha256sum -c geoip2fast-city-asn-ipv6.dat.gz.sha256
+
 export FHI_GEOIP_CITY_DB="$PWD/geoip2fast-city-asn-ipv6.dat.gz"
 ```
+
+> **Treat this file as trusted code, not data.** geoip2fast loads the database
+> with `pickle.load()`, so anything that can replace the file (a swapped
+> release asset, a MITM on a build box, write access to the deployment volume)
+> can execute code inside the web process — which holds DB credentials and the
+> PHI field-encryption keys. Pin the release, verify the checksum before the
+> file reaches a server, and give the mounted path the same write protections
+> you give application code.
 
 **Soft fail:** when `FHI_GEOIP_CITY_DB` is unset (or the file is missing /
 unreadable, or the package isn't installed) nothing breaks — the state guess

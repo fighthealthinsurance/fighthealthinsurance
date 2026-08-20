@@ -112,8 +112,17 @@ const PWYWBanner: React.FC<{ onDismiss: () => void }> = ({ onDismiss }) => {
 // server to echo back exactly what was sent to the backend model; frames
 // arrive as debug_llm_input and are logged to the browser console. The
 // server only honors it for DEBUG deployments and staff accounts.
-const isChatDebugEnabled = (): boolean =>
-  localStorage.getItem("fhi_chat_debug") === "true";
+// Guarded: storage access THROWS (rather than returning null) in an embedded
+// iframe with third-party storage blocked, or under a block-all-cookies
+// policy. This runs inside ws.onopen and the send helpers, so an unguarded
+// throw here stopped the chat from ever sending its first frame.
+const isChatDebugEnabled = (): boolean => {
+  try {
+    return localStorage.getItem("fhi_chat_debug") === "true";
+  } catch {
+    return false;
+  }
+};
 
 // Server debug frames for one turn (only sent when debug is enabled AND the
 // server allows it): the exact LLM input and the model-selection result.
@@ -438,8 +447,9 @@ interface ChatInterfaceProps {
 }
 
 const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, defaultCondition, medicare, micrositeSlug, initialMessage, enableVoiceIntake, enableLocalSTT }) => {
-  // State for our chat interface
-  const [state, setState] = useState<ChatState>({
+  // State for our chat interface. Lazy initializer: the object literal (with
+  // its localStorage reads) would otherwise be rebuilt on every render.
+  const [state, setState] = useState<ChatState>(() => ({
     messages: [],
     isLoading: false,
     input: "",
@@ -455,7 +465,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
     // for anyone who never went through the consent form).
     useExternalModels: getExternalModelsPreference(),
     showVoiceIntake: Boolean(enableVoiceIntake),
-  });
+  }));
 
   // Track when to show retry button (separate state to avoid re-render issues)
   const [showRetryButton, setShowRetryButton] = useState(false);

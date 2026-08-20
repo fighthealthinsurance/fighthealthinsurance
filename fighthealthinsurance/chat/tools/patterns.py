@@ -6,6 +6,8 @@ responses to indicate it wants to invoke a tool (e.g., search PubMed,
 look up Medicaid info, create/update appeals, etc.)
 """
 
+import re
+
 # PubMed query tool - captures query terms
 # Matches: [pubmed_query: terms], **pubmed query: terms**, etc.
 PUBMED_QUERY_REGEX = r"[\[\*]{0,4}pubmed[ _]?query:?\s*([^*\[\]]+)"
@@ -96,6 +98,23 @@ CLINICAL_TRIALS_QUERY_REGEX = (
 # not via match.group(1).
 FINANCIAL_ASSISTANCE_REGEX = r"(?:\*\*)?financial_assistance\s*(?=\{)"
 
+# Flags the tool HANDLERS use when detecting a call in a reply (each handler
+# sets `detect_flags`). Anything else that screens a reply for tool calls must
+# use the same flags: several patterns are `^...$`-anchored, so a flag-less
+# re.search only ever matches a tool call at the very start of the reply and
+# silently passes one that follows a sentence of prose.
+TOOL_DETECT_FLAGS = re.DOTALL | re.MULTILINE | re.IGNORECASE
+
+# Tokens that mean a reply is part of a tool/action flow rather than a plain
+# conversational answer (those flows mutate state; only the winner runs them).
+# Matches the bare name too -- the handlers tolerate 0-4 asterisks, so
+# requiring `**name**` adjacency missed the unadorned form.
+ACTION_TOKEN_MENTION_RE = re.compile(
+    r"\*{0,4}\b(?:create_or_update_appeal|create_or_update_prior_auth)\b\*{0,4}",
+    re.IGNORECASE,
+)
+
+
 # List of all tool patterns for scoring/detection
 ALL_TOOL_PATTERNS = [
     PUBMED_QUERY_REGEX,
@@ -110,3 +129,18 @@ ALL_TOOL_PATTERNS = [
     CLINICAL_TRIALS_QUERY_REGEX,
     FINANCIAL_ASSISTANCE_REGEX,
 ]
+
+
+def contains_tool_call(text: str) -> bool:
+    """Whether ``text`` contains anything a tool handler would fire on.
+
+    Uses TOOL_DETECT_FLAGS so this agrees with the handlers themselves. Any
+    reply shown to a user WITHOUT running the tool pipeline (the side-by-side
+    alternate answer) must be screened through here, or raw tool syntax and
+    its JSON payload reach the browser.
+    """
+    if not text:
+        return False
+    if ACTION_TOKEN_MENTION_RE.search(text):
+        return True
+    return any(re.search(p, text, TOOL_DETECT_FLAGS) for p in ALL_TOOL_PATTERNS)

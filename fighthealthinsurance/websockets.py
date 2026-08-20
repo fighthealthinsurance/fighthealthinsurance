@@ -1394,11 +1394,19 @@ class OngoingChatConsumer(PerConnectionThreadSensitiveMixin, AsyncWebsocketConsu
                 else None
             )
             record_answer_feedback(preferred)
+            # chat_id is raw client input: bound and repr it so an
+            # attacker-supplied value can't inject newlines (forged log
+            # records) or flood the log pipeline with one huge line.
             logger.info(
                 f"chat ws: answer feedback preferred={str(preferred)[:16]!r} "
-                f"chat_id={chat_id}"
+                f"chat_id={str(chat_id)[:64]!r}"
             )
-            return
+            # Only short-circuit when the frame carries nothing else. A frame
+            # batching feedback with a real message used to have the message
+            # silently dropped -- no reply, no error, and the client's
+            # spinner never cleared.
+            if not message and not data.get("replay", False):
+                return
         replay_requested = data.get("replay", False)
         iterate_on_appeal = data.get("iterate_on_appeal")
         iterate_on_prior_auth = data.get("iterate_on_prior_auth")
@@ -1557,11 +1565,18 @@ class OngoingChatConsumer(PerConnectionThreadSensitiveMixin, AsyncWebsocketConsu
                     debug_llm=debug_llm,
                 )
             else:
-                if use_external_models != self.chat_interface.use_external_models:
-                    # User changed their preference for external models mid-chat
-                    self.chat_interface.use_external_models = use_external_models
-                # Debug preference can be toggled mid-chat.
-                self.chat_interface.debug_llm = debug_llm
+                # Only frames that actually CARRY a preference may change it.
+                # Applying the default to every frame meant one frame that
+                # omitted the key (an upload, a replay, a hand-rolled client)
+                # silently reset a user's explicit opt-out back to the
+                # default-on value for the rest of the session.
+                if "use_external_models" in data:
+                    if use_external_models != self.chat_interface.use_external_models:
+                        # User changed their preference mid-chat.
+                        self.chat_interface.use_external_models = use_external_models
+                if "debug" in data:
+                    # Debug preference can be toggled mid-chat.
+                    self.chat_interface.debug_llm = debug_llm
 
             if not replay_requested:
                 # Allow empty message when linking an appeal or prior auth

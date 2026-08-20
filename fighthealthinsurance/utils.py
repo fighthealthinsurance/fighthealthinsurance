@@ -1312,13 +1312,22 @@ async def best_two_within_timelimit(
     # Create task objects with Future results and wrap them
     original_to_task: Dict[asyncio.Task[T], Awaitable[T]] = {}
     wrapped_tasks: List[asyncio.Task[T]] = []
+    # Fan-out position of each original task. asyncio.wait hands back an
+    # UNORDERED set, so without this an exact score tie was resolved by set
+    # iteration order -- and exact ties are the normal case (the router lists
+    # the primary backend twice with identical base scores). Which answer got
+    # delivered vs. shown as a throwaway alternate then flipped between runs
+    # of the same conversation, making the preference metric and the
+    # picked-model debug output irreproducible.
+    task_order: Dict[int, int] = {}
 
-    for task in tasks:
+    for position, task in enumerate(tasks):
         # Cast the awaitable to a coroutine to satisfy mypy
         coroutine: Coroutine[Any, Any, T] = cast(Coroutine[Any, Any, T], task)
         wrapped: asyncio.Task[T] = asyncio.create_task(coroutine)
         wrapped_tasks.append(wrapped)
         original_to_task[wrapped] = task
+        task_order[id(task)] = position
 
     best_result_option: Optional[T] = None
     best_score = float("-inf")  # Start with negative infinity for comparison
@@ -1330,7 +1339,11 @@ async def best_two_within_timelimit(
     def _score_done(done_tasks: Set[asyncio.Task[T]]) -> None:
         nonlocal best_result_option, best_score, best_original
         nonlocal second_result_option, second_score, second_original
-        for task in done_tasks:
+        # Deterministic order: earlier-listed tasks win exact score ties.
+        for task in sorted(
+            done_tasks,
+            key=lambda t: task_order.get(id(original_to_task[t]), 0),
+        ):
             try:
                 result = task.result()
                 original_task = original_to_task[task]
