@@ -1855,24 +1855,94 @@ class QuickIntroSendTest(_QuickIntroTestCase):
         self.assertIsNotNone(pro.proconnector_sent_at)
         self.assertEqual(pro.proconnector_email_body, body)
 
-    @patch(
-        "fighthealthinsurance.staff_views.generate_intro_email",
-        return_value="Generated body with the compensation disclosure.",
-    )
+    @patch("fighthealthinsurance.staff_views.generate_intro_email")
     @patch("fighthealthinsurance.staff_views.send_proconnector_intro_email")
-    def test_missing_body_is_drafted_automatically(self, mock_send, mock_gen):
-        # A bare one-press POST (no previewed body round-tripped) drafts the
-        # email itself, so the flow stays fully automatic.
+    def test_empty_body_rejected_never_auto_drafted(self, mock_send, mock_gen):
+        # An emptied/missing body must be rejected like the full workflow --
+        # never silently replaced by a fresh AI draft nobody reviewed.
         pro = _make_pro(email="jane@janeclinic.com")
         response = self._post(pro.id, "send")
-        self.assertEqual(response.status_code, 200)
-        mock_gen.assert_called_once()
-        self.assertEqual(
-            mock_send.call_args.kwargs["body"],
-            "Generated body with the compensation disclosure.",
+        self.assertEqual(response.status_code, 400)
+        self.assertContains(response, "cannot be empty", status_code=400)
+        mock_gen.assert_not_called()
+        mock_send.assert_not_called()
+        pro.refresh_from_db()
+        self.assertFalse(pro.proconnector_attempted)
+
+    @patch("fighthealthinsurance.staff_views.generate_intro_email")
+    @patch("fighthealthinsurance.staff_views.send_proconnector_intro_email")
+    def test_missing_action_rejected(self, mock_send, mock_gen):
+        # A POST that lost the submit button's value (scripted form.submit(),
+        # mangled resubmission) must fail safe, not default to a real send.
+        pro = _make_pro(email="jane@janeclinic.com")
+        response = self.client.post(
+            self._url(pro.id),
+            {"email_body": "Body with compensation disclosure."},
         )
+        self.assertEqual(response.status_code, 400)
+        self.assertContains(response, "Unknown action", status_code=400)
+        mock_gen.assert_not_called()
+        mock_send.assert_not_called()
+        pro.refresh_from_db()
+        self.assertFalse(pro.proconnector_attempted)
+
+    @patch("fighthealthinsurance.staff_views.claim_email_for_send", return_value=0)
+    @patch("fighthealthinsurance.staff_views.send_proconnector_intro_email")
+    def test_lost_claim_explains_and_preserves_edits(self, mock_send, _mock_claim):
+        # Losing the atomic claim (another session just handled the record)
+        # must say so and keep the staff member's edits on the page, even in
+        # the race where the competing send failed and released the claim.
+        pro = _make_pro(email="race@clinic.org")
+        body = "Edited body with the compensation disclosure."
+        response = self._post(pro.id, "send", email_body=body)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "handled in another session")
+        self.assertContains(response, body)
+        mock_send.assert_not_called()
+
+    @patch(
+        "fighthealthinsurance.staff_views.mark_email_sent",
+        side_effect=RuntimeError("db down"),
+    )
+    @patch("fighthealthinsurance.staff_views.send_proconnector_intro_email")
+    def test_mark_failure_after_send_never_resends(self, mock_send, _mock_mark):
+        # If recording the send fails after the email went out, the claim must
+        # hold (fail safe against double-introducing): the record never
+        # resurfaces and a retry press is blocked instead of re-emailing.
+        pro = _make_pro(email="jane@janeclinic.com")
+        body = "Body with the compensation disclosure."
+        with self.assertRaises(RuntimeError):
+            self._post(pro.id, "send", email_body=body)
+        mock_send.assert_called_once()
         pro.refresh_from_db()
         self.assertTrue(pro.proconnector_attempted)
+        response = self._post(pro.id, "send", email_body=body)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "already queued")
+        mock_send.assert_called_once()  # still exactly one delivery
+
+    @patch("fighthealthinsurance.staff_views.send_proconnector_intro_email")
+    def test_concurrent_delete_after_send_redirects(self, mock_send):
+        # A record deleted mid-request (e.g. via the admin) must not 500 after
+        # an email that already went out; the view falls back to the queue.
+        pro = _make_pro(email="jane@janeclinic.com")
+
+        def _delete_rows(email, body):
+            return InterestedProfessional.objects.filter(email__iexact=email).delete()[
+                0
+            ]
+
+        with patch(
+            "fighthealthinsurance.staff_views.mark_email_sent",
+            side_effect=_delete_rows,
+        ):
+            response = self._post(
+                pro.id, "send", email_body="Body with compensation disclosure."
+            )
+        self.assertRedirects(
+            response, reverse("proconnector_process"), fetch_redirect_response=False
+        )
+        mock_send.assert_called_once()
 
     @patch("fighthealthinsurance.staff_views.send_proconnector_intro_email")
     def test_send_rejects_edit_missing_compensation(self, mock_send):
@@ -1958,12 +2028,11 @@ class QuickIntroSendTest(_QuickIntroTestCase):
         self.assertIsNone(pro.proconnector_sent_at)
         self.assertEqual(pro.proconnector_email_body, body)
 
-    @patch(
-        "fighthealthinsurance.staff_views.generate_intro_email",
-        return_value="A draft body with compensation disclosure.",
-    )
+    @patch("fighthealthinsurance.staff_views.generate_intro_email")
     @patch("fighthealthinsurance.staff_views.send_proconnector_intro_email")
-    def test_unknown_action_rejected(self, mock_send, _mock_gen):
+    def test_unknown_action_rejected(self, mock_send, mock_gen):
+        # The 400 re-render round-trips the posted body; it never pays for a
+        # fresh AI draft just to decorate an error page.
         pro = _make_pro(email="jane@janeclinic.com")
         response = self._post(
             pro.id, "explode", email_body="Body with compensation disclosure."
@@ -1971,6 +2040,7 @@ class QuickIntroSendTest(_QuickIntroTestCase):
         self.assertEqual(response.status_code, 400)
         self.assertContains(response, "Unknown action", status_code=400)
         mock_send.assert_not_called()
+        mock_gen.assert_not_called()
 
     @patch("fighthealthinsurance.staff_views.send_proconnector_intro_email")
     def test_missing_record_post_redirects_to_process(self, mock_send):

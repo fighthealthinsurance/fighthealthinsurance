@@ -679,7 +679,7 @@ def quick_intro_block_reason(pro: InterestedProfessional) -> Optional[str]:
         if pro.proconnector_sent_at:
             return (
                 "The Cofactor AI introduction was already sent on "
-                f"{pro.proconnector_sent_at:%Y-%m-%d}."
+                f"{timezone.localtime(pro.proconnector_sent_at):%Y-%m-%d}."
             )
         return (
             "The Cofactor AI introduction was already queued to send during "
@@ -694,9 +694,12 @@ def quick_intro_block_reason(pro: InterestedProfessional) -> Optional[str]:
             "This professional has unsubscribed from Fight Health Insurance "
             "emails, so the introduction cannot be sent."
         )
-    # Attempted/skipped/unsubscribed are ruled out above, so the only way to
-    # miss the processable queryset now is the test/spam filtering.
-    if not processable_queryset().filter(pk=pro.pk).exists():
+    # Probe exactly the test/spam filter (not the whole processable queryset,
+    # whose attempted/skipped/unsubscribed conditions re-test the instance
+    # flags above from the DB): a record claimed by a concurrent request
+    # between the instance load and this query must never be mislabeled as
+    # spam. The atomic claim in the send path remains the authority on races.
+    if not _exclude_filtered(InterestedProfessional.objects.filter(pk=pro.pk)).exists():
         return (
             "This signup is filtered out of pro-connector processing as a "
             "test or spam address."
