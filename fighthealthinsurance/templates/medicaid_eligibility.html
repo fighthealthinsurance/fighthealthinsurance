@@ -13,9 +13,9 @@
             <div class="caption d-flex flex-column align-items-center justify-content-center">
                 <div class="hero-inner" style="max-width: 900px;">
                     <div class="mb-3">
-                        <span class="badge experimental-badge">&#9888;&#65039; EXPERIMENTAL FEATURE</span>
+                        <span class="badge experimental-badge"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" focusable="false"><path d="M8.982 1.566a1.13 1.13 0 0 0-1.96 0L.165 13.233c-.457.778.091 1.767.98 1.767h13.713c.889 0 1.438-.99.98-1.767L8.982 1.566zM8 5c.535 0 .954.462.9.995l-.35 3.507a.552.552 0 0 1-1.1 0L7.1 5.995A.905.905 0 0 1 8 5zm.002 6a1 1 0 1 1 0 2 1 1 0 0 1 0-2z"/></svg>EXPERIMENTAL FEATURE</span>
                     </div>
-                    <h3 class="hero-tagline">Medicaid rules are confusing&mdash;checking shouldn't be</h3>
+                    <p class="hero-tagline">Medicaid rules are confusing&mdash;checking shouldn't be</p>
                     <h1 class="hero-headline">Do I Qualify for Medicaid?</h1>
                     <p class="hero-subcopy">Answer a few questions with our free, <strong>experimental</strong> AI assistant and get a rough estimate of whether you may qualify for Medicaid or Medicare in your state&mdash;plus what to do next either way. No account required. It's an estimate only, <strong>not</strong> an official determination&mdash;always confirm with your state.</p>
                     <div class="hero-cta-group">
@@ -35,10 +35,15 @@
 <section id="experimental-notice" class="pt-4 pb-2">
     <div class="container">
         <div class="row">
-            <div class="col-lg-10 mx-auto">
+            <div class="col-lg-8 mx-auto">
                 <div class="alert alert-warning experimental-banner mb-0" role="alert">
-                    <h4 class="alert-heading mb-2">&#9888;&#65039; This eligibility check is an experimental feature</h4>
-                    <p class="mb-0">It is <strong>new, under active development, and can be wrong, incomplete, or out of date</strong>. It gives a rough estimate&mdash;<strong>not</strong> an official eligibility determination, and not legal, medical, or financial advice. Only your state Medicaid agency can determine your eligibility for real. Please double-check everything it tells you with <a href="{% url 'state_help_index' %}" class="alert-link">your state</a> before making any decisions about your coverage.</p>
+                    <div class="banner-icon" aria-hidden="true">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 16 16" fill="currentColor" focusable="false"><path d="M8.982 1.566a1.13 1.13 0 0 0-1.96 0L.165 13.233c-.457.778.091 1.767.98 1.767h13.713c.889 0 1.438-.99.98-1.767L8.982 1.566zM8 5c.535 0 .954.462.9.995l-.35 3.507a.552.552 0 0 1-1.1 0L7.1 5.995A.905.905 0 0 1 8 5zm.002 6a1 1 0 1 1 0 2 1 1 0 0 1 0-2z"/></svg>
+                    </div>
+                    <div class="banner-body">
+                        <h2 class="alert-heading">This eligibility check is an experimental feature</h2>
+                        <p>It is <strong>new, under active development, and can be wrong, incomplete, or out of date</strong>. It gives a rough estimate&mdash;<strong>not</strong> an official eligibility determination, and not legal, medical, or financial advice. Only your state Medicaid agency can determine your eligibility for real. Please double-check everything it tells you with <a href="{% url 'state_help_index' %}" class="alert-link">your state</a> before making any decisions about your coverage.</p>
+                    </div>
                 </div>
             </div>
         </div>
@@ -55,34 +60,37 @@
 
                 <div class="row g-4">
                     <div class="col-md-4">
-                        <div class="card h-100 border-info">
+                        <div class="card h-100 step-card">
                             <div class="card-body">
-                                <h5 class="card-title"><span class="badge bg-success me-2">1</span>Tell us your state</h5>
+                                <div class="step-num" aria-hidden="true">1</div>
+                                <h5 class="card-title">Tell us your state</h5>
                                 <p class="card-text">Medicaid is run by states and goes by many names&mdash;Medi-Cal (California), Apple Health (Washington), MassHealth (Massachusetts), TennCare (Tennessee), and more. Rules differ a lot between states.</p>
                             </div>
                         </div>
                     </div>
                     <div class="col-md-4">
-                        <div class="card h-100 border-info">
+                        <div class="card h-100 step-card">
                             <div class="card-body">
-                                <h5 class="card-title"><span class="badge bg-success me-2">2</span>Answer a few questions</h5>
+                                <div class="step-num" aria-hidden="true">2</div>
+                                <h5 class="card-title">Answer a few questions</h5>
                                 <p class="card-text">The assistant only asks what it actually needs: things like your age, household size, monthly income, and whether you're pregnant, disabled, or applying for long-term care.</p>
                             </div>
                         </div>
                     </div>
                     <div class="col-md-4">
-                        <div class="card h-100 border-info">
+                        <div class="card h-100 step-card">
                             <div class="card-body">
-                                <h5 class="card-title"><span class="badge bg-success me-2">3</span>Get an estimate + next steps</h5>
+                                <div class="step-num" aria-hidden="true">3</div>
+                                <h5 class="card-title">Get an estimate + next steps</h5>
                                 <p class="card-text">You'll get an experimental, best-guess estimate for today's rules and the 2026 work-requirement rules, alternatives if you don't qualify, and your state's contact info to confirm and apply.</p>
                             </div>
                         </div>
                     </div>
                 </div>
 
-                <div class="card mt-4 border-warning">
+                <div class="card mt-4 border-warning callout-card">
                     <div class="card-body">
-                        <h5 class="card-title"><span class="text-warning me-2">&#9888;</span> Experimental: An Estimate, Not a Determination</h5>
+                        <h5 class="card-title"><span class="text-warning me-2" aria-hidden="true">&#9888;</span>Experimental: An Estimate, Not a Determination</h5>
                         <p class="card-text mb-0">This checker is an <strong>experimental feature</strong>&mdash;the AI can make mistakes, and Medicaid rules change often. Only your state Medicaid agency can officially determine eligibility. Our check is a free, fast way to understand where you likely stand and what to gather before you apply&mdash;always confirm with your state.</p>
                     </div>
                 </div>
@@ -201,10 +209,10 @@
             <div class="col-lg-8 mx-auto">
                 <h2 class="text-center mb-4">The 2026 Work Requirements</h2>
 
-                <div class="card mb-4 border-warning">
+                <div class="card mb-4 border-warning callout-card">
                     <div class="card-body">
-                        <h5 class="card-title"><span class="text-warning me-2">&#9888;</span> New Federal Rules</h5>
-                        <p class="card-text">New federal rules require many adults (ages 19&ndash;64) to complete at least <strong>80 hours per month</strong> of qualifying activities to keep Medicaid coverage, phasing in by December 31, 2026 (some states may start earlier or get extensions).</p>
+                        <h5 class="card-title"><span class="text-warning me-2" aria-hidden="true">&#9888;</span>New Federal Rules</h5>
+                        <p class="card-text mb-0">New federal rules require many adults (ages 19&ndash;64) to complete at least <strong>80 hours per month</strong> of qualifying activities to keep Medicaid coverage, phasing in by December 31, 2026 (some states may start earlier or get extensions).</p>
                     </div>
                 </div>
 
@@ -212,8 +220,8 @@
                     <div class="col-md-6">
                         <div class="card h-100">
                             <div class="card-body">
-                                <h6 class="card-subtitle mb-2 text-info">What Counts Toward 80 Hours</h6>
-                                <ul class="mb-0">
+                                <h6 class="card-subtitle mb-3 wr-label">What Counts Toward 80 Hours</h6>
+                                <ul class="check-list mb-0">
                                     <li>Work (including self-employment)</li>
                                     <li>School or job training</li>
                                     <li>Volunteering / community service</li>
@@ -225,8 +233,8 @@
                     <div class="col-md-6">
                         <div class="card h-100">
                             <div class="card-body">
-                                <h6 class="card-subtitle mb-2 text-info">Groups Often Exempt</h6>
-                                <ul class="mb-0">
+                                <h6 class="card-subtitle mb-3 wr-label">Groups Often Exempt</h6>
+                                <ul class="check-list mb-0">
                                     <li>Pregnant people</li>
                                     <li>People with disabilities or who are medically frail</li>
                                     <li>People on Medicare</li>
@@ -237,9 +245,9 @@
                     </div>
                 </div>
 
-                <div class="card mt-4 border-info">
+                <div class="card mt-4 callout-card callout-tip">
                     <div class="card-body">
-                        <h5 class="card-title"><span class="text-info me-2">&#128161;</span> Keep Records Now</h5>
+                        <h5 class="card-title"><span class="me-2" aria-hidden="true">&#128161;</span>Keep Records Now</h5>
                         <p class="card-text mb-0">States may look back up to 3 months when checking hours. Keep pay stubs, class schedules, and volunteer logs&mdash;it's unfair paperwork, but good records are the best defense against wrongly losing coverage. If you're short of 80 hours, adding a class or regular volunteering can close the gap.</p>
                     </div>
                 </div>
@@ -295,12 +303,14 @@
                     </div>
                 </div>
 
-                <div class="card mt-4 border-warning">
+                <div class="card mt-4 border-warning callout-card">
                     <div class="card-body">
                         <h5 class="card-title">Denied or Terminated? You Can Appeal.</h5>
                         <p class="card-text">If your state denies your Medicaid application or ends your coverage&mdash;including over work-requirement paperwork&mdash;you have the right to a fair hearing, and deadlines matter. Our free tools can help you fight back, and your state's legal aid resources can help too.</p>
-                        <a href="{% url 'scan' %}" class="btn btn-green">Generate an Appeal</a>
-                        <a href="{% url 'chat' %}" class="btn btn-outline-green">Ask the AI Assistant</a>
+                        <div class="d-flex flex-wrap gap-2 mt-1">
+                            <a href="{% url 'scan' %}" class="btn btn-green">Generate an Appeal</a>
+                            <a href="{% url 'chat' %}" class="btn btn-outline-green">Ask the AI Assistant</a>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -319,19 +329,19 @@
                 <div class="row g-4">
                     <div class="col-md-6">
                         <div class="card h-100">
-                            <div class="card-body">
+                            <div class="card-body d-flex flex-column">
                                 <h5 class="card-title">Your State's Resources</h5>
                                 <p class="card-text">Find your state Medicaid agency, consumer assistance programs, and legal aid contacts&mdash;the assistant can also look these up for you in chat.</p>
-                                <a href="{% url 'state_help_index' %}" class="btn btn-outline-green">Find Your State's Resources</a>
+                                <a href="{% url 'state_help_index' %}" class="btn btn-outline-green mt-auto align-self-start">Find Your State's Resources</a>
                             </div>
                         </div>
                     </div>
                     <div class="col-md-6">
                         <div class="card h-100">
-                            <div class="card-body">
+                            <div class="card-body d-flex flex-column">
                                 <h5 class="card-title">Apply Through Healthcare.gov</h5>
                                 <p class="card-text">The Marketplace application automatically checks your Medicaid and CHIP eligibility and forwards your info to your state&mdash;one application covers both.</p>
-                                <a href="https://www.healthcare.gov/medicaid-chip/" target="_blank" rel="noopener noreferrer" class="btn btn-outline-green">Learn More at Healthcare.gov</a>
+                                <a href="https://www.healthcare.gov/medicaid-chip/" target="_blank" rel="noopener noreferrer" class="btn btn-outline-green mt-auto align-self-start">Learn More at Healthcare.gov</a>
                             </div>
                         </div>
                     </div>
@@ -346,12 +356,12 @@
     <div class="container">
         <div class="row">
             <div class="col-lg-8 mx-auto text-center">
-                <div class="mb-2">
-                    <span class="badge experimental-badge">&#9888;&#65039; EXPERIMENTAL FEATURE</span>
+                <div class="mb-3">
+                    <span class="badge experimental-badge"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" focusable="false"><path d="M8.982 1.566a1.13 1.13 0 0 0-1.96 0L.165 13.233c-.457.778.091 1.767.98 1.767h13.713c.889 0 1.438-.99.98-1.767L8.982 1.566zM8 5c.535 0 .954.462.9.995l-.35 3.507a.552.552 0 0 1-1.1 0L7.1 5.995A.905.905 0 0 1 8 5zm.002 6a1 1 0 1 1 0 2 1 1 0 0 1 0-2z"/></svg>EXPERIMENTAL FEATURE</span>
                 </div>
                 <h2 class="mb-3">Find Out Where You Stand&mdash;In Minutes</h2>
                 <p class="lead mb-4">Free, no account needed. Get an experimental Medicaid and Medicare eligibility estimate, plus a plan for what to do next&mdash;then confirm everything with your state.</p>
-                <div class="d-flex justify-content-center gap-3 flex-wrap">
+                <div class="d-flex justify-content-center align-items-center gap-3 flex-wrap">
                     <a href="{% url 'chat' %}" class="btn btn-green btn-lg">Check My Eligibility (Experimental)</a>
                     <a href="{% url 'medicaid-faq' %}" class="btn btn-outline-green btn-lg">Work Requirements FAQ</a>
                     <a href="{% url 'state_help_index' %}" class="btn btn-outline-secondary btn-lg">State Resources</a>
@@ -379,55 +389,228 @@
 
 {% block extra_style %}
 <style>
+    /* ============================================================
+       Page palette (matches the site theme):
+       brand green #a5c422 / #7B920A, experimental amber #ffc107,
+       ink #212529, body gray #575757
+       ============================================================ */
+
+    /* ---------- Hero ---------- */
     #medicaid-eligibility-hero .hero-inner {
-        backdrop-filter: blur(3px);
-        padding: 2rem;
-        border-radius: 14px;
+        background: rgba(24, 18, 48, 0.30);
+        backdrop-filter: blur(4px);
+        -webkit-backdrop-filter: blur(4px);
+        padding: 2.25rem 2.5rem;
+        border-radius: 16px;
+        border: 1px solid rgba(255, 255, 255, 0.14);
     }
 
+    #medicaid-eligibility-hero .hero-headline {
+        line-height: 1.12;
+    }
+
+    #medicaid-eligibility-hero .hero-subcopy {
+        max-width: 46rem;
+    }
+
+    /* Let "Work Requirements FAQ" fit on one line next to "How It Works" */
+    #medicaid-eligibility-hero .hero-cta-secondary a {
+        max-width: 300px;
+    }
+
+    /* ---------- Experimental badge (hero + final CTA) ---------- */
     .experimental-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5em;
         background-color: #ffc107;
-        color: #212529;
-        font-size: 0.95rem;
+        color: #332701;
+        font-size: 0.8rem;
         font-weight: 700;
-        letter-spacing: 0.06em;
-        padding: 0.5em 0.9em;
-        border: 2px solid #212529;
-        border-radius: 6px;
+        letter-spacing: 0.09em;
+        line-height: 1;
+        padding: 0.55em 1.1em;
+        border: 1px solid rgba(90, 64, 0, 0.35);
+        border-radius: 999px;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
         text-transform: uppercase;
     }
 
+    .experimental-badge svg {
+        flex: 0 0 auto;
+        margin-top: -1px;
+    }
+
+    /* ---------- Experimental notice banner ---------- */
     .experimental-banner {
-        border: 2px solid #ffc107;
-        border-left-width: 8px;
-        background-color: #fff8e1;
-        color: #212529;
+        display: flex;
+        align-items: flex-start;
+        gap: 1rem;
+        background: linear-gradient(180deg, #fffdf5 0%, #fff8e6 100%);
+        border: 1px solid #f0dda2;
+        border-left: 4px solid #ffc107;
+        border-radius: 10px;
+        padding: 1.35rem 1.5rem;
+        box-shadow: 0 2px 10px rgba(120, 90, 0, 0.06);
     }
 
+    .experimental-banner .banner-icon {
+        flex: 0 0 auto;
+        width: 2.4rem;
+        height: 2.4rem;
+        border-radius: 50%;
+        background: #ffc107;
+        color: #332701;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-top: 0.1rem;
+    }
+
+    /* Beat custom.css `.alert-warning h4` mustard and main.css h2 sizing */
     .experimental-banner .alert-heading {
+        color: #212529;
+        font-size: 1.2rem;
         font-weight: 700;
+        letter-spacing: 0;
+        line-height: 1.35;
+        padding-bottom: 0;
+        margin-bottom: 0.4rem;
     }
 
+    /* Beat main.css `p { color: #757575 }` for contrast on the cream panel */
+    .experimental-banner p {
+        color: #45412f;
+        font-size: 0.95rem;
+        line-height: 1.6;
+        margin-bottom: 0;
+    }
+
+    .experimental-banner .alert-link {
+        color: #6a7f0a;
+        font-weight: 600;
+        text-decoration: underline;
+    }
+
+    /* ---------- Typography rhythm ---------- */
+    #main-content h2 {
+        line-height: 1.25;
+    }
+
+    /* ---------- Cards ---------- */
+    #main-content .card {
+        border: 1px solid #e8e8e8;
+        border-radius: 10px;
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.05);
+    }
+
+    #main-content .card-title {
+        color: #272727;
+        font-weight: 600;
+    }
+
+    /* Numbered step cards */
+    .step-num {
+        width: 2.3rem;
+        height: 2.3rem;
+        border-radius: 50%;
+        background: #7B920A;
+        color: #ffffff;
+        font-weight: 700;
+        font-size: 1.05rem;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-bottom: 0.85rem;
+        box-shadow: 0 2px 6px rgba(123, 146, 10, 0.35);
+    }
+
+    .step-card .card-body {
+        padding: 1.5rem 1.4rem;
+    }
+
+    .step-card .card-title {
+        font-size: 1.1rem;
+        margin-bottom: 0.5rem;
+    }
+
+    @media (min-width: 768px) {
+        /* keep step bodies aligned when titles wrap to two lines */
+        .step-card .card-title {
+            min-height: 3.05em;
+        }
+    }
+
+    /* Callout cards: amber = experimental/warning, green = tip */
+    .callout-card .card-body {
+        padding: 1.35rem 1.5rem;
+    }
+
+    .card.border-warning {
+        border-color: #f0dda2 !important;
+        border-left: 4px solid #ffc107 !important;
+        background: #fffdf7;
+    }
+
+    .card.callout-tip {
+        border-color: #dfe8bc !important;
+        border-left: 4px solid #a5c422 !important;
+        background: #fbfdf2;
+    }
+
+    /* ---------- "What you'll want handy" list ---------- */
     .list-group-item {
         border-left: 4px solid #a5c422;
+        padding: 1rem 1.25rem;
     }
 
     .list-group-item:hover {
         background-color: rgba(165, 196, 34, 0.05);
     }
 
-    .card.border-warning {
-        border-left: 4px solid #ffc107 !important;
+    .list-group-item h5 {
+        font-size: 1.05rem;
+        font-weight: 600;
+        color: #272727;
     }
 
-    .card.border-info {
-        border-left: 4px solid #17a2b8 !important;
+    /* ---------- Work requirements ---------- */
+    .wr-label {
+        color: #6a7f0a;
+        font-size: 0.8rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
     }
 
-    #final-cta {
-        background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+    .check-list {
+        list-style: none;
+        padding-left: 0;
+        margin-bottom: 0;
     }
 
+    .check-list li {
+        position: relative;
+        padding-left: 1.5rem;
+        margin-bottom: 0.5rem;
+        color: #575757;
+        line-height: 1.5;
+    }
+
+    .check-list li:last-child {
+        margin-bottom: 0;
+    }
+
+    .check-list li::before {
+        content: "\2713";
+        position: absolute;
+        left: 0;
+        top: 0;
+        color: #7B920A;
+        font-weight: 700;
+    }
+
+    /* ---------- Buttons ---------- */
     .btn-green {
         background: linear-gradient(to right, #ADD100 0%, #7B920A 51%, #ADD100 100%);
         background-size: 200% auto;
@@ -452,18 +635,82 @@
         color: white;
     }
 
+    /* Restore a real size hierarchy: custom.css pins .btn-green to 1rem,
+       which made the primary CTA smaller than its outline neighbors. */
+    .btn-green.btn-lg {
+        font-size: 1.15rem;
+        font-weight: 700;
+        padding: 0.8rem 1.5rem;
+    }
+
+    .btn-outline-green.btn-lg,
+    .btn-outline-secondary.btn-lg {
+        font-size: 1.05rem;
+        padding: 0.75rem 1.2rem;
+    }
+
+    .btn:focus-visible {
+        outline: 3px solid rgba(123, 146, 10, 0.5);
+        outline-offset: 2px;
+    }
+
+    /* ---------- Final CTA ---------- */
+    #final-cta {
+        background: linear-gradient(135deg, #f8f9fa 0%, #eef1e0 100%);
+    }
+
+    #final-cta .lead {
+        max-width: 44rem;
+        margin-left: auto;
+        margin-right: auto;
+    }
+
     section {
         scroll-margin-top: 80px;
     }
 
+    /* ---------- Mobile ---------- */
     @media (max-width: 768px) {
         #medicaid-eligibility-hero .hero-inner {
-            padding: 1.5rem;
+            padding: 1.5rem 1.15rem;
         }
 
-        .btn-lg {
-            padding: 0.5rem 1rem;
+        .experimental-badge {
+            font-size: 0.72rem;
+        }
+
+        /* stacked hero buttons get one consistent width */
+        #medicaid-eligibility-hero .hero-cta-secondary a {
+            flex: 1 1 100%;
+            max-width: 320px;
+        }
+
+        .experimental-banner {
+            gap: 0.75rem;
+            padding: 1.1rem 1.15rem;
+        }
+
+        .experimental-banner .banner-icon {
+            width: 2rem;
+            height: 2rem;
+        }
+
+        .experimental-banner .alert-heading {
+            font-size: 1.1rem;
+        }
+
+        .btn-green.btn-lg,
+        .btn-outline-green.btn-lg,
+        .btn-outline-secondary.btn-lg {
             font-size: 1rem;
+            padding: 0.6rem 1.1rem;
+        }
+    }
+
+    @media (max-width: 576px) {
+        #final-cta .d-flex .btn {
+            flex: 1 1 100%;
+            max-width: 340px;
         }
     }
 </style>
