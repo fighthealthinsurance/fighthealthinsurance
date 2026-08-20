@@ -256,11 +256,6 @@ urlpatterns: List[Union[URLPattern, URLResolver]] = [
         name="turning-26",
     ),
     path(
-        "medicaid-eligibility",
-        views.MedicaidEligibilityView.as_view(),
-        name="medicaid-eligibility",
-    ),
-    path(
         "as-seen-on-pbs",
         views.PBSNewsHourView.as_view(),
         name="pbs-newshour",
@@ -502,6 +497,18 @@ urlpatterns += [
 urlpatterns += staticfiles_urlpatterns()
 
 # Serve static files in development
+if getattr(settings, "MEDICAID_ELIGIBILITY_PAGE_ENABLED", False):
+    # Experimental Medicaid eligibility landing page -- staged behind a
+    # settings flag (see MEDICAID_ELIGIBILITY_PAGE_ENABLED) so the URL stays
+    # unrouted in production while the page is iterated on.
+    urlpatterns.append(
+        path(
+            "medicaid-eligibility",
+            views.MedicaidEligibilityView.as_view(),
+            name="medicaid-eligibility",
+        )
+    )
+
 if settings.DEBUG:
     # Serve files from the app static dir in development
     if settings.STATIC_URL:

@@ -106,6 +106,13 @@ class Base(Configuration):
     NEW_PROFESSIONAL_SIGNUP_ENABLED = (
         os.getenv("NEW_PROFESSIONAL_SIGNUP_ENABLED", "false").lower() == "true"
     )
+    # Experimental Medicaid eligibility landing page. Off by default: while
+    # the page is still cooking its URL isn't routed (and isn't in the
+    # sitemap), so it stays invisible in production. Dev/Test enable it so
+    # the page and its tests stay exercised.
+    MEDICAID_ELIGIBILITY_PAGE_ENABLED = (
+        os.getenv("MEDICAID_ELIGIBILITY_PAGE_ENABLED", "false").lower() == "true"
+    )
 
     # --- Temporal (durable workflow execution) ---
     # Off by default: fax sending stays on the Ray fax actor until
@@ -618,6 +625,9 @@ class Dev(Base):
     # Keep the (production-closed) professional signup flow testable locally
     # and in the Test* configurations that subclass Dev.
     NEW_PROFESSIONAL_SIGNUP_ENABLED = True
+    # Keep the (production-hidden) experimental Medicaid eligibility landing
+    # page routable locally and in the Test* configurations.
+    MEDICAID_ELIGIBILITY_PAGE_ENABLED = True
     CSRF_TRUSTED_ORIGINS = [
         "https://fightpaperwork.com",
         "https://localhost:3000",

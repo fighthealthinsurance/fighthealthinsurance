@@ -17,6 +17,7 @@ from typing import Any
 
 from django.contrib.sitemaps import Sitemap
 from django.contrib.sites.requests import RequestSite
+from django.conf import settings
 from django.contrib.staticfiles.storage import staticfiles_storage
 from django.http import HttpRequest, HttpResponse
 from django.urls import reverse
@@ -32,14 +33,13 @@ class StaticViewSitemap(Sitemap):
 
     def items(self) -> list[str]:
         """Return list of URL names for static pages."""
-        return [
+        items = [
             "root",
             "about",
             "pbs-newshour",
             "media-references",
             "preparing-2026",
             "turning-26",
-            "medicaid-eligibility",
             "other-resources",
             "faq",
             "medicaid-faq",
@@ -51,6 +51,11 @@ class StaticViewSitemap(Sitemap):
             "blog",
             "microsite_directory",
         ]
+        # The experimental Medicaid eligibility page is only routed (and only
+        # discoverable) when its staging flag is on; see urls.py.
+        if getattr(settings, "MEDICAID_ELIGIBILITY_PAGE_ENABLED", False):
+            items.append("medicaid-eligibility")
+        return items
 
     def location(self, item: str) -> str:
         """Return the URL for a given item."""
