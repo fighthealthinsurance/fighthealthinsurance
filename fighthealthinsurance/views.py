@@ -58,6 +58,7 @@ from fighthealthinsurance.models import (
 from fighthealthinsurance.type_utils import User
 from fighthealthinsurance.utils import (
     is_valid_denial_id,
+    medicaid_eligibility_page_enabled,
     notify_interested_professional,
     send_fallback_email,
     should_notify_returning_lead,
@@ -528,22 +529,36 @@ class Turning26View(StaticIshView):
 class MedicaidEligibilityView(StaticIshView):
     """Landing page for the AI-assisted Medicaid/Medicare eligibility check.
 
-    Staged behind MEDICAID_ELIGIBILITY_PAGE_ENABLED, checked per request
-    (the NEW_PROFESSIONAL_SIGNUP_ENABLED pattern): the route always exists so
-    reverse() and templates never break, but the page 404s in production
-    until the flag is flipped -- and both states are testable with
-    override_settings. cache_page only stores 200s, so a 404 here is never
-    served from the page cache after the flag turns on.
+    Staged behind MEDICAID_ELIGIBILITY_PAGE_ENABLED: the route always exists
+    so reverse() and templates never break, but the page 404s until the flag
+    is flipped -- and both states are testable with override_settings.
+
+    The check wraps ``as_view`` OUTSIDE StaticIshView's cache_page, rather
+    than living in ``get``, for two reasons: Django serves a cached response
+    before the view ever runs, so an in-view check could not switch the page
+    back OFF once a 200 had been cached (the direction that matters for a
+    staged experimental page); and ``View.options`` answers 200 without
+    dispatching to ``get``, which left the route enumerable when disabled.
     """
 
     template_name = "medicaid_eligibility.html"
 
-    def get(self, request, *args, **kwargs):
-        if not getattr(settings, "MEDICAID_ELIGIBILITY_PAGE_ENABLED", False):
-            from django.http import Http404
+    @classonlymethod
+    def as_view(  # type: ignore[override]
+        cls, **initkwargs: typing.Any
+    ) -> typing.Callable[..., HttpResponseBase]:
+        cached_view = super().as_view(**initkwargs)
 
-            raise Http404("This page is not available yet.")
-        return super().get(request, *args, **kwargs)
+        def view(
+            request: HttpRequest, *args: typing.Any, **kwargs: typing.Any
+        ) -> HttpResponseBase:
+            if not medicaid_eligibility_page_enabled():
+                from django.http import Http404
+
+                raise Http404("This page is not available yet.")
+            return cached_view(request, *args, **kwargs)
+
+        return view
 
 
 class PBSNewsHourView(StaticIshView):

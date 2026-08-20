@@ -47,8 +47,10 @@ class TestMedicaidEligibilityLandingPage(TestCase):
             "This eligibility check is an experimental feature", self.content
         )
 
-    def test_page_ctas_are_labeled_experimental(self):
+    def test_hero_cta_is_labeled_experimental(self):
         self.assertIn("Try the Experimental Eligibility Check", self.content)
+
+    def test_final_cta_is_labeled_experimental(self):
         self.assertIn("Check My Eligibility (Experimental)", self.content)
 
     def test_page_disclaimer_flags_experimental(self):
@@ -67,10 +69,22 @@ class TestMedicaidEligibilityPageStaging(TestCase):
         response = Client().get(reverse("medicaid-eligibility"))
         self.assertEqual(response.status_code, 404)
 
+    @override_settings(MEDICAID_ELIGIBILITY_PAGE_ENABLED=True)
     def test_page_is_in_the_static_sitemap_when_enabled(self):
+        # Pin the precondition the name states rather than leaning on the
+        # ambient Dev/Test default, which will change when the flag is
+        # promoted or retired.
         from fighthealthinsurance.sitemap import StaticViewSitemap
 
         self.assertIn("medicaid-eligibility", StaticViewSitemap().items())
+
+    @override_settings(MEDICAID_ELIGIBILITY_PAGE_ENABLED=False)
+    def test_options_does_not_reveal_the_route_when_disabled(self):
+        # Review regression: the flag lived in get(), but View.options()
+        # answers 200 without dispatching there, leaving the staged route
+        # enumerable while it was supposed to be invisible.
+        response = Client().options(reverse("medicaid-eligibility"))
+        self.assertEqual(response.status_code, 404)
 
     @override_settings(MEDICAID_ELIGIBILITY_PAGE_ENABLED=False)
     def test_page_is_hidden_from_the_sitemap_when_disabled(self):

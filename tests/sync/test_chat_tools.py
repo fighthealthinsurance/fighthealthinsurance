@@ -501,6 +501,31 @@ class TestMedicaidEligibilityTool(TestCase):
 
         self.assertIn("two or three at a time", info)
 
+    def test_build_eligibility_info_reports_settled_verdict_while_asking(self):
+        """A determination already reached isn't withheld behind a question."""
+        info = self.tool._build_eligibility_info(
+            eligible_2025=True,
+            eligible_2026=False,
+            medicare=True,
+            alternatives=[],
+            missing=["Do you have ALS?"],
+        )
+
+        self.assertIn("already look eligible", info)
+        self.assertIn("medicare", info.lower())
+
+    def test_build_eligibility_info_holds_alternatives_until_verdict(self):
+        """Denial-flavored next steps don't surface mid-interview."""
+        info = self.tool._build_eligibility_info(
+            eligible_2025=True,
+            eligible_2026=False,
+            medicare=False,
+            alternatives=["If denied, you can appeal; gather documentation."],
+            missing=["Do you have ALS?"],
+        )
+
+        self.assertNotIn("If denied", info)
+
     def test_build_eligibility_info_lists_alternatives_not_python_repr(self):
         """Alternatives render as a readable list, not a list repr."""
         info = self.tool._build_eligibility_info(

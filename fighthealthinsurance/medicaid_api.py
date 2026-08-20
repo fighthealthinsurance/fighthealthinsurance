@@ -1,10 +1,12 @@
 import difflib
 import json
 import re
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import pandas as pd
+from loguru import logger
 
 # Look for data/ next to the repo root
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
@@ -96,7 +98,21 @@ _STATE_MAP = {
     "west virginia": "wv",
     "wisconsin": "wi",
     "wyoming": "wy",
+    # US territories run Medicaid under capped block grants with their own
+    # rules. They are recognized here so a resident's answer parses instead of
+    # re-asking "what state do you live in?" forever; is_eligible then routes
+    # them to their local agency rather than guessing with state rules.
+    "puerto rico": "pr",
+    "guam": "gu",
+    "us virgin islands": "vi",
+    "u.s. virgin islands": "vi",
+    "virgin islands": "vi",
+    "american samoa": "as",
+    "northern mariana islands": "mp",
 }
+
+# Territory codes, kept out of the 50-state policy sets above.
+_TERRITORY_CODES = frozenset({"pr", "gu", "vi", "as", "mp"})
 
 # Helpful aliases/variants -> canonical full name
 _ALIASES = {
@@ -255,13 +271,102 @@ _Q_LIVING_SITUATION = (
     "Where are you living now (home, assisted living, rehab, nursing home)?"
 )
 _Q_SSDI_MONTHS = "How many months have you been receiving SSDI?"
+_Q_ESRD = "Are you in end stage renal failure?"
+_Q_ALS = "Do you have ALS?"
 
 # String truthiness for LLM-supplied "booleans": tool payloads are raw LLM
 # JSON, which sometimes carries "false"/"no" instead of JSON booleans -- and
-# bool("false") is True. Unknown strings read as unanswered (re-ask) rather
-# than guessed.
-_TRUE_STRINGS = frozenset({"true", "yes", "y", "1", "on"})
-_FALSE_STRINGS = frozenset({"false", "no", "n", "0", "off", ""})
+# bool("false") is True. The vocabulary covers how people actually answer in
+# chat ("nope", "single") because an unrecognized string reads as unanswered,
+# and an unanswered required field re-asks the same question forever. An
+# empty string is explicitly NOT false: it is the most likely "I don't have
+# this value" placeholder, so it must re-ask rather than record a "no".
+_TRUE_STRINGS = frozenset(
+    {
+        "true",
+        "yes",
+        "y",
+        "1",
+        "on",
+        "t",
+        "yeah",
+        "yep",
+        "yup",
+        "correct",
+        "married",
+        "i am",
+        "i do",
+    }
+)
+_FALSE_STRINGS = frozenset(
+    {
+        "false",
+        "no",
+        "n",
+        "0",
+        "off",
+        "f",
+        "nope",
+        "nah",
+        "single",
+        "unmarried",
+        "not married",
+        "none",
+        "never",
+        "i am not",
+        "i'm not",
+    }
+)
+
+# Word forms for the small counts people spell out ("three people").
+_WORD_NUMBERS = {
+    "zero": 0,
+    "none": 0,
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+    "ten": 10,
+    "eleven": 11,
+    "twelve": 12,
+}
+
+
+def _parse_numeric(value: Any) -> Optional[float]:
+    """Best-effort number out of an LLM-supplied value.
+
+    Chat answers arrive as "$1,200", "1200/month", "about 1200", or "three",
+    and a bare float() on those raises -- which the callers turn into None,
+    i.e. "unanswered", so the same question is asked again every turn. Strip
+    the currency/units decoration instead. Returns None only when there is
+    genuinely no number to find.
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if not isinstance(value, str):
+        return None
+    text = value.strip().lower()
+    if not text:
+        return None
+    if text in _WORD_NUMBERS:
+        return float(_WORD_NUMBERS[text])
+    # Keep the first number-like run, dropping $ , and any trailing units.
+    match = re.search(r"-?\d[\d,]*(?:\.\d+)?", text)
+    if not match:
+        return None
+    try:
+        return float(match.group(0).replace(",", ""))
+    except ValueError:
+        return None
 
 
 def _clean_token(s: str) -> str:
@@ -420,7 +525,7 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
             # LLM payloads sometimes carry "false"/"no" string booleans;
             # bool("false") is True, which flipped verdicts. See
             # _TRUE_STRINGS/_FALSE_STRINGS.
-            s = v.strip().lower()
+            s = v.strip().lower().rstrip(".!").strip()
             if s in _TRUE_STRINGS:
                 return True
             if s in _FALSE_STRINGS:
@@ -429,18 +534,11 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
         return bool(v)
 
     def get_int(name: str) -> Optional[int]:
-        v = kwargs.get(name, None)
-        try:
-            return int(v) if v is not None else None
-        except Exception:
-            return None
+        parsed = _parse_numeric(kwargs.get(name, None))
+        return int(parsed) if parsed is not None else None
 
     def get_float(name: str) -> Optional[float]:
-        v = kwargs.get(name, None)
-        try:
-            return float(v) if v is not None else None
-        except Exception:
-            return None
+        return _parse_numeric(kwargs.get(name, None))
 
     def get_seq_of_floats(name: str) -> Optional[List[float]]:
         v = kwargs.get(name, None)
@@ -561,6 +659,16 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
         )
 
     # ---- prioritize missing info for stepwise questioning ----
+    if state in _TERRITORY_CODES:
+        # Territories run Medicaid under capped block grants with their own
+        # income rules, so the 50-state heuristics below don't apply. Say so
+        # and route to the local agency rather than guessing (or re-asking
+        # for a state the resident has already correctly given).
+        alts.append(
+            "Medicaid in US territories follows different rules than the states"
+            "—contact your territory's Medicaid agency for eligibility limits."
+        )
+        return _result()
     if not state:
         missing.append("What state do you live in?")
     if age is None:
@@ -580,9 +688,10 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
             "About how much is your household's monthly income before taxes?"
         )
 
-    # https://en.wikipedia.org/wiki/Lina_Medina :/
+    # https://en.wikipedia.org/wiki/Lina_Medina :/ -- and at the other end, a
+    # 95-year-old's determination should not sit blocked on this either.
     if age is not None and pregnant is None:
-        if age > 4:
+        if 4 < age <= 60:
             missing.append("Are you currently pregnant?")
         else:
             # Don't stall the determination on a question we'd never ask.
@@ -594,22 +703,38 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
         missing.append(
             "Are you receiving SSDI or otherwise considered disabled for benefits?"
         )
-    if receiving_ssdi and ssdi_length is None:
+    # Only ask about SSDI duration when SSDI itself was answered yes. Someone
+    # who said "disabled, but not on SSDI" cannot answer it, and the prompt
+    # forbids the model from inventing a value -- so asking anyway stalls the
+    # conversation on a question with no possible answer.
+    if ssdi_answer and ssdi_length is None:
         # Needed at any age: 24+ months of SSDI is its own Medicare pathway,
         # so a 67-year-old on SSDI must be asked too, not just under-65s.
         missing.append(_Q_SSDI_MONTHS)
     if age is not None and age < 65:
-        if (ssdi_length is None or ssdi_length < 24) and esrd is None:
-            missing.append("Are you in end stage renal failure?")
-        if esrd is not None and als is None:
-            missing.append("Do you have ALS?")
+        # ESRD and ALS each open a Medicare pathway at any age, but they are
+        # rare enough that asking every healthy young adult about kidney
+        # failure burns two turns on answers that cannot change the result.
+        # Ask only when there's already a disability/Medicare signal, and
+        # ask both at once rather than serializing them across turns.
+        settled_by_ssdi = ssdi_length is not None and ssdi_length >= 24
+        if (bool(receiving_ssdi) or bool(on_medicare)) and not settled_by_ssdi:
+            if esrd is None:
+                missing.append(_Q_ESRD)
+            if als is None:
+                missing.append(_Q_ALS)
+        else:
+            if esrd is None:
+                esrd = False
+            if als is None:
+                als = False
 
     # ---- Medicare pathway: enrolled, 65+, 24+ months of SSDI, ESRD, or ALS ----
     is_65_plus = age is not None and age >= 65
     has_esrd_or_als = bool(esrd) or bool(als)
-    ssdi_24_months = (
-        bool(receiving_ssdi) and ssdi_length is not None and ssdi_length >= 24
-    )
+    # Gate on ssdi_answer: ssdi_length means *SSDI* months, so a duration
+    # supplied alongside a non-SSDI disability must not confer Medicare.
+    ssdi_24_months = bool(ssdi_answer) and ssdi_length is not None and ssdi_length >= 24
     medicare_pathway = (
         bool(on_medicare) or is_65_plus or has_esrd_or_als or ssdi_24_months
     )
@@ -652,10 +777,11 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
         # whose answer is essentially always "no".
         on_medicare = False
 
-    # LTC pathways
+    # LTC pathways. Note: living_situation is accepted as context but is not
+    # asked for and does not gate the determination -- applying_reason already
+    # carries the nursing-home vs home-care distinction, and gating on a value
+    # nothing reads cost every LTC applicant an extra round trip.
     if applying_reason in _LTC_REASONS:
-        if living_situation is None:
-            missing.append(_Q_LIVING_SITUATION)
         if assets_total is None:
             missing.append(_Q_ASSETS)
         if home_owner is None:
@@ -663,9 +789,14 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
         if home_owner and home_equity is None:
             missing.append(_Q_HOME_EQUITY)
     else:
-        if (age is not None and age >= 65) or (receiving_ssdi is True):
-            if assets_total is None:
-                missing.append(_Q_ASSETS)
+        # Only the ABD branch reads assets. Children and pregnancy are scored
+        # on income alone and are matched earlier in the category chain, so
+        # asking them for a number nothing consumes just costs a turn.
+        abd_candidate = (
+            (age is not None and age >= 65) or (receiving_ssdi is True)
+        ) and not ((age is not None and age < 19) or pregnant is True)
+        if abd_candidate and assets_total is None:
+            missing.append(_Q_ASSETS)
 
     # mypy isn't smart enough to infer the types with a loop :/
     if (
@@ -683,7 +814,11 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
 
     # ---- with core info present, evaluate categories ----
     pfpl_2025 = pct_fpl(monthly_income, household_size, 2025)
-    pfpl_2026 = pct_fpl(monthly_income, household_size, 2026)
+
+    # Set by the LTC branch below: that branch computes its own 2026 verdict
+    # (the LTC income cap differs by year), so the work overlay must not
+    # recompute it -- but only when the branch actually ran.
+    ltc_evaluated = False
 
     is_child = age < 19
     is_adult_magi = 19 <= age <= 64
@@ -718,7 +853,10 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
             asset_limit = ABD_ASSET_LIMIT_MARRIED if married else ABD_ASSET_LIMIT_SINGLE
             assets_ok = assets_total <= asset_limit
             income_ok_2025 = pfpl_2025 <= 100.0
-            eligible_2025 = assets_ok and (income_ok_2025 or medically_needy)
+            # NOTE: medically_needy is a spend-down PATHWAY, not an income
+            # waiver -- treating it as one reported six-figure earners as
+            # "probably eligible". It stays a suggestion below instead.
+            eligible_2025 = assets_ok and income_ok_2025
             if not eligible_2025 and is_adult_magi:
                 # Disability doesn't bar the ACA expansion pathway: adults
                 # 19-64 in expansion (or 100%-FPL-waiver) states qualify on
@@ -742,19 +880,12 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
                         "Ask about medically-needy/spend-down Medicaid in your state."
                     )
     elif applying_reason in _LTC_REASONS:
-        # For LTC we need some extra info
-        if assets_total is None:
-            missing.append(_Q_ASSETS)
-        if home_owner is None:
-            missing.append(_Q_HOME_OWNER)
-        if living_situation is None:
-            missing.append(_Q_LIVING_SITUATION)
-        if home_owner and home_equity is None:
-            missing.append(_Q_HOME_EQUITY)
+        ltc_evaluated = True
+        # The stepwise block above already queued these questions; here we
+        # only decide whether we can score yet.
         if (
             assets_total is None
             or home_owner is None
-            or living_situation is None
             or (home_owner and home_equity is None)
         ):
             # Keep any Medicare verdict and alternatives accumulated above --
@@ -767,9 +898,7 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
 
         asset_limit = ABD_ASSET_LIMIT_MARRIED if married else ABD_ASSET_LIMIT_SINGLE
 
-        # assets_total is narrowed by the early return above; zero assets
-        # passes the test.
-        assert assets_total is not None
+        # assets_total is narrowed by the guard above; zero assets passes.
         assets_ok = assets_total <= asset_limit
         home_ok = True
         if home_owner:
@@ -824,10 +953,6 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
                 alts.append(
                     "If you’re a caretaker relative, check caretaker-relative Medicaid rules in your state."
                 )
-    else:
-        alts.append("Consider ACA marketplace plans with subsidies.")
-        if kids and kids > 0:
-            alts.append("Children may qualify for CHIP.")
 
     # ---- 2026 eligibility = 2025 base eligibility + federal work overlay ----
     # Exemptions (if caller knows): pregnancy, SSDI/disabled, Medicare, ESRD/ALS,
@@ -840,14 +965,19 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
         or is_child
         or is_abd_age
         or has_esrd_or_als
+        or applying_reason in _LTC_REASONS
     )
     exempt = (work_req_exempt_2026 is True) or presumed_exempt
 
-    if applying_reason in _LTC_REASONS:
+    if ltc_evaluated:
         # The LTC branch computed eligible_2026 itself (the LTC income cap
         # differs by year, so income can pass 2026 while failing 2025), and
         # LTC applicants are medically frail -- never subject them to the
-        # work overlay or the not-eligible-2025 clamp.
+        # work overlay or the not-eligible-2025 clamp. Keyed on the branch
+        # actually running, NOT on applying_reason: a child or pregnant LTC
+        # applicant is scored by the child/pregnancy branch earlier in the
+        # chain, and keying on the reason skipped their exemption entirely,
+        # handing a 10-year-old a final "not eligible in 2026".
         pass
     elif not eligible_2025:
         # If not eligible in 2025, they won't be in 2026 either (even before work overlay).
@@ -858,13 +988,18 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
         else:
             # We need a 3-month lookback assessment for 80 hours per month
             def compute_monthly_sums() -> Optional[List[float]]:
-                # Derive monthly totals from weekly data if available
-                if weekly_hours and len(weekly_hours) >= 12:
-                    # Group into 3 months of 4 weeks each
-                    return [
-                        sum(weekly_hours[i * 4 : (i + 1) * 4])
-                        for i in range(REQUIRED_MONTHS)
-                    ]
+                # Derive monthly totals from weekly data if available.
+                # Scale by weeks-per-month rather than slicing into 4-week
+                # buckets: bucketing dropped any weeks past the 12th and
+                # undercounted real calendar months by ~8%, so the same
+                # person got opposite verdicts depending on whether the model
+                # sent a weekly list or a weekly average.
+                if weekly_hours:
+                    weeks = len(weekly_hours)
+                    if weeks >= 4:
+                        weeks_per_month = 13.0 / REQUIRED_MONTHS
+                        per_month = (sum(weekly_hours) / weeks) * weeks_per_month
+                        return [per_month] * REQUIRED_MONTHS
                 if total_hours_3mo is not None:
                     # Average monthly hours from total
                     avg_monthly = float(total_hours_3mo) / REQUIRED_MONTHS
@@ -928,49 +1063,60 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
     return _result()
 
 
-def get_medicaid_info(query: Dict[str, Any]) -> str:
+@lru_cache(maxsize=1)
+def _load_medicaid_resources() -> "Optional[pd.DataFrame]":
+    """Read the Medicaid resources CSV once per process.
+
+    The file is ~400 KB and only ever yields one state's row, so re-parsing
+    it on every lookup was pure overhead on a chat turn.
     """
-    query example: {"state":"StateName","topic":"","limit":5}
+    file_path = DATA_DIR / DEFAULT_FILE
+    if not file_path.exists():
+        matches = list(DATA_DIR.glob("*medicaid*.csv"))
+        if not matches:
+            return None
+        file_path = matches[0]
+    try:
+        return pd.read_csv(file_path)
+    except Exception:
+        logger.opt(exception=True).warning("Could not read Medicaid resources CSV")
+        return None
+
+
+def get_medicaid_info(query: Dict[str, Any]) -> Optional[str]:
+    """
+    query example: {"state":"StateName"}
     Returns a clean, professional format with key contact info.
+
+    Returns None when the state can't be determined, so the caller can ask
+    the user which state they're in. (Returning prose here would be
+    indistinguishable from data: the chat tool wraps any string it gets in
+    "Here's the official Medicaid information for X".)
     """
     raw_state = str(query.get("state") or query.get("State") or "").strip()
+    if not raw_state:
+        # Check before normalizing: _normalize_state("") raises, which would
+        # otherwise report a garbled state the user never actually gave.
+        return None
     try:
         state_short = _normalize_state(raw_state)
     except ValueError:
         # A state we can't recognize (typo, garbled LLM value) should read as
         # a re-ask, not an exception that kills the whole tool call -- same
         # hardening is_eligible has.
-        return (
-            f"We couldn't tell which state {raw_state!r} is. "
-            "Please ask the user to confirm their state and try again."
-        )
+        return None
     if state_short is None:
-        # No state (or a placeholder like "unknown"): without one we'd dump
-        # every state's contact info, which is useless in chat.
-        return (
-            "We need to know which state they're in to look up Medicaid "
-            "contact info. Please ask the user for their state and try again."
-        )
-    topic = (query.get("topic") or "").strip().lower()
-    limit = int(query.get("limit") or 5)
+        # A placeholder like "unknown"/"StateName": without a real state we'd
+        # dump every state's contact info, which is useless in chat.
+        return None
 
     # _normalize_state only returns 2-letter codes, every one of which is in
     # the shared reverse map (kept in sync with _STATE_MAP).
     state = _ABBR_TO_NAME[state_short]
 
-    # Pick the CSV
-    file_path = DATA_DIR / DEFAULT_FILE
-    if not file_path.exists():
-        matches = list(DATA_DIR.glob("*medicaid*.csv"))
-        if not matches:
-            return f"Could not find Medicaid data file."
-        file_path = matches[0]
-
-    # Read CSV
-    try:
-        df = pd.read_csv(file_path)
-    except Exception as e:
-        return f"Error reading data: {e}"
+    df = _load_medicaid_resources()
+    if df is None:
+        return None
 
     # Filter by state
     if state and "state" in df.columns:
@@ -988,7 +1134,6 @@ def get_medicaid_info(query: Dict[str, Any]) -> str:
         "agency_website",
     ]
     available_cols = [col for col in important_cols if col in df.columns]
-    misc_cols = [col for col in df.columns if col not in important_cols]
 
     if not available_cols:
         return f"Medicaid data found for {state}, but no contact information available."
@@ -1042,10 +1187,5 @@ def get_medicaid_info(query: Dict[str, Any]) -> str:
             ):
                 phone = str(row["helpline_contact"]).strip()
                 result.append(f"Phone: {phone}")
-        result.append("")
-        result.append("***MISC info (less important)***")
-        for col in misc_cols:
-            if col in row and row[col]:
-                result.append(row[col])
 
     return "\n".join(result)

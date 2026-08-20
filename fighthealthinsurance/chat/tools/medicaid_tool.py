@@ -172,12 +172,16 @@ class MedicaidInfoTool(BaseTool):
                 return cleaned_response, context
 
             else:
+                # get_medicaid_info returns None when it can't tell which
+                # state was meant -- ask, rather than guessing or reporting a
+                # successful lookup.
                 await self.send_status_message(
-                    "No Medicaid info found for the provided data."
+                    "Need the user's state before looking up Medicaid info."
                 )
                 return (
-                    "I couldn't find Medicaid information for the requested state. "
-                    "Please check the state name and try again.",
+                    "Ask the user which state they're in (or confirm it if "
+                    "they already said) so we can look up their state's "
+                    "Medicaid contact info.",
                     context,
                 )
 
@@ -411,6 +415,13 @@ class MedicaidEligibilityTool(BaseTool):
         Returns:
             Formatted information text
         """
+        # One shared description of the 2026 rules so the eligible and
+        # not-eligible wordings can't drift apart.
+        work_req_note = (
+            " (which add the federal 80-hours-per-month "
+            "work/community-engagement requirement)"
+        )
+
         parts: List[str] = [
             "We're helping figure out if someone is likely eligible for "
             "Medicaid using our EXPERIMENTAL eligibility checker. Be very "
@@ -427,41 +438,44 @@ class MedicaidEligibilityTool(BaseTool):
                 "time, in this order, rephrased naturally):\n"
                 f"{question_lines}"
             )
-        else:
+            # Report findings that are already settled. Withholding them
+            # until every question is answered meant a firm "yes, you look
+            # eligible" sat unsaid behind an unrelated follow-up. Only
+            # positives are reported here: a False at this stage means "not
+            # established yet", not "no".
             if eligible_2025:
                 parts.append(
-                    "Our data so far suggests they could be eligible for "
-                    "medicaid under the current (2025) rules."
+                    "Based on what we have so far they already look eligible "
+                    "for medicaid under the current (2025) rules -- you can "
+                    "share that, while noting the questions above are still "
+                    "needed to be sure."
                 )
-            else:
+            if medicare:
                 parts.append(
-                    "Our data so far suggests they may not be eligible for "
-                    "medicaid under the current (2025) rules."
+                    "Our data already suggests they may be eligible for medicare."
                 )
-
-            if eligible_2026:
+        else:
+            for label, is_eligible_for_year, note in (
+                ("current (2025)", eligible_2025, ""),
+                ("2026", eligible_2026, work_req_note),
+            ):
+                verdict = "could be" if is_eligible_for_year else "may not be"
                 parts.append(
-                    "Our data so far suggests they could be eligible for "
-                    "medicaid under the 2026 rules (which add the federal "
-                    "80-hours-per-month work/community-engagement "
-                    "requirement)."
-                )
-            else:
-                parts.append(
-                    "Our data so far suggests they may not be eligible for "
-                    "medicaid under the 2026 rules (which add the federal "
-                    "80-hours-per-month work/community-engagement "
-                    "requirement)."
+                    f"Our data so far suggests they {verdict} eligible for "
+                    f"medicaid under the {label} rules{note}."
                 )
 
             if medicare:
                 parts.append("Our data suggests they may be eligible for medicare.")
 
-        if len(alternatives) > 0:
-            alternative_lines = "\n".join(f"- {a}" for a in alternatives)
-            parts.append(
-                "Alternative programs and next steps worth mentioning:\n"
-                f"{alternative_lines}"
-            )
+            # Alternatives are next-steps for a finished determination (they
+            # include appeal-after-denial advice), so they'd be confusing
+            # mid-interview for someone who currently looks eligible.
+            if len(alternatives) > 0:
+                alternative_lines = "\n".join(f"- {a}" for a in alternatives)
+                parts.append(
+                    "Alternative programs and next steps worth mentioning:\n"
+                    f"{alternative_lines}"
+                )
 
         return "\n\n".join(parts)

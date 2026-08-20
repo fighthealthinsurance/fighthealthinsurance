@@ -116,18 +116,39 @@ class TestExpansionAdultFlow(SimpleTestCase):
         self.assertTrue(eligible_2025)
         self.assertTrue(eligible_2026)
 
-    def test_monthly_hours_average_matches_question_units(self):
+    def test_monthly_hours_below_threshold_is_not_eligible_2026(self):
         # Review regression: the tool asks for hours per MONTH but only a
-        # per-week kwarg existed, inviting a 4x unit error. 60/month fails
-        # the 80-hours rule; 90/month meets it.
+        # per-week kwarg existed, inviting a 4x unit error.
         _, eligible_2026, _, _, _ = is_eligible(
             **_answers(avg_monthly_qualifying_hours_last_3mo=60.0)
         )
         self.assertFalse(eligible_2026)
+
+    def test_monthly_hours_above_threshold_is_eligible_2026(self):
         _, eligible_2026, _, _, _ = is_eligible(
             **_answers(avg_monthly_qualifying_hours_last_3mo=90.0)
         )
         self.assertTrue(eligible_2026)
+
+    def test_weekly_hours_list_agrees_with_weekly_average(self):
+        # Review regression: the scalar path used a 13-week quarter while the
+        # weekly-list path bucketed 4-week months, so the same 19.5 hrs/week
+        # got opposite verdicts depending on which kwarg the model filled --
+        # and the user with detailed records got the harsher answer.
+        _, from_average, _, _, _ = is_eligible(
+            **_answers(avg_weekly_qualifying_hours_last_3mo=19.5)
+        )
+        _, from_list, _, _, _ = is_eligible(
+            **_answers(qualifying_hours_weekly_last_12=[19.5] * 12)
+        )
+        self.assertEqual(from_average, from_list)
+
+    def test_weekly_hours_list_does_not_drop_extra_weeks(self):
+        # Bucketing by index silently discarded anything past the 12th entry.
+        _, eligible_2026, _, _, _ = is_eligible(
+            **_answers(qualifying_hours_weekly_last_12=[0.0] * 4 + [10.0] * 12)
+        )
+        self.assertFalse(eligible_2026)
 
     def test_weekly_hours_use_thirteen_week_quarter(self):
         # Review regression: 4-weeks-per-month undercounted real months by
@@ -140,11 +161,10 @@ class TestExpansionAdultFlow(SimpleTestCase):
     def test_esrd_patient_exempt_from_work_requirement(self):
         # Review regression: ESRD/ALS (medically frail) were subjected to the
         # 2026 work-hours demand.
-        _, eligible_2026, medicare, _, missing = is_eligible(
+        _, eligible_2026, _, _, missing = is_eligible(
             **_answers(esrd=True, on_medicare=False, assets_total=500.0)
         )
         self.assertTrue(eligible_2026)
-        self.assertTrue(medicare)
         self.assertFalse(any("hours" in q for q in missing))
 
 
@@ -229,6 +249,80 @@ class TestQuestionFlow(SimpleTestCase):
             )
         )
         self.assertEqual(len([q for q in missing if "equity" in q]), 1)
+
+
+class TestLlmPayloadParsing(SimpleTestCase):
+    """Answers arrive as raw LLM JSON, so loose values must not stall the flow."""
+
+    def test_word_answer_to_married_question_is_understood(self):
+        # The question is literally "Are you married or single?", so "single"
+        # is the expected answer -- and an unrecognized string reads as
+        # unanswered, which re-asked the same question every turn forever.
+        _, _, _, _, missing = is_eligible(**_answers(married="single"))
+        self.assertFalse(any("married" in q for q in missing))
+
+    def test_empty_string_is_unanswered_not_no(self):
+        # "" is the likeliest "I don't have this value" placeholder; recording
+        # it as a definitive no silently routed a pregnant applicant down the
+        # able-bodied pathway with no question left to correct it.
+        _, _, _, _, missing = is_eligible(**_answers(pregnant=""))
+        self.assertTrue(any("pregnant" in q.lower() for q in missing))
+
+    def test_currency_formatted_income_is_parsed(self):
+        # "$1,200" raised in float(), became None, and re-asked forever.
+        _, _, _, _, missing = is_eligible(**_answers(monthly_income="$1,200"))
+        self.assertFalse(any("monthly income" in q for q in missing))
+
+    def test_spelled_out_household_size_is_parsed(self):
+        _, _, _, _, missing = is_eligible(**_answers(household_size="three"))
+        self.assertFalse(any("household size" in q for q in missing))
+
+    def test_territory_resident_is_not_asked_for_a_state_forever(self):
+        # Puerto Rico has Medicaid but never parsed as a state, so the flow
+        # re-asked a question the resident had already answered correctly.
+        _, _, _, alts, missing = is_eligible(state="Puerto Rico", age=30)
+        self.assertFalse(any("state do you live" in q for q in missing))
+        self.assertTrue(any("territor" in a.lower() for a in alts))
+
+
+class TestQuestionsThatCannotChangeTheAnswer(SimpleTestCase):
+    """Questions are turns of a real conversation; don't spend them for nothing."""
+
+    def test_disabled_non_ssdi_user_is_not_asked_for_ssdi_months(self):
+        # Answering "disabled, but not on SSDI" made receiving_ssdi True,
+        # which asked for SSDI months -- unanswerable, and the prompt forbids
+        # the model inventing one, so the conversation never terminated.
+        _, _, _, _, missing = is_eligible(
+            **_answers(receiving_ssdi=False, disabled=True, assets_total=0.0)
+        )
+        self.assertFalse(any("SSDI" in q for q in missing))
+
+    def test_disability_duration_without_ssdi_does_not_confer_medicare(self):
+        # ssdi_length means SSDI months; a non-SSDI disability duration must
+        # not satisfy the 24-month Medicare pathway.
+        _, _, medicare, _, _ = is_eligible(
+            **_answers(
+                receiving_ssdi=False, disabled=True, ssdi_length=24, assets_total=0.0
+            )
+        )
+        self.assertFalse(medicare)
+
+    def test_healthy_young_adult_is_not_asked_about_kidney_failure(self):
+        _, _, _, _, missing = is_eligible(**_answers(esrd=None, als=None))
+        self.assertFalse(any("renal" in q for q in missing))
+
+    def test_ninety_five_year_old_is_not_asked_about_pregnancy(self):
+        _, _, _, _, missing = is_eligible(
+            **_answers(age=95, pregnant=None, on_medicare=True, assets_total=0.0)
+        )
+        self.assertFalse(any("pregnant" in q.lower() for q in missing))
+
+    def test_child_is_not_asked_for_countable_assets(self):
+        # Only the ABD branch reads assets; children are scored on income.
+        _, _, _, _, missing = is_eligible(
+            **_answers(age=10, receiving_ssdi=True, ssdi_length=6)
+        )
+        self.assertFalse(any("countable financial assets" in q for q in missing))
 
 
 class TestMedicarePathways(SimpleTestCase):
@@ -394,6 +488,33 @@ class TestLongTermCareFlow(SimpleTestCase):
         self.assertTrue(medicare)
         self.assertTrue(len(missing) > 0)
 
+    def test_child_ltc_applicant_keeps_2026_exemption(self):
+        # Review regression: the overlay's LTC bypass keyed on applying_reason,
+        # but children are matched earlier in the category chain, so the LTC
+        # branch never ran and eligible_2026 kept its False initializer --
+        # telling a 10-year-old in a nursing home they may lose coverage in
+        # 2026 for not working 80 hours a month, with no question left.
+        _, eligible_2026, _, _, missing = is_eligible(
+            **self._ltc_answers(age=10, on_medicare=False, children_in_household=1)
+        )
+        self.assertTrue(eligible_2026)
+        self.assertEqual(missing, [])
+
+    def test_pregnant_ltc_applicant_keeps_2026_exemption(self):
+        _, eligible_2026, _, _, _ = is_eligible(
+            **self._ltc_answers(age=30, pregnant=True, on_medicare=False)
+        )
+        self.assertTrue(eligible_2026)
+
+    def test_living_situation_does_not_block_the_determination(self):
+        # It gated the whole LTC verdict but nothing ever read it, costing
+        # every LTC applicant a round trip for an inert answer.
+        answers = self._ltc_answers()
+        answers.pop("living_situation", None)
+        eligible_2025, _, _, _, missing = is_eligible(**answers)
+        self.assertTrue(eligible_2025)
+        self.assertFalse(any("living" in q.lower() for q in missing))
+
     def test_elderly_ltc_applicant_uses_ltc_income_cap_not_abd(self):
         # Regression: 65+ applicants matched the ABD branch first and never
         # reached the LTC rules. $2,500/month fails the ABD 100%-FPL test but
@@ -410,6 +531,38 @@ class TestLongTermCareFlow(SimpleTestCase):
         self.assertTrue(any("Miller trust" in a for a in alts))
 
 
+class TestAbdPathway(SimpleTestCase):
+    """Aged/blind/disabled income and asset rules."""
+
+    def test_medically_needy_state_does_not_waive_the_income_test(self):
+        # Review finding: medically-needy is a spend-down PATHWAY, not an
+        # income waiver -- treating it as one reported a $120k/yr earner in
+        # New York as "probably eligible" in both years.
+        eligible_2025, eligible_2026, _, alts, _ = is_eligible(
+            **_answers(
+                state="ny",
+                age=70,
+                monthly_income=10000.0,
+                on_medicare=True,
+                assets_total=1500.0,
+            )
+        )
+        self.assertFalse(eligible_2025)
+        self.assertFalse(eligible_2026)
+
+    def test_medically_needy_state_still_suggests_spend_down(self):
+        _, _, _, alts, _ = is_eligible(
+            **_answers(
+                state="ny",
+                age=70,
+                monthly_income=10000.0,
+                on_medicare=True,
+                assets_total=1500.0,
+            )
+        )
+        self.assertTrue(any("spend-down" in a for a in alts))
+
+
 class TestGetMedicaidInfo(SimpleTestCase):
     """State info lookups keep working with the shared state map."""
 
@@ -423,16 +576,32 @@ class TestGetMedicaidInfo(SimpleTestCase):
         result = get_medicaid_info({"state": "washington, dc", "topic": "", "limit": 5})
         self.assertIn("Health Care Finance", result)
 
-    def test_garbled_state_returns_reask_instead_of_raising(self):
+    def test_garbled_state_returns_none_instead_of_raising(self):
         # Review regression: is_eligible got the garbled-state hardening but
         # this sibling entry point still raised ValueError, killing the whole
-        # chat tool call.
-        result = get_medicaid_info({"state": "medi-cal er california"})
-        self.assertIn("confirm their state", result)
+        # chat tool call. None (not prose) so the caller can tell this apart
+        # from real data -- it wraps any string in "Here's the official
+        # Medicaid information for X".
+        self.assertIsNone(get_medicaid_info({"state": "medi-cal er california"}))
 
-    def test_missing_state_asks_instead_of_dumping_every_state(self):
-        # Review regression: no state (or the "unknown" placeholder) skipped
-        # the CSV filter and returned an 11k-character all-states dump.
-        result = get_medicaid_info({"state": "unknown"})
-        self.assertIn("ask the user for their state", result)
-        self.assertLess(len(result), 500)
+    def test_placeholder_state_returns_none(self):
+        # Review regression: the "unknown"/"StateName" placeholders the model
+        # copies out of the prompt skipped the CSV filter and returned an
+        # 11k-character all-states dump.
+        self.assertIsNone(get_medicaid_info({"state": "unknown"}))
+
+    def test_absent_state_returns_none(self):
+        # Review regression: an absent key became "", and _normalize_state("")
+        # raises, so this landed in the garbled-state arm and told the model
+        # to "confirm" a state the user never gave.
+        self.assertIsNone(get_medicaid_info({}))
+
+    def test_non_numeric_limit_does_not_raise(self):
+        # Review regression: int(query["limit"]) blew up the whole tool call
+        # on an LLM payload like {"limit": "five"}.
+        self.assertIn("California", get_medicaid_info({"state": "ca", "limit": "five"}))
+
+    def test_no_dangling_misc_header(self):
+        # The MISC section looped over columns already projected away, so it
+        # emitted a header promising data it structurally could not deliver.
+        self.assertNotIn("MISC", get_medicaid_info({"state": "ca"}))

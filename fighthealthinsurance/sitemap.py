@@ -15,7 +15,6 @@ domain (www.fighthealthinsurance.com) in production.
 import json
 from typing import Any
 
-from django.conf import settings
 from django.contrib.sitemaps import Sitemap
 from django.contrib.sites.requests import RequestSite
 from django.contrib.staticfiles.storage import staticfiles_storage
@@ -23,6 +22,8 @@ from django.http import HttpRequest, HttpResponse
 from django.urls import reverse
 
 from loguru import logger
+
+from fighthealthinsurance.utils import medicaid_eligibility_page_enabled
 
 
 class StaticViewSitemap(Sitemap):
@@ -51,9 +52,9 @@ class StaticViewSitemap(Sitemap):
             "blog",
             "microsite_directory",
         ]
-        # The experimental Medicaid eligibility page is only routed (and only
-        # discoverable) when its staging flag is on; see urls.py.
-        if getattr(settings, "MEDICAID_ELIGIBILITY_PAGE_ENABLED", False):
+        # The experimental Medicaid eligibility page only serves (and is only
+        # discoverable) when its staging flag is on; see views.py.
+        if medicaid_eligibility_page_enabled():
             items.append("medicaid-eligibility")
         return items
 
