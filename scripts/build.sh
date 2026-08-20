@@ -133,7 +133,12 @@ envsubst < k8s/ray/cluster.yaml | kubectl apply -f -
 envsubst < k8s/deploy.yaml | kubectl apply -f -
 
 # In-cluster scraping of the app's /metrics (which is no longer reachable from
-# the internet -- see docs/metrics-endpoint-access.md). Needs the Prometheus
-# operator's PodMonitor CRD; skipped with a warning where that isn't installed.
-kubectl apply -f k8s/fhi-web-podmonitor.yaml || \
-  echo "WARNING: PodMonitor not applied (no monitoring.coreos.com CRD?) -- app metrics will not be scraped"
+# the internet -- see docs/metrics-endpoint-access.md). The apply is skipped
+# only where the Prometheus operator's CRD is absent; every other failure (bad
+# manifest, RBAC, API error) is fatal, because a deploy that "succeeded" with no
+# metrics targets is exactly the silent gap this endpoint lockdown could create.
+if kubectl get crd podmonitors.monitoring.coreos.com >/dev/null 2>&1; then
+    kubectl apply -f k8s/fhi-web-podmonitor.yaml
+else
+    echo "WARNING: no PodMonitor CRD in this cluster -- app metrics will not be scraped"
+fi

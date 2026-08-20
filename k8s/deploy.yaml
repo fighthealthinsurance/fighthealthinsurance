@@ -170,6 +170,13 @@ spec:
           env:
           - name: BRB
             value: "LIVE"
+          # The PodMonitor scrapes this pod by IP, so the scrape's Host header
+          # is the pod IP; settings.py adds this to ALLOWED_HOSTS, without which
+          # every scrape 400s as a DisallowedHost.
+          - name: POD_IP
+            valueFrom:
+              fieldRef:
+                fieldPath: status.podIP
           # One uvicorn worker per pod so the probes below can see a wedged
           # worker; scale via replicas, not workers (see start-server.sh).
           - name: UVICORN_WORKERS

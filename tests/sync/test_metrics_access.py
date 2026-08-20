@@ -21,6 +21,10 @@ DEPLOY_MANIFESTS = ["deploy.yaml", "deploy_dev.yaml", "deploy_staging.yaml"]
 # MetricsAccessMiddleware -- not the ingress -- decides who gets an answer.
 METRICS_PUBLIC_HOSTS = {"monitor.fighthealthinsurance.com"}
 
+# The source range the deny Ingresses allow: loopback, which no client outside
+# the ingress controller can ever present.
+DENY_ALL_SOURCE_RANGE = "127.0.0.1/32"
+
 # A pod IP: private, and reached without going through the ingress.
 IN_CLUSTER_ADDR = "10.42.0.7"
 # The ingress pod, i.e. what REMOTE_ADDR is for anything from the internet.
@@ -92,6 +96,15 @@ class MetricsAccessMiddlewareTest(TestCase):
 
     def test_trailing_slash_spelling_is_also_gated(self):
         request = self.factory.get("/metrics/", REMOTE_ADDR="203.0.113.5")
+        response = self.middleware(request)
+        self.assertEqual(response.status_code, 404)
+
+    def test_empty_forwarding_header_still_counts_as_forwarded(self):
+        """An empty X-Forwarded-For must not read as "no proxy involved" --
+        the ingress's own peer address would otherwise pass the CIDR check."""
+        request = self.factory.get(
+            "/metrics", REMOTE_ADDR=INGRESS_ADDR, HTTP_X_FORWARDED_FOR=""
+        )
         response = self.middleware(request)
         self.assertEqual(response.status_code, 404)
 
@@ -207,6 +220,29 @@ class MetricsEndpointTest(TestCase):
         self.assertNotIn(b"# HELP", response.content)
 
 
+class PodIpHostTest(TestCase):
+    """A PodMonitor scrape addresses the pod by IP, so the Host is that IP."""
+
+    PROD_LIKE_HOSTS = ["www.fighthealthinsurance.com"]
+
+    @override_settings(ALLOWED_HOSTS=PROD_LIKE_HOSTS + [IN_CLUSTER_ADDR])
+    def test_scrape_by_pod_ip_is_served_when_pod_ip_is_allowed(self):
+        response = self.client.get(
+            "/metrics", REMOTE_ADDR=IN_CLUSTER_ADDR, HTTP_HOST=IN_CLUSTER_ADDR
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"# HELP", response.content)
+
+    @override_settings(ALLOWED_HOSTS=PROD_LIKE_HOSTS)
+    def test_scrape_by_pod_ip_is_rejected_without_it(self):
+        """Guards settings.POD_IP: without the pod IP in ALLOWED_HOSTS every
+        scrape 400s as a DisallowedHost before reaching the metrics view."""
+        response = self.client.get(
+            "/metrics", REMOTE_ADDR=IN_CLUSTER_ADDR, HTTP_HOST=IN_CLUSTER_ADDR
+        )
+        self.assertEqual(response.status_code, 400)
+
+
 class UptimeRobotIPListTest(TestCase):
     """The generated probe list is what opens the monitor host; keep it sane."""
 
@@ -219,6 +255,52 @@ class UptimeRobotIPListTest(TestCase):
         """A private range here would hand every in-cluster caller the exception."""
         private = [a for a in UPTIMEROBOT_IPS if ip_address(a).is_private]
         self.assertEqual(private, [])
+
+
+class PodMonitorWiringTest(TestCase):
+    """The in-cluster scrape path only works if all three pieces line up."""
+
+    def setUp(self):
+        docs = [
+            doc
+            for doc in yaml.safe_load_all((REPO_ROOT / "k8s" / "deploy.yaml").read_text())
+            if doc
+        ]
+        self.web = next(
+            d for d in docs if d["kind"] == "Deployment" and d["metadata"]["name"] == "web"
+        )
+        self.container = self.web["spec"]["template"]["spec"]["containers"][0]
+        self.podmonitor = yaml.safe_load(
+            (REPO_ROOT / "k8s" / "fhi-web-podmonitor.yaml").read_text()
+        )
+
+    def test_pod_ip_is_injected_from_the_downward_api(self):
+        """Without it the scrape's Host is an unknown pod IP and Django 400s."""
+        pod_ip = next(
+            (e for e in self.container["env"] if e["name"] == "POD_IP"),
+            None,
+        )
+        self.assertIsNotNone(pod_ip, "web container has no POD_IP env")
+        self.assertEqual(pod_ip["valueFrom"]["fieldRef"]["fieldPath"], "status.podIP")
+
+    def test_podmonitor_selects_the_web_pods(self):
+        self.assertEqual(
+            self.podmonitor["spec"]["selector"]["matchLabels"].items()
+            - self.web["spec"]["template"]["metadata"]["labels"].items(),
+            set(),
+            "PodMonitor selector does not match the web pod labels",
+        )
+
+    def test_podmonitor_scrapes_a_port_the_container_exposes(self):
+        endpoint = self.podmonitor["spec"]["podMetricsEndpoints"][0]
+        self.assertIn(
+            endpoint["port"], {p["name"] for p in self.container["ports"]}
+        )
+        self.assertEqual(endpoint["path"], "/metrics")
+
+    def test_deploy_script_applies_the_podmonitor(self):
+        build = (REPO_ROOT / "scripts" / "build.sh").read_text()
+        self.assertIn("k8s/fhi-web-podmonitor.yaml", build)
 
 
 class MetricsIngressDenyTest(TestCase):
@@ -240,7 +322,23 @@ class MetricsIngressDenyTest(TestCase):
                 )
                 for rule in ingress["spec"]["rules"]:
                     for path in rule["http"]["paths"]:
-                        if path["path"] == "/metrics" and allowlist:
+                        if path["path"] == "/metrics":
+                            # A rule only denies if nothing can match the
+                            # allowlist and it beats the "/" Prefix rule --
+                            # "0.0.0.0/0" or a Prefix path would leave the
+                            # endpoint public while still looking like a deny.
+                            self.assertEqual(
+                                allowlist,
+                                DENY_ALL_SOURCE_RANGE,
+                                f"k8s/{manifest}: /metrics rule for "
+                                f"{rule['host']} has a reachable source range",
+                            )
+                            self.assertEqual(
+                                path["pathType"],
+                                "Exact",
+                                f"k8s/{manifest}: /metrics rule for "
+                                f"{rule['host']} must be an Exact path",
+                            )
                             denied.add(rule["host"])
                         elif path["path"] == "/":
                             served.add(rule["host"])

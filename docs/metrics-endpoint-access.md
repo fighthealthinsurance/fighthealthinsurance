@@ -81,6 +81,12 @@ replica keeps its own registry (one uvicorn worker per pod, no multiprocess
 dir), so the old ingress scrape returned whichever pod the session-affinity
 cookie landed on — a random sixth of the traffic — instead of the fleet.
 
+Because the scrape addresses a pod by IP, the request's `Host` header is that
+pod IP — which prod's `ALLOWED_HOSTS` would reject with a 400 before the
+metrics view ever ran. The web Deployment therefore injects `POD_IP` from the
+downward API and `settings.py` appends it to `ALLOWED_HOSTS`. Keep those two
+together: dropping either turns every scrape into a `DisallowedHost`.
+
 Confirm the operator actually selects it (its `podMonitorSelector` /
 `podMonitorNamespaceSelector` must match):
 
@@ -89,10 +95,12 @@ kubectl -n totallylegitco get podmonitor fhi-web
 # Targets should show 6 web pods, state UP, in the Prometheus targets page.
 ```
 
-Ad-hoc check from inside the cluster:
+Ad-hoc check from inside the cluster (addressed by pod IP for the same
+`ALLOWED_HOSTS` reason — `curl localhost/metrics` sends `Host: localhost` and
+gets a 400):
 
 ```bash
-kubectl -n totallylegitco exec deploy/web -- curl -s localhost/metrics | head
+kubectl -n totallylegitco exec deploy/web -- sh -c 'curl -s "http://$POD_IP/metrics" | head'
 ```
 
 From outside, both layers should refuse — the first at the edge, the second in

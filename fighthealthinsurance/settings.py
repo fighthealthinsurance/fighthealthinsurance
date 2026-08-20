@@ -68,6 +68,14 @@ def _env_flag(name: str, default: str = "0") -> bool:
     return (os.getenv(name) or default).strip().lower() in ("1", "true", "yes", "on")
 
 
+# This pod's own IP, from the downward API (k8s/deploy.yaml). Needed in
+# ALLOWED_HOSTS so the Prometheus PodMonitor -- which scrapes pods by IP, making
+# the pod IP the Host header -- isn't rejected as a DisallowedHost. Empty
+# outside the cluster. Module level rather than a class attribute: a class-body
+# comprehension can't see class scope.
+POD_IP = (os.getenv("POD_IP") or "").strip()
+
+
 class Base(Configuration):
     SENTRY_ENDPOINT = os.getenv("SENTRY_ENDPOINT")
     COOKIE_CONSENT_ENABLED = False
@@ -908,7 +916,12 @@ class Prod(Base):
         "www.fuckhealthinsurance.com",
         "fightinsurance.ai",
         "www.fightinsurance.ai",
-    ]
+        # Prometheus scrapes each pod directly at http://<pod-ip>:80/metrics, so
+        # the Host header is the pod IP and host validation would 400 the scrape
+        # (DomainRedirectMiddleware calls get_host() on every request). POD_IP is
+        # injected from the downward API in k8s/deploy.yaml; empty off-cluster,
+        # where the entry is dropped below.
+    ] + ([POD_IP] if POD_IP else [])
 
     DOMAIN_REDIRECTS = {
         "fuckhealthinsurance.com": "www.fighthealthinsurance.com",

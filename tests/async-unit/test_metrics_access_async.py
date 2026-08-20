@@ -36,26 +36,37 @@ async def test_async_middleware_404s_forwarded_request():
     assert response.status_code == 404
 
 
-@pytest.mark.asyncio
-async def test_asgi_stack_gates_metrics():
-    """Through the real ASGI handler and MIDDLEWARE list, not just the class.
+# The ASGI-stack tests below go through the real handler and MIDDLEWARE list
+# rather than the middleware class alone. AsyncClient pins the scope's peer
+# address to 127.0.0.1 (extra kwargs become headers, not scope keys), so the
+# peer-address branch is exercised by narrowing the allowed CIDRs instead.
 
-    AsyncClient pins the ASGI scope's peer address to 127.0.0.1 (extra kwargs
-    become headers, not scope keys), so the peer-address branch is exercised by
-    narrowing the allowed CIDRs instead.
-    """
-    client = AsyncClient()
-    served = await client.get("/metrics")
-    forwarded = await client.get(
+
+@pytest.mark.asyncio
+async def test_asgi_stack_serves_an_in_cluster_scrape():
+    response = await AsyncClient().get("/metrics")
+    assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_asgi_stack_returns_prometheus_content():
+    response = await AsyncClient().get("/metrics")
+    assert b"# HELP" in response.content
+
+
+@pytest.mark.asyncio
+async def test_asgi_stack_404s_a_forwarded_request():
+    response = await AsyncClient().get(
         "/metrics", headers={"x-forwarded-for": "203.0.113.5"}
     )
-    assert served.status_code == 200
-    assert b"# HELP" in served.content
-    assert forwarded.status_code == 404
+    assert response.status_code == 404
 
+
+@pytest.mark.asyncio
+async def test_asgi_stack_404s_a_peer_outside_the_allowed_cidrs():
     with override_settings(METRICS_ALLOWED_CIDRS=[f"{IN_CLUSTER_ADDR}/32"]):
-        outside = await AsyncClient().get("/metrics")
-    assert outside.status_code == 404
+        response = await AsyncClient().get("/metrics")
+    assert response.status_code == 404
 
 
 @pytest.mark.asyncio

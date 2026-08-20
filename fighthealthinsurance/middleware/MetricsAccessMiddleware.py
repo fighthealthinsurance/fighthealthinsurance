@@ -41,6 +41,8 @@ from django.conf import settings
 from django.http import HttpRequest, HttpResponse, HttpResponseNotFound
 from django.urls import NoReverseMatch, reverse
 
+from loguru import logger
+
 from fighthealthinsurance.uptimerobot_ips import UPTIMEROBOT_IPS
 
 # Pod, node and loopback addresses live in these ranges on every cluster we
@@ -68,13 +70,17 @@ IPAddress = Union[ipaddress.IPv4Address, ipaddress.IPv6Address]
 
 
 def _parse_networks(cidrs: Sequence[str]) -> Tuple[IPNetwork, ...]:
-    """Parse CIDRs, skipping malformed entries rather than failing startup."""
+    """Parse CIDRs, skipping malformed entries rather than failing startup.
+
+    Skipping only ever narrows access, so a typo cannot open the endpoint up --
+    but it can quietly close it, hence the warning.
+    """
     networks = []
     for cidr in cidrs:
         try:
             networks.append(ipaddress.ip_network(cidr.strip(), strict=False))
         except ValueError:
-            continue
+            logger.warning(f"Ignoring unparseable /metrics allowlist entry: {cidr!r}")
     return tuple(networks)
 
 
@@ -138,9 +144,11 @@ class MetricsAccessMiddleware:
         # Anything a proxy touched came from outside; the ingress is the only
         # proxy in front of these pods and it always sets these. Such a request
         # is served only if it is a monitor we published the endpoint to.
-        for header in FORWARDING_HEADERS:
-            if request.META.get(header):
-                return self._is_allowed_monitor(request)
+        # Presence, not truthiness: an empty X-Forwarded-For still means a proxy
+        # was involved, and treating it as absent would fall through to the
+        # peer-address check, which the ingress's own private IP would pass.
+        if any(header in request.META for header in FORWARDING_HEADERS):
+            return self._is_allowed_monitor(request)
         try:
             remote_addr = ipaddress.ip_address(
                 str(request.META.get("REMOTE_ADDR", "")).strip()
