@@ -76,7 +76,9 @@
     <strong>Warning:</strong> This will send an email to all {{ recipient_count }}
     recipients. Use the test email field to send a preview to yourself first.
     Recipients who have unsubscribed are excluded automatically, and an
-    unsubscribe link is appended to every real send.
+    unsubscribe link is appended to every real send. Real sends run in the
+    background paced a few seconds apart &mdash; submit once and check the
+    server logs for progress; do not re-submit.
   </div>
 
   <form method="post">

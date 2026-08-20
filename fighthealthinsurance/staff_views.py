@@ -641,20 +641,31 @@ class _SendBulkMailView(generic.FormView):
             future = remote_method.remote(
                 subject, html_content, text_content, test_email
             )
-            sent_count, failed_count, blocked_count = ray.get(future)
 
             if test_email:
+                # A test send goes to one address and is unpaced, so block for
+                # the result to give the operator immediate confirmation.
+                ray.get(future)
                 masked_email = mask_email_for_logging(test_email)
                 return HttpResponse(f"Test email sent successfully to {masked_email}")
             else:
+                # A real send is paced (~1-3s per recipient) on the detached
+                # actor, so a whole-list broadcast takes minutes to hours.
+                # Blocking on ray.get here would time the request out at the
+                # proxy and invite a re-submit -- a duplicate blast -- so fire
+                # and forget: the actor logs each send and a final
+                # sent/failed/blocked summary.
+                recipient_count = self.recipient_count()
                 logger.info(
-                    f"Staff user {self.request.user.username} sent a "
-                    f"{self.audience_noun} email to {sent_count} recipients "
-                    f"({failed_count} failed, {blocked_count} blocked)"
+                    f"Staff user {self.request.user.username} started a "
+                    f"{self.audience_noun} email send to ~{recipient_count} "
+                    "recipients (paced, running in the background)"
                 )
                 return HttpResponse(
-                    f"{self.audience_label} email sent. Success: {sent_count}, "
-                    f"Failed: {failed_count}, Blocked: {blocked_count}"
+                    f"{self.audience_label} email send started in the background "
+                    f"to ~{recipient_count} recipients. Sends are paced a few "
+                    "seconds apart; progress and the final sent/failed/blocked "
+                    "counts are in the server logs."
                 )
         except Exception as e:
             logger.opt(exception=True).error(

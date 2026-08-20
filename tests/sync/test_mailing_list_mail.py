@@ -1,10 +1,18 @@
 """Test the mailing list mail admin page functionality"""
 
+import smtplib
+
 from django.contrib.auth import get_user_model
+from django.core import mail
 from django.test import TestCase, Client
 from unittest.mock import patch, MagicMock
 
 from fighthealthinsurance.forms import SendMailingListMailForm
+from fighthealthinsurance.mailing_list_actor import (
+    BULK_SEND_DELAY_MAX_SECONDS,
+    BULK_SEND_DELAY_MIN_SECONDS,
+    send_bulk_email,
+)
 from fighthealthinsurance.models import MailingListSubscriber
 from fighthealthinsurance.utils import mask_email_for_logging
 
@@ -203,6 +211,143 @@ class TestSendMailingListMailView(TestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Test email sent successfully")
+
+    @patch("fighthealthinsurance.staff_views.ray_cluster_available", return_value=True)
+    @patch("fighthealthinsurance.staff_views.mailing_list_actor_ref")
+    @patch("fighthealthinsurance.staff_views.ray")
+    def test_form_submission_real_send_runs_in_background(
+        self, mock_ray, mock_actor_ref, mock_cluster_available
+    ):
+        """A real (non-test) send dispatches to the actor and returns at once.
+
+        The actor paces whole-list sends, so blocking on ray.get would time the
+        request out and tempt the operator into a duplicate re-submit.
+        """
+        mock_actor = MagicMock()
+        mock_actor_ref.get = mock_actor
+        MailingListSubscriber.objects.create(email="sub1@clinic.com", name="Sub 1")
+
+        self.client.login(username="staffuser", password="testpass123")
+        response = self.client.post(
+            "/timbit/help/send_mailing_list_mail",
+            data={
+                "subject": "Test Subject",
+                "html_content": "<p>Test HTML</p>",
+                "text_content": "Test text",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        mock_actor.send_mailing_list_email.remote.assert_called_once_with(
+            "Test Subject", "<p>Test HTML</p>", "Test text", ""
+        )
+        mock_ray.get.assert_not_called()
+        self.assertContains(response, "started in the background")
+        self.assertContains(response, "~1 recipients")
+
+
+class SendBulkEmailPacingTest(TestCase):
+    """Real broadcasts trickle out slowly; test sends go out immediately."""
+
+    RECIPIENTS = [
+        ("a@clinic.com", "https://www.fighthealthinsurance.com/v0/unsubscribe/a"),
+        ("b@clinic.com", None),
+        ("c@clinic.com", "https://www.fighthealthinsurance.com/v0/unsubscribe/c"),
+    ]
+
+    @patch("fighthealthinsurance.mailing_list_actor.time.sleep")
+    def test_real_send_paces_between_each_email(self, mock_sleep):
+        counts = send_bulk_email(
+            "Subject",
+            "<p>Hi</p>",
+            "Hi",
+            list(self.RECIPIENTS),
+            audience="mailing list",
+            pace=True,
+        )
+
+        self.assertEqual(counts, (3, 0, 0))
+        self.assertEqual(len(mail.outbox), 3)
+        # Three sends -> two gaps: no sleep before the first or after the last.
+        self.assertEqual(mock_sleep.call_count, 2)
+        for sleep_call in mock_sleep.call_args_list:
+            self.assertGreaterEqual(sleep_call.args[0], BULK_SEND_DELAY_MIN_SECONDS)
+            self.assertLessEqual(sleep_call.args[0], BULK_SEND_DELAY_MAX_SECONDS)
+
+    @patch("fighthealthinsurance.mailing_list_actor.time.sleep")
+    def test_test_send_is_not_paced(self, mock_sleep):
+        counts = send_bulk_email(
+            "Subject",
+            "<p>Hi</p>",
+            "Hi",
+            [("staff@clinic.com", None)],
+            audience="mailing list",
+            pace=False,
+        )
+
+        self.assertEqual(counts, (1, 0, 0))
+        self.assertEqual(len(mail.outbox), 1)
+        mock_sleep.assert_not_called()
+
+    @patch("fighthealthinsurance.mailing_list_actor.time.sleep")
+    def test_blocked_recipients_are_skipped_without_pacing(self, mock_sleep):
+        counts = send_bulk_email(
+            "Subject",
+            "<p>Hi</p>",
+            "Hi",
+            [("blocked@example.com", None), ("ok@clinic.com", None)],
+            audience="mailing list",
+            pace=True,
+        )
+
+        self.assertEqual(counts, (1, 0, 1))
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(mail.outbox[0].to, ["ok@clinic.com"])
+        # Blocked addresses never touch the relay: only one real attempt
+        # happened, so there is nothing to pace.
+        mock_sleep.assert_not_called()
+
+    @patch("fighthealthinsurance.mailing_list_actor.time.sleep")
+    def test_failed_sends_are_counted_and_still_paced(self, mock_sleep):
+        with patch(
+            "django.core.mail.EmailMultiAlternatives.send",
+            side_effect=smtplib.SMTPException("mailbox unavailable"),
+        ):
+            counts = send_bulk_email(
+                "Subject",
+                "<p>Hi</p>",
+                "Hi",
+                [("a@clinic.com", None), ("b@clinic.com", None)],
+                audience="mailing list",
+                pace=True,
+            )
+
+        self.assertEqual(counts, (0, 2, 0))
+        # A failed attempt still hit the relay, so the gap before the next
+        # attempt remains.
+        self.assertEqual(mock_sleep.call_count, 1)
+
+    def test_unsubscribe_footer_only_added_when_url_present(self):
+        send_bulk_email(
+            "Subject",
+            "<p>Hi</p>",
+            "Hi",
+            list(self.RECIPIENTS),
+            audience="mailing list",
+            pace=False,
+        )
+
+        with_url, without_url, _ = mail.outbox
+        self.assertIn(
+            "To unsubscribe from future emails, visit: "
+            "https://www.fighthealthinsurance.com/v0/unsubscribe/a",
+            with_url.body,
+        )
+        self.assertIn(
+            "https://www.fighthealthinsurance.com/v0/unsubscribe/a",
+            with_url.alternatives[0][0],
+        )
+        self.assertNotIn("unsubscribe", without_url.body)
 
 
 class TestStaffDashboardView(TestCase):

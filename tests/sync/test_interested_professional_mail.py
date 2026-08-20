@@ -276,7 +276,7 @@ class SendInterestedProfessionalMailViewTest(TestCase):
         """The professionals page must not send to the mailing list."""
         mock_actor = MagicMock()
         mock_actor_ref.get = mock_actor
-        mock_ray.get.return_value = (3, 1, 2)
+        InterestedProfessional.objects.create(email="doc@clinic.com")
 
         self.client.login(username="staffuser", password="testpass123")
         response = self.client.post(SEND_URL, data=self.form_data)
@@ -286,9 +286,24 @@ class SendInterestedProfessionalMailViewTest(TestCase):
             "Test Subject", "<p>Test HTML</p>", "Test text", ""
         )
         mock_actor.send_mailing_list_email.remote.assert_not_called()
-        self.assertContains(response, "Success: 3")
-        self.assertContains(response, "Failed: 1")
-        self.assertContains(response, "Blocked: 2")
+        self.assertContains(response, "started in the background")
+        self.assertContains(response, "~1 recipients")
+
+    @patch("fighthealthinsurance.staff_views.ray_cluster_available", return_value=True)
+    @patch("fighthealthinsurance.staff_views.mailing_list_actor_ref")
+    @patch("fighthealthinsurance.staff_views.ray")
+    def test_real_send_does_not_block_on_the_paced_actor_run(
+        self, mock_ray, mock_actor_ref, mock_cluster_available
+    ):
+        """A paced whole-list send would outlive the request; never ray.get it."""
+        mock_actor = MagicMock()
+        mock_actor_ref.get = mock_actor
+
+        self.client.login(username="staffuser", password="testpass123")
+        response = self.client.post(SEND_URL, data=self.form_data)
+
+        self.assertEqual(response.status_code, 200)
+        mock_ray.get.assert_not_called()
 
     @patch("fighthealthinsurance.staff_views.ray_cluster_available", return_value=True)
     @patch("fighthealthinsurance.staff_views.mailing_list_actor_ref")
@@ -307,6 +322,9 @@ class SendInterestedProfessionalMailViewTest(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Test email sent successfully")
+        # Test sends are quick (one unpaced email), so the view blocks for the
+        # result to give the operator immediate confirmation.
+        mock_ray.get.assert_called_once()
 
     @patch("fighthealthinsurance.staff_views.ray_cluster_available", return_value=False)
     def test_send_without_ray_cluster_returns_503(self, mock_cluster_available):
@@ -322,7 +340,10 @@ class SendInterestedProfessionalMailViewTest(TestCase):
     ):
         mock_actor = MagicMock()
         mock_actor_ref.get = mock_actor
-        mock_ray.get.side_effect = RuntimeError("actor died at smtp.internal.host")
+        # Real sends no longer ray.get, so fail at task submission instead.
+        mock_actor.send_interested_professional_email.remote.side_effect = RuntimeError(
+            "actor died at smtp.internal.host"
+        )
 
         self.client.login(username="staffuser", password="testpass123")
         response = self.client.post(SEND_URL, data=self.form_data)
