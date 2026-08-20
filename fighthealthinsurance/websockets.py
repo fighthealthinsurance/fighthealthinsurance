@@ -1410,9 +1410,11 @@ class OngoingChatConsumer(PerConnectionThreadSensitiveMixin, AsyncWebsocketConsu
         microsite_slug = data.get(
             "microsite_slug", None
         )  # Microsite slug if coming from a microsite
-        # Allow users to opt-in to using external/public models as fallback
-        # Only used when FHI models fail or timeout
-        use_external_models = data.get("use_external_models", False)
+        # External/public models participate in chat by default (both in the
+        # primary fan-out and as retry fallback); users opt OUT via the
+        # consent-form toggle, which sends an explicit false. A frame without
+        # the key (older clients, hand-rolled API callers) gets the default.
+        use_external_models = data.get("use_external_models", True)
         # Document upload flags from frontend
         is_document = data.get("is_document", False)
         document_name = data.get("document_name", None)

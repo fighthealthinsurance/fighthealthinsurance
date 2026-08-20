@@ -5,7 +5,7 @@ Provides retry logic with fallback strategies for handling LLM failures
 gracefully. Uses parallel calls to multiple backends with quality scoring.
 """
 
-from typing import Awaitable, Callable, Dict, List, Optional, Tuple
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 from loguru import logger
 
@@ -20,7 +20,7 @@ from fighthealthinsurance.chat.llm_client import (
 )
 from fighthealthinsurance.chat.safety_filters import detect_false_promises
 from fighthealthinsurance.ml.ml_models import RemoteModelLike
-from fighthealthinsurance.utils import best_within_timelimit
+from fighthealthinsurance.utils import best_two_within_timelimit
 
 # Decisive (but finite) penalty for a retry candidate that still repeats a
 # recent reply. Retry base scores top out around quality**2 // 2 (~22k), so
@@ -146,6 +146,7 @@ async def retry_llm_with_fallback(
     anti_repeat: bool = False,
     extended_timeout: float = 40.0,
     allow_repeated_reply: bool = False,
+    debug_info: Optional[Dict[str, Any]] = None,
 ) -> Tuple[Optional[str], Optional[str]]:
     """
     Retry LLM call with shortened context and fallback backends.
@@ -179,6 +180,9 @@ async def retry_llm_with_fallback(
             wrapped current_message contains system-injected text mentioning
             "repeat") and forwarded to the backends so their self-heal loop
             doesn't fight the user's request.
+        debug_info: Optional mutable dict; on a successful retry it receives
+            "retry_picked_model" (backend label) and "retry_picked_score"
+            so the caller's debug output can attribute the delivered answer.
 
     Returns:
         Tuple of (response_text, context_part) or (None, None) on failure
@@ -204,6 +208,7 @@ async def retry_llm_with_fallback(
         retry_temperature = ANTI_REPEAT_TEMPERATURE
 
     # Build retry calls with shortened history and fallbacks
+    call_labels: Dict[Awaitable, str] = {}
     retry_calls, retry_scores = build_retry_calls(
         model_backends=model_backends,
         current_message=retry_message,
@@ -214,6 +219,7 @@ async def retry_llm_with_fallback(
         fallback_backends=fallback_backends,
         temperature=retry_temperature,
         allow_repeated_reply=allow_repeated_reply,
+        call_labels=call_labels,
     )
 
     # Create simplified scorer for retries
@@ -222,7 +228,7 @@ async def retry_llm_with_fallback(
     )
 
     try:
-        best_retry = await best_within_timelimit(
+        best_retry = await best_two_within_timelimit(
             retry_calls,
             retry_scorer,
             timeout=timeout,
@@ -232,11 +238,22 @@ async def retry_llm_with_fallback(
             extended_timeout=extended_timeout,
         )
         retry_response, retry_context = (
-            best_retry if best_retry is not None else (None, None)
+            best_retry.best if best_retry.best is not None else (None, None)
         )
 
         if retry_response and len(retry_response.strip()) > MIN_RESPONSE_LENGTH:
-            logger.info("Successfully got response from retry/fallback models")
+            picked = (
+                call_labels.get(best_retry.best_task)
+                if best_retry.best_task is not None
+                else None
+            )
+            if debug_info is not None:
+                debug_info["retry_picked_model"] = picked
+                debug_info["retry_picked_score"] = best_retry.best_score
+            logger.info(
+                "Successfully got response from retry/fallback models "
+                f"(picked {picked or 'unknown'}, score={best_retry.best_score})"
+            )
             return retry_response, retry_context
 
     except Exception as e:

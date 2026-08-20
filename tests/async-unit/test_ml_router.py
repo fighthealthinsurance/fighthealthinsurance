@@ -211,6 +211,44 @@ class TestMLRouterChatBackends(unittest.TestCase):
             mock_get_chat.assert_called_once_with(use_external=False)
             self.assertEqual(primary_models, ["mock_model"])
 
+    def test_externals_join_primary_fanout_when_enabled(self):
+        """With use_external=True, external models participate in the PRIMARY
+        fan-out (scoring keeps preferring internals when they answer well);
+        they are not only a retry fallback."""
+        self.router.external_models_by_cost = [
+            make_external_mock(quality=90),
+            make_external_mock(quality=80),
+        ]
+
+        primary_models, fallback_models = self.router.get_chat_backends_with_fallback(
+            use_external=True
+        )
+
+        external_in_primary = [m for m in primary_models if getattr(m, "external", False)]
+        self.assertEqual(len(external_in_primary), 2)
+        self.assertEqual(len(fallback_models), 2)
+
+    def test_internal_chat_backends_ordered_by_quality(self):
+        """The internal slots go to the STRONGEST available internals, not the
+        cheapest (stable sort: equal quality keeps cost order)."""
+
+        def make_internal_mock(quality: int) -> MagicMock:
+            model = MagicMock(spec=RemoteModelLike)
+            model.external = False
+            model.quality.return_value = quality
+            model.is_available.return_value = True
+            model.health_checked_live = True
+            return model
+
+        weak_cheap = make_internal_mock(quality=101)
+        strong_pricier = make_internal_mock(quality=200)
+        self.router.internal_models_by_cost = [weak_cheap, strong_pricier]
+        self.router.models_by_name = {}
+
+        models = self.router.get_chat_backends(use_external=False)
+
+        self.assertEqual(models, [strong_pricier, weak_cheap])
+
 
 class TestMLRouterBestExternalModels(unittest.TestCase):
     """Tests for MLRouter.best_external_models (quality + health selection)."""

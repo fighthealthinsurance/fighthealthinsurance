@@ -260,6 +260,52 @@ class ChatFallbackTest(APITestCase):
         await communicator.disconnect()
         await self.asyncTearDown()
 
+    async def test_external_models_default_on_when_key_absent(self):
+        """A frame that omits use_external_models gets the default: external
+        models participate. (Older clients and hand-rolled API callers send
+        no key; the consent-form toggle sends an explicit false to opt out.)"""
+        await self.asyncSetUp()
+
+        self.mock_get_backends.return_value = ([self.mock_primary_model], [])
+        self.mock_primary_model.set_next_response("Default response", "Context")
+
+        user = await sync_to_async(User.objects.create_user)(
+            username="testuser5", password="testpass", email="test5@example.com"
+        )
+        professional = await sync_to_async(ProfessionalUser.objects.create)(
+            user=user, active=True, npi_number="5678901234"
+        )
+        chat = await sync_to_async(OngoingChat.objects.create)(
+            professional_user=professional,
+            chat_history=[],
+            summary_for_next_call=[],
+        )
+
+        communicator = WebsocketCommunicator(
+            OngoingChatConsumer.as_asgi(), "/ws/ongoing-chat/"
+        )
+        communicator.scope["user"] = user
+        connected, _ = await communicator.connect()
+        self.assertTrue(connected)
+
+        await communicator.send_json_to(
+            {
+                "chat_id": str(chat.id),
+                "content": "Test message",
+                # use_external_models intentionally absent
+            }
+        )
+
+        response = await communicator.receive_json_from(timeout=15)
+        while "status" in response:
+            response = await communicator.receive_json_from(timeout=15)
+        self.assertIn("content", response)
+
+        self.mock_get_backends.assert_called_with(use_external=True)
+
+        await communicator.disconnect()
+        await self.asyncTearDown()
+
 
 class MLRouterFallbackTest(APITestCase):
     """Test the ML router fallback functionality."""

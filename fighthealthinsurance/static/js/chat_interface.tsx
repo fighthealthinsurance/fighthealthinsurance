@@ -26,7 +26,9 @@ import { THEME } from "./theme";
 import ErrorBoundary from "./ErrorBoundary";
 import VoiceIntake from "./VoiceIntake";
 import {
+  getExternalModelsPreference,
   getUserInfo,
+  saveExternalModelsPreference,
   saveUserInfo,
   scrubPersonalInfo,
   restorePersonalInfo,
@@ -113,6 +115,13 @@ const PWYWBanner: React.FC<{ onDismiss: () => void }> = ({ onDismiss }) => {
 const isChatDebugEnabled = (): boolean =>
   localStorage.getItem("fhi_chat_debug") === "true";
 
+// Server debug frames for one turn (only sent when debug is enabled AND the
+// server allows it): the exact LLM input and the model-selection result.
+interface ChatDebugInfo {
+  input?: Record<string, unknown>;
+  result?: Record<string, unknown>;
+}
+
 interface ChatMessage {
   role: "user" | "assistant";
   content: string;
@@ -122,6 +131,9 @@ interface ChatMessage {
   // Optional side-by-side alternate answer (ephemeral: not persisted
   // server-side, so it only appears on live turns, not replays).
   alternate_content?: string;
+  // Debug frames captured for the turn that produced this assistant
+  // message (rendered as a collapsible panel under the bubble).
+  debug_info?: ChatDebugInfo;
 }
 
 interface ChatState {
@@ -262,6 +274,83 @@ const AlternateAnswer: React.FC<{
   );
 };
 
+// One-line summary of a debug_llm_result frame for the panel header.
+const summarizeDebugResult = (result: Record<string, unknown>): string => {
+  const parts: string[] = [];
+  if (typeof result.picked_model === "string") {
+    parts.push(`picked ${result.picked_model}`);
+  }
+  if (typeof result.candidate_count === "number") {
+    parts.push(`${result.candidate_count} candidates`);
+  }
+  if (typeof result.rejected_repeats === "number" && result.rejected_repeats > 0) {
+    parts.push(`${result.rejected_repeats} repeats rejected`);
+  }
+  if (result.retry_used) {
+    parts.push("retry used");
+  }
+  if (typeof result.elapsed_ms === "number") {
+    parts.push(`${(result.elapsed_ms / 1000).toFixed(1)}s`);
+  }
+  return parts.join(" · ");
+};
+
+// Collapsible per-turn debug panel (only rendered when chat debug is on and
+// the server sent debug frames): shows the model-selection summary up front
+// and the raw LLM input/result JSON behind a toggle.
+const DebugPanel: React.FC<{ debugInfo: ChatDebugInfo }> = ({ debugInfo }) => {
+  const [expanded, setExpanded] = useState(false);
+  const summary = debugInfo.result ? summarizeDebugResult(debugInfo.result) : "";
+
+  return (
+    <Box mt="xs" style={{ borderTop: "1px dashed #d1d5db", paddingTop: 6 }}>
+      <Button
+        variant="subtle"
+        size="compact-xs"
+        color="gray"
+        onClick={() => setExpanded((prev) => !prev)}
+      >
+        {expanded ? "Hide debug" : `🔧 Debug${summary ? `: ${summary}` : ""}`}
+      </Button>
+      {expanded && (
+        <Box
+          mt="xs"
+          style={{
+            border: "1px solid #e5e7eb",
+            borderRadius: 8,
+            padding: "6px 10px",
+            backgroundColor: "#f9fafb",
+            fontFamily: "monospace",
+            fontSize: 11,
+            overflowX: "auto",
+          }}
+        >
+          {debugInfo.result && (
+            <>
+              <MantineText size="xs" c="dimmed">
+                Model selection
+              </MantineText>
+              <pre style={{ whiteSpace: "pre-wrap", margin: "4px 0" }}>
+                {JSON.stringify(debugInfo.result, null, 2)}
+              </pre>
+            </>
+          )}
+          {debugInfo.input && (
+            <>
+              <MantineText size="xs" c="dimmed">
+                LLM input
+              </MantineText>
+              <pre style={{ whiteSpace: "pre-wrap", margin: "4px 0" }}>
+                {JSON.stringify(debugInfo.input, null, 2)}
+              </pre>
+            </>
+          )}
+        </Box>
+      )}
+    </Box>
+  );
+};
+
 const TypingAnimation: React.FC<{ startTime?: number | null }> = ({ startTime }) => {
   const [dots, setDots] = useState(".");
   const [elapsed, setElapsed] = useState(0);
@@ -361,7 +450,10 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
     messageCount: 0,
     statusMessage: null,
     requestStartTime: null,
-    useExternalModels: localStorage.getItem("fhi_use_external_models") === "true",
+    // Default-on: getExternalModelsPreference treats a missing key as true
+    // (the raw === "true" read here used to silently disable external models
+    // for anyone who never went through the consent form).
+    useExternalModels: getExternalModelsPreference(),
     showVoiceIntake: Boolean(enableVoiceIntake),
   });
 
@@ -411,6 +503,10 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
 
   const wsRef = useRef<WebSocket | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  // Debug frames (LLM input / selection result) arrive before the assistant
+  // content frame of the same turn; buffer them here so they attach to the
+  // message that they describe.
+  const pendingDebugRef = useRef<ChatDebugInfo | null>(null);
 
   // Initialize chat interface on load
   useEffect(() => {
@@ -476,7 +572,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
         // If we have a chat ID, request the chat history we explicitily refresh from local storage
         // so reconnect does not capture the old state.
         let chatId = localStorage.getItem("fhi_chat_id");
-        const useExternalModels = localStorage.getItem("fhi_use_external_models") === "true";
+        const useExternalModels = getExternalModelsPreference();
 
         // If we have an initial message (e.g., from explain denial page), start a NEW chat
         // even if there's an existing one - the user explicitly started a new denial explanation
@@ -632,11 +728,23 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
         // Frames carry chat message content (PHI) -- log only the field names.
         console.debug("Received message frame, keys:", Object.keys(data ?? {}));
 
-        // Debug echo of exactly what was sent to the backend model this
-        // turn (only sent when the debug flag was requested AND the server
-        // allows it). Surfaces in the browser console for inspection.
+        // Debug echoes (only sent when the debug flag was requested AND the
+        // server allows it): the exact LLM input for the turn and the
+        // model-selection result. Logged to the console and buffered so the
+        // next assistant message renders them as a collapsible panel.
         if (data.debug_llm_input) {
           console.log("FHI chat debug — LLM input:", data.debug_llm_input);
+          pendingDebugRef.current = {
+            ...(pendingDebugRef.current ?? {}),
+            input: data.debug_llm_input,
+          };
+        }
+        if (data.debug_llm_result) {
+          console.log("FHI chat debug — model selection:", data.debug_llm_result);
+          pendingDebugRef.current = {
+            ...(pendingDebugRef.current ?? {}),
+            result: data.debug_llm_result,
+          };
         }
 
         // Get user info for restoring personal info
@@ -730,6 +838,15 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
               : data.alternate_content;
           }
 
+          // Attach any buffered debug frames to the assistant message they
+          // belong to (cleared either way so a later turn can't inherit a
+          // stale panel).
+          let debugInfo: ChatDebugInfo | undefined = undefined;
+          if (data.role === "assistant" && pendingDebugRef.current) {
+            debugInfo = pendingDebugRef.current;
+          }
+          pendingDebugRef.current = null;
+
           setState((prev) => ({
             ...prev,
             messages: [
@@ -738,6 +855,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
                 role: data.role,
                 content: processedContent,
                 alternate_content: alternateContent,
+                debug_info: debugInfo,
                 timestamp: data.timestamp || new Date().toISOString(),
                 status: "done",
               },
@@ -992,7 +1110,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
   };
 // Handle toggling external models
   const handleToggleExternalModels = (checked: boolean) => {
-    localStorage.setItem("fhi_use_external_models", checked.toString());
+    saveExternalModelsPreference(checked);
     setState((prev) => ({ ...prev, useExternalModels: checked }));
   };
 
@@ -1011,7 +1129,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
 
     console.log("Resetting the chat state");
     // Reset the chat state but preserve useExternalModels setting
-    const useExternalModels = localStorage.getItem("fhi_use_external_models") === "true";
+    const useExternalModels = getExternalModelsPreference();
     setState({
       messages: [],
       isLoading: false,
@@ -1099,6 +1217,9 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
                     content={message.alternate_content}
                     onPrefer={(preferred) => sendAnswerFeedback(preferred)}
                   />
+                )}
+                {!isUser && message.debug_info && (
+                  <DebugPanel debugInfo={message.debug_info} />
                 )}
               </>
             )}

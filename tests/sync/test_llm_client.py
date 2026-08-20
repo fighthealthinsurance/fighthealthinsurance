@@ -11,12 +11,15 @@ from fighthealthinsurance.chat.llm_client import (
     compute_repetition_penalty,
     alternate_is_presentable,
     find_repeated_reply,
+    scores_closely_tied,
     user_requested_repeat,
+    ALTERNATE_CLOSE_TIE_RATIO,
     EXACT_REPEAT_PENALTY,
     BAG_OF_WORDS_REPEAT_PENALTY,
     NEAR_REPEAT_PENALTY,
     OLDER_ASSISTANT_REPEAT_PENALTY,
     OLDER_USER_REPEAT_PENALTY,
+    REPEAT_OFFENDER_DECAY,
     BAD_RESPONSE_PATTERNS,
     BAD_CONTEXT_PATTERNS,
 )
@@ -670,3 +673,89 @@ class TestPenaltySeverityOrdering(TestCase):
         history = [{"role": "user", "content": "help with my denial"}]
         penalty = compute_repetition_penalty("my denial with help", history)
         self.assertEqual(penalty, BAG_OF_WORDS_REPEAT_PENALTY)
+
+
+class TestScoresCloselyTied(TestCase):
+    """Alternates only show when the fan-out's top two scores are close."""
+
+    def test_within_ratio_is_tied(self):
+        self.assertTrue(scores_closely_tied(100.0, 100.0 * ALTERNATE_CLOSE_TIE_RATIO))
+        self.assertTrue(scores_closely_tied(2630.0, 2210.0))
+
+    def test_below_ratio_not_tied(self):
+        self.assertFalse(
+            scores_closely_tied(100.0, 100.0 * ALTERNATE_CLOSE_TIE_RATIO - 0.1)
+        )
+        # Cross-tier gap (internal ~8000 base vs external ~2000): never tied.
+        self.assertFalse(scores_closely_tied(8200.0, 2100.0))
+
+    def test_non_positive_scores_never_tied(self):
+        self.assertFalse(scores_closely_tied(0.0, 0.0))
+        self.assertFalse(scores_closely_tied(-50.0, -40.0))
+        self.assertFalse(scores_closely_tied(100.0, 0.0))
+
+    def test_non_finite_scores_never_tied(self):
+        self.assertFalse(scores_closely_tied(float("inf"), 100.0))
+        self.assertFalse(scores_closely_tied(100.0, float("-inf")))
+
+
+class TestRepeatOffenderDemotion(TestCase):
+    """Backends that produced hard-rejected repeats earlier in the session
+    have their base score decayed, and each rejection records a strike."""
+
+    CONTEXT = "context for the reply"
+
+    def _score(self, offenders, base=1000):
+        task = object()
+        score_fn = create_response_scorer(
+            call_scores={task: base},
+            chat_history=None,
+            current_message=None,
+            call_labels={task: "backend-a"},
+            repeat_offenders=offenders,
+        )
+        return score_fn((FRESH_REPLY, self.CONTEXT), task)
+
+    def test_strikes_decay_base_score(self):
+        clean = self._score({})
+        struck = self._score({"backend-a": 2})
+        expected_decayed_base = int(1000 * (REPEAT_OFFENDER_DECAY**2))
+        self.assertEqual(clean - struck, 1000 - expected_decayed_base)
+
+    def test_strike_count_capped(self):
+        at_cap = self._score({"backend-a": 4})
+        past_cap = self._score({"backend-a": 40})
+        self.assertEqual(at_cap, past_cap)
+
+    def test_rejected_repeat_records_strike(self):
+        task = object()
+        offenders: dict = {}
+        rejection_stats: dict = {}
+        history = [
+            {"role": "user", "content": "Help me with the new requirements."},
+            {"role": "assistant", "content": LOOPED_REPLY},
+        ]
+        score_fn = create_response_scorer(
+            call_scores={task: 1000},
+            chat_history=history,
+            current_message="CA",
+            rejection_stats=rejection_stats,
+            call_labels={task: "backend-a"},
+            repeat_offenders=offenders,
+        )
+        score = score_fn((LOOPED_REPLY, self.CONTEXT), task)
+        self.assertEqual(score, float("-inf"))
+        self.assertEqual(offenders, {"backend-a": 1})
+
+    def test_score_log_records_final_scores(self):
+        task = object()
+        score_log: dict = {}
+        score_fn = create_response_scorer(
+            call_scores={task: 1000},
+            chat_history=None,
+            current_message=None,
+            call_labels={task: "backend-a"},
+            score_log=score_log,
+        )
+        score = score_fn((FRESH_REPLY, self.CONTEXT), task)
+        self.assertEqual(score_log, {task: score})

@@ -212,18 +212,39 @@ class TestAsyncTaskUtils:
         def score_fn(result: str, _: Awaitable[str]) -> float:
             return scores.get(result, 0.0)
 
-        best, second = await best_two_within_timelimit(tasks, score_fn, timeout=2.0)
-        assert best == "best"
-        assert second == "middle"
+        result = await best_two_within_timelimit(tasks, score_fn, timeout=2.0)
+        assert result.best == "best"
+        assert result.runner_up == "middle"
+
+    @pytest.mark.asyncio
+    async def test_best_two_reports_scores_and_tasks(self):
+        """The result carries both scores and the ORIGINAL awaitables, so
+        callers can judge how closely tied the race was and attribute each
+        answer to the call that produced it."""
+        tasks = [
+            self.async_task_with_delay("best", 0.05),
+            self.async_task_with_delay("middle", 0.1),
+        ]
+        scores = {"best": 3.0, "middle": 2.5}
+
+        def score_fn(result: str, _: Awaitable[str]) -> float:
+            return scores.get(result, 0.0)
+
+        result = await best_two_within_timelimit(tasks, score_fn, timeout=2.0)
+        assert result.best_score == 3.0
+        assert result.runner_up_score == 2.5
+        assert result.best_task is tasks[0]
+        assert result.runner_up_task is tasks[1]
+        # Field order keeps index 0 == best (older callers indexed).
+        assert result[0] == "best"
 
     @pytest.mark.asyncio
     async def test_best_two_single_task_has_no_runner_up(self):
         tasks = [self.async_task_with_delay("only", 0.05)]
-        best, second = await best_two_within_timelimit(
-            tasks, lambda r, _: 1.0, timeout=1.0
-        )
-        assert best == "only"
-        assert second is None
+        result = await best_two_within_timelimit(tasks, lambda r, _: 1.0, timeout=1.0)
+        assert result.best == "only"
+        assert result.runner_up is None
+        assert result.runner_up_task is None
 
     @pytest.mark.asyncio
     async def test_best_two_runner_up_never_neg_inf(self):
@@ -236,9 +257,9 @@ class TestAsyncTaskUtils:
         def score_fn(result: str, _: Awaitable[str]) -> float:
             return float("-inf") if result == "rejected" else 1.0
 
-        best, second = await best_two_within_timelimit(tasks, score_fn, timeout=2.0)
-        assert best == "best"
-        assert second is None
+        result = await best_two_within_timelimit(tasks, score_fn, timeout=2.0)
+        assert result.best == "best"
+        assert result.runner_up is None
 
     @pytest.mark.asyncio
     async def test_best_two_runner_up_skips_duplicates_of_best(self):
@@ -254,9 +275,9 @@ class TestAsyncTaskUtils:
         def score_fn(result: str, _: Awaitable[str]) -> float:
             return scores.get(result, 0.0)
 
-        best, second = await best_two_within_timelimit(tasks, score_fn, timeout=2.0)
-        assert best == "same_answer"
-        assert second == "different_answer"
+        result = await best_two_within_timelimit(tasks, score_fn, timeout=2.0)
+        assert result.best == "same_answer"
+        assert result.runner_up == "different_answer"
 
     @pytest.mark.asyncio
     async def test_best_two_all_duplicates_no_runner_up(self):
@@ -264,11 +285,9 @@ class TestAsyncTaskUtils:
             self.async_task_with_delay("same_answer", 0.05),
             self.async_task_with_delay("same_answer", 0.1),
         ]
-        best, second = await best_two_within_timelimit(
-            tasks, lambda r, _: 1.0, timeout=2.0
-        )
-        assert best == "same_answer"
-        assert second is None
+        result = await best_two_within_timelimit(tasks, lambda r, _: 1.0, timeout=2.0)
+        assert result.best == "same_answer"
+        assert result.runner_up is None
 
     @pytest.mark.asyncio
     async def test_best_within_timelimit_with_exceptions(self):

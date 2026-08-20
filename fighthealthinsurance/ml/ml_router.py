@@ -579,7 +579,7 @@ class MLRouter(object):
         """
         Return models for handling chat interactions.
         Args:
-            use_external: Whether to include external models as fallback
+            use_external: Whether to include external models in the fan-out
 
         Returns:
             List of RemoteModelLike models suitable for chat tasks
@@ -603,9 +603,15 @@ class MLRouter(object):
             )
         if use_external:
             models += self.best_external_models()
-        internal_to_add = self._filter_available(
+        # Strongest available internals, not cheapest: the cost ordering was
+        # picking the 6 CHEAPEST internal backends for chat, which is the
+        # wrong end of the list when strong and weak internals coexist. The
+        # sort is stable over the cost ordering, so equal-quality models
+        # still resolve cheapest-first.
+        internal_available = self._filter_available(
             self.internal_models_by_cost, "chat-internal"
-        )[:6]
+        )
+        internal_to_add = sorted(internal_available, key=lambda m: -m.quality())[:6]
         models += internal_to_add
         logger.debug(
             f"get_chat_backends(use_external={use_external}): {len(models)} models: "
@@ -617,23 +623,30 @@ class MLRouter(object):
         self, use_external=False
     ) -> tuple[list[RemoteModelLike], list[RemoteModelLike]]:
         """
-        Return primary (FHI) and fallback (external) models for chat interactions.
-        The fallback models are only returned if use_external is True.
+        Return primary and fallback (retry-only) models for chat interactions.
+
+        When ``use_external`` is True the best external models join the
+        PRIMARY fan-out alongside the internal backends, not just the retry
+        pass: quadratic base scoring still prefers a healthy internal reply,
+        but when the internals loop (hard-rejected repeats) or fail, an
+        external answer is already in hand instead of costing a full retry
+        round trip. The same externals are also returned as fallback so the
+        retry pass (shortened context, hotter sampling) can take another
+        shot at them.
 
         Args:
-            use_external: Whether to include external models as fallback
+            use_external: Whether external models participate (primary and
+                fallback). False keeps chat internal-only with no fallback.
 
         Returns:
             Tuple of (primary_models, fallback_models)
-            - primary_models: FHI/internal models to try first
-            - fallback_models: External models to try if primary fails (empty if use_external=False)
         """
         forced_models = self._get_forced_models("for chat", use_external=use_external)
         if forced_models:
             return forced_models, []
 
         # Reuse get_chat_backends for primary models (allows test mocking to work)
-        primary_models = self.get_chat_backends(use_external=False)
+        primary_models = self.get_chat_backends(use_external=use_external)
 
         fallback_models: list[RemoteModelLike] = []
         if use_external:

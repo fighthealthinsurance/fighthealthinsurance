@@ -65,6 +65,9 @@ class _FrameRecorder:
     def debug_frames(self):
         return [f for f in self.frames if "debug_llm_input" in f]
 
+    def debug_result_frames(self):
+        return [f for f in self.frames if "debug_llm_result" in f]
+
 
 class RecordingChatModel:
     """Chat backend stub: records calls; loops until told not to repeat.
@@ -80,12 +83,17 @@ class RecordingChatModel:
         fresh_reply=FRESH_REPLY,
         always_reply=None,
         model_quality=100,
+        name="recording-model",
     ):
         self.calls = []
         self._looped_reply = looped_reply
         self._fresh_reply = fresh_reply
         self._always_reply = always_reply
         self._quality = model_quality
+        self._name = name
+
+    def __str__(self):
+        return self._name
 
     def quality(self):
         return self._quality
@@ -286,6 +294,57 @@ class ChatAlternateAnswerTest(APITestCase):
         assert content_frames
         assert "alternate_content" not in content_frames[-1]
 
+    async def test_wide_score_gap_runner_up_not_offered(self):
+        """A runner-up far below the winner (cross-tier quality gap) is not
+        worth the user's attention: alternates only show on close ties."""
+        user, chat = await _make_chat(
+            "alternate3", "9999930015", chat_history=_seed_history()
+        )
+        recorder = _FrameRecorder()
+        interface = ChatInterface(send_json_message_func=recorder, chat=chat, user=user)
+        strong_model = RecordingChatModel(
+            always_reply=FRESH_REPLY, model_quality=200, name="strong-internal"
+        )
+        weak_model = RecordingChatModel(
+            always_reply=SECOND_OPINION_REPLY, model_quality=100, name="weak-external"
+        )
+
+        with _patched_router([strong_model, weak_model]), _PATCH_FIRE_AND_FORGET:
+            await interface.handle_chat_message("CA")
+
+        content_frames = recorder.content_frames()
+        assert content_frames
+        frame = content_frames[-1]
+        assert frame["content"] == FRESH_REPLY
+        assert "alternate_content" not in frame
+
+
+class ChatRepeatOffenderTest(APITestCase):
+    async def test_looping_backend_gets_session_strikes(self):
+        """A backend whose candidate is hard-rejected as a repeat collects a
+        per-session strike (used to decay its base score on later turns),
+        and the fresh answer from the other backend is delivered."""
+        user, chat = await _make_chat(
+            "offender1", "9999930016", chat_history=_seed_history()
+        )
+        recorder = _FrameRecorder()
+        interface = ChatInterface(send_json_message_func=recorder, chat=chat, user=user)
+        looper = RecordingChatModel(
+            always_reply=LOOPED_REPLY, model_quality=110, name="looping-backend"
+        )
+        fresh = RecordingChatModel(
+            always_reply=FRESH_REPLY, model_quality=100, name="fresh-backend"
+        )
+
+        with _patched_router([looper, fresh]), _PATCH_FIRE_AND_FORGET:
+            await interface.handle_chat_message("CA")
+
+        content_frames = recorder.content_frames()
+        assert content_frames
+        assert content_frames[-1]["content"] == FRESH_REPLY
+        assert interface._repeat_offenders.get("looping-backend", 0) >= 1
+        assert "fresh-backend" not in interface._repeat_offenders
+
 
 class ChatStateHintTest(APITestCase):
     async def test_state_hint_reaches_model_context_as_unconfirmed(self):
@@ -368,6 +427,48 @@ class ChatDebugFrameTest(APITestCase):
             await interface.handle_chat_message("CA")
 
         assert not recorder.debug_frames()
+        assert not recorder.debug_result_frames()
+
+    async def test_debug_result_frame_reports_model_selection(self):
+        """With debug on, each turn also reports WHICH backend won, both
+        scores, and the anti-loop bookkeeping — the fan-out is otherwise a
+        black box when triaging a bad reply."""
+        user, chat = await _make_chat(
+            "chatdebug3", "9999930017", chat_history=_seed_history()
+        )
+        recorder = _FrameRecorder()
+        interface = ChatInterface(
+            send_json_message_func=recorder,
+            chat=chat,
+            user=user,
+            debug_llm=True,
+        )
+        best_model = RecordingChatModel(
+            always_reply=FRESH_REPLY, model_quality=110, name="winner-model"
+        )
+        second_model = RecordingChatModel(
+            always_reply=SECOND_OPINION_REPLY, model_quality=100, name="second-model"
+        )
+
+        with _patched_router([best_model, second_model]), _PATCH_FIRE_AND_FORGET:
+            await interface.handle_chat_message("CA")
+
+        result_frames = recorder.debug_result_frames()
+        assert result_frames, f"expected a debug result frame: {recorder.frames}"
+        result = result_frames[0]["debug_llm_result"]
+        assert result["picked_model"] == "winner-model"
+        assert result["runner_up_model"] == "second-model"
+        assert result["picked_score"] > result["runner_up_score"]
+        assert result["closely_tied"] is True
+        assert result["alternate_offered"] is True
+        assert result["candidate_count"] == 2
+        assert result["rejected_repeats"] == 0
+        assert result["retry_used"] is False
+        assert result["elapsed_ms"] >= 0
+        assert {c["model"] for c in result["scored_candidates"]} == {
+            "winner-model",
+            "second-model",
+        }
 
 
 class ChatDisconnectSafetyTest(APITestCase):

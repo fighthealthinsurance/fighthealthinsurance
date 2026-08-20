@@ -4,6 +4,7 @@ LLM client utilities for chat interface.
 Extracts core LLM calling logic from ChatInterface for reusability and testing.
 """
 
+import math
 import re
 from typing import Awaitable, Callable, Dict, List, Optional, Tuple
 
@@ -393,12 +394,27 @@ def score_llm_response(
     return score
 
 
+# Per-session demotion for backends whose candidates were hard-rejected as
+# repeats earlier in the SAME chat session: each strike multiplies the
+# backend's base score by the decay (capped), so a persistent looper decays
+# from internal-tier preference (~8000 base) toward external-tier (~1900)
+# after ~4 strikes instead of winning every race on raw quality forever.
+# Content-quality signals are unaffected -- only the model-preference prior
+# decays. Strikes are in-memory per ChatInterface (one WebSocket session)
+# and never persisted.
+REPEAT_OFFENDER_DECAY = 0.7
+REPEAT_OFFENDER_CAP = 4
+
+
 def create_response_scorer(
     call_scores: Dict[Awaitable, int],
     primary_calls: Optional[List[Awaitable]] = None,
     chat_history: Optional[List[Dict[str, str]]] = None,
     current_message: Optional[str] = None,
     rejection_stats: Optional[Dict[str, int]] = None,
+    call_labels: Optional[Dict[Awaitable, str]] = None,
+    repeat_offenders: Optional[Dict[str, int]] = None,
+    score_log: Optional[Dict[Awaitable, float]] = None,
 ) -> Callable[[Optional[Tuple[Optional[str], Optional[str]]], Awaitable], float]:
     """
     Create a scoring function for use with best_within_timelimit.
@@ -412,6 +428,17 @@ def create_response_scorer(
             at scoring time.
         rejection_stats: Optional mutable dict shared with the caller; see
             score_llm_response.
+        call_labels: Optional dict mapping call awaitables to backend labels
+            (filled by the build_* helpers). Enables the repeat-offender
+            demotion and the per-candidate score log.
+        repeat_offenders: Optional mutable dict (label -> strike count)
+            owned by the caller and shared across turns of one chat
+            session. Strikes demote the backend's base score (see
+            REPEAT_OFFENDER_DECAY) and each hard-rejected repeat from a
+            labeled call adds a strike.
+        score_log: Optional mutable dict; every scored call's final score is
+            recorded here (keyed by the original awaitable) so the caller
+            can report per-candidate scores in debug output.
 
     Returns:
         Scoring function compatible with best_within_timelimit
@@ -423,8 +450,18 @@ def create_response_scorer(
         original_task: Awaitable,
     ) -> float:
         call_score = call_scores.get(original_task, 0)
+        label = call_labels.get(original_task) if call_labels else None
+        if label and repeat_offenders:
+            strikes = min(repeat_offenders.get(label, 0), REPEAT_OFFENDER_CAP)
+            if strikes:
+                call_score = int(call_score * (REPEAT_OFFENDER_DECAY**strikes))
         is_primary = original_task in primary_set
-        return score_llm_response(
+        rejected_before = (
+            rejection_stats.get("repeated_rejected", 0)
+            if rejection_stats is not None
+            else 0
+        )
+        score = score_llm_response(
             result,
             call_score,
             is_primary,
@@ -432,6 +469,16 @@ def create_response_scorer(
             current_message=current_message,
             rejection_stats=rejection_stats,
         )
+        if (
+            label
+            and repeat_offenders is not None
+            and rejection_stats is not None
+            and rejection_stats.get("repeated_rejected", 0) > rejected_before
+        ):
+            repeat_offenders[label] = repeat_offenders.get(label, 0) + 1
+        if score_log is not None:
+            score_log[original_task] = score
+        return score
 
     return score_fn
 
@@ -445,6 +492,7 @@ def build_llm_calls(
     is_logged_in: bool,
     full_history: Optional[List[Dict[str, str]]] = None,
     allow_repeated_reply: bool = False,
+    call_labels: Optional[Dict[Awaitable, str]] = None,
 ) -> Tuple[List[Awaitable[Tuple[Optional[str], Optional[str]]]], Dict[Awaitable, int]]:
     """
     Build parallel LLM calls for multiple model backends.
@@ -457,12 +505,19 @@ def build_llm_calls(
         is_professional: Whether user is a professional
         is_logged_in: Whether user is logged in
         full_history: Full untruncated history (optional)
+        call_labels: Optional mutable dict filled with call -> backend label
+            (str(backend)); lets the scorer attribute candidates to models
+            for repeat-offender demotion and debug reporting.
 
     Returns:
         Tuple of (list of call awaitables, dict mapping calls to quality scores)
     """
     calls: List[Awaitable[Tuple[Optional[str], Optional[str]]]] = []
     call_scores: Dict[Awaitable, int] = {}
+
+    def _label(call: Awaitable, model_backend: RemoteModelLike) -> None:
+        if call_labels is not None:
+            call_labels[call] = str(model_backend)
 
     for model_backend in model_backends:
         # Try with truncated history
@@ -474,6 +529,7 @@ def build_llm_calls(
             is_logged_in=is_logged_in,
             allow_repeated_reply=allow_repeated_reply,
         )
+        _label(call, model_backend)
         calls.append(call)
         # Quadratic scaling to more aggressively prefer higher-quality models
         call_scores[call] = (model_backend.quality() ** 2) // 5
@@ -494,6 +550,7 @@ def build_llm_calls(
                     is_logged_in=is_logged_in,
                     allow_repeated_reply=allow_repeated_reply,
                 )
+                _label(full_history_call, model_backend)
                 calls.append(full_history_call)
                 # Slightly prefer full history for better context
                 call_scores[full_history_call] = (model_backend.quality() ** 2) // 4
@@ -510,6 +567,7 @@ def build_llm_calls_for_variants(
     is_logged_in: bool,
     full_history: Optional[List[Dict[str, str]]] = None,
     allow_repeated_reply: bool = False,
+    call_labels: Optional[Dict[Awaitable, str]] = None,
 ) -> Tuple[
     List[Awaitable[Tuple[Optional[str], Optional[str]]]],
     Dict[Awaitable, int],
@@ -552,6 +610,7 @@ def build_llm_calls_for_variants(
             is_logged_in=is_logged_in,
             full_history=full_history,
             allow_repeated_reply=allow_repeated_reply,
+            call_labels=call_labels,
         )
         # Apply the variant's score delta to every call it produced.
         for call in calls:
@@ -581,6 +640,7 @@ def build_retry_calls(
     fallback_backends: Optional[List[RemoteModelLike]] = None,
     temperature: float = 0.7,
     allow_repeated_reply: bool = False,
+    call_labels: Optional[Dict[Awaitable, str]] = None,
 ) -> Tuple[List[Awaitable[Tuple[Optional[str], Optional[str]]]], Dict[Awaitable, int]]:
     """
     Build retry LLM calls with shortened context and fallback backends.
@@ -595,12 +655,18 @@ def build_retry_calls(
         fallback_backends: Optional backup model backends
         temperature: Sampling temperature for the retry calls. Anti-repeat
             retries pass a higher value to break deterministic loops.
+        call_labels: Optional mutable dict filled with call -> backend label
+            (see build_llm_calls).
 
     Returns:
         Tuple of (list of call awaitables, dict mapping calls to quality scores)
     """
     calls: List[Awaitable[Tuple[Optional[str], Optional[str]]]] = []
     call_scores: Dict[Awaitable, int] = {}
+
+    def _label(call: Awaitable, model_backend: RemoteModelLike) -> None:
+        if call_labels is not None:
+            call_labels[call] = str(model_backend)
 
     # Use shorter history for retry (Python gracefully handles if len < 5)
     start_idx = max(0, len(history) - 5)
@@ -617,6 +683,7 @@ def build_retry_calls(
             temperature=temperature,
             allow_repeated_reply=allow_repeated_reply,
         )
+        _label(call, model_backend)
         calls.append(call)
         # Quadratic scaling, reduced for retry (lower priority than primary)
         call_scores[call] = (model_backend.quality() ** 2) // 7
@@ -632,6 +699,7 @@ def build_retry_calls(
             temperature=temperature,
             allow_repeated_reply=allow_repeated_reply,
         )
+        _label(call, model_backend)
         calls.append(call)
         call_scores[call] = (model_backend.quality() ** 2) // 2
 
@@ -648,6 +716,7 @@ def build_retry_calls(
                 temperature=temperature,
                 allow_repeated_reply=allow_repeated_reply,
             )
+            _label(call, model_backend)
             calls.append(call)
             call_scores[call] = (model_backend.quality() ** 2) // 7
 
@@ -661,6 +730,7 @@ def build_retry_calls(
                 temperature=temperature,
                 allow_repeated_reply=allow_repeated_reply,
             )
+            _label(call, model_backend)
             calls.append(call)
             call_scores[call] = (model_backend.quality() ** 2) // 5
 
@@ -717,3 +787,33 @@ def alternate_is_presentable(
     if find_repeated_reply(text, chat_history, current_message):
         return False
     return True
+
+
+# Runner-up must score at least this fraction of the winner for the pair to
+# count as "closely tied" (the only case where a side-by-side alternate is
+# offered). Base call scores are quadratic in model quality (internal ~8000
+# vs external ~1900 at //5), so a cross-tier runner-up never comes close and
+# the alternate stays reserved for genuinely comparable answers -- e.g. the
+# same model's truncated- vs full-history variants (8000 vs 10000 base,
+# ratio 0.8) or two same-tier backends split by content-quality signals.
+ALTERNATE_CLOSE_TIE_RATIO = 0.8
+
+
+def scores_closely_tied(
+    best_score: float,
+    runner_up_score: float,
+    ratio: float = ALTERNATE_CLOSE_TIE_RATIO,
+) -> bool:
+    """Whether the fan-out's top two scores are close enough that showing
+    the user both answers (side-by-side alternate) beats auto-picking.
+
+    Both scores must be positive and finite: a non-positive winner means the
+    turn was already degraded (heavy penalties), and -inf/absent runner-ups
+    were never usable. With positive scores the ratio test is monotonic and
+    scale-free against the quadratic base-score tiers.
+    """
+    if not (math.isfinite(best_score) and math.isfinite(runner_up_score)):
+        return False
+    if best_score <= 0 or runner_up_score <= 0:
+        return False
+    return runner_up_score >= best_score * ratio

@@ -1,5 +1,7 @@
 import asyncio
+import math
 import re
+import time
 from dataclasses import replace
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, cast
 
@@ -31,6 +33,7 @@ from fighthealthinsurance.chat.llm_client import (
     build_llm_calls_for_variants,
     create_response_scorer,
     find_repeated_reply,
+    scores_closely_tied,
     user_requested_repeat,
 )
 from fighthealthinsurance.chat.message_preprocessor import (
@@ -125,7 +128,9 @@ class ChatInterface:
         send_json_message_func: Callable[[Dict[str, Any]], Awaitable[None]],
         chat: OngoingChat,
         user: User,
-        use_external_models: bool = False,
+        # External models participate by default (matches the client-side
+        # default; the consent-form toggle sends an explicit opt-out).
+        use_external_models: bool = True,
         server_session_key: Optional[str] = None,
         state_hint: Optional[str] = None,
         debug_llm: bool = False,
@@ -162,8 +167,14 @@ class ChatInterface:
         self.debug_llm: bool = debug_llm
         self._doc_fetch_count: list[int] = [0]
         # Runner-up answer from the most recent top-level LLM fan-out,
-        # offered to the client as a side-by-side alternate when presentable.
+        # offered to the client as a side-by-side alternate when presentable
+        # AND closely tied with the winner (see scores_closely_tied).
         self._candidate_alternate: Optional[str] = None
+        # Per-session strike counts for backends whose candidates were
+        # hard-rejected as repeats (label -> count). Shared with the scorer,
+        # which decays a striking backend's base score so a looping model
+        # stops winning every fan-out this session. In-memory only.
+        self._repeat_offenders: Dict[str, int] = {}
 
     @staticmethod
     def _append_to_history(chat, role: str, content: str):
@@ -340,6 +351,7 @@ class ChatInterface:
         # variant's score delta; only the primary_original variant's calls keep
         # the is-primary scoring bonus. Otherwise (recursive tool calls) fall
         # back to the single wrapped message, preserving existing behavior.
+        call_labels: Dict[Awaitable, str] = {}
         if message_variants:
             calls, call_scores, primary_calls = build_llm_calls_for_variants(
                 model_backends=model_backends,
@@ -350,6 +362,7 @@ class ChatInterface:
                 is_logged_in=is_logged_in,
                 full_history=full_history,
                 allow_repeated_reply=allow_repeat,
+                call_labels=call_labels,
             )
         else:
             calls, call_scores = build_llm_calls(
@@ -361,6 +374,7 @@ class ChatInterface:
                 is_logged_in=is_logged_in,
                 full_history=full_history,
                 allow_repeated_reply=allow_repeat,
+                call_labels=call_labels,
             )
             primary_calls = calls
 
@@ -368,31 +382,52 @@ class ChatInterface:
         # is shared with the scorer so we can tell "no usable response" apart
         # from "responses arrived but all repeated a recent reply" -- the
         # latter retries with an explicit anti-repeat instruction.
+        # call_labels + self._repeat_offenders let the scorer demote backends
+        # that produced hard-rejected repeats earlier in this session, and
+        # score_log records per-candidate final scores for debug reporting.
         rejection_stats: Dict[str, int] = {}
+        score_log: Dict[Awaitable, float] = {}
         score_fn = create_response_scorer(
             call_scores,
             primary_calls=primary_calls,
             chat_history=chat.chat_history,
             current_message=scoring_message,
             rejection_stats=rejection_stats,
+            call_labels=call_labels,
+            repeat_offenders=self._repeat_offenders,
+            score_log=score_log,
         )
 
-        runner_up_call: Optional[Tuple[Optional[str], Optional[str]]] = None
+        llm_pass_started = time.monotonic()
+        picked_model: Optional[str] = None
+        picked_score: Optional[float] = None
+        runner_up_model: Optional[str] = None
+        runner_up_score: Optional[float] = None
+        runner_up_text: Optional[str] = None
         try:
             # Explicit overtime window: with the defaults (2x timeout) the
             # primary pass could take 90s and the retry pass 105s -- past the
             # 150s turn budget, so the budget killed retries that would have
             # succeeded. 30+30 here plus 35+40 in retry_llm_with_fallback
             # keeps the whole ladder inside the budget.
-            best_call, runner_up_call = await best_two_within_timelimit(
+            best_two = await best_two_within_timelimit(
                 calls,
                 score_fn,
                 timeout=30.0,
                 extended_timeout=30.0,
             )
             response_text, context_part = (
-                best_call if best_call is not None else (None, None)
+                best_two.best if best_two.best is not None else (None, None)
             )
+            if best_two.best is not None:
+                picked_score = best_two.best_score
+                if best_two.best_task is not None:
+                    picked_model = call_labels.get(best_two.best_task)
+            if best_two.runner_up is not None:
+                runner_up_text = best_two.runner_up[0]
+                runner_up_score = best_two.runner_up_score
+                if best_two.runner_up_task is not None:
+                    runner_up_model = call_labels.get(best_two.runner_up_task)
         except Exception as e:
             logger.warning(f"Primary models all failed: {e}")
             response_text = None
@@ -401,6 +436,9 @@ class ChatInterface:
         response_text = response_text or ""
 
         # If primary models failed, use retry handler with fallback
+        retry_used = False
+        saw_repeats = False
+        retry_debug: Dict[str, Any] = {}
         if should_retry_response(response_text):
             saw_repeats = bool(rejection_stats.get("repeated_rejected"))
             if saw_repeats:
@@ -425,10 +463,19 @@ class ChatInterface:
                 user_message_for_scoring=scoring_message,
                 anti_repeat=saw_repeats,
                 allow_repeated_reply=allow_repeat,
+                debug_info=retry_debug,
             )
             if retry_response and len(retry_response.strip()) > 5:
                 response_text = retry_response
                 context_part = retry_context
+                retry_used = True
+                picked_model = retry_debug.get("retry_picked_model") or picked_model
+                picked_score = retry_debug.get("retry_picked_score", picked_score)
+                # The retry winner replaced the primary answer; the primary
+                # pass's runner-up no longer describes a comparable pair.
+                runner_up_text = None
+                runner_up_model = None
+                runner_up_score = None
 
         logger.debug(f"Using best result {response_text:.20}...")
 
@@ -436,21 +483,82 @@ class ChatInterface:
             logger.debug("Got empty response from LLM")
             return None, None
 
-        # Capture a presentable runner-up as a side-by-side alternate answer.
-        # Only for the top-level user turn (depth 0); recursive tool calls
-        # must not clobber it. Cleared again below if tool processing changes
-        # the primary response (action flows don't get a raw alternate).
+        # Capture a presentable runner-up as a side-by-side alternate answer
+        # -- but only when the top two scores are CLOSELY TIED (see
+        # scores_closely_tied): when the winner is clearly better, showing a
+        # second answer is noise; when the race was close, the user is the
+        # right tiebreaker. Only for the top-level user turn (depth 0);
+        # recursive tool calls must not clobber it. Cleared again below if
+        # tool processing changes the primary response (action flows don't
+        # get a raw alternate).
+        closely_tied = False
         if depth == 0:
             self._candidate_alternate = None
-            if runner_up_call is not None:
-                alternate_text = runner_up_call[0]
-                if alternate_text and alternate_is_presentable(
-                    alternate_text,
+            closely_tied = (
+                picked_score is not None
+                and runner_up_score is not None
+                and scores_closely_tied(picked_score, runner_up_score)
+            )
+            if runner_up_text and closely_tied:
+                if alternate_is_presentable(
+                    runner_up_text,
                     response_text,
                     chat_history=chat.chat_history,
                     current_message=scoring_message,
                 ):
-                    self._candidate_alternate = alternate_text.strip()
+                    self._candidate_alternate = runner_up_text.strip()
+            elif runner_up_text:
+                logger.debug(
+                    f"Chat {chat.id}: runner-up not closely tied "
+                    f"({runner_up_score} vs {picked_score}); no alternate"
+                )
+
+        # One compact selection line per LLM pass at INFO: this is the
+        # production-debuggable record of which backend won and why the
+        # alternates/retries behaved as they did (the debug frame below
+        # only reaches DEBUG deployments and staff).
+        elapsed_ms = int((time.monotonic() - llm_pass_started) * 1000)
+        logger.info(
+            f"Chat {chat.id}: picked {picked_model or 'unknown'}"
+            f" (score={picked_score}) runner_up={runner_up_model}"
+            f" (score={runner_up_score}, tied={closely_tied})"
+            f" candidates={len(calls)} rejected_repeats="
+            f"{rejection_stats.get('repeated_rejected', 0)}"
+            f" retry_used={retry_used} elapsed_ms={elapsed_ms} depth={depth}"
+        )
+        if depth == 0 and self.debug_llm:
+            # -inf (hard-rejected candidates) is not valid JSON -- json.dumps
+            # emits `-Infinity`, which browser JSON.parse refuses, killing
+            # the whole frame client-side. Map non-finite scores to None and
+            # mark the rejection explicitly instead.
+            scored_candidates = [
+                {
+                    "model": call_labels.get(task, "unknown"),
+                    "score": score if math.isfinite(score) else None,
+                    "rejected": not math.isfinite(score),
+                }
+                for task, score in score_log.items()
+            ]
+            await self.send_json_message_func(
+                {
+                    "debug_llm_result": {
+                        "picked_model": picked_model,
+                        "picked_score": picked_score,
+                        "runner_up_model": runner_up_model,
+                        "runner_up_score": runner_up_score,
+                        "closely_tied": closely_tied,
+                        "alternate_offered": bool(self._candidate_alternate),
+                        "candidate_count": len(calls),
+                        "scored_candidates": scored_candidates,
+                        "rejected_repeats": rejection_stats.get("repeated_rejected", 0),
+                        "repeat_offenders": dict(self._repeat_offenders),
+                        "retry_used": retry_used,
+                        "anti_repeat_retry": saw_repeats and retry_used,
+                        "allow_repeated_reply": allow_repeat,
+                        "elapsed_ms": elapsed_ms,
+                    }
+                }
+            )
         response_before_tools = response_text
 
         # Process tool calls via modular tool handlers
