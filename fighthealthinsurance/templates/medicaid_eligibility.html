@@ -1,9 +1,9 @@
 {% extends 'base.html' %}
 {% load static %}
 
-{% block title %}Do I Qualify for Medicaid? Free Eligibility Check{% endblock title %}
-{% block metatitle %}Do I Qualify for Medicaid? Free Eligibility Check - Fight Health Insurance{% endblock metatitle %}
-{% block metadescription %}Check if you may qualify for Medicaid or Medicare with our free AI-powered eligibility assistant. Understand income limits, the 2026 work requirements, and your alternatives if you don't qualify.{% endblock metadescription %}
+{% block title %}Do I Qualify for Medicaid? Free Experimental Eligibility Check{% endblock title %}
+{% block metatitle %}Do I Qualify for Medicaid? Free Experimental Eligibility Check - Fight Health Insurance{% endblock metatitle %}
+{% block metadescription %}Check if you may qualify for Medicaid or Medicare with our free, experimental AI-powered eligibility assistant. It's an estimate only — not an official determination. Understand income limits, the 2026 work requirements, and your alternatives if you don't qualify.{% endblock metadescription %}
 
 {% block content %}
 <!-- Hero Section -->
@@ -12,16 +12,33 @@
         <div class="item item-first">
             <div class="caption d-flex flex-column align-items-center justify-content-center">
                 <div class="hero-inner" style="max-width: 900px;">
+                    <div class="mb-3">
+                        <span class="badge experimental-badge">&#9888;&#65039; EXPERIMENTAL FEATURE</span>
+                    </div>
                     <h3 class="hero-tagline">Medicaid rules are confusing&mdash;checking shouldn't be</h3>
                     <h1 class="hero-headline">Do I Qualify for Medicaid?</h1>
-                    <p class="hero-subcopy">Answer a few questions with our free AI assistant and get an estimate of whether you may qualify for Medicaid or Medicare in your state&mdash;plus what to do next either way. No account required.</p>
+                    <p class="hero-subcopy">Answer a few questions with our free, <strong>experimental</strong> AI assistant and get a rough estimate of whether you may qualify for Medicaid or Medicare in your state&mdash;plus what to do next either way. No account required. It's an estimate only, <strong>not</strong> an official determination&mdash;always confirm with your state.</p>
                     <div class="hero-cta-group">
-                        <a href="{% url 'chat' %}" class="section-btn btn btn-default primary-cta">Check My Eligibility (Free AI Chat)</a>
+                        <a href="{% url 'chat' %}" class="section-btn btn btn-default primary-cta">Try the Experimental Eligibility Check</a>
                     </div>
                     <div class="hero-cta-group hero-cta-secondary">
                         <a href="#how-it-works" class="btn btn-outline-green smoothScroll secondary-cta">How It Works</a>
                         <a href="{% url 'medicaid-faq' %}" class="btn btn-outline-green tertiary-cta">Work Requirements FAQ</a>
                     </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Experimental Notice Banner -->
+<section id="experimental-notice" class="pt-4 pb-2">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-10 mx-auto">
+                <div class="alert alert-warning experimental-banner mb-0" role="alert">
+                    <h4 class="alert-heading mb-2">&#9888;&#65039; This eligibility check is an experimental feature</h4>
+                    <p class="mb-0">It is <strong>new, under active development, and can be wrong, incomplete, or out of date</strong>. It gives a rough estimate&mdash;<strong>not</strong> an official eligibility determination, and not legal, medical, or financial advice. Only your state Medicaid agency can determine your eligibility for real. Please double-check everything it tells you with <a href="{% url 'state_help_index' %}" class="alert-link">your state</a> before making any decisions about your coverage.</p>
                 </div>
             </div>
         </div>
@@ -57,7 +74,7 @@
                         <div class="card h-100 border-info">
                             <div class="card-body">
                                 <h5 class="card-title"><span class="badge bg-success me-2">3</span>Get an estimate + next steps</h5>
-                                <p class="card-text">You'll get a best-guess estimate for today's rules and the 2026 work-requirement rules, alternatives if you don't qualify, and your state's contact info to confirm and apply.</p>
+                                <p class="card-text">You'll get an experimental, best-guess estimate for today's rules and the 2026 work-requirement rules, alternatives if you don't qualify, and your state's contact info to confirm and apply.</p>
                             </div>
                         </div>
                     </div>
@@ -65,8 +82,8 @@
 
                 <div class="card mt-4 border-warning">
                     <div class="card-body">
-                        <h5 class="card-title"><span class="text-warning me-2">&#9888;</span> An Estimate, Not a Determination</h5>
-                        <p class="card-text mb-0">Only your state Medicaid agency can officially determine eligibility, and rules change often. Our check is a free, fast way to understand where you likely stand and what to gather before you apply&mdash;always confirm with your state.</p>
+                        <h5 class="card-title"><span class="text-warning me-2">&#9888;</span> Experimental: An Estimate, Not a Determination</h5>
+                        <p class="card-text mb-0">This checker is an <strong>experimental feature</strong>&mdash;the AI can make mistakes, and Medicaid rules change often. Only your state Medicaid agency can officially determine eligibility. Our check is a free, fast way to understand where you likely stand and what to gather before you apply&mdash;always confirm with your state.</p>
                     </div>
                 </div>
             </div>
@@ -106,7 +123,8 @@
                 </div>
 
                 <div class="text-center mt-4">
-                    <a href="{% url 'chat' %}" class="btn btn-green btn-lg">Start the Free Eligibility Check</a>
+                    <a href="{% url 'chat' %}" class="btn btn-green btn-lg">Start the Free Eligibility Check (Experimental)</a>
+                    <p class="text-muted small mt-2 mb-0">Experimental: results are estimates only&mdash;confirm with your state.</p>
                 </div>
             </div>
         </div>
@@ -328,10 +346,13 @@
     <div class="container">
         <div class="row">
             <div class="col-lg-8 mx-auto text-center">
+                <div class="mb-2">
+                    <span class="badge experimental-badge">&#9888;&#65039; EXPERIMENTAL FEATURE</span>
+                </div>
                 <h2 class="mb-3">Find Out Where You Stand&mdash;In Minutes</h2>
-                <p class="lead mb-4">Free, no account needed. Get a Medicaid and Medicare eligibility estimate, plus a plan for what to do next.</p>
+                <p class="lead mb-4">Free, no account needed. Get an experimental Medicaid and Medicare eligibility estimate, plus a plan for what to do next&mdash;then confirm everything with your state.</p>
                 <div class="d-flex justify-content-center gap-3 flex-wrap">
-                    <a href="{% url 'chat' %}" class="btn btn-green btn-lg">Check My Eligibility</a>
+                    <a href="{% url 'chat' %}" class="btn btn-green btn-lg">Check My Eligibility (Experimental)</a>
                     <a href="{% url 'medicaid-faq' %}" class="btn btn-outline-green btn-lg">Work Requirements FAQ</a>
                     <a href="{% url 'state_help_index' %}" class="btn btn-outline-secondary btn-lg">State Resources</a>
                 </div>
@@ -347,7 +368,7 @@
             <div class="col-lg-8 mx-auto">
                 <div class="disclaimer-box p-3 bg-light border rounded">
                     <p class="text-muted small mb-0">
-                        <strong>Disclaimer:</strong> This page and our AI assistant provide informational estimates only&mdash;not legal, medical, or financial advice, and not an official eligibility determination. Medicaid and Medicare rules vary by state and change frequently, including the phase-in of federal work requirements. Always confirm with your state Medicaid agency or a benefits navigator. Last updated: August 2026.
+                        <strong>Disclaimer:</strong> The Medicaid eligibility check is an <strong>EXPERIMENTAL feature</strong> that is under active development and can produce incorrect, incomplete, or outdated results. This page and our AI assistant provide informational estimates only&mdash;not legal, medical, or financial advice, and not an official eligibility determination. Medicaid and Medicare rules vary by state and change frequently, including the phase-in of federal work requirements. Always confirm with your state Medicaid agency or a benefits navigator before making decisions about your coverage. Last updated: August 2026.
                     </p>
                 </div>
             </div>
@@ -362,6 +383,29 @@
         backdrop-filter: blur(3px);
         padding: 2rem;
         border-radius: 14px;
+    }
+
+    .experimental-badge {
+        background-color: #ffc107;
+        color: #212529;
+        font-size: 0.95rem;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        padding: 0.5em 0.9em;
+        border: 2px solid #212529;
+        border-radius: 6px;
+        text-transform: uppercase;
+    }
+
+    .experimental-banner {
+        border: 2px solid #ffc107;
+        border-left-width: 8px;
+        background-color: #fff8e1;
+        color: #212529;
+    }
+
+    .experimental-banner .alert-heading {
+        font-weight: 700;
     }
 
     .list-group-item {

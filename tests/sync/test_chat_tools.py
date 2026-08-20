@@ -474,6 +474,36 @@ class TestMedicaidEligibilityTool(TestCase):
         self.assertIn("- What state do you live in?", info)
         self.assertNotIn("['What state", info)
 
+    def test_build_eligibility_info_flags_experimental_when_asking(self):
+        """The LLM is told to disclose the experimental status while asking."""
+        mock_status = AsyncMock()
+        tool = MedicaidEligibilityTool(mock_status)
+
+        info = tool._build_eligibility_info(
+            eligible_2025=False,
+            eligible_2026=False,
+            medicare=False,
+            alternatives=[],
+            missing=["What state do you live in?"],
+        )
+
+        self.assertIn("EXPERIMENTAL", info)
+
+    def test_build_eligibility_info_flags_experimental_on_verdict(self):
+        """The LLM is told to disclose the experimental status with verdicts."""
+        mock_status = AsyncMock()
+        tool = MedicaidEligibilityTool(mock_status)
+
+        info = tool._build_eligibility_info(
+            eligible_2025=True,
+            eligible_2026=True,
+            medicare=False,
+            alternatives=[],
+            missing=[],
+        )
+
+        self.assertIn("EXPERIMENTAL", info)
+
     def test_build_eligibility_info_paces_questions(self):
         """The LLM is told to ask only a few questions at a time."""
         mock_status = AsyncMock()

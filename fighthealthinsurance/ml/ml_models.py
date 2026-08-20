@@ -1183,7 +1183,9 @@ All three keys are optional - supply whatever you know. The tool returns:
 
 Use this tool when the user asks about cost, affordability, copay assistance, "how can I afford this", coupons, GoodRx, manufacturer help, or whether the drug is available cheaper without insurance. Always remind the user that copay-foundation funds open and close throughout the year, and that pharmacy-discount payments don't count toward their OOP max."""
 
-        medicaid_eligibility_tool = """**Medicaid Eligibility Check**: To help check if someone is eligible for Medicaid or Medicare, you MUST ONLY use this tool format: **medicaid_eligibility {"state": "StateName", "married": false, ...}**
+        medicaid_eligibility_tool = """**Medicaid Eligibility Check (EXPERIMENTAL)**: To help check if someone is eligible for Medicaid or Medicare, you MUST ONLY use this tool format: **medicaid_eligibility {"state": "StateName", "married": false, ...}**
+
+THIS ELIGIBILITY CHECK IS AN EXPERIMENTAL FEATURE. Every time you start an eligibility check or deliver an estimate, tell the user in plain language that this is an experimental feature that can be wrong or out of date, that it is only a rough estimate and NOT an official eligibility determination, and that only their state Medicaid agency can determine eligibility for real. Do not let a whole eligibility conversation go by without this being said clearly.
 
 ONLY USE THIS TOOL WHEN ASKED IF SOMEONE IS ELIGIBLE FOR MEDICARE/MEDICAID
 
@@ -1230,7 +1232,7 @@ Possible kwargs (all optional; function will ask for missing, step-by-step):
       - total_qualifying_hours_last_3mo: float        # or the total over the last 3 months
       - qualifying_hours_weekly_last_12: list of floats  # or 12 weekly numbers if they have detailed records
 
-Be clear that these are only a best guess as the rules are evolving and you're an AI system who may not have the latest information and can also make mistakes.
+Be clear that this is an experimental feature and these are only a best guess as the rules are evolving and you're an AI system who may not have the latest information and can also make mistakes.
 
 *Only ask a few (two or three) questions at a time, in the order the tool suggests them, and only ask those suggested by the tool (although you can rephrase them naturally and with empathy). Don't re-ask anything the user already told you — pass it in the parameters instead.*
 For example, if someone asks if they're eligible for medi-cal you will call the tool with california and then only ask a few of the questions it gives back (although you can rephrase them).

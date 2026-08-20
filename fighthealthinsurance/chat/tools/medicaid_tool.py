@@ -326,9 +326,11 @@ class MedicaidEligibilityTool(BaseTool):
                 "questions (no more than two or three per message, in the "
                 "order listed, rephrased naturally) or deliver the news of "
                 "our determination along with the alternatives. Don't re-ask "
-                "anything the user already answered. Always be careful to "
-                "indicate that this is an approximation and they should "
-                "contact the state to know for sure (you can use the "
+                "anything the user already answered. Always make it very "
+                "clear that this eligibility check is an EXPERIMENTAL "
+                "feature and only an approximation -- it can be wrong or "
+                "out of date -- and they must contact the state to know for "
+                "sure (you can use the "
                 "medicaid_info tool call to get state-specific contact info "
                 "to provide to the user). If the 2026 work requirement is "
                 "the barrier, suggest ways to reach 80 qualifying hours a "
@@ -411,7 +413,9 @@ class MedicaidEligibilityTool(BaseTool):
         """
         parts: List[str] = [
             "We're helping figure out if someone is likely eligible for "
-            "Medicaid. Be clear this is an approximation and they'll need "
+            "Medicaid using our EXPERIMENTAL eligibility checker. Be very "
+            "clear with the user that this is an experimental feature that "
+            "can be wrong: it only gives an approximation, and they'll need "
             "to confirm with the state to be sure."
         ]
 

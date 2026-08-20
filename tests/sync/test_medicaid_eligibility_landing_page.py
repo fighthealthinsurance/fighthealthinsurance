@@ -27,6 +27,21 @@ class TestMedicaidEligibilityLandingPage(TestCase):
         # The page must not present the AI check as an official determination.
         self.assertContains(self.response, "Estimate, Not a Determination")
 
+    def test_page_shows_experimental_badge_in_hero(self):
+        self.assertContains(self.response, "EXPERIMENTAL FEATURE")
+
+    def test_page_has_prominent_experimental_banner(self):
+        self.assertContains(
+            self.response, "This eligibility check is an experimental feature"
+        )
+
+    def test_page_ctas_are_labeled_experimental(self):
+        self.assertContains(self.response, "Try the Experimental Eligibility Check")
+        self.assertContains(self.response, "Check My Eligibility (Experimental)")
+
+    def test_page_disclaimer_flags_experimental(self):
+        self.assertContains(self.response, "EXPERIMENTAL feature")
+
     def test_page_covers_2026_work_requirements(self):
         self.assertContains(self.response, "80 hours per month")
 
