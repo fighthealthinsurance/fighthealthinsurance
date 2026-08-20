@@ -10,7 +10,11 @@ never going to be asked (the pre-2026-08 stall bugs).
 # a CSV -- no ORM, so skip TestCase's per-test transaction machinery.
 from django.test import SimpleTestCase
 
-from fighthealthinsurance.medicaid_api import get_medicaid_info, is_eligible
+from fighthealthinsurance.medicaid_api import (
+    get_medicaid_info,
+    is_eligible,
+    summarize_eligibility_inputs,
+)
 
 
 def _answers(**overrides):
@@ -273,6 +277,10 @@ class TestLlmPayloadParsing(SimpleTestCase):
         _, _, _, _, missing = is_eligible(**_answers(monthly_income="$1,200"))
         self.assertFalse(any("monthly income" in q for q in missing))
 
+    def test_abbreviated_thousands_income_is_parsed(self):
+        summary = summarize_eligibility_inputs({"monthly_income": "1.2k"})
+        self.assertEqual(summary["recorded"]["monthly_income"], 1200.0)
+
     def test_spelled_out_household_size_is_parsed(self):
         _, _, _, _, missing = is_eligible(**_answers(household_size="three"))
         self.assertFalse(any("household size" in q for q in missing))
@@ -283,6 +291,86 @@ class TestLlmPayloadParsing(SimpleTestCase):
         _, _, _, alts, missing = is_eligible(state="Puerto Rico", age=30)
         self.assertFalse(any("state do you live" in q for q in missing))
         self.assertTrue(any("territor" in a.lower() for a in alts))
+
+
+class TestUnknownAnswerChannel(SimpleTestCase):
+    """The model needs a way to say "asked, and the user can't answer"."""
+
+    def test_declined_optional_field_is_not_reasked(self):
+        # Without this channel the model has nothing valid to send for "I
+        # don't know", so the question returns every turn forever.
+        _, _, _, _, missing = is_eligible(**_answers(married="unknown"))
+        self.assertFalse(any("married" in q for q in missing))
+
+    def test_declined_optional_field_still_yields_a_verdict(self):
+        eligible_2025, _, _, _, _ = is_eligible(**_answers(married="unknown"))
+        self.assertTrue(eligible_2025)
+
+    def test_declined_optional_field_discloses_the_assumption(self):
+        _, _, _, alts, _ = is_eligible(**_answers(married="prefer not to say"))
+        self.assertTrue(any("assumed the most conservative" in a for a in alts))
+
+    def test_declined_required_field_is_not_reasked(self):
+        _, _, _, _, missing = is_eligible(
+            **_answers(household_size="don't know", monthly_income="idk")
+        )
+        self.assertFalse(any("household" in q for q in missing))
+
+    def test_declined_required_field_explains_the_blocked_estimate(self):
+        # Not a silent "not eligible" dead end -- say what's missing.
+        _, _, _, alts, _ = is_eligible(
+            **_answers(household_size="don't know", monthly_income="idk")
+        )
+        self.assertTrue(any("can't estimate eligibility without" in a for a in alts))
+
+    def test_declined_assets_question_is_not_reasked(self):
+        _, _, _, _, missing = is_eligible(
+            **_answers(
+                age=70,
+                on_medicare=True,
+                years_worked=20,
+                assets_total="prefer not to say",
+            )
+        )
+        self.assertFalse(any("assets" in q for q in missing))
+
+
+class TestParsedInputFeedback(SimpleTestCase):
+    """The model parses user text, so it needs to see what actually landed."""
+
+    def test_normalized_values_are_reported_back(self):
+        summary = summarize_eligibility_inputs(
+            {"state": "Medi-Cal", "monthly_income": "$1,200", "married": "single"}
+        )
+        self.assertEqual(summary["recorded"]["state"], "ca")
+        self.assertEqual(summary["recorded"]["monthly_income"], 1200.0)
+        self.assertFalse(summary["recorded"]["married"])
+
+    def test_unrecognized_parameter_names_are_reported(self):
+        # Silently dropping these looks to the model exactly like acceptance,
+        # so it believes it answered and the question comes back.
+        summary = summarize_eligibility_inputs({"income": 999, "state": "ca"})
+        self.assertEqual(summary["unrecognized"], ["income"])
+
+    def test_unreadable_values_are_reported(self):
+        summary = summarize_eligibility_inputs({"age": "thirtyish"})
+        self.assertEqual(summary["unreadable"], ["age"])
+
+    def test_declined_fields_are_reported(self):
+        summary = summarize_eligibility_inputs({"assets_total": "unknown"})
+        self.assertEqual(summary["declined"], ["assets_total"])
+
+
+class TestStateProgramNames(SimpleTestCase):
+    """Program names are what users actually say; resolve them as a backstop."""
+
+    def test_medi_cal_resolves_to_california(self):
+        eligible_2025, _, _, _, _ = is_eligible(**_answers(state="Medi-Cal"))
+        self.assertTrue(eligible_2025)
+
+    def test_masshealth_resolves_to_massachusetts(self):
+        eligible_2025, _, _, _, _ = is_eligible(**_answers(state="MassHealth"))
+        self.assertTrue(eligible_2025)
 
 
 class TestQuestionsThatCannotChangeTheAnswer(SimpleTestCase):

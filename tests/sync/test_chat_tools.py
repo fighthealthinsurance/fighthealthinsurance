@@ -526,6 +526,30 @@ class TestMedicaidEligibilityTool(TestCase):
 
         self.assertNotIn("If denied", info)
 
+    def test_parsed_summary_echoes_recorded_values(self):
+        """The LLM keeps its own context, so it must see what we recorded."""
+        text = self.tool._build_parsed_summary(
+            {"recorded": {"state": "ca"}, "unreadable": [], "unrecognized": [], "declined": []}
+        )
+
+        self.assertIn("state: ca", text)
+
+    def test_parsed_summary_flags_unrecognized_parameters(self):
+        """A silently dropped key looks to the model just like acceptance."""
+        text = self.tool._build_parsed_summary(
+            {"recorded": {}, "unreadable": [], "unrecognized": ["income"], "declined": []}
+        )
+
+        self.assertIn("income", text)
+        self.assertIn("ignored", text)
+
+    def test_parsed_summary_tells_llm_not_to_reask_declined_fields(self):
+        text = self.tool._build_parsed_summary(
+            {"recorded": {}, "unreadable": [], "unrecognized": [], "declined": ["assets_total"]}
+        )
+
+        self.assertIn("don't ask about those again", text)
+
     def test_build_eligibility_info_lists_alternatives_not_python_repr(self):
         """Alternatives render as a readable list, not a list repr."""
         info = self.tool._build_eligibility_info(

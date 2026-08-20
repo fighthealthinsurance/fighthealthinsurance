@@ -309,9 +309,20 @@ class MedicaidEligibilityTool(BaseTool):
 
         try:
             # Import here to avoid circular imports
-            from fighthealthinsurance.medicaid_api import is_eligible
+            from fighthealthinsurance.medicaid_api import (
+                is_eligible,
+                summarize_eligibility_inputs,
+            )
 
             await self.send_status_message("Processing Medicaid eligibility data")
+
+            # What we actually understood from the payload. The LLM parses
+            # the user's free text and carries the running answers in its
+            # own context, so it needs this echo to stay in sync with us --
+            # especially for values we normalized and keys we ignored.
+            parsed_summary = self._build_parsed_summary(
+                summarize_eligibility_inputs(loaded)
+            )
 
             (
                 eligible_2025,
@@ -324,6 +335,8 @@ class MedicaidEligibilityTool(BaseTool):
             info_text = self._build_eligibility_info(
                 eligible_2025, eligible_2026, medicare, alternatives, missing
             )
+            if parsed_summary:
+                info_text += "\n\n" + parsed_summary
 
             action_text = (
                 "\n\nUse this info to either ask the user the next follow-up "
@@ -392,6 +405,52 @@ class MedicaidEligibilityTool(BaseTool):
                 "Please contact your state for more info.",
                 context,
             )
+
+    def _build_parsed_summary(self, summary: dict) -> str:
+        """Tell the LLM what we recorded, ignored, and couldn't read.
+
+        Without this the model gets no feedback on its own parsing: an
+        unrecognized key (``income`` instead of ``monthly_income``) is
+        dropped silently, which is indistinguishable from being accepted, so
+        the model believes it answered and the same question comes back.
+        """
+        parts: List[str] = []
+
+        recorded = summary.get("recorded") or {}
+        if recorded:
+            lines = "\n".join(f"- {k}: {v}" for k, v in sorted(recorded.items()))
+            parts.append(
+                "This is what we have recorded so far — keep these in your "
+                "context and send them all back on the next call:\n" + lines
+            )
+
+        unrecognized = summary.get("unrecognized") or []
+        if unrecognized:
+            parts.append(
+                "We do NOT have a parameter named "
+                + ", ".join(sorted(unrecognized))
+                + " so those values were ignored. Re-send them under the "
+                "documented parameter names if they still apply."
+            )
+
+        unreadable = summary.get("unreadable") or []
+        if unreadable:
+            parts.append(
+                "We couldn't read the value given for "
+                + ", ".join(sorted(unreadable))
+                + ". Send a plain number, a JSON true/false, or a US state "
+                'name — or "unknown" if the user can\'t answer.'
+            )
+
+        declined = summary.get("declined") or []
+        if declined:
+            parts.append(
+                "The user couldn't answer "
+                + ", ".join(sorted(declined))
+                + " — don't ask about those again."
+            )
+
+        return "\n\n".join(parts)
 
     def _build_eligibility_info(
         self,

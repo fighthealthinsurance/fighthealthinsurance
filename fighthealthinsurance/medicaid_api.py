@@ -147,6 +147,36 @@ _ALIASES = {
     "s. carolina": "south carolina",
     "n. dakota": "north dakota",
     "s. dakota": "south dakota",
+    # State Medicaid program names. The prompt asks the model to infer the
+    # state from these; this is the backstop for when it passes the program
+    # name straight through as the "state".
+    "medi-cal": "california",
+    "medical": "california",
+    "denalicare": "alaska",
+    "health first colorado": "colorado",
+    "husky health": "connecticut",
+    "diamond state health plan": "delaware",
+    "med-quest": "hawaii",
+    "medquest": "hawaii",
+    "healthchoice illinois": "illinois",
+    "hoosier healthwise": "indiana",
+    "kansas medical assistance program": "kansas",
+    "mainecare": "maine",
+    "masshealth": "massachusetts",
+    "mo healthnet": "missouri",
+    "nj familycare": "new jersey",
+    "turquoise care": "new mexico",
+    "soonercare": "oklahoma",
+    "healthy connections": "south carolina",
+    "tenncare": "tennessee",
+    "star+plus": "texas",
+    "star plus": "texas",
+    "green mountain care": "vermont",
+    "cardinal care": "virginia",
+    "apple health": "washington",
+    "forward health": "wisconsin",
+    "forwardhealth": "wisconsin",
+    "equality care": "wyoming",
     # “state of …” forms
     "state of california": "california",
     "state of new york": "new york",
@@ -318,6 +348,108 @@ _FALSE_STRINGS = frozenset(
     }
 )
 
+# How the model tells us a question was asked and cannot be answered ("I
+# don't know my countable assets", "prefer not to say"). Without this channel
+# the model has nothing valid to send, so the same question comes back every
+# turn and the conversation never terminates. See _DECLINE_DEFAULTS.
+_UNKNOWN_STRINGS = frozenset(
+    {
+        "unknown",
+        "unsure",
+        "not sure",
+        "dont know",
+        "don't know",
+        "do not know",
+        "no idea",
+        "idk",
+        "n/a",
+        "na",
+        "declined",
+        "prefer not to say",
+        "no answer",
+        "unanswered",
+        "maybe",
+    }
+)
+
+# Fields we can safely assume when the user can't answer, so one unknown
+# doesn't sink the whole estimate. Each assumption is the conservative one
+# (single filer's lower asset limit, no exemptions) and is disclosed in the
+# alternatives so the user can correct it.
+_DECLINE_DEFAULTS: Dict[str, Any] = {
+    "married": False,
+    "pregnant": False,
+    "children_in_household": 0,
+    "receiving_ssdi": False,
+    "disabled": False,
+    "on_medicare": False,
+    "esrd": False,
+    "als": False,
+    "home_owner": False,
+    "veteran_or_spouse_of_veteran": False,
+    "work_req_exempt_2026": False,
+}
+
+# Without these there is no estimate to give, so a decline here stops the
+# flow with an explanation instead of a silent "not eligible".
+_REQUIRED_FOR_ESTIMATE = ("state", "age", "household_size", "monthly_income")
+
+# Every kwarg is_eligible reads. Anything else the model sends is silently
+# ignored today, which looks to the model like the answer was accepted -- so
+# summarize_eligibility_inputs reports the strays back to it.
+_KNOWN_ELIGIBILITY_FIELDS = frozenset(
+    {
+        "state",
+        "married",
+        "age",
+        "pregnant",
+        "receiving_ssdi",
+        "disabled",
+        "ssdi_length",
+        "on_medicare",
+        "veteran_or_spouse_of_veteran",
+        "living_situation",
+        "applying_reason",
+        "household_size",
+        "monthly_income",
+        "assets_total",
+        "home_owner",
+        "home_equity",
+        "children_in_household",
+        "als",
+        "esrd",
+        "years_worked",
+        "on_medicaid_past",
+        "work_req_exempt_2026",
+        "qualifying_hours_weekly_last_12",
+        "avg_monthly_qualifying_hours_last_3mo",
+        "avg_weekly_qualifying_hours_last_3mo",
+        "total_qualifying_hours_last_3mo",
+    }
+)
+
+
+def _parse_bool(value: Any) -> Optional[bool]:
+    """Tri-state bool out of an LLM-supplied value (None = unanswered)."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        text = value.strip().lower().rstrip(".!").strip()
+        if text in _TRUE_STRINGS:
+            return True
+        if text in _FALSE_STRINGS:
+            return False
+        return None
+    return bool(value)
+
+
+def _is_unknown_marker(value: Any) -> bool:
+    """Whether a value means "asked, but the user couldn't answer"."""
+    if not isinstance(value, str):
+        return False
+    return value.strip().lower().rstrip(".!?").strip() in _UNKNOWN_STRINGS
+
+
 # Word forms for the small counts people spell out ("three people").
 _WORD_NUMBERS = {
     "zero": 0,
@@ -360,13 +492,19 @@ def _parse_numeric(value: Any) -> Optional[float]:
     if text in _WORD_NUMBERS:
         return float(_WORD_NUMBERS[text])
     # Keep the first number-like run, dropping $ , and any trailing units.
-    match = re.search(r"-?\d[\d,]*(?:\.\d+)?", text)
+    match = re.search(r"-?\d[\d,]*(?:\.\d+)?\s*([km])?\b", text)
     if not match:
         return None
     try:
-        return float(match.group(0).replace(",", ""))
+        number = float(match.group(0).rstrip("km ").replace(",", ""))
     except ValueError:
         return None
+    suffix = match.group(1)
+    if suffix == "k":
+        number *= 1_000
+    elif suffix == "m":
+        number *= 1_000_000
+    return number
 
 
 def _clean_token(s: str) -> str:
@@ -518,20 +656,9 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
 
     # ---- helpers ----
     def get_bool(name: str) -> Optional[bool]:
-        v = kwargs.get(name, None)
-        if v is None:
-            return None
-        if isinstance(v, str):
-            # LLM payloads sometimes carry "false"/"no" string booleans;
-            # bool("false") is True, which flipped verdicts. See
-            # _TRUE_STRINGS/_FALSE_STRINGS.
-            s = v.strip().lower().rstrip(".!").strip()
-            if s in _TRUE_STRINGS:
-                return True
-            if s in _FALSE_STRINGS:
-                return False
-            return None
-        return bool(v)
+        # LLM payloads sometimes carry "false"/"no" string booleans, and
+        # bool("false") is True -- see _parse_bool / _TRUE_STRINGS.
+        return _parse_bool(kwargs.get(name, None))
 
     def get_int(name: str) -> Optional[int]:
         parsed = _parse_numeric(kwargs.get(name, None))
@@ -582,6 +709,27 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
     # but they could also do three. Yaaay.
     REQUIRED_MONTHS = 3  # lookback period in months
     MIN_MONTHS_MEETING = 3  # require meeting monthly hours in at least this many months
+
+    # ---- honour "the user couldn't answer" markers ----
+    # The model parses free text and hands us values; when the user simply
+    # doesn't know, it has nothing valid to send, so without this the same
+    # question returns every turn forever. Fold the safe assumptions in and
+    # remember the rest so their questions are suppressed below.
+    declined_fields = sorted(
+        name for name, raw in kwargs.items() if _is_unknown_marker(raw)
+    )
+    assumed_fields: List[str] = []
+    if declined_fields:
+        kwargs = dict(kwargs)
+        for name in declined_fields:
+            if name in _DECLINE_DEFAULTS:
+                kwargs[name] = _DECLINE_DEFAULTS[name]
+                assumed_fields.append(name)
+            else:
+                # No safe assumption: drop it so extraction sees "unanswered",
+                # and ask() below keeps us from re-asking it.
+                kwargs.pop(name, None)
+    declined_set = set(declined_fields)
 
     # ---- extract inputs ----
     # A state we can't recognize (typo, garbled LLM value) becomes a re-ask
@@ -648,6 +796,12 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
     eligible_2026 = False
     eligible_medicare = False
 
+    def ask(field: str, question: str) -> None:
+        """Queue a question unless the user already declined that field."""
+        if field in declined_set:
+            return
+        missing.append(question)
+
     def _result() -> Tuple[bool, bool, bool, List[str], List[str]]:
         """Single exit point: casts + dedupes so every return stays consistent."""
         return (
@@ -670,38 +824,44 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
         )
         return _result()
     if not state:
-        missing.append("What state do you live in?")
+        ask("state", "What state do you live in?")
     if age is None:
-        missing.append("How old are you?")
+        ask("age", "How old are you?")
     # No federal minimum marriage age law exists Oo. We could _probably_ go with 16 though but
     # for now lets do 10 since asking is not terrible and some states do allow it.
     if age is not None and age < 10 and married is None:
         married = False
     if age is not None and age >= 10 and married is None:
-        missing.append("Are you married or single?")
+        ask("married", "Are you married or single?")
     if household_size is None:
-        missing.append(
-            "How many people are in your household for taxes (household size)?"
+        ask(
+            "household_size",
+            "How many people are in your household for taxes (household size)?",
         )
     if monthly_income is None:
-        missing.append(
-            "About how much is your household's monthly income before taxes?"
+        ask(
+            "monthly_income",
+            "About how much is your household's monthly income before taxes?",
         )
 
     # https://en.wikipedia.org/wiki/Lina_Medina :/ -- and at the other end, a
     # 95-year-old's determination should not sit blocked on this either.
     if age is not None and pregnant is None:
         if 4 < age <= 60:
-            missing.append("Are you currently pregnant?")
+            ask("pregnant", "Are you currently pregnant?")
         else:
             # Don't stall the determination on a question we'd never ask.
             pregnant = False
     if kids is None:
-        missing.append("How many children (under 19) live in your household?")
+        ask(
+            "children_in_household",
+            "How many children (under 19) live in your household?",
+        )
 
     if receiving_ssdi is None:
-        missing.append(
-            "Are you receiving SSDI or otherwise considered disabled for benefits?"
+        ask(
+            "receiving_ssdi",
+            "Are you receiving SSDI or otherwise considered disabled for benefits?",
         )
     # Only ask about SSDI duration when SSDI itself was answered yes. Someone
     # who said "disabled, but not on SSDI" cannot answer it, and the prompt
@@ -710,7 +870,7 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
     if ssdi_answer and ssdi_length is None:
         # Needed at any age: 24+ months of SSDI is its own Medicare pathway,
         # so a 67-year-old on SSDI must be asked too, not just under-65s.
-        missing.append(_Q_SSDI_MONTHS)
+        ask("ssdi_length", _Q_SSDI_MONTHS)
     if age is not None and age < 65:
         # ESRD and ALS each open a Medicare pathway at any age, but they are
         # rare enough that asking every healthy young adult about kidney
@@ -720,9 +880,9 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
         settled_by_ssdi = ssdi_length is not None and ssdi_length >= 24
         if (bool(receiving_ssdi) or bool(on_medicare)) and not settled_by_ssdi:
             if esrd is None:
-                missing.append(_Q_ESRD)
+                ask("esrd", _Q_ESRD)
             if als is None:
-                missing.append(_Q_ALS)
+                ask("als", _Q_ALS)
         else:
             if esrd is None:
                 esrd = False
@@ -740,7 +900,7 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
     )
     if medicare_pathway:
         if on_medicare is None:
-            missing.append("Are you currently on Medicare?")
+            ask("on_medicare", "Are you currently on Medicare?")
         if on_medicare:
             # Already enrolled (any age -- an affirmative answer alone is a
             # pathway, so an under-65 enrollee isn't told they're ineligible).
@@ -753,8 +913,9 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
             eligible_medicare = True
         elif is_65_plus:
             if years_worked is None:
-                missing.append(
-                    "How many years did you (or spouse or ex-spouse) work and pay medicare taxes?"
+                ask(
+                    "years_worked",
+                    "How many years did you (or spouse or ex-spouse) work and pay medicare taxes?",
                 )
             elif years_worked >= 10:
                 # 10 years (40 quarters) of Medicare taxes = premium-free Part A.
@@ -783,11 +944,11 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
     # nothing reads cost every LTC applicant an extra round trip.
     if applying_reason in _LTC_REASONS:
         if assets_total is None:
-            missing.append(_Q_ASSETS)
+            ask("assets_total", _Q_ASSETS)
         if home_owner is None:
-            missing.append(_Q_HOME_OWNER)
+            ask("home_owner", _Q_HOME_OWNER)
         if home_owner and home_equity is None:
-            missing.append(_Q_HOME_EQUITY)
+            ask("home_equity", _Q_HOME_EQUITY)
     else:
         # Only the ABD branch reads assets. Children and pregnancy are scored
         # on income alone and are matched earlier in the category chain, so
@@ -796,7 +957,7 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
             (age is not None and age >= 65) or (receiving_ssdi is True)
         ) and not ((age is not None and age < 19) or pregnant is True)
         if abd_candidate and assets_total is None:
-            missing.append(_Q_ASSETS)
+            ask("assets_total", _Q_ASSETS)
 
     # mypy isn't smart enough to infer the types with a loop :/
     if (
@@ -810,6 +971,15 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
         or receiving_ssdi is None
         or on_medicare is None
     ):
+        blocking = [f for f in _REQUIRED_FOR_ESTIMATE if f in declined_set]
+        if blocking and not missing:
+            # Everything answerable has been answered and what's left was
+            # declined -- say so rather than returning a bare "not eligible".
+            alts.append(
+                "We can't estimate eligibility without "
+                f"{', '.join(f.replace('_', ' ') for f in blocking)}"
+                "—your state Medicaid agency can check without it."
+            )
         return _result()
 
     # ---- with core info present, evaluate categories ----
@@ -848,7 +1018,7 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
         # LTC branch below (LTC applicants are almost always 65+/disabled, so
         # without this carve-out they'd be evaluated under the wrong rules).
         if assets_total is None:
-            missing.append(_Q_ASSETS)
+            ask("assets_total", _Q_ASSETS)
         else:
             asset_limit = ABD_ASSET_LIMIT_MARRIED if married else ABD_ASSET_LIMIT_SINGLE
             assets_ok = assets_total <= asset_limit
@@ -1012,11 +1182,13 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
             # total_qualifying_hours_last_3mo) so the answer has a slot to
             # land in instead of being silently dropped.
             if monthly_data is None:
-                missing.append(
-                    "For 2026, about how many qualifying hours per month (work, school, volunteering, or caregiving) do you average?"
+                ask(
+                    "avg_monthly_qualifying_hours_last_3mo",
+                    "For 2026, about how many qualifying hours per month (work, school, volunteering, or caregiving) do you average?",
                 )
-                missing.append(
-                    "If easier, share your total qualifying hours over the last 3 months."
+                ask(
+                    "total_qualifying_hours_last_3mo",
+                    "If easier, share your total qualifying hours over the last 3 months.",
                 )
                 eligible_2026 = False  # unknown until we get this
             else:
@@ -1039,6 +1211,15 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
                     )
 
     # ---- general alternatives / supportive pointers ----
+    if assumed_fields:
+        # The user couldn't answer these, so the estimate leans on an
+        # assumption -- say which, so they can correct it if it's wrong.
+        readable = ", ".join(f.replace("_", " ") for f in assumed_fields)
+        alts.append(
+            f"We assumed the most conservative answer for: {readable}. "
+            "If any of those are wrong the estimate may change."
+        )
+
     if veteran:
         alts.append(
             "Since there’s veteran status in the household, compare with VA health benefits."
@@ -1081,6 +1262,94 @@ def _load_medicaid_resources() -> "Optional[pd.DataFrame]":
     except Exception:
         logger.opt(exception=True).warning("Could not read Medicaid resources CSV")
         return None
+
+
+_BOOL_FIELDS = frozenset(
+    {
+        "married",
+        "pregnant",
+        "receiving_ssdi",
+        "disabled",
+        "on_medicare",
+        "veteran_or_spouse_of_veteran",
+        "home_owner",
+        "als",
+        "esrd",
+        "on_medicaid_past",
+        "work_req_exempt_2026",
+    }
+)
+_INT_FIELDS = frozenset(
+    {"age", "ssdi_length", "household_size", "children_in_household", "years_worked"}
+)
+_FLOAT_FIELDS = frozenset(
+    {
+        "monthly_income",
+        "assets_total",
+        "home_equity",
+        "avg_monthly_qualifying_hours_last_3mo",
+        "avg_weekly_qualifying_hours_last_3mo",
+        "total_qualifying_hours_last_3mo",
+    }
+)
+
+
+def summarize_eligibility_inputs(kwargs: Dict[str, Any]) -> Dict[str, Any]:
+    """Report what is_eligible actually understood from a tool payload.
+
+    The model does its own parsing of the user's free text and keeps the
+    running answers in its context, so it needs to see what landed on our
+    side: values we normalized (``$1,200`` -> 1200.0, ``Medi-Cal`` -> ca),
+    values we could not read, keys we do not know (silently dropped
+    otherwise, which looks to the model exactly like acceptance), and the
+    fields the user declined.
+
+    Returns ``{"recorded", "unreadable", "unrecognized", "declined"}``.
+    """
+    recorded: Dict[str, Any] = {}
+    unreadable: List[str] = []
+    unrecognized: List[str] = []
+    declined: List[str] = []
+
+    for name, raw in kwargs.items():
+        if name not in _KNOWN_ELIGIBILITY_FIELDS:
+            unrecognized.append(name)
+            continue
+        if _is_unknown_marker(raw):
+            declined.append(name)
+            continue
+        if raw is None:
+            continue
+        if name == "state":
+            try:
+                normalized: Any = _normalize_state(raw)
+            except ValueError:
+                normalized = None
+            if normalized is None:
+                unreadable.append(name)
+            else:
+                recorded[name] = normalized
+        elif name in _BOOL_FIELDS:
+            parsed_bool = _parse_bool(raw)
+            if parsed_bool is None:
+                unreadable.append(name)
+            else:
+                recorded[name] = parsed_bool
+        elif name in _INT_FIELDS or name in _FLOAT_FIELDS:
+            number = _parse_numeric(raw)
+            if number is None:
+                unreadable.append(name)
+            else:
+                recorded[name] = int(number) if name in _INT_FIELDS else number
+        else:
+            recorded[name] = raw
+
+    return {
+        "recorded": recorded,
+        "unreadable": sorted(unreadable),
+        "unrecognized": sorted(unrecognized),
+        "declined": sorted(declined),
+    }
 
 
 def get_medicaid_info(query: Dict[str, Any]) -> Optional[str]:
