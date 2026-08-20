@@ -328,3 +328,72 @@ spec:
                 name:  web-svc
                 port:
                   number: 80
+---
+# /metrics is for in-cluster scrapers only (see the PodMonitor in
+# k8s/fhi-web-podmonitor.yaml). django_prometheus mounts it at the URL root, so
+# every host above would otherwise serve the full metric set to the internet.
+# An Exact-path rule beats the "/" Prefix rules on the same hosts, and the
+# source-range allowlist (loopback only == nobody) makes the controller answer
+# 403 without ever proxying to the pods. TLS/cert-manager config stays on the
+# ingress above; ingress-nginx merges both rule sets into one server per host.
+# On ingress-nginx >= 1.12 the annotation is also spelled allowlist-source-range.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: fight-health-insurance-metrics-deny
+  namespace: totallylegitco
+  annotations:
+    nginx.ingress.kubernetes.io/whitelist-source-range: "127.0.0.1/32"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: www.fighthealthinsurance.com
+      http:
+        paths:
+          - path: /metrics
+            pathType: Exact
+            backend:
+              service:
+                name:  web-svc
+                port:
+                  number: 80
+    - host: fighthealthinsurance.com
+      http:
+        paths:
+          - path: /metrics
+            pathType: Exact
+            backend:
+              service:
+                name:  web-svc
+                port:
+                  number: 80
+    - host: api.fighthealthinsurance.com
+      http:
+        paths:
+          - path: /metrics
+            pathType: Exact
+            backend:
+              service:
+                name:  web-svc
+                port:
+                  number: 80
+    - host: api.fightpaperwork.com
+      http:
+        paths:
+          - path: /metrics
+            pathType: Exact
+            backend:
+              service:
+                name:  web-svc
+                port:
+                  number: 80
+    - host: monitor.fighthealthinsurance.com
+      http:
+        paths:
+          - path: /metrics
+            pathType: Exact
+            backend:
+              service:
+                name:  web-svc
+                port:
+                  number: 80

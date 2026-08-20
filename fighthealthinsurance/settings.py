@@ -335,6 +335,8 @@ class Base(Configuration):
     )
 
     MIDDLEWARE = [
+        # First: /metrics is gated before any session/auth/audit work happens.
+        "fighthealthinsurance.middleware.MetricsAccessMiddleware",
         "fighthealthinsurance.middleware.DomainRedirectMiddleware",
         "fighthealthinsurance.middleware.CsrfCookieToHeaderMiddleware",
         "corsheaders.middleware.CorsMiddleware",
@@ -547,6 +549,19 @@ class Base(Configuration):
     ]
 
     PROMETHEUS_METRIC_NAMESPACE = "fhi"
+
+    # django_prometheus mounts /metrics at the URL root and the Ingress routes
+    # every path to the app, so MetricsAccessMiddleware only serves it to
+    # callers whose peer address falls in these ranges (and who did not come
+    # through the ingress). Pod/node IPs are private, so the private + loopback
+    # defaults are what "inside the cluster" means; override with a comma
+    # separated METRICS_ALLOWED_CIDRS on clusters with public pod CIDRs.
+    # Unset (the normal case) leaves the middleware on its own defaults.
+    METRICS_ALLOWED_CIDRS = [
+        cidr.strip()
+        for cidr in os.getenv("METRICS_ALLOWED_CIDRS", "").split(",")
+        if cidr.strip()
+    ]
 
     # STRIPE SETTINGS
     STRIPE_LIVE_MODE = False
