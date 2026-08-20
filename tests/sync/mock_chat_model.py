@@ -54,6 +54,7 @@ class MockChatModel:
         temperature: float = 0.7,
         is_professional: Optional[bool] = True,
         is_logged_in: Optional[bool] = True,
+        allow_repeated_reply: bool = False,
     ) -> Tuple[str, str]:
         """
         Generate a mock response to a chat message.
@@ -71,6 +72,9 @@ class MockChatModel:
             temperature: Sampling temperature (ignored by the mock)
             is_professional: Optional boolean indicating if the user is a professional
             is_logged_in: Optional boolean indicating if the user is logged in
+            allow_repeated_reply: True when the user explicitly asked for a
+                repeat (ignored by the mock; accepted because the call
+                builders always pass it)
 
         Returns:
             A tuple of (response_text, updated_context)

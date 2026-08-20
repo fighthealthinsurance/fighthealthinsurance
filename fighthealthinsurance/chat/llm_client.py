@@ -444,6 +444,7 @@ def build_llm_calls(
     is_professional: bool,
     is_logged_in: bool,
     full_history: Optional[List[Dict[str, str]]] = None,
+    allow_repeated_reply: bool = False,
 ) -> Tuple[List[Awaitable[Tuple[Optional[str], Optional[str]]]], Dict[Awaitable, int]]:
     """
     Build parallel LLM calls for multiple model backends.
@@ -471,6 +472,7 @@ def build_llm_calls(
             history=history,
             is_professional=is_professional,
             is_logged_in=is_logged_in,
+            allow_repeated_reply=allow_repeated_reply,
         )
         calls.append(call)
         # Quadratic scaling to more aggressively prefer higher-quality models
@@ -490,6 +492,7 @@ def build_llm_calls(
                     history=full_history,
                     is_professional=is_professional,
                     is_logged_in=is_logged_in,
+                    allow_repeated_reply=allow_repeated_reply,
                 )
                 calls.append(full_history_call)
                 # Slightly prefer full history for better context
@@ -506,6 +509,7 @@ def build_llm_calls_for_variants(
     is_professional: bool,
     is_logged_in: bool,
     full_history: Optional[List[Dict[str, str]]] = None,
+    allow_repeated_reply: bool = False,
 ) -> Tuple[
     List[Awaitable[Tuple[Optional[str], Optional[str]]]],
     Dict[Awaitable, int],
@@ -547,6 +551,7 @@ def build_llm_calls_for_variants(
             is_professional=is_professional,
             is_logged_in=is_logged_in,
             full_history=full_history,
+            allow_repeated_reply=allow_repeated_reply,
         )
         # Apply the variant's score delta to every call it produced.
         for call in calls:
@@ -575,6 +580,7 @@ def build_retry_calls(
     is_logged_in: bool,
     fallback_backends: Optional[List[RemoteModelLike]] = None,
     temperature: float = 0.7,
+    allow_repeated_reply: bool = False,
 ) -> Tuple[List[Awaitable[Tuple[Optional[str], Optional[str]]]], Dict[Awaitable, int]]:
     """
     Build retry LLM calls with shortened context and fallback backends.
@@ -609,6 +615,7 @@ def build_retry_calls(
             is_professional=is_professional,
             is_logged_in=is_logged_in,
             temperature=temperature,
+            allow_repeated_reply=allow_repeated_reply,
         )
         calls.append(call)
         # Quadratic scaling, reduced for retry (lower priority than primary)
@@ -623,6 +630,7 @@ def build_retry_calls(
             is_professional=is_professional,
             is_logged_in=is_logged_in,
             temperature=temperature,
+            allow_repeated_reply=allow_repeated_reply,
         )
         calls.append(call)
         call_scores[call] = (model_backend.quality() ** 2) // 2
@@ -638,6 +646,7 @@ def build_retry_calls(
                 is_professional=is_professional,
                 is_logged_in=is_logged_in,
                 temperature=temperature,
+                allow_repeated_reply=allow_repeated_reply,
             )
             calls.append(call)
             call_scores[call] = (model_backend.quality() ** 2) // 7
@@ -650,6 +659,7 @@ def build_retry_calls(
                 is_professional=is_professional,
                 is_logged_in=is_logged_in,
                 temperature=temperature,
+                allow_repeated_reply=allow_repeated_reply,
             )
             calls.append(call)
             call_scores[call] = (model_backend.quality() ** 2) // 5

@@ -50,12 +50,14 @@ class RecordingModel:
         is_professional=True,
         is_logged_in=True,
         temperature=0.7,
+        allow_repeated_reply=False,
     ):
         self.calls.append(
             {
                 "message": current_message_for_llm,
                 "temperature": temperature,
                 "history_len": len(history) if history else 0,
+                "allow_repeated_reply": allow_repeated_reply,
             }
         )
         return (self._response, self._context)
@@ -131,3 +133,25 @@ class TestRetryAntiRepeatInstruction:
         for call in model.calls:
             assert ANTI_REPEAT_NOTE not in call["message"]
             assert call["temperature"] == 0.7
+
+    @pytest.mark.asyncio
+    async def test_allow_repeated_reply_forwards_to_backends(self):
+        """The explicit-repeat flag (derived from the RAW user message by the
+        caller) must reach the backend so its self-heal loop doesn't fight a
+        user-requested repeat."""
+        model = RecordingModel()
+        await retry_llm_with_fallback(
+            model_backends=[model],
+            current_message="please repeat that",
+            previous_context_summary=None,
+            history=list(CHAT_HISTORY),
+            is_professional=False,
+            is_logged_in=False,
+            chat_history=CHAT_HISTORY,
+            user_message_for_scoring="please repeat that",
+            allow_repeated_reply=True,
+            timeout=5.0,
+        )
+        assert model.calls
+        for call in model.calls:
+            assert call["allow_repeated_reply"] is True

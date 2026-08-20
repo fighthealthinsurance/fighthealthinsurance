@@ -145,6 +145,7 @@ async def retry_llm_with_fallback(
     user_message_for_scoring: Optional[str] = None,
     anti_repeat: bool = False,
     extended_timeout: float = 40.0,
+    allow_repeated_reply: bool = False,
 ) -> Tuple[Optional[str], Optional[str]]:
     """
     Retry LLM call with shortened context and fallback backends.
@@ -173,6 +174,11 @@ async def retry_llm_with_fallback(
             repeats of a recent reply. Appends an explicit do-not-repeat
             instruction to the message and raises the sampling temperature
             so the retry actually generates something new.
+        allow_repeated_reply: True when the user explicitly asked for a
+            repeat. Derived from the RAW user message by the caller (the
+            wrapped current_message contains system-injected text mentioning
+            "repeat") and forwarded to the backends so their self-heal loop
+            doesn't fight the user's request.
 
     Returns:
         Tuple of (response_text, context_part) or (None, None) on failure
@@ -207,6 +213,7 @@ async def retry_llm_with_fallback(
         is_logged_in=is_logged_in,
         fallback_backends=fallback_backends,
         temperature=retry_temperature,
+        allow_repeated_reply=allow_repeated_reply,
     )
 
     # Create simplified scorer for retries

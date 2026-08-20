@@ -87,6 +87,7 @@ class FakeModel:
         is_professional=True,
         is_logged_in=True,
         is_medicaid_related=None,
+        allow_repeated_reply=False,
     ):
         self.chat_calls += 1
         return (CHAT_TEXT, "summary")

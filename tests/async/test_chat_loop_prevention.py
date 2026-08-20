@@ -101,11 +101,13 @@ class RecordingChatModel:
         is_professional=True,
         is_logged_in=True,
         temperature=0.7,
+        allow_repeated_reply=False,
     ):
         self.calls.append(
             {
                 "message": current_message_for_llm,
                 "context": previous_context_summary,
+                "allow_repeated_reply": allow_repeated_reply,
                 "history": list(history) if history else [],
                 "temperature": temperature,
             }

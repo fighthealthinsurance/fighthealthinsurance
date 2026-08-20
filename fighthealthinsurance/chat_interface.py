@@ -327,6 +327,14 @@ class ChatInterface:
             else current_message_for_llm
         )
 
+        # Did the user explicitly ask for a repeat? Derived from the RAW
+        # message (scoring_message) BEFORE prompt wrapping -- the wrapped
+        # current_message_for_llm contains system-injected text that itself
+        # says "repeat", so testing it there would always match. Forwarded to
+        # the backends so their per-backend self-heal loop doesn't fight the
+        # user's request (the scorers make the same check independently).
+        allow_repeat = user_requested_repeat(scoring_message)
+
         # Build LLM calls using the extracted module. When message variants are
         # supplied (top-level user turn), fan out per variant and apply each
         # variant's score delta; only the primary_original variant's calls keep
@@ -341,6 +349,7 @@ class ChatInterface:
                 is_professional=is_professional,
                 is_logged_in=is_logged_in,
                 full_history=full_history,
+                allow_repeated_reply=allow_repeat,
             )
         else:
             calls, call_scores = build_llm_calls(
@@ -351,6 +360,7 @@ class ChatInterface:
                 is_professional=is_professional,
                 is_logged_in=is_logged_in,
                 full_history=full_history,
+                allow_repeated_reply=allow_repeat,
             )
             primary_calls = calls
 
@@ -414,6 +424,7 @@ class ChatInterface:
                 chat_history=chat.chat_history,
                 user_message_for_scoring=scoring_message,
                 anti_repeat=saw_repeats,
+                allow_repeated_reply=allow_repeat,
             )
             if retry_response and len(retry_response.strip()) > 5:
                 response_text = retry_response

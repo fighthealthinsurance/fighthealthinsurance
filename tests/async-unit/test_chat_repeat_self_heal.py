@@ -163,6 +163,28 @@ CANNED_REPLY = (
 
 
 @pytest.mark.asyncio
+async def test_allow_repeated_reply_skips_corrective_retry():
+    """When the caller derived an explicit-repeat request from the RAW user
+    message (allow_repeated_reply=True), a repeat of the last reply is what
+    the user wants — the self-heal loop must deliver it without burning a
+    serial corrective retry."""
+    model = ScriptedModel([f"{LOOPED_REPLY}🐼 Repeated as requested."])
+
+    response, _ = await model.generate_chat_response(
+        "can you repeat that?",
+        previous_context_summary=None,
+        history=HISTORY,
+        is_professional=False,
+        is_logged_in=False,
+        allow_repeated_reply=True,
+    )
+
+    assert len(model.infer_calls) == 1
+    assert "repeated your last reply" not in model.infer_calls[0]["prompt"]
+    assert response == LOOPED_REPLY
+
+
+@pytest.mark.asyncio
 async def test_canned_reply_repeat_needs_no_retry():
     """Mandated verbatim replies repeat by design — the self-heal loop must
     not burn a serial retry when the model re-sends one."""

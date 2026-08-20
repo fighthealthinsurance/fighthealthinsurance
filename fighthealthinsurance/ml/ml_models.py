@@ -987,6 +987,7 @@ class RemoteModelLike(DenialBase):
         is_professional: bool = True,
         is_logged_in: bool = True,
         is_medicaid_related: Optional[bool] = None,
+        allow_repeated_reply: bool = False,
     ) -> tuple[Optional[str], Optional[str]]:
         """
         Generate a chat response from the model.
@@ -1000,6 +1001,11 @@ class RemoteModelLike(DenialBase):
             is_logged_in: Whether the user is logged in or anonymous
             is_medicaid_related: Whether the chat involves Medicaid/Medicare topics.
                 If None, will be auto-detected from message and context.
+            allow_repeated_reply: True when the user's RAW message explicitly
+                asked for a repeat (derived by the caller BEFORE prompt
+                wrapping -- the wrapped prompt contains system-injected text
+                that says "repeat" and can't be tested here). Disables the
+                repeat-of-last-reply retry so the model may actually repeat.
 
         Returns:
             Generated response or None
@@ -1325,11 +1331,13 @@ Remember in the last three sentences GLP-1 is just an _example_ check what the u
 
         def _repeats_last_reply(candidate: Optional[str]) -> bool:
             # Mandated verbatim replies (see CANNED_REPLY_MARKERS) repeat by
-            # design -- retrying against them just burns a serial call. The
-            # user-asked-for-a-repeat case is handled by the SCORING layer,
-            # which sees the raw user message; the wrapped prompt available
-            # here contains system-injected text that itself says "repeat"
-            # and would false-positive.
+            # design, and an explicit "please repeat that" from the user
+            # (allow_repeated_reply, derived from the RAW message upstream)
+            # makes repeating the correct answer -- retrying against either
+            # just burns a serial call and steers the model away from what
+            # was asked.
+            if allow_repeated_reply:
+                return False
             if candidate and is_canned_reply(candidate):
                 return False
             return bool(
