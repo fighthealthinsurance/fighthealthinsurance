@@ -11,7 +11,6 @@ import os
 import sys
 
 from fighthealthinsurance.env_utils import get_env_variable, should_enable_sentry
-from fighthealthinsurance.sentry_filters import is_only_unrouted
 
 # Use stderr for startup messages since logging may not be configured yet
 print("Setting default envs", file=sys.stderr)
@@ -69,75 +68,21 @@ from django.conf import settings
 # k8s pod) or an explicit FHI_DEPLOYED=1.
 if should_enable_sentry(settings.SENTRY_ENDPOINT, settings.DEBUG):
     import sentry_sdk
+    from django.urls import Resolver404
     from sentry_sdk.integrations.django import DjangoIntegration
+    from sentry_sdk.integrations.logging import ignore_logger
 
-    def before_send_filter(event, hint):
-        """
-        Filter out Ray client connection errors that are transient infrastructure
-        issues. Ray handles reconnection automatically, so these are noisy but
-        not actionable in Sentry. They're logged locally for debugging.
-        """
-        from loguru import logger
+    from fighthealthinsurance.sentry_filters import (
+        before_send_filter,
+        before_send_transaction_filter,
+    )
 
-        # Check logger name for Ray client internal loggers
-        logger_name = event.get("logger", "")
-        if logger_name in (
-            "ray.util.client.logsclient",
-            "ray.util.client.dataclient",
-        ):
-            logger.warning(
-                f"Ray client connection issue (filtered from Sentry): {event.get('message', 'unknown')}"
-            )
-            return None
-
-        # Check for specific gRPC error messages from Ray
-        message = event.get("message", "") or ""
-        if "Logstream proxy failed to connect" in message:
-            logger.warning(
-                f"Ray logstream proxy connection failed (filtered from Sentry)"
-            )
-            return None
-        if "Unrecoverable error in data channel" in message:
-            logger.warning(f"Ray data channel error (filtered from Sentry)")
-            return None
-
-        # Check exception values for Ray gRPC errors
-        exception_values = event.get("exception", {}).get("values", [])
-        for exc in exception_values:
-            exc_value = exc.get("value", "") or ""
-            if "Logstream proxy failed to connect" in exc_value:
-                logger.warning(
-                    f"Ray gRPC logstream error (filtered from Sentry): {exc_value[:200]}"
-                )
-                return None
-            if "grpc_status:5" in exc_value and "Channel for client" in exc_value:
-                logger.warning(
-                    f"Ray gRPC channel error (filtered from Sentry): {exc_value[:200]}"
-                )
-                return None
-
-        # Drop URL-resolution 404s. These are internet background noise:
-        # scanners probing for exposed secrets (.bashrc, api/.env, key.pem,
-        # wp-login.php...). Django refuses them correctly, so there is nothing
-        # to action -- but each novel probe path is a NEW Sentry issue, which
-        # means a fresh alert for something nobody can or should fix.
-        #
-        # Deliberately narrow: only the resolver's "no route matched" error.
-        # A 404 raised deliberately inside a view (a missing appeal, an expired
-        # link) is a different class and still reports, because that one can
-        # indicate a real bug. IGNORABLE_404_URLS in settings covers Django's
-        # own 404 mail; this is the equivalent for Sentry.
-        if is_only_unrouted(exception_values):
-            # The attempted path is deliberately NOT recorded here. It is
-            # client-controlled and can carry sensitive segments (a mistyped
-            # follow-up link still contains its token and hashed email), and
-            # uvicorn already logs every request path via --access-log in
-            # scripts/start-server.sh -- so probe activity stays greppable
-            # without writing untrusted input a second time.
-            logger.info("Unrouted path (filtered from Sentry)")
-            return None
-
-        return event
+    # Ray client internals chatter on these two loggers while reconnecting.
+    # ignore_logger drops them inside LoggingIntegration, before an event is
+    # built at all -- cheaper and less brittle than matching event["logger"]
+    # in before_send.
+    ignore_logger("ray.util.client.logsclient")
+    ignore_logger("ray.util.client.dataclient")
 
     sentry_sdk.init(
         dsn=settings.SENTRY_ENDPOINT,
@@ -147,7 +92,28 @@ if should_enable_sentry(settings.SENTRY_ENDPOINT, settings.DEBUG):
         integrations=[DjangoIntegration()],
         environment=get_env_variable("DJANGO_CONFIGURATION", "production-ish"),
         release=get_env_variable("RELEASE", "unset"),
+        # Scanner probes (.bashrc, api/.env, key.pem, wp-login.php...) are
+        # internet background noise. ignore_errors matches the real exception
+        # class off hint["exc_info"], so a deliberate Http404 from a view --
+        # a missing appeal, an expired link -- is untouched.
+        #
+        # Be clear about what this does NOT buy: as configured, an unrouted
+        # 404 never reaches Sentry as an error in the first place. Django
+        # answers Http404 (and its Resolver404 subclass) itself without
+        # sending got_request_exception, which is the only exception signal
+        # DjangoIntegration hooks, and DjangoIntegration()'s
+        # failed_request_status_codes defaults to the 5xx range. This is a
+        # guard for if that ever changes. The probe noise that DOES reach
+        # Sentry is one transaction per novel path, which
+        # before_send_transaction removes below.
+        #
+        # Consequence worth knowing: a mass-404 outage (a dropped include(),
+        # a changed prefix) is invisible to Sentry either way, so it has to be
+        # alerted on from the django_prometheus 404 rate -- django_prometheus
+        # is already in MIDDLEWARE -- and never from the absence of errors.
+        ignore_errors=[Resolver404],
         before_send=before_send_filter,
+        before_send_transaction=before_send_transaction_filter,
         _experiments={
             # Set continuous_profiling_auto_start to True
             # to automatically start the profiler on when
