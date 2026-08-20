@@ -149,3 +149,25 @@ spec:
                 name:  staging-web-svc
                 port:
                   number: 80
+---
+# /metrics is in-cluster only; see the matching deny Ingress in k8s/deploy.yaml.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: fight-health-insurance-staging-metrics-deny
+  namespace: totallylegitco
+  annotations:
+    nginx.ingress.kubernetes.io/whitelist-source-range: "127.0.0.1/32"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: staging.fighthealthinsurance.com
+      http:
+        paths:
+          - path: /metrics
+            pathType: Exact
+            backend:
+              service:
+                name:  staging-web-svc
+                port:
+                  number: 80
