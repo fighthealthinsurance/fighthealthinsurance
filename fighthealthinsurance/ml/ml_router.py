@@ -630,13 +630,17 @@ class MLRouter(object):
         pass: quadratic base scoring still prefers a healthy internal reply,
         but when the internals loop (hard-rejected repeats) or fail, an
         external answer is already in hand instead of costing a full retry
-        round trip. The same externals are also returned as fallback so the
-        retry pass (shortened context, hotter sampling) can take another
-        shot at them.
+        round trip.
+
+        The fallback list then carries only externals NOT already in the
+        primary list -- normally none. The retry pass fans out over BOTH
+        lists, so a backend appearing in each would receive four identical
+        requests per retry; the externals already get their retry attempt as
+        members of the primary list.
 
         Args:
-            use_external: Whether external models participate (primary and
-                fallback). False keeps chat internal-only with no fallback.
+            use_external: Whether external models participate at all. False
+                keeps chat internal-only with no fallback.
 
         Returns:
             Tuple of (primary_models, fallback_models)

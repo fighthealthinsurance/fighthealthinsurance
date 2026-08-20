@@ -165,7 +165,9 @@ get_chat_backends_with_fallback builds the fan-out:
   this change; the old cost-sort quietly picked the cheapest end,
 * when external models are enabled: the best <= 3 externals
   (quality-sorted, health-gated, one Groq max) now join the PRIMARY
-  fan-out too, plus serve as the retry-pass fallback list.
+  fan-out. The separate fallback list then carries only externals NOT
+  already there — normally none, since the retry pass fans out over both
+  lists and a backend in each would get four identical requests.
 
 Why externals in the primary pass: with externals only in the fallback,
 an internal-loop turn had to burn the full 30+30s primary window before an
