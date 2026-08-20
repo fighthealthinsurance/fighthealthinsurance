@@ -34,6 +34,7 @@ from fighthealthinsurance.proconnector import (
     get_professional_cc_email,
     partner_framing_problem,
     queue_proconnector_intro_email,
+    quick_intro_block_reason,
     send_proconnector_test_email,
 )
 
@@ -1699,3 +1700,297 @@ class ProExtractCSVTest(TestCase):
             )
         self.assertEqual(_csv_safe("Dr. Jane"), "Dr. Jane")
         self.assertEqual(_csv_safe(None), "")
+
+
+# ---------------------------------------------------------------------------
+# Quick intro (one-press flow linked from the signup notification email)
+# ---------------------------------------------------------------------------
+class QuickIntroBlockReasonTest(TestCase):
+    def test_fresh_record_is_not_blocked(self):
+        self.assertIsNone(quick_intro_block_reason(_make_pro()))
+
+    def test_sent_record_reports_already_sent(self):
+        pro = _make_pro(proconnector_attempted=True)
+        InterestedProfessional.objects.filter(pk=pro.pk).update(
+            proconnector_sent_at=timezone.now()
+        )
+        pro.refresh_from_db()
+        self.assertIn("already sent", quick_intro_block_reason(pro))
+
+    def test_queued_record_reports_already_queued(self):
+        pro = _make_pro(proconnector_attempted=True)
+        self.assertIn("already queued", quick_intro_block_reason(pro))
+
+    def test_skipped_record_reports_reason(self):
+        pro = _make_pro(proconnector_skipped=True, proconnector_skip_reason="not a fit")
+        reason = quick_intro_block_reason(pro)
+        self.assertIn("skipped", reason)
+        self.assertIn("not a fit", reason)
+
+    def test_unsubscribed_record_is_blocked(self):
+        pro = _make_pro(unsubscribed=True)
+        self.assertIn("unsubscribed", quick_intro_block_reason(pro))
+
+    def test_filtered_test_signup_is_blocked(self):
+        pro = _make_pro(email="test@test.com")
+        self.assertIn("filtered", quick_intro_block_reason(pro))
+
+
+class QuickIntroAccessTest(TestCase):
+    def setUp(self):
+        self.pro = _make_pro(email="jane@janeclinic.com")
+        self.url = reverse("proconnector_quick_intro", args=[self.pro.id])
+
+    def test_anonymous_redirected_to_login(self):
+        response = self.client.get(self.url)
+        self.assertRedirects(
+            response,
+            f"{reverse('admin:login')}?next={self.url}",
+            fetch_redirect_response=False,
+        )
+
+    def test_non_staff_post_redirected_and_nothing_sent(self):
+        _login(self.client, is_staff=False)
+        response = self.client.post(self.url, {"action": "send"})
+        self.assertRedirects(
+            response,
+            f"{reverse('admin:login')}?next={self.url}",
+            fetch_redirect_response=False,
+        )
+        self.pro.refresh_from_db()
+        self.assertFalse(self.pro.proconnector_attempted)
+        self.assertEqual(len(mail.outbox), 0)
+
+
+class _QuickIntroTestCase(TestCase):
+    """Shared staff login and URL helpers for the quick-intro flow tests."""
+
+    def setUp(self):
+        _login(self.client, is_staff=True)
+
+    def _url(self, pro_id) -> str:
+        return reverse("proconnector_quick_intro", args=[pro_id])
+
+    def _post(self, pro_id, action="send", **fields):
+        return self.client.post(self._url(pro_id), {"action": action, **fields})
+
+
+class QuickIntroPageTest(_QuickIntroTestCase):
+    @patch(
+        "fighthealthinsurance.staff_views.generate_intro_email",
+        return_value="A draft body with compensation disclosure.",
+    )
+    def test_page_shows_draft_and_send_buttons(self, mock_gen):
+        pro = _make_pro(email="jane@janeclinic.com")
+        response = self.client.get(self._url(pro.id))
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "proconnector_quick_intro.html")
+        self.assertContains(response, "jane@janeclinic.com")
+        self.assertContains(response, "A draft body with compensation disclosure.")
+        self.assertContains(response, "Send intro email now")
+        self.assertContains(response, "Send during business hours")
+        mock_gen.assert_called_once()
+
+    def test_missing_record_redirects_to_process(self):
+        response = self.client.get(self._url(999999))
+        self.assertRedirects(
+            response, reverse("proconnector_process"), fetch_redirect_response=False
+        )
+
+    def test_page_view_does_not_record_anything(self):
+        # Previewing (including by a link prefetcher with a staff session) must
+        # not claim / send / mark the record -- only the POST does.
+        pro = _make_pro(email="jane@janeclinic.com")
+        with patch(
+            "fighthealthinsurance.staff_views.generate_intro_email",
+            return_value="A draft body with compensation disclosure.",
+        ):
+            self.client.get(self._url(pro.id))
+        pro.refresh_from_db()
+        self.assertFalse(pro.proconnector_attempted)
+        self.assertEqual(len(mail.outbox), 0)
+
+    @patch("fighthealthinsurance.staff_views.generate_intro_email")
+    def test_already_sent_record_shows_status_without_drafting(self, mock_gen):
+        pro = _make_pro(email="done@janeclinic.com", proconnector_attempted=True)
+        InterestedProfessional.objects.filter(pk=pro.pk).update(
+            proconnector_sent_at=timezone.now(),
+            proconnector_email_body="The body that went out.",
+        )
+        response = self.client.get(self._url(pro.id))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "already sent")
+        # The stored audit body is shown instead of paying for a fresh draft.
+        self.assertContains(response, "The body that went out.")
+        self.assertNotContains(response, "Send intro email now")
+        mock_gen.assert_not_called()
+
+    @patch("fighthealthinsurance.staff_views.generate_intro_email")
+    def test_filtered_test_signup_shows_block_and_no_button(self, mock_gen):
+        pro = _make_pro(email="test@test.com")
+        response = self.client.get(self._url(pro.id))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "filtered")
+        self.assertNotContains(response, "Send intro email now")
+        mock_gen.assert_not_called()
+
+
+class QuickIntroSendTest(_QuickIntroTestCase):
+    @patch("fighthealthinsurance.staff_views.send_proconnector_intro_email")
+    def test_send_marks_record_and_confirms(self, mock_send):
+        pro = _make_pro(email="jane@janeclinic.com")
+        body = "Previewed body mentioning the compensation disclosure."
+        response = self._post(pro.id, "send", email_body=body)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Introduction sent to jane@janeclinic.com")
+
+        mock_send.assert_called_once()
+        args, kwargs = mock_send.call_args
+        self.assertEqual(args[0].pk, pro.pk)
+        self.assertEqual(kwargs["body"], body)
+        self.assertEqual(kwargs["subject"], proconnector.PROCONNECTOR_INTRO_SUBJECT)
+
+        pro.refresh_from_db()
+        self.assertTrue(pro.proconnector_attempted)
+        self.assertIsNotNone(pro.proconnector_sent_at)
+        self.assertEqual(pro.proconnector_email_body, body)
+
+    @patch(
+        "fighthealthinsurance.staff_views.generate_intro_email",
+        return_value="Generated body with the compensation disclosure.",
+    )
+    @patch("fighthealthinsurance.staff_views.send_proconnector_intro_email")
+    def test_missing_body_is_drafted_automatically(self, mock_send, mock_gen):
+        # A bare one-press POST (no previewed body round-tripped) drafts the
+        # email itself, so the flow stays fully automatic.
+        pro = _make_pro(email="jane@janeclinic.com")
+        response = self._post(pro.id, "send")
+        self.assertEqual(response.status_code, 200)
+        mock_gen.assert_called_once()
+        self.assertEqual(
+            mock_send.call_args.kwargs["body"],
+            "Generated body with the compensation disclosure.",
+        )
+        pro.refresh_from_db()
+        self.assertTrue(pro.proconnector_attempted)
+
+    @patch("fighthealthinsurance.staff_views.send_proconnector_intro_email")
+    def test_send_rejects_edit_missing_compensation(self, mock_send):
+        pro = _make_pro(email="jane@janeclinic.com")
+        response = self._post(
+            pro.id, "send", email_body="Hi, meet Cofactor AI. No disclosure here."
+        )
+        self.assertEqual(response.status_code, 400)
+        mock_send.assert_not_called()
+        pro.refresh_from_db()
+        self.assertFalse(pro.proconnector_attempted)
+
+    @patch("fighthealthinsurance.staff_views.send_proconnector_intro_email")
+    def test_send_to_unsendable_address_rejected(self, mock_send):
+        # example.com is a blocked domain -> not sendable.
+        pro = _make_pro(email="blocked@example.com")
+        response = self._post(
+            pro.id, "send", email_body="Body with compensation disclosure."
+        )
+        self.assertEqual(response.status_code, 400)
+        mock_send.assert_not_called()
+
+    @patch("fighthealthinsurance.staff_views.send_proconnector_intro_email")
+    def test_double_press_does_not_resend(self, mock_send):
+        pro = _make_pro(email="jane@janeclinic.com")
+        body = "Body with the compensation disclosure."
+        self._post(pro.id, "send", email_body=body)
+        response = self._post(pro.id, "send", email_body=body)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "already sent")
+        mock_send.assert_called_once()  # only the first press delivered
+
+    @patch("fighthealthinsurance.staff_views.send_proconnector_intro_email")
+    def test_unsubscribed_record_is_not_sent(self, mock_send):
+        pro = _make_pro(email="jane@janeclinic.com", unsubscribed=True)
+        response = self._post(
+            pro.id, "send", email_body="Body with compensation disclosure."
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "unsubscribed")
+        mock_send.assert_not_called()
+        pro.refresh_from_db()
+        self.assertFalse(pro.proconnector_attempted)
+
+    @patch("fighthealthinsurance.staff_views.send_proconnector_intro_email")
+    def test_filtered_test_signup_is_not_sent(self, mock_send):
+        # The email button must not become a side door around the queue's
+        # test/spam filtering (claim_email_for_send doesn't check it).
+        pro = _make_pro(email="test@test.com")
+        response = self._post(
+            pro.id, "send", email_body="Body with compensation disclosure."
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "filtered")
+        mock_send.assert_not_called()
+        pro.refresh_from_db()
+        self.assertFalse(pro.proconnector_attempted)
+
+    @patch(
+        "fighthealthinsurance.staff_views.send_proconnector_intro_email",
+        side_effect=RuntimeError("smtp down"),
+    )
+    def test_send_failure_releases_claim(self, _mock_send):
+        pro = _make_pro(email="jane@janeclinic.com")
+        response = self._post(
+            pro.id, "send", email_body="Body with compensation disclosure."
+        )
+        self.assertEqual(response.status_code, 500)
+        self.assertContains(response, "Failed to send", status_code=500)
+        pro.refresh_from_db()
+        self.assertFalse(pro.proconnector_attempted)  # back in the queue
+
+    @patch("fighthealthinsurance.staff_views.queue_proconnector_intro_email")
+    def test_queue_marks_attempted_without_sent_at(self, mock_queue):
+        pro = _make_pro(email="jane@janeclinic.com")
+        body = "Body with the compensation disclosure."
+        response = self._post(pro.id, "queue", email_body=body)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "business hours")
+        mock_queue.assert_called_once()
+        pro.refresh_from_db()
+        self.assertTrue(pro.proconnector_attempted)
+        self.assertIsNone(pro.proconnector_sent_at)
+        self.assertEqual(pro.proconnector_email_body, body)
+
+    @patch(
+        "fighthealthinsurance.staff_views.generate_intro_email",
+        return_value="A draft body with compensation disclosure.",
+    )
+    @patch("fighthealthinsurance.staff_views.send_proconnector_intro_email")
+    def test_unknown_action_rejected(self, mock_send, _mock_gen):
+        pro = _make_pro(email="jane@janeclinic.com")
+        response = self._post(
+            pro.id, "explode", email_body="Body with compensation disclosure."
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertContains(response, "Unknown action", status_code=400)
+        mock_send.assert_not_called()
+
+    @patch("fighthealthinsurance.staff_views.send_proconnector_intro_email")
+    def test_missing_record_post_redirects_to_process(self, mock_send):
+        response = self._post(999999, "send", email_body="x")
+        self.assertRedirects(
+            response, reverse("proconnector_process"), fetch_redirect_response=False
+        )
+        mock_send.assert_not_called()
+
+    @patch("fighthealthinsurance.staff_views.send_proconnector_intro_email")
+    def test_send_resolves_all_records_with_same_email(self, mock_send):
+        # Two signups share an email; one press marks both and emails once.
+        a = _make_pro(email="dup@clinic.org")
+        b = _make_pro(email="dup@clinic.org")
+        response = self._post(
+            a.id, "send", email_body="Body with the compensation disclosure."
+        )
+        self.assertEqual(response.status_code, 200)
+        mock_send.assert_called_once()
+        for rec in (a, b):
+            rec.refresh_from_db()
+            self.assertTrue(rec.proconnector_attempted)
+        self.assertIsNone(get_next_interested_professional())

@@ -80,6 +80,36 @@ class ProVersionSignupSuccessTest(TestCase):
             )
         )
 
+    def test_team_notification_includes_quick_intro_link(self):
+        # The body carries the one-press Cofactor-intro link so the team can
+        # do the introduction straight from the notification.
+        intro_path = reverse("proconnector_quick_intro", args=[self.pro.id])
+        self.assertIn(intro_path, self._team_email().body)
+
+    def test_team_notification_html_renders_intro_button(self):
+        # The HTML alternative renders the same link as a press-able button.
+        email = self._team_email()
+        html = next(
+            content for content, mimetype in email.alternatives if mimetype == "text/html"
+        )
+        self.assertIn(reverse("proconnector_quick_intro", args=[self.pro.id]), html)
+        self.assertIn("Send the Cofactor AI introduction", html)
+
+    def test_team_notification_html_escapes_submitted_fields(self):
+        # Every field comes from the public form; markup must arrive escaped.
+        payload = dict(self.PAYLOAD, email="mallory@clinic.example")
+        payload["name"] = 'Jane <img src=x onerror="alert(1)">'
+        self.client.post(reverse("pro_version"), payload)
+        pro = InterestedProfessional.objects.get(email="mallory@clinic.example")
+        notification = next(
+            m for m in mail.outbox if m.subject == f"New pro version signup #{pro.id}"
+        )
+        html = next(
+            content for content, mimetype in notification.alternatives if mimetype == "text/html"
+        )
+        self.assertNotIn("<img src=x", html)
+        self.assertIn("Jane &lt;img src=x", html)
+
 
 class ProVersionSignupInvalidSubmissionTest(TestCase):
     """A submission missing the required email is rejected, not saved.

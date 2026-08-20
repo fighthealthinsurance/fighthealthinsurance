@@ -664,6 +664,46 @@ def processable_queryset() -> "QuerySet[InterestedProfessional]":
     )
 
 
+def quick_intro_block_reason(pro: InterestedProfessional) -> Optional[str]:
+    """Human-readable reason ``pro`` can't be introduced right now, or ``None``.
+
+    Gate for the one-press intro flow launched from the signup notification
+    email (see ``ProConnectorQuickIntroView``). ``None`` means the record is
+    claimable exactly as the main processing queue would see it; otherwise the
+    reason distinguishes the already-processed states from records the queue
+    filters out entirely, so the email button can never become a side door
+    around the queue's rules (an internal test account, an unsubscribed
+    professional, a double send).
+    """
+    if pro.proconnector_attempted:
+        if pro.proconnector_sent_at:
+            return (
+                "The Cofactor AI introduction was already sent on "
+                f"{pro.proconnector_sent_at:%Y-%m-%d}."
+            )
+        return (
+            "The Cofactor AI introduction was already queued to send during "
+            "business hours (or a send is in flight)."
+        )
+    if pro.proconnector_skipped:
+        reason = (pro.proconnector_skip_reason or "").strip()
+        suffix = f" (reason: {reason})" if reason else ""
+        return f"This record was skipped in the Pro Connector workflow{suffix}."
+    if pro.unsubscribed:
+        return (
+            "This professional has unsubscribed from Fight Health Insurance "
+            "emails, so the introduction cannot be sent."
+        )
+    # Attempted/skipped/unsubscribed are ruled out above, so the only way to
+    # miss the processable queryset now is the test/spam filtering.
+    if not processable_queryset().filter(pk=pro.pk).exists():
+        return (
+            "This signup is filtered out of pro-connector processing as a "
+            "test or spam address."
+        )
+    return None
+
+
 def get_next_interested_professional() -> Optional[InterestedProfessional]:
     """Next interested professional to process, or ``None``.
 
