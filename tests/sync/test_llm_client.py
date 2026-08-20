@@ -609,3 +609,42 @@ class TestScoreLlmResponseRepetitionPenalty(TestCase):
         exact_score = score_llm_response(exact_result, 100, current_message=current_msg)
         # Both penalized, but exact match more heavily
         self.assertGreater(bow_score, exact_score)
+
+
+class TestCannedReplyExemption(TestCase):
+    """Mandated verbatim replies (e.g. the Medicaid work-requirements block)
+    may legitimately repeat across turns — they are exempt from HARD
+    rejection while soft penalties still apply."""
+
+    CANNED = (
+        "New federal rules require many adults (ages 19-64) to complete at "
+        "least 80 hours per month of work, job training, school, or community "
+        "service to keep Medicaid coverage. For detailed information visit: "
+        "[Medicaid Work Requirements FAQ](/faq/medicaid/)"
+    )
+
+    def test_canned_reply_repeat_not_hard_rejected(self):
+        history = [
+            {"role": "user", "content": "tell me about the work requirements"},
+            {"role": "assistant", "content": self.CANNED},
+        ]
+        self.assertIsNone(
+            find_repeated_reply(self.CANNED, history, "and the work requirements?")
+        )
+        score = score_llm_response(
+            (self.CANNED, "ctx"),
+            call_score=100,
+            chat_history=history,
+            current_message="what about the work requirements again?",
+        )
+        self.assertGreater(score, float("-inf"))
+
+    def test_non_canned_repeat_still_rejected(self):
+        history = [
+            {"role": "user", "content": "help"},
+            {"role": "assistant", "content": LOOPED_REPLY},
+        ]
+        self.assertEqual(
+            find_repeated_reply(LOOPED_REPLY, history, "CA"),
+            "repeats_recent_assistant_reply",
+        )

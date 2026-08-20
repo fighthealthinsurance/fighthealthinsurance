@@ -369,10 +369,16 @@ class ChatInterface:
 
         runner_up_call: Optional[Tuple[Optional[str], Optional[str]]] = None
         try:
+            # Explicit overtime window: with the defaults (2x timeout) the
+            # primary pass could take 90s and the retry pass 105s -- past the
+            # 150s turn budget, so the budget killed retries that would have
+            # succeeded. 30+30 here plus 35+40 in retry_llm_with_fallback
+            # keeps the whole ladder inside the budget.
             best_call, runner_up_call = await best_two_within_timelimit(
                 calls,
                 score_fn,
                 timeout=30.0,
+                extended_timeout=30.0,
             )
             response_text, context_part = (
                 best_call if best_call is not None else (None, None)
@@ -816,11 +822,14 @@ class ChatInterface:
                 user_facing_message = "This chat is already linked to your prior authorization request. How can I help you with it?"
         if link_message and user_facing_message:
             await asyncio.sleep(0.01)
-            # Transactional merge against the fresh row (see apersist_chat_turn)
+            # Transactional merge against the fresh row (see apersist_chat_turn).
+            # The link note is context for the LLM, not something the user
+            # typed: flag it internal so replays don't render it as a user
+            # bubble (see _is_internal_history_message).
             self.chat = chat = await apersist_chat_turn(
                 chat,
                 new_messages=[
-                    {"role": "user", "content": link_message},
+                    {"role": "user", "content": link_message, "internal": True},
                     {"role": "assistant", "content": user_facing_message},
                 ],
             )
@@ -1054,6 +1063,34 @@ class ChatInterface:
         # (The double asterisks around the entire tool call are required)
         # USPSTF preventive recommendations: **uspstf_lookup {"query": "...", "grade": "A"}**
 
+        # Persist the user's message BEFORE generation. Channels cancels the
+        # consumer's coroutine on disconnect, and persistence used to happen
+        # only after the LLM returned -- so a network blip mid-turn silently
+        # erased the user's message from history (CancelledError skips the
+        # failure-path persist too). The final persist below merges against
+        # fresh state with tail-dedup, so this never duplicates the message.
+        # Deliberately NOT rebinding self.chat/chat: scoring and history prep
+        # treat chat.chat_history as the PRE-turn history (the current
+        # message travels separately). Guarded: persistence problems must
+        # not block the turn -- worst case we fall back to the old
+        # persist-at-end behavior.
+        if user_message and user_message.strip():
+            try:
+                await apersist_chat_turn(
+                    chat,
+                    new_messages=[{"role": "user", "content": user_message}],
+                )
+            except OngoingChat.DoesNotExist:
+                logger.warning(
+                    f"Chat {chat.id} vanished before the turn started; "
+                    f"continuing unpersisted"
+                )
+            except Exception:
+                logger.opt(exception=True).warning(
+                    f"Could not pre-persist user message for chat {chat.id}; "
+                    f"continuing (will persist at turn end)"
+                )
+
         # Debug visibility: show exactly what is being sent to the backend
         # model for this turn. Gated upstream (settings.DEBUG or staff), and
         # the content is the requesting user's own conversation, so sending
@@ -1261,11 +1298,33 @@ class ChatInterface:
             )
             await self.send_error_message(err_msg)
 
+    # Legacy prefixes of internal (LLM-context-only) user-role messages that
+    # predate the explicit "internal" flag; matched so old chats don't replay
+    # them either.
+    _INTERNAL_MESSAGE_PREFIXES = (
+        "Linked this chat to ",
+        "This chat is already linked to ",
+    )
+
+    @classmethod
+    def _is_internal_history_message(cls, message: Dict[str, Any]) -> bool:
+        """Messages stored purely as LLM context (e.g. the appeal-linking
+        notes recorded with role=user) must not replay as user bubbles."""
+        if message.get("internal"):
+            return True
+        content = message.get("content") or ""
+        return message.get("role") == "user" and content.startswith(
+            cls._INTERNAL_MESSAGE_PREFIXES
+        )
+
     async def replay_chat_history(self):
-        """Sends the existing chat history to the client."""
+        """Sends the existing chat history to the client, minus internal
+        LLM-context-only messages (which would render as user bubbles the
+        user never typed)."""
         chat = self.chat
-        history: Optional[List[Dict[str, Any]]] = chat.chat_history
-        await self.send_json_message_func({"messages": chat.chat_history})
+        history: List[Dict[str, Any]] = chat.chat_history or []
+        visible = [m for m in history if not self._is_internal_history_message(m)]
+        await self.send_json_message_func({"messages": visible})
 
     async def _handle_policy_analysis(
         self, chat: OngoingChat, user_message: str

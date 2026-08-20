@@ -24,7 +24,7 @@ from loguru import logger
 
 
 def merge_new_messages(
-    history: List[Dict[str, Any]], new_messages: List[Dict[str, str]]
+    history: List[Dict[str, Any]], new_messages: List[Dict[str, Any]]
 ) -> List[Dict[str, Any]]:
     """Append messages to a history list with tail-dedupe and user-merge.
 
@@ -48,19 +48,31 @@ def merge_new_messages(
                 last["content"] = f"{last.get('content')} {content}"
                 last["timestamp"] = timezone.now().isoformat()
                 continue
-        history.append(
-            {
-                "role": role,
-                "content": content,
-                "timestamp": timezone.now().isoformat(),
-            }
-        )
+        entry: Dict[str, Any] = {
+            "role": role,
+            "content": content,
+            "timestamp": timezone.now().isoformat(),
+        }
+        # LLM-context-only messages (e.g. appeal-link notes stored with
+        # role=user) carry an internal flag so history replay can skip them.
+        if msg.get("internal"):
+            entry["internal"] = True
+        history.append(entry)
     return history
+
+
+# Upper bound on stored context summaries. Only the last two are ever read
+# (chat_interface builds the LLM context from them), but every turn appends
+# one -- long chats used to accrete hundreds of KB-sized entries onto the
+# row, bloating each read/write of the chat. Placeholders trimmed away
+# before their background summary lands are fine: the replacement helper
+# no-ops when the tag is gone.
+MAX_STORED_SUMMARIES = 20
 
 
 def _persist_chat_turn_sync(
     chat_id: uuid.UUID,
-    new_messages: List[Dict[str, str]],
+    new_messages: List[Dict[str, Any]],
     new_summaries: List[Optional[str]],
 ):
     from fighthealthinsurance.models import OngoingChat
@@ -80,6 +92,8 @@ def _persist_chat_turn_sync(
                 if not entry or (summary and summary[-1] == entry):
                     continue
                 summary.append(entry)
+            if len(summary) > MAX_STORED_SUMMARIES:
+                summary = summary[-MAX_STORED_SUMMARIES:]
             fresh.summary_for_next_call = summary
             update_fields.append("summary_for_next_call")
         fresh.save(update_fields=update_fields)
@@ -89,7 +103,7 @@ def _persist_chat_turn_sync(
 async def apersist_chat_turn(
     chat,
     *,
-    new_messages: Optional[List[Dict[str, str]]] = None,
+    new_messages: Optional[List[Dict[str, Any]]] = None,
     new_summaries: Optional[List[Optional[str]]] = None,
 ):
     """Persist a turn's additions against the fresh row; return the fresh row.

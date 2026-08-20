@@ -338,31 +338,30 @@ def get_asn_info(ip_address: Optional[str]) -> tuple[str, str]:
     Returns:
         Tuple of (asn_number, asn_name). Both empty strings if lookup fails.
 
-    Note: This is a placeholder that can be enhanced with geoip2fast or similar.
-    For now, returns empty strings. To enable ASN lookup, install geoip2fast
-    and download the ASN database.
+    Uses the shared cached geoip2fast reader (see _get_geo_reader), which is
+    only constructed when FHI_GEOIP_CITY_DB is set. Point it at an ASN-bearing
+    database (geoip2fast-city-asn-ipv6.dat.gz) to get ASN data alongside the
+    state guess; with the key unset this returns empty strings — the
+    pre-geoip2fast behavior.
     """
     if not ip_address:
         return ("", "")
 
+    reader = _get_geo_reader()
+    if reader is None:
+        return ("", "")
     try:
-        # Try to import geoip2fast if available
-        from geoip2fast import GeoIP2Fast
-
-        geoip = GeoIP2Fast()
-        result = geoip.lookup(ip_address)
-        if result and hasattr(result, "asn"):
-            asn_num = str(result.asn) if result.asn else ""
-            asn_name = str(result.asn_name)[:200] if result.asn_name else ""
-            return (asn_num, asn_name)
-    except ImportError:
-        # geoip2fast not installed, that's fine
-        pass
+        result = reader.lookup(str(ip_address).strip())
+        if result is None:
+            return ("", "")
+        # geoip2fast exposes asn_name (and asn_cidr); some builds/forks also
+        # expose a numeric asn. Probe defensively.
+        asn_num = str(getattr(result, "asn", "") or "")
+        asn_name = str(getattr(result, "asn_name", "") or "")[:200]
+        return (asn_num, asn_name)
     except Exception:
         # Any lookup failure, return empty
-        pass
-
-    return ("", "")
+        return ("", "")
 
 
 # --- IP -> US state guess (for chat context, transient only) ---
@@ -424,9 +423,19 @@ _US_STATE_NAMES_BY_CODE = {
 }
 _US_STATE_NAMES = {name.lower(): name for name in _US_STATE_NAMES_BY_CODE.values()}
 
+# The configuration key that switches IP geo lookups on: path to a
+# geoip2fast CITY-level database (state guessing needs subdivision data,
+# which the package's bundled country/ASN databases do not carry). Use
+# geoip2fast-city-asn-ipv6.dat.gz to also get ASN data for get_asn_info.
+# See README "GeoIP" section. Without it, guess_us_state and get_asn_info
+# soft-fail to None/empty — a startup warning names this key.
+GEOIP_CITY_DB_ENV = "FHI_GEOIP_CITY_DB"
+
 # Lazily-created, cached geo reader (loading the database per lookup would be
-# far too slow for a per-message call). _geo_reader_failed remembers a failed
-# init so we don't retry the import/load on every chat message.
+# far too slow for a per-message call: the city database takes seconds to
+# load). _geo_reader_failed remembers a failed init so we don't retry the
+# import/load on every chat message. The FIRST call still pays the load, so
+# async callers must wrap lookups in a thread (the chat consumer does).
 _geo_reader: Any = None
 _geo_reader_failed = False
 _geo_reader_lock = threading.Lock()
@@ -439,20 +448,26 @@ def _get_geo_reader() -> Any:
     with _geo_reader_lock:
         if _geo_reader is not None or _geo_reader_failed:
             return _geo_reader
+        # Deliberately gated on the env key rather than falling back to the
+        # package's bundled country database: without city data the state
+        # guess can never work, and silently loading a database that can't
+        # serve the feature just hides the misconfiguration (the startup
+        # check warns instead).
+        db_path = os.environ.get(GEOIP_CITY_DB_ENV)
+        if not db_path:
+            _geo_reader_failed = True
+            return None
         try:
             from geoip2fast import GeoIP2Fast
 
-            # Subdivision (state) data needs a city-level database; the
-            # default country-level file yields no state and guesses stay
-            # None. Point FHI_GEOIP_CITY_DB at a city .dat.gz to enable.
-            db_path = os.environ.get("FHI_GEOIP_CITY_DB")
-            if db_path:
-                _geo_reader = GeoIP2Fast(geoip2fast_data_file=db_path)
-            else:
-                _geo_reader = GeoIP2Fast()
+            _geo_reader = GeoIP2Fast(geoip2fast_data_file=db_path)
         except Exception:
-            # geoip2fast not installed / database missing: state guessing is
-            # an optional enhancement (same posture as get_asn_info above).
+            # Missing package or unreadable database file: geo features are
+            # an optional enhancement and must never break request handling.
+            logger.opt(exception=True).warning(
+                f"Failed to load GeoIP database from {GEOIP_CITY_DB_ENV}="
+                f"{db_path!r}; IP state guessing and ASN lookups disabled."
+            )
             _geo_reader_failed = True
             _geo_reader = None
     return _geo_reader
@@ -464,6 +479,61 @@ def _reset_geo_reader_cache_for_tests() -> None:
     with _geo_reader_lock:
         _geo_reader = None
         _geo_reader_failed = False
+
+
+def geo_lookup_status() -> tuple[bool, Optional[str]]:
+    """Whether IP geo lookups (state guess + ASN) are available, and why not.
+
+    Cheap enough for startup: it checks the key and the package import but
+    does NOT load the database (that happens lazily on first lookup).
+
+    Returns:
+        (enabled, reason) — reason is None when enabled, otherwise a short
+        human-readable explanation naming the fix.
+    """
+    db_path = os.environ.get(GEOIP_CITY_DB_ENV)
+    if not db_path:
+        return (
+            False,
+            f"{GEOIP_CITY_DB_ENV} is not set (path to a geoip2fast city-level "
+            f"database, e.g. geoip2fast-city-asn-ipv6.dat.gz)",
+        )
+    try:
+        import geoip2fast  # noqa: F401
+    except ImportError:
+        return (False, "the geoip2fast package is not installed")
+    if not os.path.exists(db_path):
+        return (False, f"{GEOIP_CITY_DB_ENV}={db_path!r} does not exist")
+    return (True, None)
+
+
+_geo_startup_warning_emitted = False
+
+
+def warn_if_geo_lookups_disabled() -> None:
+    """Log a one-line startup warning when geo lookups are disabled.
+
+    Soft fail by design: the chat state guess and ASN tracking silently
+    degrade without the database, and this warning is the only signal — so
+    it names the exact key to set. Called from AppConfig.ready(); guarded so
+    repeat ready() calls (tests, autoreload) warn once per process.
+    """
+    global _geo_startup_warning_emitted
+    if _geo_startup_warning_emitted:
+        return
+    _geo_startup_warning_emitted = True
+    enabled, reason = geo_lookup_status()
+    if enabled:
+        logger.info(
+            f"GeoIP lookups enabled ({GEOIP_CITY_DB_ENV}="
+            f"{os.environ.get(GEOIP_CITY_DB_ENV)!r})"
+        )
+        return
+    logger.warning(
+        f"GeoIP lookups disabled: {reason}. Chat IP-based state guessing "
+        f"and ASN tracking will soft-fail (return nothing). See the README "
+        f"'GeoIP' section for setup."
+    )
 
 
 def _normalize_state_guess(value: str) -> Optional[str]:

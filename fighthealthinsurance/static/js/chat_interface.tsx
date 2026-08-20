@@ -659,9 +659,11 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
           }));
         } else if (data.messages) {
           // This is a history replay
-          // Restore personal info in the message content if we have user info
+          // Restore personal info for BOTH roles: user messages are stored
+          // scrubbed ({{FIRST_NAME}} etc.), so without restoring them a
+          // refresh showed placeholder tokens in the user's own bubbles.
           const processedMessages = data.messages.map((msg: ChatMessage) => {
-            if (msg.role === "assistant" && userInfo) {
+            if (userInfo) {
               return {
                 ...msg,
                 content: restorePersonalInfo(msg.content, userInfo),
@@ -682,6 +684,13 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ defaultProcedure, default
             return {
               ...prev,
               messages: processedMessages,
+              // A replay only happens on (re)connect; any turn that was in
+              // flight died with the old socket, so clear the loading state
+              // instead of leaving the spinner stuck until the retry button
+              // appears.
+              isLoading: false,
+              requestStartTime: null,
+              statusMessage: null,
             };
           });
         }

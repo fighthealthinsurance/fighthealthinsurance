@@ -366,3 +366,97 @@ class ChatDebugFrameTest(APITestCase):
             await interface.handle_chat_message("CA")
 
         assert not recorder.debug_frames()
+
+
+class ChatDisconnectSafetyTest(APITestCase):
+    async def test_user_message_survives_mid_turn_cancellation(self):
+        """Channels cancels the consumer's coroutine on disconnect; the
+        user's message must already be persisted by then (persistence used
+        to happen only after generation, so a network blip erased the
+        turn)."""
+        import asyncio
+
+        user, chat = await _make_chat(
+            "cancelmid1", "9999930010", chat_history=_seed_history()
+        )
+        recorder = _FrameRecorder()
+        interface = ChatInterface(send_json_message_func=recorder, chat=chat, user=user)
+
+        with (
+            _patched_router([RecordingChatModel(always_reply=FRESH_REPLY)]),
+            _PATCH_FIRE_AND_FORGET,
+            patch.object(
+                ChatInterface,
+                "_call_llm_with_actions",
+                new=AsyncMock(side_effect=asyncio.CancelledError),
+            ),
+        ):
+            try:
+                await interface.handle_chat_message("CA")
+            except asyncio.CancelledError:
+                pass
+
+        fresh = await OngoingChat.objects.aget(id=chat.id)
+        user_msgs = [
+            m["content"] for m in fresh.chat_history if m.get("role") == "user"
+        ]
+        assert "CA" in user_msgs, f"user message lost: {fresh.chat_history}"
+
+    async def test_completed_turn_has_no_duplicate_user_message(self):
+        """The early persist plus the end-of-turn persist must not double
+        the user's message (tail-dedup in the merge helper)."""
+        user, chat = await _make_chat(
+            "cancelmid2", "9999930011", chat_history=_seed_history()
+        )
+        recorder = _FrameRecorder()
+        interface = ChatInterface(send_json_message_func=recorder, chat=chat, user=user)
+
+        with (
+            _patched_router([RecordingChatModel(always_reply=FRESH_REPLY)]),
+            _PATCH_FIRE_AND_FORGET,
+        ):
+            await interface.handle_chat_message("CA")
+
+        fresh = await OngoingChat.objects.aget(id=chat.id)
+        ca_msgs = [
+            m
+            for m in fresh.chat_history
+            if m.get("role") == "user" and m.get("content") == "CA"
+        ]
+        assert len(ca_msgs) == 1, f"duplicated user message: {fresh.chat_history}"
+        assert fresh.chat_history[-1]["content"] == FRESH_REPLY
+
+
+class ChatReplayFilterTest(APITestCase):
+    async def test_internal_link_messages_do_not_replay(self):
+        """Appeal-link notes are stored as role=user for LLM context; they
+        must not replay as bubbles the user never typed."""
+        seeded = _seed_history() + [
+            {
+                "role": "user",
+                "content": "Linked this chat to Appeal #4 -- help the user iterate",
+                "internal": True,
+            },
+            {"role": "assistant", "content": "I've linked this chat to your appeal."},
+            # Legacy entry from before the internal flag existed.
+            {
+                "role": "user",
+                "content": "This chat is already linked to Appeal #4 -- details",
+            },
+        ]
+        user, chat = await _make_chat("replayfilter1", "9999930012", seeded)
+        recorder = _FrameRecorder()
+        interface = ChatInterface(send_json_message_func=recorder, chat=chat, user=user)
+
+        await interface.replay_chat_history()
+
+        replay_frames = [f for f in recorder.frames if "messages" in f]
+        assert replay_frames
+        contents = [m["content"] for m in replay_frames[0]["messages"]]
+        assert "I've linked this chat to your appeal." in contents
+        assert not any(c.startswith("Linked this chat to ") for c in contents)
+        assert not any(
+            c.startswith("This chat is already linked to ") for c in contents
+        )
+        # Normal user messages still replay.
+        assert "Help me with the new medicaid requirements." in contents

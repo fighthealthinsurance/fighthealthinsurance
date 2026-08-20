@@ -144,6 +144,7 @@ async def retry_llm_with_fallback(
     chat_history: Optional[List[Dict[str, str]]] = None,
     user_message_for_scoring: Optional[str] = None,
     anti_repeat: bool = False,
+    extended_timeout: float = 40.0,
 ) -> Tuple[Optional[str], Optional[str]]:
     """
     Retry LLM call with shortened context and fallback backends.
@@ -218,6 +219,10 @@ async def retry_llm_with_fallback(
             retry_calls,
             retry_scorer,
             timeout=timeout,
+            # Bounded overtime so primary (30+30) + retry (35+40) fit inside
+            # the FHI_CHAT_TURN_BUDGET (150s default) instead of the default
+            # 2x-timeout overtime blowing past it mid-retry.
+            extended_timeout=extended_timeout,
         )
         retry_response, retry_context = (
             best_retry if best_retry is not None else (None, None)

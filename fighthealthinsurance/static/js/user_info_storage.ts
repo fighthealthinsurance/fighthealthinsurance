@@ -148,13 +148,11 @@ export function scrubPersonalInfo(message: string, userInfo: UserInfo | null): s
     );
   }
 
-  // Replace state
-  if (userInfo.state) {
-    scrubbedMessage = scrubbedMessage.replace(
-      new RegExp(`\\b${escapeRegExp(userInfo.state)}\\b`, "gi"),
-      "{{STATE}}"
-    );
-  }
+  // State is deliberately NOT scrubbed. It is coarse (1 of 50), and the
+  // Medicaid/appeal flows genuinely need it server-side: the assistant asks
+  // "which state are you in?", and when the answer got masked to {{STATE}}
+  // the model could never learn it and re-asked forever — a guaranteed chat
+  // loop. restorePersonalInfo still expands {{STATE}} for legacy history.
 
   // Replace zip code
   if (userInfo.zipCode) {

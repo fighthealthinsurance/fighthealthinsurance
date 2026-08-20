@@ -3,6 +3,7 @@ Tests for the simplified audit logging system.
 """
 
 from typing import Optional
+from unittest.mock import patch
 
 from django.test import TestCase, RequestFactory, override_settings
 from django.contrib.auth import get_user_model
@@ -501,9 +502,12 @@ class DenialTrackingInfoTest(TestCase):
 class GuessUsStateTest(TestCase):
     """Tests for the IP -> US state guess used to seed chat context.
 
-    geoip2fast is an optional dependency, so these tests inject a fake module
-    into sys.modules and reset the cached reader around each case.
+    Lookups are gated on FHI_GEOIP_CITY_DB (state data needs a city-level
+    database); these tests inject a fake geoip2fast module into sys.modules
+    and reset the cached reader around each case.
     """
+
+    FAKE_DB = {"FHI_GEOIP_CITY_DB": "/fake/geoip2fast-city.dat.gz"}
 
     def setUp(self):
         import fhi_users.audit as audit_module
@@ -541,13 +545,19 @@ class GuessUsStateTest(TestCase):
         self.assertIsNone(self.audit.guess_us_state(None))
         self.assertIsNone(self.audit.guess_us_state(""))
 
-    def test_missing_geoip_returns_none(self):
-        # No fake module installed and (in the test env) geoip2fast is not a
-        # real dependency: the guess degrades to None without raising.
-        import sys
+    def test_no_db_key_returns_none(self):
+        # The key is the switch: without FHI_GEOIP_CITY_DB no reader is
+        # built, even with geoip2fast importable.
+        class Result:
+            country_code = "US"
+            subdivision_code = "CA"
 
-        sys.modules.pop("geoip2fast", None)
-        self.assertIsNone(self.audit.guess_us_state("203.0.113.7"))
+        self._install_fake_geoip(Result())
+        with patch.dict("os.environ", {}, clear=False):
+            import os
+
+            os.environ.pop("FHI_GEOIP_CITY_DB", None)
+            self.assertIsNone(self.audit.guess_us_state("203.0.113.7"))
 
     def test_us_subdivision_code_maps_to_state_name(self):
         class Result:
@@ -555,7 +565,8 @@ class GuessUsStateTest(TestCase):
             subdivision_code = "CA"
 
         self._install_fake_geoip(Result())
-        self.assertEqual(self.audit.guess_us_state("203.0.113.7"), "California")
+        with patch.dict("os.environ", self.FAKE_DB):
+            self.assertEqual(self.audit.guess_us_state("203.0.113.7"), "California")
 
     def test_country_prefixed_subdivision_code(self):
         class Result:
@@ -563,9 +574,11 @@ class GuessUsStateTest(TestCase):
             subdivision_code = "US-NY"
 
         self._install_fake_geoip(Result())
-        self.assertEqual(self.audit.guess_us_state("203.0.113.7"), "New York")
+        with patch.dict("os.environ", self.FAKE_DB):
+            self.assertEqual(self.audit.guess_us_state("203.0.113.7"), "New York")
 
     def test_subdivision_name_on_nested_city_object(self):
+        # Matches the real geoip2fast CityDetail shape (city.subdivision_*).
         class City:
             subdivision_name = "Texas"
 
@@ -574,7 +587,8 @@ class GuessUsStateTest(TestCase):
             city = City()
 
         self._install_fake_geoip(Result())
-        self.assertEqual(self.audit.guess_us_state("203.0.113.7"), "Texas")
+        with patch.dict("os.environ", self.FAKE_DB):
+            self.assertEqual(self.audit.guess_us_state("203.0.113.7"), "Texas")
 
     def test_non_us_ip_returns_none(self):
         class Result:
@@ -582,18 +596,21 @@ class GuessUsStateTest(TestCase):
             subdivision_code = "IDF"
 
         self._install_fake_geoip(Result())
-        self.assertIsNone(self.audit.guess_us_state("203.0.113.7"))
+        with patch.dict("os.environ", self.FAKE_DB):
+            self.assertIsNone(self.audit.guess_us_state("203.0.113.7"))
 
-    def test_country_only_database_returns_none(self):
+    def test_country_only_data_returns_none(self):
         class Result:
             country_code = "US"
 
         self._install_fake_geoip(Result())
-        self.assertIsNone(self.audit.guess_us_state("203.0.113.7"))
+        with patch.dict("os.environ", self.FAKE_DB):
+            self.assertIsNone(self.audit.guess_us_state("203.0.113.7"))
 
     def test_lookup_error_returns_none(self):
         self._install_fake_geoip(RuntimeError("boom"))
-        self.assertIsNone(self.audit.guess_us_state("203.0.113.7"))
+        with patch.dict("os.environ", self.FAKE_DB):
+            self.assertIsNone(self.audit.guess_us_state("203.0.113.7"))
 
     def test_unknown_subdivision_returns_none(self):
         class Result:
@@ -601,4 +618,101 @@ class GuessUsStateTest(TestCase):
             subdivision_code = "ZZ"
 
         self._install_fake_geoip(Result())
-        self.assertIsNone(self.audit.guess_us_state("203.0.113.7"))
+        with patch.dict("os.environ", self.FAKE_DB):
+            self.assertIsNone(self.audit.guess_us_state("203.0.113.7"))
+
+
+class GetAsnInfoTest(TestCase):
+    """get_asn_info shares the gated cached reader with guess_us_state."""
+
+    FAKE_DB = {"FHI_GEOIP_CITY_DB": "/fake/geoip2fast-city-asn.dat.gz"}
+
+    def setUp(self):
+        import fhi_users.audit as audit_module
+
+        self.audit = audit_module
+        self.audit._reset_geo_reader_cache_for_tests()
+
+    def tearDown(self):
+        import sys
+
+        sys.modules.pop("geoip2fast", None)
+        self.audit._reset_geo_reader_cache_for_tests()
+
+    def _install_fake_geoip(self, lookup_result):
+        import sys
+        import types
+
+        fake_module = types.ModuleType("geoip2fast")
+
+        class FakeGeoIP2Fast:
+            def __init__(self, geoip2fast_data_file=None):
+                self.data_file = geoip2fast_data_file
+
+            def lookup(self, ip):
+                return lookup_result
+
+        fake_module.GeoIP2Fast = FakeGeoIP2Fast  # type: ignore[attr-defined]
+        sys.modules["geoip2fast"] = fake_module
+
+    def test_no_db_key_returns_empty(self):
+        import os
+
+        os.environ.pop("FHI_GEOIP_CITY_DB", None)
+        self.audit._reset_geo_reader_cache_for_tests()
+        self.assertEqual(self.audit.get_asn_info("203.0.113.7"), ("", ""))
+
+    def test_asn_name_from_reader(self):
+        class Result:
+            asn_name = "EXAMPLE-NET"
+
+        self._install_fake_geoip(Result())
+        with patch.dict("os.environ", self.FAKE_DB):
+            self.assertEqual(
+                self.audit.get_asn_info("203.0.113.7"), ("", "EXAMPLE-NET")
+            )
+
+    def test_none_ip_returns_empty(self):
+        self.assertEqual(self.audit.get_asn_info(None), ("", ""))
+
+
+class GeoLookupStatusTest(TestCase):
+    """The startup soft-fail status/warning helper."""
+
+    def setUp(self):
+        import fhi_users.audit as audit_module
+
+        self.audit = audit_module
+
+    def test_disabled_without_key_names_the_key(self):
+        import os
+
+        os.environ.pop("FHI_GEOIP_CITY_DB", None)
+        enabled, reason = self.audit.geo_lookup_status()
+        self.assertFalse(enabled)
+        self.assertIn("FHI_GEOIP_CITY_DB", reason)
+
+    def test_disabled_when_file_missing(self):
+        with patch.dict("os.environ", {"FHI_GEOIP_CITY_DB": "/nonexistent/geo.dat.gz"}):
+            enabled, reason = self.audit.geo_lookup_status()
+        self.assertFalse(enabled)
+        self.assertIn("does not exist", reason)
+
+    def test_enabled_with_real_file(self):
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(suffix=".dat.gz") as f:
+            with patch.dict("os.environ", {"FHI_GEOIP_CITY_DB": f.name}):
+                enabled, reason = self.audit.geo_lookup_status()
+        # geoip2fast is an installed dependency, so a present file => enabled.
+        self.assertTrue(enabled)
+        self.assertIsNone(reason)
+
+    def test_warn_helper_never_raises(self):
+        import os
+
+        os.environ.pop("FHI_GEOIP_CITY_DB", None)
+        # Reset the once-per-process guard so the warning path actually runs.
+        self.audit._geo_startup_warning_emitted = False
+        self.audit.warn_if_geo_lookups_disabled()
+        self.audit.warn_if_geo_lookups_disabled()  # second call is a no-op

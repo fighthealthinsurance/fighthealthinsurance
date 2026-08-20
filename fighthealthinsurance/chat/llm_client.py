@@ -115,6 +115,20 @@ USER_REQUESTED_REPEAT_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Markers of replies the system prompt REQUIRES to be sent verbatim (e.g. the
+# Medicaid work-requirements block must always be that exact text). Repeating
+# them across turns is by design, so they are exempt from HARD rejection —
+# soft repetition penalties still apply, keeping a fresh non-canned answer
+# preferred when one exists.
+CANNED_REPLY_MARKERS = ("Medicaid Work Requirements FAQ",)
+
+
+def is_canned_reply(text: Optional[str]) -> bool:
+    """Whether the reply is one of the mandated verbatim canned responses."""
+    if not text:
+        return False
+    return any(marker in text for marker in CANNED_REPLY_MARKERS)
+
 
 def user_requested_repeat(message: Optional[str]) -> bool:
     """True when the user's message explicitly asks us to repeat ourselves."""
@@ -139,6 +153,8 @@ def find_repeated_reply(
     repeat still won the fan-out race.
     """
     if not response_text:
+        return None
+    if is_canned_reply(response_text):
         return None
     if current_message and is_mostly_repeated(response_text, current_message):
         return "echoes_user_message"

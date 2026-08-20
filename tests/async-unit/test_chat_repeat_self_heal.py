@@ -58,7 +58,13 @@ class ScriptedModel(RemoteOpenLike):
         raise_http_errors: bool = False,
         timeout=None,
     ):
-        self.infer_calls.append({"prompt": prompt, "temperature": temperature})
+        self.infer_calls.append(
+            {
+                "prompt": prompt,
+                "temperature": temperature,
+                "system_prompts": list(system_prompts or []),
+            }
+        )
         if not self._replies:
             return None
         return (self._replies.pop(0), None)
@@ -101,3 +107,47 @@ async def test_fresh_reply_needs_no_retry():
     assert len(model.infer_calls) == 1
     assert "repeated your last reply" not in model.infer_calls[0]["prompt"]
     assert response == FRESH_REPLY
+
+
+@pytest.mark.asyncio
+async def test_system_prompt_carries_anti_loop_and_placeholder_guidance():
+    """The chat system prompt must teach the model to never repeat itself
+    and to treat client-side privacy placeholders ({{STATE}} etc.) as known
+    values — messages arrive scrubbed and the model previously had no way to
+    know what the tokens meant, so it re-asked for them forever."""
+    model = ScriptedModel([f"{FRESH_REPLY}🐼 ctx"])
+
+    await model.generate_chat_response(
+        "CA",
+        previous_context_summary=None,
+        history=HISTORY,
+        is_professional=False,
+        is_logged_in=False,
+    )
+
+    system_prompt = model.infer_calls[0]["system_prompts"][0]
+    assert "Never repeat one of your earlier replies" in system_prompt
+    assert "{{STATE}}" in system_prompt
+    assert "{{FIRST_NAME}}" in system_prompt
+    assert "privacy placeholders" in system_prompt
+
+
+@pytest.mark.asyncio
+async def test_context_framing_labels_summary_and_newest_message():
+    """The ongoing-turn framing labels the summary as background and points
+    the model at the user's newest message (the old wording buried terse
+    replies behind a summary of the model's own previous turn)."""
+    model = ScriptedModel([f"{FRESH_REPLY}🐼 ctx"])
+
+    await model.generate_chat_response(
+        "CA",
+        previous_context_summary="User is asking about Medicaid requirements.",
+        history=HISTORY,
+        is_professional=False,
+        is_logged_in=False,
+    )
+
+    prompt = model.infer_calls[0]["prompt"]
+    assert "Context summary of the conversation so far" in prompt
+    assert "The user's newest message is: CA" in prompt
+    assert "Do not repeat an earlier reply" in prompt
