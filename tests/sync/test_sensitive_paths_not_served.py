@@ -19,7 +19,7 @@ the request reached something that broke rather than something that refused,
 which can hide a routing bug behind an apparent "not served".
 
 Following redirects does NOT cover an off-site one, so those are failed
-outright -- see assert_no_offsite_redirect.
+outright rather than followed -- see assert_no_offsite_redirect.
 
 Scope: this covers what Django routes. In production nginx answers /static
 and /media off local disk before uvicorn is reached (conf/nginx.default), so
@@ -31,9 +31,10 @@ from urllib.parse import urlsplit
 
 from django.test import TestCase
 
-# Hosts the Django test client can actually answer for. "" is a relative
-# Location header (same app); "testserver" is the default test client host.
-INTERNAL_HOSTS = {"", "testserver"}
+# Hosts the Django test client can actually answer for. urlsplit().hostname
+# is lowercased and strips both userinfo and the port, so this needs only the
+# bare name; a relative Location header yields None, which the caller skips.
+INTERNAL_HOSTS = {"testserver"}
 
 # Paths taken from probes actually observed against production, plus the
 # usual suspects from scanner wordlists. Add to this list, never trim it.
@@ -97,7 +98,10 @@ class SensitivePathsNotServedTest(TestCase):
         destination we never fetched.
         """
         for target, status in getattr(response, "redirect_chain", []):
-            host = urlsplit(target).netloc.split("@")[-1]
+            # .hostname, not .netloc: netloc keeps the port and the case, so
+            # a same-app redirect to testserver:8000 or TESTSERVER would read
+            # as off-site and fail this test spuriously.
+            host = urlsplit(target).hostname
             if host and host not in INTERNAL_HOSTS:
                 self.fail(
                     f"/{path} redirected ({status}) off-site to {target!r}. The "
@@ -144,16 +148,26 @@ class OffsiteRedirectGuardTest(TestCase):
         self.assertIn("off-site", str(caught.exception))
 
     def test_offsite_redirect_with_credentials_in_netloc_fails(self):
-        """urlsplit keeps userinfo in netloc; the host must be read past it."""
+        """A userinfo prefix must not disguise the real host."""
         response = self._Response([("https://user:pw@evil.example.com/.env", 302)])
         with self.assertRaises(AssertionError):
             self.case.assert_no_offsite_redirect(".env", response)
 
     def test_same_app_redirects_pass(self):
-        response = self._Response(
-            [("/login/", 302), ("http://testserver/login/", 302)]
-        )
-        self.case.assert_no_offsite_redirect(".env", response)
+        """Every one of these is this app answering for itself. The port and
+        case variants are why the check parses .hostname rather than .netloc,
+        which keeps both and would fail these."""
+        for target in (
+            "/login/",
+            "http://testserver/login/",
+            "http://testserver:80/login/",
+            "https://testserver:8000/login/",
+            "HTTP://TESTSERVER/login/",
+        ):
+            with self.subTest(target=target):
+                self.case.assert_no_offsite_redirect(
+                    ".env", self._Response([(target, 302)])
+                )
 
     def test_no_redirect_chain_passes(self):
         self.case.assert_no_offsite_redirect(".env", self._Response([]))
