@@ -67,11 +67,15 @@ def as_text(value: Any) -> str:
     """
     if isinstance(value, str):
         return value
-    if not value:
-        return ""
     try:
+        # Both of these run user-supplied code on a non-str: `not value` calls
+        # __bool__/__len__ and str() calls __str__. Either can raise, so both
+        # live inside the try -- outside it, the raise would propagate and
+        # discard the event.
+        if not value:
+            return ""
         return str(value)
-    except Exception:  # pragma: no cover - an exotic __str__
+    except Exception:
         return ""
 
 
