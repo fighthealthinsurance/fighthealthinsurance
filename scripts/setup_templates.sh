@@ -54,3 +54,4 @@ pushd ./static/js
 npm i
 npm run build
 popd
+
