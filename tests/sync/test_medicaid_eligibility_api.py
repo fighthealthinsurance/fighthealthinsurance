@@ -39,30 +39,30 @@ class TestExpansionAdultFlow(SimpleTestCase):
     """MAGI adults in expansion states."""
 
     def test_low_income_expansion_adult_is_eligible_2025(self):
-        eligible_2025, _, _, _, missing = is_eligible(**_answers())
+        eligible_2025, _, _, _, _, _ = is_eligible(**_answers())
         self.assertTrue(eligible_2025)
 
     def test_flow_never_dead_ends_without_questions(self):
         # Regression: on_medicare/pregnant were required internally but never
         # asked for under-65 adults, so a fully-cooperative user got
         # "not eligible" with zero remaining questions.
-        eligible_2025, eligible_2026, _, _, missing = is_eligible(**_answers())
+        eligible_2025, _, _, _, missing, _ = is_eligible(**_answers())
         self.assertTrue(eligible_2025 or len(missing) > 0)
 
     def test_2026_requires_work_hours_question(self):
-        _, eligible_2026, _, _, missing = is_eligible(**_answers())
+        _, eligible_2026, _, _, missing, _ = is_eligible(**_answers())
         self.assertFalse(eligible_2026)
         self.assertTrue(any("qualifying hours" in q for q in missing))
 
     def test_2026_eligible_with_sufficient_hours(self):
-        _, eligible_2026, _, _, missing = is_eligible(
+        _, eligible_2026, _, _, missing, _ = is_eligible(
             **_answers(avg_weekly_qualifying_hours_last_3mo=25.0)
         )
         self.assertTrue(eligible_2026)
         self.assertEqual(missing, [])
 
     def test_2026_not_eligible_with_insufficient_hours(self):
-        _, eligible_2026, _, alts, _ = is_eligible(
+        _, eligible_2026, _, alts, _, _ = is_eligible(
             **_answers(avg_weekly_qualifying_hours_last_3mo=10.0)
         )
         self.assertFalse(eligible_2026)
@@ -70,34 +70,34 @@ class TestExpansionAdultFlow(SimpleTestCase):
 
     def test_massachusetts_is_an_expansion_state(self):
         # Regression: MA was missing from the expansion list.
-        eligible_2025, _, _, _, _ = is_eligible(**_answers(state="ma"))
+        eligible_2025, _, _, _, _, _ = is_eligible(**_answers(state="ma"))
         self.assertTrue(eligible_2025)
 
     def test_north_dakota_is_an_expansion_state(self):
         # Regression: ND was missing from the expansion list.
-        eligible_2025, _, _, _, _ = is_eligible(**_answers(state="nd"))
+        eligible_2025, _, _, _, _, _ = is_eligible(**_answers(state="nd"))
         self.assertTrue(eligible_2025)
 
     def test_alabama_is_not_an_expansion_state(self):
         # Regression: AL was wrongly listed as expanded.
-        eligible_2025, _, _, _, _ = is_eligible(**_answers(state="al"))
+        eligible_2025, _, _, _, _, _ = is_eligible(**_answers(state="al"))
         self.assertFalse(eligible_2025)
 
     def test_wisconsin_waiver_covers_adults_under_poverty_line(self):
         # WI has no ACA expansion but covers adults to 100% FPL via waiver.
-        eligible_2025, _, _, _, _ = is_eligible(**_answers(state="wi"))
+        eligible_2025, _, _, _, _, _ = is_eligible(**_answers(state="wi"))
         self.assertTrue(eligible_2025)
 
     def test_coverage_gap_alternative_mentions_health_centers(self):
         # Below 100% FPL in a non-expansion state there are no marketplace
         # subsidies; the guidance must not pretend there are.
-        _, _, _, alts, _ = is_eligible(**_answers(state="tx"))
+        _, _, _, alts, _, _ = is_eligible(**_answers(state="tx"))
         self.assertTrue(any("coverage gap" in a for a in alts))
 
     def test_wisconsin_over_waiver_limit_gets_marketplace_alternative(self):
         # Review regression: the WI waiver branch had no not-eligible arm, so
         # WI adults over 100% FPL got no subsidy pointer at all.
-        eligible_2025, _, _, alts, _ = is_eligible(
+        eligible_2025, _, _, alts, _, _ = is_eligible(
             **_answers(state="wi", monthly_income=1600.0)
         )
         self.assertFalse(eligible_2025)
@@ -107,7 +107,7 @@ class TestExpansionAdultFlow(SimpleTestCase):
         # Review regression: answering yes to SSDI routed 19-64 adults into
         # the asset-tested ABD branch only; SSDI receipt does not bar the
         # MAGI expansion pathway (income-only, up to 138% FPL).
-        eligible_2025, eligible_2026, _, _, _ = is_eligible(
+        eligible_2025, eligible_2026, _, _, _, _ = is_eligible(
             **_answers(
                 state="co",
                 monthly_income=1500.0,
@@ -123,13 +123,13 @@ class TestExpansionAdultFlow(SimpleTestCase):
     def test_monthly_hours_below_threshold_is_not_eligible_2026(self):
         # Review regression: the tool asks for hours per MONTH but only a
         # per-week kwarg existed, inviting a 4x unit error.
-        _, eligible_2026, _, _, _ = is_eligible(
+        _, eligible_2026, _, _, _, _ = is_eligible(
             **_answers(avg_monthly_qualifying_hours_last_3mo=60.0)
         )
         self.assertFalse(eligible_2026)
 
     def test_monthly_hours_above_threshold_is_eligible_2026(self):
-        _, eligible_2026, _, _, _ = is_eligible(
+        _, eligible_2026, _, _, _, _ = is_eligible(
             **_answers(avg_monthly_qualifying_hours_last_3mo=90.0)
         )
         self.assertTrue(eligible_2026)
@@ -139,17 +139,26 @@ class TestExpansionAdultFlow(SimpleTestCase):
         # weekly-list path bucketed 4-week months, so the same 19.5 hrs/week
         # got opposite verdicts depending on which kwarg the model filled --
         # and the user with detailed records got the harsher answer.
-        _, from_average, _, _, _ = is_eligible(
+        _, from_average, _, _, _, _ = is_eligible(
             **_answers(avg_weekly_qualifying_hours_last_3mo=19.5)
         )
-        _, from_list, _, _, _ = is_eligible(
+        _, from_list, _, _, _, _ = is_eligible(
             **_answers(qualifying_hours_weekly_last_12=[19.5] * 12)
         )
         self.assertEqual(from_average, from_list)
 
+    def test_weekly_hours_keep_month_to_month_variation(self):
+        # Review finding: averaging the whole window and repeating it let
+        # [60]*4 + [0]*8 -- two genuinely empty months -- pass a rule that
+        # requires each month to reach 80 hours.
+        _, eligible_2026, _, _, _, _ = is_eligible(
+            **_answers(qualifying_hours_weekly_last_12=[60.0] * 4 + [0.0] * 8)
+        )
+        self.assertFalse(eligible_2026)
+
     def test_weekly_hours_list_does_not_drop_extra_weeks(self):
         # Bucketing by index silently discarded anything past the 12th entry.
-        _, eligible_2026, _, _, _ = is_eligible(
+        _, eligible_2026, _, _, _, _ = is_eligible(
             **_answers(qualifying_hours_weekly_last_12=[0.0] * 4 + [10.0] * 12)
         )
         self.assertFalse(eligible_2026)
@@ -157,7 +166,7 @@ class TestExpansionAdultFlow(SimpleTestCase):
     def test_weekly_hours_use_thirteen_week_quarter(self):
         # Review regression: 4-weeks-per-month undercounted real months by
         # ~8%. 19 hrs/week is ~82.3 hrs per calendar month, which meets 80.
-        _, eligible_2026, _, _, _ = is_eligible(
+        _, eligible_2026, _, _, _, _ = is_eligible(
             **_answers(avg_weekly_qualifying_hours_last_3mo=19.0)
         )
         self.assertTrue(eligible_2026)
@@ -165,7 +174,7 @@ class TestExpansionAdultFlow(SimpleTestCase):
     def test_esrd_patient_exempt_from_work_requirement(self):
         # Review regression: ESRD/ALS (medically frail) were subjected to the
         # 2026 work-hours demand.
-        _, eligible_2026, _, _, missing = is_eligible(
+        _, eligible_2026, _, _, missing, _ = is_eligible(
             **_answers(esrd=True, on_medicare=False, assets_total=500.0)
         )
         self.assertTrue(eligible_2026)
@@ -178,21 +187,21 @@ class TestQuestionFlow(SimpleTestCase):
     def test_answering_no_to_ssdi_is_not_reasked(self):
         # Regression: `get_bool("receiving_ssdi") or get_bool("disabled")`
         # coerced an explicit False back to None, re-asking forever.
-        _, _, _, _, missing = is_eligible(state="ca", age=30, receiving_ssdi=False)
+        _, _, _, _, missing, _ = is_eligible(state="ca", age=30, receiving_ssdi=False)
         self.assertFalse(any("SSDI" in q for q in missing))
 
     def test_young_child_not_asked_about_pregnancy(self):
-        _, _, _, _, missing = is_eligible(state="wa", age=2)
+        _, _, _, _, missing, _ = is_eligible(state="wa", age=2)
         self.assertFalse(any("pregnant" in q.lower() for q in missing))
 
     def test_unrecognized_state_becomes_a_reask_not_an_exception(self):
         # A garbled state from the LLM used to raise ValueError and kill the
         # whole check; now it just re-asks for the state.
-        _, _, _, _, missing = is_eligible(state="medi-cal er california", age=30)
+        _, _, _, _, missing, _ = is_eligible(state="medi-cal er california", age=30)
         self.assertTrue(any("state" in q.lower() for q in missing))
 
     def test_young_child_verdict_does_not_stall_on_pregnancy(self):
-        eligible_2025, _, _, _, missing = is_eligible(
+        eligible_2025, _, _, _, missing, _ = is_eligible(
             state="wa",
             age=2,
             household_size=3,
@@ -207,7 +216,7 @@ class TestQuestionFlow(SimpleTestCase):
     def test_sixty_five_year_old_is_asked_about_medicare(self):
         # Regression: the medicare question used `age > 65`, skipping
         # people who are exactly 65.
-        _, _, _, _, missing = is_eligible(
+        _, _, _, _, missing, _ = is_eligible(
             **_answers(age=65, esrd=None, als=None, receiving_ssdi=False)
         )
         self.assertTrue(any("Medicare" in q for q in missing))
@@ -215,7 +224,7 @@ class TestQuestionFlow(SimpleTestCase):
     def test_missing_questions_are_deduplicated(self):
         # The assets question is raised by both the stepwise 65+ ask and the
         # ABD evaluation; the caller should only ever see it once.
-        _, _, _, _, missing = is_eligible(
+        _, _, _, _, missing, _ = is_eligible(
             **_answers(age=70, on_medicare=True, years_worked=15)
         )
         self.assertEqual(len(missing), len(set(missing)))
@@ -226,13 +235,13 @@ class TestQuestionFlow(SimpleTestCase):
     def test_string_no_is_treated_as_no(self):
         # Review regression: bool("no") is True, so LLM string booleans
         # flipped answers. A string "no" must behave like False.
-        eligible_2025, _, _, _, _ = is_eligible(**_answers(state="tx", pregnant="no"))
+        eligible_2025, _, _, _, _, _ = is_eligible(**_answers(state="tx", pregnant="no"))
         self.assertFalse(eligible_2025)
 
     def test_string_false_work_exemption_is_not_treated_as_exempt(self):
         # Review regression: work_req_exempt_2026="false" was truthy and
         # skipped the work-hours questions entirely.
-        _, eligible_2026, _, _, missing = is_eligible(
+        _, eligible_2026, _, _, missing, _ = is_eligible(
             **_answers(work_req_exempt_2026="false")
         )
         self.assertFalse(eligible_2026)
@@ -241,7 +250,7 @@ class TestQuestionFlow(SimpleTestCase):
     def test_home_equity_question_asked_only_once(self):
         # Review regression: two divergent phrasings of the home-equity
         # question survived dedup and got asked twice in one message.
-        _, _, _, _, missing = is_eligible(
+        _, _, _, _, missing, _ = is_eligible(
             **_answers(
                 age=80,
                 on_medicare=True,
@@ -262,19 +271,19 @@ class TestLlmPayloadParsing(SimpleTestCase):
         # The question is literally "Are you married or single?", so "single"
         # is the expected answer -- and an unrecognized string reads as
         # unanswered, which re-asked the same question every turn forever.
-        _, _, _, _, missing = is_eligible(**_answers(married="single"))
+        _, _, _, _, missing, _ = is_eligible(**_answers(married="single"))
         self.assertFalse(any("married" in q for q in missing))
 
     def test_empty_string_is_unanswered_not_no(self):
         # "" is the likeliest "I don't have this value" placeholder; recording
         # it as a definitive no silently routed a pregnant applicant down the
         # able-bodied pathway with no question left to correct it.
-        _, _, _, _, missing = is_eligible(**_answers(pregnant=""))
+        _, _, _, _, missing, _ = is_eligible(**_answers(pregnant=""))
         self.assertTrue(any("pregnant" in q.lower() for q in missing))
 
     def test_currency_formatted_income_is_parsed(self):
         # "$1,200" raised in float(), became None, and re-asked forever.
-        _, _, _, _, missing = is_eligible(**_answers(monthly_income="$1,200"))
+        _, _, _, _, missing, _ = is_eligible(**_answers(monthly_income="$1,200"))
         self.assertFalse(any("monthly income" in q for q in missing))
 
     def test_abbreviated_thousands_income_is_parsed(self):
@@ -282,15 +291,32 @@ class TestLlmPayloadParsing(SimpleTestCase):
         self.assertEqual(summary["recorded"]["monthly_income"], 1200.0)
 
     def test_spelled_out_household_size_is_parsed(self):
-        _, _, _, _, missing = is_eligible(**_answers(household_size="three"))
+        _, _, _, _, missing, _ = is_eligible(**_answers(household_size="three"))
         self.assertFalse(any("household size" in q for q in missing))
 
     def test_territory_resident_is_not_asked_for_a_state_forever(self):
         # Puerto Rico has Medicaid but never parsed as a state, so the flow
         # re-asked a question the resident had already answered correctly.
-        _, _, _, alts, missing = is_eligible(state="Puerto Rico", age=30)
+        _, _, _, alts, missing, _ = is_eligible(state="Puerto Rico", age=30)
         self.assertFalse(any("state do you live" in q for q in missing))
         self.assertTrue(any("territor" in a.lower() for a in alts))
+
+    def test_territory_result_is_not_a_determination(self):
+        # Review finding: the territory exit returned False/False with no
+        # questions left, which the chat tool rendered as a confident "may
+        # not be eligible" -- contradicting the alternative it returned.
+        _, _, _, _, _, determination_made = is_eligible(
+            state="Puerto Rico", age=30
+        )
+        self.assertFalse(determination_made)
+
+    def test_territory_resident_still_gets_a_medicare_answer(self):
+        # Medicare is federal and does operate in PR/GU/VI/AS/MP, so the
+        # territory exit must not skip the Medicare pathway.
+        _, _, medicare, _, _, _ = is_eligible(
+            **_answers(state="Puerto Rico", age=67, on_medicare=True)
+        )
+        self.assertTrue(medicare)
 
 
 class TestUnknownAnswerChannel(SimpleTestCase):
@@ -299,32 +325,32 @@ class TestUnknownAnswerChannel(SimpleTestCase):
     def test_declined_optional_field_is_not_reasked(self):
         # Without this channel the model has nothing valid to send for "I
         # don't know", so the question returns every turn forever.
-        _, _, _, _, missing = is_eligible(**_answers(married="unknown"))
+        _, _, _, _, missing, _ = is_eligible(**_answers(married="unknown"))
         self.assertFalse(any("married" in q for q in missing))
 
     def test_declined_optional_field_still_yields_a_verdict(self):
-        eligible_2025, _, _, _, _ = is_eligible(**_answers(married="unknown"))
+        eligible_2025, _, _, _, _, _ = is_eligible(**_answers(married="unknown"))
         self.assertTrue(eligible_2025)
 
     def test_declined_optional_field_discloses_the_assumption(self):
-        _, _, _, alts, _ = is_eligible(**_answers(married="prefer not to say"))
+        _, _, _, alts, _, _ = is_eligible(**_answers(married="prefer not to say"))
         self.assertTrue(any("assumed the most conservative" in a for a in alts))
 
     def test_declined_required_field_is_not_reasked(self):
-        _, _, _, _, missing = is_eligible(
+        _, _, _, _, missing, _ = is_eligible(
             **_answers(household_size="don't know", monthly_income="idk")
         )
         self.assertFalse(any("household" in q for q in missing))
 
     def test_declined_required_field_explains_the_blocked_estimate(self):
         # Not a silent "not eligible" dead end -- say what's missing.
-        _, _, _, alts, _ = is_eligible(
+        _, _, _, alts, _, _ = is_eligible(
             **_answers(household_size="don't know", monthly_income="idk")
         )
         self.assertTrue(any("can't estimate eligibility without" in a for a in alts))
 
     def test_declined_assets_question_is_not_reasked(self):
-        _, _, _, _, missing = is_eligible(
+        _, _, _, _, missing, _ = is_eligible(
             **_answers(
                 age=70,
                 on_medicare=True,
@@ -333,6 +359,38 @@ class TestUnknownAnswerChannel(SimpleTestCase):
             )
         )
         self.assertFalse(any("assets" in q for q in missing))
+
+
+class TestIndeterminateResults(SimpleTestCase):
+    """"Couldn't score them" must never be rendered as "not eligible"."""
+
+    def test_scored_ineligible_is_a_determination(self):
+        _, _, _, _, _, determination_made = is_eligible(
+            **_answers(state="tx", monthly_income=1100.0)
+        )
+        self.assertTrue(determination_made)
+
+    def test_declined_required_field_is_not_a_determination(self):
+        _, _, _, _, _, determination_made = is_eligible(
+            **_answers(household_size="don't know", monthly_income="idk")
+        )
+        self.assertFalse(determination_made)
+
+    def test_declined_home_ownership_does_not_assume_no_home(self):
+        # Review finding: defaulting home_owner to False skipped the LTC
+        # home-equity test, so someone with equity over the cap could get a
+        # false "probably eligible". It must stay indeterminate instead.
+        _, _, _, _, _, determination_made = is_eligible(
+            **_answers(
+                age=80,
+                on_medicare=True,
+                applying_reason="ltc_nursing_home",
+                assets_total=0.0,
+                home_owner="unknown",
+                monthly_income=1500.0,
+            )
+        )
+        self.assertFalse(determination_made)
 
 
 class TestParsedInputFeedback(SimpleTestCase):
@@ -365,11 +423,11 @@ class TestStateProgramNames(SimpleTestCase):
     """Program names are what users actually say; resolve them as a backstop."""
 
     def test_medi_cal_resolves_to_california(self):
-        eligible_2025, _, _, _, _ = is_eligible(**_answers(state="Medi-Cal"))
+        eligible_2025, _, _, _, _, _ = is_eligible(**_answers(state="Medi-Cal"))
         self.assertTrue(eligible_2025)
 
     def test_masshealth_resolves_to_massachusetts(self):
-        eligible_2025, _, _, _, _ = is_eligible(**_answers(state="MassHealth"))
+        eligible_2025, _, _, _, _, _ = is_eligible(**_answers(state="MassHealth"))
         self.assertTrue(eligible_2025)
 
 
@@ -380,7 +438,7 @@ class TestQuestionsThatCannotChangeTheAnswer(SimpleTestCase):
         # Answering "disabled, but not on SSDI" made receiving_ssdi True,
         # which asked for SSDI months -- unanswerable, and the prompt forbids
         # the model inventing one, so the conversation never terminated.
-        _, _, _, _, missing = is_eligible(
+        _, _, _, _, missing, _ = is_eligible(
             **_answers(receiving_ssdi=False, disabled=True, assets_total=0.0)
         )
         self.assertFalse(any("SSDI" in q for q in missing))
@@ -388,7 +446,7 @@ class TestQuestionsThatCannotChangeTheAnswer(SimpleTestCase):
     def test_disability_duration_without_ssdi_does_not_confer_medicare(self):
         # ssdi_length means SSDI months; a non-SSDI disability duration must
         # not satisfy the 24-month Medicare pathway.
-        _, _, medicare, _, _ = is_eligible(
+        _, _, medicare, _, _, _ = is_eligible(
             **_answers(
                 receiving_ssdi=False, disabled=True, ssdi_length=24, assets_total=0.0
             )
@@ -396,18 +454,18 @@ class TestQuestionsThatCannotChangeTheAnswer(SimpleTestCase):
         self.assertFalse(medicare)
 
     def test_healthy_young_adult_is_not_asked_about_kidney_failure(self):
-        _, _, _, _, missing = is_eligible(**_answers(esrd=None, als=None))
+        _, _, _, _, missing, _ = is_eligible(**_answers(esrd=None, als=None))
         self.assertFalse(any("renal" in q for q in missing))
 
     def test_ninety_five_year_old_is_not_asked_about_pregnancy(self):
-        _, _, _, _, missing = is_eligible(
+        _, _, _, _, missing, _ = is_eligible(
             **_answers(age=95, pregnant=None, on_medicare=True, assets_total=0.0)
         )
         self.assertFalse(any("pregnant" in q.lower() for q in missing))
 
     def test_child_is_not_asked_for_countable_assets(self):
         # Only the ABD branch reads assets; children are scored on income.
-        _, _, _, _, missing = is_eligible(
+        _, _, _, _, missing, _ = is_eligible(
             **_answers(age=10, receiving_ssdi=True, ssdi_length=6)
         )
         self.assertFalse(any("countable financial assets" in q for q in missing))
@@ -417,7 +475,7 @@ class TestMedicarePathways(SimpleTestCase):
     """Medicare eligibility determinations."""
 
     def test_ssdi_24_months_confers_medicare(self):
-        _, _, medicare, _, _ = is_eligible(
+        _, _, medicare, _, _, _ = is_eligible(
             **_answers(
                 age=50,
                 receiving_ssdi=True,
@@ -431,7 +489,7 @@ class TestMedicarePathways(SimpleTestCase):
     def test_ten_years_worked_at_65_confers_medicare(self):
         # Regression: the check was `years_worked > 10`, and was only
         # evaluated while the on_medicare question was still unanswered.
-        _, _, medicare, _, _ = is_eligible(
+        _, _, medicare, _, _, _ = is_eligible(
             **_answers(
                 age=67,
                 on_medicare=False,
@@ -442,13 +500,13 @@ class TestMedicarePathways(SimpleTestCase):
         self.assertTrue(medicare)
 
     def test_als_confers_medicare(self):
-        _, _, medicare, _, _ = is_eligible(
+        _, _, medicare, _, _, _ = is_eligible(
             **_answers(als=True, on_medicare=False, assets_total=500.0)
         )
         self.assertTrue(medicare)
 
     def test_under_ten_years_worked_suggests_medicare_savings_programs(self):
-        _, _, medicare, alts, _ = is_eligible(
+        _, _, medicare, alts, _, _ = is_eligible(
             **_answers(
                 age=70,
                 on_medicare=False,
@@ -463,7 +521,7 @@ class TestMedicarePathways(SimpleTestCase):
         # Review regression: an under-65 user who said they are ON Medicare
         # was reported not Medicare-eligible (the enrolled branch was only
         # reachable through the other pathways).
-        _, _, medicare, _, _ = is_eligible(
+        _, _, medicare, _, _, _ = is_eligible(
             **_answers(age=40, monthly_income=800.0, on_medicare=True, assets_total=500.0)
         )
         self.assertTrue(medicare)
@@ -472,7 +530,7 @@ class TestMedicarePathways(SimpleTestCase):
         # Review regression: the ssdi_length question was only asked under
         # 65, so the 24-month pathway was unreachable for 65+ SSDI
         # recipients and they got a definitive wrong "not eligible".
-        _, _, medicare, _, missing = is_eligible(
+        _, _, medicare, _, missing, _ = is_eligible(
             **_answers(
                 age=67,
                 receiving_ssdi=True,
@@ -486,7 +544,7 @@ class TestMedicarePathways(SimpleTestCase):
         self.assertFalse(medicare)
 
     def test_ssdi_recipient_at_67_with_24_months_gets_medicare(self):
-        _, _, medicare, _, missing = is_eligible(
+        _, _, medicare, _, missing, _ = is_eligible(
             **_answers(
                 age=67,
                 receiving_ssdi=True,
@@ -503,7 +561,7 @@ class TestMedicarePathways(SimpleTestCase):
         # Review regression: receiving_ssdi=False silently discarded
         # disabled=True, dropping the disability pathway and its work
         # exemption.
-        eligible_2025, eligible_2026, _, _, _ = is_eligible(
+        eligible_2025, eligible_2026, _, _, _, _ = is_eligible(
             **_answers(
                 state="tx",
                 monthly_income=800.0,
@@ -537,21 +595,21 @@ class TestLongTermCareFlow(SimpleTestCase):
     def test_zero_assets_pass_the_ltc_asset_test(self):
         # Regression: `if not assets_total` treated $0 (the most-eligible
         # case) as missing info and failed the asset test.
-        eligible_2025, _, _, _, missing = is_eligible(**self._ltc_answers())
+        eligible_2025, _, _, _, missing, _ = is_eligible(**self._ltc_answers())
         self.assertTrue(eligible_2025)
         self.assertEqual(missing, [])
 
     def test_eligible_ltc_applicant_is_exempt_from_2026_work_overlay(self):
         # Split from the asset test: 2026 exemption is a distinct rule
         # (LTC applicants are medically frail, never asked for work hours).
-        _, eligible_2026, _, _, missing = is_eligible(**self._ltc_answers())
+        _, eligible_2026, _, _, missing, _ = is_eligible(**self._ltc_answers())
         self.assertTrue(eligible_2026)
         self.assertFalse(any("hours" in q for q in missing))
 
     def test_under_65_ltc_applicant_not_asked_for_work_hours(self):
         # Review regression: a 55-year-old permanent nursing-home resident
         # was subjected to the 80-hours-per-month work requirement.
-        _, eligible_2026, _, _, missing = is_eligible(
+        _, eligible_2026, _, _, missing, _ = is_eligible(
             **self._ltc_answers(age=55, on_medicare=False)
         )
         self.assertTrue(eligible_2026)
@@ -561,7 +619,7 @@ class TestLongTermCareFlow(SimpleTestCase):
         # Review regression: the work overlay's not-eligible-2025 clamp
         # discarded the LTC branch's own 2026 result. $3,050/month is over
         # the $3,000 2025 cap but under the inflated 2026 cap.
-        eligible_2025, eligible_2026, _, _, _ = is_eligible(
+        eligible_2025, eligible_2026, _, _, _, _ = is_eligible(
             **self._ltc_answers(monthly_income=3050.0)
         )
         self.assertFalse(eligible_2025)
@@ -570,7 +628,7 @@ class TestLongTermCareFlow(SimpleTestCase):
     def test_ltc_missing_info_return_preserves_medicare_verdict(self):
         # Review regression: the LTC ask-for-more-info early return clobbered
         # an already-computed Medicare verdict back to False.
-        _, _, medicare, _, missing = is_eligible(
+        _, _, medicare, _, missing, _ = is_eligible(
             **self._ltc_answers(assets_total=None, home_owner=None, living_situation=None)
         )
         self.assertTrue(medicare)
@@ -582,14 +640,14 @@ class TestLongTermCareFlow(SimpleTestCase):
         # branch never ran and eligible_2026 kept its False initializer --
         # telling a 10-year-old in a nursing home they may lose coverage in
         # 2026 for not working 80 hours a month, with no question left.
-        _, eligible_2026, _, _, missing = is_eligible(
+        _, eligible_2026, _, _, missing, _ = is_eligible(
             **self._ltc_answers(age=10, on_medicare=False, children_in_household=1)
         )
         self.assertTrue(eligible_2026)
         self.assertEqual(missing, [])
 
     def test_pregnant_ltc_applicant_keeps_2026_exemption(self):
-        _, eligible_2026, _, _, _ = is_eligible(
+        _, eligible_2026, _, _, _, _ = is_eligible(
             **self._ltc_answers(age=30, pregnant=True, on_medicare=False)
         )
         self.assertTrue(eligible_2026)
@@ -599,7 +657,7 @@ class TestLongTermCareFlow(SimpleTestCase):
         # every LTC applicant a round trip for an inert answer.
         answers = self._ltc_answers()
         answers.pop("living_situation", None)
-        eligible_2025, _, _, _, missing = is_eligible(**answers)
+        eligible_2025, _, _, _, missing, _ = is_eligible(**answers)
         self.assertTrue(eligible_2025)
         self.assertFalse(any("living" in q.lower() for q in missing))
 
@@ -607,13 +665,13 @@ class TestLongTermCareFlow(SimpleTestCase):
         # Regression: 65+ applicants matched the ABD branch first and never
         # reached the LTC rules. $2,500/month fails the ABD 100%-FPL test but
         # passes the ~$3,000 LTC cap.
-        eligible_2025, _, _, _, _ = is_eligible(
+        eligible_2025, _, _, _, _, _ = is_eligible(
             **self._ltc_answers(state="wy", monthly_income=2500.0)
         )
         self.assertTrue(eligible_2025)
 
     def test_income_over_ltc_cap_suggests_miller_trust(self):
-        _, _, _, alts, _ = is_eligible(
+        _, _, _, alts, _, _ = is_eligible(
             **self._ltc_answers(monthly_income=3500.0)
         )
         self.assertTrue(any("Miller trust" in a for a in alts))
@@ -626,7 +684,7 @@ class TestAbdPathway(SimpleTestCase):
         # Review finding: medically-needy is a spend-down PATHWAY, not an
         # income waiver -- treating it as one reported a $120k/yr earner in
         # New York as "probably eligible" in both years.
-        eligible_2025, eligible_2026, _, alts, _ = is_eligible(
+        eligible_2025, eligible_2026, _, _, _, _ = is_eligible(
             **_answers(
                 state="ny",
                 age=70,
@@ -639,7 +697,7 @@ class TestAbdPathway(SimpleTestCase):
         self.assertFalse(eligible_2026)
 
     def test_medically_needy_state_still_suggests_spend_down(self):
-        _, _, _, alts, _ = is_eligible(
+        _, _, _, alts, _, _ = is_eligible(
             **_answers(
                 state="ny",
                 age=70,

@@ -526,6 +526,45 @@ class TestMedicaidEligibilityTool(TestCase):
 
         self.assertNotIn("If denied", info)
 
+    def test_indeterminate_result_is_not_rendered_as_a_denial(self):
+        """"Couldn't score them" must not become "may not be eligible"."""
+        info = self.tool._build_eligibility_info(
+            eligible_2025=False,
+            eligible_2026=False,
+            medicare=False,
+            alternatives=["Contact your territory's Medicaid agency."],
+            missing=[],
+            determination_made=False,
+        )
+
+        self.assertIn("could NOT produce a Medicaid estimate", info)
+        self.assertNotIn("may not be eligible", info)
+
+    def test_indeterminate_result_still_reports_medicare(self):
+        """Medicare is federal, so a territory resident still gets that answer."""
+        info = self.tool._build_eligibility_info(
+            eligible_2025=False,
+            eligible_2026=False,
+            medicare=True,
+            alternatives=[],
+            missing=[],
+            determination_made=False,
+        )
+
+        self.assertIn("may be eligible for it", info)
+
+    def test_scored_ineligible_still_reads_as_a_verdict(self):
+        info = self.tool._build_eligibility_info(
+            eligible_2025=False,
+            eligible_2026=False,
+            medicare=False,
+            alternatives=[],
+            missing=[],
+            determination_made=True,
+        )
+
+        self.assertIn("may not be eligible", info)
+
     def test_parsed_summary_echoes_recorded_values(self):
         """The LLM keeps its own context, so it must see what we recorded."""
         text = self.tool._build_parsed_summary(

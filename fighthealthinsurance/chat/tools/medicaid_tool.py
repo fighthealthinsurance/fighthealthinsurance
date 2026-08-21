@@ -178,10 +178,12 @@ class MedicaidInfoTool(BaseTool):
                 await self.send_status_message(
                     "Need the user's state before looking up Medicaid info."
                 )
+                # BaseTool.handle propagates this as the assistant's reply,
+                # so it has to read as something we'd say to the user, not as
+                # an instruction addressed to the model.
                 return (
-                    "Ask the user which state they're in (or confirm it if "
-                    "they already said) so we can look up their state's "
-                    "Medicaid contact info.",
+                    "Which state are you in? I need it to look up your "
+                    "state's Medicaid contact information.",
                     context,
                 )
 
@@ -330,10 +332,16 @@ class MedicaidEligibilityTool(BaseTool):
                 medicare,
                 alternatives,
                 missing,
+                determination_made,
             ) = is_eligible(**loaded)
 
             info_text = self._build_eligibility_info(
-                eligible_2025, eligible_2026, medicare, alternatives, missing
+                eligible_2025,
+                eligible_2026,
+                medicare,
+                alternatives,
+                missing,
+                determination_made,
             )
             if parsed_summary:
                 info_text += "\n\n" + parsed_summary
@@ -459,6 +467,7 @@ class MedicaidEligibilityTool(BaseTool):
         medicare: bool,
         alternatives: List[str],
         missing: List[str],
+        determination_made: bool = True,
     ) -> str:
         """
         Build the eligibility information text passed back to the LLM.
@@ -477,8 +486,9 @@ class MedicaidEligibilityTool(BaseTool):
         # One shared description of the 2026 rules so the eligible and
         # not-eligible wordings can't drift apart.
         work_req_note = (
-            " (which add the federal 80-hours-per-month "
-            "work/community-engagement requirement)"
+            " (once the federal 80-hours-per-month work/community-engagement "
+            "requirement applies to them — states must implement it by "
+            "January 1, 2027, a few earlier)"
         )
 
         parts: List[str] = [
@@ -513,6 +523,25 @@ class MedicaidEligibilityTool(BaseTool):
                 parts.append(
                     "Our data already suggests they may be eligible for medicare."
                 )
+        elif not determination_made:
+            # We could not score this person at all (a US territory, or a
+            # required answer they declined). Saying "may not be eligible"
+            # here would be a confident denial we never actually computed --
+            # and it would contradict the explanation in the alternatives.
+            parts.append(
+                "We could NOT produce a Medicaid estimate for this person — "
+                "do not tell them they may be ineligible. Explain that their "
+                "situation isn't something our checker can estimate and point "
+                "them at the next step below."
+            )
+            if medicare:
+                parts.append(
+                    "We were able to check Medicare, and our data suggests "
+                    "they may be eligible for it."
+                )
+            if len(alternatives) > 0:
+                alternative_lines = "\n".join(f"- {a}" for a in alternatives)
+                parts.append("Next steps to share:\n" + alternative_lines)
         else:
             for label, is_eligible_for_year, note in (
                 ("current (2025)", eligible_2025, ""),

@@ -3,6 +3,7 @@ import json
 import os
 import random
 import re
+import functools
 import typing
 from typing import TypedDict
 from urllib.parse import quote, urlencode
@@ -549,6 +550,7 @@ class MedicaidEligibilityView(StaticIshView):
     ) -> typing.Callable[..., HttpResponseBase]:
         cached_view = super().as_view(**initkwargs)
 
+        @functools.wraps(cached_view)
         def view(
             request: HttpRequest, *args: typing.Any, **kwargs: typing.Any
         ) -> HttpResponseBase:
@@ -558,6 +560,9 @@ class MedicaidEligibilityView(StaticIshView):
                 raise Http404("This page is not available yet.")
             return cached_view(request, *args, **kwargs)
 
+        # functools.wraps keeps view_class / view_initkwargs / __name__ that
+        # Django attaches to the as_view callable and that middleware and
+        # URL introspection read.
         return view
 
 

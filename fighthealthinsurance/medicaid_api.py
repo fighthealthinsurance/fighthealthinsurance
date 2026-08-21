@@ -385,7 +385,10 @@ _DECLINE_DEFAULTS: Dict[str, Any] = {
     "on_medicare": False,
     "esrd": False,
     "als": False,
-    "home_owner": False,
+    # NOTE: home_owner is deliberately NOT here. Assuming "no home" skips the
+    # LTC home-equity test entirely, so someone with equity over the cap
+    # would get a false "probably eligible" -- the opposite of conservative.
+    # Left indeterminate instead, so it is asked or reported as undetermined.
     "veteran_or_spouse_of_veteran": False,
     "work_req_exempt_2026": False,
 }
@@ -595,7 +598,9 @@ def _normalize_state(
     raise ValueError(f"Unknown state: {raw}")
 
 
-def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
+def is_eligible(
+    **kwargs,
+) -> Tuple[bool, bool, bool, List[str], List[str], bool]:
     """
     Perform an approximate eligibility check for Medicaid / Medicare based on the provided parameters.
     Returns a tuple of (2025 eligibility, 2026 eligibility, medicare, alternatives, missing_info).
@@ -604,8 +609,14 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
     Treat results as a best guess only and confirm with state resources.
 
     Federal work/community engagement requirement:
-      - Effective 12/31/2025 (i.e., for 2026 eligibility and onward), assume a federal requirement
-        of 80 qualifying hours PER MONTH with a 3-month lookback (12 weeks).
+      - Per the CMS interim final rule (CMS-2454-IFC, June 2026), states must
+        implement the requirement no later than JANUARY 1, 2027; a few have
+        gone earlier, and states showing good-faith effort can get extensions.
+        The ``eligible_2026`` flag therefore models "eligibility once the work
+        requirement applies to them", not calendar-year 2026 specifically.
+      - The requirement is 80 qualifying hours PER MONTH, checked at
+        application and renewal against a lookback of one to three months
+        (states choose), which is why late-2026 activity can already matter.
       - Qualifying hours may include work, school, volunteering, or caregiving.
       - Some people may be exempt (pregnant, disabled/SSDI/medically frail, etc.). If unsure, we ask.
 
@@ -644,14 +655,22 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
       - Pregnant: <= 200% FPL (often higher).
       - ABD & LTC: asset limits approx $2k single / $3k married; LTC income cap ~ $3,000/mo;
         home equity must be below a default cap (use $750k if unknown). Medically-needy may help.
-      - 2026 work overlay: requires >=80 qualifying hours per month, averaged across a
-        3-month lookback, with each of the 3 months individually meeting 80 hours.
+      - 2026 work overlay: requires >=80 qualifying hours per month across a
+        3-month lookback. Detailed weekly records are partitioned per month so
+        each month is checked on its own; a single monthly average or a 3-month
+        total has no per-month detail to check, so it is spread evenly and only
+        the average can be tested.
       - Questions we would never ask (e.g. "are you on Medicare?" for a healthy
         30-year-old, or "are you pregnant?" for a toddler) are defaulted instead of
         stalling the determination waiting on an answer that will never come.
 
     Returns:
-      (eligible_2025: bool, eligible_2026: bool, eligible_medicare: bool, alternatives: List[str], missing_info: List[str])
+      (eligible_2025, eligible_2026, eligible_medicare, alternatives,
+       missing_info, determination_made)
+
+    ``determination_made`` is False when we could not score the person at all
+    (US territory, or a required answer the user declined) — distinct from a
+    scored "not eligible". Callers must not present the former as a verdict.
     """
 
     # ---- helpers ----
@@ -802,27 +821,27 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
             return
         missing.append(question)
 
-    def _result() -> Tuple[bool, bool, bool, List[str], List[str]]:
-        """Single exit point: casts + dedupes so every return stays consistent."""
+    def _result(
+        determination_made: bool = False,
+    ) -> Tuple[bool, bool, bool, List[str], List[str], bool]:
+        """Single exit point: casts + dedupes so every return stays consistent.
+
+        ``determination_made`` separates "we scored this person and the answer
+        is no" from "we couldn't score them at all" (a US territory, or a
+        required answer the user declined). Both used to come back as
+        False/False with no questions left, which the chat tool rendered as a
+        confident "may not be eligible".
+        """
         return (
             bool(eligible_2025),
             bool(eligible_2026),
             bool(eligible_medicare),
             list(dict.fromkeys(alts)),
             list(dict.fromkeys(missing)),
+            determination_made,
         )
 
     # ---- prioritize missing info for stepwise questioning ----
-    if state in _TERRITORY_CODES:
-        # Territories run Medicaid under capped block grants with their own
-        # income rules, so the 50-state heuristics below don't apply. Say so
-        # and route to the local agency rather than guessing (or re-asking
-        # for a state the resident has already correctly given).
-        alts.append(
-            "Medicaid in US territories follows different rules than the states"
-            "—contact your territory's Medicaid agency for eligibility limits."
-        )
-        return _result()
     if not state:
         ask("state", "What state do you live in?")
     if age is None:
@@ -927,7 +946,7 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
             else:
                 eligible_medicare = False
                 alts.append(
-                    "You may be eligible to buy Part-A medicare even if you don't qualify for premium-free part A."
+                    "You may be eligible to buy Medicare Part A even if you don't qualify for premium-free Part A."
                 )
                 alts.append(
                     "Medicare Savings Programs (QMB/SLMB/QI) can help pay Medicare premiums when income and assets are low."
@@ -937,6 +956,20 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
         # assume not enrolled instead of stalling the flow on a question
         # whose answer is essentially always "no".
         on_medicare = False
+
+    if state in _TERRITORY_CODES:
+        # Territories run Medicaid under capped block grants with their own
+        # income rules, so the 50-state heuristics below don't apply. This
+        # runs AFTER the Medicare pathway above on purpose: Medicare is
+        # federal and does operate in PR/GU/VI/AS/MP, so a 67-year-old
+        # resident still gets a real Medicare answer. The Medicaid side
+        # comes back as not modeled (determination_made stays False) rather
+        # than as a "not eligible" verdict.
+        alts.append(
+            "Medicaid in US territories follows different rules than the states"
+            "—contact your territory's Medicaid agency for eligibility limits."
+        )
+        return _result()
 
     # LTC pathways. Note: living_situation is accepted as context but is not
     # asked for and does not gate the determination -- applying_reason already
@@ -1166,10 +1199,27 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
                 # sent a weekly list or a weekly average.
                 if weekly_hours:
                     weeks = len(weekly_hours)
-                    if weeks >= 4:
-                        weeks_per_month = 13.0 / REQUIRED_MONTHS
-                        per_month = (sum(weekly_hours) / weeks) * weeks_per_month
-                        return [per_month] * REQUIRED_MONTHS
+                    if weeks >= REQUIRED_MONTHS:
+                        # Partition the weeks across the 3 months so real
+                        # month-to-month variation survives -- averaging the
+                        # whole window and repeating it made [60]*4 + [0]*8
+                        # (two genuinely empty months) pass the per-month
+                        # rule. Each bucket is then scaled to a calendar
+                        # month (13 weeks per quarter, not 12), which keeps
+                        # this in agreement with the weekly-average path
+                        # instead of undercounting by ~8%.
+                        per_bucket = weeks / REQUIRED_MONTHS
+                        weeks_in_month = 13.0 / REQUIRED_MONTHS
+                        buckets: List[float] = []
+                        for index in range(REQUIRED_MONTHS):
+                            start = int(round(index * per_bucket))
+                            end = int(round((index + 1) * per_bucket))
+                            chunk = weekly_hours[start:end]
+                            if not chunk:
+                                continue
+                            buckets.append((sum(chunk) / len(chunk)) * weeks_in_month)
+                        if len(buckets) == REQUIRED_MONTHS:
+                            return buckets
                 if total_hours_3mo is not None:
                     # Average monthly hours from total
                     avg_monthly = float(total_hours_3mo) / REQUIRED_MONTHS
@@ -1241,7 +1291,7 @@ def is_eligible(**kwargs) -> Tuple[bool, bool, bool, List[str], List[str]]:
             "We can’t find a pathway with the current info—consider speaking with a benefits navigator or attorney."
         )
 
-    return _result()
+    return _result(determination_made=True)
 
 
 @lru_cache(maxsize=1)

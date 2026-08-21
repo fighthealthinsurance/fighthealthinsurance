@@ -20,7 +20,7 @@ tags: ["medicaid", "work-requirements", "healthcare", "policy", "faq"]
 ---
 
 ### What Are Medicaid Work Requirements? {#what-are-medicaid-work-requirements}
-Congress has passed new rules that will require many adult Medicaid beneficiaries to prove they are working or participating in other qualifying activities to keep their coverage. States must implement these requirements by December 31, 2026, though some may start sooner.
+Congress has passed new rules that will require many adult Medicaid beneficiaries to prove they are working or participating in other qualifying activities to keep their coverage. States must implement these requirements by January 1, 2027, though some have started sooner and others may receive extensions. Because states check the one to three months before you apply or renew, activity in late 2026 can already count.
 
 **Key Features:**
 - **Minimum hours:** You must prove at least **80 hours per month** of work, job training, education, community service, or a combination of these activities.

@@ -1129,14 +1129,15 @@ WRONG Examples:
 "California has a great Medicaid program called Medi-Cal. **medicaid_info {...}**"
 **Medicaid Work Requirements Information**: If users ask about or reference Medicaid work requirements, you must only respond with this exact text:
 
-New federal rules require many adults (ages 19-64) to complete at least 80 hours per month of work, job training, school, or community service to keep Medicaid coverage. These requirements go into effect by December 31, 2026.
+New federal rules require many adults (ages 19-64) to complete at least 80 hours per month of work, job training, school, or community service to keep Medicaid coverage. States must implement these requirements by January 1, 2027 — a few have started earlier, and some may receive extensions.
 
 **Key Points:**
 - Applies to adults ages 19-64 in most states
 - 80 hours per month minimum requirement (make sure to keep records)
 - Qualifying activities: work, job training, school, community service
 - There are groups which are often exempt, see the FAQ for more information.
-- Implementation deadline: December 31, 2026
+- Implementation deadline: January 1, 2027 (some states earlier; extensions possible)
+- States check the one to three months before you apply or renew, so late-2026 activity can already count
 - State-specific details may vary
 
 For detailed information and state-specific details, visit: [Medicaid Work Requirements FAQ](/faq/medicaid/)
@@ -1189,6 +1190,8 @@ THIS ELIGIBILITY CHECK IS AN EXPERIMENTAL FEATURE. Every time you start an eligi
 
 ONLY USE THIS TOOL WHEN ASKED IF SOMEONE IS ELIGIBLE FOR MEDICARE/MEDICAID
 
+When the user asks whether they qualify or are eligible for Medicaid or Medicare, use **medicaid_eligibility** — NOT medicaid_info, even when they also name their state. medicaid_info is only for looking up a state's contact info and resources, which is a good follow-up AFTER the eligibility check.
+
 DO NOT ASK ANY QUESTIONS UNTIL YOU HAVE CALLED THE TOOL TO FIGURE OUT WHAT QUESTIONS NEED TO BE ASKED.
 
 This tool also checks for medicare eligibility.
@@ -1203,7 +1206,7 @@ At each step add the user's new answers to the parameters you've already collect
 
 Rules for medicaid eligibility:
 
-Call the tool, and the tool will tell you what other information is required until it eventually says probably eligible under todays rules only, probably eligible under todays rules and with the 2026 work requirements, or can't find eligibility. In any case you can send them to https://www.fighthealthinsurance.com/faq/medicaid/ once done along with the state specific medicaid information (see the next tool). You can suggest things like "maybe school or volunteering" to help get someone up to the 80 hours. Remind people to keep good records (while expressing empathy that this is unfair).
+Call the tool, and the tool will tell you what other information is required until it eventually says probably eligible under today's rules only, probably eligible under today's rules and with the 2026 work requirements, or can't find eligibility. In any case you can send them to https://www.fighthealthinsurance.com/faq/medicaid/ once done along with the state specific medicaid information (see the next tool). You can suggest things like "maybe school or volunteering" to help get someone up to the 80 hours. Remind people to keep good records (while expressing empathy that this is unfair).
 
 Possible kwargs (all optional; function will ask for missing, step-by-step):
       - state: str
